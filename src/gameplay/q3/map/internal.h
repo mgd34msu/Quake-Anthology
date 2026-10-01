@@ -14,6 +14,7 @@ struct q3_map_runtime {
     int32_t loaded_game_type;
     uint64_t registered_items;
     bool world_spawned, post_spawned, locations_linked;
+    qa_actor_id location_head;
 };
 
 static inline int32_t q3_map_float_to_int(float value) {
@@ -31,6 +32,7 @@ static inline int32_t q3_map_random_schedule(int32_t now, float wait, float rand
 }
 
 bool q3_map_fail(qa_error *, const char *);
+bool q3_map_item_respawn(qa_q3_game *, qa_actor_id, bool *handled, qa_error *);
 bool q3_maps_round_reset(qa_q3_game *, const qa_q3_map_options *, qa_error *);
 bool q3_configstring_event(qa_q3_game *, const qa_q3_map_event *, qa_error *);
 qa_q3_map_actor_state *q3_map_get(qa_q3_game *, qa_actor_id);

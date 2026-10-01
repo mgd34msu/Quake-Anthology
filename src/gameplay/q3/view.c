@@ -8,7 +8,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
                    map->kind > QA_Q3_MAP_MOVER_PENDULUM ||
                    (!q3_map_text(game, map->model) && !q3_map_text(game, map->model2))))
         return q3_fail(error, "missing Q3 entity view");
-    qa_q3_entity_view view = {.actor = actor, .source_number = q3_entity_number(game, actor)};
+    qa_q3_entity_view view = {.actor = actor, .source_number = q3_entity_number(game, actor),
+                             .source_client = -1};
     if (!qa_world_body_read(game->options.services.world, actor, &view.body, error))
         return false;
     view.position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = view.body.origin};
@@ -29,9 +30,36 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         return q3_fail(error, "Q3 presentation actor retired during observation");
     view.alpha = entry->alpha;
     switch (entry->kind) {
+    case Q3_ACTOR_PODIUM: case Q3_ACTOR_VICTORY_MODEL: {
+        const qa_q3_entity *s = &entry->state.postgame.entity;
+        view.kind = entry->kind == Q3_ACTOR_PODIUM ? QA_Q3_ENTITY_MOVER : QA_Q3_ENTITY_PLAYER;
+        view.flags = (uint32_t)s->eFlags;
+        view.powerups = (uint32_t)s->powerups;
+        view.weapon = (qa_q3_weapon)s->weapon;
+        view.legs_animation = s->legsAnim; view.torso_animation = s->torsoAnim;
+        view.position = (qa_trajectory){.type = (qa_trajectory_type)s->pos.type,
+            .time_ms = s->pos.time, .duration_ms = s->pos.duration,
+            .base = qa_v3(s->pos.base[0], s->pos.base[1], s->pos.base[2]),
+            .delta = qa_v3(s->pos.delta[0], s->pos.delta[1], s->pos.delta[2])};
+        view.angular = (qa_trajectory){.type = (qa_trajectory_type)s->apos.type,
+            .time_ms = s->apos.time, .duration_ms = s->apos.duration,
+            .base = qa_v3(s->apos.base[0], s->apos.base[1], s->apos.base[2]),
+            .delta = qa_v3(s->apos.delta[0], s->apos.delta[1], s->apos.delta[2])};
+        if (entry->kind == Q3_ACTOR_PODIUM && s->modelindex > 0 && s->modelindex <= 255)
+            view.model = game->configstrings[32 + s->modelindex];
+        uint32_t client;
+        if (q3_source_client_pointer(game, actor, &client)) {
+            view.source_client = s->clientNum;
+            view.owner = game->source_entities[client].body_attached
+                ? game->source_entities[client].actor : (qa_actor_id){0};
+        }
+        break;
+    }
     case Q3_ACTOR_PLAYER: {
         const qa_q3_player_state *player = &entry->state.player;
         view.kind = player->gibbed || player->spectator ? QA_Q3_ENTITY_HIDDEN : QA_Q3_ENTITY_PLAYER;
+        uint32_t client;
+        if (q3_source_client_pointer(game, actor, &client)) view.source_client = player->client_number;
         view.flags = player->flags;
         view.selections = player->selections;
         view.weapon = player->weapon;
@@ -108,6 +136,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
     case Q3_ACTOR_NONE:
     case Q3_ACTOR_PROX_TRIGGER:
     case Q3_ACTOR_KAMIKAZE_TIMER:
+    case Q3_ACTOR_TEMPORARY:
+    case Q3_ACTOR_OBELISK:
         break;
     }
     *out = view;

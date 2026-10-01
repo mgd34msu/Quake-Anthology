@@ -24,14 +24,12 @@ static bool allocate_target(qa_q3_game *game, qa_q3_map_actor_state *state,
 static bool normalize_speaker_noise(qa_q3_game *game, qa_q3_map_actor_state *state,
                                     qa_error *error) {
     const char *noise = q3_map_cstr(game, state->noise);
-    if (!noise || !*noise)
+    if (!noise)
         return q3_map_fail(error, "Q3 target_speaker has no noise key");
     if (noise[0] == '*')
         state->spawnflags |= 8u;
-    if (strstr(noise, ".wav"))
-        return true;
     char path[64];
-    int written = snprintf(path, sizeof(path), "%s.wav", noise);
+    int written = snprintf(path, sizeof(path), strstr(noise, ".wav") ? "%s" : "%s.wav", noise);
     if (written < 0)
         return q3_map_fail(error, "invalid Q3 target_speaker noise");
     path[sizeof(path) - 1] = '\0';
@@ -75,6 +73,9 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->random = (float)random;
         if (!normalize_speaker_noise(game, state, error))
             return false;
+        if (!qa_q3_sound_index(game, q3_map_cstr(game, state->noise),
+                               &state->noise_index, error))
+            return false;
         state->sound_frame = q3_map_float_to_int(state->wait * 10.0f);
         state->sound_random = q3_map_float_to_int(state->random * 10.0f);
     } else if (!strcmp(name, "target_push")) {
@@ -84,6 +85,10 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->direction = q3_map_direction(state->angles);
         state->angles = qa_v3(0, 0, 0);
         state->launch_velocity = qa_vec_scale(state->direction, state->speed);
+        if (!qa_q3_sound_index(game, (state->spawnflags & 1u)
+                ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav",
+                &state->noise_index, error))
+            return false;
     } else if (!strcmp(name, "target_laser"))
         state->kind = QA_Q3_MAP_TARGET_LASER;
     else if (!strcmp(name, "target_teleporter")) {
@@ -100,12 +105,48 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->kind = QA_Q3_MAP_TARGET_POSITION;
     else
         return q3_map_fail(error, "unsupported Q3 target classname");
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), state->actor)) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
     bool link = state->kind == QA_Q3_MAP_TARGET_SPEAKER;
-    if (!allocate_target(game, state, link, error))
+    if (!allocate_target(game, state, false, error))
         return false;
     qa_q3_map_actor_state *stored = q3_map_get(game, state->actor);
     if (!stored)
         return q3_map_fail(error, "missing Q3 target state");
+    qa_actor_id actor = stored->actor;
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire)
+        return q3_rollback_spawn(game, actor, error);
+    if (stored->kind == QA_Q3_MAP_TARGET_SPEAKER) {
+        uint32_t source_slot;
+        if (!qa_q3_source_actor_slot(game, actor, &source_slot, error))
+            return q3_rollback_spawn(game, actor, error);
+        wire->type = 7;
+        wire->event_parameter = stored->noise_index;
+        wire->frame = stored->sound_frame;
+        wire->client = stored->sound_random;
+        if (stored->spawnflags & 1u)
+            wire->loop_sound = stored->noise_index;
+        if (stored->spawnflags & 4u)
+            game->source_entities[source_slot].server_flags |= 32u;
+        wire->position.base = wire->authored_origin;
+    } else if (stored->kind == QA_Q3_MAP_TARGET_PUSH) {
+        wire->authored_angles = stored->angles;
+        wire->origin2 = stored->launch_velocity;
+    }
+    if (link && !qa_q3_wire_link(game, actor, NULL, error))
+        return q3_rollback_spawn(game, actor, error);
+    stored = q3_map_get(game, actor);
+    if (!stored) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
+    qa_linked_body linked;
+    stored->linked = qa_world_linked(game->options.services.world, actor, &linked);
+    if (!q3_wire_entity_ready(game, actor, error))
+        return q3_rollback_spawn(game, actor, error);
     if (stored->kind == QA_Q3_MAP_TARGET_PUSH && q3_map_text(game, stored->target))
         q3_map_schedule(game, stored, 100, QA_Q3_MAP_THINK_AIM);
     else if (stored->kind == QA_Q3_MAP_TARGET_LASER)
@@ -162,15 +203,9 @@ static bool give_items(qa_q3_game *game, qa_q3_map_actor_state *state,
         q3_actor *native = q3_actor_get(game, actor);
         if (!item || !native || native->kind != Q3_ACTOR_ITEM)
             continue;
-        qa_q3_map_actor_state *master = q3_map_get(
-            game, item->team_master.registry ? item->team_master : item->actor);
-        if (master && master->kind == QA_Q3_MAP_ITEM) {
-            master->think = QA_Q3_MAP_THINK_NONE;
-            master->due_ms = 0;
-        }
+        item->due_ms = 0;
         native->state.item.respawn_at = 0;
-        if (!qa_q3_item_availability(game, actor, false, 0,
-                                     native->state.item.expire_at, error))
+        if (!qa_world_unlink(game->options.services.world, actor, error))
             return false;
         if (!q3_map_get(game, source))
             return true;
@@ -211,7 +246,11 @@ static bool remove_powerups(qa_q3_game *game, qa_q3_map_actor_state *state,
 static bool use_speaker(qa_q3_game *game, qa_q3_map_actor_state *state,
                         qa_actor_id activator, qa_error *error) {
     if (state->spawnflags & 3u) {
-        state->sound_looping = !state->sound_looping;
+        q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
+        if (!wire)
+            return q3_map_fail(error, "Q3 speaker lost its actual source sound fields");
+        wire->loop_sound = wire->loop_sound ? 0 : state->noise_index;
+        state->sound_looping = wire->loop_sound != 0;
         return q3_map_emit(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_SOUND,
                                                     .actor = state->actor,
                                                     .other = activator,
@@ -227,6 +266,9 @@ static bool use_speaker(qa_q3_game *game, qa_q3_map_actor_state *state,
     if ((state->spawnflags & 8u) && !activator.registry)
         return q3_map_fail(error, "Q3 target_speaker requires an activator");
     qa_actor_id source = (state->spawnflags & 8u) ? activator : state->actor;
+    int32_t event = (state->spawnflags & 8u) ? 45 : (state->spawnflags & 4u) ? 46 : 45;
+    if (!q3_wire_add_event(game, source, event, state->noise_index, error))
+        return false;
     return q3_map_emit(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_SOUND,
                                                 .actor = source,
                                                 .other = state->actor,
@@ -247,6 +289,7 @@ static bool use_push(qa_q3_game *game, qa_q3_map_actor_state *state,
     qa_actor_id source = state->actor;
     qa_vec3 velocity = state->launch_velocity;
     uint32_t spawnflags = state->spawnflags;
+    int32_t sound_index = state->noise_index;
     q3_actor *player = NULL;
     if (!q3_map_player_launchable(game, activator, &player))
         return true;
@@ -257,18 +300,34 @@ static bool use_push(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (!q3_map_get(game, source))
         return true;
     player = q3_actor_get(game, activator);
+    bool sound = false;
     if (!player || player->kind != Q3_ACTOR_PLAYER) {
         if (!qa_actors_get(qa_session_actors(game->options.services.session), activator))
             return true;
-        const char *sound = (spawnflags & 1u) ? "sound/world/jumppad.wav"
-                                              : "sound/misc/windfly.wav";
-        return q3_sound(game, activator, sound, 3, error);
-    }
-    if (q3_sub_time(game->now_ms, player->state.player.fly_sound_after) > 0) {
+        sound = true;
+    } else if (q3_sub_time(game->now_ms, player->state.player.fly_sound_after) > 0) {
         player->state.player.fly_sound_after = q3_add_time(game->now_ms, 1500);
-        const char *sound = (spawnflags & 1u) ? "sound/world/jumppad.wav"
-                                              : "sound/misc/windfly.wav";
-        if (!q3_sound(game, activator, sound, 3, error))
+        sound = true;
+    }
+    if (sound) {
+        qa_body_state body;
+        if (!qa_world_body_read(game->options.services.world, activator, &body, error))
+            return false;
+        if (!q3_map_get(game, source) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), activator))
+            return true;
+        qa_actor_id temporary;
+        if (!q3_wire_temp_entity(game, body.origin, 45, &temporary, error))
+            return false;
+        qa_q3_entity *event = q3_wire_temporary(game, temporary);
+        if (!event)
+            return q3_map_fail(error, "Q3 target push lost its temporary source sound");
+        event->eventParm = sound_index;
+        if (!q3_map_get(game, source) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), activator))
+            return true;
+        if (!q3_sound_report(game, activator, (spawnflags & 1u)
+                ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav", 3, error))
             return false;
     }
     return true;
@@ -326,6 +385,7 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->due_ms = q3_map_random_schedule(game->now_ms, state->wait,
                                                 state->random, q3_crandom(game));
         state->think = QA_Q3_MAP_THINK_DELAY;
+        q3_postgame_native_think_assigned(game, state->actor);
         return true;
     }
     case QA_Q3_MAP_TARGET_SCORE: {
@@ -348,12 +408,13 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
     case QA_Q3_MAP_TARGET_LASER: {
         qa_actor_id actor = state->actor;
         state->activator = activator;
-        if (state->due_ms > 0) {
+        if (q3_postgame_think_time(game, actor, state->due_ms) > 0) {
             if (!qa_world_unlink(game->options.services.world, actor, error))
                 return false;
             state = q3_map_get(game, actor);
             if (state) {
                 state->due_ms = 0;
+                q3_postgame_nextthink_assigned(game, actor, 0);
                 state->linked = false;
             }
             return true;
@@ -420,18 +481,23 @@ bool q3_map_aim(qa_q3_game *game, qa_q3_map_actor_state *state, qa_vec3 origin,
         return true;
     if (!qa_actors_get(qa_session_actors(game->options.services.session), target))
         return qa_session_release(game->options.services.session, actor, error);
-    float height = body.origin.z - origin.z;
-    float gravity = game->physics.gravity;
+    q3_wire_entity_source *target_wire = q3_wire_entity(game, target);
+    qa_vec3 target_origin = target_wire ? target_wire->authored_origin : body.origin;
+    float height = target_origin.z - origin.z;
+    float gravity = game->options.rules.gravity;
     float time = sqrtf(height / (0.5f * gravity));
     if (!isfinite(time) || time == 0)
         return qa_session_release(game->options.services.session, actor, error);
-    qa_vec3 offset = qa_vec_sub(body.origin, origin);
+    qa_vec3 offset = qa_vec_sub(target_origin, origin);
     qa_vec3 horizontal = qa_v3(offset.x, offset.y, 0);
     float distance = qa_vec_length(horizontal);
     qa_vec3 direction = distance == 0 ? horizontal : qa_vec_scale(horizontal, 1.0f / distance);
     state->launch_velocity = qa_vec_add(qa_vec_scale(direction, distance / time),
                                         qa_v3(0, 0, time * gravity));
-    state->think = QA_Q3_MAP_THINK_NONE;
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 target aiming lost its actual source endpoint");
+    wire->origin2 = state->launch_velocity;
     state->due_ms = 0;
     return true;
 }
@@ -457,10 +523,16 @@ static bool start_laser(qa_q3_game *game, qa_q3_map_actor_state *state,
     state->enemy = enemy;
     state->direction = direction;
     state->angles = angles;
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 laser start lost its source entity fields");
+    wire->type = 5;
+    wire->authored_angles = angles;
     if (!state->damage)
         state->damage = 1;
     state->usable = true;
     state->think = QA_Q3_MAP_THINK_LASER;
+    q3_postgame_native_think_assigned(game, actor);
     state->due_ms = 0;
     if (state->spawnflags & 1u) {
         state->activator = actor;
@@ -482,10 +554,11 @@ static bool laser(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *erro
         bool enemy_live = qa_actors_get(
                               qa_session_actors(game->options.services.session), enemy) != NULL;
         if (read && enemy_live && qa_actor_id_equal(state->enemy, enemy)) {
-            qa_vec3 center = qa_vec_add(target.origin,
-                                        qa_vec_scale(qa_vec_add(target.bounds.mins,
-                                                                target.bounds.maxs),
-                                                     0.5f));
+            q3_wire_entity_source *enemy_wire = q3_wire_entity(game, enemy);
+            qa_vec3 enemy_origin = enemy_wire ? enemy_wire->authored_origin : target.origin;
+            qa_vec3 center = qa_vec_add(
+                qa_vec_add(enemy_origin, qa_vec_scale(target.bounds.mins, 0.5f)),
+                qa_vec_scale(target.bounds.maxs, 0.5f));
             state->direction = qa_vec_normalize(qa_vec_sub(center, state->origin));
         } else if (!read && local.code != QA_ERROR_NOT_FOUND) {
             if (error)
@@ -518,84 +591,55 @@ static bool laser(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *erro
         return true;
     origin = state->origin;
     direction = state->direction;
-    if (!q3_event(game, actor, trace.actor, QA_BUILTIN_BEAM, 0, 0, origin,
-                  trace.end, direction, error))
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 laser trace lost its source endpoint");
+    wire->origin2 = trace.end;
+    if (!qa_q3_wire_link(game, actor, NULL, error))
         return false;
     state = q3_map_get(game, actor);
     if (!state)
         return true;
-    if (!qa_world_link(game->options.services.world, actor, NULL, error))
-        return false;
-    state = q3_map_get(game, actor);
-    if (!state)
-        return true;
-    state->linked = true;
+    qa_linked_body linked;
+    state->linked = qa_world_linked(game->options.services.world, actor, &linked);
     state->think = QA_Q3_MAP_THINK_LASER;
     state->due_ms = q3_add_time(game->now_ms, 100);
-    return true;
-}
-
-typedef struct q3_location_entry {
-    qa_actor_id actor;
-    uint32_t ordinal;
-} q3_location_entry;
-
-static int compare_locations(const void *left, const void *right) {
-    const q3_location_entry *a = left, *b = right;
-    if (a->ordinal != b->ordinal)
-        return a->ordinal < b->ordinal ? -1 : 1;
-    return a->actor.slot < b->actor.slot ? -1 : a->actor.slot > b->actor.slot;
+    q3_postgame_nextthink_assigned(game, actor, state->due_ms);
+    return q3_event(game, actor, trace.actor, QA_BUILTIN_BEAM, 0, 0, origin,
+                    trace.end, direction, error);
 }
 
 static bool link_locations(qa_q3_game *game, qa_error *error) {
     if (game->map->locations_linked)
         return true;
-    size_t count = 0;
-    for (uint32_t i = 0; i < game->map->capacity; ++i)
-        if (game->map->actors[i].active &&
-            game->map->actors[i].kind == QA_Q3_MAP_TARGET_LOCATION)
-            ++count;
-    q3_location_entry *ordered = count ? malloc(count * sizeof(*ordered)) : NULL;
-    if (count && !ordered) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 location order");
-        return false;
-    }
-    size_t at = 0;
-    for (uint32_t i = 0; i < game->map->capacity; ++i)
-        if (game->map->actors[i].active &&
-            game->map->actors[i].kind == QA_Q3_MAP_TARGET_LOCATION)
-            ordered[at++] = (q3_location_entry){.actor = game->map->actors[i].actor,
-                                                .ordinal = game->map->actors[i].ordinal};
-    qsort(ordered, count, sizeof(*ordered), compare_locations);
     game->map->locations_linked = true;
+    game->map->location_head = (qa_actor_id){0};
     qa_string_id unknown;
     if (!q3_map_intern_cstr(game, "unknown", &unknown, error) ||
         !q3_configstring_event(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_CONFIGSTRING,
                                               .index = 608,
                                               .text = unknown},
-                     error)) {
-        free(ordered);
+                     error))
         return false;
-    }
-    for (size_t i = 0; i < count; ++i) {
-        if (i >= (size_t)INT32_MAX - 609u) {
-            free(ordered);
-            return q3_map_fail(error, "too many Q3 target locations");
-        }
-        qa_q3_map_actor_state *location = q3_map_get(game, ordered[i].actor);
+    int32_t number = 1;
+    for (uint32_t i = 0; i < game->source_count; ++i) {
+        qa_q3_map_actor_state *location = q3_map_get(game, game->source_entities[i].actor);
         if (!location || location->kind != QA_Q3_MAP_TARGET_LOCATION)
             continue;
-        location->health = (int32_t)i + 1;
+        location->health = number;
         qa_q3_map_event event = {.kind = QA_Q3_MAP_CONFIGSTRING,
                                  .actor = location->actor,
-                                 .index = 609 + (int32_t)i,
+                                 .index = 608 + number,
                                  .text = location->message};
-        if (!q3_configstring_event(game, &event, error)) {
-            free(ordered);
+        if (!q3_configstring_event(game, &event, error))
             return false;
+        ++number;
+        location = q3_map_get(game, event.actor);
+        if (location && location->kind == QA_Q3_MAP_TARGET_LOCATION) {
+            location->path_next = game->map->location_head;
+            game->map->location_head = location->actor;
         }
     }
-    free(ordered);
     return true;
 }
 
@@ -610,12 +654,10 @@ bool q3_map_target_think(qa_q3_game *game, qa_q3_map_actor_state *state,
         return laser(game, state, error);
     case QA_Q3_MAP_THINK_DELAY: {
         qa_actor_id activator = state->activator;
-        state->think = QA_Q3_MAP_THINK_NONE;
         state->due_ms = 0;
         return q3_map_use_targets(game, state, activator, error);
     }
     case QA_Q3_MAP_THINK_LOCATIONS:
-        state->think = QA_Q3_MAP_THINK_NONE;
         state->due_ms = 0;
         return link_locations(game, error);
     default:

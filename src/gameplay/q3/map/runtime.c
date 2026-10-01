@@ -1,5 +1,17 @@
 #include "internal.h"
 
+bool qa_q3_map_item_registered(const qa_q3_game *game, uint32_t item, bool *out,
+                               qa_error *error) {
+    size_t count;
+    if (!game || !game->map || !out)
+        return q3_map_fail(error, "invalid Q3 registered item read");
+    (void)qa_q3_items(game->options.product, &count);
+    if (!item || item >= count || item >= 64)
+        return q3_map_fail(error, "invalid Q3 registered item index");
+    *out = (game->map->registered_items & (UINT64_C(1) << item)) != 0;
+    return true;
+}
+
 bool q3_map_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
@@ -72,6 +84,8 @@ static bool level_state_idle(qa_q3_game *game, bool require_empty, qa_error *err
 }
 
 static bool provider_state_empty(const qa_q3_game *game) {
+    for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
+        if (game->source_entities[i].actor.registry) return false;
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind || game->kamikaze_cooldowns[i].actor.registry ||
             game->player_binding_tokens[i])
@@ -80,6 +94,8 @@ static bool provider_state_empty(const qa_q3_game *game) {
 }
 
 static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options) {
+    game->memory.allocated_bytes = 0;
+    q3_shader_remaps_clear(game);
     game->rng = options->random_seed;
     game->death_animation = 0;
     game->body_queue_index = 0;
@@ -90,6 +106,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
            game->capacity * sizeof(*game->kamikaze_cooldowns));
     memset(game->player_binding_tokens, 0,
            game->capacity * sizeof(*game->player_binding_tokens));
+    q3_source_state_reset(game);
     game->previous_ms = options->start_time_ms;
     game->now_ms = options->start_time_ms;
     game->physics.gravity = 800;
@@ -97,7 +114,8 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
         frame->snapshot.count = 0;
 }
 
-bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_error *error) {
+static bool maps_bind(qa_q3_game *game, const qa_q3_map_options *options,
+                       bool restore, qa_error *error) {
     if (!game || game->source_restored || game->map || !provider_state_empty(game))
         return q3_map_fail(error, "invalid Q3 authored map binding");
     if (!level_state_idle(game, false, error))
@@ -108,7 +126,14 @@ bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_erro
     game->map = map;
     q3_configstrings_clear(game);
     level_state_reset(game, options);
-    return true;
+    return restore || q3_source_level_init(game, error);
+}
+bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_error *error) {
+    return maps_bind(game, options, false, error);
+}
+bool qa_q3_maps_bind_restore(qa_q3_game *game, const qa_q3_map_options *options,
+                             qa_error *error) {
+    return maps_bind(game, options, true, error);
 }
 
 static bool maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
@@ -125,7 +150,7 @@ static bool maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
     if (!retain_configstrings)
         q3_configstrings_clear(game);
     level_state_reset(game, options);
-    return true;
+    return q3_source_level_init(game, error);
 }
 bool qa_q3_maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
                       qa_error *error) {
@@ -192,6 +217,7 @@ bool q3_map_schedule(qa_q3_game *game, qa_q3_map_actor_state *state, int32_t del
                      qa_q3_map_think think) {
     if (!game || !state || !state->active)
         return false;
+    q3_postgame_native_think_assigned(game, state->actor);
     state->due_ms = q3_add_time(game->now_ms, delay);
     state->think = think;
     return true;
@@ -245,6 +271,9 @@ static bool target_set_target(void *context, qa_actor_id actor, qa_string_id val
     state->target = folded;
     if (state->kind == QA_Q3_MAP_ITEM)
         state->item.target = folded;
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (entry && entry->kind == Q3_ACTOR_ITEM) entry->state.item.spawn.target = folded;
+    if (entry && entry->kind == Q3_ACTOR_MOVER) entry->state.mover.target = folded;
     return true;
 }
 
@@ -312,6 +341,7 @@ bool q3_map_target_binding(qa_q3_game *game, qa_actor_id actor, qa_target_bindin
                                  .use = target_use,
                                  .set_targetname = target_set_targetname,
                                  .set_target = target_set_target,
+                                 .remap_shader = q3_shader_remap_target,
                                  .field = target_field};
     return true;
 }
@@ -360,9 +390,7 @@ bool q3_map_player_launchable(qa_q3_game *game, qa_actor_id actor, q3_actor **na
 }
 
 int32_t q3_map_team(qa_q3_game *game, qa_actor_id actor) {
-    return game->options.hooks.source_team
-               ? game->options.hooks.source_team(game->options.hooks.context, actor)
-               : 0;
+    return q3_source_team(game, actor);
 }
 
 bool q3_map_set_velocity(qa_q3_game *game, qa_actor_id actor, qa_vec3 velocity,
@@ -421,19 +449,26 @@ bool q3_map_pick(qa_q3_game *game, qa_string_id target, qa_actor_id *out, qa_err
 }
 
 static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
-                           const qa_actor_collision *collision, bool link, bool authored,
+                           const qa_actor_collision *collision, bool link,
                            qa_error *error) {
     qa_builtin_spawn spawn = {
         .owner = game->options.owner,
         .definition = source->classname,
-        .has_source = authored,
-        .source_slot = source->ordinal,
-        .body = {.origin = source->origin, .angles = source->angles, .bounds = source->bounds},
+        .body = {.origin = source->origin, .bounds = source->bounds},
         .collision = collision,
         .link = link};
-    qa_actor_id actor;
-    if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &actor, error))
-        return false;
+    qa_actor_id actor = source->actor;
+    if (!actor.registry) {
+        if (!q3_spawn_actor(game, &spawn, &actor, error)) return false;
+    } else {
+        qa_body_state body;
+        if (!qa_q3_source_actor_slot(game, actor, &(uint32_t){0}, error) ||
+            !qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+        body.bounds = source->bounds;
+        if (!qa_world_body_write(game->options.services.world, actor, &body, error) ||
+            (collision && !qa_world_set_collision(game->options.services.world, actor, collision, error)) ||
+            (link && !qa_q3_wire_link(game, actor, NULL, error))) return false;
+    }
     if (actor.slot >= game->map->capacity) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q3 map actor exceeds runtime capacity");
         return q3_rollback_spawn(game, actor, error);
@@ -441,7 +476,7 @@ static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
     source->actor = actor;
     source->active = true;
     source->alpha = 1;
-    source->linked = link;
+    source->linked = qa_world_linked(game->options.services.world, actor, &(qa_linked_body){0});
     game->map->actors[actor.slot] = *source;
     qa_q3_map_actor_state *state = &game->map->actors[actor.slot];
     if (!q3_map_bind_target(game, state, error))
@@ -452,13 +487,13 @@ static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
 
 bool q3_map_allocate(qa_q3_game *game, qa_q3_map_actor_state *source,
                      const qa_actor_collision *collision, bool link, qa_error *error) {
-    return allocate_actor(game, source, collision, link, true, error);
+    return allocate_actor(game, source, collision, link, error);
 }
 
 bool q3_map_allocate_generated(qa_q3_game *game, qa_q3_map_actor_state *source,
                                const qa_actor_collision *collision, bool link,
                                qa_error *error) {
-    return allocate_actor(game, source, collision, link, false, error);
+    return allocate_actor(game, source, collision, link, error);
 }
 
 static bool map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,
@@ -504,8 +539,15 @@ bool q3_map_actor_frame(qa_q3_game *game, qa_actor_id actor, bool *handled,
     q3_actor *native = q3_actor_get(game, actor);
     if (handled)
         *handled = !native;
-    if (state->think == QA_Q3_MAP_THINK_NONE || state->due_ms <= 0 ||
-        q3_sub_time(game->now_ms, state->due_ms) < 0)
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (source && source->arena_think) {
+        if (native) return true;
+        bool replaced;
+        return q3_postgame_think_override(game, actor, &replaced, error);
+    }
+    float think_time = (float)state->due_ms;
+    if (state->think == QA_Q3_MAP_THINK_NONE || think_time <= 0 ||
+        (double)think_time > (double)game->now_ms)
         return true;
     state->due_ms = 0;
     if (state->kind == QA_Q3_MAP_ITEM)
@@ -689,4 +731,118 @@ bool qa_q3_map_nearest_location(const qa_q3_game *game, qa_vec3 origin,
     *actor = found;
     *message = text;
     return found.registry != 0;
+}
+
+static bool team_location_current(qa_q3_game *game, qa_actor_id client, uint32_t slot,
+                                  qa_actor_id location, qa_error *error) {
+    uint32_t actual;
+    if (!qa_q3_native_client_slot(game, client, &actual, error) || actual != slot)
+        return q3_map_fail(error, "Q3 source location client retired during observation");
+    if (location.registry) {
+        const qa_q3_map_actor_state *state = q3_map_const(game, location);
+        if (!state || state->kind != QA_Q3_MAP_TARGET_LOCATION ||
+            !qa_q3_source_actor_slot(game, location, &actual, error))
+            return q3_map_fail(error, "Q3 source location retired during observation");
+    }
+    return true;
+}
+
+bool qa_q3_map_team_location_read(qa_q3_game *game, qa_actor_id actor,
+                                  qa_q3_map_team_location *out, bool *found,
+                                  qa_error *error) {
+    uint32_t slot;
+    if (!game || !game->map || !out || !found || game->observation_depth == SIZE_MAX ||
+        !qa_q3_native_client_slot(game, actor, &slot, error))
+        return q3_map_fail(error, "Q3 team location query needs its actual source client");
+    *out = (qa_q3_map_team_location){0};
+    *found = false;
+    qa_actor_id next = game->map->location_head;
+    if (!next.registry) return true;
+    ++game->observation_depth;
+    bool okay = false, have_from = false;
+    qa_body_state client;
+    if (!q3_source_body_read(game, actor, &client, error) ||
+        !team_location_current(game, actor, slot, (qa_actor_id){0}, error)) goto done;
+    qa_collision_geometry *geometry = qa_world_geometry(game->options.services.world);
+    qa_collision_leaf from;
+    float nearest = 201326592.0f;
+    qa_q3_map_team_location result = {0};
+    uint32_t visited = 0;
+    while (next.registry) {
+        const qa_q3_map_actor_state *location = q3_map_const(game, next);
+        if (!location || location->kind != QA_Q3_MAP_TARGET_LOCATION ||
+            ++visited > game->source_count) {
+            q3_map_fail(error, "Q3 source location chain is stale or cyclic");
+            goto done;
+        }
+        qa_body_state body;
+        if (!q3_source_body_read(game, next, &body, error) ||
+            !team_location_current(game, actor, slot, next, error)) goto done;
+        qa_vec3 delta = qa_vec_sub(client.origin, body.origin);
+        float squared = q3_source_float_add(q3_source_float_add(
+            q3_source_float_multiply(delta.x, delta.x),
+            q3_source_float_multiply(delta.y, delta.y)),
+            q3_source_float_multiply(delta.z, delta.z));
+        if (squared <= nearest) {
+            qa_collision_leaf to;
+            bool visible, connected;
+            if (!have_from) {
+                if (!qa_collision_point_leaf(geometry, client.origin, &from, error) ||
+                    !team_location_current(game, actor, slot, next, error)) goto done;
+                have_from = true;
+            }
+            if (!qa_collision_point_leaf(geometry, body.origin, &to, error) ||
+                !team_location_current(game, actor, slot, next, error)) goto done;
+            if (from.cluster < INT32_MIN || from.cluster > INT32_MAX ||
+                to.cluster < INT32_MIN || to.cluster > INT32_MAX ||
+                from.area < INT32_MIN || from.area > INT32_MAX ||
+                to.area < INT32_MIN || to.area > INT32_MAX) {
+                q3_map_fail(error, "Q3 source location exceeds native visibility domains");
+                goto done;
+            }
+            if (!qa_collision_cluster_visible(geometry, (int32_t)from.cluster,
+                    (int32_t)to.cluster, false, &visible, error) ||
+                !team_location_current(game, actor, slot, next, error)) goto done;
+            if (!visible) goto next_location;
+            if (!qa_collision_areas_connected(geometry, (int32_t)from.area,
+                    (int32_t)to.area, &connected, error) ||
+                !team_location_current(game, actor, slot, next, error)) goto done;
+            if (visible && connected) {
+                location = q3_map_const(game, next);
+                nearest = squared;
+                result = (qa_q3_map_team_location){.actor = next, .message = location->message,
+                    .id = location->health, .count = location->count};
+            }
+        }
+next_location:
+        location = q3_map_const(game, next);
+        if (!location) {
+            q3_map_fail(error, "Q3 source location chain changed during observation");
+            goto done;
+        }
+        next = location->path_next;
+    }
+    if (!team_location_current(game, actor, slot, result.actor, error)) goto done;
+    if (result.actor.registry) {
+        const qa_q3_map_actor_state *selected = q3_map_const(game, result.actor);
+        result.message = selected->message;
+        result.id = selected->health;
+        result.count = selected->count;
+    }
+    *out = result;
+    *found = result.actor.registry != 0;
+    okay = true;
+done:
+    --game->observation_depth;
+    return okay;
+}
+
+bool qa_q3_map_location_count_set(qa_q3_game *game, qa_actor_id actor, int32_t value,
+                                  qa_error *error) {
+    qa_q3_map_actor_state *location = q3_map_get(game, actor);
+    if (!game || game->source_restored || !location ||
+        location->kind != QA_Q3_MAP_TARGET_LOCATION)
+        return q3_map_fail(error, "Q3 location count mutation needs its actual source location");
+    location->count = value;
+    return true;
 }

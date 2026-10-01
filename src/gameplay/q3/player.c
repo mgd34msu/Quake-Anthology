@@ -1,4 +1,13 @@
-#include "internal.h"
+#include "map/internal.h"
+#include "qa/game_q3_clients.h"
+
+static bool source_command_active(const qa_q3_game *game, qa_actor_id actor) {
+    qa_source_command command;
+    uint32_t slot;
+    return qa_session_active_command(game->options.services.session, game->options.owner, &command) &&
+        qa_actor_id_equal(command.actor, actor) &&
+        qa_q3_native_client_slot(game, actor, &slot, NULL);
+}
 
 bool qa_q3_player_notarget(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_error *error) {
     if (!game || game->source_restored)
@@ -39,7 +48,7 @@ static bool activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdabl
         return true;
     if (!q3_player_event(game, actor, 24 + (int32_t)expected, 0, error))
         return false;
-    return prediction || !q3_actor_get(game, actor) ||
+    return prediction || source_command_active(game, actor) || !q3_actor_get(game, actor) ||
            q3_use_holdable(game, actor, expected, error);
 }
 bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
@@ -59,7 +68,7 @@ bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selec
         (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS) || !binding || binding->token ||
         game->player_binding_tokens[actor.slot])
         return q3_fail(error, "invalid Q3 player admission");
-    q3_actor *entry = &game->actors[actor.slot];
+    q3_actor *entry = q3_actor_storage(game, actor);
     if (entry->kind && (!qa_actor_id_equal(entry->actor, actor) || entry->kind != Q3_ACTOR_PLAYER))
         return q3_fail(error, "actor already has another Q3 behavior");
     if (handicap < 1 || handicap > 100)
@@ -75,7 +84,9 @@ bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selec
                                                               : 0,
                                       .selections = selections,
                                       .handicap = handicap,
-                                      .created = !entry->kind};
+                                      .created = !entry->kind ||
+                                          (entry->kind == Q3_ACTOR_PLAYER &&
+                                           !entry->state.player.selections)};
     return true;
 }
 static bool binding_matches(qa_q3_game *game, const qa_q3_player_binding *binding,
@@ -86,8 +97,9 @@ static bool binding_matches(qa_q3_game *game, const qa_q3_player_binding *bindin
         return q3_fail(error, "invalid Q3 player binding transaction");
     if (!qa_actors_get(qa_session_actors(game->options.services.session), binding->actor))
         return q3_fail(error, "Q3 player binding actor was retired");
-    q3_actor *entry = &game->actors[binding->actor.slot];
-    if ((binding->created && entry->kind) ||
+    q3_actor *entry = q3_actor_storage(game, binding->actor);
+    if ((binding->created && entry->kind &&
+         (entry->kind != Q3_ACTOR_PLAYER || entry->state.player.selections)) ||
         (!binding->created &&
          (!qa_actor_id_equal(entry->actor, binding->actor) || entry->kind != Q3_ACTOR_PLAYER ||
           entry->state.player.selections != binding->prior_selections)))
@@ -106,7 +118,13 @@ bool qa_q3_bind_player_commit(qa_q3_game *game, qa_q3_player_binding *binding,
     if (!binding_matches(game, binding, &entry, error))
         return false;
     if (binding->created) {
+        qa_actor_id enemy = entry->enemy;
+        uint32_t enemy_source_slot = entry->enemy_source_slot;
+        bool enemy_source_present = entry->enemy_source_present;
         *entry = (q3_actor){.actor = binding->actor,
+                            .enemy = enemy,
+                            .enemy_source_slot = enemy_source_slot,
+                            .enemy_source_present = enemy_source_present,
                             .kind = Q3_ACTOR_PLAYER,
                             .alpha = 1,
                             .state.player = {.weapon = QA_Q3_W_MACHINEGUN,
@@ -191,7 +209,8 @@ bool qa_q3_player_set_view(qa_q3_game *game, qa_actor_id actor, qa_vec3 angles, 
     return true;
 }
 static int32_t q3_angle_word(float angle) {
-    return (int32_t)((uint32_t)(int32_t)(fmodf(angle, 360) * 65536 / 360) & 65535u);
+    float scaled = q3_source_float_divide(q3_source_float_multiply(angle, 65536.0f), 360.0f);
+    return (int32_t)((uint32_t)q3_source_float_to_int(scaled) & 65535u);
 }
 static void q3_cutscene_movement(qa_movement_state *state, qa_movement_command *command,
                                  const qa_q3_cutscene_state *cutscene) {
@@ -241,15 +260,15 @@ void q3_force_view(qa_q3_player_state *player, qa_vec3 angles, int32_t lock_ms) 
     player->view_angles = angles;
     player->ground_entity_number = 1023;
     player->delta_pitch_word =
-        q3_angle_word(angles.x) - player->last_command_angles[0];
+        q3_sub_time(q3_angle_word(angles.x), player->last_command_angles[0]);
     player->delta_yaw_word =
-        q3_angle_word(angles.y) - player->last_command_angles[1];
+        q3_sub_time(q3_angle_word(angles.y), player->last_command_angles[1]);
     player->delta_roll_word =
-        q3_angle_word(angles.z) - player->last_command_angles[2];
+        q3_sub_time(q3_angle_word(angles.z), player->last_command_angles[2]);
     ++player->teleport_revision;
     player->teleport_lock_ms = lock_ms;
 }
-bool q3_player_state_valid(const qa_q3_player_state *state) {
+static bool player_state_valid(const qa_q3_player_state *state, bool source_client) {
     if (!state || state->weapon < 0 || state->weapon >= QA_Q3_WEAPON_COUNT ||
         state->requested_weapon < 0 || state->requested_weapon >= QA_Q3_WEAPON_COUNT ||
         state->weapon_phase < QA_Q3_READY || state->weapon_phase > QA_Q3_FIRING ||
@@ -258,7 +277,8 @@ bool q3_player_state_valid(const qa_q3_player_state *state) {
         (state->persistent != QA_Q3_P_NONE &&
          (state->persistent < QA_Q3_P_SCOUT || state->persistent > QA_Q3_P_AMMOREGEN)) ||
         state->holdable < QA_Q3_H_NONE || state->holdable > QA_Q3_H_INVULNERABILITY ||
-        state->max_health < 1 || state->handicap < 1 || state->handicap > 100 ||
+        state->max_health < (source_client ? 0 : 1) ||
+        state->handicap < (source_client ? 0 : 1) || state->handicap > 100 ||
         state->drowning_damage < 0 || state->drowning_damage > 15 ||
         !isfinite(state->fractional_weapon_ms) || state->fractional_weapon_ms < 0 ||
         state->fractional_weapon_ms >= 1 || !qa_vec_finite(state->view_angles) ||
@@ -268,12 +288,17 @@ bool q3_player_state_valid(const qa_q3_player_state *state) {
         (state->cutscene.active && !(state->selections & QA_Q3_CHARACTER)) ||
         !qa_vec_finite(state->damage_from) || !isfinite(state->damage_blood) ||
         !isfinite(state->damage_armor) || !isfinite(state->damage_knockback) ||
-        !state->selections || (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
+        (!source_client && !state->selections) ||
+        (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
         return false;
-    for (size_t i = 0; i < 3; ++i)
-        if (state->last_command_angles[i] < 0 || state->last_command_angles[i] > 65535)
-            return false;
     return true;
+}
+bool q3_player_state_valid(const qa_q3_player_state *state) {
+    return player_state_valid(state, false);
+}
+bool q3_player_state_valid_source_client(const qa_q3_player_state *state,
+                                          const qa_q3_native_client *client) {
+    return client && player_state_valid(state, true);
 }
 bool qa_q3_player_restore(qa_q3_game *game, qa_actor_id actor, const qa_q3_player_state *state,
                           qa_error *error) {
@@ -281,7 +306,7 @@ bool qa_q3_player_restore(qa_q3_game *game, qa_actor_id actor, const qa_q3_playe
         return q3_fail(error, "invalid Q3 player checkpoint");
     if (!qa_q3_bind_player(game, actor, state->selections, state->handicap, error))
         return false;
-    game->actors[actor.slot].state.player = *state;
+    q3_actor_storage(game, actor)->state.player = *state;
     return true;
 }
 bool q3_ammo_read(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon, int32_t *out,
@@ -332,14 +357,39 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !spawn)
         return q3_fail(error, "missing Q3 spawn admission");
+    uint32_t source_slot;
+    if (qa_q3_source_actor_slot(game, actor, &source_slot, NULL)) {
+        qa_string_id classname;
+        if (!qa_builtin_resource(&game->options.services, "player", &classname, error)) return false;
+        game->source_entities[source_slot].classname = classname;
+        game->source_entities[source_slot].in_use = true;
+        if (source_slot < QA_Q3_SOURCE_CLIENTS)
+            entry->state.player.client_number = (int32_t)source_slot;
+    }
     qa_q3_player_state *player = &entry->state.player;
-    if (player->dead && (player->selections & QA_Q3_CHARACTER) &&
+    uint32_t native_slot;
+    bool native_client = qa_q3_native_client_slot(game, actor, &native_slot, NULL);
+    if (!native_client && player->dead && (player->selections & QA_Q3_CHARACTER) &&
         !q3_copy_corpse(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
+    if (native_client) {
+        q3_wire_client_spawn_clear(game, native_slot);
+        qa_q3_client_follow_clear(game, native_slot, NULL);
+        game->clients[native_slot].inactivity_time_ms = 0;
+        game->clients[native_slot].inactivity_warning = false;
+        game->clients[native_slot].old_buttons = game->clients[native_slot].buttons =
+            game->clients[native_slot].latched_buttons = 0;
+        game->clients[native_slot].ready_to_exit = false;
+        entry->state.player.persistent_team = game->clients[native_slot].session.team;
+        entry->state.player.generic1 = 0;
+        if (!qa_q3_wire_player_special_ammo(game, actor, QA_Q3_W_GAUNTLET, -1, error) ||
+            !qa_q3_wire_player_special_ammo(game, actor, QA_Q3_W_GRAPPLE, -1, error)) return false;
+    }
+    entry->force_gesture = false;
     if (player->selections & QA_Q3_CHARACTER) {
         qa_combat_state combat = {
             .health = (float)player->handicap + 25,
@@ -388,6 +438,20 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        player = &entry->state.player;
+    }
+    if (native_client && !(player->selections & QA_Q3_CHARACTER)) {
+        qa_body_state body;
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry) return true;
+        body.origin = spawn->origin;
+        body.velocity = spawn->velocity;
+        body.angles = spawn->angles;
+        if (!qa_world_body_write(game->options.services.world, actor, &body, error)) return false;
+        q3_source_origin_written(game, actor, body.origin);
+        entry = q3_actor_get(game, actor);
+        if (!entry) return true;
         player = &entry->state.player;
     }
     if (player->selections & QA_Q3_ARSENAL) {
@@ -458,11 +522,18 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->invulnerability_until = 0;
     player->invulnerability_expanded = false;
     player->last_command_ms = game->now_ms;
+    player->command_time_ms = q3_sub_time(game->now_ms, 100);
     player->damage_blood = player->damage_armor = player->damage_knockback = 0;
     player->loop_sound = 0;
     player->damage_count = player->damage_event = player->damage_pitch = player->damage_yaw = 0;
     player->time_residual = player->pain_after = player->reward_until = player->last_kill_ms =
         player->rail_streak = 0;
+    player->last_killed_client = -1;
+    player->last_hurt_client = player->last_hurt_mod = 0;
+    memset(player->events, 0, sizeof(player->events));
+    memset(player->event_parameters, 0, sizeof(player->event_parameters));
+    player->entity_event_sequence = 0;
+    player->external_event = player->external_event_parameter = player->external_event_time = 0;
     player->fractional_weapon_ms = 0;
     player->gauntlet_contact = player->damage_from_world = player->noclip = false;
     memset(player->ammo_time_ms, 0, sizeof(player->ammo_time_ms));
@@ -476,6 +547,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->holdable = QA_Q3_H_NONE;
     player->hook = player->attached_mine = player->portal = player->persistent_item =
         (qa_actor_id){0};
+    player->portal_id = 0;
     player->grapple_pull = player->fire_held = player->use_item_held = false;
     ++player->spawn_count;
     if (!qa_q3_inventory_admit(game, actor, error))
@@ -484,9 +556,16 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
-    if (!(player->selections & QA_Q3_CHARACTER))
+    if (!(player->selections & QA_Q3_CHARACTER) && !native_client)
         return true;
     q3_force_view(player, spawn->angles, 100);
+    if (native_client) {
+        player->pmove_frame_count = player->jumppad_entity = player->jumppad_frame = 0;
+        qa_q3_wire_policy policy = {.pm_type = player->spectator ? 2 : 0,
+            .pm_flags = 0x200 | 0x40, .pm_time = 100};
+        if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_ALL, &policy, error) ||
+            !q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error)) return false;
+    }
     if (!player->spectator && !q3_killbox(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
@@ -496,7 +575,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     if (player->spectator) {
         if (!qa_world_unlink(game->options.services.world, actor, error))
             return false;
-    } else if (!qa_world_link(game->options.services.world, actor, NULL, error))
+    } else if (!(native_client ? qa_q3_wire_link(game, actor, NULL, error)
+                               : qa_world_link(game->options.services.world, actor, NULL, error)))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
@@ -519,7 +599,9 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
-    return player->spawn_count <= 1 || q3_player_event(game, actor, 42, 0, error);
+    if (native_client && game->options.hooks.source_flags_cleared &&
+        !game->options.hooks.source_flags_cleared(game->options.hooks.context, actor, error)) return false;
+    return native_client || player->spawn_count <= 1 || q3_player_event(game, actor, 42, 0, error);
 }
 bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
                         qa_team_id team, qa_error *error) {
@@ -643,7 +725,8 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
         bool forced = game->options.rules.force_respawn_seconds > 0 &&
                       (int64_t)game->now_ms - player->respawn_after >
                           (int64_t)game->options.rules.force_respawn_seconds * 1000;
-        if (!command->prediction && (player->selections & QA_Q3_CHARACTER) &&
+        if (!command->prediction && !source_command_active(game, actor) &&
+            (player->selections & QA_Q3_CHARACTER) &&
             game->now_ms > player->respawn_after && (attack || use || forced) &&
             game->options.hooks.respawn)
             return game->options.hooks.respawn(game->options.hooks.context, actor, error);
@@ -761,7 +844,8 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
-    if (!command->prediction && !qa_q3_fire_weapon(game, actor, weapon, error))
+    if (!command->prediction && !source_command_active(game, actor) &&
+        !qa_q3_fire_weapon(game, actor, weapon, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -800,7 +884,9 @@ static bool gib(qa_q3_game *game, qa_actor_id actor, int32_t killer, qa_error *e
     if (!entry)
         return true;
     entry->state.player.gibbed = true;
-    entry->state.player.flags |= 0x80u;
+    uint32_t source_slot;
+    bool native = qa_q3_native_client_slot(game, actor, &source_slot, NULL);
+    if (!native) entry->state.player.flags |= 0x80u;
     if (!q3_cancel_kamikaze_timers(game, actor, error))
         return false;
     if (!q3_actor_get(game, actor))
@@ -809,14 +895,114 @@ static bool gib(qa_q3_game *game, qa_actor_id actor, int32_t killer, qa_error *e
     if (!qa_combat_read_traits(game->options.services.combat, actor, &state, error))
         return false;
     state.can_take_damage = false;
+    if (native) {
+        if (!q3_add_event(game, actor, 64, killer, error)) return false;
+        if (!q3_actor_get(game, actor)) return true;
+        q3_wire_entity_source *source = q3_wire_entity(game, actor);
+        if (!source) return q3_fail(error, "Q3 gib lost its actual source entity");
+        source->type = 10;
+        qa_actor_collision collision;
+        if (!qa_world_get_collision(game->options.services.world, actor, &collision, error)) return false;
+        collision.contents = 0;
+        return qa_combat_set_traits(game->options.services.combat, actor, &state, error) &&
+            qa_world_set_collision(game->options.services.world, actor, &collision, error);
+    }
     return qa_combat_set_traits(game->options.services.combat, actor, &state, error) &&
            qa_world_unlink(game->options.services.world, actor, error) &&
            q3_player_event(game, actor, 64, killer, error);
+}
+bool q3_source_initial_death(qa_q3_game *game, const qa_damage_outcome *outcome,
+                             bool *admitted, qa_error *error) {
+    if (!game || !outcome || !admitted)
+        return q3_fail(error, "Q3 source death needs its committed outcome");
+    *admitted = false;
+    uint32_t slot;
+    if (outcome->stale || outcome->result.reaction != QA_REACTION_DEATH ||
+        game->match_state.intermission_time_ms != 0 ||
+        !qa_q3_native_client_slot(game, outcome->request.target, &slot, NULL)) return true;
+    q3_actor *entry = q3_actor_get(game, outcome->request.target);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+    qa_q3_wire_policy policy;
+    if (!qa_q3_wire_player_policy_read(game, entry->actor, &policy, error)) return false;
+    if (policy.pm_type == 3) return true;
+    qa_actor_id actor = entry->actor;
+    qa_actor_id hook = entry->state.player.hook;
+    if (q3_actor_get(game, hook) && !qa_session_release(game->options.services.session, hook, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    q3_actor *mine = q3_actor_get(game, entry->state.player.attached_mine);
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (!source) return q3_fail(error, "Q3 source death lost its entity fields");
+    if (game->options.product == QA_Q3_TEAM_ARENA &&
+        (source->flags & 2) && mine && mine->kind == Q3_ACTOR_MISSILE) {
+        entry->state.player.flags &= ~2u;
+        mine->state.missile.phase = Q3_MISSILE_PROX_DISCARD;
+        q3_postgame_native_think_assigned(game, mine->actor);
+        mine->state.missile.think_at = game->now_ms;
+    }
+    policy.pm_type = 3;
+    if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_TYPE, &policy, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (entry->state.player.selections & QA_Q3_CHARACTER)
+        game->death_continuations[slot] = (q3_death_continuation){.actor = actor,
+            .sequence = outcome->request.attack.sequence, .time_ns = outcome->request.attack.time_ns,
+            .weapon_provider = outcome->request.attack.weapon_provider};
+    *admitted = true;
+    return true;
+}
+
+bool q3_source_death_effects(qa_q3_game *game, const qa_damage_outcome *outcome,
+                             qa_error *error) {
+    qa_actor_id actor = outcome->request.target;
+    uint32_t slot;
+    if (!qa_q3_native_client_slot(game, actor, &slot, NULL)) return true;
+    if (!q3_death_rewards(game, actor, &outcome->request, error)) return false;
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (game->options.hooks.death &&
+        !game->options.hooks.death(game->options.hooks.context, actor, &outcome->request, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (game->options.hooks.source_frag_bonuses &&
+        !game->options.hooks.source_frag_bonuses(game->options.hooks.context,
+            actor, outcome->request.attack.attacker, error)) return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor) ||
+        !game->source_entities[slot].body_attached) return true;
+    if (!qa_q3_player_death_cleanup(game, actor, error)) return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    entry->state.player.respawn_after = q3_add_time(game->now_ms, 1700);
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (!source) return q3_fail(error, "Q3 source death lost its native entity state");
+    source->weapon = source->powerups = source->loop_sound = 0;
+    return true;
+}
+
+static bool take_source_death(qa_q3_game *game, const qa_damage_outcome *outcome,
+                              uint32_t slot) {
+    q3_death_continuation *pending = &game->death_continuations[slot];
+    const qa_attack *attack = &outcome->request.attack;
+    if (!qa_actor_id_equal(pending->actor, outcome->request.target) ||
+        pending->sequence != attack->sequence || pending->time_ns != attack->time_ns ||
+        pending->weapon_provider != attack->weapon_provider) return false;
+    *pending = (q3_death_continuation){0};
+    return true;
 }
 bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, outcome->request.target);
     if (!entry || outcome->stale)
         return true;
+    bool admitted = false;
+    if (!q3_source_initial_death(game, outcome, &admitted, error) ||
+        (admitted && (!qa_q3_ranking_death(game, outcome, error) ||
+                      !q3_source_death_effects(game, outcome, error)))) return false;
+    entry = q3_actor_get(game, outcome->request.target);
+    if (!entry) return true;
     if (entry->kind == Q3_ACTOR_PORTAL && outcome->result.reaction == QA_REACTION_DEATH)
         return qa_session_release(game->options.services.session, entry->actor, error);
     if (entry->kind == Q3_ACTOR_CORPSE && outcome->result.reaction == QA_REACTION_DEATH) {
@@ -829,14 +1015,28 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
             return qa_combat_set_health(game->options.services.combat, entry->actor, -39, error);
         qa_actor_id corpse = entry->actor;
         qa_body_state body;
-        if (!qa_world_body_read(game->options.services.world, corpse, &body, error))
+        if (!q3_source_body_read(game, corpse, &body, error))
             return false;
-        entry->state.corpse.flags |= 0x80u;
+        uint32_t source_slot;
+        bool native = qa_q3_source_actor_slot(game, corpse, &source_slot, NULL);
+        if (!native) entry->state.corpse.flags |= 0x80u;
         combat.can_take_damage = false;
         if (!q3_cancel_kamikaze_timers(game, corpse, error))
             return false;
         if (!q3_actor_get(game, corpse))
             return true;
+        if (native) {
+            if (!q3_add_event(game, corpse, 64, 0, error)) return false;
+            q3_wire_entity_source *source = q3_wire_entity(game, corpse);
+            if (!source) return q3_fail(error, "Q3 corpse gib lost its actual source entity");
+            source->type = 10;
+            qa_actor_collision collision;
+            if (!qa_world_get_collision(game->options.services.world, corpse, &collision, error))
+                return false;
+            collision.contents = 0;
+            return qa_combat_set_traits(game->options.services.combat, corpse, &combat, error) &&
+                qa_world_set_collision(game->options.services.world, corpse, &collision, error);
+        }
         return qa_combat_set_traits(game->options.services.combat, corpse, &combat, error) &&
                qa_world_unlink(game->options.services.world, corpse, error) &&
                q3_event(game, corpse, outcome->request.attack.attacker, QA_BUILTIN_DEATH, 64, 0,
@@ -844,6 +1044,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     }
     if (entry->kind == Q3_ACTOR_MISSILE && outcome->result.reaction == QA_REACTION_DEATH) {
         entry->state.missile.phase = Q3_MISSILE_PROX_TRIGGERED;
+        q3_postgame_native_think_assigned(game, entry->actor);
         entry->state.missile.think_at = q3_add_time(game->now_ms, 1);
         return true;
     }
@@ -861,7 +1062,10 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     int32_t killer = q3_entity_number(game, outcome->request.attack.attacker);
     if (killer < 0 || killer >= 64)
         killer = 1022;
-    if (player->dead) {
+    uint32_t native_slot;
+    bool native_client = qa_q3_native_client_slot(game, actor, &native_slot, NULL);
+    bool initial_source_death = native_client && take_source_death(game, outcome, native_slot);
+    if (player->dead && !initial_source_death) {
         if (combat.health <= -40 && game->options.rules.blood)
             return gib(game, actor, killer, error);
         return combat.health > -40 ||
@@ -870,12 +1074,12 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     player->dead = true;
     player->flags |= 1u;
     player->respawn_after = q3_add_time(game->now_ms, 1700);
-    player->deaths = q3_add_time(player->deaths, 1);
+    if (!native_client) player->deaths = q3_add_time(player->deaths, 1);
     qa_actor_id hook = player->hook, mine = player->attached_mine;
-    if (q3_actor_get(game, hook) &&
+    if (!native_client && q3_actor_get(game, hook) &&
         !qa_session_release(game->options.services.session, hook, error))
         return false;
-    if (q3_actor_get(game, mine) &&
+    if (!native_client && q3_actor_get(game, mine) &&
         !qa_session_release(game->options.services.session, mine, error))
         return false;
     if (!q3_actor_get(game, actor))
@@ -892,11 +1096,11 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
                                            .shape = QA_SHAPE_BOX,
                                            .contents = INT32_C(0x04000000),
                                            .role = QA_COLLISION_SOLID};
-    if (!q3_death_rewards(game, actor, &outcome->request, error))
+    if (!native_client && !q3_death_rewards(game, actor, &outcome->request, error))
         return false;
     if (!q3_actor_get(game, actor))
         return true;
-    if (game->options.hooks.death &&
+    if (!native_client && game->options.hooks.death &&
         !game->options.hooks.death(game->options.hooks.context, actor, &outcome->request, error))
         return false;
     entry = q3_actor_get(game, actor);
@@ -908,7 +1112,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &query, &contents, error))
         return false;
-    if (!qa_q3_player_death_cleanup(game, actor, error))
+    if (!native_client && !qa_q3_player_death_cleanup(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -919,12 +1123,15 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return false;
     body.angles.x = body.angles.z = 0;
     body.bounds.maxs.z = -8;
-    player->weapon = QA_Q3_W_NONE;
-    memset(player->powerups, 0, sizeof(player->powerups));
-    player->loop_sound = 0;
+    if (!native_client) {
+        player->weapon = QA_Q3_W_NONE;
+        memset(player->powerups, 0, sizeof(player->powerups));
+        player->loop_sound = 0;
+    }
     if (!qa_world_set_collision(game->options.services.world, actor, &corpse_collision, error) ||
         !qa_world_body_write(game->options.services.world, actor, &body, error) ||
-        !qa_world_link(game->options.services.world, actor, NULL, error))
+        !(native_client ? qa_q3_wire_link(game, actor, NULL, error)
+                        : qa_world_link(game->options.services.world, actor, NULL, error)))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -943,7 +1150,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     game->death_animation = (game->death_animation + 1u) % 3u;
     player->legs_animation = ((player->legs_animation & 128) ^ 128) | animation;
     player->torso_animation = ((player->torso_animation & 128) ^ 128) | animation;
-    if (!q3_player_event(game, actor, event, killer, error))
+    if (!q3_add_event(game, actor, event, killer, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -958,13 +1165,18 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || elapsed < 0)
         return q3_fail(error, "invalid Q3 player effects");
     qa_q3_player_state *player = &entry->state.player;
-    if (!(player->selections & (QA_Q3_EFFECTS | QA_Q3_CHARACTER)))
+    uint32_t source_client;
+    bool native = source_command_active(game, actor) &&
+        qa_q3_native_client_slot(game, actor, &source_client, NULL) &&
+        game->source_entities[source_client].body_attached;
+    bool decay = native || (player->selections & QA_Q3_CHARACTER);
+    if (!native && !(player->selections & (QA_Q3_EFFECTS | QA_Q3_CHARACTER)))
         return true;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
         return false;
     player->time_residual = q3_add_time(player->time_residual, elapsed);
-    while (player->time_residual >= 1000 && combat.health > 0) {
+    while (player->time_residual >= 1000 && (native || combat.health > 0)) {
         player->time_residual -= 1000;
         int32_t maximum = player->max_health;
         int32_t regen = player->persistent == QA_Q3_P_GUARD ? maximum / 2
@@ -980,11 +1192,11 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
                 health = fminf(health + 5, (float)regen * 2);
                 regenerated = true;
             }
-        } else if ((player->selections & QA_Q3_CHARACTER) && health > (float)maximum)
+        } else if (decay && health > (float)maximum)
             health -= 1;
         if (!qa_combat_set_health(game->options.services.combat, actor, health, error))
             return false;
-        if (regenerated && !q3_player_event(game, actor, 63, 0, error))
+        if (regenerated && !q3_add_event(game, actor, 63, 0, error))
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry)
@@ -992,7 +1204,7 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
         player = &entry->state.player;
         if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
             return false;
-        if ((player->selections & QA_Q3_CHARACTER) &&
+        if (decay &&
             combat.armor.regular.points > (float)maximum &&
             !qa_combat_set_regular_points(game->options.services.combat, actor,
                                           combat.armor.regular.points - 1, NULL, error))
@@ -1042,19 +1254,17 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
     }
     return true;
 }
-bool qa_q3_player_effects(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, int32_t water_level,
-                          int32_t water_type, bool noclip, qa_error *error) {
+static bool player_world_effects(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
+                                 int32_t water_type, bool noclip, bool native, qa_error *error) {
     if (water_level < 0 || water_level > 3)
         return q3_fail(error, "invalid Q3 world effects");
-    if (!qa_q3_player_timers(game, actor, elapsed, error))
-        return false;
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
     qa_q3_player_state *player = &entry->state.player;
     player->noclip = noclip;
-    if (!(player->selections & QA_Q3_EFFECTS) || player->spectator ||
-        game->options.rules.intermission)
+    if (!native && (!(player->selections & QA_Q3_EFFECTS) || player->spectator ||
+        game->options.rules.intermission))
         return true;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
@@ -1102,7 +1312,7 @@ bool qa_q3_player_effects(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, 
     if (water_level && (water_type & (8 | 16)) && combat.health > 0 &&
         player->pain_after <= game->now_ms) {
         if (suit)
-            return q3_player_event(game, actor, 62, 0, error);
+            return q3_add_event(game, actor, 62, 0, error);
         if ((water_type & 8) && !q3_damage(game, actor, (qa_actor_id){0}, (qa_actor_id){0},
                                            QA_Q3_W_NONE, 16, 0, (float)(30 * water_level),
                                            qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL, error))
@@ -1114,6 +1324,20 @@ bool qa_q3_player_effects(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, 
             return false;
     }
     return true;
+}
+bool qa_q3_player_effects(qa_q3_game *game, qa_actor_id actor, int32_t elapsed,
+                          int32_t water_level, int32_t water_type, bool noclip,
+                          qa_error *error) {
+    return qa_q3_player_timers(game, actor, elapsed, error) &&
+        player_world_effects(game, actor, water_level, water_type, noclip, false, error);
+}
+bool qa_q3_client_world_effects(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
+                               int32_t water_type, qa_error *error) {
+    uint32_t slot;
+    if (!game || game->source_restored ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    return player_world_effects(game, actor, water_level, water_type,
+                                game->client_actors[slot].state.player.noclip, true, error);
 }
 bool qa_q3_movement_environment(qa_q3_game *game, qa_actor_id actor, qa_movement_environment *out,
                                 qa_error *error) {
@@ -1153,8 +1377,10 @@ static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_in
         !qa_actor_id_equal(input->actor, actor))
         return q3_fail(error, "invalid Q3 movement input");
     qa_q3_player_state *player = &entry->state.player;
-    player->gauntlet_contact = false;
-    if (!player->cutscene.active && !input->prediction && input->command.kind == QA_MOVEMENT_Q3 &&
+    bool native_command = !input->prediction && source_command_active(game, actor);
+    if (!native_command) player->gauntlet_contact = false;
+    if (!native_command && !player->cutscene.active && !input->prediction &&
+        input->command.kind == QA_MOVEMENT_Q3 &&
         player->weapon == QA_Q3_W_GAUNTLET && !(input->command.buttons & 2u) &&
         (input->command.buttons & 1u) && player->weapon_time_ms <= 0) {
         bool hit = false;
@@ -1196,12 +1422,243 @@ bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_inp
     --game->observation_depth;
     return okay;
 }
+
+bool qa_q3_client_events(qa_q3_game *game, qa_actor_id actor, uint32_t old_sequence,
+                         qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) || game->observation_depth == SIZE_MAX ||
+        !qa_q3_native_client_slot(game, actor, &slot, error))
+        return q3_fail(error, "Q3 ClientEvents needs its actual source command");
+    ++game->observation_depth;
+    bool okay = true;
+    qa_q3_player_state *player = &game->client_actors[slot].state.player;
+    int32_t old, sequence, oldest;
+    memcpy(&old, &old_sequence, sizeof(old));
+    memcpy(&sequence, &player->event_sequence, sizeof(sequence));
+    oldest = q3_sub_time(sequence, 2);
+    if (old < oldest) old = oldest;
+    for (; old < sequence; old = q3_add_time(old, 1)) {
+        if (!qa_actor_id_equal(game->source_entities[slot].actor, actor) ||
+            !q3_actor_get(game, actor)) break;
+        player = &game->client_actors[slot].state.player;
+        int32_t event = player->events[(uint32_t)old & 1u];
+        if (event == 11 || event == 12) {
+            q3_wire_entity_source *source = q3_wire_entity(game, actor);
+            if (source && source->type == 1 && !(game->options.rules.dmflags & 8)) {
+                player->pain_after = q3_add_time(game->now_ms, 200);
+                okay = q3_damage(game, actor, (qa_actor_id){0}, (qa_actor_id){0},
+                    QA_Q3_W_NONE, 19, 2, event == 12 ? 10 : 5,
+                    qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL, error);
+            }
+        } else if (event == 23) {
+            if (!game->options.hooks.primary_attack_allowed) {
+                okay = q3_fail(error, "Q3 source weapon fire lacks its actual primary selection owner");
+            } else {
+                bool allowed = game->options.hooks.primary_attack_allowed(
+                    game->options.hooks.context, actor);
+                if (allowed && qa_actor_id_equal(game->source_entities[slot].actor, actor) &&
+                    q3_actor_get(game, actor))
+                    okay = qa_q3_fire_weapon(game, actor, game->client_actors[slot].state.player.weapon, error);
+            }
+        }
+        else if (event >= 25 && event <= 29)
+            okay = q3_use_holdable(game, actor, (qa_q3_holdable)(event - 24), error);
+        if (!okay) break;
+        player = &game->client_actors[slot].state.player;
+        memcpy(&sequence, &player->event_sequence, sizeof(sequence));
+    }
+    --game->observation_depth;
+    return okay;
+}
+
+bool qa_q3_client_think_event_time(qa_q3_game *game, qa_actor_id actor,
+                                   uint32_t old_sequence, qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    return game->client_actors[slot].state.player.event_sequence == old_sequence ||
+        q3_wire_event_time(game, actor, game->now_ms, error);
+}
+bool qa_q3_client_fire_held_finish(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    if (!(game->client_actors[slot].state.player.flags & 0x100u))
+        game->client_actors[slot].state.player.fire_held = false;
+    return true;
+}
+bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t time,
+                                     qa_vec3 view, float height, qa_movement_ground ground,
+                                     qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) || !qa_vec_finite(view) || !isfinite(height) ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    qa_q3_player_state *player = &game->client_actors[slot].state.player;
+    player->command_time_ms = time;
+    player->view_angles = view;
+    player->view_height = height;
+    uint32_t source_slot;
+    player->ground_entity_number = ground.hit == QA_TRACE_HIT_WORLD ? QA_Q3_SOURCE_WORLD :
+        ground.hit == QA_TRACE_HIT_ACTOR && qa_q3_source_actor_slot(game, ground.actor, &source_slot, NULL)
+        ? (int32_t)source_slot : QA_Q3_SOURCE_NONE;
+    qa_q3_native_client *client = &game->clients[slot];
+    if (client->has_followed_player) {
+        client->followed_player.commandTime = time;
+        client->followed_player.viewangles[0] = view.x;
+        client->followed_player.viewangles[1] = view.y;
+        client->followed_player.viewangles[2] = view.z;
+        client->followed_player.viewheight = q3_source_float_to_int(height);
+        client->followed_player.groundEntityNum = player->ground_entity_number;
+    }
+    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_COMMAND | QA_Q3_SOURCE_PM_VIEW, error);
+}
+bool qa_q3_client_movement_water(qa_q3_game *game, qa_actor_id actor, int32_t level,
+                                 int32_t type, qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) || level < 0 || level > 3 ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    game->client_actors[slot].water_level = level;
+    game->client_actors[slot].water_type = type;
+    return true;
+}
+bool qa_q3_client_spectator_origin(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    uint32_t slot;
+    qa_body_state body;
+    if (!game || !source_command_active(game, actor) ||
+        !qa_q3_native_client_slot(game, actor, &slot, error) ||
+        !qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (!source) return q3_fail(error, "Q3 SpectatorThink lost its actual source entity");
+    source->authored_origin = body.origin;
+    return true;
+}
+bool qa_q3_client_jumppad_finish(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    qa_q3_player_state *player = &game->client_actors[slot].state.player;
+    if (player->jumppad_frame != player->pmove_frame_count)
+        player->jumppad_frame = player->jumppad_entity = 0;
+    qa_q3_player *copied = q3_client_follow_player(game, slot);
+    if (copied) { copied->jumppadFrame = player->jumppad_frame; copied->jumppadEnt = player->jumppad_entity; }
+    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_JUMPPAD, error);
+}
+bool qa_q3_client_touch_policy(const qa_q3_game *game, qa_actor_id actor,
+                               bool *native, bool *touchable, bool *door, qa_error *error) {
+    if (!game || !native || !touchable || !door)
+        return q3_fail(error, "Q3 touch qualification needs actual source outputs");
+    *native = *touchable = *door = false;
+    uint32_t slot;
+    if (!qa_q3_source_actor_slot(game, actor, &slot, NULL) ||
+        !game->source_entities[slot].in_use) return true;
+    *native = true;
+    const qa_q3_map_actor_state *map = q3_map_const(game, actor);
+    if (map) {
+        *touchable = map->touchable;
+        *door = map->kind == QA_Q3_MAP_MOVER_DOOR_TRIGGER;
+        return true;
+    }
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (!entry) return true;
+    *touchable = entry->kind == Q3_ACTOR_ITEM || entry->kind == Q3_ACTOR_PROX_TRIGGER ||
+        (entry->kind == Q3_ACTOR_PORTAL && entry->state.portal.source && entry->state.portal.enabled) ||
+        (entry->kind == Q3_ACTOR_OBELISK && entry->state.obelisk.think == QA_Q3_OBELISK_NONE);
+    return true;
+}
+bool qa_q3_client_think_finish(qa_q3_game *game, qa_actor_id actor, int32_t msec,
+                               qa_error *error) {
+    uint32_t slot;
+    if (!game || !source_command_active(game, actor) || msec < 0 ||
+        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    uint32_t old;
+    uint32_t buttons = (uint32_t)game->clients[slot].command.buttons;
+    if (!qa_q3_client_buttons(game, actor, buttons, true, &old, error)) return false;
+    qa_combat_state combat;
+    if (!qa_combat_read(game->options.services.combat, actor, &combat, error)) return false;
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry) return true;
+    if (combat.health <= 0) {
+        qa_q3_player_state *player = &entry->state.player;
+        int32_t elapsed = q3_sub_time(game->now_ms, player->respawn_after);
+        uint32_t force_bits = (uint32_t)game->options.rules.force_respawn_seconds * 1000u;
+        int32_t force_ms;
+        memcpy(&force_ms, &force_bits, sizeof(force_ms));
+        bool forced = game->options.rules.force_respawn_seconds > 0 && elapsed > force_ms;
+        if (game->now_ms > player->respawn_after && (forced || (buttons & 5u)) &&
+            game->options.hooks.respawn)
+            return game->options.hooks.respawn(game->options.hooks.context, actor, error);
+        return true;
+    }
+    return qa_q3_player_timers(game, actor, msec, error);
+}
+bool qa_q3_client_movement_water_read(const qa_q3_game *game, qa_actor_id actor,
+                                      int32_t *level, int32_t *type, qa_error *error) {
+    uint32_t slot;
+    if (!level || !type || !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "Q3 water observation lost its actual source entity");
+    *level = entry->water_level;
+    *type = entry->water_type;
+    return true;
+}
 static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
                                    qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     qa_q3_player_state *player = &entry->state.player;
+    uint32_t native_slot;
+    if (source_command_active(game, actor) &&
+        qa_q3_native_client_slot(game, actor, &native_slot, NULL)) {
+        qa_q3_wire_policy policy;
+        if (!qa_q3_wire_player_policy_read(game, actor, &policy, error)) return false;
+        if (game->options.product != QA_Q3_TEAM_ARENA ||
+            !player->powerups[QA_Q3_P_INVULNERABILITY] || (policy.pm_flags & 0x4000)) return true;
+        qa_body_state body;
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+        if (!q3_actor_get(game, actor)) return true;
+        qa_bounds original = body.bounds;
+        body.bounds = (qa_bounds){qa_v3(-42, -42, -42), qa_v3(42, 42, 42)};
+        bool okay = qa_world_body_write(game->options.services.world, actor, &body, error) &&
+            qa_q3_wire_link(game, actor, NULL, error);
+        bool stuck = false;
+        qa_linked_body linked;
+        qa_bounds source_bounds = qa_world_linked(game->options.services.world, actor, &linked)
+            ? linked.absolute_bounds : (qa_bounds){0};
+        for (uint32_t slot = 0; okay && !stuck && slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
+            qa_actor_id other = game->source_entities[slot].actor;
+            if (slot == native_slot || !game->source_entities[slot].in_use ||
+                !other.registry || !q3_actor_const(game, other)) continue;
+            qa_combat_state combat;
+            if (!qa_combat_read(game->options.services.combat, other, &combat, error)) {
+                okay = false;
+                break;
+            }
+            if (!qa_actor_id_equal(game->source_entities[slot].actor, other) || combat.health <= 0)
+                continue;
+            qa_bounds other_bounds = qa_world_linked(game->options.services.world, other, &linked)
+                ? linked.absolute_bounds : (qa_bounds){0};
+            stuck = qa_bounds_overlap(source_bounds, other_bounds);
+        }
+        if (okay && !stuck && q3_actor_get(game, actor)) {
+            policy.pm_flags = (int32_t)((uint32_t)policy.pm_flags | 0x4000u);
+            okay = qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_FLAGS, &policy, error);
+            entry = q3_actor_get(game, actor);
+            if (okay && entry) entry->state.player.invulnerability_expanded = true;
+        }
+        if (q3_actor_get(game, actor)) {
+            qa_error cleanup = {0};
+            bool restored = qa_world_body_read(game->options.services.world, actor, &body, &cleanup);
+            if (restored) {
+                body.bounds = original;
+                restored = qa_world_body_write(game->options.services.world, actor, &body, &cleanup) &&
+                    qa_q3_wire_link(game, actor, NULL, &cleanup);
+            }
+            if (!restored) { if (okay && error) *error = cleanup; okay = false; }
+        }
+        return okay;
+    }
     if (player->invulnerability_until <= game->now_ms || player->invulnerability_expanded)
         return true;
     qa_body_state body;
@@ -1231,6 +1688,59 @@ static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
         entry->state.player.invulnerability_expanded = true;
     return true;
 }
+bool qa_q3_client_think_prepare(qa_q3_game *game, qa_actor_id actor,
+                                const qa_q3_usercmd *input, uint32_t *old_sequence,
+                                qa_q3_usercmd *effective, qa_error *error) {
+    uint32_t slot;
+    if (!game || !input || !old_sequence || !effective ||
+        !source_command_active(game, actor) || game->observation_depth == SIZE_MAX ||
+        !qa_q3_native_client_slot(game, actor, &slot, error))
+        return q3_fail(error, "Q3 ClientThink preparation needs its actual source command");
+    qa_q3_usercmd command = *input;
+    ++game->observation_depth;
+    bool okay = true;
+    qa_q3_player_state *player = &game->client_actors[slot].state.player;
+    qa_actor_id hook = player->hook;
+    if (player->weapon == QA_Q3_W_GRAPPLE && hook.registry && !(command.buttons & 1) &&
+        q3_actor_get(game, hook))
+        okay = qa_session_release(game->options.services.session, hook, error);
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!okay || !entry) goto done;
+    player = &entry->state.player;
+    *old_sequence = player->event_sequence;
+    player->gauntlet_contact = false;
+    if (player->weapon == QA_Q3_W_GAUNTLET && !(command.buttons & 2) &&
+        (command.buttons & 1) && player->weapon_time_ms <= 0) {
+        if (!game->options.hooks.primary_attack_allowed) {
+            okay = q3_fail(error, "Q3 source gauntlet lacks its actual primary selection owner");
+            goto done;
+        }
+        bool allowed = game->options.hooks.primary_attack_allowed(game->options.hooks.context, actor);
+        entry = q3_actor_get(game, actor);
+        if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) goto done;
+        if (allowed) {
+            bool hit;
+            okay = q3_gauntlet(game, actor, &hit, error);
+            entry = q3_actor_get(game, actor);
+            if (!okay || !entry) goto done;
+            entry->state.player.gauntlet_contact = hit;
+        }
+    }
+    if (entry->force_gesture) {
+        entry->force_gesture = false;
+        command.buttons = (int32_t)((uint32_t)command.buttons | 8u);
+        game->clients[slot].command.buttons = command.buttons;
+    }
+    okay = expand_invulnerability(game, actor, error);
+    if (!okay || !q3_actor_get(game, actor)) goto done;
+    qa_body_state body;
+    okay = qa_world_body_read(game->options.services.world, actor, &body, error);
+    if (okay && q3_actor_get(game, actor)) game->clients[slot].old_origin = body.origin;
+done:
+    *effective = command;
+    --game->observation_depth;
+    return okay;
+}
 qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_phase phase,
                                                   qa_movement_call *call, bool arsenal_selected,
                                                   qa_error *error) {
@@ -1245,18 +1755,28 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         return QA_MOVEMENT_CONTINUE;
     }
     if (phase == QA_MOVE_INPUT_BEGIN) {
-        p->last_command_ms = game->now_ms;
+        uint32_t native_slot;
+        if (!qa_q3_native_client_slot(game, call->actor, &native_slot, NULL))
+            p->last_command_ms = game->now_ms;
         if (call->command->kind == QA_MOVEMENT_Q3)
             for (unsigned i = 0; i < 3; ++i)
-                p->last_command_angles[i] = call->command->angle_words[i] & 65535;
+                p->last_command_angles[i] = call->command->angle_words[i];
         if (call->state->kind == QA_MOVEMENT_Q3) {
             p->noclip = call->state->data.q3.movement_type == 1;
             call->state->data.q3.delta_angle_words[0] = p->delta_pitch_word;
             call->state->data.q3.delta_angle_words[1] = p->delta_yaw_word;
             call->state->data.q3.delta_angle_words[2] = p->delta_roll_word;
+            if (source_command_active(game, call->actor)) {
+                call->state->data.q3.flags = p->flags;
+                call->state->data.q3.command_time_ms = p->command_time_ms;
+                call->state->data.q3.event_sequence = p->event_sequence;
+                call->state->data.q3.movement_frame = p->pmove_frame_count;
+                call->state->data.q3.jump_pad_frame = p->jumppad_frame;
+            }
         }
     } else if (phase == QA_MOVE_INPUT_END && call->state->kind == QA_MOVEMENT_Q3) {
         qa_q3_movement_state *movement = &call->state->data.q3;
+        p->command_time_ms = movement->command_time_ms;
         p->ground_entity_number = movement->ground.hit == QA_TRACE_HIT_WORLD ? 1022
                                   : movement->ground.hit == QA_TRACE_HIT_ACTOR
                                       ? q3_entity_number(game, movement->ground.actor)
@@ -1269,7 +1789,16 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         p->jumppad_entity = movement->jump_pad.registry
                                 ? q3_entity_number(game, movement->jump_pad)
                                 : 0;
-        if (!call->prediction && !expand_invulnerability(game, call->actor, error))
+        if (source_command_active(game, call->actor)) {
+            p->flags = movement->flags;
+            uint32_t slot;
+            if (qa_q3_native_client_slot(game, call->actor, &slot, NULL)) {
+                qa_q3_player *copied = q3_client_follow_player(game, slot);
+                if (copied) copied->eFlags = (int32_t)p->flags;
+            }
+        }
+        if (!call->prediction && !source_command_active(game, call->actor) &&
+            !expand_invulnerability(game, call->actor, error))
             return QA_MOVEMENT_ERROR;
         entry = q3_actor_get(game, call->actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -1311,6 +1840,8 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         if (!entry)
             return QA_MOVEMENT_REMOVED;
         p = &entry->state.player;
+        if (call->state->kind == QA_MOVEMENT_Q3 && source_command_active(game, call->actor))
+            call->state->data.q3.event_sequence = p->event_sequence;
         if (p->teleport_revision != teleport_revision) {
             qa_body_state body;
             if (!qa_world_body_read(game->options.services.world, call->actor, &body, error) ||
@@ -1367,7 +1898,12 @@ qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effec
     if (effect->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_MOVEMENT_Q3) {
         if (!q3_player_event(game, call->actor, effect->value, effect->parameter, error))
             return QA_MOVEMENT_ERROR;
-        if (!call->prediction && (effect->value == 11 || effect->value == 12) &&
+        if (source_command_active(game, call->actor))
+            call->state->data.q3.event_sequence = q3_actor_get(game, call->actor)
+                ? q3_actor_get(game, call->actor)->state.player.event_sequence
+                : call->state->data.q3.event_sequence;
+        if (!call->prediction && !source_command_active(game, call->actor) &&
+            (effect->value == 11 || effect->value == 12) &&
             !q3_damage(game, call->actor, (qa_actor_id){0}, (qa_actor_id){0}, QA_Q3_W_NONE, 19, 2,
                        effect->value == 12 ? 10 : 5, qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL,
                        error))

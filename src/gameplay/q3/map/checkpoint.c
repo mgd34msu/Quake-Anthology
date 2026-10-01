@@ -34,7 +34,13 @@ static bool state_valid(const qa_q3_game *game, const qa_q3_map_actor_state *sta
         !qa_vec_finite(state->bounds.mins) || !qa_vec_finite(state->bounds.maxs) ||
         !isfinite(state->speed) || !isfinite(state->wait) || !isfinite(state->random) ||
         !isfinite(state->delay) || !isfinite(state->roll) || !isfinite(state->light) ||
-        !isfinite(state->alpha))
+        !isfinite(state->alpha) ||
+        state->noise_index < 0 || state->noise_index > 255 ||
+        state->sound_loop < 0 || state->sound_loop > 255 ||
+        state->sound_1_to_2 < 0 || state->sound_1_to_2 > 255 ||
+        state->sound_2_to_1 < 0 || state->sound_2_to_1 > 255 ||
+        state->sound_pos_1 < 0 || state->sound_pos_1 > 255 ||
+        state->sound_pos_2 < 0 || state->sound_pos_2 > 255)
         return q3_map_fail(error, "invalid Q3 authored actor checkpoint state");
     if (state->damageable && state->kind != QA_Q3_MAP_MOVER_DOOR &&
         state->kind != QA_Q3_MAP_MOVER_BUTTON)
@@ -210,7 +216,7 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
         !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_map_fail(error, "Q3 authored checkpoint requires a session safe point");
-    qa_q3_map_checkpoint saved = {.version = 4,
+    qa_q3_map_checkpoint saved = {.version = 5,
                                   .loaded_game_type = game->map->loaded_game_type,
                                   .registered_items = game->map->registered_items,
                                   .motd = game->map->options.motd,
@@ -222,6 +228,7 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
                                   .world_spawned = game->map->world_spawned,
                                   .post_spawned = game->map->post_spawned,
                                   .locations_linked = game->map->locations_linked};
+    if (!save_reference(game, game->map->location_head, &saved.location_head, error)) return false;
     for (uint32_t i = 0; i < game->map->capacity; ++i)
         if (game->map->actors[i].active)
             ++saved.actor_count;
@@ -247,7 +254,7 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
 static bool checkpoint_restore(qa_q3_game *game,
                                 const qa_q3_map_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
-    if (!game || !game->map || !saved || saved->version != 4 || saved->loaded_game_type < -1 ||
+    if (!game || !game->map || !saved || saved->version != 5 || saved->loaded_game_type < -1 ||
         (saved->loaded_game_type >= 0 && (!saved->world_spawned || !saved->post_spawned)) ||
         (saved->motd && !qa_strings_cstr(qa_session_strings(game->options.services.session), saved->motd)) ||
         !item_registry_valid(game, saved->registered_items) ||
@@ -273,6 +280,23 @@ static bool checkpoint_restore(qa_q3_game *game,
         }
         candidate[state.actor.slot] = state;
     }
+    qa_actor_id location_head;
+    if (!restore_reference(game, saved->location_head, &location_head, error)) {
+        free(candidate);
+        return false;
+    }
+    qa_actor_id location = location_head;
+    uint32_t location_count = 0;
+    while (location.registry) {
+        if (location.slot >= game->map->capacity || ++location_count > saved->actor_count ||
+            !candidate[location.slot].active ||
+            !qa_actor_id_equal(candidate[location.slot].actor, location) ||
+            candidate[location.slot].kind != QA_Q3_MAP_TARGET_LOCATION) {
+            free(candidate);
+            return q3_map_fail(error, "invalid Q3 source location checkpoint chain");
+        }
+        location = candidate[location.slot].path_next;
+    }
     if (!reconnect) {
         for (uint32_t i = 0; i < game->map->capacity; ++i) {
             qa_q3_map_actor_state *state = &candidate[i];
@@ -296,6 +320,7 @@ static bool checkpoint_restore(qa_q3_game *game,
         game->map->world_spawned = saved->world_spawned;
         game->map->post_spawned = saved->post_spawned;
         game->map->locations_linked = saved->locations_linked;
+        game->map->location_head = location_head;
         return true;
     }
     qa_q3_map_actor_state *prior = game->map->actors;
@@ -371,6 +396,7 @@ static bool checkpoint_restore(qa_q3_game *game,
     game->map->world_spawned = saved->world_spawned;
     game->map->post_spawned = saved->post_spawned;
     game->map->locations_linked = saved->locations_linked;
+    game->map->location_head = location_head;
     return true;
 }
 bool qa_q3_map_checkpoint_restore(qa_q3_game *game,

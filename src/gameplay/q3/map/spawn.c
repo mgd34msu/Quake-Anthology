@@ -199,7 +199,38 @@ bool q3_map_vector(const qa_q3_map_fields *fields, const char *key, qa_vec3 fall
 }
 
 static bool set_string(qa_q3_game *game, qa_bytes value, qa_string_id *field, qa_error *error) {
-    return q3_map_intern(game, value, field, error);
+    if (value.size >= INT32_MAX) return q3_map_fail(error, "Q3 spawn string exceeds G_Alloc size");
+    uint32_t offset;
+    if (!qa_q3_source_memory_allocate(game, (uint32_t)value.size + 1, &offset, error)) return false;
+    uint32_t written = 0;
+    for (size_t i = 0; i <= value.size; ++i) {
+        uint8_t byte = i == value.size ? 0 : value.data[i];
+        if (byte == '\\' && i < value.size) {
+            ++i;
+            byte = i < value.size && value.data[i] == 'n' ? '\n' : '\\';
+        }
+        game->memory.pool[offset + written++] = byte;
+    }
+    const uint8_t *text = game->memory.pool + offset;
+    const uint8_t *end = memchr(text, 0, QA_Q3_SOURCE_MEMORY_BYTES - offset);
+    if (!end) return q3_map_fail(error, "Game string reads beyond the source memory pool");
+    return qa_strings_intern(qa_session_strings(game->options.services.session),
+                             (qa_bytes){text, (size_t)(end - text)}, field, error);
+}
+static bool set_folded_string(qa_q3_game *game, qa_bytes value, qa_string_id *field,
+                              qa_error *error) {
+    qa_string_id original;
+    if (!set_string(game, value, &original, error)) return false;
+    const char *text = q3_map_cstr(game, original);
+    size_t length = strlen(text);
+    uint8_t *folded = malloc(length ? length : 1);
+    if (!folded) { qa_error_set(error, QA_ERROR_MEMORY, 0, "folding Q3 target string"); return false; }
+    for (size_t i = 0; i < length; ++i)
+        folded[i] = text[i] >= 'A' && text[i] <= 'Z' ? (uint8_t)(text[i] + ('a' - 'A')) : (uint8_t)text[i];
+    bool ok = qa_strings_intern(qa_session_strings(game->options.services.session),
+                                (qa_bytes){folded, length}, field, error);
+    free(folded);
+    return ok;
 }
 
 static bool parse_generic(qa_q3_game *game, qa_bytes key, qa_bytes value,
@@ -211,9 +242,9 @@ static bool parse_generic(qa_q3_game *game, qa_bytes key, qa_bytes value,
     if (bytes_equal(key, "model2"))
         return set_string(game, value, &state->model2, error);
     if (bytes_equal(key, "target"))
-        return q3_map_intern_fold(game, value, &state->target, error);
+        return set_folded_string(game, value, &state->target, error);
     if (bytes_equal(key, "targetname"))
-        return q3_map_intern_fold(game, value, &state->targetname, error);
+        return set_folded_string(game, value, &state->targetname, error);
     if (bytes_equal(key, "message"))
         return set_string(game, value, &state->message, error);
     if (bytes_equal(key, "team"))
@@ -282,7 +313,8 @@ bool q3_map_parse_state(qa_q3_game *game, const qa_q3_map_fields *fields,
         return true;
     qa_bytes value;
     if (q3_map_property(fields, "noise", &value) &&
-        !q3_map_intern(game, value, &state->noise, error))
+        !qa_strings_intern(qa_session_strings(game->options.services.session),
+                            value, &state->noise, error))
         return false;
     double number;
     state->has_delay = q3_map_property(fields, "delay", &value);
@@ -292,11 +324,6 @@ bool q3_map_parse_state(qa_q3_game *game, const qa_q3_map_fields *fields,
     if (!q3_map_number(fields, "roll", 0, &number, error))
         return false;
     state->roll = (float)number;
-    int32_t integer;
-    q3_map_integer(fields, "nobots", 0, &integer);
-    state->no_bots = integer != 0;
-    q3_map_integer(fields, "nohumans", 0, &integer);
-    state->no_humans = integer != 0;
     const char *model = q3_map_cstr(game, state->model);
     if (model && model[0] == '*' && model[1]) {
         char *end = NULL;
@@ -392,14 +419,14 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
         !q3_map_intern_cstr(game, "0", &zero, error))
         return false;
     if (q3_map_property(fields, "music", &value) &&
-        !q3_map_intern(game, value, &music, error))
+        !qa_strings_intern(qa_session_strings(game->options.services.session), value, &music, error))
         return false;
     if (q3_map_property(fields, "message", &value) &&
-        !q3_map_intern(game, value, &message, error))
+        !qa_strings_intern(qa_session_strings(game->options.services.session), value, &message, error))
         return false;
     if (!q3_map_property(fields, "gravity", &value))
         value = (qa_bytes){(const uint8_t *)"800", 3};
-    if (!q3_map_intern(game, value, &gravity_text, error))
+    if (!qa_strings_intern(qa_session_strings(game->options.services.session), value, &gravity_text, error))
         return false;
     double gravity;
     gravity = q3_source_atof(value);
@@ -407,17 +434,18 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
         return q3_map_fail(error, "invalid Q3 world gravity");
     if (!q3_map_property(fields, "enableDust", &value))
         value = (qa_bytes){(const uint8_t *)"0", 1};
-    if (!q3_map_intern(game, value, &dust, error))
+    if (!qa_strings_intern(qa_session_strings(game->options.services.session), value, &dust, error))
         return false;
     if (!q3_map_property(fields, "enableBreath", &value))
         value = (qa_bytes){(const uint8_t *)"0", 1};
     qa_string_id minus_one = 0;
-    if (!q3_map_intern(game, value, &breath, error) ||
+    if (!qa_strings_intern(qa_session_strings(game->options.services.session), value, &breath, error) ||
         (game->map->options.warmup && !game->map->options.restarted &&
          !q3_map_intern_cstr(game, "-1", &minus_one, error)))
         return false;
     game->map->world_spawned = true;
     game->physics.gravity = (float)gravity;
+    game->team_state.warmup_time_ms = 0;
     if (!emit_text(game, QA_Q3_MAP_CONFIGSTRING, 20, NULL, version, error) ||
         !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 21, NULL, start, error) ||
         !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 2, NULL, music, error) ||
@@ -434,7 +462,11 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
         if (!emit_text(game, QA_Q3_MAP_CVAR, 0, "g_restarted", zero, error))
             return false;
     } else if (game->map->options.warmup) {
+        game->team_state.warmup_time_ms = -1;
         if (!emit_text(game, QA_Q3_MAP_CONFIGSTRING, 5, NULL, minus_one, error))
+            return false;
+        if (game->options.hooks.source_log &&
+            !game->options.hooks.source_log(game->options.hooks.context, "Warmup:\n", error))
             return false;
     }
     return true;
@@ -500,65 +532,130 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
                      qa_q3_map_spawn_result *out, qa_error *error) {
     if (out)
         *out = (qa_q3_map_spawn_result){0};
-    if (!game || !game->map || !fields || !out)
+    if (!game || !game->map || !fields || (fields->count && !fields->properties) || !out)
         return q3_map_fail(error, "invalid Q3 authored spawn");
-    qa_q3_map_actor_state state;
-    if (!q3_map_parse_state(game, fields, &state, error))
-        return false;
-    const char *classname = q3_map_cstr(game, state.classname);
     if (!game->map->world_spawned) {
-        if (!classname || !bytes_equal(qa_strings_text(
-                                           qa_session_strings(game->options.services.session),
-                                           state.classname),
-                                       "worldspawn"))
+        qa_bytes classname;
+        if (!q3_map_property(fields, "classname", &classname) ||
+            !bytes_equal(classname, "worldspawn"))
             return q3_map_fail(error, "first Q3 authored entity is not worldspawn");
         if (!worldspawn(game, fields, error))
             return false;
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_WORLD,
-                                        .classname = state.classname};
+            .actor = game->source_entities[QA_Q3_SOURCE_WORLD].actor,
+            .classname = game->source_entities[QA_Q3_SOURCE_WORLD].classname};
         return true;
     }
+    qa_actor_id allocated = {0};
+    if (!q3_spawn_actor(game, &(qa_builtin_spawn){.owner = game->options.owner},
+                         &allocated, error))
+        return false;
+    qa_q3_map_actor_state state;
+    if (!q3_map_parse_state(game, fields, &state, error))
+        return allocated.registry ? q3_rollback_spawn(game, allocated, error) : false;
+    state.actor = allocated;
+    const char *classname = q3_map_cstr(game, state.classname);
+    uint32_t source_slot;
+    if (!qa_q3_source_actor_slot(game, allocated, &source_slot, error))
+        return q3_rollback_spawn(game, allocated, error);
+    game->source_entities[source_slot].classname = state.classname;
     if (!classname) {
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_UNKNOWN};
         q3_map_warn(game, (qa_actor_id){0}, "Q3 authored entity has no classname");
-        return true;
+        return qa_session_release(game->options.services.session, state.actor, error);
     }
     qa_q3_map_filter reason = QA_Q3_MAP_FILTER_NONE;
     bool rejected;
     if (!filtered(game, fields, &reason, &rejected, error))
-        return false;
+        return q3_rollback_spawn(game, state.actor, error);
     if (rejected) {
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_FILTERED,
                                         .filter = reason,
                                         .classname = state.classname};
-        return true;
+        return qa_session_release(game->options.services.session, state.actor, error);
     }
+    q3_wire_entity_source *wire = q3_wire_entity(game, state.actor);
+    if (!wire)
+        return q3_rollback_spawn(game, state.actor, error);
+    wire->authored_origin = state.origin;
+    wire->authored_angles = state.angles;
+    wire->position.base = state.origin;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, state.actor, &body, error))
+        return q3_rollback_spawn(game, state.actor, error);
+    body.origin = state.origin;
+    if (!qa_world_body_write(game->options.services.world, state.actor, &body, error))
+        return q3_rollback_spawn(game, state.actor, error);
     uint32_t item_index = 0;
     if (qa_q3_find_item(game->options.product, classname, &item_index)) {
         if (!q3_map_register_item(game, item_index, error))
             return false;
         if (game->map->options.item_disabled &&
             game->map->options.item_disabled(game->map->options.context, item_index)) {
+            double wait, random;
+            if (!q3_map_number(fields, "wait", 0, &wait, error) ||
+                !q3_map_number(fields, "random", 0, &random, error))
+                return q3_rollback_spawn(game, state.actor, error);
+            state.wait = (float)wait;
+            state.random = (float)random;
+            state.kind = QA_Q3_MAP_POINT;
+            if (!q3_map_allocate(game, &state, NULL, false, error) ||
+                !q3_wire_entity_ready(game, state.actor, error))
+                return q3_rollback_spawn(game, state.actor, error);
             *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_FILTERED,
                                             .filter = QA_Q3_MAP_FILTER_DISABLED_ITEM,
+                                            .actor = state.actor,
                                             .classname = state.classname};
             return true;
         }
-        double no_global_sound;
-        if (!q3_map_number(fields, "noglobalsound", 0, &no_global_sound, error))
-            return false;
-        state.speed = (float)no_global_sound;
         if (!q3_map_spawn_item(game, fields, &state, item_index, error))
             return false;
-    } else if (point_class(classname)) {
+    } else if (game->options.product == QA_Q3_TEAM_ARENA &&
+               (!strcmp(classname, "team_redobelisk") ||
+                !strcmp(classname, "team_blueobelisk") ||
+                !strcmp(classname, "team_neutralobelisk"))) {
         state.kind = QA_Q3_MAP_POINT;
         if (!q3_map_allocate(game, &state, NULL, false, error))
             return false;
+        int32_t team = !strcmp(classname, "team_redobelisk") ? 1 :
+            !strcmp(classname, "team_blueobelisk") ? 2 : 0;
+        qa_actor_id trigger;
+        if (!qa_q3_source_obelisk_spawn(game, state.actor, team,
+                                         state.spawnflags, &trigger, error))
+            return false;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), state.actor))
+            state.actor = (qa_actor_id){0};
+        else {
+            qa_q3_map_actor_state *stored = q3_map_get(game, state.actor);
+            qa_linked_body linked;
+            if (stored)
+                stored->linked = qa_world_linked(game->options.services.world,
+                                                 state.actor, &linked);
+        }
+    } else if (point_class(classname)) {
+        state.kind = QA_Q3_MAP_POINT;
+        if (!strcmp(classname, "info_player_start")) {
+            if (!q3_map_intern_cstr(game, "info_player_deathmatch", &state.classname, error))
+                return q3_rollback_spawn(game, state.actor, error);
+            game->source_entities[source_slot].classname = state.classname;
+        }
+        if (!strcmp(classname, "info_player_start") ||
+            !strcmp(classname, "info_player_deathmatch")) {
+            int32_t value;
+            q3_map_integer(fields, "nobots", 0, &value);
+            state.no_bots = value != 0;
+            q3_map_integer(fields, "nohumans", 0, &value);
+            state.no_humans = value != 0;
+        }
+        if (!q3_map_allocate(game, &state, NULL, false, error))
+            return false;
+        if (!q3_wire_entity_ready(game, state.actor, error))
+            return q3_rollback_spawn(game, state.actor, error);
     } else if (!strcmp(classname, "info_null") || !strcmp(classname, "func_group") ||
                !strcmp(classname, "light") || !strcmp(classname, "misc_model")) {
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_SPAWNED,
                                         .classname = state.classname};
-        return true;
+        return qa_session_release(game->options.services.session, state.actor, error);
     } else if (target_class(classname)) {
         if (!q3_map_spawn_target(game, fields, &state, error))
             return false;
@@ -575,7 +672,7 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
         q3_map_warn(game, (qa_actor_id){0}, "Q3 classname has no native spawn function");
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_UNKNOWN,
                                         .classname = state.classname};
-        return true;
+        return qa_session_release(game->options.services.session, state.actor, error);
     }
     *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_SPAWNED,
                                     .actor = state.actor,
@@ -594,19 +691,12 @@ bool qa_q3_map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
     return result;
 }
 
-static int compare_ordinal(const void *left, const void *right) {
-    const qa_q3_map_actor_state *const *a = left, *const *b = right;
-    if ((*a)->ordinal != (*b)->ordinal)
-        return (*a)->ordinal < (*b)->ordinal ? -1 : 1;
-    return (*a)->actor.slot < (*b)->actor.slot ? -1 : (*a)->actor.slot > (*b)->actor.slot;
-}
-
 static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     if (!game || !game->map || !game->map->world_spawned || game->map->post_spawned)
         return q3_map_fail(error, "invalid Q3 map post-spawn phase");
     size_t count = 0;
-    for (uint32_t i = 0; i < game->map->capacity; ++i)
-        if (game->map->actors[i].active)
+    for (uint32_t i = 0; i < game->source_count; ++i)
+        if (q3_map_get(game, game->source_entities[i].actor))
             ++count;
     qa_q3_map_actor_state **ordered = count ? malloc(count * sizeof(*ordered)) : NULL;
     if (count && !ordered) {
@@ -614,10 +704,11 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
         return false;
     }
     size_t n = 0;
-    for (uint32_t i = 0; i < game->map->capacity; ++i)
-        if (game->map->actors[i].active)
-            ordered[n++] = &game->map->actors[i];
-    qsort(ordered, count, sizeof(*ordered), compare_ordinal);
+    for (uint32_t i = 0; i < game->source_count; ++i) {
+        qa_q3_map_actor_state *state = q3_map_get(game, game->source_entities[i].actor);
+        if (state)
+            ordered[n++] = state;
+    }
     for (size_t i = 0; i < count; ++i) {
         ordered[i]->team_master = (qa_actor_id){0};
         ordered[i]->team_next = (qa_actor_id){0};
@@ -647,6 +738,9 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     if (!q3_map_mover_post_spawn(game, error))
         return false;
     game->map->post_spawned = true;
+    if (game->options.rules.game_type >= 3 && game->options.hooks.source_team_items &&
+        !game->options.hooks.source_team_items(game->options.hooks.context, error))
+        return false;
     size_t item_count;
     (void)qa_q3_items(game->options.product, &item_count);
     uint8_t registered[64];

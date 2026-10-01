@@ -5,6 +5,8 @@ bool qa_q3_bind_mover(qa_q3_game *game, qa_actor_id actor, const qa_q3_mover_def
     if (!game || game->source_restored || !definition || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
         !qa_vec_finite(definition->first) || !qa_vec_finite(definition->second) ||
+        definition->blocked < QA_Q3_MOVER_BLOCKED_NONE ||
+        definition->blocked > QA_Q3_MOVER_BLOCKED_DOOR ||
         definition->state_index < 0 || definition->state_index > 3)
         return q3_fail(error, "invalid Q3 mover admission");
     q3_actor *entry = &game->actors[actor.slot];
@@ -18,7 +20,8 @@ bool qa_q3_bind_mover(qa_q3_game *game, qa_actor_id actor, const qa_q3_mover_def
 static bool mover_read(void *context, qa_actor_id actor, qa_q3_mover_state *out) {
     qa_q3_game *game = context;
     q3_actor *entry = q3_actor_get(game, actor);
-    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read) {
+    if ((!entry || entry->kind == Q3_ACTOR_PLAYER || entry->kind == Q3_ACTOR_VICTORY_MODEL) &&
+        game->options.hooks.foreign_mover_read) {
         if (game->options.hooks.foreign_mover_read(game->options.hooks.context, actor, out))
             return qa_actors_get(qa_session_actors(game->options.services.session), actor) != NULL;
         entry = q3_actor_get(game, actor);
@@ -40,10 +43,29 @@ static bool mover_read(void *context, qa_actor_id actor, qa_q3_mover_state *out)
                                .position = {.type = QA_TRAJECTORY_STATIONARY, .base = body.origin},
                                .angular = {.type = QA_TRAJECTORY_STATIONARY, .base = body.angles},
                                .ground_entity_number = 1023};
-    if (entry->kind == Q3_ACTOR_PLAYER) {
-        out->kind = QA_Q3_MOVER_NATIVE_PLAYER;
-        out->delta_yaw_word = entry->state.player.delta_yaw_word;
-        out->ground_entity_number = entry->state.player.ground_entity_number;
+    if (entry->kind == Q3_ACTOR_PLAYER || entry->kind == Q3_ACTOR_VICTORY_MODEL) {
+        uint32_t slot, client;
+        if (qa_q3_source_actor_slot(game, actor, &slot, NULL) &&
+            q3_source_client_pointer(game, actor, &client)) {
+            qa_q3_entity entity; qa_q3_wire_visibility visible;
+            qa_q3_source_client_motion motion;
+            if (!qa_q3_wire_entity_read(game, slot, &entity, &visible, &ignored) ||
+                !qa_q3_wire_borrowed_client_motion_read(game, actor, &motion, &ignored)) return false;
+            out->kind = entity.eType == 1 ||
+                (entry->kind == Q3_ACTOR_VICTORY_MODEL && entry->state.postgame.physics_object)
+                    ? QA_Q3_MOVER_NATIVE_PLAYER : QA_Q3_MOVER_NATIVE_FIXED;
+            out->has_client = true;
+            out->client_origin = motion.origin; out->delta_yaw_word = motion.delta_yaw_word;
+            out->position = (qa_trajectory){.type = (qa_trajectory_type)entity.pos.type,
+                .time_ms = entity.pos.time, .duration_ms = entity.pos.duration,
+                .base = qa_v3(entity.pos.base[0], entity.pos.base[1], entity.pos.base[2]),
+                .delta = qa_v3(entity.pos.delta[0], entity.pos.delta[1], entity.pos.delta[2])};
+            out->angular = (qa_trajectory){.type = (qa_trajectory_type)entity.apos.type,
+                .time_ms = entity.apos.time, .duration_ms = entity.apos.duration,
+                .base = qa_v3(entity.apos.base[0], entity.apos.base[1], entity.apos.base[2]),
+                .delta = qa_v3(entity.apos.delta[0], entity.apos.delta[1], entity.apos.delta[2])};
+            out->ground_entity_number = entity.groundEntityNum;
+        } else out->kind = QA_Q3_MOVER_SHARED;
     } else if (entry->kind == Q3_ACTOR_ITEM) {
         out->kind = QA_Q3_MOVER_NATIVE_MOVABLE;
         out->position = entry->state.item.trajectory;
@@ -64,7 +86,8 @@ static bool mover_write(void *context, qa_actor_id actor, const qa_q3_mover_stat
     qa_q3_game *game = context;
     q3_actor *entry = q3_actor_get(game, actor);
     qa_q3_mover_state foreign;
-    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read) {
+    if ((!entry || entry->kind == Q3_ACTOR_PLAYER || entry->kind == Q3_ACTOR_VICTORY_MODEL) &&
+        game->options.hooks.foreign_mover_read) {
         bool selected = game->options.hooks.foreign_mover_read(
             game->options.hooks.context, actor, &foreign);
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
@@ -89,9 +112,17 @@ static bool mover_write(void *context, qa_actor_id actor, const qa_q3_mover_stat
         entry->state.mover.state = *state;
         break;
     case Q3_ACTOR_PLAYER:
-        entry->state.player.delta_yaw_word = state->delta_yaw_word;
-        entry->state.player.ground_entity_number = state->ground_entity_number;
+        if (state->has_client)
+            return qa_q3_wire_entity_motion_write(game, actor, &state->position,
+                &state->angular, state->ground_entity_number, error) &&
+                (!state->write_client_motion || qa_q3_wire_borrowed_client_motion_write(game, actor,
+                    &(qa_q3_source_client_motion){state->client_origin, state->delta_yaw_word}, error));
         break;
+    case Q3_ACTOR_VICTORY_MODEL:
+        return qa_q3_wire_entity_motion_write(game, actor, &state->position, &state->angular,
+            state->ground_entity_number, error) && (!state->has_client || !state->write_client_motion ||
+                qa_q3_wire_borrowed_client_motion_write(game, actor,
+                    &(qa_q3_source_client_motion){state->client_origin, state->delta_yaw_word}, error));
     case Q3_ACTOR_ITEM:
         entry->state.item.trajectory = state->position;
         entry->state.item.ground_entity_number = state->ground_entity_number;
@@ -124,8 +155,6 @@ bool q3_mover_set_state(qa_q3_game *game, qa_actor_id actor, int32_t state, int3
     qa_trajectory *position = &mover->state.position;
     mover->state_index = state;
     position->time_ms = time;
-    if (position->duration_ms < 1)
-        position->duration_ms = 1;
     if (state == 0 || state == 1) {
         position->type = QA_TRAJECTORY_STATIONARY;
         position->base = state == 0 ? mover->first : mover->second;
@@ -142,7 +171,7 @@ bool q3_mover_set_state(qa_q3_game *game, qa_actor_id actor, int32_t state, int3
         return false;
     entry = q3_actor_get(game, actor);
     return !entry || entry->kind != Q3_ACTOR_MOVER ||
-           qa_world_link(game->options.services.world, actor, NULL, error);
+           qa_q3_wire_link(game, actor, NULL, error);
 }
 bool q3_mover_match_team(qa_q3_game *game, qa_actor_id leader, int32_t state, int32_t time,
                          qa_error *error) {
@@ -182,7 +211,9 @@ static bool use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator
         return q3_map_mover_used(game, actor, 0, 2, error);
     }
     if (mover->state_index == 1) {
-        mover->next_think_ms = q3_add_time(game->now_ms, mover->wait_ms);
+        mover->next_think_ms = q3_source_float_to_int(
+            q3_source_float_add((float)game->now_ms, mover->wait_ms));
+        q3_postgame_nextthink_assigned(game, actor, mover->next_think_ms);
         return true;
     }
     int32_t total = mover->state.position.duration_ms;
@@ -207,6 +238,11 @@ bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator,
 static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id actor,
                          qa_actor_id other, int32_t now, qa_error *error) {
     qa_q3_game *game = context;
+    if (action == QA_Q3_MOVER_THINK) {
+        bool replaced;
+        if (!q3_postgame_think_override(game, actor, &replaced, error)) return false;
+        if (replaced) return true;
+    }
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
@@ -220,6 +256,13 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_MISSILE)
             return true;
+        q3_wire_entity_source *source = q3_wire_entity(game, actor);
+        if (!source)
+            return q3_fail(error, "Q3 blocked proximity mine lost its actual source row");
+        source->loop_sound = 0;
+        entry->state.missile.loop_sound = 0;
+        if (!q3_wire_add_event(game, actor, 67, 0, error))
+            return false;
         if (!q3_event(game, actor, other, QA_BUILTIN_IMPACT, 67, 0, body.origin, qa_v3(0, 0, 0),
                       qa_v3(0, 0, 0), error))
             return false;
@@ -229,8 +272,13 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
         return true;
     qa_q3_mover_definition mover = entry->state.mover;
     if (action == QA_Q3_MOVER_BLOCKED) {
+        if (mover.blocked == QA_Q3_MOVER_BLOCKED_NONE)
+            return !game->options.hooks.mover_action ||
+                game->options.hooks.mover_action(game->options.hooks.context,
+                                                  action, actor, other, now, error);
         q3_actor *victim = q3_actor_get(game, other);
-        bool player = victim && victim->kind == Q3_ACTOR_PLAYER;
+        uint32_t client;
+        bool player = q3_source_client_pointer(game, other, &client);
         qa_builtin_actor_traits traits = {0};
         if (!player && game->options.services.actor_traits &&
             game->options.services.actor_traits(game->options.services.context, other,
@@ -256,7 +304,15 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
             if (!q3_actor_get(game, actor) ||
                 !qa_actors_get(qa_session_actors(game->options.services.session), other))
                 return true;
-            if (!q3_event(game, other, actor, QA_BUILTIN_ITEM, 41, 0, body.origin, qa_v3(0, 0, 0),
+            q3_wire_entity_source *other_wire = q3_wire_entity(game, other);
+            qa_vec3 origin = other_wire ? other_wire->authored_origin : body.origin;
+            qa_actor_id temporary;
+            if (!q3_wire_temp_entity(game, origin, 41, &temporary, error))
+                return false;
+            if (!q3_actor_get(game, actor) ||
+                !qa_actors_get(qa_session_actors(game->options.services.session), other))
+                return true;
+            if (!q3_event(game, other, actor, QA_BUILTIN_ITEM, 41, 0, origin, qa_v3(0, 0, 0),
                           qa_v3(0, 0, 0), error))
                 return false;
             return !qa_actors_get(qa_session_actors(game->options.services.session), other) ||
@@ -283,7 +339,10 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
             entry = q3_actor_get(game, actor);
             if (!entry)
                 return true;
-            entry->state.mover.next_think_ms = q3_add_time(now, mover.wait_ms);
+            entry->state.mover.next_think_ms = q3_source_float_to_int(
+                /* Reached_BinaryMover assigns ReturnToPos1 as the thinker. */
+                q3_source_float_add((float)now, mover.wait_ms));
+            q3_postgame_native_think_assigned(game, actor);
             if (mover.target && game->options.services.use_targets &&
                 !game->options.services.use_targets(
                     game->options.services.context, actor,
@@ -294,7 +353,8 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
                 !q3_map_mover_used(game, actor, 3, 0, error))
                 return false;
         }
-    } else if (action == QA_Q3_MOVER_THINK && mover.next_think_ms && now >= mover.next_think_ms) {
+    } else if (action == QA_Q3_MOVER_THINK && (float)mover.next_think_ms > 0.0f &&
+               (double)(float)mover.next_think_ms <= (double)now) {
         entry->state.mover.next_think_ms = 0;
         if (mover.state_index == 1) {
             if (!q3_mover_match_team(game, actor, 3, now, error) ||

@@ -1,8 +1,77 @@
 #include "internal.h"
+#include "source_postgame.h"
 
 bool q3_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
+}
+bool qa_q3_source_memory_allocate(qa_q3_game *game, uint32_t size, uint32_t *out,
+                                  qa_error *error) {
+    if (!game || !out || size > INT32_MAX || game->source_restored ||
+        game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "G_Alloc requires a nonnegative source int size");
+    uint32_t point = game->memory.allocated_bytes, aligned = (size + 31u) & ~31u;
+    int32_t debug = 0;
+    ++game->observation_depth;
+    bool ok = !game->options.hooks.memory_debug_integer ||
+        game->options.hooks.memory_debug_integer(game->options.hooks.context, &debug, error);
+    if (ok && debug && game->options.hooks.console_print) {
+        uint32_t left_bits = QA_Q3_SOURCE_MEMORY_BYTES - point - aligned;
+        int32_t left; memcpy(&left, &left_bits, sizeof(left));
+        char text[96];
+        snprintf(text, sizeof(text), "G_Alloc of %u bytes (%i left)\n", size, left);
+        ok = game->options.hooks.console_print(game->options.hooks.context, text, error);
+    }
+    --game->observation_depth;
+    if (!ok) return false;
+    if (point != game->memory.allocated_bytes)
+        return q3_fail(error, "Q3 GAME memory changed during its allocation report");
+    if (size > QA_Q3_SOURCE_MEMORY_BYTES - point) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "G_Alloc: failed on allocation of %u bytes\n", size);
+        return false;
+    }
+    game->memory.allocated_bytes = point + aligned;
+    *out = point;
+    return true;
+}
+bool qa_q3_source_memory_rewind(qa_q3_game *game, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth)
+        return q3_fail(error, "Q3 GAME memory rewind requires its idle source owner");
+    game->memory.allocated_bytes = 0;
+    return true;
+}
+bool qa_q3_source_memory_allocated(const qa_q3_game *game, uint32_t *out, qa_error *error) {
+    if (!game || !out) return q3_fail(error, "Q3 GAME memory read needs its source owner");
+    *out = game->memory.allocated_bytes;
+    return true;
+}
+bool qa_q3_source_memory_status(qa_q3_game *game, qa_error *error) {
+    if (!game || game->source_restored || !game->options.hooks.console_print ||
+        game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "Q3 memory status requires its real console print service");
+    char text[96];
+    snprintf(text, sizeof(text), "Game memory status: %u out of %u bytes allocated\n",
+             game->memory.allocated_bytes, QA_Q3_SOURCE_MEMORY_BYTES);
+    ++game->observation_depth;
+    bool ok = game->options.hooks.console_print(game->options.hooks.context, text, error);
+    --game->observation_depth;
+    return ok;
+}
+bool qa_q3_source_memory_read(const qa_q3_game *game, uint32_t offset, void *out,
+                              uint32_t size, qa_error *error) {
+    if (!game || (size && !out) || offset > QA_Q3_SOURCE_MEMORY_BYTES ||
+        size > QA_Q3_SOURCE_MEMORY_BYTES - offset)
+        return q3_fail(error, "Q3 source allocation exceeds its real GAME pool");
+    if (size) memcpy(out, game->memory.pool + offset, size);
+    return true;
+}
+bool qa_q3_source_memory_write(qa_q3_game *game, uint32_t offset, const void *bytes,
+                               uint32_t size, qa_error *error) {
+    if (!game || game->source_restored || (size && !bytes) || offset > QA_Q3_SOURCE_MEMORY_BYTES ||
+        size > QA_Q3_SOURCE_MEMORY_BYTES - offset)
+        return q3_fail(error, "Q3 source allocation write exceeds its real GAME pool");
+    if (size) memmove(game->memory.pool + offset, bytes, size);
+    return true;
 }
 bool q3_rollback_spawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_error original = {0}, cleanup = {0};
@@ -69,18 +138,41 @@ int32_t q3_sub_time(int32_t a, int32_t b) {
     memcpy(&value, &bits, sizeof(value));
     return value;
 }
+q3_actor *q3_actor_storage(qa_q3_game *game, qa_actor_id actor) {
+    if (!game || actor.slot >= game->capacity) return NULL;
+    uint32_t slot = game->source_numbers[actor.slot];
+    if (slot < QA_Q3_SOURCE_CLIENTS &&
+        qa_actor_id_equal(game->source_entities[slot].actor, actor))
+        return &game->client_actors[slot];
+    return &game->actors[actor.slot];
+}
 q3_actor *q3_actor_get(qa_q3_game *game, qa_actor_id actor) {
     if (!game || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return NULL;
-    q3_actor *entry = &game->actors[actor.slot];
+    q3_actor *entry = q3_actor_storage(game, actor);
     return entry->kind && qa_actor_id_equal(entry->actor, actor) ? entry : NULL;
+}
+const q3_actor *q3_actor_at_const(const qa_q3_game *game, uint32_t host_slot) {
+    if (!game || host_slot >= game->capacity) return NULL;
+    uint32_t slot = game->source_numbers[host_slot];
+    if (slot < QA_Q3_SOURCE_CLIENTS &&
+        game->source_entities[slot].actor.registry &&
+        game->source_entities[slot].actor.slot == host_slot)
+        return &game->client_actors[slot];
+    return &game->actors[host_slot];
+}
+q3_actor *q3_actor_at(qa_q3_game *game, uint32_t host_slot) {
+    return (q3_actor *)q3_actor_at_const(game, host_slot);
 }
 const q3_actor *q3_actor_const(const qa_q3_game *game, qa_actor_id actor) {
     if (!game || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return NULL;
-    const q3_actor *entry = &game->actors[actor.slot];
+    uint32_t slot = game->source_numbers[actor.slot];
+    const q3_actor *entry = slot < QA_Q3_SOURCE_CLIENTS &&
+        qa_actor_id_equal(game->source_entities[slot].actor, actor)
+        ? &game->client_actors[slot] : &game->actors[actor.slot];
     return entry->kind && qa_actor_id_equal(entry->actor, actor) ? entry : NULL;
 }
 uint32_t q3_rand(qa_q3_game *game) {
@@ -94,6 +186,18 @@ float q3_crandom(qa_q3_game *game) {
     return q3_source_float_multiply(
         2.0f, q3_source_float_add(q3_random(game), -0.5f));
 }
+bool qa_q3_game_random(qa_q3_game *game, float *out, qa_error *error) {
+    if (!game || !out || game->source_restored)
+        return q3_fail(error, "Q3 random needs its actual active source owner");
+    *out = q3_random(game);
+    return true;
+}
+bool qa_q3_game_rand(qa_q3_game *game, uint32_t *out, qa_error *error) {
+    if (!game || !out || game->source_restored)
+        return q3_fail(error, "Q3 rand needs its actual active source owner");
+    *out = q3_rand(game);
+    return true;
+}
 
 qa_q3_rules qa_q3_default_rules(void) {
     return (qa_q3_rules){.proximity_timeout_ms = 20000,
@@ -102,6 +206,7 @@ qa_q3_rules qa_q3_default_rules(void) {
                          .knockback = 1000,
                          .weapon_respawn_seconds = 5,
                          .team_weapon_respawn_seconds = 30,
+                         .gravity = 800,
                          .blood = true};
 }
 static bool valid_rules(const qa_q3_rules *rules) {
@@ -111,7 +216,12 @@ static bool valid_rules(const qa_q3_rules *rules) {
            isfinite(rules->weapon_respawn_seconds) &&
            fabsf(rules->weapon_respawn_seconds) <= 2147483 &&
            isfinite(rules->team_weapon_respawn_seconds) &&
-           fabsf(rules->team_weapon_respawn_seconds) <= 2147483;
+           fabsf(rules->team_weapon_respawn_seconds) <= 2147483 && isfinite(rules->gravity);
+}
+static bool valid_source_rules(const qa_q3_rules *rules) {
+    return rules && isfinite(rules->quad_factor) && isfinite(rules->knockback) &&
+           isfinite(rules->weapon_respawn_seconds) &&
+           isfinite(rules->team_weapon_respawn_seconds) && isfinite(rules->gravity);
 }
 static bool physics_read(void *context, qa_actor_id actor, qa_physics_properties *out) {
     qa_q3_game *game = context;
@@ -124,6 +234,8 @@ static bool physics_read(void *context, qa_actor_id actor, qa_physics_properties
         out->flags |= QA_PHYSICS_PLAYER;
     else if (entry && entry->kind == Q3_ACTOR_MISSILE)
         out->motion = QA_PHYSICS_FLY_MISSILE;
+    else if (entry && entry->kind == Q3_ACTOR_VICTORY_MODEL)
+        out->clip_mask = UINT32_C(0x10001);
     else
         out->clip_mask = 1;
     return true;
@@ -153,17 +265,23 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     game->player_binding_tokens = calloc(game->capacity, sizeof(*game->player_binding_tokens));
     game->item_observations = calloc(game->capacity, sizeof(*game->item_observations));
     game->inventory_owners = calloc(game->capacity, sizeof(*game->inventory_owners));
-    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens || !game->item_observations || !game->inventory_owners) {
+    game->source_numbers = malloc(game->capacity * sizeof(*game->source_numbers));
+    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens || !game->item_observations || !game->inventory_owners || !game->source_numbers) {
         free(game->actors);
         free(game->kamikaze_cooldowns);
         free(game->player_binding_tokens);
         free(game->item_observations);
         free(game->inventory_owners);
+        free(game->source_numbers);
         free(game);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 actor extensions");
         return false;
     }
     game->rng = options->random_seed;
+    if (!q3_wire_create(game, error)) goto fail;
+    q3_source_state_reset(game);
+    if (!qa_builtin_resource(&options->services, "noclass", &game->source_noclass, error) ||
+        !qa_builtin_resource(&options->services, "freed", &game->source_freed, error)) goto fail;
     game->physics = (qa_physics){.world = options->services.world,
                                  .gravity = 800,
                                  .max_velocity = 2000,
@@ -185,6 +303,8 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     *out = game;
     return true;
 fail:
+    q3_wire_destroy(game);
+    free(game->source_numbers);
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
     free(game->item_observations);
@@ -196,7 +316,8 @@ fail:
 bool qa_q3_destroy_ready(const qa_q3_game *game) {
     if (!game)
         return true;
-    if (game->observation_depth || !qa_session_safe(game->options.services.session) ||
+    if (game->observation_depth || !q3_source_origins_idle(game) ||
+        !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
         !qa_combat_idle(game->options.services.combat))
         return false;
@@ -221,6 +342,8 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     }
     q3_map_destroy(game);
     q3_configstrings_clear(game);
+    q3_wire_destroy(game);
+    free(game->source_numbers);
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
             qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
@@ -256,15 +379,46 @@ bool qa_q3_set_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error
     game->options.rules = *rules;
     return true;
 }
+bool qa_q3_set_source_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth ||
+        !valid_source_rules(rules))
+        return q3_fail(error, "invalid Q3 source game rules");
+    game->options.rules = *rules;
+    return true;
+}
 int32_t q3_entity_number(const qa_q3_game *game, qa_actor_id actor) {
+    if (actor.slot < game->capacity &&
+        qa_actors_get(qa_session_actors(game->options.services.session), actor)) {
+        uint32_t slot = game->source_numbers[actor.slot];
+        if (slot < QA_Q3_SOURCE_ENTITIES &&
+            qa_actor_id_equal(game->source_entities[slot].actor, actor))
+            return (int32_t)slot;
+    }
     if (game->options.hooks.entity_number)
         return game->options.hooks.entity_number(game->options.hooks.context, actor);
-    const qa_actor_record *record =
-        qa_actors_get(qa_session_actors(game->options.services.session), actor);
-    return record && record->owner == game->options.owner && record->has_source &&
-                   record->source_slot < 1022
-               ? (int32_t)record->source_slot
-               : 1022;
+    return QA_Q3_SOURCE_WORLD;
+}
+static bool sound_report(qa_q3_game *game, qa_actor_id actor, qa_string_id resource,
+                         qa_vec3 origin, int32_t channel, qa_error *error) {
+    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
+                              .family = QA_GAME_Q3,
+                              .provider = game->options.owner,
+                              .actor = actor,
+                              .time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
+                              .resource = resource,
+                              .origin = origin,
+                              .volume = 1,
+                              .attenuation = 1,
+                              .channel = channel};
+    return qa_builtin_emit(&game->options.services, &event, error);
+}
+bool q3_sound_report(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t channel,
+                     qa_error *error) {
+    qa_string_id resource;
+    qa_body_state body;
+    return qa_builtin_resource(&game->options.services, path, &resource, error) &&
+        q3_source_body_read(game, actor, &body, error) &&
+        sound_report(game, actor, resource, body.origin, channel, error);
 }
 bool q3_sound(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t channel,
               qa_error *error) {
@@ -272,19 +426,19 @@ bool q3_sound(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t cha
     if (!qa_builtin_resource(&game->options.services, path, &resource, error))
         return false;
     qa_body_state body;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+    if (!q3_source_body_read(game, actor, &body, error))
         return false;
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q3,
-                              .provider = game->options.owner,
-                              .actor = actor,
-                              .time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
-                              .resource = resource,
-                              .origin = body.origin,
-                              .volume = 1,
-                              .attenuation = 1,
-                              .channel = channel};
-    return qa_builtin_emit(&game->options.services, &event, error);
+    uint32_t source_slot;
+    if (qa_q3_source_actor_slot(game, actor, &source_slot, NULL)) {
+        int32_t sound_index;
+        qa_actor_id temporary;
+        if (!qa_q3_sound_index(game, path, &sound_index, error) ||
+            !q3_wire_temp_entity(game, body.origin, 45, &temporary, error)) return false;
+        qa_q3_entity *source = q3_wire_temporary(game, temporary);
+        if (!source) return q3_fail(error, "Q3 sound lost its actual temporary entity");
+        source->eventParm = sound_index;
+    }
+    return sound_report(game, actor, resource, body.origin, channel, error);
 }
 qa_item_id qa_q3_weapon_item(const qa_q3_game *game, qa_q3_weapon weapon, bool ammo) {
     if (!game || weapon <= QA_Q3_W_NONE || weapon >= QA_Q3_WEAPON_COUNT)
@@ -310,14 +464,49 @@ bool q3_event(qa_q3_game *game, qa_actor_id actor, qa_actor_id other, qa_builtin
 bool q3_player_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t parameter,
                      qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
-    if (entry && entry->kind == Q3_ACTOR_PLAYER)
-        ++entry->state.player.event_sequence;
+    if (entry && entry->kind == Q3_ACTOR_PLAYER) {
+        qa_q3_player_state *player = &entry->state.player;
+        uint32_t slot = player->event_sequence & 1u;
+        player->events[slot] = code;
+        player->event_parameters[slot] = parameter;
+        ++player->event_sequence;
+        uint32_t source_slot;
+        if (qa_q3_native_client_slot(game, actor, &source_slot, NULL)) {
+            qa_q3_player *copied = q3_client_follow_player(game, source_slot);
+            if (copied) {
+                copied->events[slot] = code;
+                copied->eventParms[slot] = parameter;
+                memcpy(&copied->eventSequence, &player->event_sequence, sizeof(copied->eventSequence));
+            }
+        }
+    }
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return true;
     qa_body_state body;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+    if (!q3_source_body_read(game, actor, &body, error))
         return false;
     return q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ANIMATION, code, parameter,
+                    body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
+}
+bool q3_add_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t parameter,
+                   qa_error *error) {
+    uint32_t slot;
+    if (qa_q3_source_actor_slot(game, actor, &slot, NULL)) {
+        if (!q3_wire_add_event(game, actor, code, parameter, error)) return false;
+    } else {
+        q3_actor *entry = q3_actor_get(game, actor);
+        if (entry && entry->kind == Q3_ACTOR_PLAYER && code) {
+            qa_q3_player_state *player = &entry->state.player;
+            player->external_event = code | (((player->external_event & 0x300) + 0x100) & 0x300);
+            player->external_event_parameter = parameter;
+            player->external_event_time = game->now_ms;
+        }
+    }
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor)) return true;
+    qa_body_state body;
+    if (!q3_source_body_read(game, actor, &body, error)) return false;
+    return !q3_actor_get(game, actor) ||
+           q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ANIMATION, code, parameter,
                     body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
 }
 bool q3_trace(qa_q3_game *game, qa_vec3 start, qa_vec3 end, qa_actor_id pass, uint32_t mask,
@@ -341,8 +530,22 @@ bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
     if (!qa_combat_read(game->options.services.combat, attacker, &ac, &ignored) ||
         !qa_combat_read(game->options.services.combat, target, &tc, &ignored))
         return false;
-    return tc.can_take_damage && tc.health > 0 &&
-           (game->options.rules.game_type < 3 || ac.team != tc.team);
+    if (!tc.can_take_damage || tc.health <= 0 ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), attacker) ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), target)) return false;
+    if (game->options.rules.game_type < 3) return true;
+    uint32_t attacker_client, target_client;
+    bool native_attacker = q3_source_client_pointer(game, attacker, &attacker_client);
+    bool native_target = q3_source_client_pointer(game, target, &target_client);
+    if (native_attacker && native_target)
+        return game->clients[attacker_client].session.team != game->clients[target_client].session.team;
+    if (!native_attacker && !native_target) return ac.team != tc.team;
+    char native_team[32];
+    snprintf(native_team, sizeof(native_team), "q3-team:%i",
+        game->clients[native_attacker ? attacker_client : target_client].session.team);
+    const char *foreign_team = qa_strings_cstr(qa_session_strings(game->options.services.session),
+                                                native_attacker ? tc.team : ac.team);
+    return !foreign_team || strcmp(native_team, foreign_team) != 0;
 }
 bool q3_is_player(qa_q3_game *game, qa_actor_id actor) {
     const q3_actor *entry = q3_actor_const(game, actor);
@@ -430,6 +633,10 @@ bool qa_q3_damage_allowed(const qa_q3_game *game, const qa_damage_request *reque
 bool q3_damage(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker, qa_actor_id inflictor,
                qa_q3_weapon weapon, int32_t method, uint32_t flags, float amount, qa_vec3 direction,
                qa_vec3 point, bool radius, qa_damage_outcome *result, qa_error *error) {
+    if (!attacker.registry)
+        attacker = game->source_entities[QA_Q3_SOURCE_WORLD].actor;
+    if (!inflictor.registry)
+        inflictor = game->source_entities[QA_Q3_SOURCE_WORLD].actor;
     qa_actor_owner policy = game->options.owner;
     if (game->options.hooks.combat_provider)
         policy = game->options.hooks.combat_provider(game->options.hooks.context, target, policy);
@@ -470,6 +677,7 @@ bool qa_q3_frame(qa_q3_game *game, int32_t previous, int32_t now, qa_error *erro
         return q3_fail(error, "Q3 source restoration is pending or unavailable");
     game->previous_ms = previous;
     game->now_ms = now;
+    memset(game->source_actor_ran, 0, sizeof(game->source_actor_ran));
     return q3_map_frame_begin(game, error);
 }
 static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
@@ -480,13 +688,17 @@ static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         return true;
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
-        return true;
+        return q3_postgame_think_override(game, actor, &handled, error);
+    uint32_t native_slot;
     if (entry->kind == Q3_ACTOR_PLAYER &&
+        !qa_q3_native_client_slot(game, actor, &native_slot, NULL) &&
         entry->state.player.jumppad_frame != entry->state.player.pmove_frame_count) {
         entry->state.player.jumppad_frame = 0;
         entry->state.player.jumppad_entity = 0;
     }
     switch (entry->kind) {
+    case Q3_ACTOR_PODIUM: case Q3_ACTOR_VICTORY_MODEL:
+        return q3_postgame_step(game, actor, error);
     case Q3_ACTOR_MISSILE:
         return q3_missile_step(game, actor, error);
     case Q3_ACTOR_ITEM:
@@ -503,7 +715,14 @@ static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         return q3_portal_step(game, actor, error);
     case Q3_ACTOR_CORPSE:
         return q3_corpse_step(game, actor, error);
+    case Q3_ACTOR_OBELISK:
+        return q3_obelisk_step(game, actor, error);
+    case Q3_ACTOR_TEMPORARY:
+        return q3_sub_time(game->now_ms, entry->state.temporary.event_time_ms) <= 300 ||
+               qa_session_release(game->options.services.session, actor, error);
     case Q3_ACTOR_KAMIKAZE_TIMER:
+        if (!q3_postgame_think_override(game, actor, &handled, error)) return false;
+        if (handled) return true;
         if (game->now_ms >= entry->state.kamikaze.next) {
             qa_actor_id source = entry->state.kamikaze.attacker;
             q3_actor *owner = q3_actor_get(game, source);
@@ -519,7 +738,7 @@ static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         }
         return true;
     default:
-        return true;
+        return q3_postgame_think_override(game, actor, &handled, error);
     }
 }
 bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
@@ -548,10 +767,11 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
             qa_inventory_close_items(game->options.services.inventory, inventory->holdables, NULL);
         *inventory = (q3_inventory_owner){0};
     }
-    q3_actor *entry = &game->actors[record.id.slot];
+    q3_actor *entry = q3_actor_storage(game, record.id);
     if (qa_actor_id_equal(entry->actor, record.id)) {
         q3_actor retired = *entry;
-        memset(entry, 0, sizeof(*entry));
+        if (game->source_numbers[record.id.slot] >= QA_Q3_SOURCE_CLIENTS)
+            memset(entry, 0, sizeof(*entry));
         if (retired.kind == Q3_ACTOR_MISSILE) {
             q3_missile missile = retired.state.missile;
             q3_actor *owner = q3_actor_get(game, missile.owner);
@@ -585,23 +805,79 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
         } else if (qa_actor_id_equal(missile->trigger, record.id))
             missile->trigger = (qa_actor_id){0};
     }
+    q3_source_actor_released(game, record.id);
 }
 static bool component_begin(void *context, qa_session *session, const qa_source_frame *frame,
                             qa_error *error) {
     (void)session;
     qa_q3_game *game = context;
-    return qa_q3_frame(game, game->now_ms, (int32_t)(uint32_t)(frame->time_ns / UINT64_C(1000000)),
-                       error);
+    if (game->source_restored)
+        return q3_fail(error, "Q3 source restoration is pending");
+    game->previous_ms = game->now_ms;
+    game->now_ms = (int32_t)(uint32_t)(frame->time_ns / UINT64_C(1000000));
+    memset(game->source_actor_ran, 0, sizeof(game->source_actor_ran));
+    if (game->options.hooks.source_settings_update &&
+        !game->options.hooks.source_settings_update(game->options.hooks.context, frame, error))
+        return false;
+    return q3_map_frame_begin(game, error);
 }
 static bool component_actor(void *context, qa_session *session, qa_actor_id actor,
                             const qa_source_frame *frame, qa_error *error) {
     (void)session;
-    (void)frame;
-    return qa_q3_actor_frame(context, actor, error);
+    qa_q3_game *game = context;
+    uint32_t slot;
+    return qa_q3_source_actor_slot(game, actor, &slot, NULL)
+        ? qa_q3_source_run_actor(game, actor, frame, error)
+        : qa_q3_actor_frame(game, actor, error);
+}
+bool qa_q3_source_run_actor(qa_q3_game *game, qa_actor_id actor,
+                            const qa_source_frame *frame, qa_error *error) {
+    uint32_t slot;
+    qa_source_frame active;
+    if (!game || !frame || frame->provider != game->options.owner || frame->kind != QA_CLOCK_Q3 ||
+        frame->phase != QA_ENTITY_PHYSICS ||
+        !qa_session_active_frame(game->options.services.session, frame->provider, &active) ||
+        active.number != frame->number || active.time_ns != frame->time_ns ||
+        !qa_q3_source_actor_slot(game, actor, &slot, error))
+        return q3_fail(error, "Q3 actor dispatch needs its genuine native source frame");
+    if (!game->source_entities[slot].in_use || game->source_actor_ran[slot]) return true;
+    game->source_actor_ran[slot] = true;
+    q3_wire_event_status event_status;
+    if (!q3_wire_expire_events(game, actor, &event_status, error)) return false;
+    if (event_status != Q3_WIRE_EVENT_ACTIVE) return true;
+    if (slot < QA_Q3_SOURCE_CLIENTS && game->options.hooks.source_client_run &&
+        !game->options.hooks.source_client_run(game->options.hooks.context, actor, frame, error))
+        return false;
+    if (!qa_q3_source_actor_slot(game, actor, &slot, NULL)) return true;
+    return qa_q3_actor_frame(game, actor, error);
+}
+static bool component_end(void *context, qa_session *session, const qa_source_frame *frame,
+                           qa_error *error) {
+    qa_q3_game *game = context;
+    if (!frame || session != game->options.services.session ||
+        frame->provider != game->options.owner || frame->kind != QA_CLOCK_Q3 ||
+        frame->phase != QA_CLIENT_END_FRAME || game->source_restored)
+        return q3_fail(error, "Q3 frame tail requires its actual source END phase");
+    if (game->options.hooks.source_client_end)
+        for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
+            qa_actor_id actor = game->source_entities[slot].actor;
+            if (!game->source_entities[slot].in_use || !actor.registry ||
+                !qa_actors_get(qa_session_actors(session), actor)) continue;
+            if (!game->options.hooks.source_client_end(
+                    game->options.hooks.context, actor, frame, error)) return false;
+        }
+    return !game->options.hooks.source_end_frame || game->options.hooks.source_end_frame(
+        game->options.hooks.context, frame, error);
 }
 static void component_release(void *context, qa_session *session, qa_actor_record actor) {
     (void)session;
     qa_q3_actor_released(context, actor);
+}
+static bool component_command_actor(void *context, qa_session *session, qa_actor_id actor) {
+    qa_q3_game *game = context;
+    uint32_t slot;
+    return game && !game->source_restored && session == game->options.services.session &&
+        qa_q3_native_client_slot(game, actor, &slot, NULL);
 }
 qa_component qa_q3_component(qa_q3_game *game) {
     return (qa_component){.owner = game->options.owner,
@@ -609,6 +885,8 @@ qa_component qa_q3_component(qa_q3_game *game) {
                           .state = game,
                           .begin_frame = component_begin,
                           .actor_frame = component_actor,
+                          .end_frame = component_end,
+                          .command_actor = component_command_actor,
                           .actor_released = component_release};
 }
 

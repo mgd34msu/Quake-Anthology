@@ -3,6 +3,7 @@
 typedef struct q3_attack_geometry {
     qa_vec3 muzzle, forward, right, up;
     float factor;
+    qa_q3_weapon firing_weapon;
 } q3_attack_geometry;
 static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geometry *out,
                             qa_error *error) {
@@ -10,8 +11,21 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "Q3 weapon requires an admitted player");
     qa_body_state body;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+    if (!q3_source_body_read(game, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "Q3 weapon player changed during its body read");
+    uint32_t source_slot;
+    qa_q3_weapon firing_weapon = entry->state.player.weapon;
+    if (qa_q3_native_client_slot(game, actor, &source_slot, NULL)) {
+        qa_q3_entity source;
+        qa_q3_wire_visibility visibility;
+        if (!qa_q3_wire_entity_read(game, source_slot, &source, &visibility, error))
+            return false;
+        body.origin = qa_v3(source.pos.base[0], source.pos.base[1], source.pos.base[2]);
+        firing_weapon = (qa_q3_weapon)source.weapon;
+    }
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "Q3 weapon player changed during its body read");
@@ -20,6 +34,7 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, player->view_height));
     out->muzzle = qa_physics_q3_snap(qa_vec_add(out->muzzle, qa_vec_scale(out->forward, 14)));
     out->factor = q3_damage_factor(game, player);
+    out->firing_weapon = firing_weapon;
     return true;
 }
 static bool target_state(qa_q3_game *game, qa_actor_id actor, qa_combat_state *state) {
@@ -37,7 +52,7 @@ bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, 
         entry->state.player.invulnerability_until <= game->now_ms)
         return true;
     qa_body_state body;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+    if (!q3_source_body_read(game, actor, &body, error))
         return false;
     qa_vec3 backwards = qa_vec_scale(qa_vec_normalize(direction), -1);
     qa_vec3 offset = qa_vec_sub(point, body.origin);
@@ -48,6 +63,28 @@ bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, 
     *impact = qa_vec_add(point, qa_vec_scale(backwards, (-b + sqrtf(discriminant)) * 0.5f));
     *normal = qa_vec_normalize(qa_vec_sub(*impact, body.origin));
     *hit = true;
+    qa_actor_id temporary;
+    if (!q3_wire_temp_entity(game, body.origin, 71, &temporary, error))
+        return false;
+    qa_q3_entity *event = q3_wire_temporary(game, temporary);
+    if (!event) return q3_fail(error, "Q3 invulnerability impact lost its temporary entity");
+    qa_vec3 offset_angles = qa_vec_sub(*impact, body.origin);
+    float yaw = 0, pitch = offset_angles.z > 0 ? 90 : 270;
+    if (offset_angles.x || offset_angles.y) {
+        yaw = offset_angles.x ? q3_source_float_divide(q3_source_float_multiply(
+            (float)atan2((double)offset_angles.y, (double)offset_angles.x), 180), Q3_PI)
+            : offset_angles.y > 0 ? 90 : 270;
+        if (yaw < 0) yaw = q3_source_float_add(yaw, 360);
+        float horizontal = (float)sqrt((double)q3_source_float_add(
+            q3_source_float_multiply(offset_angles.x, offset_angles.x),
+            q3_source_float_multiply(offset_angles.y, offset_angles.y)));
+        pitch = q3_source_float_divide(q3_source_float_multiply(
+            (float)atan2((double)offset_angles.z, (double)horizontal), 180), Q3_PI);
+        if (pitch < 0) pitch = q3_source_float_add(pitch, 360);
+    }
+    pitch = q3_source_float_add(-pitch, 90);
+    if (pitch > 360) pitch = q3_source_float_add(pitch, -360);
+    event->angles[0] = pitch; event->angles[1] = yaw; event->angles[2] = 0;
     return q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_IMPACT, 71, 0, body.origin, *impact,
                     *normal, error);
 }
@@ -62,6 +99,30 @@ static qa_vec3 reflected_end(qa_vec3 start, qa_vec3 point, qa_vec3 normal) {
         qa_vec_sub(incoming, qa_vec_scale(normal, 2 * qa_vec_dot(incoming, normal)));
     return qa_vec_add(point, qa_vec_scale(qa_vec_normalize(reflected), 8192));
 }
+static bool beam_event(qa_q3_game *game, qa_actor_id shooter, int32_t code, int32_t parm,
+                       qa_vec3 origin, qa_vec3 destination, qa_vec3 normal, qa_error *error) {
+    int32_t client_number = 0;
+    uint32_t slot;
+    if (code == 53 && qa_q3_native_client_slot(game, shooter, &slot, NULL)) {
+        qa_q3_entity source;
+        qa_q3_wire_visibility visibility;
+        if (!qa_q3_wire_entity_read(game, slot, &source, &visibility, error)) return false;
+        client_number = source.clientNum;
+    } else {
+        const q3_actor *player = q3_actor_const(game, shooter);
+        if (player && player->kind == Q3_ACTOR_PLAYER)
+            client_number = player->state.player.client_number;
+    }
+    qa_actor_id temporary;
+    if (!q3_wire_temp_entity(game, origin, code, &temporary, error)) return false;
+    qa_q3_entity *event = q3_wire_temporary(game, temporary);
+    if (!event) return q3_fail(error, "Q3 beam lost its temporary entity");
+    event->origin2[0] = destination.x; event->origin2[1] = destination.y;
+    event->origin2[2] = destination.z;
+    if (code == 53) { event->clientNum = client_number; event->eventParm = parm; }
+    return q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, code, parm,
+                    origin, destination, normal, error);
+}
 static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
                          const qa_trace_result *trace, qa_vec3 point, bool bullet,
                          qa_error *error) {
@@ -71,6 +132,15 @@ static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon wea
     uint8_t normal = 0;
     (void)qa_normal_byte(trace->contact_plane.normal, &normal);
     int32_t code = bullet ? (flesh ? 48 : 49) : (flesh ? 50 : 51);
+    int32_t shooter_number = q3_entity_number(game, shooter);
+    int32_t target_number = flesh ? q3_entity_number(game, trace->actor) : 0;
+    qa_actor_id temporary;
+    if (!q3_wire_temp_entity(game, point, code, &temporary, error)) return false;
+    qa_q3_entity *event = q3_wire_temporary(game, temporary);
+    if (!event) return q3_fail(error, "Q3 weapon impact lost its temporary entity");
+    event->eventParm = bullet && flesh ? target_number : normal;
+    if (bullet) event->otherEntityNum = shooter_number;
+    else if (flesh) { event->otherEntityNum = target_number; event->weapon = weapon; }
     return q3_event(game, shooter, trace->actor, QA_BUILTIN_IMPACT, code,
                     flesh ? q3_entity_number(game, trace->actor) : (int32_t)normal, point,
                     qa_v3((float)weapon, 0, 0), trace->contact_plane.normal, error);
@@ -154,12 +224,12 @@ bool q3_gauntlet(qa_q3_game *game, qa_actor_id shooter, bool *hit, qa_error *err
         !qa_actors_get(qa_session_actors(game->options.services.session), trace.actor))
         return true;
     if (flesh &&
-        !impact_event(game, shooter, QA_Q3_W_GAUNTLET, &trace, trace.end, false, error))
+        !impact_event(game, shooter, attack.firing_weapon, &trace, trace.end, false, error))
         return false;
     entry = q3_actor_get(game, shooter);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
-    if (entry->state.player.powerups[QA_Q3_P_QUAD] && !q3_player_event(game, shooter, 61, 0, error))
+    if (entry->state.player.powerups[QA_Q3_P_QUAD] && !q3_add_event(game, shooter, 61, 0, error))
         return false;
     entry = q3_actor_get(game, shooter);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
@@ -177,7 +247,7 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
                       qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 768)), pass,
                       Q3_MASK_SHOT, &trace, error))
             return false;
-        if (i && !q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 73, 0, attack.muzzle,
+        if (i && !beam_event(game, shooter, 73, 0, attack.muzzle,
                            qa_physics_q3_snap(trace.end), qa_v3(0, 0, 0), error))
             return false;
         if (trace.hit == QA_TRACE_HIT_NONE)
@@ -207,7 +277,7 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
                 return false;
         }
         if (!(trace.surface_flags & Q3_SURF_NOIMPACT) &&
-            !impact_event(game, shooter, QA_Q3_W_LIGHTNING, &trace, trace.end, false, error))
+            !impact_event(game, shooter, attack.firing_weapon, &trace, trace.end, false, error))
             return false;
         if (q3_accuracy(game, trace.actor, shooter))
             q3_credit_accuracy(game, shooter);
@@ -242,7 +312,14 @@ static float seeded_crandom(uint32_t *seed) {
 static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attack,
                     qa_error *error) {
     qa_vec3 direction = qa_physics_q3_snap(qa_vec_scale(attack.forward, 4096));
+    int32_t shooter_number = q3_entity_number(game, shooter);
+    qa_actor_id temporary;
+    if (!q3_wire_temp_entity(game, attack.muzzle, 54, &temporary, error)) return false;
+    qa_q3_entity *event = q3_wire_temporary(game, temporary);
+    if (!event) return q3_fail(error, "Q3 shotgun lost its temporary entity");
+    event->origin2[0] = direction.x; event->origin2[1] = direction.y; event->origin2[2] = direction.z;
     uint32_t seed = q3_rand(game) & 255u;
+    event->eventParm = (int32_t)seed; event->otherEntityNum = shooter_number;
     if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_SHOT, 54, (int32_t)seed,
                   attack.muzzle, direction, qa_v3(0, 0, 0), error))
         return false;
@@ -328,7 +405,7 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
                     qa_vec3 start =
                         qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.right, 4)),
                                    qa_vec_scale(attack.up, -1));
-                    if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 53, 255,
+                    if (!beam_event(game, shooter, 53, 255,
                                   qa_physics_q3_snap_towards(trace.end, attack.muzzle), start,
                                   qa_v3(0, 0, 0), error)) {
                         ok = false;
@@ -375,7 +452,7 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
         (void)qa_normal_byte(trace.contact_plane.normal, &normal);
         qa_vec3 start = qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.right, 4)),
                                    qa_vec_scale(attack.up, -1));
-        if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 53,
+        if (!beam_event(game, shooter, 53,
                       trace.surface_flags & Q3_SURF_NOIMPACT ? 255 : normal,
                       qa_physics_q3_snap_towards(trace.end, attack.muzzle), start,
                       trace.contact_plane.normal, error))

@@ -146,6 +146,8 @@ typedef struct qa_q3_map_actor_state {
     qa_q3_item_spawn item;
     uint32_t spawnflags, inline_model, ordinal;
     int32_t count, health, damage, due_ms, cooldown_ms, sound_frame, sound_random;
+    int32_t noise_index, sound_1_to_2, sound_2_to_1, sound_pos_1, sound_pos_2;
+    int32_t sound_loop;
     float speed, wait, random, delay, roll, light, alpha;
     bool active, linked, has_inline_model, touchable, usable, team_slave, item_bound;
     bool damageable;
@@ -164,6 +166,7 @@ typedef struct qa_q3_map_checkpoint {
     int32_t start_time_ms, restarted, loaded_game_type;
     float gravity;
     bool warmup, world_spawned, post_spawned, locations_linked;
+    qa_saved_actor_id location_head;
     qa_q3_map_actor_checkpoint *actors;
     size_t actor_count;
 } qa_q3_map_checkpoint;
@@ -176,6 +179,9 @@ typedef struct qa_q3_map_spawnpoint {
 } qa_q3_map_spawnpoint;
 
 bool qa_q3_maps_bind(qa_q3_game *, const qa_q3_map_options *, qa_error *);
+/* Bind only the immutable source services for an isolated save candidate.
+ * The portable continuation restores its world, client and body queue rows. */
+bool qa_q3_maps_bind_restore(qa_q3_game *, const qa_q3_map_options *, qa_error *);
 /* After the session has retired every actor and committed replacement geometry,
  * replace only Q3's map-local runtime. Provider identities, rules and detached
  * component/policy descriptors survive. This does not advance or synthesize a
@@ -184,12 +190,21 @@ bool qa_q3_maps_reset(qa_q3_game *, const qa_q3_map_options *, qa_error *);
 bool qa_q3_map_spawn(qa_q3_game *, const qa_q3_map_fields *, qa_q3_map_spawn_result *,
                      qa_error *);
 bool qa_q3_maps_post_spawn(qa_q3_game *, qa_error *);
+bool qa_q3_map_item_registered(const qa_q3_game *, uint32_t item_index, bool *, qa_error *);
 bool qa_q3_map_use(qa_q3_game *, qa_actor_id, qa_actor_id other, qa_actor_id activator,
                    qa_error *);
 bool qa_q3_map_spawnpoint_next(const qa_q3_game *, uint32_t *cursor,
                                qa_q3_map_spawnpoint *);
 bool qa_q3_map_nearest_location(const qa_q3_game *, qa_vec3 origin, qa_actor_id *actor,
                                 qa_string_id *message);
+typedef struct qa_q3_map_team_location {
+    qa_actor_id actor;
+    qa_string_id message;
+    int32_t id, count;
+} qa_q3_map_team_location;
+bool qa_q3_map_team_location_read(qa_q3_game *, qa_actor_id source_client,
+                                  qa_q3_map_team_location *, bool *found, qa_error *);
+bool qa_q3_map_location_count_set(qa_q3_game *, qa_actor_id, int32_t, qa_error *);
 bool qa_q3_map_actor_capture(const qa_q3_game *, qa_actor_id, qa_q3_map_actor_state *);
 bool qa_q3_map_actor_restore(qa_q3_game *, const qa_q3_map_actor_state *, qa_error *);
 bool qa_q3_map_checkpoint_capture(const qa_q3_game *, qa_q3_map_checkpoint *, qa_error *);

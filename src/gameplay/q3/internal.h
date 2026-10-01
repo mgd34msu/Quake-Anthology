@@ -2,6 +2,12 @@
 #define QA_Q3_INTERNAL_H
 #include "qa/game_q3.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/game_q3_client_types.h"
+#include "qa/game_q3_source_types.h"
+#include "qa/game_q3_source.h"
+#include "source_wire.h"
+#include "source_postgame.h"
+#include "shader_remap.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -75,6 +81,21 @@ typedef qa_q3_actor_state q3_actor;
 typedef qa_q3_kamikaze_cooldown q3_kamikaze_cooldown;
 typedef struct q3_map_runtime q3_map_runtime;
 bool q3_checkpoint_restore_source(qa_q3_game *, const qa_q3_checkpoint *, qa_error *);
+bool q3_client_counts_valid(const qa_q3_source_client_counts *, uint32_t max_clients);
+bool q3_level_state_valid(const qa_q3_game *, const qa_q3_source_team_state *,
+                         const qa_q3_source_match_state *, qa_error *);
+bool q3_followed_player_valid(const qa_q3_game *, const qa_q3_player *);
+bool q3_followed_player_saved_valid(const qa_q3_game *, const qa_q3_player *);
+qa_q3_player *q3_client_follow_player(qa_q3_game *, uint32_t slot);
+bool q3_source_movement_write(qa_q3_game *, qa_actor_id, uint32_t fields, qa_error *);
+bool q3_source_client_pointer(const qa_q3_game *, qa_actor_id, uint32_t *);
+bool q3_source_row_body_ensure(qa_q3_game *, uint32_t, qa_actor_id *, qa_error *);
+bool q3_spawn_raw_actor(qa_q3_game *, qa_string_id, qa_actor_id *, qa_error *);
+bool q3_source_client_body_ensure(qa_q3_game *, uint32_t, qa_actor_id *, qa_error *);
+int32_t q3_source_team(qa_q3_game *, qa_actor_id);
+bool q3_obelisk_step(qa_q3_game *, qa_actor_id, qa_error *);
+bool q3_obelisk_touch(qa_q3_game *, qa_actor_id, qa_actor_id, qa_error *);
+bool q3_obelisk_reconnect(qa_q3_game *, qa_actor_id, qa_error *);
 typedef struct q3_inventory_owner {
     qa_q3_game *game;
     qa_actor_id actor;
@@ -87,7 +108,18 @@ typedef struct q3_snapshot_frame {
     qa_builtin_actor_snapshot snapshot;
     bool active;
 } q3_snapshot_frame;
+typedef struct q3_death_continuation {
+    qa_actor_id actor;
+    uint64_t sequence, time_ns;
+    qa_actor_owner weapon_provider;
+} q3_death_continuation;
+typedef struct q3_current_origin {
+    qa_actor_id actor;
+    qa_vec3 origin;
+    bool active;
+} q3_current_origin;
 struct qa_q3_game {
+    qa_q3_source_memory memory;
     qa_q3_options options;
     q3_actor *actors;
     q3_kamikaze_cooldown *kamikaze_cooldowns;
@@ -98,18 +130,53 @@ struct qa_q3_game {
     size_t observation_depth;
     bool source_restored;
     uint32_t capacity, rng, death_animation;
+    qa_string_id source_noclass, source_freed;
     qa_item_id weapon_items[QA_Q3_WEAPON_COUNT], ammo_items[QA_Q3_WEAPON_COUNT];
     qa_item_id item_ids[52];
     int32_t previous_ms, now_ms;
     uint64_t attack_sequence;
     qa_q3_ranking_hit ranking_hit;
     qa_actor_id body_queue[8];
+    uint32_t podium_players[3];
     uint32_t body_queue_index;
     q3_snapshot_frame *snapshot_frames;
     q3_map_runtime *map;
+    q3_wire_state *wire;
+    qa_q3_shader_remap_state shader_remaps;
     char *configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
+    uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
+    qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
+    q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
+    qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
+    uint16_t *source_numbers;
+    uint32_t source_count;
+    bool new_session;
+    int32_t fry_sound_index;
+    int32_t portal_sequence;
+    int32_t last_team_location_time;
+    qa_q3_source_client_counts client_counts;
+    qa_q3_source_team_state team_state;
+    qa_q3_source_match_state match_state;
+    bool source_actor_ran[QA_Q3_SOURCE_ENTITIES];
+    q3_death_continuation death_continuations[QA_Q3_SOURCE_CLIENTS];
+    q3_current_origin current_origins[QA_Q3_SOURCE_CLIENTS];
     qa_physics physics;
 };
+qa_q3_native_client *q3_client_at(qa_q3_game *, uint32_t);
+const qa_q3_native_client *q3_client_const(const qa_q3_game *, uint32_t);
+q3_actor *q3_actor_storage(qa_q3_game *, qa_actor_id);
+q3_actor *q3_actor_at(qa_q3_game *, uint32_t);
+const q3_actor *q3_actor_at_const(const qa_q3_game *, uint32_t);
+void q3_source_state_reset(qa_q3_game *);
+bool q3_source_level_init(qa_q3_game *, qa_error *);
+bool q3_spawn_actor(qa_q3_game *, const qa_builtin_spawn *, qa_actor_id *, qa_error *);
+bool q3_teleport_event_at(qa_q3_game *, qa_actor_id, qa_vec3, bool entering, qa_error *);
+bool q3_source_body_read(qa_q3_game *, qa_actor_id, qa_body_state *, qa_error *);
+void q3_source_origin_written(qa_q3_game *, qa_actor_id, qa_vec3);
+bool q3_source_origins_idle(const qa_q3_game *);
+void q3_source_actor_released(qa_q3_game *, qa_actor_id);
+bool q3_source_prepare(qa_q3_game *, const qa_q3_checkpoint *, uint16_t **, qa_error *);
+void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, uint16_t *);
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 float q3_initial_alpha(const qa_q3_game *, qa_actor_id);
@@ -122,12 +189,15 @@ void q3_configstrings_commit(qa_q3_game *, char **);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
+qa_actor_id q3_portal_destination(qa_q3_game *, int32_t sequence);
 bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable before,
                                     qa_q3_holdable after, qa_error *);
 bool q3_player_state_valid(const qa_q3_player_state *);
+bool q3_player_state_valid_source_client(const qa_q3_player_state *, const qa_q3_native_client *);
 void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);
 int32_t q3_entity_number(const qa_q3_game *, qa_actor_id);
 bool q3_sound(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);
+bool q3_sound_report(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);
 uint32_t q3_rand(qa_q3_game *);
 float q3_random(qa_q3_game *);
 float q3_crandom(qa_q3_game *);
@@ -137,6 +207,9 @@ int32_t q3_sub_time(int32_t, int32_t);
 bool q3_event(qa_q3_game *, qa_actor_id, qa_actor_id, qa_builtin_event_kind, int32_t event,
               int32_t parameter, qa_vec3 origin, qa_vec3 end, qa_vec3 normal, qa_error *);
 bool q3_player_event(qa_q3_game *, qa_actor_id, int32_t event, int32_t parameter, qa_error *);
+bool q3_add_event(qa_q3_game *, qa_actor_id, int32_t event, int32_t parameter, qa_error *);
+bool q3_source_initial_death(qa_q3_game *, const qa_damage_outcome *, bool *admitted, qa_error *);
+bool q3_source_death_effects(qa_q3_game *, const qa_damage_outcome *, qa_error *);
 bool q3_trace(qa_q3_game *, qa_vec3, qa_vec3, qa_actor_id, uint32_t, qa_trace_result *, qa_error *);
 bool q3_damage(qa_q3_game *, qa_actor_id target, qa_actor_id attacker, qa_actor_id inflictor,
                qa_q3_weapon, int32_t method, uint32_t flags, float amount, qa_vec3 direction,

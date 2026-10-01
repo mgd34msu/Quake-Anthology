@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool brush_trigger(qa_q3_game *game, qa_q3_map_actor_state *state,
-                          bool link, qa_error *error) {
+                          qa_error *error) {
     if (!state->has_inline_model)
         return q3_map_fail(error, "Q3 brush trigger has no inline model");
     if (!qa_collision_model_bounds(qa_world_geometry(game->options.services.world),
@@ -14,10 +14,23 @@ static bool brush_trigger(qa_q3_game *game, qa_q3_map_actor_state *state,
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .inline_model = true,
                                     .model = state->inline_model,
-                                    .contents = Q3_CONTENTS_TRIGGER,
-                                    .role = QA_COLLISION_TRIGGER};
+                                    .contents = -1,
+                                    .role = QA_COLLISION_SOLID};
+    q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 brush trigger has no source entity row");
+    wire->model = (int32_t)state->inline_model;
+    wire->authored_angles = state->angles;
     state->touchable = true;
-    return q3_map_allocate(game, state, &collision, link, error);
+    if (!q3_map_allocate(game, state, &collision, true, error))
+        return false;
+    if (!q3_map_get(game, state->actor)) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
+    collision.contents = Q3_CONTENTS_TRIGGER;
+    collision.role = QA_COLLISION_TRIGGER;
+    return qa_world_set_collision(game->options.services.world, state->actor, &collision, error);
 }
 
 bool q3_map_spawn_trigger(qa_q3_game *game, const qa_q3_map_fields *fields,
@@ -67,14 +80,51 @@ bool q3_map_spawn_trigger(qa_q3_game *game, const qa_q3_map_fields *fields,
         }
     } else
         return q3_map_fail(error, "unsupported Q3 trigger classname");
-    bool okay = brush ? brush_trigger(game, state, link, error)
+    bool okay = brush ? brush_trigger(game, state, error)
                       : q3_map_allocate(game, state, NULL, false, error);
     if (!okay)
         return false;
+    if (!state->actor.registry)
+        return true;
     qa_q3_map_actor_state *stored = q3_map_get(game, state->actor);
     if (!stored)
         return q3_map_fail(error, "missing Q3 trigger state");
-    stored->linked = link;
+    qa_actor_id actor = stored->actor;
+    uint32_t source_slot;
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire || !qa_q3_source_actor_slot(game, actor, &source_slot, error))
+        return q3_rollback_spawn(game, actor, error);
+    if (brush) {
+        wire->model = (int32_t)stored->inline_model;
+        wire->authored_angles = stored->angles;
+        game->source_entities[source_slot].server_flags = 1u;
+    }
+    if (stored->kind == QA_Q3_MAP_TRIGGER_PUSH ||
+        stored->kind == QA_Q3_MAP_TRIGGER_TELEPORT ||
+        stored->kind == QA_Q3_MAP_TRIGGER_HURT) {
+        const char *path = stored->kind == QA_Q3_MAP_TRIGGER_HURT
+            ? "sound/world/electro.wav" : "sound/world/jumppad.wav";
+        int32_t sound_index;
+        if (!qa_q3_sound_index(game, path, &sound_index, error))
+            return q3_rollback_spawn(game, actor, error);
+        stored = q3_map_get(game, actor);
+        wire = q3_wire_entity(game, actor);
+        if (!stored || !wire) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        if (stored->kind == QA_Q3_MAP_TRIGGER_HURT)
+            stored->noise_index = sound_index;
+    }
+    if (stored->kind == QA_Q3_MAP_TRIGGER_PUSH) {
+        wire->type = 8;
+        game->source_entities[source_slot].server_flags &= ~1u;
+    } else if (stored->kind == QA_Q3_MAP_TRIGGER_TELEPORT) {
+        wire->type = 9;
+        if (!(stored->spawnflags & 1u))
+            game->source_entities[source_slot].server_flags &= ~1u;
+    } else if (stored->kind == QA_Q3_MAP_TIMER)
+        game->source_entities[source_slot].server_flags = 1u;
     if (stored->kind == QA_Q3_MAP_TRIGGER_ALWAYS)
         q3_map_schedule(game, stored, 300, QA_Q3_MAP_THINK_ALWAYS);
     else if (stored->kind == QA_Q3_MAP_TRIGGER_PUSH)
@@ -83,6 +133,17 @@ bool q3_map_spawn_trigger(qa_q3_game *game, const qa_q3_map_fields *fields,
         stored->activator = stored->actor;
         q3_map_schedule(game, stored, 100, QA_Q3_MAP_THINK_TIMER);
     }
+    if (link && !qa_q3_wire_link(game, actor, NULL, error))
+        return q3_rollback_spawn(game, actor, error);
+    stored = q3_map_get(game, actor);
+    if (!stored) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
+    qa_linked_body linked;
+    stored->linked = qa_world_linked(game->options.services.world, actor, &linked);
+    if (!q3_wire_entity_ready(game, actor, error))
+        return q3_rollback_spawn(game, actor, error);
     *state = *stored;
     return true;
 }
@@ -93,7 +154,7 @@ static bool trigger_multiple(qa_q3_game *game, qa_q3_map_actor_state *state,
         return q3_map_fail(error, "Q3 trigger_multiple requires an activator");
     qa_actor_id actor = state->actor;
     state->activator = activator;
-    if (state->due_ms != 0)
+    if (q3_postgame_think_time(game, actor, state->due_ms) != 0)
         return true;
     bool player = q3_map_is_player(game, activator);
     state = q3_map_get(game, actor);
@@ -118,6 +179,7 @@ static bool trigger_multiple(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->due_ms = q3_map_random_schedule(game->now_ms, state->wait,
                                                 state->random, q3_crandom(game));
         state->think = QA_Q3_MAP_THINK_MULTI_READY;
+        q3_postgame_native_think_assigned(game, actor);
     } else {
         state->touchable = false;
         q3_map_schedule(game, state, 100, QA_Q3_MAP_THINK_FREE);
@@ -135,6 +197,7 @@ static bool timer(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *erro
     state->due_ms = q3_map_random_schedule(game->now_ms, state->wait,
                                             state->random, q3_crandom(game));
     state->think = QA_Q3_MAP_THINK_TIMER;
+    q3_postgame_nextthink_assigned(game, actor, state->due_ms);
     return true;
 }
 
@@ -157,7 +220,7 @@ bool q3_map_trigger_use(qa_q3_game *game, qa_q3_map_actor_state *state,
             return true;
         }
         qa_actor_id actor = state->actor;
-        if (!qa_world_link(game->options.services.world, actor, NULL, error))
+        if (!qa_q3_wire_link(game, actor, NULL, error))
             return false;
         state = q3_map_get(game, actor);
         if (state)
@@ -165,8 +228,9 @@ bool q3_map_trigger_use(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     case QA_Q3_MAP_TIMER:
         state->activator = activator;
-        if (state->due_ms != 0) {
+        if (q3_postgame_think_time(game, state->actor, state->due_ms) != 0) {
             state->due_ms = 0;
+            q3_postgame_nextthink_assigned(game, state->actor, 0);
             return true;
         }
         return timer(game, state, error);
@@ -293,8 +357,27 @@ static bool hurt_touch(qa_q3_game *game, qa_q3_map_actor_state *state,
     uint32_t flags = state->spawnflags;
     int32_t damage = state->damage;
     state->cooldown_ms = q3_add_time(game->now_ms, (flags & 16u) ? 1000 : 100);
-    if (!(flags & 4u) && !q3_sound(game, actor, "sound/world/electro.wav", 3, error))
-        return false;
+    if (!(flags & 4u)) {
+        qa_body_state body;
+        int32_t sound_index = state->noise_index;
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+            return false;
+        if (!q3_map_get(game, source) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            return true;
+        qa_actor_id temporary;
+        if (!q3_wire_temp_entity(game, body.origin, 45, &temporary, error))
+            return false;
+        qa_q3_entity *event = q3_wire_temporary(game, temporary);
+        if (!event)
+            return q3_map_fail(error, "Q3 hurt sound lost its temporary entity");
+        event->eventParm = sound_index;
+        if (!q3_map_get(game, source) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            return true;
+        if (!q3_sound_report(game, actor, "sound/world/electro.wav", 3, error))
+            return false;
+    }
     if (!q3_map_get(game, source) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return true;
@@ -332,7 +415,6 @@ bool q3_map_trigger_think(qa_q3_game *game, qa_q3_map_actor_state *state,
     case QA_Q3_MAP_THINK_FREE:
         return qa_session_release(game->options.services.session, state->actor, error);
     case QA_Q3_MAP_THINK_MULTI_READY:
-        state->think = QA_Q3_MAP_THINK_NONE;
         state->due_ms = 0;
         return true;
     case QA_Q3_MAP_THINK_ALWAYS: {

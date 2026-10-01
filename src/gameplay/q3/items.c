@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "map/internal.h"
+#include "source_objectives.h"
 #include "qa/game_q3_save.h"
 
 #define ITEM(c, n, m, s, i, a, k, t, q) {c, n, m, s, i, a, k, t, q}
@@ -177,7 +179,18 @@ static bool item_availability(qa_q3_game *game, qa_actor_id actor, bool availabl
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return q3_fail(error, "missing Q3 item lifecycle");
+    uint32_t source_slot;
+    if (!qa_q3_source_actor_slot(game, actor, &source_slot, error)) return false;
+    if (available) game->source_entities[source_slot].server_flags &= ~1u;
+    else game->source_entities[source_slot].server_flags |= 1u;
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (!source)
+        return q3_fail(error, "Q3 item visibility lacks its actual source row");
+    if (available) source->flags &= ~0x80;
+    else source->flags |= 0x80;
     entry->state.item.hidden = !available;
+    if (!available) q3_postgame_native_think_assigned(game, actor);
+    else if (source->arena_think) source->arena_nextthink = 0;
     entry->state.item.respawn_at = respawn;
     entry->state.item.expire_at = expire;
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
@@ -190,8 +203,7 @@ static bool item_availability(qa_q3_game *game, qa_actor_id actor, bool availabl
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
-    return available ? qa_world_link(game->options.services.world, actor, NULL, error)
-                     : qa_world_unlink(game->options.services.world, actor, error);
+    return qa_q3_wire_link(game, actor, NULL, error);
 }
 bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available, int32_t respawn,
                              int32_t expire, qa_error *error) {
@@ -247,9 +259,10 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         return false;
     if (!q3_actor_get(game, pickup) || !q3_actor_get(game, recipient))
         return true;
-    for (uint32_t i = 0; i < game->capacity; ++i) {
-        q3_actor *candidate = &game->actors[i];
-        if (candidate->kind != Q3_ACTOR_PLAYER || qa_actor_id_equal(candidate->actor, recipient) ||
+    for (uint32_t i = 0; i < game->options.max_clients; ++i) {
+        q3_actor *candidate = &game->client_actors[i];
+        if (game->clients[i].connected == QA_Q3_CLIENT_DISCONNECTED ||
+            candidate->kind != Q3_ACTOR_PLAYER || qa_actor_id_equal(candidate->actor, recipient) ||
             !q3_actor_get(game, candidate->actor))
             continue;
         qa_actor_id actor = candidate->actor;
@@ -261,8 +274,13 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         candidate = q3_actor_get(game, actor);
         if (!candidate || candidate->kind != Q3_ACTOR_PLAYER)
             continue;
+        uint32_t recipient_slot, candidate_slot;
+        int32_t receiver_team = qa_q3_native_client_slot(game, recipient, &recipient_slot, NULL)
+            ? game->clients[recipient_slot].session.team : (int32_t)receiver.team;
+        int32_t candidate_team = qa_q3_native_client_slot(game, actor, &candidate_slot, NULL)
+            ? game->clients[candidate_slot].session.team : (int32_t)combat.team;
         if (combat.health <= 0 ||
-            (game->options.rules.game_type >= 3 && receiver.team == combat.team))
+            (game->options.rules.game_type >= 3 && receiver_team == candidate_team))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
@@ -325,7 +343,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,
                                     .role = QA_COLLISION_TRIGGER};
-    int32_t ground_entity_number = input->dropped ? -1 : 1023;
+    int32_t ground_entity_number = 0;
     bool on_ground = false;
     if (!input->dropped && !input->suspended) {
         qa_trace_query query = {.start = input->origin,
@@ -366,12 +384,22 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
                        .trajectory = {.type = input->dropped ? QA_TRAJECTORY_GRAVITY
                                                              : QA_TRAJECTORY_STATIONARY,
                                       .base = body.origin,
-                                      .delta = input->velocity,
-                                      .time_ms = game->now_ms},
+                                      .delta = input->dropped ? input->velocity : qa_v3(0, 0, 0),
+                                      .time_ms = input->dropped ? game->now_ms : 0},
                        .expire_at = input->dropped ? q3_add_time(game->now_ms, 30000) : 0}};
+    q3_wire_entity_source *source = q3_wire_entity(game, actor);
+    if (!source)
+        return q3_fail(error, "Q3 item constructor lacks its physical source row");
+    source->type = 2;
+    source->model = (int32_t)input->item_index;
+    source->model2 = input->dropped ? 1 : 0;
+    if (input->dropped)
+        source->flags |= 0x20;
+    if (input->dropped) q3_postgame_native_think_assigned(game, actor);
     if(!q3_item_observation_bind(game,actor,&game->item_observations[actor.slot],error)) return false;
     if (initial_powerup_delay && items[input->item_index].kind == QA_Q3_ITEM_POWERUP &&
         !input->dropped) {
+        q3_postgame_native_think_assigned(game, actor);
         available = false;
         entry->state.item.hidden = true;
         float delay_seconds = q3_source_float_add(
@@ -380,38 +408,101 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
     }
     if (!available) {
         entry->state.item.hidden = true;
+        source->flags |= 0x80;
         if (!qa_world_set_collision(game->options.services.world, actor, NULL, error))
             return false;
         if (!q3_actor_get(game, actor))
             return true;
         if (!qa_world_unlink(game->options.services.world, actor, error))
             return false;
+        if (q3_actor_get(game, actor) && !q3_wire_entity_ready(game, actor, error))
+            return false;
         if (q3_actor_get(game, actor) && placed)
             *placed = true;
         return true;
+    }
+    if (input->dropped && items[input->item_index].kind == QA_Q3_ITEM_TEAM &&
+        (game->options.rules.game_type == 4 ||
+         (game->options.product == QA_Q3_TEAM_ARENA && game->options.rules.game_type == 5))) {
+        if (!game->options.hooks.objective_dropped)
+            return q3_fail(error, "Q3 dropped flag has no actual TEAM adoption owner");
+        if (!game->options.hooks.objective_dropped(game->options.hooks.context, actor,
+                                                  input->item_index, error))
+            return false;
+        if (!q3_actor_get(game, actor))
+            return true;
     }
     if (!qa_world_set_collision(game->options.services.world, actor, &collision, error))
         return false;
     if (!q3_actor_get(game, actor))
         return true;
-    if (!qa_world_link(game->options.services.world, actor, NULL, error))
+    if (!qa_q3_wire_link(game, actor, NULL, error))
+        return false;
+    if (q3_actor_get(game, actor) && !q3_wire_entity_ready(game, actor, error))
         return false;
     if (q3_actor_get(game, actor) && placed)
         *placed = true;
     return true;
 }
+bool qa_q3_source_item_adopt(qa_q3_game *game, qa_actor_id actor,
+                             const qa_q3_item_spawn *input, bool available,
+                             qa_error *error) {
+    uint32_t source_slot;
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX ||
+        !qa_q3_source_actor_slot(game, actor, &source_slot, error) ||
+        source_slot < QA_Q3_SOURCE_CLIENTS || source_slot >= QA_Q3_SOURCE_WORLD)
+        return q3_fail(error, "Q3 item adoption requires an actual dynamic source actor");
+    ++game->observation_depth;
+    bool placed = false;
+    bool okay = q3_item_bind_existing(game, actor, input, available, false, &placed, error);
+    if (okay && !placed && q3_actor_get(game, actor))
+        okay = q3_fail(error, "Q3 adopted item starts inside solid geometry");
+    --game->observation_depth;
+    return okay;
+}
+bool qa_q3_source_item_spawn_read(const qa_q3_game *game, qa_actor_id actor,
+                                  qa_q3_item_spawn *out, bool *finished,
+                                  qa_error *error) {
+    uint32_t source_slot;
+    if (!game || !out || !finished ||
+        !qa_q3_source_actor_slot(game, actor, &source_slot, error))
+        return q3_fail(error, "Q3 item source read requires an actual source actor");
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (entry && entry->kind == Q3_ACTOR_ITEM) {
+        *out = entry->state.item.spawn;
+        *finished = true;
+        return true;
+    }
+    const qa_q3_map_actor_state *map = q3_map_const(game, actor);
+    if (!map || map->kind != QA_Q3_MAP_ITEM || !map->item.item_index) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q3 source entity has no actual SpawnItem owner");
+        return false;
+    }
+    *out = map->item;
+    *finished = false;
+    return true;
+}
 static bool spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
                         qa_error *error) {
+    qa_string_id classname;
+    if (!qa_builtin_resource(&game->options.services, items[input->item_index].classname,
+                              &classname, error)) return false;
     qa_builtin_spawn spawn = {.owner = game->options.owner,
+                              .definition = classname,
                               .body = {.origin = input->origin,
                                        .velocity = input->velocity,
                                        .bounds = {qa_v3(-15, -15, -15), qa_v3(15, 15, 15)}}};
     qa_actor_id actor;
-    if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &actor, error))
+    if (!q3_spawn_actor(game, &spawn, &actor, error))
         return false;
     if (!q3_item_bind_existing(game, actor, input, true, true, NULL, error))
         return q3_rollback_spawn(game, actor, error);
-    *out = actor;
+    if (!input->dropped && items[input->item_index].kind == QA_Q3_ITEM_TEAM &&
+        q3_actor_get(game, actor) && game->options.hooks.objective_admitted &&
+        !game->options.hooks.objective_admitted(game->options.hooks.context, actor,
+                                                input->item_index, true, error))
+        return false;
+    *out = q3_actor_get(game, actor) ? actor : (qa_actor_id){0};
     return true;
 }
 bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
@@ -553,7 +644,7 @@ typedef struct pickup_context {
     qa_q3_game *game;
     qa_actor_id item;
     float respawn;
-    bool accepted, allow_hidden;
+    bool accepted, allow_hidden, source_logged;
 } pickup_context;
 static bool pickup_original_live(qa_q3_game *game, const qa_pickup_offer *offer,
                                  q3_actor **pickup, q3_actor **recipient) {
@@ -590,6 +681,18 @@ static bool pickup_eligible(void *context, const qa_pickup_offer *offer, bool *e
     *eligible = combat.health > 0;
     return true;
 }
+static bool pickup_log(pickup_context *call, const qa_pickup_offer *offer,
+                        const qa_q3_item *item, qa_error *error) {
+    call->source_logged = true;
+    if (!call->game->options.hooks.source_log)
+        return true;
+    uint32_t slot;
+    if (!qa_q3_native_client_slot(call->game, offer->recipient, &slot, NULL))
+        return true;
+    char line[160];
+    snprintf(line, sizeof(line), "Item: %u %s\n", slot, item->classname);
+    return call->game->options.hooks.source_log(call->game->options.hooks.context, line, error);
+}
 static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *accepted,
                             qa_error *error) {
     pickup_context *call = context;
@@ -623,6 +726,10 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
             quantity = 0;
         else if (!spawn.dropped && game->options.rules.game_type != 3)
             quantity = ammo < quantity ? quantity - ammo : 1;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         if (!qa_inventory_give(game->options.services.inventory, offer->recipient,
                                game->weapon_items[item->tag], 1, &given, error))
             return false;
@@ -642,6 +749,10 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
             return true;
         if (ammo >= 200)
             return true;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         if (!q3_add_ammo(game, offer->recipient, (qa_q3_weapon)item->tag, quantity, error))
             return false;
         break;
@@ -650,6 +761,10 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         if (player->persistent != QA_Q3_P_GUARD && (item->quantity == 5 || item->quantity == 100))
             maximum *= 2;
         if (combat.health >= maximum)
+            return true;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
             return true;
         if (!qa_combat_set_health(game->options.services.combat, offer->recipient,
                                   fminf(maximum, combat.health + (float)quantity), error))
@@ -661,6 +776,10 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         if (player->persistent != QA_Q3_P_GUARD)
             maximum *= 2;
         if (combat.armor.regular.points >= maximum)
+            return true;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
             return true;
         qa_regular_armor armor = {
             .kind = QA_ARMOR_Q3,
@@ -675,6 +794,11 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     case QA_Q3_ITEM_HOLDABLE:
         if (player->holdable)
             return true;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, &entity, &recipient))
+            return true;
+        player = &recipient->state.player;
         player->holdable = (qa_q3_holdable)item->tag;
         if (player->holdable == QA_Q3_H_KAMIKAZE)
             player->flags |= 0x200u;
@@ -683,6 +807,11 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
             return false;
         break;
     case QA_Q3_ITEM_POWERUP: {
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, &entity, &recipient))
+            return true;
+        player = &recipient->state.player;
         int32_t until = player->powerups[item->tag];
         if (!until)
             until = game->now_ms - game->now_ms % 1000;
@@ -703,6 +832,11 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
             ((spawn.team_restriction & 2) && team != 1) ||
             ((spawn.team_restriction & 4) && team != 2))
             return true;
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, &entity, &recipient))
+            return true;
+        player = &recipient->state.player;
         player->persistent = (qa_q3_powerup)item->tag;
         player->persistent_item = offer->pickup;
         player->max_health = player->handicap;
@@ -734,6 +868,10 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     case QA_Q3_ITEM_TEAM:
         if (!game->options.hooks.objective_pickup)
             return q3_fail(error, "Q3 objective has no selected match owner");
+        if (!pickup_log(call, offer, item, error))
+            return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         return game->options.hooks.objective_pickup(game->options.hooks.context, offer->pickup,
                                                     offer->recipient, spawn.item_index, accepted,
                                                     error);
@@ -757,20 +895,53 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (!accepted || !entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
     qa_q3_item_spawn spawn = entry->state.item.spawn;
-    if (!q3_player_event(game, offer->recipient, 19, (int32_t)spawn.item_index, error))
+    if (!call->source_logged) {
+        if (!pickup_log(call, offer, &items[spawn.item_index], error))
+            return false;
+        if (!pickup_original_live(game, offer, &entry, NULL))
+            return true;
+    }
+    uint32_t client_slot;
+    bool source_client = qa_q3_native_client_slot(game, offer->recipient, &client_slot, NULL);
+    bool predict = !source_client || (game->clients[client_slot].predict_item_pickup &&
+                   items[spawn.item_index].kind != QA_Q3_ITEM_POWERUP);
+    if (predict) {
+        if (!q3_player_event(game, offer->recipient, 19, (int32_t)spawn.item_index, error))
+            return false;
+    } else if (!q3_wire_add_event(game, offer->recipient, 19, (int32_t)spawn.item_index, error) ||
+               !q3_event(game, offer->recipient, (qa_actor_id){0}, QA_BUILTIN_ANIMATION,
+                         19, (int32_t)spawn.item_index, qa_v3(0, 0, 0), qa_v3(0, 0, 0),
+                         qa_v3(0, 0, 0), error))
         return false;
     entry = q3_actor_get(game, offer->pickup);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
     if (items[spawn.item_index].kind == QA_Q3_ITEM_POWERUP ||
         items[spawn.item_index].kind == QA_Q3_ITEM_TEAM) {
-        qa_body_state body;
-        if (!qa_world_body_read(game->options.services.world, offer->pickup, &body, error))
+        qa_vec3 origin = entry->state.item.trajectory.base;
+        const qa_q3_map_actor_state *authored = q3_map_const(game, offer->pickup);
+        bool single_client = authored && authored->speed != 0;
+        qa_actor_id temporary;
+        if (source_client && !q3_wire_temp_entity(game, origin, 20, &temporary, error))
             return false;
-        if (!q3_actor_get(game, offer->pickup))
+        if (!q3_actor_get(game, offer->pickup) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), offer->recipient))
             return true;
+        if (source_client) {
+            qa_q3_entity *event = q3_wire_temporary(game, temporary);
+            q3_wire_entity_source *source = q3_wire_entity(game, temporary);
+            uint32_t temporary_slot;
+            if (!event || !source || !qa_q3_source_actor_slot(game, temporary, &temporary_slot, error))
+                return q3_fail(error, "Q3 global pickup event lost its source row");
+            event->eventParm = (int32_t)spawn.item_index;
+            if (single_client) {
+                game->source_entities[temporary_slot].server_flags |= 256u;
+                source->single_client = (int32_t)client_slot;
+            } else
+                game->source_entities[temporary_slot].server_flags |= 32u;
+        }
         if (!q3_event(game, offer->pickup, offer->recipient, QA_BUILTIN_ITEM, 20,
-                      (int32_t)spawn.item_index, body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0),
+                      (int32_t)spawn.item_index, origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0),
                       error))
             return false;
     }
@@ -783,11 +954,21 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     entry = q3_actor_get(game, offer->pickup);
     if (!entry)
         return true;
+    q3_wire_entity_source *source = q3_wire_entity(game, offer->pickup);
+    if (!source)
+        return q3_fail(error, "Q3 item pickup lost its actual source lifecycle row");
+    if (spawn.wait_seconds == -1) {
+        source->unlink_after_event = true;
+        entry->state.item.hidden = true;
+        game->source_entities[game->source_numbers[offer->pickup.slot]].server_flags |= 1u;
+        source->flags |= 0x80;
+        return qa_world_set_collision(game->options.services.world, offer->pickup, NULL, error);
+    }
     if (spawn.dropped)
-        return qa_session_release(game->options.services.session, offer->pickup, error);
+        source->free_after_event = true;
     float seconds = spawn.wait_seconds ? spawn.wait_seconds : call->respawn;
     int32_t respawn_seconds = q3_source_float_to_int(seconds);
-    if (spawn.wait_seconds != -1 && spawn.random_seconds) {
+    if (spawn.random_seconds) {
         float adjusted = q3_source_float_add(
             (float)respawn_seconds,
             q3_source_float_multiply(q3_crandom(game), spawn.random_seconds));
@@ -839,7 +1020,7 @@ bool q3_item_touch(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipie
                                       : resource.kind               ? QA_PICKUP_RESOURCE_GRANT
                                                                     : QA_PICKUP_SOURCE_EFFECT};
     pickup_context context = {game, item_actor, respawn_seconds(game, item), false,
-                              allow_hidden};
+                              allow_hidden, false};
     qa_pickup_continuation continuation = {.context = &context,
                                            .eligible = pickup_eligible,
                                            .original = pickup_original,
@@ -860,57 +1041,140 @@ bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id reci
     --game->observation_depth;
     return okay;
 }
-bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool item_respawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    bool handled;
+    if (!q3_map_item_respawn(game, actor, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return q3_fail(error, "Q3 RespawnItem has no actual source item owner");
+    int32_t expire_at = entry->state.item.expire_at;
+    if (!qa_q3_item_availability(game, actor, true, 0, expire_at, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    const qa_q3_item *definition = &items[entry->state.item.spawn.item_index];
+    const char *respawn_sound = definition->kind == QA_Q3_ITEM_POWERUP
+        ? "sound/items/poweruprespawn.wav"
+        : definition->kind == QA_Q3_ITEM_HOLDABLE && definition->tag == QA_Q3_H_KAMIKAZE
+            ? "sound/items/kamikazerespawn.wav" : NULL;
+    if (respawn_sound) {
+        int32_t sound_index;
+        qa_actor_id temporary;
+        if (!q3_wire_temp_entity(game, entry->state.item.trajectory.base, 46, &temporary, error) ||
+            !qa_q3_sound_index(game, respawn_sound, &sound_index, error))
+            return false;
+        qa_q3_entity *event = q3_wire_temporary(game, temporary);
+        uint32_t temporary_slot;
+        if (!event || !qa_q3_source_actor_slot(game, temporary, &temporary_slot, error))
+            return q3_fail(error, "Q3 item respawn sound lost its temporary source row");
+        event->eventParm = sound_index;
+        game->source_entities[temporary_slot].server_flags |= 32u;
+        if (!q3_actor_get(game, actor))
+            return true;
+    }
+    if (!q3_wire_add_event(game, actor, 40, 0, error))
+        return false;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+        return false;
+    return !q3_actor_get(game, actor) ||
+        q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ITEM, 40, 0, body.origin,
+                  qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
+}
+bool qa_q3_source_item_respawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    uint32_t source_slot;
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX ||
+        !qa_q3_source_actor_slot(game, actor, &source_slot, error) ||
+        source_slot < QA_Q3_SOURCE_CLIENTS || source_slot >= QA_Q3_SOURCE_WORLD)
+        return q3_fail(error, "Q3 RespawnItem requires an actual dynamic source actor");
+    ++game->observation_depth;
+    bool okay = item_respawn(game, actor, error);
+    --game->observation_depth;
+    return okay;
+}
+static bool item_think(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    bool replaced;
+    if (!q3_postgame_think_override(game, actor, &replaced, error)) return false;
+    if (replaced) return true;
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
     q3_item_state *item = &entry->state.item;
     if (item->expire_at && game->now_ms >= item->expire_at) {
         uint32_t index = item->spawn.item_index;
-        if (items[index].kind == QA_Q3_ITEM_TEAM && game->options.hooks.objective_expired)
+        if (items[index].kind == QA_Q3_ITEM_TEAM &&
+            (game->options.rules.game_type == 4 ||
+             (game->options.product == QA_Q3_TEAM_ARENA && game->options.rules.game_type == 5))) {
+            if (!game->options.hooks.objective_expired)
+                return q3_fail(error, "Q3 dropped flag expired without its source TEAM owner");
             return game->options.hooks.objective_expired(game->options.hooks.context, actor, index,
                                                          error);
+        }
         return qa_session_release(game->options.services.session, actor, error);
     }
     if (item->hidden) {
         if (!item->respawn_at || game->now_ms < item->respawn_at)
             return true;
-        int32_t expire_at = item->expire_at;
-        qa_body_state body;
-        if (!qa_world_body_read(game->options.services.world, actor, &body, error))
-            return false;
-        if (!q3_actor_get(game, actor))
-            return true;
-        if (!qa_q3_item_availability(game, actor, true, 0, expire_at, error))
-            return false;
-        return !q3_actor_get(game, actor) ||
-               q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ITEM, 40, 0, body.origin,
-                        qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
+        return item_respawn(game, actor, error);
     }
+    return true;
+}
+bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    q3_item_state *item = &entry->state.item;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    item = &entry->state.item;
     if (item->ground_entity_number == -1 && item->trajectory.type != QA_TRAJECTORY_GRAVITY) {
         item->trajectory.type = QA_TRAJECTORY_GRAVITY;
         item->trajectory.time_ms = game->now_ms;
     }
     if (item->trajectory.type == QA_TRAJECTORY_STATIONARY)
-        return true;
+        return item_think(game, actor, error);
     qa_vec3 destination;
     if (!qa_trajectory_position(&item->trajectory, game->now_ms, 800, &destination, error))
         return false;
+    uint32_t source_slot;
+    if (!qa_q3_source_actor_slot(game, actor, &source_slot, error))
+        return false;
+    int32_t owner_number = game->source_entities[source_slot].owner_number;
+    qa_actor_id owner = owner_number >= 0 && owner_number < (int32_t)QA_Q3_SOURCE_WORLD &&
+        game->source_entities[owner_number].in_use
+            ? game->source_entities[owner_number].actor : (qa_actor_id){0};
     qa_trace_query query = {.start = body.origin,
                             .end = destination,
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                             .policy = qa_collision_default_policy(QA_COLLISION_Q3),
-                            .pass_actor = actor};
+                            .pass_actor = owner};
     query.policy.contents_mask = 0x10001u;
     qa_trace_result trace;
     if (!qa_world_trace(game->options.services.world, &query, &trace, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
     body.origin = trace.end;
-    if (!qa_world_body_write(game->options.services.world, actor, &body, error) ||
-        !qa_world_link(game->options.services.world, actor, NULL, error))
+    if (!qa_world_body_write(game->options.services.world, actor, &body, error))
+        return false;
+    if (!q3_actor_get(game, actor))
+        return true;
+    if (!qa_q3_wire_link(game, actor, NULL, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    item = &entry->state.item;
+    if (!item_think(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
@@ -923,11 +1187,18 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    item = &entry->state.item;
     if (contents.contents & INT32_MIN) {
         uint32_t index = item->spawn.item_index;
-        if (items[index].kind == QA_Q3_ITEM_TEAM && game->options.hooks.objective_expired)
-            return game->options.hooks.objective_expired(game->options.hooks.context, actor, index,
-                                                         error);
+        if (items[index].kind == QA_Q3_ITEM_TEAM) {
+            if (!game->options.hooks.objective_nodrop)
+                return q3_fail(error, "Q3 team item entered NODROP without its source TEAM owner");
+            return game->options.hooks.objective_nodrop(game->options.hooks.context, actor, index,
+                                                        error);
+        }
         return qa_session_release(game->options.services.session, actor, error);
     }
     qa_vec3 velocity;
@@ -965,10 +1236,12 @@ static bool touch_actor(qa_q3_game *game, const qa_touch_contact *contact, qa_er
         return true;
     if (entry->kind == Q3_ACTOR_ITEM)
         return qa_q3_touch_item(game, contact->self, contact->other, NULL, error);
+    if (entry->kind == Q3_ACTOR_OBELISK)
+        return q3_obelisk_touch(game, contact->self, contact->other, error);
     if (entry->kind == Q3_ACTOR_PROX_TRIGGER)
         return q3_missile_trigger(game, entry->state.trigger.parent, contact->other, error);
     if (entry->kind == Q3_ACTOR_PORTAL && entry->state.portal.source &&
-        game->now_ms >= entry->state.portal.activate_at) {
+        entry->state.portal.enabled) {
         if (!q3_is_player(game, contact->other))
             return true;
         if (!q3_actor_get(game, contact->self) ||
@@ -989,7 +1262,7 @@ static bool touch_actor(qa_q3_game *game, const qa_touch_contact *contact, qa_er
         if (!entry || entry->kind != Q3_ACTOR_PORTAL ||
             !qa_actors_get(qa_session_actors(game->options.services.session), contact->other))
             return true;
-        q3_actor *destination = q3_actor_get(game, entry->state.portal.destination);
+        q3_actor *destination = q3_actor_get(game, q3_portal_destination(game, entry->state.portal.sequence));
         if (!destination || destination->kind != Q3_ACTOR_PORTAL) {
             qa_vec3 fallback = entry->state.portal.fallback;
             if ((fallback.x != 0 || fallback.y != 0 || fallback.z != 0) &&

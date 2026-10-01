@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/console.h"
+#include "qa/game_q3_clients.h"
 #include <ctype.h>
 
 static bool named(const char *left, const char *right) {
@@ -8,7 +9,28 @@ static bool named(const char *left, const char *right) {
             return false;
     return *left == *right;
 }
+static void integer_text(int32_t value, char text[12]) {
+    unsigned char reversed[11];
+    size_t count = 0;
+    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
+    int32_t remaining;
+    memcpy(&remaining, &bits, sizeof(remaining));
+    do {
+        reversed[count++] = (unsigned char)(48 + remaining % 10);
+        remaining /= 10;
+    } while (remaining);
+    if (value < 0) reversed[count++] = '-';
+    for (size_t i = 0; i < count; ++i) text[i] = (char)reversed[count - i - 1];
+    text[count] = 0;
+}
 static bool print(qa_q3_game *game, qa_actor_id actor, const char *text, qa_error *error) {
+    uint32_t slot;
+    if (qa_q3_native_client_slot(game, actor, &slot, NULL) &&
+        game->clients[slot].connected != QA_Q3_CLIENT_DISCONNECTED) {
+        if (!game->options.hooks.client_print)
+            return q3_fail(error, "Q3 client print requires the source reliable command sink");
+        return game->options.hooks.client_print(game->options.hooks.context, actor, text, error);
+    }
     qa_string_id resource;
     if (!qa_builtin_resource(&game->options.services, text, &resource, error))
         return false;
@@ -109,21 +131,12 @@ static bool give(qa_q3_game *game, qa_actor_id actor, const qa_command_invocatio
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
-    int32_t *award = named(text, "excellent") ? &entry->state.player.excellent_count
-                     : named(text, "impressive") ? &entry->state.player.impressive_count
-                     : named(text, "gauntletaward") ? &entry->state.player.gauntlet_frag_count : NULL;
-    if (award) {
-        uint32_t bits = (uint32_t)*award + 1;
-        memcpy(award, &bits, sizeof(bits));
-        return true;
-    }
-    if (named(text, "defend") || named(text, "assist")) {
-        if (!game->options.hooks.award)
-            return q3_fail(error, "Q3 award requires the selected mode statistics owner");
-        return game->options.hooks.award(game->options.hooks.context, actor,
-                                         named(text, "defend") ? QA_Q3_AWARD_DEFEND : QA_Q3_AWARD_ASSIST,
-                                         error);
-    }
+    qa_q3_source_award award = named(text, "excellent") ? QA_Q3_AWARD_EXCELLENT
+        : named(text, "impressive") ? QA_Q3_AWARD_IMPRESSIVE
+        : named(text, "gauntletaward") ? QA_Q3_AWARD_GAUNTLET
+        : named(text, "defend") ? QA_Q3_AWARD_DEFEND
+        : named(text, "assist") ? QA_Q3_AWARD_ASSIST : 0;
+    if (award) return qa_q3_client_award(game, actor, award, 1, error);
     if (all)
         return true;
     size_t count;
@@ -220,10 +233,20 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        uint32_t slot;
+        if (qa_q3_native_client_slot(game, actor, &slot, NULL) &&
+            game->clients[slot].connected != QA_Q3_CLIENT_DISCONNECTED) {
+            qa_q3_entity entity;
+            qa_q3_wire_visibility visibility;
+            if (!qa_q3_wire_entity_read(game, slot, &entity, &visibility, error)) return false;
+            body.origin = qa_v3(entity.origin[0], entity.origin[1], entity.origin[2]);
+        }
         char text[64];
-        int length = snprintf(text, sizeof(text), "(%i %i %i)",
-            q3_source_float_to_int(body.origin.x), q3_source_float_to_int(body.origin.y),
-            q3_source_float_to_int(body.origin.z));
+        char fields[3][12];
+        integer_text(q3_source_float_to_int(body.origin.x), fields[0]);
+        integer_text(q3_source_float_to_int(body.origin.y), fields[1]);
+        integer_text(q3_source_float_to_int(body.origin.z), fields[2]);
+        int length = snprintf(text, sizeof(text), "(%s %s %s)", fields[0], fields[1], fields[2]);
         if (length >= 32) {
             char warning[80];
             snprintf(warning, sizeof(warning), "Com_sprintf: overflow of %i in 32\n", length);

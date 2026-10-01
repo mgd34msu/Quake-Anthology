@@ -207,9 +207,9 @@ bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
     if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session))
         return q3_fail(error, "Q3 inventory rebind requires a safe source boundary");
     for (uint32_t i = 0; i < game->capacity; ++i)
-        if (game->actors[i].kind == Q3_ACTOR_PLAYER &&
-            q3_actor_get(game, game->actors[i].actor) &&
-            !qa_q3_inventory_admit(game, game->actors[i].actor, error))
+        if (q3_actor_at(game, i)->kind == Q3_ACTOR_PLAYER &&
+            q3_actor_get(game, q3_actor_at(game, i)->actor) &&
+            !qa_q3_inventory_admit(game, q3_actor_at(game, i)->actor, error))
             return false;
     return true;
 }

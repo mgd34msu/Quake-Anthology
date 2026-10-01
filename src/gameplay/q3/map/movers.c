@@ -164,18 +164,61 @@ static bool ensure_damageable(qa_q3_game *game, qa_q3_map_actor_state *state,
 
 static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
                        qa_q3_mover_definition *definition, qa_error *error) {
-    if (q3_map_text(game, state->noise) &&
-        !qa_builtin_resource(&game->options.services, q3_map_cstr(game, state->noise),
-                             &definition->loop_sound, error))
-        return false;
+    definition->loop_sound = state->noise;
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .inline_model = true,
                                     .model = state->inline_model,
-                                    .contents = 1,
+                                    .contents = -1,
                                     .role = QA_COLLISION_SOLID};
+    q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 mover constructor has no source entity row");
+    wire->model = (int32_t)state->inline_model;
     if (!q3_map_allocate(game, state, &collision, true, error))
         return false;
     qa_actor_id actor = state->actor;
+    if (state->model2) {
+        int32_t model_index;
+        if (!qa_q3_model_index(game, q3_map_cstr(game, state->model2), &model_index, error))
+            return q3_rollback_spawn(game, actor, error);
+        wire = q3_wire_entity(game, actor);
+        if (!wire) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        wire->model2 = model_index;
+    }
+    if (state->noise) {
+        int32_t sound_index;
+        if (!qa_q3_sound_index(game, q3_map_cstr(game, state->noise), &sound_index, error))
+            return q3_rollback_spawn(game, actor, error);
+        wire = q3_wire_entity(game, actor);
+        if (!wire) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        wire->loop_sound = sound_index;
+    }
+    wire = q3_wire_entity(game, actor);
+    uint32_t source_slot;
+    if (!wire || !qa_q3_source_actor_slot(game, actor, &source_slot, error))
+        return q3_rollback_spawn(game, actor, error);
+    if (state->has_light || state->has_color) {
+        int32_t red = q3_source_float_to_int(q3_source_float_multiply(state->color.x, 255.0f));
+        int32_t green = q3_source_float_to_int(q3_source_float_multiply(state->color.y, 255.0f));
+        int32_t blue = q3_source_float_to_int(q3_source_float_multiply(state->color.z, 255.0f));
+        int32_t intensity = q3_source_float_to_int(q3_source_float_divide(state->light, 4.0f));
+        if (red > 255) red = 255;
+        if (green > 255) green = 255;
+        if (blue > 255) blue = 255;
+        if (intensity > 255) intensity = 255;
+        uint32_t packed = (uint32_t)red | ((uint32_t)green << 8) |
+            ((uint32_t)blue << 16) | ((uint32_t)intensity << 24);
+        memcpy(&wire->constant_light, &packed, sizeof(packed));
+    }
+    wire->type = 4;
+    wire->authored_angles = state->angles;
+    game->source_entities[source_slot].server_flags = 128u;
     definition->team_leader = actor;
     if (!qa_q3_bind_mover(game, actor, definition, error))
         return q3_rollback_spawn(game, actor, error);
@@ -189,7 +232,10 @@ static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     }
     body.origin = definition->state.position.base;
-    body.angles = definition->state.angular.base;
+    bool continuous = stored->kind >= QA_Q3_MAP_MOVER_STATIC &&
+                      stored->kind <= QA_Q3_MAP_MOVER_PENDULUM;
+    if (continuous)
+        body.origin = qa_v3(0, 0, 0);
     body.bounds = stored->bounds;
     if (!qa_world_body_write(game->options.services.world, actor, &body, error))
         return q3_rollback_spawn(game, actor, error);
@@ -197,34 +243,58 @@ static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->actor = (qa_actor_id){0};
         return true;
     }
-    if (!qa_world_link(game->options.services.world, actor, NULL, error))
+    if (!qa_q3_wire_link(game, actor, NULL, error))
         return q3_rollback_spawn(game, actor, error);
+    if (continuous) {
+        stored = q3_map_get(game, actor);
+        if (!stored) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+            return q3_rollback_spawn(game, actor, error);
+        body.origin = stored->origin;
+        if (stored->kind == QA_Q3_MAP_MOVER_ROTATING)
+            body.angles = definition->state.angular.base;
+        if (!qa_world_body_write(game->options.services.world, actor, &body, error))
+            return q3_rollback_spawn(game, actor, error);
+        stored = q3_map_get(game, actor);
+        if (!stored) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        if (stored->kind == QA_Q3_MAP_MOVER_ROTATING &&
+            !qa_q3_wire_link(game, actor, NULL, error))
+            return q3_rollback_spawn(game, actor, error);
+    }
     stored = q3_map_get(game, actor);
     native = q3_actor_get(game, actor);
     if (!stored || !native || native->kind != Q3_ACTOR_MOVER) {
         state->actor = (qa_actor_id){0};
         return true;
     }
-    stored->linked = true;
+    qa_linked_body linked;
+    stored->linked = qa_world_linked(game->options.services.world, actor, &linked);
+    if (!q3_wire_entity_ready(game, actor, error))
+        return q3_rollback_spawn(game, actor, error);
     *state = *stored;
     return true;
 }
 
 static qa_q3_mover_definition binary_definition(const qa_q3_map_actor_state *state,
-                                                 int32_t wait_ms, int32_t damage,
+                                                 float wait_ms, int32_t damage,
                                                  bool crusher) {
     qa_vec3 move = qa_vec_sub(state->second, state->first);
     float distance = qa_vec_length(move);
-    int32_t duration = state->speed > 0
-                           ? q3_map_float_to_int(distance * 1000.0f / state->speed)
-                           : 1;
+    int32_t duration = q3_map_float_to_int(q3_source_float_divide(
+        q3_source_float_multiply(distance, 1000.0f), state->speed));
     if (duration < 1)
         duration = 1;
     return (qa_q3_mover_definition){
         .state = {.kind = QA_Q3_MOVER_NATIVE_FIXED,
                   .position = {.type = QA_TRAJECTORY_STATIONARY,
                                .base = state->first,
-                               .delta = qa_vec_scale(move, 1000.0f / (float)duration),
+                               .delta = qa_vec_scale(move, state->speed),
                                .duration_ms = duration},
                   .angular = {.type = QA_TRAJECTORY_STATIONARY,
                               .base = state->angles}},
@@ -253,7 +323,9 @@ static bool spawn_trigger(qa_q3_game *game, qa_q3_map_kind kind, qa_actor_id par
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,
                                     .role = QA_COLLISION_TRIGGER};
-    return q3_map_allocate_generated(game, &trigger, &collision, true, error);
+    if (!q3_map_allocate_generated(game, &trigger, &collision, true, error))
+        return false;
+    return q3_wire_entity_ready(game, trigger.actor, error);
 }
 
 static bool spawn_door(qa_q3_game *game, const qa_q3_map_fields *fields,
@@ -267,8 +339,7 @@ static bool spawn_door(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->speed = 400;
     if (state->wait == 0)
         state->wait = 2;
-    if (state->speed <= 0)
-        return q3_map_fail(error, "Q3 func_door speed must be positive");
+    state->wait = q3_source_float_multiply(state->wait, 1000.0f);
     state->kind = QA_Q3_MAP_MOVER_DOOR;
     state->usable = true;
     state->direction = q3_map_direction(state->angles);
@@ -285,7 +356,9 @@ static bool spawn_door(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->second = swap;
     }
     qa_q3_mover_definition mover = binary_definition(
-        state, source_milliseconds(state->wait), damage, (state->spawnflags & 4u) != 0);
+        state, state->wait, damage,
+        (state->spawnflags & 4u) != 0);
+    mover.blocked = QA_Q3_MOVER_BLOCKED_DOOR;
     if (!bind_mover(game, state, &mover, error))
         return false;
     qa_q3_map_actor_state *stored = q3_map_get(game, state->actor);
@@ -314,19 +387,21 @@ static bool spawn_plat(qa_q3_game *game, const qa_q3_map_fields *fields,
         !number(game, fields, "lip", 8, &lip, error) ||
         !number(game, fields, "height", 0, &height, error) || !mover_bounds(game, state, error))
         return false;
-    if (speed <= 0)
-        return q3_map_fail(error, "Q3 func_plat speed must be positive");
+    if (speed == 0)
+        speed = 100;
     state->kind = QA_Q3_MAP_MOVER_PLAT;
     state->usable = true;
     state->touchable = true;
     state->speed = speed;
     state->damage = damage;
+    state->wait = 1000.0f;
     state->angles = qa_v3(0, 0, 0);
     float distance = has_height ? height : state->bounds.maxs.z - state->bounds.mins.z - lip;
     state->second = state->origin;
     state->first = qa_v3(state->origin.x, state->origin.y, state->origin.z - distance);
-    qa_q3_mover_definition mover = binary_definition(state, 1000, state->damage,
+    qa_q3_mover_definition mover = binary_definition(state, state->wait, state->damage,
                                                       (state->spawnflags & 4u) != 0);
+    mover.blocked = QA_Q3_MOVER_BLOCKED_DOOR;
     if (!bind_mover(game, state, &mover, error))
         return false;
     if (!state->actor.registry || !q3_map_get(game, state->actor))
@@ -360,8 +435,7 @@ static bool spawn_button(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->speed = 40;
     if (state->wait == 0)
         state->wait = 1;
-    if (state->speed <= 0)
-        return q3_map_fail(error, "Q3 func_button speed must be positive");
+    state->wait = q3_source_float_multiply(state->wait, 1000.0f);
     state->kind = QA_Q3_MAP_MOVER_BUTTON;
     state->usable = true;
     state->touchable = state->health == 0;
@@ -374,7 +448,7 @@ static bool spawn_button(qa_q3_game *game, const qa_q3_map_fields *fields,
     state->first = state->origin;
     state->second = qa_vec_add(state->origin, qa_vec_scale(state->direction, distance));
     qa_q3_mover_definition mover = binary_definition(
-        state, source_milliseconds(state->wait), state->damage,
+        state, state->wait, state->damage,
         (state->spawnflags & 4u) != 0);
     if (!bind_mover(game, state, &mover, error))
         return false;
@@ -398,6 +472,8 @@ static bool spawn_train(qa_q3_game *game, const qa_q3_map_fields *fields,
     (void)fields;
     if (!q3_map_text(game, state->target)) {
         q3_map_warn(game, (qa_actor_id){0}, "Q3 func_train has no target");
+        if (!qa_session_release(game->options.services.session, state->actor, error))
+            return false;
         state->actor = (qa_actor_id){0};
         return true;
     }
@@ -405,14 +481,12 @@ static bool spawn_train(qa_q3_game *game, const qa_q3_map_fields *fields,
         return false;
     if (state->speed == 0)
         state->speed = 100;
-    if (state->speed <= 0)
-        return q3_map_fail(error, "Q3 func_train speed must be positive");
     state->kind = QA_Q3_MAP_MOVER_TRAIN;
     state->usable = true;
     state->angles = qa_v3(0, 0, 0);
     state->damage = (state->spawnflags & 4u) ? 0 : state->damage ? state->damage : 2;
-    state->first = state->second = state->origin;
-    qa_q3_mover_definition mover = binary_definition(state, 0, state->damage,
+    state->first = state->second = qa_v3(0, 0, 0);
+    qa_q3_mover_definition mover = binary_definition(state, state->wait, state->damage,
                                                       (state->spawnflags & 4u) != 0);
     mover.map_controlled = true;
     if (!bind_mover(game, state, &mover, error))
@@ -427,11 +501,15 @@ static bool spawn_path_corner(qa_q3_game *game, qa_q3_map_actor_state *state,
                               qa_error *error) {
     if (!q3_map_text(game, state->targetname)) {
         q3_map_warn(game, (qa_actor_id){0}, "Q3 path_corner has no targetname");
+        if (!qa_session_release(game->options.services.session, state->actor, error))
+            return false;
         state->actor = (qa_actor_id){0};
         return true;
     }
     state->kind = QA_Q3_MAP_PATH_CORNER;
-    return q3_map_allocate(game, state, NULL, false, error);
+    if (!q3_map_allocate(game, state, NULL, false, error))
+        return false;
+    return q3_wire_entity_ready(game, state->actor, error);
 }
 
 static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
@@ -441,15 +519,14 @@ static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
         return false;
     state->kind = kind;
     state->usable = true;
-    state->first = state->second = state->origin;
-    qa_q3_mover_definition mover = binary_definition(state, 0, state->damage, false);
-    mover.state.position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY,
-                                           .base = state->origin};
+    state->first = state->second = qa_v3(0, 0, 0);
+    if (state->speed == 0)
+        state->speed = 100;
+    qa_q3_mover_definition mover = binary_definition(state, state->wait, state->damage, false);
+    mover.state.position.base = state->origin;
     mover.state.angular = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY,
-                                          .base = state->angles};
+                                          .base = qa_v3(0, 0, 0)};
     if (kind == QA_Q3_MAP_MOVER_ROTATING) {
-        if (state->speed == 0)
-            state->speed = 100;
         unsigned axis = (state->spawnflags & 4u) ? 2 : (state->spawnflags & 8u) ? 0 : 1;
         mover.state.angular.type = QA_TRAJECTORY_LINEAR;
         mover.state.angular.delta = with_component(qa_v3(0, 0, 0), axis, state->speed);
@@ -463,9 +540,9 @@ static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
             !number(game, fields, "height", 32, &height, error) ||
             !number(game, fields, "phase", 0, &phase, error))
             return false;
+        if (speed == 0)
+            speed = 100;
         int32_t duration = source_milliseconds(speed);
-        if (duration <= 0)
-            return q3_map_fail(error, "Q3 func_bobbing period must be positive");
         unsigned axis = (state->spawnflags & 1u) ? 0 : (state->spawnflags & 2u) ? 1 : 2;
         mover.state.position = (qa_trajectory){
             .type = QA_TRAJECTORY_SINE,
@@ -483,18 +560,14 @@ static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
             return false;
         float length = fmaxf(8, fabsf(state->bounds.mins.z));
         float frequency = (1.0f / (Q3_PI * 2.0f)) *
-                          sqrtf(game->physics.gravity / (3.0f * length));
+                          sqrtf(game->options.rules.gravity / (3.0f * length));
         int32_t duration = q3_map_float_to_int(1000.0f / frequency);
-        if (duration <= 0)
-            return q3_map_fail(error, "Q3 func_pendulum period is invalid");
-        mover.state.position.duration_ms = duration;
         mover.state.angular = (qa_trajectory){
             .type = QA_TRAJECTORY_SINE,
             .base = state->angles,
             .delta = qa_v3(0, 0, speed),
             .time_ms = q3_map_float_to_int((float)duration * phase),
             .duration_ms = duration};
-        state->speed = speed;
         state->damage = mover.damage = damage;
     }
     return bind_mover(game, state, &mover, error);
@@ -523,6 +596,31 @@ bool q3_map_spawn_mover(qa_q3_game *game, const qa_q3_map_fields *fields,
         return q3_map_fail(error, "missing Q3 mover classname");
     if (!presentation_fields(game, fields, state, error))
         return false;
+    const char *start = NULL, *end = NULL;
+    if (!strcmp(name, "func_door")) {
+        start = "sound/movers/doors/dr1_strt.wav";
+        end = "sound/movers/doors/dr1_end.wav";
+    } else if (!strcmp(name, "func_plat")) {
+        start = "sound/movers/plats/pt1_strt.wav";
+        end = "sound/movers/plats/pt1_end.wav";
+    } else if (!strcmp(name, "func_button"))
+        start = "sound/movers/switches/butn2.wav";
+    if (start && !qa_q3_sound_index(game, start, &state->sound_1_to_2, error))
+        return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), state->actor)) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
+    if (end) {
+        state->sound_2_to_1 = state->sound_1_to_2;
+        if (!qa_q3_sound_index(game, end, &state->sound_pos_1, error))
+            return false;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), state->actor)) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        state->sound_pos_2 = state->sound_pos_1;
+    }
     if (!strcmp(name, "func_door"))
         return spawn_door(game, fields, state, error);
     if (!strcmp(name, "func_plat"))
@@ -571,7 +669,22 @@ bool q3_map_mover_post_spawn(qa_q3_game *game, qa_error *error) {
 }
 
 static bool mover_sound(qa_q3_game *game, qa_q3_map_actor_state *state,
-                        bool start, qa_error *error) {
+                        int32_t before, int32_t after, qa_error *error) {
+    bool start = after == 2 || after == 3;
+    int32_t sound = after == 2 ? state->sound_1_to_2 : after == 3 ? state->sound_2_to_1
+        : after == 1 ? state->sound_pos_2 : state->sound_pos_1;
+    q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 mover transition lost its source sound fields");
+    if (!start || before == 0 || before == 1)
+        wire->loop_sound = state->sound_loop;
+    q3_actor *native = q3_actor_get(game, state->actor);
+    if (native && native->kind == Q3_ACTOR_MOVER && !wire->loop_sound)
+        native->state.mover.loop_sound = 0;
+    if (!sound)
+        return true;
+    if (!q3_wire_add_event(game, state->actor, 45, sound, error))
+        return false;
     const char *path = NULL;
     if (state->kind == QA_Q3_MAP_MOVER_DOOR)
         path = start ? "sound/movers/doors/dr1_strt.wav" : "sound/movers/doors/dr1_end.wav";
@@ -579,12 +692,13 @@ static bool mover_sound(qa_q3_game *game, qa_q3_map_actor_state *state,
         path = start ? "sound/movers/plats/pt1_strt.wav" : "sound/movers/plats/pt1_end.wav";
     else if (state->kind == QA_Q3_MAP_MOVER_BUTTON && start)
         path = "sound/movers/switches/butn2.wav";
-    return !path || q3_sound(game, state->actor, path, 3, error);
+    return !path || q3_sound_report(game, state->actor, path, 3, error);
 }
 
 static bool area_portal(qa_q3_game *game, qa_q3_map_actor_state *state,
                         bool open, qa_error *error) {
-    if (state->kind != QA_Q3_MAP_MOVER_DOOR || state->team_slave)
+    if (state->team_master.registry &&
+        !qa_actor_id_equal(state->team_master, state->actor))
         return true;
     return q3_map_emit(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_AREA_PORTAL,
                                                 .actor = state->actor,
@@ -597,11 +711,7 @@ bool q3_map_mover_used(qa_q3_game *game, qa_actor_id actor, int32_t before,
     qa_q3_map_actor_state *state = q3_map_get(game, actor);
     if (!state || before == after)
         return true;
-    bool starting = after == 2 || after == 3;
-    if (starting && !mover_sound(game, state, true, error))
-        return false;
-    if (!starting && (after == 0 || after == 1) &&
-        !mover_sound(game, state, false, error))
+    if (!mover_sound(game, state, before, after, error))
         return false;
     state = q3_map_get(game, actor);
     if (!state)
@@ -614,7 +724,6 @@ bool q3_map_mover_used(qa_q3_game *game, qa_actor_id actor, int32_t before,
 static bool door_setup(qa_q3_game *game, qa_q3_map_actor_state *state,
                        qa_error *error) {
     qa_actor_id leader = state->actor;
-    state->think = QA_Q3_MAP_THINK_NONE;
     state->due_ms = 0;
     if (state->team_slave)
         return true;
@@ -702,19 +811,14 @@ static bool train_reached(qa_q3_game *game, qa_q3_map_actor_state *train,
     if (!native || native->kind != Q3_ACTOR_MOVER)
         return true;
     qa_actor_id destination_actor = destination->actor;
-    qa_string_id noise = next->noise;
-    qa_string_id loop_sound = 0;
-    if (q3_map_text(game, noise) &&
-        !qa_builtin_resource(&game->options.services, q3_map_cstr(game, noise),
-                             &loop_sound, error))
-        return false;
+    int32_t loop_sound = next->sound_loop;
     train = q3_map_get(game, actor);
     next = q3_map_get(game, next_actor);
     destination = q3_map_get(game, destination_actor);
     native = q3_actor_get(game, actor);
     if (!train || !next || !destination ||
         destination->kind != QA_Q3_MAP_PATH_CORNER ||
-        !qa_actor_id_equal(next->path_next, destination_actor) || next->noise != noise ||
+        !qa_actor_id_equal(next->path_next, destination_actor) || next->sound_loop != loop_sound ||
         !native || native->kind != Q3_ACTOR_MOVER)
         return true;
     float speed = next->speed != 0 ? next->speed : train->speed;
@@ -724,12 +828,15 @@ static bool train_reached(qa_q3_game *game, qa_q3_map_actor_state *train,
     qa_vec3 first = next->origin, second = destination->origin;
     int32_t duration = q3_map_float_to_int(qa_vec_length(qa_vec_sub(second, first)) *
                                            1000.0f / speed);
-    if (duration < 1)
-        duration = 1;
     native->state.mover.first = first;
     native->state.mover.second = second;
     native->state.mover.state.position.duration_ms = duration;
-    native->state.mover.loop_sound = loop_sound;
+    q3_wire_entity_source *wire = q3_wire_entity(game, actor);
+    if (!wire)
+        return q3_map_fail(error, "Q3 train path lost its actual source loop sound");
+    wire->loop_sound = loop_sound;
+    if (!loop_sound)
+        native->state.mover.loop_sound = 0;
     train->first = first;
     train->second = second;
     train->path_next = destination->actor;
@@ -740,8 +847,9 @@ static bool train_reached(qa_q3_game *game, qa_q3_map_actor_state *train,
     if (!train || !native || native->kind != Q3_ACTOR_MOVER)
         return true;
     if (wait != 0) {
+        q3_postgame_native_think_assigned(game, actor);
         native->state.mover.state.position.type = QA_TRAJECTORY_STATIONARY;
-        train->due_ms = q3_add_time(game->now_ms, source_milliseconds(wait));
+        train->due_ms = q3_source_float_schedule(game->now_ms, wait);
         train->think = QA_Q3_MAP_THINK_MOVER_TRAIN_RESUME;
     }
     return true;
@@ -750,7 +858,6 @@ static bool train_reached(qa_q3_game *game, qa_q3_map_actor_state *train,
 static bool train_setup(qa_q3_game *game, qa_q3_map_actor_state *train,
                         qa_error *error) {
     qa_actor_id actor = train->actor;
-    train->think = QA_Q3_MAP_THINK_NONE;
     train->due_ms = 0;
     qa_actor_id start;
     if (!path_for_target(game, train->target, &start)) {
@@ -792,9 +899,13 @@ bool q3_map_mover_think(qa_q3_game *game, qa_q3_map_actor_state *state,
         return train_setup(game, state, error);
     case QA_Q3_MAP_THINK_MOVER_TRAIN_RESUME: {
         qa_actor_id actor = state->actor;
-        state->think = QA_Q3_MAP_THINK_NONE;
         state->due_ms = 0;
-        return q3_mover_set_state(game, actor, 2, game->now_ms, error);
+        q3_actor *native = q3_actor_get(game, actor);
+        if (!native || native->kind != Q3_ACTOR_MOVER)
+            return q3_map_fail(error, "Q3 train resume lost its native trajectory");
+        native->state.mover.state.position.time_ms = game->now_ms;
+        native->state.mover.state.position.type = QA_TRAJECTORY_LINEAR_STOP;
+        return true;
     }
     default:
         return true;
@@ -869,8 +980,10 @@ bool q3_map_mover_touch(qa_q3_game *game, qa_q3_map_actor_state *state,
         mover = q3_actor_get(game, actor);
         state = q3_map_get(game, actor);
         if (state && state->kind == QA_Q3_MAP_MOVER_PLAT && mover &&
-            mover->kind == Q3_ACTOR_MOVER && mover->state.mover.state_index == 1)
+            mover->kind == Q3_ACTOR_MOVER && mover->state.mover.state_index == 1) {
             mover->state.mover.next_think_ms = q3_add_time(game->now_ms, 1000);
+            q3_postgame_nextthink_assigned(game, actor, mover->state.mover.next_think_ms);
+        }
     }
     return true;
 }

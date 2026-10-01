@@ -36,6 +36,40 @@ bool q3_map_spawn_item(qa_q3_game *game, const qa_q3_map_fields *fields,
     if (!stored)
         return q3_map_fail(error, "missing Q3 authored item state");
     q3_map_schedule(game, stored, 200, QA_Q3_MAP_THINK_ITEM_FINISH);
+    if (items[item_index].kind == QA_Q3_ITEM_POWERUP) {
+        int32_t sound_index;
+        qa_actor_id actor = stored->actor;
+        if (!qa_q3_sound_index(game, "sound/items/poweruprespawn.wav", &sound_index, error))
+            return false;
+        stored = q3_map_get(game, actor);
+        if (!stored) {
+            state->actor = (qa_actor_id){0};
+            return true;
+        }
+        double no_global_sound;
+        if (!q3_map_number(fields, "noglobalsound", 0, &no_global_sound, error))
+            return q3_rollback_spawn(game, actor, error);
+        stored->speed = (float)no_global_sound;
+    }
+    q3_wire_entity_source *wire = q3_wire_entity(game, stored->actor);
+    if (!wire)
+        return q3_rollback_spawn(game, stored->actor, error);
+    if (game->options.product == QA_Q3_TEAM_ARENA &&
+        items[item_index].kind == QA_Q3_ITEM_PERSISTENT)
+        wire->generic1 = (int32_t)stored->spawnflags;
+    if (!q3_wire_entity_ready(game, stored->actor, error))
+        return q3_rollback_spawn(game, stored->actor, error);
+    qa_actor_id actor = stored->actor;
+    if (items[item_index].kind == QA_Q3_ITEM_TEAM &&
+        game->options.hooks.objective_admitted &&
+        !game->options.hooks.objective_admitted(game->options.hooks.context,
+                                                actor, item_index, false, error))
+        return q3_rollback_spawn(game, actor, error);
+    stored = q3_map_get(game, actor);
+    if (!stored) {
+        state->actor = (qa_actor_id){0};
+        return true;
+    }
     *state = *stored;
     return true;
 }
@@ -50,7 +84,6 @@ static bool finish_item(qa_q3_game *game, qa_q3_map_actor_state *state,
     bool delayed_powerup = available &&
                            items[state->item.item_index].kind == QA_Q3_ITEM_POWERUP;
     qa_actor_id actor = state->actor;
-    state->think = QA_Q3_MAP_THINK_NONE;
     state->due_ms = 0;
     bool placed;
     if (!q3_item_bind_existing(game, actor, &state->item,
@@ -70,17 +103,22 @@ static bool finish_item(qa_q3_game *game, qa_q3_map_actor_state *state,
     state = q3_map_get(game, actor);
     if (!state)
         return true;
-    state->origin = body.origin;
     state->bounds = body.bounds;
     q3_actor *entry = q3_actor_get(game, actor);
-    state->linked = entry && entry->kind == Q3_ACTOR_ITEM && !entry->state.item.hidden;
+    qa_linked_body linked;
+    state->linked = entry && entry->kind == Q3_ACTOR_ITEM &&
+        qa_world_linked(game->options.services.world, actor, &linked);
     if (delayed_powerup) {
+        q3_postgame_native_think_assigned(game, actor);
         float seconds = q3_source_float_add(
             45.0f, q3_source_float_multiply(q3_crandom(game), 15.0f));
         state->due_ms = q3_map_source_schedule(game->now_ms, seconds);
         state->think = QA_Q3_MAP_THINK_ITEM_RESPAWN;
     }
-    return true;
+    return items[state->item.item_index].kind != QA_Q3_ITEM_TEAM ||
+        !game->options.hooks.objective_admitted ||
+        game->options.hooks.objective_admitted(game->options.hooks.context,
+                                               actor, state->item.item_index, true, error);
 }
 
 static bool team_member(qa_q3_game *game, qa_q3_map_actor_state *state,
@@ -119,8 +157,6 @@ static bool team_member(qa_q3_game *game, qa_q3_map_actor_state *state,
 static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
                          qa_error *error) {
     qa_q3_map_actor_state *selected;
-    state->think = QA_Q3_MAP_THINK_NONE;
-    state->due_ms = 0;
     if (!team_member(game, state, &selected, error))
         return false;
     if (!selected->item_bound)
@@ -135,7 +171,11 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
     selected = q3_map_get(game, actor);
     if (!selected)
         return true;
-    selected->linked = true;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return q3_map_fail(error, "Q3 item respawn lost its actual lifecycle");
+    qa_linked_body linked;
+    selected->linked = qa_world_linked(game->options.services.world, actor, &linked);
     size_t count;
     const qa_q3_item *items = qa_q3_items(game->options.product, &count);
     uint32_t index = selected->item.item_index;
@@ -143,20 +183,50 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
         return q3_map_fail(error, "invalid Q3 item team member definition");
     const qa_q3_item *item = &items[index];
     int32_t channel = selected->speed ? 3 : 0;
-    if (item->kind == QA_Q3_ITEM_POWERUP &&
-        !q3_sound(game, actor, "sound/items/poweruprespawn.wav", channel, error))
-        return false;
-    if (item->kind == QA_Q3_ITEM_HOLDABLE && item->tag == QA_Q3_H_KAMIKAZE &&
-        !q3_sound(game, actor, "sound/items/kamikazerespawn.wav", channel, error))
-        return false;
+    const char *path = item->kind == QA_Q3_ITEM_POWERUP
+        ? "sound/items/poweruprespawn.wav"
+        : item->kind == QA_Q3_ITEM_HOLDABLE && item->tag == QA_Q3_H_KAMIKAZE
+            ? "sound/items/kamikazerespawn.wav" : NULL;
+    if (path) {
+        qa_actor_id temporary;
+        qa_vec3 sound_origin = entry->state.item.trajectory.base;
+        if (!q3_wire_temp_entity(game, sound_origin,
+                                 channel ? 45 : 46, &temporary, error))
+            return false;
+        qa_q3_entity *event = q3_wire_temporary(game, temporary);
+        uint32_t source_slot;
+        if (!event || !qa_q3_source_actor_slot(game, temporary, &source_slot, error))
+            return q3_map_fail(error, "Q3 item respawn sound lost its temporary source row");
+        int32_t sound_index;
+        if (!qa_q3_sound_index(game, path, &sound_index, error))
+            return false;
+        event = q3_wire_temporary(game, temporary);
+        if (!event || !qa_q3_source_actor_slot(game, temporary, &source_slot, error))
+            return q3_map_fail(error, "Q3 item respawn sound retired during registration");
+        event->eventParm = sound_index;
+        game->source_entities[source_slot].server_flags |= 32u;
+        if (!q3_map_get(game, actor) || !q3_actor_get(game, actor))
+            return true;
+        if (!q3_sound_report(game, actor, path, channel, error))
+            return false;
+    }
     if (!q3_map_get(game, actor) || !q3_actor_get(game, actor))
         return true;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
-    return !q3_map_get(game, actor) || !q3_actor_get(game, actor) ||
-           q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ITEM, 40, 0, body.origin,
-                    qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
+    if (q3_map_get(game, actor) && q3_actor_get(game, actor) &&
+        !q3_wire_add_event(game, actor, 40, 0, error))
+        return false;
+    if (!q3_map_get(game, actor) || !q3_actor_get(game, actor))
+        return true;
+    if (!q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ITEM, 40, 0, body.origin,
+                   qa_v3(0, 0, 0), qa_v3(0, 0, 0), error))
+        return false;
+    selected = q3_map_get(game, actor);
+    if (selected)
+        selected->due_ms = 0;
+    return true;
 }
 
 bool q3_map_item_think(qa_q3_game *game, qa_q3_map_actor_state *state,
@@ -177,8 +247,18 @@ bool q3_map_item_use(qa_q3_game *game, qa_q3_map_actor_state *state,
                      qa_error *error) {
     if (!state || state->kind != QA_Q3_MAP_ITEM || !state->item_bound)
         return true;
-    state->think = QA_Q3_MAP_THINK_ITEM_RESPAWN;
-    state->due_ms = game->now_ms;
+    return respawn_item(game, state, error);
+}
+
+bool q3_map_item_respawn(qa_q3_game *game, qa_actor_id actor, bool *handled,
+                         qa_error *error) {
+    if (handled)
+        *handled = false;
+    qa_q3_map_actor_state *state = q3_map_get(game, actor);
+    if (!state || state->kind != QA_Q3_MAP_ITEM || !state->item_bound)
+        return true;
+    if (handled)
+        *handled = true;
     return respawn_item(game, state, error);
 }
 
@@ -196,14 +276,12 @@ bool q3_map_item_picked(qa_q3_game *game, qa_actor_id actor, int32_t respawn_at,
     state = q3_map_get(game, actor);
     if (!state)
         return true;
-    state->linked = false;
+    qa_linked_body linked;
+    state->linked = qa_world_linked(game->options.services.world, actor, &linked);
     if (!respawn_at)
         return true;
-    qa_q3_map_actor_state *master = q3_map_get(
-        game, state->team_master.registry ? state->team_master : state->actor);
-    if (!master)
-        return q3_map_fail(error, "Q3 item team lost its master during pickup");
-    master->due_ms = respawn_at;
-    master->think = QA_Q3_MAP_THINK_ITEM_RESPAWN;
+    state->due_ms = respawn_at;
+    q3_postgame_native_think_assigned(game, actor);
+    state->think = QA_Q3_MAP_THINK_ITEM_RESPAWN;
     return true;
 }

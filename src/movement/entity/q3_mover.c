@@ -13,6 +13,7 @@ typedef struct q3_pushed_actor {
     qa_q3_mover_actor_kind kind;
     qa_vec3 origin, body_origin, angles;
     float yaw;
+    bool has_client;
 } q3_pushed_actor;
 typedef struct q3_mover_transaction {
     qa_physics *physics;
@@ -46,6 +47,7 @@ static int q3_read(q3_mover_transaction *transaction, qa_actor_id actor, q3_move
         qa_error_set(transaction->error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 mover actor classification");
         return -1;
     }
+    record->source.write_client_motion = false;
     return 1;
 }
 static bool q3_source_write(q3_mover_transaction *transaction, qa_actor_id actor, const qa_q3_mover_state *source) {
@@ -92,8 +94,8 @@ static bool q3_trace_query(q3_mover_transaction *transaction, const qa_trace_que
     return true;
 }
 static qa_vec3 q3_test_origin(const q3_mover_record *record) {
-    return q3_native(record->source.kind) && record->source.kind != QA_Q3_MOVER_NATIVE_PLAYER
-        ? record->source.position.base : record->body.origin;
+    if (!q3_native(record->source.kind)) return record->body.origin;
+    return record->source.has_client ? record->source.client_origin : record->source.position.base;
 }
 static bool q3_position_blocked(q3_mover_transaction *transaction, qa_actor_id actor, bool *blocked) {
     *blocked = false;
@@ -139,7 +141,8 @@ static bool q3_save(q3_mover_transaction *transaction, qa_actor_id actor,
     }
     *saved = (q3_pushed_actor){.actor = actor, .kind = record->source.kind,
         .origin = q3_test_origin(record), .body_origin = record->body.origin,
-        .angles = record->source.angular.base, .yaw = (float)record->source.delta_yaw_word};
+        .angles = record->source.angular.base, .yaw = (float)record->source.delta_yaw_word,
+        .has_client = record->source.has_client};
     transaction->pushed[transaction->count++] = *saved;
     return true;
 }
@@ -153,20 +156,24 @@ static bool q3_restore(q3_mover_transaction *transaction) {
         if (!read) continue;
         if (q3_native(saved->kind)) {
             if (!q3_native(current.source.kind) ||
-                (current.source.kind == QA_Q3_MOVER_NATIVE_PLAYER && saved->kind != QA_Q3_MOVER_NATIVE_PLAYER)) {
+                (current.source.has_client && !saved->has_client)) {
                 qa_error_set(transaction->error, QA_ERROR_ARGUMENT, 0, "Q3 pushed actor changed its native body owner");
                 return false;
             }
             current.source.position.base = saved->origin;
             current.source.angular.base = saved->angles;
-            if (current.source.kind == QA_Q3_MOVER_NATIVE_PLAYER)
+            if (current.source.has_client) {
+                current.source.client_origin = saved->origin;
                 current.source.delta_yaw_word = q3_integer(saved->yaw);
+                current.source.write_client_motion = true;
+            }
             if (!q3_source_write(transaction, saved->actor, &current.source)) return false;
         }
-        /* Trajectory bases and authoritative body positions have independent
-         * storage. Restore both, preserving live ground/velocity and callbacks. */
-        if (!q3_body_position(transaction, saved->actor, saved->body_origin, false) ||
-            !ph_link(transaction->physics, saved->actor, false, transaction->error)) return false;
+        if (!q3_native(saved->kind) &&
+            !q3_body_position(transaction, saved->actor, saved->body_origin, false)) return false;
+        /* Native rollback restores S and the actual PS, then links the current
+         * physical body. A borrowed model's r.currentOrigin is independent. */
+        if (!ph_link(transaction->physics, saved->actor, false, transaction->error)) return false;
     }
     return true;
 }
@@ -192,11 +199,14 @@ static bool q3_try_push(q3_mover_transaction *transaction, qa_actor_id actor,
     bool native = q3_native(check.source.kind);
     if (native) {
         check.source.position.base = qa_vec_add(qa_vec_add(check.source.position.base, move), rotation);
-        if (check.source.kind == QA_Q3_MOVER_NATIVE_PLAYER)
+        if (check.source.has_client) {
+            check.source.client_origin = qa_vec_add(qa_vec_add(check.source.client_origin, move), rotation);
             check.source.delta_yaw_word = q3_signed_word((uint32_t)check.source.delta_yaw_word + q3_angle_word(angular.y));
+            check.source.write_client_motion = true;
+        }
         if (!q3_source_write(transaction, actor, &check.source)) return false;
     }
-    if (!native || check.source.kind == QA_Q3_MOVER_NATIVE_PLAYER) {
+    if (!native) {
         if (!q3_body_position(transaction, actor, destination, !rider)) return false;
     }
     if (!rider && !q3_lose_ground(transaction, actor)) return false;
@@ -214,11 +224,15 @@ static bool q3_try_push(q3_mover_transaction *transaction, qa_actor_id actor,
     if (native) {
         check.source.position.base = saved.origin;
         check.source.angular.base = saved.angles;
+        if (check.source.has_client) {
+            check.source.client_origin = saved.origin;
+            check.source.write_client_motion = true;
+        }
         if (!q3_source_write(transaction, actor, &check.source)) return false;
     }
     /* Source fallback keeps the already adjusted player yaw. It restores the
      * original position, never merely subtracts translation from a rotation. */
-    if ((!native || saved.kind == QA_Q3_MOVER_NATIVE_PLAYER) &&
+    if (!native &&
         !q3_body_position(transaction, actor, saved.origin, !rider)) return false;
     if (!q3_position_blocked(transaction, actor, &blocked)) return false;
     if (!ph_live(transaction->physics, actor) || !ph_live(transaction->physics, pusher)) return true;

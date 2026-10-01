@@ -213,6 +213,13 @@ typedef enum qa_q3_mover_actor_kind {
 typedef struct qa_q3_mover_state {
     qa_q3_mover_actor_kind kind;
     qa_trajectory position, angular;
+    /* Read projection of the genuine gentity.client pointer and its actual PS
+     * origin. A borrowed victory-model client may refer to another body. */
+    qa_vec3 client_origin;
+    bool has_client;
+    /* Mutation intent, false in observations. Set only at genuine native PS
+     * assignments; a ground-only source write must not allocate a PS body. */
+    bool write_client_motion;
     int32_t delta_yaw_word, ground_entity_number;
     qa_actor_id team_next, proximity_pusher;
     qa_vec3 proximity_direction;

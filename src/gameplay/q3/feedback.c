@@ -1,13 +1,52 @@
 #include "internal.h"
+#include "qa/game_q3_clients.h"
 
+static int32_t feedback_word(double value) {
+    if (!isfinite(value) || value == 0)
+        return 0;
+    double remainder = fmod(trunc(value), 4294967296.0);
+    if (remainder < 0)
+        remainder += 4294967296.0;
+    uint32_t bits = (uint32_t)remainder;
+    int32_t word;
+    memcpy(&word, &bits, sizeof(word));
+    return word;
+}
+static bool feedback_event(qa_q3_game *game, qa_actor_id actor, int32_t event,
+                            int32_t parameter, qa_error *error) {
+    uint32_t source_slot;
+    if (!qa_q3_native_client_slot(game, actor, &source_slot, NULL))
+        return q3_player_event(game, actor, event, parameter, error);
+    if (!q3_wire_add_event(game, actor, event, parameter, error))
+        return false;
+    qa_body_state body;
+    if (!q3_source_body_read(game, actor, &body, error))
+        return false;
+    return !q3_actor_get(game, actor) ||
+        q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ANIMATION, event, parameter,
+                  body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
+}
 static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
     if (!game || !outcome)
         return q3_fail(error, "invalid Q3 damage feedback");
+    if (!q3_wire_damage(game, outcome, error))
+        return false;
     q3_actor *entry = q3_actor_get(game, outcome->request.target);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || outcome->stale)
         return true;
     qa_q3_player_state *player = &entry->state.player;
-    if (!(player->selections & (QA_Q3_CHARACTER | QA_Q3_EFFECTS)))
+    player->last_hurt_client = q3_entity_number(game, outcome->request.attack.attacker);
+    player->last_hurt_mod = outcome->request.attack.cause.kind == QA_CAUSE_Q3
+        ? outcome->request.attack.cause.source.q3.means_of_death : 0;
+    if (outcome->result.reaction == QA_REACTION_DEATH) {
+        entry->enemy = outcome->request.attack.attacker;
+        uint32_t source_slot;
+        entry->enemy_source_present = qa_q3_source_actor_slot(game, entry->enemy, &source_slot, NULL);
+        entry->enemy_source_slot = entry->enemy_source_present ? source_slot : 0;
+    }
+    uint32_t client_slot;
+    bool source_client = qa_q3_native_client_slot(game, entry->actor, &client_slot, NULL);
+    if (!(player->selections & (QA_Q3_CHARACTER | QA_Q3_EFFECTS)) && !source_client)
         return true;
     const qa_damage_result *result = &outcome->result;
     float blood = result->applied_damage, armor = 0;
@@ -27,8 +66,28 @@ static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, 
     player->damage_from = outcome->request.direction;
     player->damage_from_world =
         qa_vec_dot(outcome->request.direction, outcome->request.direction) == 0;
-    if (result->battlesuit)
-        return q3_player_event(game, entry->actor, 62, 0, error);
+    if (source_client && (game->options.rules.game_type == 4 ||
+        (game->options.product == QA_Q3_TEAM_ARENA && game->options.rules.game_type == 5)) &&
+        game->options.hooks.source_hurt_carrier) {
+        qa_actor_id target = entry->actor;
+        if (!game->options.hooks.source_hurt_carrier(game->options.hooks.context,
+                target, outcome->request.attack.attacker, error)) return false;
+        entry = q3_actor_get(game, target);
+        uint32_t actual;
+        if (!entry || !qa_q3_native_client_slot(game, target, &actual, NULL) ||
+            actual != client_slot || !game->source_entities[actual].body_attached) return true;
+        player = &entry->state.player;
+    }
+    if (result->battlesuit && !feedback_event(game, entry->actor, 62, 0, error))
+        return false;
+    if (source_client && result->reaction == QA_REACTION_DEATH) {
+        bool admitted = false;
+        if (!q3_source_initial_death(game, outcome, &admitted, error))
+            return false;
+        if (admitted && (!qa_q3_ranking_death(game, outcome, error) ||
+                         !q3_source_death_effects(game, outcome, error)))
+            return false;
+    }
     return true;
 }
 bool qa_q3_before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
@@ -41,11 +100,16 @@ bool qa_q3_before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     return result;
 }
 static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
-                            int32_t water_type, qa_error *error) {
+                            int32_t water_type, bool *publish, qa_error *error) {
+    if (publish)
+        *publish = false;
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "missing Q3 client end frame");
-    if (entry->state.player.spectator)
+    uint32_t source_slot;
+    bool source_client = qa_q3_native_client_slot(game, actor, &source_slot, NULL);
+    if (source_client ? game->clients[source_slot].session.team == 3
+                      : entry->state.player.spectator)
         return true;
     qa_q3_player_state *player = &entry->state.player;
     for (unsigned i = 0; i < QA_Q3_POWERUP_COUNT; ++i)
@@ -56,35 +120,64 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             player->powerups[player->persistent] = game->now_ms;
         if (player->invulnerability_until > game->now_ms)
             player->powerups[QA_Q3_P_INVULNERABILITY] = game->now_ms;
-        else
+        else if (!source_client)
             player->invulnerability_expanded = false;
     }
-    if (game->options.rules.intermission)
+    if (source_client ? game->match_state.intermission_time_ms != 0
+                      : game->options.rules.intermission)
         return true;
-    if (!qa_q3_player_effects(game, actor, 0, water_level, water_type, entry->state.player.noclip,
-                              error))
+    bool effects = source_client
+        ? qa_q3_client_world_effects(game, actor, water_level, water_type, error)
+        : qa_q3_player_effects(game, actor, 0, water_level, water_type,
+                                entry->state.player.noclip, error);
+    if (!effects)
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || game->options.rules.intermission)
+    uint32_t actual_slot;
+    if (!entry || (!source_client && game->options.rules.intermission) || (source_client &&
+        (!qa_q3_native_client_slot(game, actor, &actual_slot, NULL) || actual_slot != source_slot)))
         return true;
     player = &entry->state.player;
-    float count = fminf(255, player->damage_blood + player->damage_armor);
-    if (!player->dead && count > 0) {
+    bool dead = player->dead;
+    if (source_client) {
+        qa_q3_wire_policy policy;
+        if (!qa_q3_wire_player_policy_read(game, actor, &policy, error))
+            return false;
+        dead = policy.pm_type == 3;
+        entry = q3_actor_get(game, actor);
+        if (!entry || !qa_q3_native_client_slot(game, actor, &actual_slot, NULL) ||
+            actual_slot != source_slot)
+            return true;
+        player = &entry->state.player;
+    }
+    float count = fminf(255, (float)feedback_word(
+        (double)player->damage_blood + (double)player->damage_armor));
+    if (!dead && count != 0) {
         if (player->damage_from_world) {
             player->damage_pitch = 255;
             player->damage_yaw = 255;
             player->damage_from_world = false;
         } else {
             qa_vec3 d = player->damage_from;
-            float yaw = atan2f(d.y, d.x) * 180 / Q3_PI;
+            float yaw = d.x != 0 ? q3_source_float_divide(
+                q3_source_float_multiply((float)atan2((double)d.y, (double)d.x), 180), Q3_PI)
+                : d.y != 0 ? (d.y > 0 ? 90 : 270) : 0;
             if (yaw < 0)
-                yaw += 360;
-            float pitch = -atan2f(d.z, sqrtf(d.x * d.x + d.y * d.y)) * 180 / Q3_PI;
-            player->damage_pitch = (int32_t)(pitch / 360 * 256);
-            player->damage_yaw = (int32_t)(yaw / 360 * 256);
+                yaw = q3_source_float_add(yaw, 360);
+            float pitch = d.x == 0 && d.y == 0 ? (d.z > 0 ? 90 : 270)
+                : q3_source_float_divide(q3_source_float_multiply((float)atan2((double)d.z,
+                    (double)(float)sqrt((double)q3_source_float_add(
+                        q3_source_float_multiply(d.x, d.x), q3_source_float_multiply(d.y, d.y)))),
+                    180), Q3_PI);
+            if (pitch < 0)
+                pitch = q3_source_float_add(pitch, 360);
+            player->damage_pitch = q3_source_float_to_int(q3_source_float_multiply(
+                q3_source_float_divide(-pitch, 360), 256));
+            player->damage_yaw = q3_source_float_to_int(q3_source_float_multiply(
+                q3_source_float_divide(yaw, 360), 256));
         }
         qa_combat_state combat;
-        if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
+        if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -92,7 +185,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         player = &entry->state.player;
         if (game->now_ms > player->pain_after && !combat.invulnerable) {
             player->pain_after = q3_add_time(game->now_ms, 700);
-            if (!q3_player_event(game, actor, 56, (int32_t)combat.health, error))
+            if (!feedback_event(game, actor, 56, feedback_word(combat.health), error))
                 return false;
             entry = q3_actor_get(game, actor);
             if (!entry)
@@ -103,20 +196,51 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         player->damage_count = (int32_t)count;
         player->damage_blood = player->damage_armor = player->damage_knockback = 0;
     }
+    q3_wire_entity_source *source = source_client ? q3_wire_entity(game, actor) : NULL;
+    if (source_client && !source)
+        return q3_fail(error, "Q3 ClientEndFrame lost its published source entity");
+    uint32_t flags = source ? (uint32_t)source->flags : player->flags;
     if (q3_sub_time(game->now_ms, player->last_command_ms) > 1000)
-        player->flags |= 0x2000u;
+        flags |= 0x2000u;
     else
-        player->flags &= ~0x2000u;
-    if (player->reward_until && game->now_ms > player->reward_until)
-        player->flags &= ~0x38848u;
-    const char *loop = game->options.product == QA_Q3_TEAM_ARENA && (player->flags & 2u)
+        flags &= ~0x2000u;
+    if (source)
+        source->flags = (int32_t)flags;
+    else {
+        player->flags = flags;
+        if (player->reward_until && game->now_ms > player->reward_until)
+            player->flags &= ~0x38848u;
+    }
+    int32_t loop_index = 0;
+    const char *loop = game->options.product == QA_Q3_TEAM_ARENA && (flags & 2u)
                            ? "sound/weapons/proxmine/wstbtick.wav"
-                       : water_level && (water_type & (8 | 16)) ? "sound/world/fry.wav"
+                       : water_level && (water_type & (8 | 16)) ? "sound/player/fry.wav"
                                                                 : NULL;
+    if (source_client && loop && (flags & 2u) && game->options.product == QA_Q3_TEAM_ARENA) {
+        if (!qa_q3_sound_index(game, loop, &loop_index, error))
+            return false;
+    } else if (loop)
+        loop_index = game->fry_sound_index;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (source_client &&
+        !qa_q3_wire_player_loop_sound(game, actor, loop_index, error))
+        return false;
+    player = &entry->state.player;
     if (!loop)
         player->loop_sound = 0;
-    else if (!qa_builtin_resource(&game->options.services, loop, &player->loop_sound, error))
-        return false;
+    else {
+        qa_string_id resource;
+        if (!qa_builtin_resource(&game->options.services, loop, &resource, error))
+            return false;
+        entry = q3_actor_get(game, actor);
+        if (entry && entry->kind == Q3_ACTOR_PLAYER)
+            entry->state.player.loop_sound = resource;
+    }
+    if (publish && qa_q3_native_client_slot(game, actor, &actual_slot, NULL) &&
+        actual_slot == source_slot)
+        *publish = true;
     return true;
 }
 bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
@@ -124,7 +248,19 @@ bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_l
     if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 client end-frame boundary");
     ++game->observation_depth;
-    bool result = player_end_frame(game, actor, water_level, water_type, error);
+    bool result = player_end_frame(game, actor, water_level, water_type, NULL, error);
+    --game->observation_depth;
+    return result;
+}
+bool qa_q3_client_end_prepare(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
+                              int32_t water_type, bool *publish, qa_error *error) {
+    uint32_t source_slot;
+    if (!game || !publish || game->source_restored || game->observation_depth == SIZE_MAX ||
+        !qa_q3_native_client_slot(game, actor, &source_slot, error))
+        return q3_fail(error, "Q3 native end frame requires its actual source client");
+    *publish = false;
+    ++game->observation_depth;
+    bool result = player_end_frame(game, actor, water_level, water_type, publish, error);
     --game->observation_depth;
     return result;
 }

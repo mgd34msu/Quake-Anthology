@@ -6,8 +6,13 @@
 #include "qa/physics.h"
 #include "qa/rankings.h"
 #include "qa/game_q3_product.h"
+#include "qa/game_q3_client_types.h"
+#include "qa/game_q3_source_types.h"
+#include "qa/game_q3_shader_remap.h"
 
 typedef struct qa_q3_game qa_q3_game;
+bool qa_q3_game_random(qa_q3_game *, float *, qa_error *);
+bool qa_q3_game_rand(qa_q3_game *, uint32_t *, qa_error *);
 bool qa_q3_game_grant_arsenal(qa_q3_game *, qa_actor_id, bool ammo, qa_error *);
 bool qa_q3_game_give_item(qa_q3_game *, qa_actor_id, size_t, const char *const *, bool *handled,
                          qa_error *);
@@ -103,6 +108,9 @@ typedef struct qa_q3_cutscene_state {
 } qa_q3_cutscene_state;
 typedef struct qa_q3_player_state {
     uint32_t selections, flags, event_sequence, spawn_count;
+    int32_t events[2], event_parameters[2];
+    uint32_t entity_event_sequence;
+    int32_t external_event, external_event_parameter, external_event_time;
     qa_q3_weapon weapon, requested_weapon;
     qa_q3_weapon_phase weapon_phase;
     qa_q3_external_slot external_slot;
@@ -115,11 +123,16 @@ typedef struct qa_q3_player_state {
     int32_t drowning_damage, pain_after, reward_until, accuracy_shots, accuracy_hits;
     int32_t rail_streak, impressive_count, denied_rewards, player_events;
     int32_t deaths, excellent_count, gauntlet_frag_count, last_kill_ms, dead_yaw;
+    int32_t last_killed_client, last_hurt_client, last_hurt_mod;
     int32_t legs_animation, torso_animation, legs_timer_ms, torso_timer_ms;
     int32_t delta_yaw_word, ground_entity_number;
     int32_t delta_pitch_word, delta_roll_word, teleport_lock_ms;
     uint64_t teleport_revision;
     int32_t damage_event, damage_count, damage_pitch, damage_yaw, last_command_ms;
+    int32_t command_time_ms, client_number;
+    int32_t portal_id;
+    int32_t rank, persistent_team, generic1;
+    int32_t defend_count, assist_count, captures;
     int32_t fly_sound_after, jumppad_entity, jumppad_frame, pmove_frame_count;
     int32_t last_command_angles[3];
     float damage_blood, damage_armor, damage_knockback;
@@ -135,16 +148,54 @@ typedef struct qa_q3_player_state {
 } qa_q3_player_state;
 
 typedef struct qa_q3_rules {
-    int32_t game_type, proximity_timeout_ms, force_respawn_seconds;
+    int32_t game_type, proximity_timeout_ms, force_respawn_seconds, dmflags;
     float quad_factor, knockback, weapon_respawn_seconds, team_weapon_respawn_seconds;
+    float gravity;
     bool friendly_fire, blood, intermission;
 } qa_q3_rules;
 typedef enum qa_q3_source_award {
+    QA_Q3_AWARD_IMPRESSIVE = 9,
+    QA_Q3_AWARD_EXCELLENT = 10,
     QA_Q3_AWARD_DEFEND = 11,
-    QA_Q3_AWARD_ASSIST = 12
+    QA_Q3_AWARD_ASSIST = 12,
+    QA_Q3_AWARD_GAUNTLET = 13,
+    QA_Q3_AWARD_CAPTURE = 14
 } qa_q3_source_award;
+enum {
+    QA_Q3_SOURCE_PM_COMMAND = 1, QA_Q3_SOURCE_PM_EVENTS = 2,
+    QA_Q3_SOURCE_PM_FRAME = 4, QA_Q3_SOURCE_PM_JUMPPAD = 8,
+    QA_Q3_SOURCE_PM_DELTAS = 16, QA_Q3_SOURCE_PM_VIEW = 32,
+    QA_Q3_SOURCE_PM_ALL = 63
+};
+typedef enum qa_q3_obelisk_think {
+    QA_Q3_OBELISK_NONE, QA_Q3_OBELISK_REGEN, QA_Q3_OBELISK_RESPAWN
+} qa_q3_obelisk_think;
+typedef enum qa_q3_obelisk_die_stage {
+    QA_Q3_OBELISK_DIE_TEAM_SCORE, QA_Q3_OBELISK_DIE_PLAYER_SCORE
+} qa_q3_obelisk_die_stage;
+typedef struct qa_q3_obelisk_state {
+    qa_actor_id model;
+    int32_t team, next_think_ms;
+    qa_q3_obelisk_think think;
+} qa_q3_obelisk_state;
+typedef struct qa_q3_obelisk_continuation {
+    qa_actor_id model;
+    int32_t next_think_ms;
+    qa_q3_obelisk_think think;
+} qa_q3_obelisk_continuation;
+typedef struct qa_q3_obelisk_settings {
+    int32_t health, regen_period_seconds, regen_amount, respawn_delay_seconds;
+} qa_q3_obelisk_settings;
 typedef struct qa_q3_hooks {
     void *context;
+    bool (*source_settings_update)(void *, const qa_source_frame *, qa_error *);
+    bool (*source_world_init)(void *, qa_error *);
+    bool (*source_team_items)(void *, qa_error *);
+    bool (*source_client_run)(void *, qa_actor_id, const qa_source_frame *, qa_error *);
+    bool (*source_client_end)(void *, qa_actor_id, const qa_source_frame *, qa_error *);
+    bool (*source_end_frame)(void *, const qa_source_frame *, qa_error *);
+    bool (*source_movement_state)(void *, qa_actor_id, const qa_q3_player_state *,
+                                   uint32_t fields, qa_error *);
     /* Match and map owners handle their own obligations; selection does not
      * give this provider authority over the session's mode or target graph. */
     bool (*objective_pickup)(void *, qa_actor_id item, qa_actor_id player, uint32_t item_index,
@@ -152,10 +203,22 @@ typedef struct qa_q3_hooks {
     bool (*death)(void *, qa_actor_id victim, const qa_damage_request *, qa_error *);
     bool (*respawn)(void *, qa_actor_id, qa_error *);
     bool (*teleport_destination)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, qa_error *);
+    bool (*primary_attack_allowed)(void *, qa_actor_id);
     int32_t (*source_team)(void *, qa_actor_id);
     int32_t (*entity_number)(void *, qa_actor_id);
     bool (*objective_drop)(void *, qa_actor_id player, qa_error *);
+    bool (*objective_dropped)(void *, qa_actor_id item, uint32_t item_index, qa_error *);
+    bool (*objective_admitted)(void *, qa_actor_id item, uint32_t item_index,
+                               bool finished, qa_error *);
     bool (*objective_expired)(void *, qa_actor_id item, uint32_t item_index, qa_error *);
+    bool (*objective_nodrop)(void *, qa_actor_id item, uint32_t item_index, qa_error *);
+    bool (*source_flags_cleared)(void *, qa_actor_id player, qa_error *);
+    bool (*source_obelisk_settings)(void *, qa_q3_obelisk_settings *, qa_error *);
+    bool (*objective_obelisk_admitted)(void *, qa_actor_id, qa_actor_id, int32_t, qa_error *);
+    bool (*objective_obelisk_touch)(void *, qa_actor_id, qa_actor_id, qa_error *);
+    bool (*objective_obelisk_die)(void *, qa_actor_id, qa_actor_id,
+                                  qa_q3_obelisk_die_stage, qa_error *);
+    bool (*objective_obelisk_pain)(void *, qa_actor_id, qa_actor_id, int32_t, qa_error *);
     bool (*foreign_mover_read)(void *, qa_actor_id, qa_q3_mover_state *);
     bool (*foreign_mover_write)(void *, qa_actor_id, const qa_q3_mover_state *, qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id target, qa_actor_owner fallback);
@@ -166,6 +229,14 @@ typedef struct qa_q3_hooks {
     bool (*ranking_warmup)(void *);
     bool (*cheats_enabled)(void *);
     bool (*console_print)(void *, const char *, qa_error *);
+    bool (*source_log)(void *, const char *, qa_error *);
+    bool (*postgame_cvar_integer)(void *, const char *, int32_t *, qa_error *);
+    bool (*memory_debug_integer)(void *, int32_t *, qa_error *);
+    bool (*source_hurt_carrier)(void *, qa_actor_id target, qa_actor_id attacker, qa_error *);
+    bool (*source_frag_bonuses)(void *, qa_actor_id target, qa_actor_id attacker, qa_error *);
+    bool (*source_client_death)(void *, qa_actor_id, qa_error *);
+    bool (*source_death_score)(void *, qa_actor_id target, qa_actor_id attacker, qa_error *);
+    bool (*client_print)(void *, qa_actor_id, const char *, qa_error *);
     bool (*server_command)(void *, int32_t source_slot_or_minus_one, const char *, qa_error *);
     /* Called after the actual source slot commits. Text is borrowed only for
      * this call; a failing notification leaves the source mutation committed. */
@@ -198,6 +269,9 @@ bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
 bool qa_q3_source_clock(const qa_q3_game *, int32_t *source_time_ms, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
+/* G_UpdateCvars writes the source numerical values without construction-time
+ * range restrictions. Call from the real source settings phase. */
+bool qa_q3_set_source_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invocation *,
                                 bool *handled, qa_error *);
 qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
@@ -303,15 +377,27 @@ typedef struct qa_q3_item_spawn {
     qa_string_id target;
 } qa_q3_item_spawn;
 bool qa_q3_spawn_item(qa_q3_game *, const qa_q3_item_spawn *, qa_actor_id *, qa_error *);
+bool qa_q3_source_item_adopt(qa_q3_game *, qa_actor_id, const qa_q3_item_spawn *,
+                           bool available, qa_error *);
+bool qa_q3_source_item_spawn_read(const qa_q3_game *, qa_actor_id, qa_q3_item_spawn *,
+                                  bool *finished, qa_error *);
+bool qa_q3_source_item_respawn(qa_q3_game *, qa_actor_id, qa_error *);
+bool qa_q3_source_drop_item(qa_q3_game *, qa_actor_id source_player, uint32_t item_index,
+                            float angle, qa_actor_id *, qa_error *);
 bool qa_q3_touch_item(qa_q3_game *, qa_actor_id item, qa_actor_id recipient, bool *accepted,
                       qa_error *);
 bool qa_q3_touch(qa_q3_game *, const qa_touch_contact *, qa_error *);
 bool qa_q3_teleport(qa_q3_game *, qa_actor_id, qa_vec3 origin, qa_vec3 angles, qa_error *);
 
+typedef enum qa_q3_mover_blocked {
+    QA_Q3_MOVER_BLOCKED_NONE, QA_Q3_MOVER_BLOCKED_DOOR
+} qa_q3_mover_blocked;
 typedef struct qa_q3_mover_definition {
     qa_q3_mover_state state;
     qa_vec3 first, second;
-    int32_t state_index, wait_ms, damage, next_think_ms;
+    int32_t state_index, damage, next_think_ms;
+    float wait_ms;
+    qa_q3_mover_blocked blocked;
     qa_actor_id team_leader;
     qa_actor_id activator;
     qa_string_id target;
@@ -331,7 +417,11 @@ typedef enum qa_q3_actor_kind {
     Q3_ACTOR_KAMIKAZE,
     Q3_ACTOR_PORTAL,
     Q3_ACTOR_CORPSE,
-    Q3_ACTOR_KAMIKAZE_TIMER
+    Q3_ACTOR_KAMIKAZE_TIMER,
+    Q3_ACTOR_TEMPORARY,
+    Q3_ACTOR_OBELISK,
+    Q3_ACTOR_PODIUM,
+    Q3_ACTOR_VICTORY_MODEL
 } qa_q3_actor_kind;
 typedef enum qa_q3_projectile_phase {
     Q3_MISSILE_FLIGHT,
@@ -340,7 +430,8 @@ typedef enum qa_q3_projectile_phase {
     Q3_MISSILE_PROX_ARMING,
     Q3_MISSILE_PROX_ARMED,
     Q3_MISSILE_PROX_TRIGGERED,
-    Q3_MISSILE_PROX_PLAYER
+    Q3_MISSILE_PROX_PLAYER,
+    Q3_MISSILE_PROX_DISCARD
 } qa_q3_projectile_phase;
 typedef struct qa_q3_projectile_state {
     qa_q3_weapon weapon;
@@ -367,6 +458,12 @@ bool qa_q3_item_availability(qa_q3_game *, qa_actor_id, bool available, int32_t 
                              int32_t expire_at_ms, qa_error *);
 typedef struct qa_q3_actor_state {
     qa_actor_id actor;
+    qa_actor_id enemy;
+    uint32_t enemy_source_slot;
+    bool enemy_source_present;
+    bool force_gesture;
+    int32_t spawnflags;
+    int32_t water_level, water_type;
     qa_q3_actor_kind kind;
     float alpha;
     union {
@@ -374,6 +471,7 @@ typedef struct qa_q3_actor_state {
         qa_q3_projectile_state missile;
         qa_q3_item_state item;
         qa_q3_mover_definition mover;
+        qa_q3_obelisk_continuation obelisk;
         struct {
             qa_actor_id parent;
         } trigger;
@@ -387,15 +485,34 @@ typedef struct qa_q3_actor_state {
             int32_t expire_at, activate_at;
             qa_vec3 angles, fallback;
             bool source;
+            int32_t sequence;
+            bool enabled;
         } portal;
         struct {
             qa_actor_id player;
             qa_trajectory trajectory;
             int32_t animation, timestamp, next_sink;
             uint32_t flags;
+            bool physics_object;
         } corpse;
+        struct {
+            qa_q3_entity entity;
+            int32_t event_time_ms;
+        } temporary;
+        struct {
+            qa_q3_entity entity;
+            int32_t timestamp, count, event_time_ms;
+            float physics_bounce;
+            bool physics_object;
+        } postgame;
     } state;
 } qa_q3_actor_state;
+bool qa_q3_source_obelisk_spawn(qa_q3_game *, qa_actor_id model, int32_t team,
+                                 uint32_t authored_flags, qa_actor_id *, qa_error *);
+bool qa_q3_source_obelisk_read(const qa_q3_game *, qa_actor_id,
+                                qa_q3_obelisk_state *, qa_error *);
+bool qa_q3_source_obelisk_reaction(qa_q3_game *, const qa_damage_outcome *,
+                                    bool *handled, qa_error *);
 typedef struct qa_q3_kamikaze_cooldown {
     qa_actor_id actor;
     int32_t damage_after, shock_after;
@@ -409,14 +526,29 @@ typedef struct qa_q3_saved_configstring {
     char *text;
 } qa_q3_saved_configstring;
 typedef struct qa_q3_checkpoint {
+    qa_q3_source_memory memory;
     uint32_t version, random_state, death_animation, body_queue_index;
     uint32_t max_clients;
+    uint32_t source_count;
+    bool new_session;
+    int32_t fry_sound_index;
+    int32_t portal_sequence;
+    int32_t last_team_location_time;
+    qa_q3_source_client_counts client_counts;
+    qa_q3_source_team_state team_state;
+    qa_q3_source_match_state match_state;
+    qa_q3_shader_remap_state shader_remaps;
+    qa_buffer wire_state;
+    qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
+    qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
+    qa_q3_actor_state source_clients[QA_Q3_NATIVE_CLIENTS];
     qa_q3_product product;
     qa_q3_rules rules;
     int32_t previous_ms, now_ms;
     uint64_t attack_sequence;
     qa_q3_ranking_hit ranking_hit;
     qa_actor_id body_queue[8];
+    uint32_t podium_players[3];
     qa_q3_actor_state *actors;
     size_t actor_count;
     qa_q3_kamikaze_cooldown *kamikaze_cooldowns;
@@ -459,7 +591,7 @@ typedef struct qa_q3_entity_view {
     qa_trajectory position, angular;
     uint32_t flags, selections, powerups, item_index, constant_light;
     qa_q3_weapon weapon;
-    int32_t legs_animation, torso_animation, time_ms, expire_ms, source_number;
+    int32_t legs_animation, torso_animation, time_ms, expire_ms, source_number, source_client;
     qa_string_id loop_sound;
     const char *model, *secondary_model;
     float alpha;
