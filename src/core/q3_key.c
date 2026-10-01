@@ -6,7 +6,9 @@
 struct qa_q3_key {
     qa_cvars *cvars;
     uint8_t bytes[34];
-    bool dedicated;
+    bool dedicated,writing;
+    qa_q3_key_storage_fn storage;
+    void *storage_context;
 };
 
 bool qa_q3_key_valid(const char *key, const char *checksum)
@@ -34,12 +36,38 @@ bool qa_q3_key_create(qa_cvars *cvars, bool dedicated, qa_q3_key **out, qa_error
     if (!cvars || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 key state requires shared cvars and output"); return false;
     }
+    qa_q3_key *key=NULL;
+    if (!qa_q3_key_create_detached(dedicated,&key,error)) return false;
+    key->cvars=cvars; *out=key; return true;
+}
+
+bool qa_q3_key_create_detached(bool dedicated,qa_q3_key **out,qa_error *error)
+{
+    if (!out || *out) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"detached Q3 key requires an empty output"); return false;
+    }
     qa_q3_key *key = calloc(1, sizeof(*key));
     if (!key) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 key state"); return false; }
-    key->cvars = cvars; key->dedicated = dedicated;
+    key->dedicated = dedicated;
     if (dedicated) for (size_t i = 0; i < 9; ++i) key->bytes[i] = (uint8_t)('1' + i);
     else memset(key->bytes, ' ', 32);
     *out = key; return true;
+}
+
+bool qa_q3_key_rebind_cvars(qa_q3_key *key,qa_cvars *cvars,qa_error *error)
+{
+    if (!key || key->writing || (cvars && qa_cvars_dialect(cvars)!=QA_CONSOLE_Q3)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 key registry binding requires its returned source owner"); return false;
+    }
+    key->cvars=cvars; return true;
+}
+
+bool qa_q3_key_bind_storage(qa_q3_key *key,qa_q3_key_storage_fn storage,void *context,qa_error *error)
+{
+    if (!key || key->writing || !storage || key->storage) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 key storage already has its actual profile owner"); return false;
+    }
+    key->storage=storage; key->storage_context=context; return true;
 }
 
 void qa_q3_key_destroy(qa_q3_key *key)
@@ -50,12 +78,29 @@ void qa_q3_key_destroy(qa_q3_key *key)
     free(key);
 }
 
-static bool file_key(qa_q3_key *key, qa_fs_root *root, uint8_t value[17], bool *present,
+static bool file_name_equal(const char *a,const char *b,void *context)
+{
+    (void)context;
+    for (;;++a,++b) {
+        unsigned x=(uint8_t)*a,y=(uint8_t)*b;
+        if (x>='A' && x<='Z') x+='a'-'A';
+        if (y>='A' && y<='Z') y+='a'-'A';
+        if (x!=y) return false;
+        if (!x) return true;
+    }
+}
+static bool file_key(qa_q3_key *key, qa_fs_root *root, qa_fs_root *fallback,uint8_t value[17], bool *present,
                        qa_error *error)
 {
     qa_fs_file *file; qa_fs_identity identity;
-    qa_error local = {0};
-    if (!qa_fs_root_file_open(root, "q3key", &file, &identity, &local)) {
+    qa_error local = {0}; char *path=NULL;
+    if (!qa_fs_root_resolve(root,"q3key",file_name_equal,NULL,false,&path,&local)) {
+        if (local.code==QA_ERROR_NOT_FOUND && fallback) return file_key(key,fallback,NULL,value,present,error);
+        if (local.code==QA_ERROR_NOT_FOUND) { *present=false; return true; }
+        if (error) *error=local; return false;
+    }
+    bool opened=qa_fs_root_file_open(root,path,&file,&identity,&local); free(path);
+    if (!opened) {
         if (local.code == QA_ERROR_NOT_FOUND) { *present = false; return true; }
         if (error) *error = local;
         return false;
@@ -76,11 +121,16 @@ static bool file_key(qa_q3_key *key, qa_fs_root *root, uint8_t value[17], bool *
 
 bool qa_q3_key_load(qa_q3_key *key, qa_fs_root *root, qa_q3_key_product product, qa_error *error)
 {
+    return qa_q3_key_load_profile(key,root,NULL,product,error);
+}
+bool qa_q3_key_load_profile(qa_q3_key *key,qa_fs_root *root,qa_fs_root *fallback,
+    qa_q3_key_product product,qa_error *error)
+{
     if (!key || !root || (unsigned)product > QA_Q3_KEY_EXPANSION) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 key load"); return false;
     }
     uint8_t value[17]; bool present;
-    if (!file_key(key, root, value, &present, error)) return false;
+    if (!file_key(key, root, fallback,value, &present, error)) return false;
     size_t offset = product == QA_Q3_KEY_BASE ? 0 : 16;
     if (!present) {
         memset(key->bytes + offset, ' ', 16); key->bytes[offset + 16] = 0; return true;
@@ -133,7 +183,20 @@ void qa_q3_key_write_ui(qa_q3_key *key, int32_t unique, const char *directory, c
     size_t offset = ui_offset(unique, directory);
     memcpy(key->bytes + offset, input, 16);
     if (offset == 16) key->bytes[32] = 0;
-    qa_cvars_mark_modified_flags(key->cvars, QA_CVAR_ARCHIVE);
+    if (key->cvars) qa_cvars_mark_modified_flags(key->cvars, QA_CVAR_ARCHIVE);
+}
+
+bool qa_q3_key_write_ui_stored(qa_q3_key *key,int32_t unique,const char *directory,
+    const uint8_t input[16],qa_error *error)
+{
+    if (!key || !input || !key->cvars || key->writing) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 UI key write has no actual idle source registry"); return false;
+    }
+    key->writing=true;
+    qa_q3_key_write_ui(key,unique,directory,input);
+    bool ok=!key->storage || key->storage(key->storage_context,
+        ui_offset(unique,directory)?QA_Q3_KEY_EXPANSION:QA_Q3_KEY_BASE,error);
+    key->writing=false; return ok;
 }
 
 void qa_q3_key_capture(const qa_q3_key *key, uint8_t out[34])

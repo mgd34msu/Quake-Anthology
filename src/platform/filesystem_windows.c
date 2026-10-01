@@ -261,6 +261,20 @@ static qa_fs_entry_kind kind_from_attributes(DWORD attributes)
     return QA_FS_REGULAR;
 }
 
+bool qa_fs_identity_modified_time(const qa_fs_identity *identity, qa_fs_timestamp *out)
+{
+    if (!identity || !out) return false;
+    uint64_t encoded = identity->words[3];
+    int64_t ticks = encoded <= INT64_MAX ? (int64_t)encoded :
+        -1 - (int64_t)(UINT64_MAX - encoded);
+    int64_t seconds = ticks / INT64_C(10000000);
+    int64_t remainder = ticks % INT64_C(10000000);
+    if (remainder < 0) { --seconds; remainder += INT64_C(10000000); }
+    out->seconds = seconds - INT64_C(11644473600);
+    out->nanoseconds = (uint32_t)remainder * 100;
+    return true;
+}
+
 static HANDLE open_contained(qa_fs_root *root, const char *relative,
                              DWORD access, DWORD flags, qa_error *error)
 {
@@ -1608,14 +1622,21 @@ bool qa_fs_stream_write(qa_fs_stream *stream, qa_bytes bytes,
     return qa_fs_stream_size(stream, resulting_size, error);
 }
 
-void qa_fs_stream_close(qa_fs_stream *stream)
+bool qa_fs_stream_close_checked(qa_fs_stream *stream, qa_error *error)
 {
     if (stream == NULL)
-        return;
-    if (stream->handle != INVALID_HANDLE_VALUE)
-        CloseHandle(stream->handle);
+        return true;
+    bool ok = true;
+    if (stream->handle != INVALID_HANDLE_VALUE && !CloseHandle(stream->handle))
+        ok = fail_windows(error, "cannot close", stream->path, GetLastError());
     free(stream->path);
     free(stream);
+    return ok;
+}
+
+void qa_fs_stream_close(qa_fs_stream *stream)
+{
+    (void)qa_fs_stream_close_checked(stream, NULL);
 }
 
 struct qa_fs_stage {

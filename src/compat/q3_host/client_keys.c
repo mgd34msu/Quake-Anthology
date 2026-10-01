@@ -34,7 +34,7 @@ q3_service_result q3_client_keys(q3_call *call, int32_t *result, qa_error *error
             !q3_write(call, call->arguments[0] + 16, (qa_bytes){bytes + 16, 1}, error)) return Q3_FAILED;
     } else {
         if (!q3_read(call, call->arguments[0], bytes, 16, error)) return Q3_FAILED;
-        qa_q3_key_write_ui(keys, unique, directory, bytes);
+        if (!qa_q3_key_write_ui_stored(keys,unique,directory,bytes,error)) return Q3_FAILED;
     }
     return Q3_COMPLETED;
 }

@@ -1,0 +1,255 @@
+#include "restart.h"
+#include "capture.h"
+#include <math.h>
+#include <stdio.h>
+
+struct frontend_restart {
+    frontend_restart_options options;
+    qa_restart_controls *controls;
+    qa_console *console;
+    qa_command_context command;
+    char *script;
+    qa_display_backend backend;
+    uint64_t generation;
+    bool video_requested,running,registered;
+};
+static bool fail(qa_error *error,qa_status code,const char *text)
+{ qa_error_set(error,code,0,"%s",text); return false; }
+static float number(const frontend_restart *owner,const char *name,float fallback)
+{
+    const qa_cvar_view *value=qa_cvars_find(owner->options.cvars,name);
+    return value?value->number:fallback;
+}
+static bool display_options(frontend_restart *owner,qa_display_backend backend,qa_display_options *options,
+    float *gamma,int *interval,qa_error *error)
+{
+    qa_frontend *f=owner->options.frontend; qa_display_info info;
+    if (!qa_display_info_get(f->display,&info,error)) return false;
+    *options=f->options.display; options->backend=backend;
+    float width=number(owner,"r_customwidth",0),height=number(owner,"r_customheight",0);
+    if (width==0) width=(float)info.logical_width;
+    if (height==0) height=(float)info.logical_height;
+    float fullscreen=number(owner,"r_fullscreen",info.fullscreen!=QA_DISPLAY_WINDOWED);
+    float swap=number(owner,"r_swapInterval",1); *gamma=number(owner,"r_gamma",f->options.gamma);
+    if (!isfinite(width) || !isfinite(height) || floorf(width)!=width || floorf(height)!=height ||
+        width<64 || width>16384 || height<64 || height>16384 ||
+        (fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) || !isfinite(*gamma) || *gamma<.5f || *gamma>3)
+        return fail(error,QA_ERROR_ARGUMENT,"Restart display settings require valid size, fullscreen, brightness and swap interval");
+    options->width=(uint32_t)width; options->height=(uint32_t)height;
+    options->fullscreen=fullscreen==1?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED;
+    options->hidden=true; *interval=(int)swap; return true;
+}
+static void retire_surface(qa_display *display,qa_gl_renderer *gl,qa_cpu_renderer *cpu)
+{
+    qa_error ignored={0};
+    if (gl) qa_display_make_current(display,&ignored);
+    qa_gl_destroy(gl); qa_cpu_destroy(cpu); qa_display_destroy(display);
+}
+static bool video(void *context,qa_error *error)
+{
+    frontend_restart *owner=context; qa_frontend *f=owner->options.frontend;
+    if (!owner->video_requested || !f->display || owner->generation==UINT64_MAX)
+        return fail(error,QA_ERROR_ARGUMENT,"Video restart lacks its retained actual local request");
+    qa_command_context command=owner->command; char *script=owner->script;
+    qa_display_backend backend=owner->backend;
+    owner->script=NULL; owner->command=(qa_command_context){0}; owner->video_requested=false;
+    qa_display_options options={0}; float gamma=1; int interval=1;
+    qa_display *candidate=NULL; qa_gl_renderer *gl=NULL; qa_cpu_renderer *cpu=NULL; void *ticket=NULL;
+    bool ok=owner->options.current(owner->options.context,&command,error) &&
+        display_options(owner,backend,&options,&gamma,&interval,error);
+    if (ok) candidate=qa_display_create(&options,error);
+    qa_display_info info={0};
+    if (ok) ok=candidate && qa_display_info_get(candidate,&info,error);
+    if (ok && backend==QA_DISPLAY_CPU) {
+        qa_cpu_options renderer; qa_cpu_options_default(&renderer);
+        renderer.width=info.drawable_width; renderer.height=info.drawable_height; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
+        renderer.present=qa_display_present_cpu; renderer.present_context=candidate;
+        cpu=qa_cpu_create(&renderer,error); ok=cpu && qa_cpu_set_gamma(cpu,gamma,error);
+    } else if (ok) {
+        qa_gl_options renderer; qa_gl_options_default(&renderer); renderer.display=candidate; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
+        gl=qa_gl_create(&renderer,error); ok=gl && qa_gl_set_gamma(gl,gamma,error) && qa_display_set_swap_interval(candidate,interval,error);
+    }
+    if (ok && f->gl) ok=qa_display_make_current(f->display,error);
+    if (ok) ok=owner->options.prepare_video(owner->options.context,&ticket,error) &&
+        owner->options.current(owner->options.context,&command,error) && owner->options.validate_video(owner->options.context,ticket,error);
+    qa_display *previous=f->display; qa_gl_renderer *previous_gl=f->gl; qa_cpu_renderer *previous_cpu=f->cpu;
+    bool input_attempted=false,published=false;
+    double now=(double)f->time_ns/1000000.0;
+    if (ok && f->input) { input_attempted=true; ok=qa_input_platform_window(f->input,candidate,now,error); }
+    if (ok) ok=qa_display_set_visible(candidate,!f->options.display.hidden,error);
+    if (ok && gl) ok=qa_display_make_current(candidate,error);
+    if (ok) {
+        f->display=candidate; f->gl=gl; f->cpu=cpu; f->width=info.drawable_width; f->height=info.drawable_height;
+        f->options.display.backend=backend; f->options.gamma=gamma;
+        candidate=NULL; gl=NULL; cpu=NULL; published=true;
+        ok=owner->options.reopen_video(owner->options.context,ticket,error);
+    }
+    if (!published && input_attempted) {
+        qa_error cleanup={0};
+        if (!qa_input_platform_window(f->input,previous,now,&cleanup)) { if (ok && error) *error=cleanup; ok=false; }
+    }
+    owner->options.release_video(owner->options.context,ticket);
+    if (published) retire_surface(previous,previous_gl,previous_cpu);
+    else retire_surface(candidate,gl,cpu);
+    qa_error cleanup={0};
+    if (f->gl && !qa_display_make_current(f->display,&cleanup)) { if (ok && error) *error=cleanup; ok=false; }
+    ++owner->generation;
+    if (ok) frontend_console_print(f,&command,backend==QA_DISPLAY_CPU?"Renderer restarted (cpu).\n":"Renderer restarted (gl).\n");
+    free(script); return ok;
+}
+static bool input(void *context,qa_error *error)
+{
+    frontend_restart *owner=context; qa_frontend *f=owner->options.frontend;
+    if (!f->input) return fail(error,QA_ERROR_UNSUPPORTED,"Input restart has no actual local input device owner");
+    double now=(double)f->time_ns/1000000.0;
+    for (unsigned i=0;i<f->options.seats;++i)
+        if (!qa_input_seat_release(f->seats[i].input,now,error)) return false;
+    return qa_input_platform_restart(f->input,now,error);
+}
+static bool audio(void *context,qa_error *error)
+{
+    frontend_restart *owner=context; qa_frontend *f=owner->options.frontend;
+    if (!f->device) return fail(error,QA_ERROR_UNSUPPORTED,"Audio restart has no actual native output device owner");
+    qa_audio_device_options options=qa_audio_device_configuration(f->device);
+    float rate=number(owner,"s_outputRate",(float)options.format.sample_rate);
+    float bits=number(owner,"s_outputBits",(float)options.format.sample_bits);
+    float channels=number(owner,"s_outputChannels",(float)options.format.channels);
+    if (!isfinite(rate) || rate<8000 || rate>192000 || floorf(rate)!=rate ||
+        (bits!=8 && bits!=16) || (channels!=1 && channels!=2))
+        return fail(error,QA_ERROR_ARGUMENT,"Audio restart requires a valid physical output format");
+    options.format=(qa_audio_output_format){(uint32_t)rate,(unsigned)channels,(unsigned)bits};
+    size_t maximum=UINT32_MAX/(options.format.channels*(options.format.sample_bits/8));
+    if (maximum>SIZE_MAX/(2*sizeof(int16_t))) maximum=SIZE_MAX/(2*sizeof(int16_t));
+    if (options.maximum_queued_frames>maximum)
+        return fail(error,QA_ERROR_ARGUMENT,"Audio restart format exceeds the retained native queue limit");
+    /* select deliberately preserves an unchanged live device. A source
+     * snd_restart closes its actual native output while retaining queued PCM,
+     * then opens the selected format again. */
+    qa_audio_device_detach(f->device);
+    return qa_audio_device_select(f->device,&options,error);
+}
+frontend_restart *frontend_restart_create(const frontend_restart_options *options,qa_error *error)
+{
+    if (!options || !options->frontend || !options->cvars || !options->current || !options->save_context ||
+        !options->prepare_video || !options->validate_video || !options->reopen_video || !options->release_video)
+        return fail(error,QA_ERROR_ARGUMENT,"Restart controls require genuine device and source video owners"),NULL;
+    frontend_restart *owner=calloc(1,sizeof(*owner));
+    if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating frontend restart owner"),NULL;
+    owner->options=*options;
+    qa_restart_service services[3]={{owner,video,options->latched[0],options->latched_count[0]},
+        {owner,input,options->latched[1],options->latched_count[1]}, {owner,audio,options->latched[2],options->latched_count[2]}};
+    owner->controls=qa_restart_create(options->cvars,services,error);
+    if (!owner->controls) { free(owner); return NULL; }
+    return owner;
+}
+bool frontend_restart_idle(const frontend_restart *owner) { return !owner || !owner->running; }
+bool frontend_restart_destroy(frontend_restart *owner,qa_error *error)
+{
+    if (!owner) return true;
+    if (owner->running || !qa_restart_destroy(owner->controls,error)) return false;
+    if (owner->registered) qa_console_unregister(owner->console,"vid_restart",0);
+    free(owner->script); free(owner); return true;
+}
+static bool video_command(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    frontend_restart *owner=context;
+    if (command->context.origin==QA_COMMAND_REMOTE) {
+        frontend_console_print(owner->options.frontend,&command->context,"vid_restart is a local client command.\n"); return true;
+    }
+    if (command->argc>2 || (command->argc==2 && strcmp(command->argv[1],"cpu") && strcmp(command->argv[1],"gl"))) {
+        frontend_console_print(owner->options.frontend,&command->context,"vid_restart [cpu|gl]\n"); return true;
+    }
+    if (!owner->options.current(owner->options.context,&command->context,error)) return false;
+    qa_display_info info;
+    if (!qa_display_info_get(owner->options.frontend->display,&info,error)) return false;
+    char *script=NULL;
+    if (command->context.script) { script=malloc(strlen(command->context.script)+1);
+        if (!script) return fail(error,QA_ERROR_MEMORY,"Retaining video request script origin"); strcpy(script,command->context.script); }
+    if (!qa_restart_request(owner->controls,QA_RESTART_VIDEO,error)) { free(script); return false; }
+    free(owner->script); owner->script=script; owner->command=command->context; owner->command.script=script;
+    owner->backend=command->argc==1?info.backend:!strcmp(command->argv[1],"cpu")?QA_DISPLAY_CPU:QA_DISPLAY_OPENGL;
+    owner->video_requested=true; return true;
+}
+bool frontend_restart_register(frontend_restart *owner,qa_console *console,qa_error *error)
+{
+    if (!owner || !console || owner->console || owner->running)
+        return fail(error,QA_ERROR_ARGUMENT,"Restart commands already have their physical frontend owner");
+    if (!qa_console_register_owned(console,"vid_restart","Restart the client renderer while retaining the current game",0,
+        QA_FRONTEND_COMMAND_OWNER,true,video_command,owner,error)) return false;
+    owner->console=console; owner->registered=true;
+    if (!qa_restart_register(owner->controls,console,QA_FRONTEND_COMMAND_OWNER,error)) {
+        qa_console_unregister(console,"vid_restart",0); owner->registered=false; owner->console=NULL; return false;
+    }
+    return true;
+}
+bool frontend_restart_drain(frontend_restart *owner,qa_error *error)
+{
+    qa_frontend *f=owner?owner->options.frontend:NULL;
+    if (!f || owner->running || f->stepping || f->preparing || f->capture || f->source_restoring ||
+        !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f))
+        return fail(error,QA_ERROR_ARGUMENT,"Restart drain requires returned physical frontend and source callbacks");
+    owner->running=true; bool ok=qa_restart_drain(owner->controls,error); owner->running=false;
+    /* The lower owner consumes the attempt before applying its latched values.
+     * A latch failure therefore retires the same actual video request. */
+    if (owner->video_requested && !qa_restart_pending(owner->controls,QA_RESTART_VIDEO)) {
+        free(owner->script); owner->script=NULL; owner->command=(qa_command_context){0}; owner->video_requested=false;
+    }
+    return ok;
+}
+static bool fields(qa_source_save_io *io,frontend_restart *owner)
+{
+    uint8_t magic[4]={'Q','F','R','S'}; uint32_t version=1,backend=owner->backend;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRS",4) || !qa_source_save_u32(io,&version) || version!=1 ||
+        !qa_source_save_u64(io,&owner->generation) || !qa_source_save_bool(io,&owner->video_requested)) return false;
+    if (owner->video_requested) {
+        if (!qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||
+            !owner->options.save_context(owner->options.context,io,&owner->command) || owner->command.origin==QA_COMMAND_REMOTE) return false;
+        owner->backend=(qa_display_backend)backend;
+    }
+    return true;
+}
+bool frontend_restart_checkpoint(const frontend_restart *owner,qa_buffer *out,qa_error *error)
+{
+    if (!owner || owner->running || !out || out->data || out->size ||
+        qa_restart_pending(owner->controls,QA_RESTART_VIDEO)!=owner->video_requested)
+        return fail(error,QA_ERROR_ARGUMENT,"Restart capture requires its returned actual request owner");
+    qa_buffer pending={0}; frontend_restart state=*owner; qa_source_save_io io={0};
+    bool ok=qa_restart_checkpoint(owner->controls,&pending,error) && qa_source_save_writer(&io,NULL,error) && fields(&io,&state);
+    size_t count=pending.size;
+    if (ok) ok=qa_source_save_count(&io,&count,SIZE_MAX) && qa_source_save_bytes(&io,pending.data,pending.size) && qa_source_save_finish(&io,out);
+    qa_buffer_free(&pending); qa_source_save_dispose(&io); return ok;
+}
+bool frontend_restart_restore(frontend_restart *owner,qa_bytes bytes,qa_error *error)
+{
+    if (!owner || owner->running || owner->video_requested || owner->generation || owner->console)
+        return fail(error,QA_ERROR_ARGUMENT,"Restart import requires its empty detached controls");
+    frontend_restart state=*owner; qa_source_save_io io={0}; size_t count=0;
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,&state) &&
+        qa_source_save_count(&io,&count,io.input.size-io.offset);
+    qa_bytes pending=ok?(qa_bytes){io.input.data+io.offset,count}:(qa_bytes){0};
+    if (ok) { io.offset+=count; ok=qa_source_save_finish(&io,NULL); }
+    if (ok && state.video_requested) {
+        if (state.command.script) { state.script=malloc(strlen(state.command.script)+1);
+            if (!state.script) ok=fail(error,QA_ERROR_MEMORY,"Importing video script origin"); else { strcpy(state.script,state.command.script); state.command.script=state.script; } }
+    }
+    qa_restart_controls *controls=NULL;
+    if (ok) {
+        qa_restart_service services[3]={{owner,video,owner->options.latched[0],owner->options.latched_count[0]},
+            {owner,input,owner->options.latched[1],owner->options.latched_count[1]},
+            {owner,audio,owner->options.latched[2],owner->options.latched_count[2]}};
+        controls=qa_restart_create(owner->options.cvars,services,error);
+        ok=controls && qa_restart_restore(controls,pending,error) &&
+            qa_restart_pending(controls,QA_RESTART_VIDEO)==state.video_requested;
+        if (!ok && (!error || error->code==QA_OK)) fail(error,QA_ERROR_FORMAT,"Video request and actual restart queue disagree");
+    }
+    if (ok) {
+        ok=qa_restart_destroy(owner->controls,error);
+        if (ok) { owner->controls=controls; controls=NULL; }
+    }
+    if (ok) { owner->generation=state.generation; owner->video_requested=state.video_requested;
+        owner->backend=state.backend; owner->command=state.command; owner->script=state.script; }
+    if (!ok) free(state.script);
+    qa_restart_destroy(controls,NULL); qa_source_save_dispose(&io); return ok;
+}
+void frontend_restart_rebind(frontend_restart *owner,qa_frontend *frontend,void *context)
+{ if (owner && !owner->running) { owner->options.frontend=frontend; owner->options.context=context; } }

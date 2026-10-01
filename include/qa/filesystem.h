@@ -39,6 +39,12 @@ bool qa_fs_identity_equal(const qa_fs_identity *left,
                           const qa_fs_identity *right);
 uint64_t qa_fs_identity_hash(const qa_fs_identity *identity);
 uint64_t qa_fs_identity_size(const qa_fs_identity *identity);
+typedef struct qa_fs_timestamp {
+    int64_t seconds;
+    uint32_t nanoseconds;
+} qa_fs_timestamp;
+/* Extracts retained modification metadata as Unix time without native I/O. */
+bool qa_fs_identity_modified_time(const qa_fs_identity *, qa_fs_timestamp *);
 
 /* A linked root is admitted and retained by its final directory handle. Child
  * reads may follow links only when the final opened object remains below that
@@ -132,6 +138,8 @@ bool qa_fs_stream_size(qa_fs_stream *stream, uint64_t *out,
                        qa_error *error);
 /* Flush the retained writable handle without changing file identity/position. */
 bool qa_fs_stream_sync(qa_fs_stream *, qa_error *);
+/* Consumes the stream even when the actual operating-system close fails. */
+bool qa_fs_stream_close_checked(qa_fs_stream *stream, qa_error *error);
 void qa_fs_stream_close(qa_fs_stream *stream);
 
 typedef struct qa_fs_stage qa_fs_stage;

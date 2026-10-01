@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/source_save.h"
 
 struct qa_restart_controls {
     qa_cvars *vars;
@@ -102,6 +103,10 @@ bool qa_restart_drain(qa_restart_controls *controls, qa_error *e) {
 }
 static bool command(void *context, const qa_command_invocation *invocation, qa_error *e) {
     qa_restart_controls *controls = context;
+    if (invocation->context.origin==QA_COMMAND_REMOTE) {
+        qa_console_emit(invocation->console,&invocation->context,"Device restart is a local client command.\n");
+        return true;
+    }
     for (size_t i = 0; i < 3; ++i) {
         const unsigned char *a = (const unsigned char *)invocation->argv[0];
         const unsigned char *b = (const unsigned char *)commands[i];
@@ -137,4 +142,43 @@ bool qa_restart_register(qa_restart_controls *controls, qa_console *console, uin
         controls->registered[i] = true;
     }
     return true;
+}
+bool qa_restart_pending(const qa_restart_controls *controls,qa_restart_kind kind)
+{
+    if (!controls || kind<QA_RESTART_VIDEO || kind>QA_RESTART_AUDIO) return false;
+    for (size_t i=0;i<controls->count;++i) if (controls->pending[i]==kind) return true;
+    return false;
+}
+static bool pending_fields(qa_source_save_io *io,qa_restart_kind pending[3],size_t *count)
+{
+    uint8_t magic[4]={'Q','A','R','C'}; uint32_t version=1;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QARC",4) ||
+        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_count(io,count,3)) return false;
+    for (size_t i=0;i<*count;++i) {
+        uint32_t kind=pending[i];
+        if (!qa_source_save_u32(io,&kind) || kind>QA_RESTART_AUDIO) return false;
+        pending[i]=(qa_restart_kind)kind;
+        for (size_t j=0;j<i;++j) if (pending[j]==pending[i]) return false;
+    }
+    return true;
+}
+bool qa_restart_checkpoint(const qa_restart_controls *controls,qa_buffer *out,qa_error *error)
+{
+    if (!controls || controls->running || !out || out->data || out->size)
+        return settings_fail(error,"Restart capture requires its returned actual controls");
+    qa_restart_kind pending[3]; memcpy(pending,controls->pending,sizeof(pending)); size_t count=controls->count;
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && pending_fields(&io,pending,&count) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_restart_restore(qa_restart_controls *controls,qa_bytes bytes,qa_error *error)
+{
+    if (!controls || controls->running || controls->count)
+        return settings_fail(error,"Restart import requires its empty detached controls");
+    qa_restart_kind pending[3]={0}; size_t count=0; qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && pending_fields(&io,pending,&count) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (ok) { memcpy(controls->pending,pending,sizeof(pending)); controls->count=count; }
+    else if (!error || error->code==QA_OK) settings_fail(error,"Invalid actual restart pending order");
+    return ok;
 }

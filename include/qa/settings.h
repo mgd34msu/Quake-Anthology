@@ -89,4 +89,9 @@ bool qa_restart_destroy(qa_restart_controls *, qa_error *);
 bool qa_restart_request(qa_restart_controls *, qa_restart_kind, qa_error *);
 bool qa_restart_drain(qa_restart_controls *, qa_error *);
 bool qa_restart_register(qa_restart_controls *, qa_console *, uint64_t owner, qa_error *);
+bool qa_restart_pending(const qa_restart_controls *,qa_restart_kind);
+bool qa_restart_checkpoint(const qa_restart_controls *,qa_buffer *,qa_error *);
+/* Imports only the actual pending kind order into fresh idle controls. Native
+ * callbacks/registries are bound by the owning candidate factory. */
+bool qa_restart_restore(qa_restart_controls *,qa_bytes,qa_error *);
 #endif

@@ -95,6 +95,16 @@ static qa_fs_entry_kind kind_from_mode(mode_t mode)
     return QA_FS_OTHER;
 }
 
+bool qa_fs_identity_modified_time(const qa_fs_identity *identity, qa_fs_timestamp *out)
+{
+    if (!identity || !out || identity->words[4] >= UINT64_C(1000000000)) return false;
+    uint64_t seconds = identity->words[3];
+    out->seconds = seconds <= INT64_MAX ? (int64_t)seconds :
+        -1 - (int64_t)(UINT64_MAX - seconds);
+    out->nanoseconds = (uint32_t)identity->words[4];
+    return true;
+}
+
 static char *copy_string(const char *source)
 {
     size_t length = strlen(source);
@@ -1189,14 +1199,21 @@ bool qa_fs_stream_write(qa_fs_stream *stream, qa_bytes bytes,
     return qa_fs_stream_size(stream, resulting_size, error);
 }
 
-void qa_fs_stream_close(qa_fs_stream *stream)
+bool qa_fs_stream_close_checked(qa_fs_stream *stream, qa_error *error)
 {
     if (stream == NULL)
-        return;
-    if (stream->descriptor >= 0)
-        (void)close(stream->descriptor);
+        return true;
+    bool ok = true;
+    if (stream->descriptor >= 0 && close(stream->descriptor) < 0)
+        ok = fail_errno(error, "cannot close", stream->path, errno);
     free(stream->path);
     free(stream);
+    return ok;
+}
+
+void qa_fs_stream_close(qa_fs_stream *stream)
+{
+    (void)qa_fs_stream_close_checked(stream, NULL);
 }
 
 struct qa_fs_stage {
