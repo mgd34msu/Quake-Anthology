@@ -34,6 +34,11 @@ function(qa_native_guest_replace_text variable before after expected)
     set(${variable} "${updated}" PARENT_SCOPE)
 endfunction()
 
+function(qa_native_guest_wrap_source target original extension output)
+    file(WRITE "${output}" "#include \"${original}\"\n#include \"${extension}\"\n")
+    qa_native_guest_replace_source(${target} "${original}" "${output}")
+endfunction()
+
 function(qa_native_guest_dependency)
     get_filename_component(guest_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/compat/native/guest" ABSOLUTE)
     get_filename_component(project_headers "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../include" ABSOLUTE)
@@ -53,7 +58,7 @@ function(qa_native_guest_dependency)
         GIT_PROGRESS FALSE)
     FetchContent_MakeAvailable(qa_unicorn)
 
-    if(NOT TARGET unicorn OR NOT TARGET x86_64-softmmu)
+    if(NOT TARGET unicorn OR NOT TARGET unicorn-common OR NOT TARGET x86_64-softmmu)
         message(FATAL_ERROR "Native guests require the pinned Unicorn x86 dependency")
     endif()
     get_target_property(unicorn_type unicorn TYPE)
@@ -69,9 +74,22 @@ function(qa_native_guest_dependency)
         "#include \"${x86_original}\"\n#include \"${guest_root}/unicorn_state.inc.c\"\n")
     qa_native_guest_replace_source(x86_64-softmmu "${x86_original}" "${x86_extension}")
 
+    qa_native_guest_wrap_source(unicorn "${qa_unicorn_SOURCE_DIR}/uc.c"
+        "${guest_root}/unicorn_map.inc.c" "${extension_root}/unicorn-core.c")
+    qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/exec.c"
+        "${guest_root}/unicorn_map_exec.inc.c" "${extension_root}/unicorn-exec.c")
+    qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/softmmu/memory.c"
+        "${guest_root}/unicorn_map_memory.inc.c" "${extension_root}/unicorn-memory.c")
+
     set(store_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/cputlb.c")
     set(store_extension "${extension_root}/unicorn-cputlb.c")
     file(READ "${store_original}" stores)
+    qa_native_guest_replace_text(stores
+        "static void tlb_flush_one_mmuidx_locked("
+        "#include \"${guest_root}/unicorn_map_tlb.inc.c\"\n\nstatic void tlb_flush_one_mmuidx_locked(" 1)
+    qa_native_guest_replace_text(stores
+        "tlb_mmu_resize_locked(env->uc, desc, fast, now);"
+        "qa_unicorn_memory_tlb_resize(env, desc, fast, now);" 1)
     qa_native_guest_replace_text(stores
         "static inline void\nstore_helper("
         "#include \"${guest_root}/unicorn_store.inc.c\"\n\nstatic inline void\nstore_helper(" 1)
@@ -83,12 +101,39 @@ function(qa_native_guest_dependency)
         "qa_unicorn_ram_store(env, paddr, haddr, val, op);" 2)
     file(WRITE "${store_extension}" "${stores}")
     qa_native_guest_replace_source(x86_64-softmmu "${store_original}" "${store_extension}")
-    target_include_directories(x86_64-softmmu PRIVATE "${guest_root}" "${project_headers}")
+
+    set(flush_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/translate-all.c")
+    set(flush_extension "${extension_root}/unicorn-translate-all.c")
+    file(READ "${flush_original}" flush)
+    qa_native_guest_replace_text(flush
+        "static void do_tb_flush("
+        "#include \"${guest_root}/unicorn_map_flush.inc.c\"\n\nstatic void do_tb_flush(" 1)
+    qa_native_guest_replace_text(flush
+        "qht_reset_size(cpu->uc, &cpu->uc->tcg_ctx->tb_ctx.htable, CODE_GEN_HTABLE_SIZE);"
+        "qa_unicorn_memory_tb_reset(cpu);" 1)
+    file(WRITE "${flush_extension}" "${flush}")
+    qa_native_guest_replace_source(x86_64-softmmu "${flush_original}" "${flush_extension}")
+
+    set(hash_original "${qa_unicorn_SOURCE_DIR}/glib_compat/glib_compat.c")
+    set(hash_extension "${extension_root}/unicorn-glib.c")
+    file(READ "${hash_original}" hashes)
+    qa_native_guest_replace_text(hashes
+        "void g_hash_table_destroy (GHashTable *hash_table)"
+        "#include \"${guest_root}/unicorn_map_hash.inc.c\"\n\nvoid g_hash_table_destroy (GHashTable *hash_table)" 1)
+    qa_native_guest_replace_text(hashes
+        "    g_hash_table_remove_all (hash_table);\n    g_hash_table_unref (hash_table);"
+        "    if (qa_unicorn_hash_destroy_single_owner(hash_table)) return;\n    g_hash_table_remove_all (hash_table);\n    g_hash_table_unref (hash_table);" 1)
+    file(WRITE "${hash_extension}" "${hashes}")
+    qa_native_guest_replace_source(unicorn-common "${hash_original}" "${hash_extension}")
+    target_include_directories(unicorn PRIVATE "${guest_root}" "${project_headers}")
+    target_include_directories(x86_64-softmmu PRIVATE "${guest_root}" "${project_headers}"
+        "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg")
     target_sources(qa_native PRIVATE
         "${guest_root}/memory.c"
         "${guest_root}/cpu.c"
         "${guest_root}/checkpoint.c"
-        "${guest_root}/pe.c")
+        "${guest_root}/pe.c"
+        "${guest_root}/pe_memory.c")
     target_link_libraries(qa_native PRIVATE unicorn)
     install(FILES
         "${qa_unicorn_SOURCE_DIR}/COPYING"

@@ -64,6 +64,7 @@ endif()
 set(QA_NATIVE_RUNTIME_INSTALL_ROOT "${CMAKE_INSTALL_LIBEXECDIR}/quake-anthology" CACHE STRING
     "Native runtime destination relative to the installation prefix")
 set(QA_NATIVE_INSTALL_DIR "${QA_NATIVE_RUNTIME_INSTALL_ROOT}/${QA_NATIVE_PLATFORM}-${QA_NATIVE_ARCH}")
+include("${CMAKE_CURRENT_LIST_DIR}/NativeGuest.cmake")
 if(DEFINED QA_NATIVE_EXPECTED_PLATFORM AND NOT QA_NATIVE_PLATFORM STREQUAL QA_NATIVE_EXPECTED_PLATFORM)
     message(FATAL_ERROR "Native helper toolchain produced a different operating system")
 endif()

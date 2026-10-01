@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "unicorn_state.h"
 
 bool guest_fail(qa_error *error, qa_status code, uint64_t address, const char *message)
 {
@@ -90,7 +91,8 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     if (!guest) return true;
     if (guest->run || guest->callback_depth || guest->publication_depth || guest->stepping)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest destruction requires drained execution");
-    uc_err code = uc_close(guest->cpu);
+    uc_err code = qa_unicorn_memory_release(guest->cpu);
+    if (code == UC_ERR_OK) code = uc_close(guest->cpu);
     if (code != UC_ERR_OK) return guest_uc(guest, code, error);
     for (size_t i = 0; i < guest->backing_count; ++i) free(guest->backings[i].data);
     free(guest->backings); free(guest->mappings); free(guest->allocations); free(guest->callbacks);
@@ -156,7 +158,7 @@ bool guest_install_mapping(qa_native_guest *guest, const qa_native_guest_mapping
     }
     if (!guest_grow((void **)&guest->mappings, &guest->mapping_capacity,
         guest->mapping_count + 1, sizeof(*guest->mappings), error)) return false;
-    if (!guest_uc(guest, uc_mem_map_ptr(guest->cpu, mapping->base, mapping->bytes,
+    if (!guest_uc(guest, qa_unicorn_memory_map(guest->cpu, mapping->base, mapping->bytes,
         mapping->permissions, backing->data + mapping->backing_offset), error)) return false;
     guest->mappings[guest->mapping_count++] = *mapping;
     ++backing->references;
@@ -217,7 +219,7 @@ bool qa_native_guest_unmap(qa_native_guest *guest, uint64_t id, qa_error *error)
     for (size_t i = 0; i < guest->allocation_count; ++i)
         if (guest->allocations[i].mapping == id)
             return guest_fail(error, QA_ERROR_ARGUMENT, id, "free the real allocation before unmapping its storage");
-    if (!guest_uc(guest, uc_mem_unmap(guest->cpu, mapping.base, mapping.bytes), error)) return false;
+    if (!guest_uc(guest, qa_unicorn_memory_change(guest->cpu, mapping.base, mapping.bytes, 0, true), error)) return false;
     memmove(guest->mappings + index, guest->mappings + index + 1,
         (--guest->mapping_count - index) * sizeof(*guest->mappings));
     guest_backing *backing = guest_backing_at(guest, mapping.backing);
@@ -240,7 +242,7 @@ bool qa_native_guest_protect(qa_native_guest *guest, uint64_t id, uint32_t permi
                 if (guest->callbacks[j].address >= mapping->base &&
                     guest->callbacks[j].address - mapping->base < mapping->bytes)
                     return guest_fail(error, QA_ERROR_ARGUMENT, id, "bound native guest trap requires executable storage");
-        if (!guest_uc(guest, uc_mem_protect(guest->cpu, mapping->base, mapping->bytes, permissions), error)) return false;
+        if (!guest_uc(guest, qa_unicorn_memory_change(guest->cpu, mapping->base, mapping->bytes, permissions, false), error)) return false;
         mapping->permissions = permissions;
         return true;
     }

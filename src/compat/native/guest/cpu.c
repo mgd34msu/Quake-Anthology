@@ -148,8 +148,9 @@ bool guest_cpu_open(qa_native_guest *guest, qa_error *error)
 {
     if (uc_version(NULL, NULL) != UINT32_C(0x020104ff) ||
         qa_unicorn_state_revision() != QA_UNICORN_STATE_REVISION ||
-        qa_unicorn_store_revision() != QA_UNICORN_STORE_REVISION)
-        return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "native guest CPU requires pinned Unicorn 2.1.4 and its state and store extensions");
+        qa_unicorn_store_revision() != QA_UNICORN_STORE_REVISION ||
+        qa_unicorn_map_revision() != QA_UNICORN_MAP_REVISION)
+        return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "native guest CPU requires pinned Unicorn 2.1.4 and its state, store and memory extensions");
     bool wide = guest->options.image.target.pointer_bytes == 8;
     if (!guest_uc(guest, uc_open(UC_ARCH_X86, wide ? UC_MODE_64 : UC_MODE_32, &guest->cpu), error)) return false;
     /* This lower unit qualifies x87/SSE state. Later profile admission must
@@ -158,6 +159,8 @@ bool guest_cpu_open(qa_native_guest *guest, qa_error *error)
         wide ? UC_CPU_X86_QEMU64 : UC_CPU_X86_QEMU32), error)) return false;
     if (!guest_uc(guest, uc_hook_add(guest->cpu, &guest->store_hook, UC_HOOK_MEM_WRITE,
         (void *)record_store, guest, 1, 0), error)) return false;
+    /* The real hook API initializes Unicorn after selecting the CPU model. */
+    if (!guest_uc(guest, qa_unicorn_memory_bind(guest->cpu), error)) return false;
     return guest_uc(guest, qa_unicorn_store_bind(guest->cpu, guest->store_hook), error);
 }
 

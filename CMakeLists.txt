@@ -1012,6 +1012,7 @@ add_library(qa_application STATIC
     src/app/application/engine_shutdown.c
     src/app/application/save_policy.c
     src/app/application/native_q1_console.c
+    src/app/application/native_q1_respawn.c
     src/app/application/native_q1_wire.c
     src/app/application/profile.c
     src/app/application/arsenal.c
@@ -1317,6 +1318,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_native.c
     src/app/frontend/equipment_events.c
     src/app/frontend/equipment_gear.c
+    src/app/frontend/equipment_gear_output.c
     src/app/frontend/equipment_gear_save.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c
