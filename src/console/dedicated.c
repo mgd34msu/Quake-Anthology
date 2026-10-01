@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "qa/console_io.h"
 #include "qa/text.h"
+#include "qa/console_dedicated_save.h"
+#include "qa/source_save.h"
 #include <stdlib.h>
 #include <string.h>
 struct qa_dedicated_console {
@@ -75,4 +77,51 @@ bool qa_dedicated_console_drain(qa_dedicated_console *console, qa_console *comma
             console->pending.data[0] = 0;
     }
     return true;
+}
+static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *console)
+{
+    uint8_t magic[4]={'Q','D','C','N'}; uint32_t version=1;
+    size_t size=console->pending.size, capacity=console->pending.capacity, consumed=console->consumed;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDCN",4) ||
+        !qa_source_save_u32(io,&version) || version!=1 ||
+        !qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX-1) ||
+        !qa_source_save_count(io,&capacity,SIZE_MAX) || !qa_source_save_count(io,&consumed,size) || consumed>size ||
+        (capacity?size>=capacity:size!=0) || !qa_source_save_bool(io,&console->ended)) return false;
+    if (reading) {
+        if (size>io->input.size-io->offset) return false;
+        if (capacity) {
+            console->pending.data=malloc(capacity);
+            if (!console->pending.data) return qac_fail(io->error,QA_ERROR_MEMORY,"Restoring dedicated console input reservation");
+        }
+        console->pending.size=size; console->pending.capacity=capacity; console->consumed=consumed;
+    }
+    if ((size && (!console->pending.data || (!reading && memchr(console->pending.data,0,size)))) ||
+        !qa_source_save_bytes(io,(uint8_t *)console->pending.data,size)) return false;
+    if (size && memchr(console->pending.data,0,size)) return false;
+    if (reading && capacity) console->pending.data[size]=0;
+    return !consumed || (consumed<size && console->pending.data[consumed-1]=='\n');
+}
+bool qa_dedicated_console_checkpoint(const qa_dedicated_console *console, qa_buffer *out, qa_error *error)
+{
+    if (!console || !out || out->data || out->size || console->consumed>console->pending.size ||
+        (console->pending.capacity?console->pending.size>=console->pending.capacity:console->pending.size!=0) ||
+        (console->pending.capacity!=0)!=(console->pending.data!=NULL) ||
+        (console->pending.data && console->pending.data[console->pending.size]))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Dedicated capture requires its actual input owner and empty output");
+    qa_source_save_io io={0}; qa_dedicated_console state=*console;
+    bool ok=qa_source_save_writer(&io,NULL,error) && dedicated_fields(&io,&state) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);
+    return ok || qac_fail(error,QA_ERROR_FORMAT,"Dedicated console continuation is inconsistent");
+}
+bool qa_dedicated_console_restore(qa_dedicated_console *console, qa_bytes bytes, qa_error *error)
+{
+    if (!console || console->pending.data || console->pending.size || console->pending.capacity || console->consumed || console->ended)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Dedicated import requires an empty isolated input owner");
+    qa_source_save_io io={0}; qa_dedicated_console state={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && dedicated_fields(&io,&state) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (ok) *console=state;
+    else free(state.pending.data);
+    return ok || qac_fail(error,QA_ERROR_FORMAT,"Saved dedicated console input is invalid");
 }

@@ -28,8 +28,10 @@ static bool view_target(qa_bot_moves *m, uint32_t handle, const qa_bot_move_goal
                          bool base, bool *found, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *state = bot_move_state(m, handle, e);
-    if (!state || !view_fields(goal, out, found, e)) return false;
+    if(!found) return bot_move_fail(e,"missing bot view result");
+    qa_bot_move_state *state = bot_move_source_state(m, handle);
+    if (!state) {*found=false;return true;}
+    if (!view_fields(goal, out, found, e)) return false;
     *found = false;
     m->busy = true;
     bot_travel t;

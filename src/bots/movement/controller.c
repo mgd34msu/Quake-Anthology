@@ -368,14 +368,14 @@ bool qa_bot_moves_goal_from(qa_bot_moves *m, uint32_t handle,
         (goal && !goal->value && (!goal->area || (!goal->origin.value && !goal->origin.read))))
         return bot_move_fail(e, "missing bot move goal/result fields");
     m->busy = true;
-    bool ok = bot_result_clear(out, e);
-    if (!ok) goto done;
-    qa_bot_move_state *state = bot_move_state(m, handle, e);
+    bool ok;
+    qa_bot_move_state *state = bot_move_source_state(m, handle);
     if (!state) {
-        (void)bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e);
-        ok = false;
+        ok=bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e);
         goto done;
     }
+    ok=bot_result_clear(out,e);
+    if(!ok) goto done;
     bot_travel t;
     ok = bot_travel_ready(m, e) && bot_travel_begin(m, state, &t, e) &&
         move_goal(&t, goal, flags, out, e);

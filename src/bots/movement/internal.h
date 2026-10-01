@@ -131,6 +131,7 @@ bool bot_move_fail(qa_error *, const char *);
 bool bot_move_mutable(qa_bot_moves *, qa_error *);
 const char *bot_move_variable_name(bot_move_variable);
 qa_bot_move_state *bot_move_state(const qa_bot_moves *, uint32_t, qa_error *);
+qa_bot_move_state *bot_move_source_state(qa_bot_moves *, uint32_t);
 void bot_move_avoid(qa_bot_moves *, qa_bot_move_state *, uint32_t, float);
 void bot_move_set_reach(qa_bot_move_state *, uint32_t);
 bool bot_goal_area(const qa_bot_move_goal_source *, uint32_t *, qa_error *);

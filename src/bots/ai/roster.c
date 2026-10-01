@@ -117,7 +117,7 @@ bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
         free(s->admitted_character);s->admitted_character=NULL;
         free(s->admitted_name);s->admitted_name=NULL;return true;
     }
-    if (s->movement && !qa_bot_moves_free(qa_bot_runtime_moves(b->runtime), s->movement, e)) return false;
+    if ((s->inuse || s->movement) && !qa_bot_moves_free(qa_bot_runtime_moves(b->runtime), s->movement, e)) return false;
     s->movement = 0;
     if (s->goals && !qa_bot_goals_free(qa_bot_runtime_goals(b->runtime), s->goals, e)) return false;
     s->goals = 0;

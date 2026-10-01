@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../checkpoint_internal.h"
+#include <stdio.h>
 
 bool bot_move_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -18,6 +19,14 @@ qa_bot_move_state *bot_move_state(const qa_bot_moves *m, uint32_t id, qa_error *
         return NULL;
     }
     return &m->slots[id - 1].state;
+}
+qa_bot_move_state *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
+    if(id && id<=m->maximum && m->slots[id-1].used) return &m->slots[id-1].state;
+    char text[96];
+    snprintf(text,sizeof(text),!id || id>m->maximum?"move state handle %u out of range\n":"invalid move state %u\n",id);
+    bool prior=m->busy;m->busy=true;
+    if(m->services.diagnostic) m->services.diagnostic(m->services.context,QA_SCRIPT_FATAL,text);
+    m->busy=prior;return NULL;
 }
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actions *actions,
                          const qa_bot_move_services *services, qa_bot_moves **out, qa_error *e) {
@@ -94,8 +103,8 @@ bool qa_bot_moves_allocate(qa_bot_moves *m, uint32_t *out, qa_error *e) {
     return true;
 }
 bool qa_bot_moves_free(qa_bot_moves *m, uint32_t id, qa_error *e) {
-    if (!bot_move_mutable(m, e) || !bot_move_state(m, id, e))
-        return false;
+    if (!bot_move_mutable(m, e)) return false;
+    if (!bot_move_source_state(m, id)) return true;
     m->slots[id - 1] = (bot_move_slot){0};
     return true;
 }
@@ -136,9 +145,9 @@ bool qa_bot_moves_initialize_from(qa_bot_moves *m, uint32_t id,
                                   const qa_bot_move_init_source *source, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *s = bot_move_state(m, id, e);
+    qa_bot_move_state *s = bot_move_source_state(m, id);
     if (!s)
-        return false;
+        return true;
     if (!source || (!source->value &&
         (!source->integer || !source->vector || !source->think_time)))
         return bot_move_fail(e, "missing bot movement input reader");
@@ -174,18 +183,18 @@ done:
 bool qa_bot_moves_reset(qa_bot_moves *m, uint32_t id, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *s = bot_move_state(m, id, e);
+    qa_bot_move_state *s = bot_move_source_state(m, id);
     if (!s)
-        return false;
+        return true;
     *s = (qa_bot_move_state){0};
     return true;
 }
 bool qa_bot_moves_reset_avoid(qa_bot_moves *m, uint32_t id, bool last, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *s = bot_move_state(m, id, e);
+    qa_bot_move_state *s = bot_move_source_state(m, id);
     if (!s)
-        return false;
+        return true;
     if (!last) {
         s->avoid_reachability = 0;
         s->avoid_time = 0;
@@ -231,9 +240,9 @@ bool qa_bot_moves_avoid_spot_from(qa_bot_moves *m, uint32_t id,
                                   int32_t type, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *s = bot_move_state(m, id, e);
+    qa_bot_move_state *s = bot_move_source_state(m, id);
     if (!s)
-        return false;
+        return true;
     if (!source || (!source->value && !source->read))
         return bot_move_fail(e, "missing bot avoid-spot origin fields");
     if (!type)

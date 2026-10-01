@@ -292,6 +292,10 @@ static bool bot_print(void *opaque,const char *text,qa_error *error) {
     if(!qa_application_capture_command_context(bots->application,&command,&command,error)) return false;
     application_console_print(bots->application,&command,text);return true;
 }
+static void bot_diagnostic(void *opaque,qa_script_severity severity,const char *text) {
+    (void)severity;qa_error error={0};
+    (void)bot_print(opaque,text,&error);
+}
 static bool bot_source_client(void *opaque,qa_actor_id actor,int32_t *out,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     uint32_t slot;
@@ -708,6 +712,7 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
         .observations=guest_count?QA_BOT_OBSERVATION_MODULE:QA_BOT_OBSERVATION_NATIVE};
     qa_bot_random_source random={bots,random_word};
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
+        .diagnostic=bot_diagnostic,
         .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
@@ -733,6 +738,7 @@ bool application_bots_construct_restored(application_bots *bots,qa_error *error)
     options.library.scripts.read=read_file; options.library.scripts.release=release_file;
     qa_bot_random_source random={bots,random_word};
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
+        .diagnostic=bot_diagnostic,
         .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,

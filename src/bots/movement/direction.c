@@ -108,10 +108,10 @@ bool qa_bot_moves_direction_from(qa_bot_moves *m, uint32_t handle,
                                  uint32_t type, bool *moved, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
-    qa_bot_move_state *state = bot_move_state(m, handle, e);
-    if (!state)
-        return false;
-    if (!moved || !source || (!source->value && !source->read))
+    if(!moved) return bot_move_fail(e,"missing bot direction result");
+    qa_bot_move_state *state = bot_move_source_state(m, handle);
+    if (!state) {*moved=false;return true;}
+    if (!source || (!source->value && !source->read))
         return bot_move_fail(e, "missing bot movement direction fields");
     m->busy = true;
     bot_travel t;
