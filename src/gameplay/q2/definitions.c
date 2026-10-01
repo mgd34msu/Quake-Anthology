@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_bots.h"
 
 #define B(n) (UINT64_C(1) << (n))
 #define D(id, n, i, a, q, w, v, g, p, ac, f, idle, de, pa, fi, r)                                  \
@@ -76,20 +77,20 @@ static const qa_q2_weapon_definition grapples[] = {
 };
 #undef D
 static void install(qa_q2_game *g, const qa_q2_weapon_definition *d, size_t count) {
-    for (size_t i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i) {
+        if (g->definitions[d[i].weapon].name == NULL)
+            g->definition_order[g->definition_count++] = d[i].weapon;
         g->definitions[d[i].weapon] = d[i];
+    }
 }
 bool q2_definitions(qa_q2_game *g, qa_error *error) {
     install(g, base, sizeof(base) / sizeof(*base));
-    install(g, grapples, sizeof(grapples) / sizeof(*grapples));
     g->definitions[QA_Q2_BLASTER].world_model = "";
-    g->definitions[QA_Q2_GRAPPLE].world_model = "";
     if (g->options.product == QA_Q2_XATRIX || g->options.edition == QA_Q2_RERELEASE)
         install(g, xatrix, sizeof(xatrix) / sizeof(*xatrix));
     if (g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE)
         install(g, rogue, sizeof(rogue) / sizeof(*rogue));
     if (g->options.edition == QA_Q2_RERELEASE) {
-        g->definitions[QA_Q2_GRAPPLE].fire_last = 10;
         g->definitions[QA_Q2_IONRIPPER].activate_last = 5;
         g->definitions[QA_Q2_IONRIPPER].fire_last = 7;
         g->definitions[QA_Q2_IONRIPPER].fires = B(6);
@@ -108,6 +109,100 @@ bool q2_definitions(qa_q2_game *g, qa_error *error) {
             (d->ammo != NULL && !qa_builtin_resource(&g->services, d->ammo, &g->ammo[i], error)))
             return false;
     }
+    return qa_q2_bot_arsenal_register_multiplayer(g,g->options.arsenal_rules,
+        g->options.native_hook,g->options.hook_edition,error) &&
+        qa_q2_bot_equipment_register_hook(g,g->options.equipment_hook_rules,
+            g->options.equipment_hook_edition,error);
+}
+bool qa_q2_bot_arsenal_register_multiplayer(qa_q2_game *g,qa_q2_weapon_rules rules,
+                                           bool native_hook,qa_q2_edition hook_edition,
+                                           qa_error *error) {
+    if (!g || (unsigned)rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (unsigned)hook_edition > QA_Q2_RERELEASE ||
+        (rules == QA_Q2_WEAPON_RULES_BASE && native_hook)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q2 source arsenal registration");
+        return false;
+    }
+    if (!native_hook || rules != QA_Q2_WEAPON_RULES_CTF)
+        hook_edition = QA_Q2_CLASSIC;
+    if (g->arsenal_rules == rules && g->native_hook == native_hook &&
+        g->hook_edition == hook_edition)
+        return true;
+    if (g->item_runtime || g->arsenal_rules != QA_Q2_WEAPON_RULES_BASE || g->continuation_pending ||
+        g->continuation_failed || !q2_checkpoint_idle(g,error)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 source arsenal modules already selected");
+        return false;
+    }
+    qa_q2_weapon_definition additions[2];
+    uint32_t count = 0;
+    if (rules == QA_Q2_WEAPON_RULES_CTF && native_hook) {
+        additions[count] = grapples[0];
+        additions[count].world_model = "";
+        if (hook_edition == QA_Q2_RERELEASE)
+            additions[count].fire_last = 10;
+        ++count;
+    } else if (rules == QA_Q2_WEAPON_RULES_LMCTF) {
+        additions[count++] = grapples[2];
+        if (native_hook)
+            additions[count++] = grapples[1];
+    }
+    qa_item_id items[2] = {0},ammo[2] = {0};
+    qa_string_id models[2] = {0};
+    for (uint32_t i = 0; i < count; ++i) {
+        const qa_q2_weapon_definition *d = additions + i;
+        if (!qa_builtin_resource(&g->services,d->item,items+i,error) ||
+            !qa_builtin_resource(&g->services,d->view_model,models+i,error) ||
+            (d->ammo && !qa_builtin_resource(&g->services,d->ammo,ammo+i,error)))
+            return false;
+    }
+    install(g,additions,count);
+    for (uint32_t i = 0; i < count; ++i) {
+        qa_q2_weapon weapon = additions[i].weapon;
+        g->items[weapon] = items[i];
+        g->ammo[weapon] = ammo[i];
+        g->view_models[weapon] = models[i];
+    }
+    g->arsenal_rules = rules;
+    g->native_hook = native_hook;
+    g->hook_edition = hook_edition;
+    return true;
+}
+bool qa_q2_bot_equipment_register_hook(qa_q2_game *g,qa_q2_weapon_rules rules,
+                                      qa_q2_edition edition,qa_error *error) {
+    if (!g || (unsigned)rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (unsigned)edition > QA_Q2_RERELEASE) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q2 source equipment registration");
+        return false;
+    }
+    if (rules != QA_Q2_WEAPON_RULES_CTF) edition = QA_Q2_CLASSIC;
+    if (g->equipment_hook_rules == rules && g->equipment_hook_edition == edition)
+        return true;
+    if (g->item_runtime || g->equipment_hook_rules != QA_Q2_WEAPON_RULES_BASE ||
+        g->continuation_pending || g->continuation_failed || !q2_checkpoint_idle(g,error)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 source equipment already selected");
+        return false;
+    }
+    qa_q2_weapon_definition definition = grapples[rules == QA_Q2_WEAPON_RULES_CTF ? 0 : 1];
+    if (rules == QA_Q2_WEAPON_RULES_CTF) {
+        definition.world_model = "";
+        if (edition == QA_Q2_RERELEASE) definition.fire_last = 10;
+    }
+    if (g->native_hook && (g->arsenal_rules != rules ||
+        (rules == QA_Q2_WEAPON_RULES_CTF && g->hook_edition != edition))) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 arsenal and equipment hook definitions conflict");
+        return false;
+    }
+    qa_q2_weapon weapon = definition.weapon;
+    if (!g->definitions[weapon].name) {
+        qa_item_id item; qa_string_id model;
+        if (!qa_builtin_resource(&g->services,definition.item,&item,error) ||
+            !qa_builtin_resource(&g->services,definition.view_model,&model,error)) return false;
+        g->definitions[weapon] = definition;
+        g->items[weapon] = item;
+        g->view_models[weapon] = model;
+    }
+    g->equipment_hook_rules = rules;
+    g->equipment_hook_edition = edition;
     return true;
 }
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *g,

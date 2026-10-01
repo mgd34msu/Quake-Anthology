@@ -202,6 +202,11 @@ typedef struct qa_q2_options {
     qa_actor_owner owner;
     qa_q2_edition edition;
     qa_q2_product product;
+    qa_q2_weapon_rules arsenal_rules;
+    bool native_hook;
+    qa_q2_edition hook_edition;
+    qa_q2_weapon_rules equipment_hook_rules;
+    qa_q2_edition equipment_hook_edition;
     bool deathmatch, cooperative;
     uint32_t deathmatch_flags;
     int skill;
@@ -230,6 +235,12 @@ bool qa_q2_monster_action(qa_q2_game *, qa_actor_id, qa_q2_monster_action_kind, 
 
 typedef struct qa_q2_hooks {
     void *context;
+    /* Source preparation stamps sequence/time first. The application supplies
+     * the selected target policy and movement, preserving retained item/source
+     * provenance; original foreign damage sees the same prepared request. */
+    bool (*prepare_damage)(void *, qa_damage_request *, bool *allowed, qa_error *);
+    /* Capture the actual selected inventory before a projectile retains its attack. */
+    qa_actor_owner (*inventory_provider)(void *, qa_actor_id, qa_item_id);
     bool (*weapon_view)(void *, const qa_q2_weapon_presentation *, qa_error *);
     bool (*noise)(void *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
     bool (*ammo_changed)(void *, qa_actor_id, qa_item_id, qa_error *);
@@ -331,6 +342,13 @@ typedef struct qa_q2_runtime_checkpoint {
     qa_q2_edition edition;
     qa_q2_product product;
     qa_builtin_random random;
+    uint32_t definition_count;
+    qa_q2_weapon definition_order[QA_Q2_WEAPON_COUNT];
+    qa_q2_weapon_rules arsenal_rules;
+    bool native_hook;
+    qa_q2_edition hook_edition;
+    qa_q2_weapon_rules equipment_hook_rules;
+    qa_q2_edition equipment_hook_edition;
     uint32_t rerelease_words[624], rerelease_index;
     uint64_t rerelease_draws, sequence, actor_sequence, now_ns, frame_ns;
     qa_q2_grapple_options grapple_options;

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
+#include "qa/game_q1_bots.h"
 #include <float.h>
 
 const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
@@ -942,6 +943,122 @@ bool qa_q1_player_weapon_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon wea
     }
     qa_q1_game_operation_end(&operation);
     return result;
+}
+
+static bool bot_weapon(qa_q1_weapon weapon) {
+    return (unsigned)weapon <= QA_Q1_LIGHTNING && weapon != QA_Q1_GRENADE;
+}
+bool qa_q1_bot_weapon_items(const qa_q1_game *g,qa_q1_weapon weapon,qa_item_id *item,
+                            qa_item_id *ammunition,bool *covered,qa_error *error) {
+    if (!g || !item || !ammunition || !covered || (unsigned)weapon>=QA_Q1_WEAPON_COUNT ||
+        g->destroy_pending || g->continuation_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot weapon items require their source registry");
+        return false;
+    }
+    *covered=bot_weapon(weapon);*item=0;*ammunition=0;
+    if (!*covered) return true;
+    *item=g->weapons[weapon];
+    int ammo=q1_weapon_ammo(weapon);
+    *ammunition=ammo<0?0:g->ammo[ammo];return true;
+}
+bool qa_q1_bot_weapon_usable(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,
+                             bool *out,qa_error *error) {
+    if (!g || !out || (unsigned)weapon>=QA_Q1_WEAPON_COUNT || g->destroy_pending ||
+        g->continuation_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot weapon usability requires its source owner");
+        return false;
+    }
+    *out=false;
+    q1_player *player=q1_player_get(g,actor);
+    if (!bot_weapon(weapon) || !player || !player->arsenal) return true;
+    qa_inventory_entry entry;
+    double owned=qa_inventory_entry_read(g->services.inventory,actor,g->weapons[weapon],&entry,NULL)?entry.count:0;
+    int ammo=q1_weapon_ammo(weapon);
+    unsigned needed=weapon==QA_Q1_SUPER_SHOTGUN || weapon==QA_Q1_SUPER_NAILGUN?2:1;
+    *out=owned!=0 && (ammo<0 || q1_ammo_count(g,actor,(qa_q1_ammo)ammo)>=needed) &&
+        (weapon!=QA_Q1_LIGHTNING || player->input.water_level<=1);
+    return true;
+}
+bool qa_q1_bot_weapon_state_read(const qa_q1_game *g,qa_actor_id actor,qa_q1_weapon *weapon,
+                                 double *attack_finished,double *time,bool *present,qa_error *error) {
+    if (!g || !weapon || !attack_finished || !time || !present || g->destroy_pending ||
+        g->continuation_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot weapon state requires its actual source owner");
+        return false;
+    }
+    const q1_player *player = actor.slot < g->capacity ? g->players[actor.slot] : NULL;
+    *present = player && player->active && player->arsenal &&
+        qa_actor_id_equal(player->id,actor) &&
+        qa_actors_get(qa_session_actors(g->services.session),actor);
+    *weapon = *present ? player->weapon : QA_Q1_AXE;
+    *attack_finished = *present ? player->attack_finished : 0;
+    *time = g->time;
+    return true;
+}
+bool qa_q1_bot_weapon_read(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,
+                           qa_q1_bot_weapon_fact *out,bool *covered,qa_error *error) {
+    if (!out || !covered || (unsigned)weapon >= QA_Q1_WEAPON_COUNT) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q1 bot weapon fact request");
+        return false;
+    }
+    *out = (qa_q1_bot_weapon_fact){0};
+    *covered = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g,&operation,error)) return false;
+    if (!bot_weapon(weapon)) {qa_q1_game_operation_end(&operation);return true;}
+    q1_player *player = q1_player_get(g,actor);
+    if (player && !player->arsenal) player = NULL;
+    double nails = player ? q1_ammo_count(g,actor,QA_Q1_NAILS) : 2;
+    double shells = player ? q1_ammo_count(g,actor,QA_Q1_SHELLS) : 2;
+    float nail_speed = 1000;
+    bool okay = !player || !g->host.bot_nail_speed ||
+        g->host.bot_nail_speed(g->host.context,actor,1000,&nail_speed,error);
+    if (okay && (!qa_q1_game_operation_live(&operation) || !isfinite(nail_speed) || nail_speed < 0)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot nail speed lost its source operation");
+        okay = false;
+    }
+    if (!okay) {qa_q1_game_operation_end(&operation);return false;}
+    /* The callback may retire a player while retaining the GAME allocation. */
+    player = q1_player_get(g,actor);
+    if (player && !player->arsenal) player = NULL;
+    qa_q1_bot_weapon_fact value = {.item=g->weapons[weapon],.shots=1,.offset={0,0,-6}};
+    int ammo = q1_weapon_ammo(weapon);
+    value.ammo = ammo < 0 ? 0 : g->ammo[ammo];
+    switch (weapon) {
+    case QA_Q1_AXE: value.damage=20;value.cycle=.5;value.range=64;break;
+    case QA_Q1_SHOTGUN:
+    case QA_Q1_SUPER_SHOTGUN: {
+        bool super = weapon==QA_Q1_SUPER_SHOTGUN && shells>1;
+        value.damage=4;value.shots=super?14:6;value.cycle=weapon==QA_Q1_SHOTGUN?.5:.7;
+        value.ammo_per_shot=super?2:1;value.range=2048;
+        value.spread_x=super?.14:.04;value.spread_y=super?.08:.04;
+        qa_body_state body;
+        double height=15.2;
+        if (qa_world_body_read(g->services.world,actor,&body,NULL))
+            height=body.bounds.mins.z+((double)body.bounds.maxs.z-body.bounds.mins.z)*.7;
+        value.offset=qa_v3(10,0,(float)(height-22));break;
+    }
+    case QA_Q1_NAILGUN:
+    case QA_Q1_SUPER_NAILGUN: {
+        bool super=weapon==QA_Q1_SUPER_NAILGUN && nails>=2;
+        value.damage=super?18:9;value.cycle=.1;value.ammo_per_shot=super?2:1;
+        value.speed=nail_speed;value.range=(double)nail_speed*6;
+        value.offset.y=super?0:(float)(player?player->nail_side:1)*4;break;
+    }
+    case QA_Q1_ROCKET:
+        value.damage=110;value.cycle=.8;value.ammo_per_shot=1;
+        value.speed=1000;value.range=5000;value.radius=160;value.offset.x=8;break;
+    case QA_Q1_LIGHTNING:
+        value.damage=30;value.cycle=.1;value.ammo_per_shot=1;value.range=600;break;
+    default: break;
+    }
+    qa_inventory_entry inventory;
+    double owned=qa_inventory_entry_read(g->services.inventory,actor,value.item,&inventory,NULL)?inventory.count:0;
+    value.owned=owned>0;
+    okay=qa_q1_bot_weapon_usable(g,actor,weapon,&value.usable,error);
+    if (!okay) {qa_q1_game_operation_end(&operation);return false;}
+    *out=value;*covered=true;
+    qa_q1_game_operation_end(&operation);return true;
 }
 
 static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {

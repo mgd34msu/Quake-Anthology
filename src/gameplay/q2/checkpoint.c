@@ -41,9 +41,15 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
     if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
-    *out = (qa_q2_runtime_checkpoint){.version = 3,
+    *out = (qa_q2_runtime_checkpoint){.version = 5,
                                       .edition = g->options.edition,
                                       .product = g->options.product,
+                                      .definition_count = g->definition_count,
+                                      .arsenal_rules = g->arsenal_rules,
+                                      .native_hook = g->native_hook,
+                                      .hook_edition = g->hook_edition,
+                                      .equipment_hook_rules = g->equipment_hook_rules,
+                                      .equipment_hook_edition = g->equipment_hook_edition,
                                       .random = g->random,
                                       .rerelease_index = g->rerelease_random.index,
                                       .rerelease_draws = g->rerelease_random.draws,
@@ -57,11 +63,19 @@ bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_erro
                                       .widow_shot_phase = g->widow_shot_phase};
     for (size_t i = 0; i < 624; ++i)
         out->rerelease_words[i] = g->rerelease_random.words[i];
+    for (uint32_t i = 0; i < g->definition_count; ++i)
+        out->definition_order[i] = g->definition_order[i];
     return true;
 }
 bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state, qa_error *e) {
-    if (g == NULL || state == NULL || state->version != 3 || state->edition != g->options.edition ||
+    if (g == NULL || state == NULL || state->version != 5 || state->edition != g->options.edition ||
         state->product != g->options.product || state->widow_shot_phase >= 4 ||
+        state->definition_count != g->definition_count ||
+        state->definition_count >= QA_Q2_WEAPON_COUNT ||
+        state->arsenal_rules != g->arsenal_rules || state->native_hook != g->native_hook ||
+        state->hook_edition != g->hook_edition ||
+        state->equipment_hook_rules != g->equipment_hook_rules ||
+        state->equipment_hook_edition != g->equipment_hook_edition ||
         state->random.front >= 31 ||
         state->random.rear >= 31 || state->rerelease_index > 624 || state->frame_ns == 0 ||
         (state->widow_damage_multiplier != 1 && state->widow_damage_multiplier != 2 &&
@@ -69,6 +83,11 @@ bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state,
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 runtime checkpoint");
         return false;
     }
+    for (uint32_t i = 0; i < state->definition_count; ++i)
+        if (state->definition_order[i] != g->definition_order[i]) {
+            qa_error_set(e,QA_ERROR_FORMAT,i,"Q2 continuation source arsenal order differs");
+            return false;
+        }
     if (!q2_checkpoint_idle(g, e) || !qa_q2_grapple_configure(g, &state->grapple_options, e))
         return false;
     g->random = state->random;

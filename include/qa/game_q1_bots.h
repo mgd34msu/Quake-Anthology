@@ -12,6 +12,20 @@ bool qa_q1_bot_entity_read(const qa_q1_game *,qa_actor_id,qa_q1_bot_entity *,qa_
 bool qa_q1_bot_clock_read(const qa_q1_game *,double *,bool *,double *,qa_error *);
 bool qa_q1_bot_max_clients(const qa_q1_game *,uint32_t *,qa_error *);
 qa_actor_id qa_q1_bot_world_actor(const qa_q1_game *);
+typedef struct qa_q1_bot_weapon_fact {
+    qa_item_id item,ammo;
+    double damage,cycle,ammo_per_shot,speed,range,radius,spread_x,spread_y;
+    uint32_t shots;
+    qa_vec3 offset;
+    bool owned,usable;
+} qa_q1_bot_weapon_fact;
+bool qa_q1_bot_weapon_read(qa_q1_game *,qa_actor_id,qa_q1_weapon,
+                           qa_q1_bot_weapon_fact *,bool *covered,qa_error *);
+bool qa_q1_bot_weapon_usable(qa_q1_game *,qa_actor_id,qa_q1_weapon,bool *,qa_error *);
+bool qa_q1_bot_weapon_items(const qa_q1_game *,qa_q1_weapon,qa_item_id *,qa_item_id *,
+                            bool *covered,qa_error *);
+bool qa_q1_bot_weapon_state_read(const qa_q1_game *,qa_actor_id,qa_q1_weapon *,
+                                 double *attack_finished,double *time, bool *present,qa_error *);
 typedef struct qa_q1_source_client_view {
     qa_actor_id actor;
     uint32_t slot;

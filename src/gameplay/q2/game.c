@@ -271,6 +271,11 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
                   const qa_q2_hooks *hooks, qa_q2_game **out, qa_error *e) {
     if (options == NULL || out == NULL || options->owner == 0 ||
         (unsigned)options->edition > QA_Q2_RERELEASE || (unsigned)options->product > QA_Q2_N64 ||
+        (unsigned)options->arsenal_rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (unsigned)options->hook_edition > QA_Q2_RERELEASE ||
+        (unsigned)options->equipment_hook_rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (unsigned)options->equipment_hook_edition > QA_Q2_RERELEASE ||
+        (options->arsenal_rules == QA_Q2_WEAPON_RULES_BASE && options->native_hook) ||
         (hooks != NULL && ((hooks->lag_begin == NULL) != (hooks->lag_end == NULL))) ||
         !qa_builtin_services_validate(services, e)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid native Q2 provider options");
@@ -493,6 +498,9 @@ qa_attack q2_attack(q2_weapon_call *c, int mod, uint32_t flags) {
                         .weapon_provider = c->game->options.owner,
                         .powerup_applied = true,
                         .powerup_owner = c->game->options.owner};
+    if (c->game->hooks.inventory_provider)
+        attack.inventory_provider = c->game->hooks.inventory_provider(
+            c->game->hooks.context, attack.attacker, attack.weapon);
     attack.cause = qa_q2_damage_cause(c->rerelease ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
                                       c->game->options.product, mod, flags);
     return attack;

@@ -5,6 +5,19 @@ bool qa_q2_bot_arsenal_configuration_read(const qa_q2_game *game,qa_q2_bot_arsen
     if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot arsenal requires its actual source configuration");return false;}
     *out=(qa_q2_bot_arsenal_configuration){game->options.edition,game->options.deathmatch};return true;
 }
+bool qa_q2_bot_arsenal_rules_read(const qa_q2_game *game,qa_q2_weapon_rules *out,qa_error *error) {
+    if (!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 arsenal rules require their source owner");return false;}
+    *out=game->arsenal_rules;return true;
+}
+bool qa_q2_bot_arsenal_definition_count(const qa_q2_game *game,uint32_t *out,qa_error *error) {
+    if (!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 arsenal count requires its source owner");return false;}
+    *out=game->definition_count;return true;
+}
+bool qa_q2_bot_arsenal_definition_read(const qa_q2_game *game,uint32_t ordinal,
+                                      const qa_q2_weapon_definition **out,qa_error *error) {
+    if (!game || !out || ordinal>=game->definition_count) {qa_error_set(error,QA_ERROR_ARGUMENT,ordinal,"Q2 arsenal ordinal is outside its source registry");return false;}
+    *out=game->definitions+game->definition_order[ordinal];return true;
+}
 
 bool qa_q2_bot_entity_read(qa_q2_game *game,qa_actor_id actor,qa_q2_bot_entity *out,qa_error *error) {
     if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot entity requires its source owner and output");return false;}

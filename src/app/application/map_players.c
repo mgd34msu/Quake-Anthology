@@ -9,6 +9,8 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
+#include "native_q2_console.h"
+#include "native_q2_arsenal.h"
 #include "rankings.h"
 #include "bots_round.h"
 #include "bots_private.h"
@@ -299,8 +301,12 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
     if (arsenal != NULL && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state state;
         carry->has_weapon3 = qa_q3_player_read(arsenal->state.q3, actor, &state);
-        if (carry->has_weapon3)
+        if (carry->has_weapon3) {
             carry->weapon3 = state.weapon;
+            if (!qa_q3_player_fire_read(arsenal->state.q3, actor, &carry->fire3) ||
+                !qa_q3_source_clock(arsenal->state.q3, &carry->arsenal3_time_ms, error))
+                return false;
+        }
     }
     return true;
 }
@@ -1274,12 +1280,8 @@ static bool configure_q2_players(qa_application *application,
             continue;
         qa_q2_player_rules rules;
         qa_q2_player_rules_default(&rules);
-        const qa_cvar_view *maximum = qa_cvars_find(application->cvars, "sv_maxclients");
-        if (maximum != NULL && maximum->integer < 1)
-            return application_fail(error, QA_ERROR_FORMAT, "Q2 maximum clients is outside source slot range");
-        rules.max_clients = maximum != NULL ? (uint32_t)maximum->integer : (uint32_t)choices->seat_count;
-        if (rules.max_clients < choices->seat_count) rules.max_clients = (uint32_t)choices->seat_count;
-        rules.max_spectators = rules.max_clients;
+        if (!application_native_q2_source_player_rules(provider, &rules, error) ||
+            !application_native_q2_arsenal_prepare(provider, choices, error)) return false;
         rules.map_name = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
         rules.spawn_point = spawn_point == QA_STRING_NONE ? "" :
             qa_strings_cstr(qa_session_strings(application->session), spawn_point);
@@ -1292,6 +1294,8 @@ static bool configure_q2_players(qa_application *application,
             .weapon_selected = application_q2_weapon_selected};
         if (!qa_q2_players_configure(provider->state.q2, &rules, &services, error))
             return false;
+        if (application->operation != APPLICATION_PERSISTING &&
+            !application_native_q2_console_refresh(provider, error)) return false;
     }
     return true;
 }
@@ -1828,6 +1832,15 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!qa_q3_player_read(arsenal->state.q3, actor, &state))
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 carried arsenal has no admitted state");
             state.weapon = state.requested_weapon = carry->weapon3;
+            state.has_last_fire = carry->fire3.present;
+            state.last_fire_ms = 0;
+            if (carry->fire3.present) {
+                int32_t source_time;
+                if (!qa_q3_source_clock(arsenal->state.q3, &source_time, error)) return false;
+                uint32_t rebased = (uint32_t)carry->fire3.time_ms +
+                    (uint32_t)source_time - (uint32_t)carry->arsenal3_time_ms;
+                memcpy(&state.last_fire_ms, &rebased, sizeof(state.last_fire_ms));
+            }
             if (!qa_q3_player_restore(arsenal->state.q3, actor, &state, error)) return false;
         }
         if ((!keep_inventory && !fresh_q1_arsenal(application, choices, arsenal, actor, carry, error)) ||

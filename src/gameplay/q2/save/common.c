@@ -116,6 +116,11 @@ bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
 }
 bool q2_save_runtime(q2_save_io *io, qa_q2_runtime_checkpoint *s) {
     Q2U(version); Q2U(edition); Q2U(product);
+    Q2U(arsenal_rules); Q2B(native_hook); Q2U(hook_edition); Q2U(definition_count);
+    Q2U(equipment_hook_rules); Q2U(equipment_hook_edition);
+    if (s->definition_count >= QA_Q2_WEAPON_COUNT)
+        return q2_save_fail(io,"Invalid Q2 source arsenal count");
+    for (uint32_t i = 0; i < s->definition_count; ++i) Q2U(definition_order[i]);
     for (size_t i = 0; i < 31; ++i) Q2U(random.words[i]);
     Q2U(random.front); Q2U(random.rear); Q2T(random.draws);
     for (size_t i = 0; i < 624; ++i) Q2U(rerelease_words[i]);

@@ -6,9 +6,13 @@
 #include "native_q3_console.h"
 #include "native_q1_console.h"
 #include "native_q2_console.h"
+#include "native_q2_arsenal.h"
+#include "native_q2_combat_policy.h"
+#include "bots_q1_rules.h"
 #include "startup_flow.h"
 #include "guest_q3_save.h"
 #include "guest_q3_factory.h"
+#include "guest_qc_factory.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_settings.h"
 #include "native_q3_session.h"
@@ -24,6 +28,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/game_q2_bots.h"
 #include "native_maps.h"
 #include "rankings.h"
 #include "q3_world_restart.h"
@@ -234,6 +239,9 @@ static void profile_word(qa_sha256_context *hash, uint64_t value)
     qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
 }
 
+static bool q2_selected_options(const qa_launch_instance *, const qa_product *,
+    const qa_launch_choices *, qa_q2_options *, qa_error *);
+
 bool application_instance_configuration(void *opaque,
                                         const qa_launch_instance *launch,
                                         const qa_launch_choices *choices,
@@ -265,6 +273,19 @@ bool application_instance_configuration(void *opaque,
         profile_word(&hash, (uint32_t)profile.skill);
         profile_word(&hash, profile.cooperative);
         profile_word(&hash, profile.deathmatch);
+        if (launch->selection.runtime == QA_PROGRAM_BUILTIN) {
+            qa_catalog *catalog = qa_launch_instance_catalog(launch);
+            const qa_product *product = catalog
+                ? qa_catalog_product(catalog, launch->selection.product) : NULL;
+            qa_q2_options selected = {0};
+            if (!q2_selected_options(launch, product, choices, &selected, error))
+                return false;
+            profile_word(&hash, selected.arsenal_rules);
+            profile_word(&hash, selected.native_hook);
+            profile_word(&hash, selected.hook_edition);
+            profile_word(&hash, selected.equipment_hook_rules);
+            profile_word(&hash, selected.equipment_hook_edition);
+        }
         break;
     case QA_GAME_Q3:
         profile_word(&hash, profile.mode_kind);
@@ -433,6 +454,7 @@ static bool construct_q1(qa_application *application,
                        .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,
                        .attack_delay = application_q1_attack_delay,
+                       .bot_nail_speed = application_bot_q1_nail_speed,
                        .nail_fire = application_q1_nail_fire};
     qa_builtin_services services = application_builtin_services(
         application, world, application->physics);
@@ -459,6 +481,80 @@ static qa_q2_product q2_product(const char *campaign)
     if (strcmp(campaign, "n64") == 0)
         return QA_Q2_N64;
     return QA_Q2_BASE;
+}
+
+static bool q2_selected_options(const qa_launch_instance *instance, const qa_product *product,
+    const qa_launch_choices *choices, qa_q2_options *options, qa_error *error)
+{
+    if (!instance || !options || !product || product->family != QA_GAME_Q2 || !choices)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 arsenal registration needs its actual native source");
+    qa_q2_weapon_rules selected = QA_Q2_WEAPON_RULES_BASE;
+    if (instance->roles & QA_ROLE_BIT(QA_ROLE_ARSENAL))
+        for (size_t i = 0; i < choices->mode_count; ++i) {
+            const qa_launch_mode *mode = choices->modes + i;
+            if (!mode->rules.enabled || strcmp(mode->instance, instance->selection.instance)) continue;
+            qa_q2_weapon_rules rules = mode->rules.source == QA_MODE_Q2_CTF ? QA_Q2_WEAPON_RULES_CTF
+                : mode->rules.source == QA_MODE_LMCTF ? QA_Q2_WEAPON_RULES_LMCTF : QA_Q2_WEAPON_RULES_BASE;
+            if (rules == QA_Q2_WEAPON_RULES_BASE) continue;
+            if (selected != QA_Q2_WEAPON_RULES_BASE && selected != rules)
+                return application_fail(error, QA_ERROR_UNSUPPORTED, "One Q2 arsenal selects conflicting native mode modules");
+            selected = rules;
+        }
+    bool native_hook = false;
+    qa_q2_edition hook_edition = QA_Q2_CLASSIC;
+    qa_q2_weapon_rules equipment_rules = QA_Q2_WEAPON_RULES_BASE;
+    qa_q2_edition equipment_edition = QA_Q2_CLASSIC;
+    for (size_t i = 0; i < choices->equipment_count; ++i) {
+        const qa_launch_equipment *equipment = choices->equipment + i;
+        qa_q2_weapon_rules rules = equipment->selection.grapple == QA_GRAPPLE_Q2_CTF
+            ? QA_Q2_WEAPON_RULES_CTF : equipment->selection.grapple == QA_GRAPPLE_LMCTF
+                ? QA_Q2_WEAPON_RULES_LMCTF : QA_Q2_WEAPON_RULES_BASE;
+        if (equipment->selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
+            rules == QA_Q2_WEAPON_RULES_BASE ||
+            strcmp(equipment->grapple_source, instance->selection.instance)) continue;
+        qa_q2_edition edition = rules == QA_Q2_WEAPON_RULES_CTF &&
+            product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC;
+        if (equipment_rules != QA_Q2_WEAPON_RULES_BASE &&
+            (equipment_rules != rules || equipment_edition != edition))
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "One Q2 source selects conflicting hook equipment definitions");
+        equipment_rules = rules;
+        equipment_edition = edition;
+        if (selected != rules) continue;
+        const qa_launch_binding *arsenal = qa_launch_binding_for(choices, equipment->scope, QA_ROLE_ARSENAL, "");
+        if (!arsenal || strcmp(arsenal->instance, instance->selection.instance)) continue;
+        native_hook = true;
+        hook_edition = edition;
+    }
+    options->arsenal_rules = selected;
+    options->native_hook = native_hook;
+    options->hook_edition = hook_edition;
+    options->equipment_hook_rules = equipment_rules;
+    options->equipment_hook_edition = equipment_edition;
+    return true;
+}
+
+static bool q2_arsenal_options(application_provider *provider,
+    const qa_launch_choices *choices, qa_q2_options *options, qa_error *error)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q2)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 arsenal registration needs its actual native source");
+    qa_application *app = provider->application;
+    const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_instance *instance = qa_launch_snapshot_find(snapshot, provider->launch->selection.instance);
+    if (!instance || instance->state != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 arsenal registration lost its actual selected source");
+    return q2_selected_options(instance, provider->product, choices, options, error);
+}
+
+bool application_native_q2_arsenal_prepare(application_provider *provider,
+    const qa_launch_choices *choices, qa_error *error)
+{
+    qa_q2_options options = {0};
+    return q2_arsenal_options(provider, choices, &options, error) &&
+        qa_q2_bot_arsenal_register_multiplayer(provider->state.q2, options.arsenal_rules,
+            options.native_hook, options.hook_edition, error) &&
+        qa_q2_bot_equipment_register_hook(provider->state.q2, options.equipment_hook_rules,
+            options.equipment_hook_edition, error);
 }
 
 static bool construct_q2(qa_application *application,
@@ -491,11 +587,17 @@ static bool construct_q2(qa_application *application,
         !application_native_q2_console_finalize(provider, &options, choices, error))) return false;
     services.cvar_context = provider;
     services.cvar = application_native_q2_cvar;
-    if (!qa_q2_create(&services, &options, NULL, &provider->state.q2,
+    if (!q2_arsenal_options(provider, choices, &options, error)) return false;
+    qa_q2_hooks hooks = {.context = provider,
+        .prepare_damage = application_native_q2_damage_prepare,
+        .inventory_provider = application_native_q2_attack_inventory};
+    if (!qa_q2_create(&services, &options, &hooks, &provider->state.q2,
                       error))
         return false;
+    if (!application_native_q2_arsenal_prepare(provider, choices, error)) return false;
     if (application->operation != APPLICATION_PERSISTING &&
         !application_native_q2_console_refresh(provider, error)) return false;
+    if (!application_native_q2_combat_policy(provider, &provider->policy, error)) return false;
     provider->component = qa_q2_component(provider->state.q2);
     provider->component.clock = provider->launch->selection.clock;
     return true;
@@ -583,8 +685,8 @@ bool application_provider_console_prepare(qa_application *application,
         return q3_console_prepare(provider, choices, profile, error) &&
             application_native_q3_console_at(provider, console, cvars, command);
     case APPLICATION_PROVIDER_QC:
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Selected original GAME requires its retained private console preparation");
+        return application_qc_console_prepare(application, provider, world, product,
+            choices, console, cvars, command, error);
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
         return product->family == QA_GAME_Q3 ?
@@ -934,6 +1036,8 @@ bool application_provider_deconstruct(application_provider *provider,
         if (provider->kind == APPLICATION_PROVIDER_Q3)
             return application_native_q3_settings_destroy(provider, error) &&
                 application_native_q3_console_destroy(provider, error);
+        if (provider->kind == APPLICATION_PROVIDER_QC)
+            return application_qc_console_destroy(provider, error);
         if (provider->kind == APPLICATION_PROVIDER_QVM ||
             (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))
             return application_q3_guest_deconstruct(provider, error);
@@ -944,6 +1048,10 @@ bool application_provider_deconstruct(application_provider *provider,
     bool ok = true;
     switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
+        if (provider->state.q1 == NULL) {
+            ok = application_native_q1_console_destroy(provider, error);
+            break;
+        }
         if (!application_native_q1_console_idle(provider))
             return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 source console is borrowed");
         qa_q1_game_destroy(provider->state.q1);
@@ -956,6 +1064,10 @@ bool application_provider_deconstruct(application_provider *provider,
         ok = application_native_q1_console_destroy(provider, error);
         break;
     case APPLICATION_PROVIDER_Q2:
+        if (provider->state.q2 == NULL) {
+            ok = application_native_q2_console_destroy(provider, error);
+            break;
+        }
         if (!application_native_q2_console_idle(provider))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source console is borrowed");
         ok = qa_q2_destroy(provider->state.q2, error);
@@ -965,6 +1077,10 @@ bool application_provider_deconstruct(application_provider *provider,
         }
         break;
     case APPLICATION_PROVIDER_Q3:
+        if (provider->state.q3 == NULL) {
+            ok = application_native_q3_console_destroy(provider, error);
+            break;
+        }
         if (!application_native_q3_console_idle(provider) ||
             !application_native_q3_settings_idle(provider) ||
             !application_native_q3_ipfilters_idle(provider) ||
