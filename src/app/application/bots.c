@@ -8,6 +8,8 @@
 #include "native_q3_settings.h"
 #include "native_q3_match.h"
 #include "native_q3_wire_state.h"
+#include "bot_world_bind.h"
+#include "bots_transport.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -17,6 +19,7 @@
 #include <string.h>
 
 static application_provider *bot_source(application_bots *);
+static bool bot_source_client(void *,qa_actor_id,int32_t *,qa_error *);
 static uint32_t random_word(void *opaque) {
     application_bots *bots=opaque;return qa_builtin_random_integer(&bots->application->random);
 }
@@ -168,6 +171,7 @@ application_provider *application_bot_source(application_bots *bots) {
     return bot_source(bots);
 }
 bool application_bot_entity_number(application_bots *bots,qa_actor_id actor,int32_t *out,qa_error *error) {
+    if(bots->shared_world) return application_bot_world_entity_id(bots->shared_world,actor,out,error);
     application_provider *source=bot_source(bots);uint32_t number;
     if(source && source->kind==APPLICATION_PROVIDER_Q3) {
         if(!qa_q3_source_actor_slot(source->state.q3,actor,&number,error)) return false;
@@ -181,6 +185,7 @@ bool application_bot_entity_number(application_bots *bots,qa_actor_id actor,int3
 }
 static bool bot_entity_extent(void *opaque,uint32_t *out,qa_error *error) {
     (void)error;application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {*out=application_bot_world_entity_count(bots->shared_world);return true;}
     *out=source && source->kind==APPLICATION_PROVIDER_Q3?QA_Q3_SOURCE_ENTITIES:
         qa_actors_capacity(qa_session_actors(bots->application->session));return true;
 }
@@ -188,6 +193,17 @@ static bool bot_entity_list(void *opaque,qa_builtin_actor_snapshot *out,qa_error
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     qa_builtin_services shared=application_builtin_services(bots->application,bots->application->world,bots->application->physics);
     if(!qa_builtin_observations(&shared,out,error)) return false;
+    if(bots->shared_world) {
+        out->count=0;uint32_t count=application_bot_world_entity_count(bots->shared_world);
+        for(uint32_t number=0;number<count;++number) {
+            application_bot_world_entity actual;
+            if(!application_bot_world_read(bots->shared_world,(int32_t)number,&actual,error)) return false;
+            if(!actual.present) continue;
+            if(out->count>=out->capacity) return application_fail(error,QA_ERROR_FORMAT,"shared bot source list exceeds actual actor storage");
+            out->ids[out->count++]=actual.actor;
+        }
+        return true;
+    }
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3) return true;
     uint32_t count;if(!qa_q3_source_entity_count(source->state.q3,&count,error)) return false;
     out->count=0;
@@ -204,6 +220,11 @@ static bool bot_entity_list(void *opaque,qa_builtin_actor_snapshot *out,qa_error
 }
 static bool bot_source_generic1(void *opaque,int32_t client,int32_t *out,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,client,&actual,error)) return false;
+        *out=actual.state.generic1;return true;
+    }
     if(source && source->kind==APPLICATION_PROVIDER_Q3 && client>=0 && client<64) {
         qa_q3_entity state;qa_q3_wire_visibility visibility;
         if(!qa_q3_wire_entity_read(source->state.q3,(uint32_t)client,&state,&visibility,error)) return false;
@@ -212,6 +233,12 @@ static bool bot_source_generic1(void *opaque,int32_t client,int32_t *out,qa_erro
     return application_fail(error,QA_ERROR_UNSUPPORTED,"bot cube status requires its actual source entity words");
 }
 static bool bot_source_player(void *opaque,int32_t client,qa_bot_source_player *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,client,&actual,error)) return false;
+        *out=(qa_bot_source_player){.present=actual.present,.bot=actual.bot,.origin=actual.origin};return true;
+    }
     application_provider *source=bot_source(opaque);qa_q3_wire_client_view actual;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || client>=QA_Q3_SOURCE_CLIENTS)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot policy requires its actual fixed native Q3 client source");
@@ -224,6 +251,12 @@ static bool bot_source_player(void *opaque,int32_t client,qa_bot_source_player *
     *out=(qa_bot_source_player){.present=actual.present,.bot=actual.bot,.origin=actual.origin};return true;
 }
 static bool bot_source_intermission(void *opaque,bool *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        int32_t time,intermission;
+        if(!application_bot_world_clock(bots->shared_world,&time,&intermission,error)) return false;
+        *out=intermission!=0;return true;
+    }
     application_provider *source=bot_source(opaque);qa_q3_source_match_state match;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot intermission requires its actual native source match clock");
@@ -231,6 +264,13 @@ static bool bot_source_intermission(void *opaque,bool *out,qa_error *error) {
     *out=match.intermission_time_ms!=0;return true;
 }
 static bool bot_source_player_state(void *opaque,int32_t client,qa_bot_source_player_state *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,client,&actual,error)) return false;
+        *out=(qa_bot_source_player_state){.present=actual.present,.has_player=actual.has_player,
+            .pm_type=actual.player.pmType,.score=actual.player.persistant[0],.last_hurt_client=0,.last_hurt_mod=0};return true;
+    }
     application_provider *source=bot_source(opaque);qa_q3_bot_player_state actual;
     if(!out || !source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || client>=QA_Q3_SOURCE_CLIENTS)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot chat requires its real fixed Q3 source client");
@@ -240,12 +280,20 @@ static bool bot_source_player_state(void *opaque,int32_t client,qa_bot_source_pl
         .last_hurt_mod=actual.last_hurt_mod};return true;
 }
 static bool bot_source_row_count(void *opaque,uint32_t *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {*out=application_bot_world_entity_count(bots->shared_world);return true;}
     application_provider *source=bot_source(opaque);
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot source rows require their actual native Q3 owner");
     return qa_q3_source_entity_count(source->state.q3,out,error);
 }
 static bool bot_source_row(void *opaque,int32_t number,qa_bot_source_row *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,number,&actual,error)) return false;
+        *out=(qa_bot_source_row){.present=actual.present,.classname=actual.classname,.state=actual.state};return true;
+    }
     application_provider *source=bot_source(opaque);qa_q3_source_binding binding;qa_q3_wire_visibility visibility;
     *out=(qa_bot_source_row){0};
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
@@ -256,12 +304,26 @@ static bool bot_source_row(void *opaque,int32_t number,qa_bot_source_row *out,qa
     return qa_q3_wire_entity_read(source->state.q3,(uint32_t)number,&out->state,&visibility,error);
 }
 static bool bot_snapshot_entity(void *opaque,qa_actor_id actor,int32_t index,int32_t *number,bool *present,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        int32_t client;
+        if(!bot_source_client(bots,actor,&client,error) ||
+           !application_bot_transport_snapshot(bots->transport,(uint32_t)client,index,number,error)) return false;
+        *present=*number!=-1;return true;
+    }
     application_provider *source=bot_source(opaque);
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot snapshots require their actual native Q3 source owner");
     return application_native_q3_bot_snapshot_entity(source,actor,index,number,present,error);
 }
 static bool bot_source_entity(void *opaque,int32_t number,qa_q3_entity *out,bool *available,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,number,&actual,error)) return false;
+        *available=actual.present && actual.linked && !actual.hidden;
+        *out=*available?actual.state:(qa_q3_entity){0};return true;
+    }
     application_provider *source=bot_source(opaque);qa_q3_source_binding binding;qa_q3_wire_visibility visibility;
     *out=(qa_q3_entity){0};*available=false;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
@@ -278,6 +340,12 @@ static bool bot_source_entity(void *opaque,int32_t number,qa_q3_entity *out,bool
     return true;
 }
 static bool bot_source_event_time(void *opaque,int32_t number,int32_t *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {
+        application_bot_world_entity actual;
+        if(!application_bot_world_read(bots->shared_world,number,&actual,error)) return false;
+        *out=0;return true;
+    }
     application_provider *source=bot_source(opaque);
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot event time requires its actual fixed native Q3 source");
@@ -365,6 +433,7 @@ static bool bot_register_cvar(void *opaque,const char *name,const char *value,ui
 }
 static bool bot_configstring(void *opaque,uint32_t index,char *out,size_t capacity,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) return application_bot_world_configstring(bots->shared_world,index,out,capacity,error);
     if(!out || !capacity) return application_fail(error,QA_ERROR_ARGUMENT,"bot configstring needs bounded output");
     const char *text=NULL;
     if(source && source->kind==APPLICATION_PROVIDER_Q3) {
@@ -392,6 +461,10 @@ static bool bot_configstring(void *opaque,uint32_t index,char *out,size_t capaci
 }
 static bool bot_console(void *opaque,qa_actor_id actor,char *out,size_t capacity,bool *found,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {
+        int32_t client;if(!bot_source_client(bots,actor,&client,error)) return false;
+        return application_bot_transport_console(bots->transport,(uint32_t)client,out,capacity,found,error);
+    }
     if(source && source->kind==APPLICATION_PROVIDER_Q3)
         return application_native_q3_bot_console(source,actor,out,capacity,found,error);
     *found=false;return true;
@@ -400,7 +473,8 @@ static bool bot_get_userinfo(void *opaque,qa_actor_id actor,char *out,size_t cap
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     int32_t client;if(!bot_source_client(bots,actor,&client,error)) return false;
     const char *actual=NULL;
-    if(source && source->kind==APPLICATION_PROVIDER_Q3) {
+    if(bots->shared_world) actual=application_bot_world_userinfo(bots->shared_world,(uint32_t)client);
+    else if(source && source->kind==APPLICATION_PROVIDER_Q3) {
         if(!application_native_q3_wire_userinfo_read(source,(uint32_t)client,&actual,error)) return false;
     } else if(source && (source->kind==APPLICATION_PROVIDER_QVM || source->kind==APPLICATION_PROVIDER_NATIVE) &&
               source->product && source->product->family==QA_GAME_Q3) {
@@ -417,6 +491,8 @@ static bool bot_set_userinfo(void *opaque,qa_actor_id actor,const char *info,qa_
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     int32_t client;if(!bot_source_client(bots,actor,&client,error)) return false;
     if(!source) return application_fail(error,QA_ERROR_NOT_FOUND,"bot raw userinfo has no source owner");
+    if(bots->shared_world) return application_bot_world_userinfo_set(bots->shared_world,(uint32_t)client,info,error) &&
+        application_bot_world_userinfo_changed(bots->shared_world,(uint32_t)client,error);
     if(source->kind==APPLICATION_PROVIDER_Q3)
         return application_native_q3_wire_userinfo(source,(uint32_t)client,info,error) &&
             application_native_q3_client_userinfo_changed(source,actor,error);
@@ -431,18 +507,24 @@ static bool bot_userinfo(void *opaque,qa_actor_id actor,const char *key,const ch
         qa_q3_info_set(info,sizeof(info),key,value,error) && bot_set_userinfo(opaque,actor,info,error);
 }
 static bool bot_game_type(void *opaque,int32_t *out,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) {*out=0;return true;}
     application_provider *source=bot_source(opaque);
     if(source && source->kind==APPLICATION_PROVIDER_Q3)
         return application_native_q3_settings_integer(source,"g_gametype",out,error);
     return application_fail(error,QA_ERROR_UNSUPPORTED,"bot setup requires its actual GAME copied game type");
 }
 static bool bot_exit_level(void *opaque,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) return application_bot_world_exit_level(bots->shared_world,error);
     application_provider *source=bot_source(opaque);
     if(source && source->kind==APPLICATION_PROVIDER_Q3)
         return application_native_q3_match_exit_level(source,error);
     return application_fail(error,QA_ERROR_UNSUPPORTED,"bot interbreeding requires its actual source ExitLevel");
 }
 static bool bot_insert_command(void *opaque,const char *text,qa_error *error) {
+    application_bots *bots=opaque;
+    if(bots->shared_world) return application_bot_world_console(bots->shared_world,text,error);
     application_provider *source=bot_source(opaque);qa_console *console;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 ||
        !application_native_q3_console_at(source,&console,NULL,error)) return false;
@@ -510,7 +592,8 @@ bool application_bots_guest_bind(qa_application *application,application_provide
 static bool close_bots(application_bots *bots,qa_error *error) {
     if(!bots) return true;
     if(bots->calls || bots->arsenal_leases || bots->pickup_borrowed || bots->mover_borrowed ||
-       !qa_bots_can_destroy(bots->population) || !qa_bot_runtime_can_destroy(bots->runtime))
+       !qa_bots_can_destroy(bots->population) || !qa_bot_runtime_can_destroy(bots->runtime) ||
+       !application_bot_world_can_destroy(bots->shared_world) || !application_bot_transport_can_destroy(bots->transport))
         return application_fail(error,QA_ERROR_ARGUMENT,"application bot owners are executing a callback");
     if(application_q3_guest_bots_borrowed(bots->application,bots->runtime))
         return application_fail(error,QA_ERROR_ARGUMENT,"original GAME hosts still borrow the actual bot runtime");
@@ -518,6 +601,11 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     bots->population=NULL;
     if(!qa_bot_runtime_destroy(bots->runtime,error)) return false;
     bots->runtime=NULL;
+    if(!application_bot_transport_destroy(bots->transport,error)) return false;
+    bots->transport=NULL;
+    if(!application_bot_world_destroy(bots->shared_world,error)) return false;
+    bots->shared_world=NULL;
+    application_bot_world_binding_destroy(bots->shared_binding);bots->shared_binding=NULL;
     qa_bot_navigation_destroy(bots->map_navigation);
     if(bots->seats) for(uint32_t i=0;i<bots->capacity;++i) qa_bot_navigation_destroy(bots->seats[i].navigation);
     while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
@@ -537,7 +625,8 @@ static bool close_bots(application_bots *bots,qa_error *error) {
 bool application_bots_can_destroy(const qa_application *application) {
     application_bots *bots=application?application->bots:NULL;
     return !bots || (!bots->calls && !bots->arsenal_leases && !bots->pickup_borrowed && !bots->mover_borrowed &&
-        qa_bots_can_destroy(bots->population) && qa_bot_runtime_can_destroy(bots->runtime));
+        qa_bots_can_destroy(bots->population) && qa_bot_runtime_can_destroy(bots->runtime) &&
+        application_bot_world_can_destroy(bots->shared_world) && application_bot_transport_can_destroy(bots->transport));
 }
 bool application_bots_destroy(qa_application *application,qa_error *error) {
     if(!application || !application->bots) return true;
@@ -557,7 +646,10 @@ bool application_bots_client_shutdown(qa_application *application,qa_actor_id ac
     application_bots *bots=application?application->bots:NULL;
     if(!bots || !bots->population) return true;
     qa_bot_view view;if(!qa_bots_read(bots->population,actor,&view,NULL)) return true;
-    if(bots->restoring || bots->producing || bots->calls || !application_bots_can_destroy(application) ||
+    bool source_drop=application_bot_world_drop_admitted(bots->shared_world);
+    if(bots->restoring || bots->producing || bots->calls ||
+       (!source_drop && !application_bots_can_destroy(application)) ||
+       (source_drop && (!qa_bots_can_destroy(bots->population) || !qa_bot_runtime_can_destroy(bots->runtime))) ||
        bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot client shutdown requires its admitted idle source roster");
     ++bots->calls;bool ok=qa_bots_shutdown_client(bots->population,actor,restart,error);--bots->calls;
@@ -605,6 +697,10 @@ bool application_bots_frame_at(qa_application *application,const qa_source_frame
         *link=target->next;qa_bot_navigation_destroy(target->navigation);free(target);
     }
     bots->producer_frame=admitted;bots->producer_host_ns=host_ns;bots->producing=true;
+    if(bots->shared_world && (!application_bot_transport_frame(bots->transport,(double)admitted.elapsed_ns/1e6,error) ||
+        !application_bot_world_refresh(bots->shared_world,error))) {
+        bots->producing=false;bots->producer_frame=(qa_source_frame){0};bots->producer_host_ns=0;return false;
+    }
     ++bots->calls;
     application_native_q3_bot_cycle *cycle=NULL;
     bool ok=!bots->population || source->kind!=APPLICATION_PROVIDER_Q3 ||
@@ -753,6 +849,33 @@ bool application_bots_construct_restored(application_bots *bots,qa_error *error)
 qa_bot_runtime *application_bots_runtime(qa_application *application) {
     return application && application->bots?application->bots->runtime:NULL;
 }
+bool application_bots_shared_construct(application_bots *bots,bool restoring,qa_error *error) {
+    application_provider *source=bot_source(bots);
+    if(!source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_Q2)) return true;
+    if(bots->shared_binding || bots->shared_world || bots->transport)
+        return application_fail(error,QA_ERROR_ARGUMENT,"shared bot source owners were already constructed");
+    application_bot_world_services services;
+    if(!application_bot_world_binding_create(bots,&bots->shared_binding,error) ||
+       !application_bot_world_binding_services(bots->shared_binding,&services,error) ||
+       !application_bot_world_create(&services,restoring,&bots->shared_world,error)) return false;
+    application_bot_world_binding_holder(bots->shared_binding,bots->shared_world);
+    application_bot_transport_services transport={.context=bots->shared_binding,.world=bots->shared_world,
+        .session=bots->application->session,.client=application_bot_world_binding_transport_client,
+        .drop=application_bot_world_binding_transport_drop};
+    if(!application_bot_transport_create(&transport,&bots->transport,error)) return false;
+    if(restoring) return true;
+    const char *map=qa_strings_cstr(qa_session_strings(bots->application->session),bots->application->current_map);
+    if(!map) return application_fail(error,QA_ERROR_NOT_FOUND,"shared bot source lacks its actual map name");
+    char maximum[32],gravity[48];snprintf(maximum,sizeof(maximum),"%u",services.max_clients);
+    snprintf(gravity,sizeof(gravity),"%.9g",(double)bots->application->physics->gravity);
+    const struct {const char *name,*value;} values[]={
+        {"sv_maxclients",maximum},{"g_gametype","0"},{"mapname",map},{"sv_mapname",map},
+        {"g_spSkill","2"},{"bot_enable","1"},{"bot_minplayers","0"},{"dedicated","1"},{"g_gravity",gravity}};
+    for(size_t i=0;i<sizeof(values)/sizeof(*values);++i)
+        if(!qa_cvars_register(bots->application->cvars,values[i].name,values[i].value,0,source->owner,NULL,error)) return false;
+    return qa_cvars_set(bots->application->cvars,"mapname",map,true,error) &&
+        qa_cvars_set(bots->application->cvars,"sv_mapname",map,true,error);
+}
 bool application_bots_publish(qa_application *application,const qa_launch_choices *choices,
                                const qa_bsp_view *geometry,const qa_entities *entities,qa_error *error) {
     if(!application_bots_prepare(application,choices,geometry,entities,error)) return false;
@@ -765,6 +888,7 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
     for(size_t i=0;i<choices->seat_count;++i) native=native || choices->seats[i].bot;
     if(!native) return true;
     if(!bots || bots->population) return application_fail(error,QA_ERROR_ARGUMENT,"native bot population was already published");
+    if(!application_bots_shared_construct(bots,false,error)) return false;
     if(!qa_bot_runtime_initialized(bots->runtime)) {
         qa_cvars *configuration=bot_configuration(bots);
         const qa_cvar_view *game_type=configuration?qa_cvars_find(configuration,"g_gametype"):NULL;
@@ -788,6 +912,34 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
     if(!qa_bots_create(bots->runtime,&ai,&bots->population,error)) return false;
     for(uint32_t i=0;i<bots->capacity;++i) {
         if(!choices->seats[i].bot) continue;
+        if(bots->shared_world) {
+            qa_actor_id actor=bots->seats[i].actor;int32_t client;
+            if(!bot_source_client(bots,actor,&client,error) ||
+               !application_bot_transport_open(bots->transport,(uint32_t)client,actor,error)) return false;
+            const char *actual="";
+            for(size_t n=0;application->players && n<application->players->count;++n)
+                if(qa_actor_id_equal(application->players->records[n].actor,actor)) {
+                    actual=application->players->records[n].userinfo?application->players->records[n].userinfo:"";break;
+                }
+            char info[1024],character[160],skill[48];size_t length=strlen(actual);
+            if(length>=sizeof(info)) length=sizeof(info)-1;
+            memcpy(info,actual,length);info[length]=0;
+            if(!character_path(bots,choices->seats[i].name,character,error)) return false;
+            snprintf(skill,sizeof(skill),"%.9g",(double)choices->seats[i].bot_skill);
+            if(!qa_q3_info_set(info,sizeof(info),"characterfile",character,error) ||
+               !qa_q3_info_set(info,sizeof(info),"skill",skill,error) ||
+               !qa_q3_info_set(info,sizeof(info),"team",choices->seats[i].team?choices->seats[i].team:"",error) ||
+               !application_bot_world_userinfo_set(bots->shared_world,(uint32_t)client,info,error) ||
+               !application_bot_world_activate(bots->shared_world,(uint32_t)client,error)) return false;
+            const char *rejection=NULL;
+            if(!application_bot_world_connect_client(bots->shared_world,(uint32_t)client,true,true,&rejection,error)) return false;
+            if(rejection) {
+                if(!application_bot_world_drop(bots->shared_world,(uint32_t)client,rejection,error)) return false;
+                continue;
+            }
+            if(!application_bot_world_begin(bots->shared_world,(uint32_t)client,error)) return false;
+            continue;
+        }
         char character[160];
         if(!character_path(bots,choices->seats[i].name,character,error)) return false;
         application_provider *source=bot_source(bots);
@@ -844,6 +996,31 @@ static float bot_source_atof(const char *text) {
         }
     }
     return value*(float)sign;
+}
+bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool restart,bool *accepted,qa_error *error) {
+    if(!bots || !bots->shared_world || !bots->population || !accepted || bots->restoring || bots->calls || bots->producing)
+        return application_fail(error,QA_ERROR_ARGUMENT,"shared G_BotConnect requires its actual initialized population");
+    *accepted=false;
+    qa_actor_id actor=application_bot_transport_actor(bots->transport,client);
+    if(!actor.registry) return application_fail(error,QA_ERROR_NOT_FOUND,"shared G_BotConnect lacks its actual local connection");
+    application_bot_seat *seat=NULL;
+    for(uint32_t i=0;i<bots->capacity;++i)
+        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=bots->seats+i;break;}
+    if(!seat) return application_fail(error,QA_ERROR_NOT_FOUND,"shared G_BotConnect lacks its actual navigation seat");
+    const char *info=application_bot_world_userinfo(bots->shared_world,client);
+    char character[144],team[144],skill_text[1024],name[144];
+    qa_q3_client_info_value(info,"characterfile",character,sizeof(character));
+    qa_q3_client_info_value(info,"team",team,sizeof(team));
+    qa_q3_client_info_value(info,"skill",skill_text,sizeof(skill_text));
+    qa_q3_client_info_value(info,"name",name,sizeof(name));
+    float skill=bot_source_atof(skill_text);
+    if(!isfinite(skill)) return application_fail(error,QA_ERROR_FORMAT,"shared bot skill is outside its finite source domain");
+    qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)client,
+        .character_file=character,.name=name,.team=team,.skill=skill,.mode=bots->application->primary_mode,.restart=restart};
+    ++bots->calls;qa_error setup_error={0};bool okay=qa_bots_admit(bots->population,&admission,&setup_error);--bots->calls;
+    if(okay) {*accepted=true;return true;}
+    if(qa_bots_setup_failed(bots->population,actor)) return true;
+    if(error) *error=setup_error;return false;
 }
 
 bool application_bots_native_q3_connect(application_provider *provider,qa_actor_id actor,

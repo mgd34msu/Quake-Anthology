@@ -1,5 +1,13 @@
 #include "internal.h"
 
+bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t weapon,qa_error *e) {
+    if(!bot_ai_mutable(b,e)) return false;
+    if(!bot_ai_live(b,actor)) return true;
+    bot_ai_state *state=bot_ai_actor(b,actor);
+    if(!state) return true;
+    state->angles.angles=angles;state->angles.ideal=angles;state->view.weapon=weapon;return true;
+}
+
 bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
     bot_ai_source_order_clear(b,s);
     bot_ai_state fresh = {.acquired_source_client=s->acquired_source_client,

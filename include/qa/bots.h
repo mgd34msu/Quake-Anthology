@@ -176,6 +176,7 @@ bool qa_bots_interbreed_end_admitted(const qa_bots *);
 bool qa_bots_interbreed_end_match(qa_bots *, qa_error *);
 bool qa_bots_test_aas(qa_bots *, qa_vec3, qa_error *);
 bool qa_bots_level_reset(qa_bots *, qa_error *);
+bool qa_bots_source_begin(qa_bots *,qa_actor_id,qa_vec3,int32_t weapon,qa_error *);
 bool qa_bots_read(const qa_bots *, qa_actor_id, qa_bot_view *, qa_error *);
 bool qa_bots_move_to(qa_bots *, qa_actor_id, qa_vec3, qa_bot_order_status *, qa_error *);
 bool qa_bots_follow(qa_bots *, qa_actor_id, qa_actor_id target, qa_bot_order_status *, qa_error *);
