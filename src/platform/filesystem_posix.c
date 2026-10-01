@@ -793,6 +793,119 @@ static int writable_parent(qa_fs_root *root, const char *relative,
     return descriptor;
 }
 
+static bool create_native_directory_tail(qa_fs_root *root, char *path, qa_error *error)
+{
+    int descriptor = fcntl(root->descriptor, F_DUPFD_CLOEXEC, 0);
+    if (descriptor < 0) return fail_errno(error, "cannot retain startup directory", path, errno);
+    bool ok = true;
+    for (char *cursor = path; *cursor;) {
+        while (*cursor == '/') ++cursor;
+        char *component = cursor;
+        while (*cursor && *cursor != '/') ++cursor;
+        size_t length = (size_t)(cursor - component);
+        if (!length) continue;
+        char separator = *cursor; *cursor = 0;
+        bool dot = !strcmp(component, ".") || !strcmp(component, "..");
+        bool created = !dot && mkdirat(descriptor, component, 0700) == 0;
+        if (!dot && !created && errno != EEXIST) {
+            ok = fail_errno(error, "cannot create startup directory", component, errno);
+            *cursor = separator; break;
+        }
+        int next;
+        do { next = openat(descriptor, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC); }
+        while (next < 0 && errno == EINTR);
+        if (next < 0) {
+            ok = fail_errno(error, "cannot open startup directory", component, errno);
+            *cursor = separator; break;
+        }
+        if (created && fsync(descriptor) < 0) {
+            ok = fail_errno(error, "cannot commit startup directory", component, errno);
+            (void)close(next); *cursor = separator; break;
+        }
+        (void)close(descriptor); descriptor = next;
+        *cursor = separator;
+    }
+    (void)close(descriptor); return ok;
+}
+
+bool qa_fs_path_create_directory(const char *path, qa_error *error)
+{
+    if (!path || !*path) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "directory creation needs a native path");
+        return false;
+    }
+    char *absolute = absolute_path(path, error);
+    char *probe = absolute ? copy_string(absolute) : NULL;
+    if (!probe) {
+        free(absolute);
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_MEMORY, 0,
+                                                       "retaining startup directory path");
+        return false;
+    }
+    size_t length = strlen(probe);
+    while (length > 1 && probe[length - 1] == '/') probe[--length] = 0;
+    qa_fs_root *root = NULL; bool ok = true;
+    while (true) {
+        qa_error local = {0};
+        if (qa_fs_root_open(probe, &root, &local)) break;
+        if (local.code != QA_ERROR_NOT_FOUND || length <= 1) {
+            if (error) *error = local;
+            ok = false; break;
+        }
+        while (length > 1 && probe[length - 1] != '/') --length;
+        if (length > 1) --length;
+        probe[length] = 0;
+    }
+    if (ok) {
+        char *tail = absolute + length;
+        while (*tail == '/') ++tail;
+        /* Preserve the authored native traversal: missing/../prefs needs its
+         * missing directory to exist before the retained spelling can reopen.
+         * This startup native path is distinct from contained product paths. */
+        ok = !*tail || create_native_directory_tail(root, tail, error);
+    }
+    qa_fs_root_close(root); free(probe); free(absolute);
+    return ok;
+}
+
+bool qa_fs_root_create_directory(qa_fs_root *root, const char *relative,
+                                  qa_error *error)
+{
+    if (root == NULL) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                     "directory creation requires a retained filesystem root");
+        return false;
+    }
+    if (!qa_fs_relative_valid(relative, false, error)) return false;
+    char *leaf = NULL;
+    int parent = writable_parent(root, relative, true, &leaf, error);
+    if (parent < 0) return false;
+    bool created = mkdirat(parent, leaf, 0700) == 0;
+    int code = errno;
+    if (!created && code != EEXIST) {
+        (void)close(parent); free(leaf);
+        return fail_errno(error, "cannot create writable directory", relative, code);
+    }
+    int directory;
+    do {
+        directory = openat(parent, leaf,
+                            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    } while (directory < 0 && errno == EINTR);
+    code = errno;
+    bool ok = directory >= 0;
+    if (!ok) fail_errno(error, "cannot open created writable directory", relative, code);
+    else if (!descriptor_contained(root, directory, relative)) {
+        qa_error_set(error, QA_ERROR_IO, 0,
+                     "created writable directory escapes its root: %s", relative);
+        ok = false;
+    }
+    if (ok && created && fsync(parent) < 0)
+        ok = fail_errno(error, "cannot sync created writable directory", relative, errno);
+    if (directory >= 0) (void)close(directory);
+    (void)close(parent); free(leaf);
+    return ok;
+}
+
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error)
 {

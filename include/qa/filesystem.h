@@ -46,6 +46,13 @@ uint64_t qa_fs_identity_size(const qa_fs_identity *identity);
 bool qa_fs_root_open(const char *path, qa_fs_root **out, qa_error *error);
 void qa_fs_root_retain(qa_fs_root *root);
 void qa_fs_root_close(qa_fs_root *root);
+/* Creates an actual directory below the held writable root. Existing ordinary
+ * directories are accepted; child links and non-directory leaves are rejected. */
+bool qa_fs_root_create_directory(qa_fs_root *root, const char *relative,
+                                  qa_error *error);
+/* Normal startup only: admits the nearest existing directory as a held root,
+ * then creates the missing native path through normalized nofollow children. */
+bool qa_fs_path_create_directory(const char *path, qa_error *error);
 
 /* Components are already normalized, slash-separated relative names. NULL
  * equality requests exact spelling. Exact matches win; otherwise ambiguous

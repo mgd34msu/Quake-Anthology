@@ -1067,6 +1067,83 @@ static wchar_t *wide_child(const wchar_t *parent, const wchar_t *leaf,
     return path;
 }
 
+bool qa_fs_path_create_directory(const char *path, qa_error *error)
+{
+    if (!path || !*path) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "directory creation needs a native path");
+        return false;
+    }
+    wchar_t *input = utf8_to_wide(path, error);
+    wchar_t *absolute = input ? full_path(input, error) : NULL;
+    free(input);
+    if (!absolute) return false;
+    wchar_t *probe = copy_wide(absolute);
+    if (!probe) { free(absolute); qa_error_set(error, QA_ERROR_MEMORY, 0,
+                                              "retaining startup directory path"); return false; }
+    size_t length = wcslen(probe);
+    qa_fs_root *root = NULL; bool ok = true;
+    while (true) {
+        char *native = wide_to_utf8(probe, error);
+        if (!native) { ok = false; break; }
+        qa_error local = {0};
+        bool opened = qa_fs_root_open(native, &root, &local);
+        free(native);
+        if (opened) break;
+        if (local.code != QA_ERROR_NOT_FOUND) { if (error) *error = local; ok = false; break; }
+        size_t parent = length;
+        while (parent && probe[parent - 1] == L'\\') --parent;
+        while (parent && probe[parent - 1] != L'\\') --parent;
+        if (!parent || parent == length) { if (error) *error = local; ok = false; break; }
+        /* Keep the separator so a drive root remains C:\ rather than C:. */
+        length = parent; probe[length] = 0;
+    }
+    if (ok) {
+        wchar_t *tail = absolute + length;
+        while (*tail == L'\\') ++tail;
+        char *relative = wide_to_utf8(tail, error);
+        if (!relative) ok = false;
+        else {
+            for (char *cursor = relative; *cursor; ++cursor) if (*cursor == '\\') *cursor = '/';
+            ok = !*relative || qa_fs_root_create_directory(root, relative, error);
+            free(relative);
+        }
+    }
+    qa_fs_root_close(root); free(probe); free(absolute);
+    return ok;
+}
+
+bool qa_fs_root_create_directory(qa_fs_root *root, const char *relative,
+                                  qa_error *error)
+{
+    if (root == NULL) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                     "directory creation requires a retained filesystem root");
+        return false;
+    }
+    if (!qa_fs_relative_valid(relative, false, error)) return false;
+    writable_path locked;
+    if (!writable_parent(root, relative, true, &locked, error)) return false;
+    wchar_t *target = wide_child(locked.parent_path, locked.leaf, error);
+    if (target == NULL) { writable_path_close(&locked); return false; }
+    bool ok = CreateDirectoryW(target, NULL) != 0;
+    DWORD code = GetLastError();
+    if (!ok && code == ERROR_ALREADY_EXISTS) ok = true;
+    if (!ok) fail_windows(error, "cannot create writable directory", relative, code);
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    wchar_t *opened = NULL;
+    BY_HANDLE_FILE_INFORMATION identity;
+    if (ok) ok = lock_writable_directory(target, relative, &directory,
+                                         &opened, &identity, error);
+    if (ok && !path_within(locked.root_path, opened)) {
+        qa_error_set(error, QA_ERROR_IO, 0,
+                     "created writable directory escapes its root: %s", relative);
+        ok = false;
+    }
+    if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+    free(opened); free(target); writable_path_close(&locked);
+    return ok;
+}
+
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error)
 {

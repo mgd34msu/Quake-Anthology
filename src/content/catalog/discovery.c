@@ -145,7 +145,7 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
         return catalog_requirement(c, p, reason.message, error);
     }
     if (!catalog_grow((void **)&c->physical, &c->physical_capacity, c->physical_count + 1, sizeof(*c->physical), error)) return false;
-    qa_mount_id identity = c->physical_count + 1;
+    qa_mount_id identity = id;
     catalog_physical *physical = &c->physical[c->physical_count++];
     *physical = (catalog_physical){.view = {identity, path, kind, writable, NULL}};
     if (kind != QA_ARCHIVE_AUTO) {
@@ -164,8 +164,6 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
     }
     for (size_t i = 0; i < c->physical_count; ++i)
         c->physical[i].view.digest = c->physical[i].view.format == QA_ARCHIVE_AUTO ? NULL : &c->physical[i].digest;
-    if (!qa_vfs_unmount(c->mounts, id, error)) return false;
-    qa_resource_pool_trim(c->resources);
     return append_mount(p, identity, error);
 }
 
@@ -379,6 +377,39 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
     return true;
 }
 
+static bool user_product_directories(qa_catalog *c, qa_error *error)
+{
+    if (!c->user) return true;
+    qa_fs_root *root = NULL;
+    if (!qa_fs_path_create_directory(c->user, error) || !qa_fs_root_open(c->user, &root, error)) return false;
+    bool ok = true;
+    for (size_t i = 0; i < c->product_count; ++i) {
+        const char *path;
+        if (!catalog_path(c, c->user, c->products[i].view.directory, &path, error)
+            || (!path && !qa_fs_root_create_directory(root,
+                         c->products[i].view.directory, error))) {
+            ok = false; break;
+        }
+    }
+    qa_fs_root_close(root);
+    return ok;
+}
+
+static bool product_content_directory(qa_catalog *c, const catalog_product *p,
+                                       bool *found, qa_error *error)
+{
+    *found = false;
+    for (size_t i = 0; i < p->own_count; ++i) {
+        const qa_catalog_mount *mount = catalog_mount(c, p->own_mounts[i]);
+        if (mount->format != QA_ARCHIVE_AUTO || !mount->writable) {
+            *found = true; return true;
+        }
+        if (!content_directory(c, mount->path, found, error)) return false;
+        if (*found) return true;
+    }
+    return true;
+}
+
 bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
 {
     if (mods) {
@@ -392,10 +423,12 @@ bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
                 (c->user && !discover_directory(c, c->user, roots[i].directory, base, error))) return false;
         }
     }
+    if (!user_product_directories(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) {
         catalog_product *p = &c->products[i];
         if ((c->user && strcmp(c->user, c->root) && !scan_directory(c, p, c->user, true, error)) ||
-            !scan_directory(c, p, c->root, false, error)) return false;
+            !scan_directory(c, p, c->root,
+                            c->user && !strcmp(c->user, c->root), error)) return false;
         for (size_t j = 0; j < p->required_count; ++j) {
             const char *path;
             if (!catalog_path(c, c->root, p->required[j], &path, error)) return false;
@@ -404,7 +437,10 @@ bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
             if (!regular_file(path, &regular, error)) return false;
             if (!regular && !catalog_requirement(c, p, p->required[j], error)) return false;
         }
-        if (!p->own_count && p->view.edition != QA_EDITION_QUAKEWORLD && !catalog_requirement(c, p, p->view.directory, error)) return false;
+        bool content_present;
+        if (!product_content_directory(c, p, &content_present, error)) return false;
+        if (!content_present && p->view.edition != QA_EDITION_QUAKEWORLD
+            && !catalog_requirement(c, p, p->view.directory, error)) return false;
         if (p->view.edition == QA_EDITION_RERELEASE && !p->view.base) {
             const char *archive = p->view.family == QA_GAME_Q1 ? "q1/rerelease/QuakeEX.kpf" : "q2/rerelease/Q2Game.kpf", *path;
             if (!catalog_path(c, c->root, archive, &path, error)) return false;
@@ -509,7 +545,7 @@ static bool program_metadata(qa_catalog *c, catalog_product *p, qa_error *error)
     return true;
 }
 
-bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
+bool catalog_index_maps(qa_catalog *c, catalog_product *p, bool archives_only, qa_error *error)
 {
     map_index index = {0}; bool ok = false;
     for (size_t i = 0; i < p->mount_count; ++i) {
@@ -522,7 +558,7 @@ bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
                 const catalog_member *entry = &physical->members[ordinal];
                 if (!add_map(c, &index, entry->path, mount->id, entry->ordinal, true, error)) goto done;
             }
-        } else {
+        } else if (!archives_only) {
             const char *maps;
             if (!catalog_path(c, mount->path, "maps", &maps, error)) goto done;
             if (maps) {
@@ -536,6 +572,15 @@ bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
     if (!p->maps) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain installed maps"); goto done; }
     for (size_t i = 0; i < index.count; ++i)
         if (!i || strcmp(index.maps[i].folded, index.maps[i - 1].folded)) p->maps[p->map_count++] = index.maps[i].view;
+    ok = true;
+done:
+    free(index.maps); return ok;
+}
+
+bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
+{
+    if (!catalog_index_maps(c, p, false, error)) return false;
+    bool ok = false;
     if (p->witness) {
         bool found;
         if (!catalog_has_path(c, p, p->witness, true, &found, error)) goto done;
@@ -589,5 +634,5 @@ bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
     }
     ok = true;
 done:
-    free(index.maps); return ok;
+    return ok;
 }
