@@ -289,7 +289,7 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
 bool qa_bot_goals_save_capture(qa_session *session, const qa_bot_goals *goals, const qa_bot_saved_assets *assets,
                               qa_buffer *out, qa_error *error)
 {
-    if (!session || !goals || goals->busy || !goals->shared_memory || !assets || !out) {
+    if (!session || !goals || goals->busy || !assets || !out) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Goal capture requires the actual runtime allocation owner and asset registry");return false;
     }
     if(!topology(goals,error)) return false;
@@ -301,13 +301,13 @@ bool qa_bot_goals_save_capture(qa_session *session, const qa_bot_goals *goals, c
 bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_bytes bytes,
                               const qa_bot_saved_assets *assets, const qa_entities *entities, qa_error *error)
 {
-    if (!session || !goals || goals->busy || !goals->shared_memory || !assets || goals->weights || goals->indexes) {
+    if (!session || !goals || goals->busy || !assets || goals->weights || goals->indexes) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot goal import requires a detached idle actual owner"); return false;
     }
     for(uint32_t i=0;i<goals->options.maximum_states;++i)
         if(goals->states[i].used) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Goal import requires its fresh state store");return false;}
     qa_bot_goals scratch = {.options = goals->options, .services = goals->services, .workspace = goals->workspace,
-        .memory=goals->memory,.shared_memory=true};
+        .memory=goals->memory,.shared_memory=goals->shared_memory};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, session, bytes, error) && signature(&io) &&
         fields(&io, &scratch, assets, entities) && qa_source_save_finish(&io, NULL) && topology(&scratch, error);

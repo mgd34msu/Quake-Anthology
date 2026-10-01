@@ -78,19 +78,3 @@ void bot_goal_indexes_clear(qa_bot_goals *goals)
     }
     goals->last_indexes=NULL;
 }
-bool bot_goal_indexes_capture(qa_bot_goals *goals,uint32_t handle,bot_goal_index_image *out,qa_error *error)
-{
-    bot_goal_slot *state=bot_goal_slot_get(goals,handle,error);
-    if(!state || !out || out->bytes.data) return bot_goal_fail(error,"Goal index checkpoint requires its empty output");
-    if(!state->index_pointer) return true;
-    bot_goal_indexes *row=goals->indexes;
-    while(row && row->pointer!=state->index_pointer) row=row->next;
-    if(!row) return bot_goal_fail(error,"Invalid goal item weight index pointer");
-    qa_bot_memory_span bytes;
-    if(!qa_bot_memory_bytes(goals->memory,row->allocation,&bytes,error)) return false;
-    if(bytes.size && !(out->bytes.data=malloc(bytes.size))) {
-        qa_error_set(error,QA_ERROR_MEMORY,bytes.size,"Capturing goal index allocation bytes");return false;
-    }
-    if(bytes.size) memcpy(out->bytes.data,bytes.data,bytes.size);
-    out->bytes.size=bytes.size;out->pointer=row->pointer;out->allocation=row->allocation;return true;
-}

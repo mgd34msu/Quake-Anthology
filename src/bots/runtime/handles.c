@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../checkpoint_internal.h"
 #include "../library/character_load.h"
+#include "../library/internal.h"
 #include "qa/bots_log_consumers.h"
 #include <stdio.h>
 
@@ -118,11 +119,25 @@ struct bot_weapon_restore {
     bot_weapon_state *destination;
     qa_bot_weights *weights;
     qa_bot_weapon_selector *selector;
+    const qa_bot_weights *values;
 };
-bool bot_weapon_restore_prepare(qa_bot_runtime *r, uint32_t id, qa_bot_weights *weights,
+bool bot_weapon_checkpoint_capture(qa_bot_runtime *runtime,uint32_t id,qa_bot_weights **original,
+    qa_bot_weights **values,qa_error *error) {
+    bot_weapon_state *state=weapon_state(runtime,id,error);
+    if(!state || !original || !values || *original || *values)
+        return bot_runtime_fail(error,"Weapon checkpoint requires actual state and empty references");
+    if(!state->weights) return true;
+    if(!qa_bot_weights_clone(state->weights,values,error)) return false;
+    qa_bot_weights_retain(state->weights);*original=state->weights;return true;
+}
+bool bot_weapon_restore_prepare(qa_bot_runtime *r, uint32_t id, qa_bot_weights *weights,const qa_bot_weights *values,
                                 bot_weapon_restore **out, qa_error *e) {
     bot_weapon_state *destination=weapon_state(r,id,e);
     if (!destination) return false;
+    if((weights==NULL)!=(values==NULL) || (weights &&
+       (weights->topology!=values->topology || weights->view.node_count!=values->view.node_count ||
+        weights->value_capacity<values->view.node_count)))
+        return bot_runtime_fail(e,"Weapon snapshot differs from its captured shared configuration");
     bot_weapon_restore *prepared=calloc(1,sizeof(*prepared));
     if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing weapon checkpoint");return false; }
     if (weights && r->weapon_config &&
@@ -130,12 +145,15 @@ bool bot_weapon_restore_prepare(qa_bot_runtime *r, uint32_t id, qa_bot_weights *
         free(prepared);return false;
     }
     qa_bot_weights_retain(weights);
-    prepared->weights=weights;prepared->destination=destination;
+    prepared->weights=weights;prepared->values=values;prepared->destination=destination;
     *out=prepared;return true;
 }
 void bot_weapon_restore_finish(bot_weapon_restore *prepared, bool commit) {
     if (!prepared) return;
     if (commit) {
+        if(prepared->weights && prepared->values->view.node_count)
+            memcpy(prepared->weights->values,prepared->values->values,
+                prepared->values->view.node_count*sizeof(*prepared->weights->values));
         qa_bot_weapon_selector_destroy(prepared->destination->selector);
         qa_bot_weights_release(prepared->destination->weights);
         prepared->destination->selector=prepared->selector;

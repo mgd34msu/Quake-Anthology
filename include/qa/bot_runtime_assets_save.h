@@ -16,6 +16,10 @@ typedef struct qa_bot_saved_assets qa_bot_saved_assets;
  * library cache. Other private owners import their references afterward. */
 bool qa_bot_runtime_assets_capture(const qa_bot_runtime *, qa_buffer *, qa_bot_saved_assets **, qa_error *);
 bool qa_bot_runtime_assets_restore(qa_bot_runtime *, qa_bytes, qa_bot_saved_assets **, qa_error *);
+/* Standalone goal owners capture their actual retained item/configuration
+ * assets. Decode creates the registry without installing library caches. */
+bool qa_bot_goals_assets_capture(const qa_bot_goals *, qa_buffer *, qa_bot_saved_assets **, qa_error *);
+bool qa_bot_saved_assets_decode(qa_bytes, qa_bot_saved_assets **, qa_error *);
 bool qa_bot_saved_asset_id(const qa_bot_saved_assets *, qa_bot_saved_asset_kind, const void *, uint64_t *, qa_error *);
 bool qa_bot_saved_asset_resolve(const qa_bot_saved_assets *, qa_bot_saved_asset_kind, uint64_t, const void **, qa_error *);
 void qa_bot_saved_assets_free(qa_bot_saved_assets *);

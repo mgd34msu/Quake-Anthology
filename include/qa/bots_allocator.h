@@ -51,8 +51,10 @@ bool qa_bot_memory_dump(qa_bot_memory *,qa_error *);
 
 struct qa_bot_library;
 struct qa_bot_runtime;
+struct qa_bot_goals;
 /* Borrowed actual owner; retaining it does not keep allocations live after the
  * source library's explicit shutdown/dispose stage. */
 qa_bot_memory *qa_bot_library_memory(const struct qa_bot_library *);
 qa_bot_memory *qa_bot_runtime_memory(const struct qa_bot_runtime *);
+qa_bot_memory *qa_bot_goals_memory(const struct qa_bot_goals *);
 #endif

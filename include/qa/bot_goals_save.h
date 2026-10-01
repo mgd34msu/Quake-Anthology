@@ -5,8 +5,10 @@
 #include "qa/bot_runtime_assets_save.h"
 #include "qa/session.h"
 
-/* Complete private handle/map pools. Assets come from the actual runtime
- * registry. The entity table is the enclosing runtime's qualified immutable
+/* Complete private handle/map pools. Import the actual MEMORY owner first;
+ * this codec restores aliases into those retained allocations. Assets come
+ * from the actual runtime or standalone goal registry. The entity table is
+ * the owner's qualified immutable
  * map or restored BSP table. Actor hash buckets are rebuilt for the restored
  * namespace; physical source order and all goal numbers remain unchanged.
  * Restore keeps the detached owner's address/services/workspace stable and

@@ -175,27 +175,41 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
     if (!ok && !io->failed) return bot_save_fail(io, QA_ERROR_FORMAT, "Mismatched shared bot weight topology");
     return ok;
 }
+static bool encode(qa_bot_saved_assets *set, qa_buffer *out, qa_error *error)
+{
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) &&
+        qa_source_save_count(&io, &set->count, SIZE_MAX);
+    for (size_t i = 0; ok && i < set->count; ++i) ok = asset_fields(&io, set, i);
+    if (ok) ok = qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_bot_goals_assets_capture(const qa_bot_goals *goals, qa_buffer *out, qa_bot_saved_assets **refs, qa_error *error)
+{
+    if (!goals || goals->busy || !out || !refs || *refs)
+        return fail(error, "Goal asset capture requires an actual idle owner");
+    qa_bot_saved_assets *set = calloc(1, sizeof(*set));
+    if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating goal asset registry"); return false; }
+    bool ok = add(set, QA_BOT_SAVED_ITEMS, goals->items, false, error);
+    for (const bot_goal_weights *weights = goals->weights; ok && weights; weights = weights->next)
+        ok = add(set, QA_BOT_SAVED_WEIGHTS, weights->weights, false, error);
+    if (ok) ok = encode(set, out, error);
+    if (!ok) { qa_bot_saved_assets_free(set); return false; }
+    *refs = set; return true;
+}
 bool qa_bot_runtime_assets_capture(const qa_bot_runtime *runtime, qa_buffer *out, qa_bot_saved_assets **refs, qa_error *error)
 {
     if (!runtime || !runtime->library || !runtime->characters || !runtime->weapons || !out || !refs || *refs ||
         !qa_bot_runtime_can_destroy(runtime)) return fail(error, "Bot asset capture requires actual idle runtime owners");
     qa_bot_saved_assets *set = calloc(1, sizeof(*set));
     if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating actual bot asset registry"); return false; }
-    qa_source_save_io io = {0};
-    bool ok = collect(runtime, set, error) && qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) &&
-        qa_source_save_count(&io, &set->count, SIZE_MAX);
-    for (size_t i = 0; ok && i < set->count; ++i) ok = asset_fields(&io, set, i);
-    if (ok) ok = qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io);
+    bool ok = collect(runtime, set, error) && encode(set, out, error);
     if (!ok) { qa_bot_saved_assets_free(set); return false; }
     *refs = set; return true;
 }
-bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_bot_saved_assets **out, qa_error *error)
+bool qa_bot_saved_assets_decode(qa_bytes bytes, qa_bot_saved_assets **out, qa_error *error)
 {
-    qa_bot_library *library = runtime ? runtime->library : NULL;
-    if (!library || !out || *out || !qa_bot_runtime_can_destroy(runtime) || library->weights || library->characters ||
-        library->weapon_configs || library->item_configs || library->chat_assets || library->last_character)
-        return fail(error, "Bot asset restore requires an empty detached actual library cache");
+    if (!out || *out) return fail(error, "Bot asset decode requires an empty registry output");
     qa_bot_saved_assets *set = calloc(1, sizeof(*set));
     if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring bot asset registry"); return false; }
     qa_source_save_io io = {0};
@@ -206,7 +220,20 @@ bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_b
     if (!set->assets) set->count = 0;
     for (size_t i = 0; ok && i < set->count; ++i) ok = asset_fields(&io, set, i);
     if (ok) ok = qa_source_save_finish(&io, NULL);
-    if (ok) {
+    if (ok) *out = set;
+    else qa_bot_saved_assets_free(set);
+    if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid runtime bot asset registry");
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_bot_saved_assets **out, qa_error *error)
+{
+    qa_bot_library *library = runtime ? runtime->library : NULL;
+    if (!library || !out || *out || !qa_bot_runtime_can_destroy(runtime) || library->weights || library->characters ||
+        library->weapon_configs || library->item_configs || library->chat_assets || library->last_character)
+        return fail(error, "Bot asset restore requires an empty detached actual library cache");
+    qa_bot_saved_assets *set = NULL;
+    if (!qa_bot_saved_assets_decode(bytes, &set, error)) return false;
+    {
         qa_bot_weights **weights = &library->weights; qa_bot_character **characters = &library->characters;
         qa_bot_weapons **weapons = &library->weapon_configs; qa_bot_items **items = &library->item_configs;
         qa_bot_chat_asset **chats = &library->chat_assets;
@@ -222,7 +249,6 @@ bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_b
             }
         }
         *out = set;
-    } else qa_bot_saved_assets_free(set);
-    if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid runtime bot asset registry");
-    qa_source_save_dispose(&io); return ok;
+    }
+    return true;
 }

@@ -10,6 +10,7 @@ bool bot_goal_mutable(qa_bot_goals *g, qa_error *e) {
     return g && !g->busy ? true : bot_goal_fail(e, "goal owner is absent or executing a query");
 }
 bool qa_bot_goals_active(const qa_bot_goals *g) { return g && g->busy; }
+qa_bot_memory *qa_bot_goals_memory(const qa_bot_goals *g) {return g?g->memory:NULL;}
 bool qa_bot_goals_has_handle(const qa_bot_goals *g, uint32_t id) {
     return g && id && id <= g->options.maximum_states && g->states[id - 1].used;
 }
@@ -351,103 +352,4 @@ bool qa_bot_goals_restore(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state 
     return true;
 }
 
-struct bot_goal_restore {
-    qa_bot_goals *owner;
-    uint32_t id;
-    bot_goal_slot slot;
-    bot_goal_indexes *pending_indexes;
-    qa_bot_memory_span index_span;
-    const bot_goal_index_image *image;
-};
 void bot_goal_restore_lock(qa_bot_goals *g, bool locked) { g->busy = locked; }
-bool bot_goal_restore_prepare(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state *state,
-                              qa_bot_weights *weights,const bot_goal_index_image *image, bot_goal_restore **out, qa_error *e) {
-    if (!qa_bot_goals_has_handle(g,id) || !state || !image || state->stack_top >= QA_BOT_GOAL_STACK ||
-        (image->bytes.size && !image->bytes.data) || image->bytes.size>INT32_MAX-4 ||
-        (!image->pointer && image->bytes.size) || image->pointer>=g->next_pointer)
-        return bot_goal_fail(e,"invalid prepared goal checkpoint");
-    for (size_t i=0;i<QA_BOT_AVOID_GOALS;++i)
-        if (!isfinite(state->avoid[i].expires)) return bot_goal_fail(e,"invalid saved avoid time");
-    bot_goal_restore *prepared=calloc(1,sizeof(*prepared));
-    if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing goal checkpoint");return false; }
-    prepared->owner=g;prepared->id=id;
-    if (!bot_goal_config_set(g,&prepared->slot,weights,e)) { free(prepared);return false; }
-    prepared->image=image;
-    if(image->pointer) {
-        bot_goal_indexes *row=g->indexes;
-        while(row && row->pointer!=image->pointer) row=row->next;
-        if(row) {
-            if(row->allocation.owner!=image->allocation.owner || row->allocation.slot!=image->allocation.slot ||
-               row->allocation.generation!=image->allocation.generation ||
-               !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e) ||
-               prepared->index_span.size!=image->bytes.size) goto invalid;
-        } else {
-            row=g->prepared_indexes;
-            while(row && row->pointer!=image->pointer) row=row->next;
-            if(row) {
-                if(row->prepared_users==SIZE_MAX ||
-                   !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e) ||
-                   prepared->index_span.size!=image->bytes.size) goto invalid;
-                ++row->prepared_users;prepared->pending_indexes=row;
-                prepared->slot.index_pointer=image->pointer;
-                prepared->slot.state=*state;prepared->slot.used=true;
-                *out=prepared;return true;
-            }
-            for(bot_goal_weights *w=g->weights;w;w=w->next)
-                if(w->pointer==image->pointer) goto invalid;
-            row=calloc(1,sizeof(*row));
-            if(!row) {qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing goal index alias");goto failed;}
-            row->pointer=image->pointer;
-            if(!qa_bot_memory_allocate(g->memory,(uint32_t)image->bytes.size,QA_BOT_MEMORY_HEAP,false,NULL,&row->allocation,e) ||
-               !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e)) {
-                if(row->allocation.owner) (void)qa_bot_memory_free(g->memory,row->allocation,NULL);
-                free(row);goto failed;
-            }
-            row->prepared_users=1;row->next=g->prepared_indexes;g->prepared_indexes=row;
-            prepared->pending_indexes=row;
-        }
-        prepared->slot.index_pointer=image->pointer;
-    }
-    prepared->slot.state=*state;prepared->slot.used=true;
-    *out=prepared;return true;
-invalid:
-    bot_goal_fail(e,"Prepared goal index alias differs from its captured source allocation");
-failed:
-    bot_goal_restore_finish(prepared,false);return false;
-}
-void bot_goal_restore_finish(bot_goal_restore *prepared, bool commit) {
-    if (!prepared) return;
-    if (commit) {
-        bot_goal_slot *slot=&prepared->owner->states[prepared->id-1];
-        if(slot->index_pointer==prepared->slot.index_pointer) slot->index_pointer=0;
-        (void)release_weights(prepared->owner,slot,NULL);
-        if(prepared->pending_indexes) {
-            qa_bot_goals *g=prepared->owner;
-            bot_goal_indexes *row=prepared->pending_indexes,**link=&g->prepared_indexes;
-            while(*link && *link!=row) link=&(*link)->next;
-            if(*link) {
-                *link=row->next;row->next=NULL;
-                if(g->last_indexes) g->last_indexes->next=row;
-                else g->indexes=row;
-                g->last_indexes=row;
-            }
-            --row->prepared_users;
-        }
-        if(prepared->image->bytes.size)
-            memcpy(prepared->index_span.data,prepared->image->bytes.data,prepared->image->bytes.size);
-        *slot=prepared->slot;
-    } else {
-        prepared->slot.index_pointer=0;
-        (void)release_weights(prepared->owner,&prepared->slot,NULL);
-        if(prepared->pending_indexes && !--prepared->pending_indexes->prepared_users) {
-            qa_bot_goals *g=prepared->owner;bot_goal_indexes *row=prepared->pending_indexes;
-            bot_goal_indexes **link=&g->prepared_indexes;
-            while(*link && *link!=row) link=&(*link)->next;
-            if(*link) {
-                *link=row->next;
-                (void)qa_bot_memory_free(g->memory,row->allocation,NULL);free(row);
-            }
-        }
-    }
-    free(prepared);
-}

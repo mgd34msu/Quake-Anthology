@@ -37,8 +37,30 @@ typedef struct qa_equipment_controls {
     int32_t water_type;
     uint64_t quad_until_ns, double_until_ns, quad_fire_until_ns;
 } qa_equipment_controls;
+typedef struct qa_equipment_source_selection {
+    qa_actor_owner grapple, grenades, items;
+} qa_equipment_source_selection;
+typedef struct qa_equipment_source {
+    qa_actor_owner owner;
+    qa_q1_game *q1;
+    qa_q2_game *q2;
+    qa_q3_game *q3;
+    qa_q3_product q3_product;
+    void *context;
+    /* These callbacks belong to one retained external grapple runtime. Native
+     * source pointers and an external runtime are mutually exclusive. */
+    bool (*current)(void *);
+    bool (*admit)(void *, qa_actor_id, qa_error *);
+    bool (*frame)(void *, uint64_t now_ns, uint64_t elapsed_ns, qa_error *);
+    bool (*fire)(void *, qa_actor_id, const qa_equipment_controls *, qa_error *);
+    bool (*release)(void *, qa_actor_id, qa_error *);
+    bool (*pull)(void *, qa_actor_id, qa_vec3 forward, qa_vec3 *, bool *, qa_error *);
+    bool (*saved_actor)(void *, qa_actor_id, qa_error *);
+} qa_equipment_source;
 typedef struct qa_equipment_state {
     qa_actor_id actor;
+    qa_equipment_source_selection sources;
+    qa_equipment_source_selection pending_sources;
     qa_equipment_selection selection;
     qa_equipment_selection pending_selection;
     qa_equipment_controls controls;
@@ -55,6 +77,14 @@ typedef struct qa_equipment_options {
     qa_actor_owner q3_owner;
     qa_q3_product q3_product;
     void *context;
+    /* Resolve retained publication owners without executing or admitting a
+     * source. Each actor keeps separate grapple, grenade and item tuples. */
+    bool (*source)(void *, qa_actor_owner, qa_equipment_source *, qa_error *);
+    void *source_context;
+    bool (*source_idle)(const void *);
+    bool (*source_destroy)(void *, qa_error *);
+    bool (*source_capture)(void *, qa_buffer *, qa_error *);
+    bool (*source_restore)(void *, qa_bytes, qa_error *);
     bool (*primary_holster)(void *, qa_actor_id, qa_error *);
     bool (*primary_holstered)(void *, qa_actor_id);
     bool (*primary_resume)(void *, qa_actor_id, qa_error *);
@@ -64,10 +94,15 @@ typedef struct qa_equipment_options {
 
 bool qa_equipment_create(const qa_equipment_options *, qa_equipment **, qa_error *);
 void qa_equipment_destroy(qa_equipment *);
+bool qa_equipment_destroy_checked(qa_equipment *, qa_error *);
 bool qa_equipment_idle(const qa_equipment *);
 bool qa_equipment_admit(qa_equipment *, qa_actor_id, const qa_equipment_selection *, qa_error *);
+bool qa_equipment_admit_sources(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
+    const qa_equipment_source_selection *, qa_error *);
 bool qa_equipment_configure(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
                             qa_error *);
+bool qa_equipment_configure_sources(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
+    const qa_equipment_source_selection *, qa_error *);
 bool qa_equipment_input(qa_equipment *, qa_actor_id, const qa_equipment_controls *, qa_error *);
 bool qa_equipment_select_grapple(qa_equipment *, qa_actor_id, bool selected, qa_error *);
 bool qa_equipment_step(qa_equipment *, qa_actor_id, uint64_t now_ns, uint64_t elapsed_ns,
