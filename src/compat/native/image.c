@@ -83,7 +83,7 @@ bool qa_native_module_mutable_range(const qa_native_module *module, uint64_t rva
     return writable || native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native private state is not an original mutable image span");
 }
 
-static bool inspect_pe(qa_bytes bytes, qa_native_image_info *out, qa_error *error) {
+static bool inspect_pe(qa_bytes bytes, bool program, qa_native_image_info *out, qa_error *error) {
     if (!span(bytes, 0x3c, 4))
         return native_fail(error, QA_ERROR_FORMAT, bytes.size, "truncated PE DOS header");
     uint32_t pe = qa_load_u32le(bytes.data + 0x3c);
@@ -115,13 +115,19 @@ static bool inspect_pe(qa_bytes bytes, qa_native_image_info *out, qa_error *erro
         return false;
     if ((format == QA_NATIVE_IMAGE_PE32) != (target.pointer_bytes == 4))
         return native_fail(error, QA_ERROR_FORMAT, optional, "PE class does not match its machine");
-    if (!(characteristics & 0x2000u))
+    if (program && ((characteristics & 0x2000u) || !(characteristics & 2u)))
+        return native_fail(error, QA_ERROR_FORMAT, pe + 22, "PE artifact is not an executable program");
+    if (!program && !(characteristics & 0x2000u))
         return native_fail(error, QA_ERROR_FORMAT, pe + 22, "PE artifact is not a dynamic library");
     uint32_t image_bytes = qa_load_u32le(bytes.data + optional + 56);
     if (!image_bytes)
         return native_fail(error, QA_ERROR_FORMAT, optional + 56, "PE image has zero virtual size");
+    uint32_t entry = qa_load_u32le(bytes.data + optional + 16);
+    if (program && (!entry || entry >= image_bytes))
+        return native_fail(error, QA_ERROR_FORMAT, optional + 16, "PE program has no admitted entry point");
     size_t table = optional + optional_bytes;
     size_t section_bytes;
+    bool executable_entry = false;
     if (!native_size_multiply(sections, 40, &section_bytes) || !span(bytes, table, section_bytes))
         return native_fail(error, QA_ERROR_FORMAT, table, "truncated PE section table");
     for (uint16_t index = 0; index < sections; ++index) {
@@ -133,7 +139,13 @@ static bool inspect_pe(qa_bytes bytes, qa_native_image_info *out, qa_error *erro
                          "PE section %u exceeds the artifact", index);
             return false;
         }
+        uint32_t start = qa_load_u32le(section + 12);
+        if ((qa_load_u32le(section + 36) & UINT32_C(0x20000000)) &&
+            entry >= start && (uint64_t)entry - start < raw_size)
+            executable_entry = true;
     }
+    if (program && !executable_entry)
+        return native_fail(error, QA_ERROR_FORMAT, optional + 16, "PE entry is outside executable file storage");
     *out = (qa_native_image_info){.format = format,
                                   .target = target,
                                   .preferred_base = preferred,
@@ -142,7 +154,7 @@ static bool inspect_pe(qa_bytes bytes, qa_native_image_info *out, qa_error *erro
     return true;
 }
 
-static bool inspect_elf(qa_bytes bytes, qa_native_image_info *out, qa_error *error) {
+static bool inspect_elf(qa_bytes bytes, bool executable, qa_native_image_info *out, qa_error *error) {
     if (!span(bytes, 0, 16))
         return native_fail(error, QA_ERROR_FORMAT, bytes.size, "truncated ELF identification");
     uint8_t class_id = bytes.data[4], encoding = bytes.data[5];
@@ -154,7 +166,8 @@ static bool inspect_elf(qa_bytes bytes, qa_native_image_info *out, qa_error *err
     size_t header_size = class_id == 1 ? 52u : 64u;
     if (!span(bytes, 0, header_size))
         return native_fail(error, QA_ERROR_FORMAT, bytes.size, "truncated ELF header");
-    if (qa_load_u16le(bytes.data + 16) != 3)
+    uint16_t type = qa_load_u16le(bytes.data + 16);
+    if ((!executable && type != 3) || (executable && type != 2 && type != 3))
         return native_fail(error, QA_ERROR_FORMAT, 16,
                            "ELF native artifact is not a shared object");
     uint16_t machine = qa_load_u16le(bytes.data + 18);
@@ -176,7 +189,8 @@ static bool inspect_elf(qa_bytes bytes, qa_native_image_info *out, qa_error *err
         return native_fail(error, QA_ERROR_FORMAT, (size_t)program_offset,
                            "truncated ELF program table");
     uint64_t first = UINT64_MAX, end = 0;
-    bool loadable = false;
+    bool loadable = false, executable_entry = false;
+    uint64_t entry = class_id == 1 ? qa_load_u32le(bytes.data + 24) : qa_load_u64le(bytes.data + 24);
     for (uint16_t index = 0; index < program_count; ++index) {
         const uint8_t *program = bytes.data + (size_t)program_offset + (size_t)index * program_size;
         if (qa_load_u32le(program) != 1)
@@ -205,11 +219,16 @@ static bool inspect_elf(qa_bytes bytes, qa_native_image_info *out, qa_error *err
             first = virtual_address;
         if (virtual_end > end)
             end = virtual_end;
+        uint32_t flags = qa_load_u32le(program + (class_id == 1 ? 24 : 4));
+        if ((flags & 1u) && entry && entry >= virtual_address && entry - virtual_address < file_size)
+            executable_entry = true;
         loadable = true;
     }
     if (!loadable || end <= first)
         return native_fail(error, QA_ERROR_FORMAT, (size_t)program_offset,
                            "ELF image has no nonempty load segments");
+    if (executable && !executable_entry)
+        return native_fail(error, QA_ERROR_FORMAT, 24, "ELF program has no executable entry point");
     *out = (qa_native_image_info){.format =
                                       class_id == 1 ? QA_NATIVE_IMAGE_ELF32 : QA_NATIVE_IMAGE_ELF64,
                                   .target = target,
@@ -219,25 +238,91 @@ static bool inspect_elf(qa_bytes bytes, qa_native_image_info *out, qa_error *err
     return true;
 }
 
-bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error) {
+static bool inspect(qa_bytes image, bool program, qa_native_image_info *out, qa_error *error) {
     if (!out || (!image.data && image.size))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native image bytes and output are required");
     qa_native_image_info inspected;
     if (image.size >= 2 && image.data[0] == 'M' && image.data[1] == 'Z') {
-        if (!inspect_pe(image, &inspected, error))
+        if (!inspect_pe(image, program, &inspected, error))
             return false;
     } else if (image.size >= 4 && !memcmp(image.data,
                                           "\x7f"
                                           "ELF",
                                           4)) {
-        if (!inspect_elf(image, &inspected, error))
+        if (!inspect_elf(image, program, &inspected, error))
             return false;
     } else {
         return native_fail(error, QA_ERROR_FORMAT, 0, "native artifact is neither PE nor ELF");
     }
     *out = inspected;
     return true;
+}
+
+bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error) {
+    return inspect(image, false, out, error);
+}
+
+bool qa_native_inspect_program(qa_bytes image, qa_native_image_info *out, qa_error *error) {
+    return inspect(image, true, out, error);
+}
+
+bool native_image_soname(qa_bytes image, qa_bytes *out, qa_error *error) {
+    qa_native_image_info info;
+    if (!out || !qa_native_inspect(image, &info, error)) return false;
+    *out = (qa_bytes){0};
+    if (info.format != QA_NATIVE_IMAGE_ELF32 && info.format != QA_NATIVE_IMAGE_ELF64) return true;
+    bool elf32 = info.format == QA_NATIVE_IMAGE_ELF32;
+    const uint8_t *bytes = image.data;
+    size_t program_offset = (size_t)(elf32 ? qa_load_u32le(bytes + 28) : qa_load_u64le(bytes + 32));
+    uint16_t stride = qa_load_u16le(bytes + (elf32 ? 42 : 54));
+    uint16_t count = qa_load_u16le(bytes + (elf32 ? 44 : 56));
+    uint64_t strings = 0, string_bytes = 0, soname = 0;
+    bool has_soname = false;
+    for (uint16_t i = 0; i < count; ++i) {
+        const uint8_t *program = bytes + program_offset + (size_t)i * stride;
+        if (qa_load_u32le(program) != 2) continue;
+        uint64_t offset = elf32 ? qa_load_u32le(program + 4) : qa_load_u64le(program + 8);
+        uint64_t length = elf32 ? qa_load_u32le(program + 16) : qa_load_u64le(program + 32);
+        size_t item_bytes = elf32 ? 8u : 16u;
+        if (!native_u64_fits_size(offset) || !native_u64_fits_size(length) ||
+            length % item_bytes || !span(image, (size_t)offset, (size_t)length))
+            return native_fail(error, QA_ERROR_FORMAT, program_offset + (size_t)i * stride,
+                "invalid original dependency dynamic table");
+        bool ended = false;
+        for (size_t n = 0; n < (size_t)length; n += item_bytes) {
+            const uint8_t *entry = bytes + (size_t)offset + n;
+            uint64_t tag = elf32 ? qa_load_u32le(entry) : qa_load_u64le(entry);
+            uint64_t value = elf32 ? qa_load_u32le(entry + 4) : qa_load_u64le(entry + 8);
+            if (!tag) { ended = true; break; }
+            if (tag == 5) strings = value;
+            else if (tag == 10) string_bytes = value;
+            else if (tag == 14) { soname = value; has_soname = true; }
+        }
+        if (!ended) return native_fail(error, QA_ERROR_FORMAT, (size_t)offset,
+            "unterminated original dependency dynamic table");
+    }
+    if (!has_soname) return true;
+    if (!strings || !string_bytes || soname >= string_bytes || !native_u64_fits_size(string_bytes))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "invalid original dependency SONAME strings");
+    for (uint16_t i = 0; i < count; ++i) {
+        const uint8_t *program = bytes + program_offset + (size_t)i * stride;
+        if (qa_load_u32le(program) != 1) continue;
+        uint64_t offset = elf32 ? qa_load_u32le(program + 4) : qa_load_u64le(program + 8);
+        uint64_t address = elf32 ? qa_load_u32le(program + 8) : qa_load_u64le(program + 16);
+        uint64_t length = elf32 ? qa_load_u32le(program + 16) : qa_load_u64le(program + 32);
+        if (strings < address || strings - address > length || string_bytes > length - (strings - address)) continue;
+        uint64_t translated;
+        if (!add_u64(offset, strings - address, &translated) || !native_u64_fits_size(translated) ||
+            !span(image, (size_t)translated, (size_t)string_bytes)) continue;
+        const uint8_t *name = bytes + (size_t)translated + (size_t)soname;
+        const uint8_t *end = memchr(name, 0, (size_t)(string_bytes - soname));
+        if (!end || end == name) return native_fail(error, QA_ERROR_FORMAT, (size_t)translated,
+            "original dependency SONAME is empty or unterminated");
+        *out = (qa_bytes){name, (size_t)(end - name)};
+        return true;
+    }
+    return native_fail(error, QA_ERROR_FORMAT, 0, "original dependency SONAME has no admitted file segment");
 }
 
 qa_native_target qa_native_host_target(void) {

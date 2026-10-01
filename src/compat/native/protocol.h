@@ -35,6 +35,8 @@ struct native_runner_connection {
     qa_error failure;
     qa_native_instance *instance;
     char *temporary_directory;
+    qa_native_runner_validate_fn validate;
+    void *validation_context;
 };
 
 void native_wire_buffer_free(native_wire_buffer *buffer);

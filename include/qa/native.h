@@ -67,6 +67,9 @@ typedef struct qa_native_image_info {
  * validated before a module is admitted to either a direct or runner backend.
  */
 bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error);
+/* Packaging inspection for an executable, including ELF PIE. Module admission
+ * continues to require a DLL/shared object through qa_native_inspect. */
+bool qa_native_inspect_program(qa_bytes image, qa_native_image_info *out, qa_error *error);
 qa_native_target qa_native_host_target(void);
 
 typedef struct qa_native_module_info {
@@ -214,6 +217,8 @@ typedef enum qa_native_backend {
  * the Wine mapping used to translate absolute host paths passed to drrun. The
  * helper isolates module memory and ABI state, but is not a security sandbox;
  * guest OS calls retain the helper account's authority. */
+typedef bool (*qa_native_runner_validate_fn)(void *context, qa_native_target target,
+                                             bool instrumented, qa_error *error);
 typedef struct qa_native_runner_config {
     const char *windows_i386_runner;
     const char *windows_x86_64_runner;
@@ -230,20 +235,27 @@ typedef struct qa_native_runner_config {
     const char *wine;
     const char *wine_drive;
     size_t maximum_frame_bytes;
+    /* Called before the real helper starts and before original module reload.
+     * The callback and context remain borrowed until the instance is destroyed. */
+    qa_native_runner_validate_fn validate;
+    void *validation_context;
 } qa_native_runner_config;
 
 typedef enum qa_native_lifecycle {
     QA_NATIVE_LOADED,
     QA_NATIVE_PREINITIALIZED,
     QA_NATIVE_INITIALIZED,
-    QA_NATIVE_SHUT_DOWN
+    QA_NATIVE_SHUT_DOWN,
+    QA_NATIVE_RESTART_READY
 } qa_native_lifecycle;
 
 /* Direct instances accept only the current process OS, architecture and ABI,
  * and reject declarations with inline regions. Guest code is trusted native
  * code and may compromise the process. Imports are synchronous. Activation is
  * stacked, so permitted nested calls restore the previous instance; callbacks
- * from module-created threads are rejected. */
+ * from module-created threads are rejected. Creation outputs start empty. If
+ * failed construction cannot unload its real library, it returns that owned
+ * failed instance in *out so its callback context can survive until cleanup. */
 bool qa_native_create_direct(qa_native_module *module, const qa_native_options *options,
                              qa_native_instance **out, qa_error *error);
 bool qa_native_create_runner(qa_native_module *module, const qa_native_options *options,
@@ -254,13 +266,22 @@ bool qa_native_create_runner(qa_native_module *module, const qa_native_options *
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
                       const qa_native_runner_config *runner, qa_native_instance **out,
                       qa_error *error);
-/* Once can_destroy succeeds, destruction consumes either backend even if a
- * shutdown, unload callback or transport fault is returned. Admission rejection
- * leaves the caller's owner live. */
-bool qa_native_destroy(qa_native_instance *instance, qa_error *error);
+/* Clears the owner after actual consumption, including source callback and
+ * runner transport faults. A rejected unload or retained original mapping keeps
+ * every callback context in *owner. Cleanup never releases a closed loader
+ * reference twice; a later attempt qualifies actual image retirement. */
+bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error);
 /* True only when destruction will pass its initial ownership admission.
  * Shutdown or runner cleanup may still fail after admission. */
 bool qa_native_can_destroy(const qa_native_instance *instance);
+/* Readonly Q3 GAME/QL round admission. Raw-address observers must retire;
+ * immutable declaration regions retain their original RVA identities. */
+bool qa_native_restart_ready(const qa_native_instance *, qa_error *);
+/* After genuine Shutdown(restart=true) and complete actor-slot retirement,
+ * reload the owned original artifact and dependencies beneath this instance.
+ * Refresh imports and exports before admitting Init(restart=true). A source or
+ * loader fault consumes the reset attempt and prevents initialization. */
+bool qa_native_restart_original(qa_native_instance *, qa_error *);
 /* A poisoned isolated runner cannot execute further source operations. This
  * does not authorize replacement of a live source primary or lost snapshot. */
 bool qa_native_terminal(const qa_native_instance *instance);

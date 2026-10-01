@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -121,6 +122,8 @@ static bool prepare_command(qa_native_instance *instance, const qa_native_runner
     qa_native_target host = qa_native_host_target();
     const char *runner = runner_path(config, target);
     bool instrumented = instance->options.observe || instance->region_count != 0;
+    if (config->validate && !config->validate(config->validation_context, target,
+        instrumented, error)) return false;
     const char *drrun = instrumented ? drrun_path(config, target) : NULL;
     const char *client = instrumented ? client_path(config, target) : NULL;
     if (!runner)
@@ -327,19 +330,31 @@ static bool spawn_runner(native_runner_connection *connection, const native_runn
     return true;
 }
 
-static void close_runner_process(native_runner_connection *connection) {
-    if (connection->input)
-        CloseHandle((HANDLE)connection->input);
-    if (connection->output)
-        CloseHandle((HANDLE)connection->output);
+static bool close_runner_process(native_runner_connection *connection, qa_error *error) {
+    if (connection->input) {
+        if (!CloseHandle((HANDLE)connection->input)) return runner_os_error(error, "closing native runner input");
+        connection->input = 0;
+    }
+    if (connection->output) {
+        if (!CloseHandle((HANDLE)connection->output)) return runner_os_error(error, "closing native runner output");
+        connection->output = 0;
+    }
     if (connection->process) {
         DWORD wait = WaitForSingleObject((HANDLE)connection->process, 5000);
         if (wait == WAIT_TIMEOUT) {
-            TerminateProcess((HANDLE)connection->process, 125);
-            WaitForSingleObject((HANDLE)connection->process, INFINITE);
+            if (!TerminateProcess((HANDLE)connection->process, 125)) {
+                if (WaitForSingleObject((HANDLE)connection->process, 0) != WAIT_OBJECT_0)
+                    return runner_os_error(error, "terminating native runner");
+            }
+            wait = WaitForSingleObject((HANDLE)connection->process, 5000);
         }
-        CloseHandle((HANDLE)connection->process);
+        if (wait == WAIT_TIMEOUT) return native_fail(error, QA_ERROR_IO, 0,
+            "native runner process has not retired after termination");
+        if (wait != WAIT_OBJECT_0) return runner_os_error(error, "waiting for native runner retirement");
+        if (!CloseHandle((HANDLE)connection->process)) return runner_os_error(error, "closing retired native runner process");
+        connection->process = 0;
     }
+    return true;
 }
 #else
 static bool spawn_runner(native_runner_connection *connection, const native_runner_command *command,
@@ -390,24 +405,73 @@ static bool spawn_runner(native_runner_connection *connection, const native_runn
     return true;
 }
 
-static void close_runner_process(native_runner_connection *connection) {
-    if (connection->input >= 0)
-        close((int)connection->input);
-    if (connection->output >= 0)
-        close((int)connection->output);
+static bool close_runner_process(native_runner_connection *connection, qa_error *error) {
+    if (connection->input >= 0) {
+        int descriptor = (int)connection->input;
+        connection->input = -1;
+        if (close(descriptor) && errno != EBADF) {
+            qa_error_set(error, QA_ERROR_IO, (size_t)errno, "closing native runner input: %s", strerror(errno));
+            return false;
+        }
+    }
+    if (connection->output >= 0) {
+        int descriptor = (int)connection->output;
+        connection->output = -1;
+        if (close(descriptor) && errno != EBADF) {
+            qa_error_set(error, QA_ERROR_IO, (size_t)errno, "closing native runner output: %s", strerror(errno));
+            return false;
+        }
+    }
     if (connection->process > 0) {
         int status;
         pid_t result;
         do {
             result = waitpid((pid_t)connection->process, &status, WNOHANG);
         } while (result < 0 && errno == EINTR);
+        if (result == (pid_t)connection->process) { connection->process = 0; return true; }
+        if (result < 0) {
+            if (errno == ECHILD && kill((pid_t)connection->process, 0) && errno == ESRCH) {
+                connection->process = 0; return true;
+            }
+            qa_error_set(error, QA_ERROR_IO, (size_t)errno, "qualifying native runner child: %s", strerror(errno));
+            return false;
+        }
         if (!result) {
-            kill((pid_t)connection->process, SIGKILL);
-            do {
-                result = waitpid((pid_t)connection->process, &status, 0);
-            } while (result < 0 && errno == EINTR);
+            if (kill((pid_t)connection->process, SIGKILL) && errno != ESRCH) {
+                qa_error_set(error, QA_ERROR_IO, (size_t)errno, "terminating native runner: %s", strerror(errno));
+                return false;
+            }
+            struct timespec start;
+            if (clock_gettime(CLOCK_MONOTONIC, &start)) {
+                qa_error_set(error, QA_ERROR_IO, (size_t)errno, "timing native runner retirement: %s", strerror(errno));
+                return false;
+            }
+            for (;;) {
+                do { result = waitpid((pid_t)connection->process, &status, WNOHANG); }
+                while (result < 0 && errno == EINTR);
+                if (result == (pid_t)connection->process) { connection->process = 0; return true; }
+                if (result < 0) {
+                    if (errno == ECHILD && kill((pid_t)connection->process, 0) && errno == ESRCH) {
+                        connection->process = 0; return true;
+                    }
+                    qa_error_set(error, QA_ERROR_IO, (size_t)errno, "waiting for native runner retirement: %s", strerror(errno));
+                    return false;
+                }
+                struct timespec now;
+                if (clock_gettime(CLOCK_MONOTONIC, &now)) {
+                    qa_error_set(error, QA_ERROR_IO, (size_t)errno, "timing native runner retirement: %s", strerror(errno));
+                    return false;
+                }
+                if (now.tv_sec - start.tv_sec > 5 ||
+                    (now.tv_sec - start.tv_sec == 5 && now.tv_nsec >= start.tv_nsec))
+                    return native_fail(error, QA_ERROR_IO, 0,
+                        "native runner process has not retired after termination");
+                struct timespec interval = {.tv_nsec = 10000000};
+                nanosleep(&interval, NULL);
+            }
         }
     }
+    return true;
 }
 #endif
 
@@ -1111,16 +1175,17 @@ static bool encode_load(qa_native_instance *instance, native_wire_buffer *payloa
         !native_wire_put_u32(payload, instance->options.frame_milliseconds, error) ||
         !native_wire_put_u32(payload, (uint32_t)instance->options.q3_role, error) ||
         !native_wire_put_u8(payload, instance->has_declaration ? 1u : 0u, error) ||
+        !native_wire_put_u8(payload, instance->options.observe || instance->region_count ? 1u : 0u, error) ||
         !native_wire_put_raw(payload, instance->declaration.bytes,
                              sizeof(instance->declaration.bytes), error) ||
         !native_wire_put_raw(payload, image->digest.bytes, sizeof(image->digest.bytes), error) ||
         !native_wire_put_string(payload, instance->module->source, error) ||
         !native_wire_put_bytes(payload, (qa_bytes){instance->module->bytes, instance->module->size},
                                error) ||
-        !native_wire_put_u64(payload, instance->options.dependency_count, error))
+        !native_wire_put_u64(payload, instance->original_dependency_count, error))
         return false;
-    for (size_t index = 0; index < instance->options.dependency_count; ++index) {
-        const qa_native_dependency *dependency = &instance->options.dependencies[index];
+    for (size_t index = 0; index < instance->original_dependency_count; ++index) {
+        const qa_native_dependency *dependency = &instance->original_dependencies[index];
         if (!native_wire_put_string(payload, dependency->path, error) ||
             !native_wire_put_bytes(payload, dependency->bytes, error))
             return false;
@@ -1179,6 +1244,8 @@ bool native_runner_open(qa_native_instance *instance, const qa_native_runner_con
                            "native runner frame limit exceeds the packaged protocol");
     }
     connection->instance = instance;
+    connection->validate = config->validate;
+    connection->validation_context = config->validation_context;
     instance->runner = connection;
     char *descriptor = NULL;
     native_runner_command command = {0};
@@ -1213,7 +1280,7 @@ bool native_runner_open(qa_native_instance *instance, const qa_native_runner_con
 bool qa_native_create_runner(qa_native_module *module, const qa_native_options *options,
                              const qa_native_runner_config *runner, qa_native_instance **out,
                              qa_error *error) {
-    if (!module || !options || !runner || !out)
+    if (!module || !options || !runner || !out || *out)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native module, options, runner and output are required");
     if (module->info.profile == QA_NATIVE_Q3_VMMAIN &&
@@ -1245,9 +1312,15 @@ bool qa_native_create_runner(qa_native_module *module, const qa_native_options *
     qa_native_module_retain(module);
     if (!native_profile_prepare_remote(instance, error) ||
         !native_runner_open(instance, runner, error)) {
+        if (instance->runner) {
+            instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+            *out = instance;
+            return false;
+        }
         native_profile_unbind(instance);
         qa_native_module_release(module);
         native_regions_destroy(instance);
+        native_original_dependencies_destroy(instance);
         free(instance->slots);
         free(instance);
         return false;
@@ -1269,13 +1342,50 @@ bool native_runner_close(qa_native_instance *instance, qa_error *error) {
             runner_request(instance, NATIVE_WIRE_DESTROY, (qa_bytes){0}, &response, error);
         qa_buffer_free(&response);
     }
-    close_runner_process(connection);
+    connection->poisoned = true;
+    if (!close_runner_process(connection, error)) return false;
     native_remove_tree(connection->temporary_directory);
     free(connection->temporary_directory);
     memset(connection, 0, sizeof(*connection));
     free(connection);
     instance->runner = NULL;
     return protocol_ok;
+}
+
+bool native_runner_restart_original(qa_native_instance *instance, qa_error *error) {
+    if (!instance || !instance->runner)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native reload requires its actual runner connection");
+    if (instance->runner->validate && !instance->runner->validate(
+        instance->runner->validation_context, instance->module->info.image.target,
+        instance->options.observe || instance->region_count != 0, error)) return false;
+    qa_buffer response = {0};
+    bool ok = runner_request(instance, NATIVE_WIRE_RESTART_ORIGINAL, (qa_bytes){0}, &response, error);
+    if (ok) {
+        native_wire_reader reader = {.bytes = {response.data, response.size}};
+        uint64_t image_base = 0, image_bytes = 0;
+        uint32_t lifecycle = 0;
+        ok = native_wire_get_u64(&reader, &image_base, error) &&
+            native_wire_get_u64(&reader, &image_bytes, error) &&
+            native_wire_get_u32(&reader, &lifecycle, error) && native_wire_end(&reader, error) &&
+            image_base && image_bytes == instance->module->info.image.image_bytes &&
+            lifecycle == QA_NATIVE_RESTART_READY;
+        if (!ok) {
+            if (!error || error->code == QA_OK)
+                native_fail(error, QA_ERROR_FORMAT, reader.offset, "native runner original reload response is invalid");
+            native_wire_poison(instance->runner, error);
+        } else {
+            native_profile_unbind(instance);
+            instance->entities = (qa_native_entity_table){0};
+            if (instance->slot_capacity)
+                memset(instance->slots, 0, (size_t)instance->slot_capacity * sizeof(*instance->slots));
+            instance->image_base = image_base;
+            instance->image_bytes = image_bytes;
+            ok = native_profile_prepare_remote(instance, error);
+            if (!ok) native_wire_poison(instance->runner, error);
+        }
+    }
+    qa_buffer_free(&response);
+    return ok;
 }
 
 static bool runner_sync_entities(qa_native_instance *instance, qa_error *error) {
