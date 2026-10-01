@@ -287,6 +287,14 @@ static bool output_restore(qa_gl_renderer *renderer, qa_error *error)
     return gl_check(renderer, "OpenGL output target restore", error);
 }
 
+void gl_gamma_table(float gamma, uint8_t table[256])
+{
+    for (size_t i = 0; i < 256; ++i) {
+        float value = powf((float)i / 255.0f, 1.0f / gamma);
+        table[i] = (uint8_t)floorf(fminf(fmaxf(value, 0), 1) * 255 + 0.5f);
+    }
+}
+
 bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
                          qa_error *error)
 {
@@ -310,10 +318,7 @@ bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
     }
     if (!output_objects(renderer, error)) return false;
     uint8_t table[256];
-    for (size_t i = 0; i < sizeof(table); ++i) {
-        float value = powf((float)i / 255.0f, 1.0f / gamma);
-        table[i] = (uint8_t)floorf(fminf(fmaxf(value, 0), 1) * 255 + 0.5f);
-    }
+    gl_gamma_table(gamma, table);
     gl_api *gl = &renderer->gl;
     GLuint table_texture = 0;
     gl->GenTextures(1, &table_texture);

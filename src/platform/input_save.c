@@ -88,7 +88,7 @@ static bool info_fields(qa_source_save_io *io, qa_controller_info *info,
 }
 static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error *error)
 {
-    if (!p || !p->native_owned || !out || out->data || out->size)
+    if (!p || !p->native_owned || p->native_initializing || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "platform native cut requires its actual live owner");
     qa_source_save_io io = {0};
     size_t count = p->device_count;
@@ -237,6 +237,9 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
             !qa_source_save_bytes(io, d->name, sizeof(d->name)) || !memchr(d->name, 0, sizeof(d->name)) ||
             !qa_source_save_bytes(io, d->path, sizeof(d->path)) || !memchr(d->path, 0, sizeof(d->path))) return false;
     }
+    uint32_t startup = p->native_startup;
+    if (!qa_source_save_u32(io, &startup) || startup > INPUT_NATIVE_FAILED) return false;
+    if (reading) p->native_startup = (input_native_startup)startup;
     return qa_source_save_f64(io, &p->now) && isfinite(p->now) && p->now >= 0 &&
         slot_valid(p->keyboard, p) && p->source_slot >= -1 && p->source_slot < 4 &&
         p->midi_slot >= -1 && p->midi_slot < 4 &&
@@ -248,9 +251,9 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
     const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic)
 {
     uint8_t magic[4] = {'Q','I','P','L'};
-    uint32_t version = 1, callbacks = services(&p->options);
+    uint32_t version = 2, callbacks = services(&p->options);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u32(io, &callbacks) &&
+        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &callbacks) &&
         callbacks == services(&p->options) && blob(io, native_cut) &&
         state_fields(io, p, native, refs) && blob(io, haptic);
 }
@@ -270,6 +273,69 @@ bool qa_input_platform_checkpoint(const qa_input_platform *p, const qa_input_pla
         qa_source_save_finish(&io, out);
     qa_buffer_free(&native_cut); qa_buffer_free(&haptic); qa_source_save_dispose(&io);
     if (!success && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "invalid installed platform continuation");
+    return success;
+}
+bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platform *active,
+    qa_input_seat *const seats[4], const qa_controller_selection selections[4], int keyboard,
+    const qa_display *display, double now, qa_input_platform_restore_guard **out, qa_error *error)
+{
+    if (!p || p->native_owned || !active || !active->native_owned || active->native_initializing ||
+        !out || *out || p->devices || p->joystick || p->midi_fd >= 0 ||
+        !input_platform_haptic_bindings_ready(p) || !input_platform_haptic_bindings_ready(active) ||
+        p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
+        p->options.assignment_changed != active->options.assignment_changed)
+        return fail(error, QA_ERROR_ARGUMENT, "fresh platform requires genuine detached and active owners");
+    for (unsigned i = 0; i < 4; ++i)
+        if (p->seats[i].seat)
+            return fail(error, QA_ERROR_ARGUMENT, "fresh platform already has logical seat routes");
+    qa_display_info info;
+    if (!display) return fail(error, QA_ERROR_ARGUMENT, "fresh platform requires its actual display owner");
+    if (!qa_display_info_get(display, &info, error)) return false;
+    if (!info.window_id || info.window_id != active->window)
+        return fail(error, QA_ERROR_ARGUMENT, "fresh platform requires the actual retained native window");
+    qa_input_platform *candidate = qa_input_platform_create_detached(&p->options, error);
+    qa_input_platform_restore_guard *guard = calloc(1, sizeof(*guard));
+    bool success = candidate && guard;
+    if (!success) fail(error, QA_ERROR_MEMORY, "allocating fresh native input guard");
+    if (success) success = native_capture(active, &guard->native_cut, error) &&
+        input_platform_fresh_routes(candidate, seats, selections, keyboard, now, error);
+    if (success && active->device_capacity) {
+        candidate->devices = calloc(active->device_capacity, sizeof(*candidate->devices));
+        if (!candidate->devices) success = fail(error, QA_ERROR_MEMORY, "retaining native controller lease");
+        else {
+            candidate->device_capacity = active->device_capacity;
+            candidate->device_count = active->device_count;
+            memcpy(candidate->devices, active->devices, active->device_count * sizeof(*candidate->devices));
+        }
+    }
+    if (success && active->midi_count) {
+        candidate->midi_devices = malloc(active->midi_count * sizeof(*candidate->midi_devices));
+        if (!candidate->midi_devices) success = fail(error, QA_ERROR_MEMORY, "retaining native MIDI inventory");
+        else {
+            candidate->midi_count = active->midi_count;
+            memcpy(candidate->midi_devices, active->midi_devices, active->midi_count * sizeof(*candidate->midi_devices));
+        }
+    }
+    if (success) {
+        candidate->joystick = active->joystick;
+        candidate->joystick_instance = active->joystick_instance;
+        candidate->midi_fd = active->midi_fd;
+        candidate->window = info.window_id;
+        candidate->old_relative = active->old_relative;
+        candidate->old_text = active->old_text;
+        candidate->old_grab = active->old_grab;
+        candidate->old_controller_events = active->old_controller_events;
+        candidate->old_joystick_events = active->old_joystick_events;
+        candidate->capture = SDL_GetRelativeMouseMode() == SDL_TRUE;
+        success = native_matches(active, (qa_bytes){guard->native_cut.data, guard->native_cut.size}, error);
+    }
+    if (success) {
+        qa_input_platform old = *p;
+        *p = *candidate; *candidate = old;
+        input_platform_route_contexts_rebind(p);
+        guard->candidate = p; guard->active = active; *out = guard; guard = NULL;
+    }
+    qa_input_platform_destroy(candidate); qa_input_platform_restore_guard_destroy(guard);
     return success;
 }
 bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *active,
@@ -308,7 +374,8 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
 }
 bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *g, qa_error *error)
 {
-    if (!g || g->applied || !g->candidate || g->candidate->native_owned || !g->active || !g->active->native_owned ||
+    if (!g || g->applied || !g->candidate || g->candidate->native_owned || g->candidate->native_initializing ||
+        !g->active || !g->active->native_owned || g->active->native_initializing ||
         !input_platform_haptic_bindings_ready(g->candidate) || !input_platform_haptic_bindings_ready(g->active) ||
         g->candidate->device_count != g->active->device_count || g->candidate->joystick != g->active->joystick ||
         g->candidate->midi_fd != g->active->midi_fd || g->candidate->window != g->active->window)

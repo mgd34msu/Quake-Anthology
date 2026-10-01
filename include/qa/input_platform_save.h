@@ -14,6 +14,13 @@ typedef struct qa_input_platform_checkpoint_refs {
  * and invokes no output/routing/input callbacks. Keep it detached until the
  * complete saved platform state and native handoff are qualified. */
 qa_input_platform *qa_input_platform_create_detached(const qa_input_platform_options *, qa_error *);
+/* Bind genuine new logical seats to the active native lease without replaying
+ * its logical input state. Settings belong to the detached owner's registry.
+ * Native startup remains pending through checkpoint/import; the first event or
+ * frame after handoff configures devices and focus before delivering input. */
+bool qa_input_platform_prepare_fresh(qa_input_platform *detached, const qa_input_platform *active,
+    qa_input_seat *const seats[4], const qa_controller_selection selections[4], int keyboard_slot,
+    const qa_display *, double now_ms, qa_input_platform_restore_guard **, qa_error *);
 bool qa_input_platform_checkpoint(const qa_input_platform *, const qa_input_platform_checkpoint_refs *,
     qa_buffer *, qa_error *);
 /* Decode only into a detached owner. The active platform keeps sole native

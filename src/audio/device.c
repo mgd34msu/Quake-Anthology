@@ -959,6 +959,28 @@ bool qa_audio_device_restore(qa_bytes bytes,const qa_audio_device *active,qa_aud
     if (!ok && (!error || error->code==QA_OK)) device_error(error,QA_ERROR_FORMAT,"Saved audio device differs from its genuine native output owner");
     return ok;
 }
+bool qa_audio_device_create_detached(const qa_audio_device *active,qa_audio_engine *engine,
+    qa_audio_device **out,qa_audio_device_restore_guard **guard_out,qa_error *error)
+{
+    if (!active || active->pumping || active->capturing || !active->conversion || !active->frequency ||
+        !engine || !out || *out || !guard_out || *guard_out)
+        return device_error(error,QA_ERROR_ARGUMENT,"Fresh detached audio requires genuine idle native/mixer owners");
+    qa_audio_device *candidate=calloc(1,sizeof(*candidate));
+    qa_audio_device_restore_guard *guard=calloc(1,sizeof(*guard));
+    if (!candidate || !guard) {
+        free(candidate); free(guard); return device_error(error,QA_ERROR_MEMORY,"Allocating fresh detached audio owner");
+    }
+    candidate->options=active->options; candidate->frequency=active->frequency;
+    bool ok=copy_name(active->name,&candidate->name,error) &&
+        qa_audio_raw_create(candidate->options.format.sample_rate,&candidate->conversion,error);
+    candidate->options.name=candidate->name;
+    if (!ok) { qa_audio_device_close(candidate); free(guard); return false; }
+    /* Normal graphical construction requests playback after native open. The
+     * fresh owner carries that intent until its prepared endpoint is published. */
+    *guard=(qa_audio_device_restore_guard){.active=(qa_audio_device *)active,.candidate=candidate,
+        .endpoint=active->id,.candidate_engine=engine,.saved_attached=active->id!=0,.saved_playing=active->id!=0};
+    *out=candidate; *guard_out=guard; return true;
+}
 static bool device_guard_ready(const qa_audio_device_restore_guard *guard,qa_error *error)
 {
     if (!guard || guard->transferred || !guard->active || !guard->candidate || guard->active==guard->candidate ||

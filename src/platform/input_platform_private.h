@@ -16,6 +16,11 @@ struct seat_route {
     bool calibration_sensor;
     qa_haptic_player haptic;
 };
+typedef enum input_native_startup {
+    INPUT_NATIVE_READY,
+    INPUT_NATIVE_PENDING,
+    INPUT_NATIVE_FAILED
+} input_native_startup;
 struct qa_input_platform {
     qa_input_platform_options options;
     struct device *devices;
@@ -38,7 +43,11 @@ struct qa_input_platform {
     size_t midi_count;
     double now;
     bool native_owned;
+    input_native_startup native_startup;
+    bool native_initializing;
 };
 bool input_platform_haptic_bindings_ready(const qa_input_platform *);
 void input_platform_route_contexts_rebind(qa_input_platform *);
+bool input_platform_fresh_routes(qa_input_platform *, qa_input_seat *const [4],
+    const qa_controller_selection [4], int, double, qa_error *);
 #endif

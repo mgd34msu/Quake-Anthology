@@ -13,6 +13,10 @@ bool qa_audio_device_checkpoint(qa_audio_device *, const qa_audio_engine *, qa_b
 bool qa_audio_device_restore(qa_bytes, const qa_audio_device *active,
     qa_audio_engine *candidate_engine, qa_audio_device **,
     qa_audio_device_restore_guard **, qa_error *);
+/* Fresh PCM/converter/pump owner with the genuine active native format and
+ * endpoint authority. It submits no old PCM and opens no device until prepare. */
+bool qa_audio_device_create_detached(const qa_audio_device *,qa_audio_engine *,
+    qa_audio_device **,qa_audio_device_restore_guard **,qa_error *);
 bool qa_audio_device_handoff_ready(const qa_audio_device_restore_guard *, qa_error *);
 /* Last fallible native preparation: opens a distinct paused endpoint and
  * submits exactly the saved native PCM prefix. Failure leaves active intact. */

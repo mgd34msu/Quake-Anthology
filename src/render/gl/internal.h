@@ -242,6 +242,7 @@ void gl_mesh_unbind(qa_gl_renderer *renderer);
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);
 bool gl_select_target(qa_gl_renderer *renderer, const qa_scene_image *image,
                       qa_error *error);
+void gl_gamma_table(float gamma, uint8_t table[256]);
 bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
                          qa_error *error);
 bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error);

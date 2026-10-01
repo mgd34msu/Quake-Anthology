@@ -24,6 +24,7 @@ static bool native_owner(qa_input_platform *p, qa_error *error) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached platform has no native input ownership");
     return false;
 }
+static bool initialize_native(qa_input_platform *, double, qa_error *);
 static float variable(qa_input_platform *p, const char *name, float fallback) {
     const qa_cvar_view *v = qa_cvars_find(p->options.cvars, name);
     return v ? v->number : fallback;
@@ -412,16 +413,14 @@ static bool valid_selection(const qa_controller_selection *s) {
     }
     return s->guid[32] == 0 && (s->kind != QA_CONTROLLER_SERIAL || (s->serial && *s->serial));
 }
-bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4],
-                              const qa_controller_selection selections[4], int keyboard,
-                              double time, qa_error *error) {
-    if (!native_owner(p, error)) return false;
-    if (!p || !seats || !selections || keyboard < -1 || keyboard >= 4 ||
+static bool copy_routes(qa_input_seat *const seats[4],
+                        const qa_controller_selection selections[4], int keyboard,
+                        double time, qa_controller_selection copied[4], qa_error *error) {
+    if (!seats || !selections || keyboard < -1 || keyboard >= 4 ||
         (keyboard >= 0 && !seats[keyboard]) || !isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid local input routes");
         return false;
     }
-    qa_controller_selection copied[4] = {0};
     for (unsigned i = 0; i < 4; ++i) {
         if (!valid_selection(&selections[i]))
             goto invalid;
@@ -446,6 +445,52 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
             }
         }
     }
+    return true;
+invalid:
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid or duplicate input seat selection");
+fail:
+    for (unsigned i = 0; i < 4; ++i)
+        free((void *)copied[i].serial);
+    return false;
+}
+bool input_platform_fresh_routes(qa_input_platform *p, qa_input_seat *const seats[4],
+    const qa_controller_selection selections[4], int keyboard, double time, qa_error *error) {
+    qa_controller_selection copied[4] = {0};
+    if (!copy_routes(seats, selections, keyboard, time, copied, error)) return false;
+    bool success = qa_input_device_settings_register(p->options.cvars, error) &&
+        qa_cvars_apply_latched(p->options.cvars, "in_joystick", error) &&
+        qa_cvars_apply_latched(p->options.cvars, "in_joystickProfile", error);
+    const qa_cvar_view *profile = qa_cvars_find(p->options.cvars, "in_joystickProfile");
+    if (success && (!profile || (strcmp(profile->value, "linux") && strcmp(profile->value, "windows")))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "in_joystickProfile must be linux or windows");
+        success = false;
+    }
+    if (!success) {
+        for (unsigned i = 0; i < 4; ++i) free((void *)copied[i].serial);
+        return false;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        free((void *)p->seats[i].selection.serial);
+        p->seats[i].selection = copied[i];
+        p->seats[i].seat = seats[i];
+    }
+    p->keyboard = keyboard;
+    int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
+    p->source_slot = source >= 1 && source <= 4 && seats[source - 1] ? source - 1 : -1;
+    p->midi_slot = midi >= 1 && midi <= 4 && seats[midi - 1] ? midi - 1 : -1;
+    p->windows_joystick = !strcmp(profile->value, "windows");
+    p->mouse_available = variable(p, "in_mouse", 1) != 0;
+    p->midi_channel = integer(p, "in_midichannel", 1);
+    p->now = time;
+    p->native_startup = INPUT_NATIVE_PENDING;
+    return true;
+}
+bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4],
+                              const qa_controller_selection selections[4], int keyboard,
+                              double time, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    qa_controller_selection copied[4] = {0};
+    if (!copy_routes(seats, selections, keyboard, time, copied, error)) return false;
     bool ok = release_all(p, time, error);
     for (unsigned i = 0; i < 4; ++i) {
         if (!stop_device(p, p->seats[i].instance, error))
@@ -465,12 +510,6 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!capture(p, error))
         ok = false;
     return ok;
-invalid:
-    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid or duplicate input seat selection");
-fail:
-    for (unsigned i = 0; i < 4; ++i)
-        free((void *)copied[i].serial);
-    return false;
 }
 bool qa_input_platform_retain(qa_input_platform *p, unsigned mask, int keyboard, double time,
                               qa_error *error) {
@@ -619,6 +658,7 @@ bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, doubl
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid platform event");
         return false;
     }
+    if (!initialize_native(p, now, error)) return false;
     p->now = now;
     if (handled)
         *handled = true;
@@ -983,12 +1023,7 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
     p->midi_fd = fd;
     return true;
 }
-bool qa_input_platform_restart(qa_input_platform *p, double time, qa_error *error) {
-    if (!native_owner(p, error)) return false;
-    if (!p || !isfinite(time) || time < 0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input restart clock");
-        return false;
-    }
+static bool restart_devices(qa_input_platform *p, double time, qa_error *error) {
     p->now = time;
     if (!qa_input_device_settings_register(p->options.cvars, error) ||
         !qa_cvars_apply_latched(p->options.cvars, "in_joystick", error) ||
@@ -1039,7 +1074,53 @@ bool qa_input_platform_restart(qa_input_platform *p, double time, qa_error *erro
         (void)snprintf(message, sizeof(message), "WARNING: %s\n", warning.message);
         report(p, message);
     }
-    return capture(p, error);
+    return true;
+}
+bool qa_input_platform_restart(qa_input_platform *p, double time, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    if (!isfinite(time) || time < 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input restart clock");
+        return false;
+    }
+    if (p->native_startup != INPUT_NATIVE_READY && !p->native_initializing)
+        return initialize_native(p, time, error);
+    return restart_devices(p, time, error) && capture(p, error);
+}
+static bool initialize_native(qa_input_platform *p, double time, qa_error *error) {
+    if (p->native_startup == INPUT_NATIVE_READY) return true;
+    if (p->native_startup != INPUT_NATIVE_PENDING || p->native_initializing) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Fresh native input startup did not complete");
+        return false;
+    }
+    /* Publication transferred the real lease. Do not replay a failed startup
+     * or let callbacks recapture a partially configured native owner. */
+    p->native_startup = INPUT_NATIVE_FAILED;
+    p->native_initializing = true;
+    bool success = true;
+    for (size_t i = 0; i < p->device_count; ++i)
+        if (!stop_device(p, p->devices[i].info.instance, error)) success = false;
+    if (p->joystick && SDL_JoystickHasRumble(p->joystick) &&
+        SDL_JoystickRumble(p->joystick, 0, 0, 0) < 0)
+        success = failed(error, "Stopping source joystick rumble");
+    if (success) {
+        SDL_GameControllerEventState(SDL_ENABLE);
+        SDL_JoystickEventState(SDL_ENABLE);
+        success = restart_devices(p, time, error) && resolve(p, time, error);
+    }
+    SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
+    bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    for (unsigned i = 0; success && i < 4; ++i)
+        if (p->seats[i].seat) {
+            qa_input_event event = {.kind = QA_INPUT_EVENT_FOCUS, .time_ms = time, .down = focused};
+            success = qa_input_seat_event(p->seats[i].seat, &event, NULL, error);
+        }
+    if (success) {
+        success = capture(p, error);
+        if (success && window) SDL_SetWindowGrab(window, p->capture ? SDL_TRUE : SDL_FALSE);
+    }
+    p->native_initializing = false;
+    if (success) p->native_startup = INPUT_NATIVE_READY;
+    return success;
 }
 static bool midi_frame(qa_input_platform *p, double time, qa_error *error) {
     int channel = integer(p, "in_midichannel", 1);
@@ -1074,6 +1155,7 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input frame clock");
         return false;
     }
+    if (!initialize_native(p, now, error)) return false;
     p->now = now;
     int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
     source = source >= 1 && source <= 4 && p->seats[source - 1].seat ? source - 1 : -1;

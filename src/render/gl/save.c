@@ -177,7 +177,7 @@ void gl_restore_storage_destroy(qa_gl_renderer *renderer)
     if (!renderer) return;
     gl_saved_dispose(renderer->restore,renderer); renderer->restore=NULL;
 }
-static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa_error *error)
+static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bool full,qa_error *error)
 {
     if (!renderer || renderer->closed || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active ||
         !qa_display_make_current(renderer->options.display,error)) return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU capture requires its completed actual renderer owner");
@@ -188,14 +188,14 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
     GLint native_read_buffer=0;
     renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read_buffer);
     GLuint read_framebuffer=0;
-    if (renderer->output.framebuffer || renderer->opacity.allocated) renderer->gl.GenFramebuffers(1,&read_framebuffer);
+    if (full && (renderer->output.framebuffer || renderer->opacity.allocated)) renderer->gl.GenFramebuffers(1,&read_framebuffer);
     saved->native_count=renderer->capabilities.stereo?4:2;
-    bool ok=!(renderer->output.framebuffer || renderer->opacity.allocated) || read_framebuffer!=0;
+    bool ok=!full || !(renderer->output.framebuffer || renderer->opacity.allocated) || read_framebuffer!=0;
     if (!ok) gl_save_error(error,QA_ERROR_MEMORY,"Allocating isolated GPU continuation read framebuffer");
     for (size_t i=0;ok && i<saved->native_count;++i)
         ok=gl_surface_capture(renderer,0,gl_native_buffer(renderer->capabilities.stereo,i),saved->width,saved->height,true,i==0,saved->native+i,error);
-    saved->output_allocated=renderer->output.framebuffer!=0;
-    for (size_t i=0;ok && i<4;++i) if (renderer->output.color_ready[i]) {
+    saved->output_allocated=full && renderer->output.framebuffer!=0;
+    for (size_t i=0;full && ok && i<4;++i) if (renderer->output.color_ready[i]) {
         renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
         renderer->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,renderer->output.color[i],0);
         renderer->gl.FramebufferRenderbuffer(GL_READ_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,renderer->output.depth_stencil);
@@ -203,9 +203,9 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
             renderer->capabilities.stencil_bits?renderer->output.depth_stencil:0);
         ok=gl_surface_capture(renderer,read_framebuffer,GL_COLOR_ATTACHMENT0,renderer->output.width,renderer->output.height,true,true,saved->output+i,error);
     }
-    if (ok && renderer->output.table) ok=gl_level_capture(renderer,renderer->output.table,0,false,&saved->gamma,error);
-    saved->opacity_allocated=renderer->opacity.allocated;
-    for (size_t i=0;ok && i<2 && renderer->opacity.allocated;++i) {
+    if (full && ok && renderer->output.table) ok=gl_level_capture(renderer,renderer->output.table,0,false,&saved->gamma,error);
+    saved->opacity_allocated=full && renderer->opacity.allocated;
+    for (size_t i=0;full && ok && i<2 && renderer->opacity.allocated;++i) {
         renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
         renderer->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,renderer->opacity.color[i],0);
         renderer->gl.FramebufferRenderbuffer(GL_READ_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,i==1?renderer->opacity.depth_stencil:0);
@@ -214,7 +214,7 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
         ok=gl_surface_capture(renderer,read_framebuffer,GL_COLOR_ATTACHMENT0,renderer->opacity.width,renderer->opacity.height,true,i==1,saved->opacity+i,error);
     }
     gl_saved_texture **texture_tail=&saved->textures;
-    for (gl_texture_entry *entry=renderer->textures;ok && entry;entry=entry->next) {
+    for (gl_texture_entry *entry=renderer->textures;full && ok && entry;entry=entry->next) {
         gl_saved_texture *row=calloc(1,sizeof(*row));
         if (!row) { ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining genuine GPU texture continuation row"); break; }
         *texture_tail=row; texture_tail=&row->next; row->entry=entry; row->count=entry->image->level_count;
@@ -227,7 +227,7 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
             renderer->gl.GetTexParameteriv(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters+i);
     }
     gl_saved_mesh **mesh_tail=&saved->meshes;
-    for (gl_mesh_entry *entry=renderer->meshes;ok && entry;entry=entry->next) {
+    for (gl_mesh_entry *entry=renderer->meshes;full && ok && entry;entry=entry->next) {
         gl_saved_mesh *row=calloc(1,sizeof(*row));
         if (!row) { ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining real GPU cache geometry continuation row"); break; }
         *mesh_tail=row; mesh_tail=&row->next; row->entry=entry; row->active=qa_scene_geometry_active(entry->geometry);
@@ -241,8 +241,8 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
         if (row->indices.size) renderer->gl.GetBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,(GLsizeiptr)row->indices.size,row->indices.data);
         ok=gl_check(renderer,"Capturing genuine retained GPU mesh buffer storage",error);
     }
-    saved->stream_vertices=renderer->stream.vertex_buffer!=0; saved->stream_indices=renderer->stream.index_buffer!=0;
-    saved->target_allocated=renderer->target_framebuffer!=0; saved->fog_allocated=renderer->fog_depth!=0;
+    saved->stream_vertices=full && renderer->stream.vertex_buffer!=0; saved->stream_indices=full && renderer->stream.index_buffer!=0;
+    saved->target_allocated=full && renderer->target_framebuffer!=0; saved->fog_allocated=full && renderer->fog_depth!=0;
     if (read_framebuffer) renderer->gl.DeleteFramebuffers(1,&read_framebuffer);
     renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.ReadBuffer((GLenum)native_read_buffer);
     gl_cut_restore(renderer,&cut); renderer->capturing=false;
@@ -511,8 +511,64 @@ bool qa_gl_checkpoint(qa_gl_renderer *renderer,const qa_render_checkpoint_refs *
     if (!out || out->data || out->size) return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU checkpoint requires empty owned output");
     gl_restore_storage *saved=calloc(1,sizeof(*saved));
     if (!saved) return gl_save_error(error,QA_ERROR_MEMORY,"Retaining completed GPU owner continuation");
-    bool ok=gl_gpu_capture(renderer,saved,error) && gl_saved_write(renderer,saved,refs,out,error);
+    bool ok=gl_gpu_capture(renderer,saved,true,error) && gl_saved_write(renderer,saved,refs,out,error);
     gl_saved_dispose(saved,NULL); return ok;
+}
+static bool gl_saved_copy_pixels(qa_buffer *out,const qa_buffer *source,qa_error *error)
+{
+    if (!gl_save_allocate(out,source->size,error)) return false;
+    if (source->size) memcpy(out->data,source->data,source->size);
+    return true;
+}
+bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_renderer *active,
+    qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
+{
+    if (!out || !guard_out || !options || !options->display || !active || !isfinite(gamma) || gamma<0.5f || gamma>3)
+        return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires a real display, renderer cut, and supported gamma");
+    *out=NULL; *guard_out=NULL;
+    qa_display_info info={0};
+    if (!qa_display_info_get(options->display,&info,error) || info.backend!=QA_DISPLAY_OPENGL)
+        return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires its actual OpenGL display");
+    qa_gl_renderer *candidate=calloc(1,sizeof(*candidate));
+    gl_restore_storage *saved=calloc(1,sizeof(*saved));
+    qa_gl_restore_guard *guard=calloc(1,sizeof(*guard));
+    if (!candidate || !saved || !guard) {
+        free(candidate); free(saved); free(guard);
+        return gl_save_error(error,QA_ERROR_MEMORY,"Allocating fresh detached GPU owners");
+    }
+    candidate->options=*options; candidate->detached=true; candidate->restore=saved;
+    candidate->capabilities=active->capabilities; candidate->draw_buffer=QA_DRAW_BACK; candidate->gamma=gamma;
+    candidate->view.viewport=(qa_scene_rect){0,0,info.drawable_width,info.drawable_height}; candidate->view.depth=1;
+    bool ok=gl_gpu_capture(active,saved,false,error) && saved->width==info.drawable_width && saved->height==info.drawable_height;
+    if (ok && gamma!=1) {
+        unsigned slot=gl_draw_buffer_index(QA_DRAW_BACK);
+        size_t native=active->capabilities.stereo?2:1;
+        gl_saved_surface *surface=saved->output+slot;
+        surface->width=saved->width; surface->height=saved->height;
+        surface->floating_depth=saved->native[0].floating_depth;
+        ok=gl_saved_copy_pixels(&surface->color,&saved->native[native].color,error) &&
+            gl_saved_copy_pixels(&surface->depth,&saved->native[0].depth,error) &&
+            gl_saved_copy_pixels(&surface->stencil,&saved->native[0].stencil,error) &&
+            gl_save_allocate(&saved->gamma.pixels,256*4,error);
+        if (ok) {
+            uint8_t table[256]; gl_gamma_table(gamma,table);
+            for (size_t i=0;i<256;++i) {
+                uint8_t *pixel=saved->gamma.pixels.data+i*4;
+                pixel[0]=pixel[1]=pixel[2]=table[i]; pixel[3]=255;
+            }
+            saved->gamma.width=256; saved->gamma.height=1; saved->gamma.internal=GL_LUMINANCE8;
+            saved->output_allocated=true; candidate->output.enabled=true;
+            candidate->output.width=saved->width; candidate->output.height=saved->height;
+            candidate->output.color_ready[slot]=true; candidate->output.dirty[slot]=true;
+        }
+    }
+    if (!ok) {
+        qa_gl_destroy(candidate); free(guard);
+        if (error && error->code==QA_OK) gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU drawable does not match its retained native cut");
+        return false;
+    }
+    guard->active=active; guard->candidate=candidate; guard->saved=saved;
+    *out=candidate; *guard_out=guard; return true;
 }
 bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_checkpoint_refs *refs,
     const qa_gl_renderer *active,qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)

@@ -913,6 +913,16 @@ bool qa_display_checkpoint(qa_display *display,qa_buffer *out,qa_error *error)
     if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Invalid genuine display continuation");
     return ok;
 }
+bool qa_display_create_detached(qa_display *active,qa_display **out,
+    qa_display_restore_guard **guard_out,qa_error *error)
+{
+    if (!out || *out || !guard_out || *guard_out)
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Fresh detached display requires empty owner/guard destinations");
+    qa_buffer current={0};
+    bool ok=qa_display_checkpoint(active,&current,error) &&
+        qa_display_restore((qa_bytes){current.data,current.size},active,out,guard_out,error);
+    qa_buffer_free(&current); return ok;
+}
 bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out,qa_display_restore_guard **guard_out,qa_error *error)
 {
     if (!active || active->native_borrowed || !active->lease || active->lease->references==SIZE_MAX || !out || *out || !guard_out || *guard_out)

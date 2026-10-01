@@ -6,6 +6,9 @@ bool qa_display_checkpoint(qa_display *,qa_buffer *,qa_error *);
 /* Distinct heap owner borrowing the same qualified native window/context.
  * Saved presentation storage stays detached until final native preparation. */
 bool qa_display_restore(qa_bytes,const qa_display *,qa_display **,qa_display_restore_guard **,qa_error *);
+/* Fresh frontend construction retains the actual completed native display cut
+ * and window lease without creating another window or publishing a frame. */
+bool qa_display_create_detached(qa_display *,qa_display **,qa_display_restore_guard **,qa_error *);
 bool qa_display_restore_checkpoint(const qa_display_restore_guard *,qa_buffer *,qa_error *);
 bool qa_display_handoff_prepare(qa_display_restore_guard *,qa_error *);
 bool qa_display_handoff_ready(const qa_display_restore_guard *,qa_error *);
