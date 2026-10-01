@@ -51,7 +51,8 @@ static bool held_declaration(qa_frontend *frontend, const qa_application_equipme
     memcpy(path, view->view_model, length);
     memcpy(path + length, ".held.json", sizeof(".held.json"));
     bool found = false;
-    bool ok = qa_vfs_probe(row->owner.mounts, path, &found, NULL, error);
+    uint64_t size;
+    bool ok = qa_vfs_probe(row->owner.mounts, path, &found, &size, error);
     if (ok && found) {
         qa_resource *source = NULL;
         ok = qa_vfs_acquire(row->owner.mounts, path, &source, NULL, error);
@@ -73,10 +74,11 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
     if (row->declaration.none) return true;
     const char *path = row->declaration.path;
     bool found = false;
-    if (!qa_vfs_probe(row->owner.mounts, path, &found, NULL, error)) return false;
+    uint64_t size;
+    if (!qa_vfs_probe(row->owner.mounts, path, &found, &size, error)) return false;
     if (!found && row->declaration.fallback) {
         path = row->declaration.fallback;
-        if (!qa_vfs_probe(row->owner.mounts, path, &found, NULL, error)) return false;
+        if (!qa_vfs_probe(row->owner.mounts, path, &found, &size, error)) return false;
     }
     if (!found) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Actual source held model is absent");
     if (!frontend_visual_model_acquire(frontend, row->provider, row->family, path, NULL,
@@ -184,7 +186,8 @@ bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
     memcpy(path, view->view_model, length);
     memcpy(path + length, ".held.json", sizeof(".held.json"));
     bool found = false;
-    bool okay = qa_vfs_probe(owner.mounts, path, &found, NULL, error);
+    uint64_t size;
+    bool okay = qa_vfs_probe(owner.mounts, path, &found, &size, error);
     qa_resource *resource = NULL; frontend_held_declaration declaration = {0};
     if (okay && found) okay = qa_vfs_acquire(owner.mounts, path, &resource, NULL, error) &&
         frontend_held_declaration_read(resource, &declaration, error);

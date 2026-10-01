@@ -2,6 +2,7 @@
 #define QA_INPUT_PLATFORM_H
 #include "qa/display.h"
 #include "qa/input.h"
+#include "qa/input_release.h"
 #include <SDL2/SDL.h>
 
 #define QA_INPUT_LOCAL_SEATS 4
@@ -43,6 +44,8 @@ typedef struct qa_input_platform_options {
  * native device handles, never calls SDL_PollEvent/Init/Quit, and survives
  * window replacement. It must be destroyed before SDL shuts down. */
 qa_input_platform *qa_input_platform_create(const qa_input_platform_options *, qa_error *);
+/* Complete checked settings abort/publication before destruction. A retained
+ * nonterminal settings ticket keeps its native owner alive. */
 void qa_input_platform_destroy(qa_input_platform *);
 /* Atomic validation/copy of selections precedes release. Slots remain stable
  * when a seat is removed; a NULL seat makes that slot unavailable. */
@@ -59,6 +62,45 @@ bool qa_input_platform_event(qa_input_platform *, const SDL_Event *, double now_
                              qa_error *);
 bool qa_input_platform_frame(qa_input_platform *, double now_ms, qa_error *);
 bool qa_input_platform_restart(qa_input_platform *, double now_ms, qa_error *);
+typedef struct qa_input_platform_settings {
+    bool mouse_available, no_grab, joystick_enabled, windows_joystick, midi_enabled, restart_requested;
+    int joystick_seat, midi_seat, midi_device, midi_channel;
+    float joystick_threshold, joystick_ball_scale;
+} qa_input_platform_settings;
+typedef struct qa_input_platform_settings_ticket qa_input_platform_settings_ticket;
+typedef struct qa_input_platform_settings_requirements {
+    bool source_changed, midi_changed;
+    int source_slot, next_source_slot, midi_slot, next_midi_slot;
+    int32_t joystick_instance, next_joystick_instance;
+    unsigned controller_routes;
+} qa_input_platform_settings_requirements;
+/* Desired scalar values come from the admitted canonical settings ticket.
+ * Preparation retains active native endpoints and the exact physical routes;
+ * configuration entries are the actual prepared same-seat owners, or their
+ * unchanged active owners. Keep them alive through readiness and termination.
+ * Preparation never writes cvars or dispatches input/console callbacks. A returned
+ * ticket, including on preparation failure, requires checked abort before
+ * destruction. Readiness must precede publication under the held boundary. */
+bool qa_input_platform_settings_prepare(qa_input_platform *, const qa_input_platform_settings *,
+    qa_input_seat *const configuration[4], double now_ms, qa_input_platform_settings_ticket **, qa_error *);
+bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *,
+    qa_input_platform_settings_requirements *, qa_error *);
+const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *);
+qa_input_seat *qa_input_platform_settings_seat(const qa_input_platform_settings_ticket *, unsigned slot);
+/* Exact retained source or MIDI pressed keys, used by the real release
+ * continuation. No key events are dispatched and no native decoder changes. */
+bool qa_input_platform_settings_keys(const qa_input_platform_settings_ticket *, bool midi,
+    int *keys, size_t capacity, size_t *count, qa_error *);
+bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_ticket *, unsigned slot,
+    qa_input_release_scope *, int *keys, size_t capacity, qa_error *);
+/* Borrowed requested-device diagnostic; emit only after publication, outside
+ * its handoff, and before ticket destruction. Aborted warnings are discarded. */
+const char *qa_input_platform_settings_diagnostic(const qa_input_platform_settings_ticket *);
+bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *,
+    const qa_input_release *const release[4], qa_error *);
+bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_error *);
+void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *);
+bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket *, qa_error *);
 size_t qa_input_platform_device_count(const qa_input_platform *);
 bool qa_input_platform_device(const qa_input_platform *, size_t, qa_controller_info *);
 typedef struct qa_controller_snapshot {

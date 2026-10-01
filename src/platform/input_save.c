@@ -21,6 +21,24 @@ static bool integer(qa_source_save_io *io, int *value)
     if (io->direction == QA_SOURCE_SAVE_READ) *value = saved;
     return true;
 }
+static bool motor_fields(qa_source_save_io *io, input_motor_output *v, const input_motor_output *native)
+{
+    if (!qa_source_save_bool(io, &v->requested) || !qa_source_save_bool(io, &v->applied) ||
+        !qa_source_save_u16(io, &v->low) || !qa_source_save_u16(io, &v->high) ||
+        !qa_source_save_u32(io, &v->duration) || !qa_source_save_u64(io, &v->ticks) ||
+        (!v->requested && (v->applied || v->low || v->high || v->duration || v->ticks))) return false;
+    return io->direction != QA_SOURCE_SAVE_READ || (native &&
+        v->requested == native->requested && v->applied == native->applied &&
+        v->low == native->low && v->high == native->high &&
+        v->duration == native->duration && v->ticks == native->ticks);
+}
+static bool sensor_fields(qa_source_save_io *io, input_sensor_output *v, const input_sensor_output *native)
+{
+    if (!qa_source_save_bool(io, &v->requested) || !qa_source_save_bool(io, &v->applied) ||
+        !qa_source_save_bool(io, &v->enabled) || (!v->requested && (v->applied || v->enabled))) return false;
+    return io->direction != QA_SOURCE_SAVE_READ || (native &&
+        v->requested == native->requested && v->applied == native->applied && v->enabled == native->enabled);
+}
 static bool text(qa_source_save_io *io, char **value)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, present = *value != NULL;
@@ -88,7 +106,7 @@ static bool info_fields(qa_source_save_io *io, qa_controller_info *info,
 }
 static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error *error)
 {
-    if (!p || !p->native_owned || p->native_initializing || !out || out->data || out->size)
+    if (!p || !p->native_owned || p->native_initializing || p->settings_ticket || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "platform native cut requires its actual live owner");
     qa_source_save_io io = {0};
     size_t count = p->device_count;
@@ -98,6 +116,12 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error 
         success = p->devices[i].handle && SDL_GameControllerGetAttached(p->devices[i].handle) == SDL_TRUE &&
             SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(p->devices[i].handle)) == p->devices[i].info.instance &&
             qa_input_platform_device(p, i, &info) && info_fields(&io, &info, NULL);
+        input_motor_output rumble = p->devices[i].rumble, triggers = p->devices[i].triggers;
+        success = success && motor_fields(&io, &rumble, NULL) && motor_fields(&io, &triggers, NULL);
+        for (unsigned sensor = 0; success && sensor < 6; ++sensor) {
+            input_sensor_output output = p->devices[i].sensor_output[sensor];
+            success = sensor_fields(&io, &output, NULL);
+        }
     }
     bool joystick = p->joystick != NULL, midi = p->midi_fd >= 0;
     int32_t instance = p->joystick_instance;
@@ -110,6 +134,8 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error 
             SDL_JoystickInstanceID(p->joystick) == instance && text(&io, &name) &&
             qa_source_save_bytes(&io, guid, sizeof(guid));
     }
+    input_motor_output source_output = p->joystick_rumble;
+    success = success && motor_fields(&io, &source_output, NULL);
     success = success && qa_source_save_bool(&io, &midi);
     if (success && midi) {
         struct stat status;
@@ -177,6 +203,11 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
         qa_controller_info info = p->devices[i].info;
         if (!info_fields(io, &info, reading ? &native->devices[i].info : NULL)) return false;
         if (reading) { p->devices[i].info = info; p->devices[i].handle = native->devices[i].handle; }
+        if (!motor_fields(io, &p->devices[i].rumble, reading ? &native->devices[i].rumble : NULL) ||
+            !motor_fields(io, &p->devices[i].triggers, reading ? &native->devices[i].triggers : NULL)) return false;
+        for (unsigned sensor = 0; sensor < 6; ++sensor)
+            if (!sensor_fields(io, &p->devices[i].sensor_output[sensor],
+                reading ? &native->devices[i].sensor_output[sensor] : NULL)) return false;
     }
     for (unsigned i = 0; i < 4; ++i) {
         struct seat_route *r = &p->seats[i];
@@ -209,6 +240,7 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
         if (joystick != (native->joystick != NULL) || p->joystick_instance != native->joystick_instance) return false;
         p->joystick = native->joystick;
     }
+    if (!motor_fields(io, &p->joystick_rumble, reading ? &native->joystick_rumble : NULL)) return false;
     for (unsigned i = 0; i < 16; ++i) {
         uint16_t axis; memcpy(&axis, &p->source.axes[i], sizeof(axis));
         if (!qa_source_save_u16(io, &axis)) return false;
@@ -251,9 +283,9 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
     const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic)
 {
     uint8_t magic[4] = {'Q','I','P','L'};
-    uint32_t version = 2, callbacks = services(&p->options);
+    uint32_t version = 3, callbacks = services(&p->options);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &callbacks) &&
+        qa_source_save_u32(io, &version) && version == 3 && qa_source_save_u32(io, &callbacks) &&
         callbacks == services(&p->options) && blob(io, native_cut) &&
         state_fields(io, p, native, refs) && blob(io, haptic);
 }
@@ -279,7 +311,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
     qa_input_seat *const seats[4], const qa_controller_selection selections[4], int keyboard,
     const qa_display *display, double now, qa_input_platform_restore_guard **out, qa_error *error)
 {
-    if (!p || p->native_owned || !active || !active->native_owned || active->native_initializing ||
+    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->native_initializing || active->settings_ticket ||
         !out || *out || p->devices || p->joystick || p->midi_fd >= 0 ||
         !input_platform_haptic_bindings_ready(p) || !input_platform_haptic_bindings_ready(active) ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
@@ -319,6 +351,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
     if (success) {
         candidate->joystick = active->joystick;
         candidate->joystick_instance = active->joystick_instance;
+        candidate->joystick_rumble = active->joystick_rumble;
         candidate->midi_fd = active->midi_fd;
         candidate->window = info.window_id;
         candidate->old_relative = active->old_relative;
@@ -342,7 +375,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
     const qa_input_platform_checkpoint_refs *refs, qa_bytes bytes,
     qa_input_platform_restore_guard **out, qa_error *error)
 {
-    if (!p || p->native_owned || !active || !active->native_owned || !refs || !refs->seat_decode || !out || *out ||
+    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->settings_ticket || !refs || !refs->seat_decode || !out || *out ||
         !input_platform_haptic_bindings_ready(p) || p->devices || p->joystick || p->midi_fd >= 0 ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
         p->options.assignment_changed != active->options.assignment_changed)
@@ -374,8 +407,8 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
 }
 bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *g, qa_error *error)
 {
-    if (!g || g->applied || !g->candidate || g->candidate->native_owned || g->candidate->native_initializing ||
-        !g->active || !g->active->native_owned || g->active->native_initializing ||
+    if (!g || g->applied || !g->candidate || g->candidate->native_owned || g->candidate->native_initializing || g->candidate->settings_ticket ||
+        !g->active || !g->active->native_owned || g->active->native_initializing || g->active->settings_ticket ||
         !input_platform_haptic_bindings_ready(g->candidate) || !input_platform_haptic_bindings_ready(g->active) ||
         g->candidate->device_count != g->active->device_count || g->candidate->joystick != g->active->joystick ||
         g->candidate->midi_fd != g->active->midi_fd || g->candidate->window != g->active->window)

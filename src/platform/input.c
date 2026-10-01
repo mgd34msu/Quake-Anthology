@@ -20,7 +20,11 @@ static bool failed(qa_error *error, const char *operation) {
     return false;
 }
 static bool native_owner(qa_input_platform *p, qa_error *error) {
-    if (p && p->native_owned) return true;
+    if (p && p->native_owned && !p->settings_ticket) return true;
+    if (p && p->settings_ticket) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Native input is retained by its settings preparation");
+        return false;
+    }
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached platform has no native input ownership");
     return false;
 }
@@ -96,20 +100,44 @@ static bool midi_release(qa_input_platform *p, double time, qa_error *error) {
     p->midi = (qa_midi_decoder){0};
     return ok;
 }
+static bool controller_motor(struct device *d, bool triggers, uint16_t low, uint16_t high,
+    uint32_t duration, qa_error *error) {
+    input_motor_output next = {.requested = true, .low = low, .high = high,
+        .duration = duration, .ticks = SDL_GetTicks64()};
+    int result = triggers ? SDL_GameControllerRumbleTriggers(d->handle, low, high, duration) :
+        SDL_GameControllerRumble(d->handle, low, high, duration);
+    next.applied = result == 0;
+    *(triggers ? &d->triggers : &d->rumble) = next;
+    return next.applied || failed(error, triggers ? "Controller trigger rumble" : "Controller rumble");
+}
+static bool source_motor(qa_input_platform *p, uint16_t low, uint16_t high,
+    uint32_t duration, qa_error *error) {
+    struct device *d = device(p, p->joystick_instance);
+    if (d) return controller_motor(d, false, low, high, duration, error);
+    input_motor_output next = {.requested = true, .low = low, .high = high,
+        .duration = duration, .ticks = SDL_GetTicks64()};
+    next.applied = SDL_JoystickRumble(p->joystick, low, high, duration) == 0;
+    p->joystick_rumble = next;
+    return next.applied || failed(error, "Source joystick rumble");
+}
+static bool controller_sensor(struct device *d, SDL_SensorType sensor, bool enabled, qa_error *error) {
+    input_sensor_output next = {.requested = true, .enabled = enabled};
+    next.applied = SDL_GameControllerSetSensorEnabled(d->handle, sensor,
+        enabled ? SDL_TRUE : SDL_FALSE) == 0;
+    d->sensor_output[(unsigned)sensor - 1] = next;
+    return next.applied || failed(error, "Controller sensor");
+}
 static bool stop_device(qa_input_platform *p, int32_t instance, qa_error *error) {
     struct device *d = device(p, instance);
     if (!d || !SDL_GameControllerGetAttached(d->handle))
         return true;
     bool ok = true;
-    if (d->info.rumble && SDL_GameControllerRumble(d->handle, 0, 0, 0) < 0)
-        ok = failed(error, "Stopping controller rumble");
-    if (d->info.trigger_rumble && SDL_GameControllerRumbleTriggers(d->handle, 0, 0, 0) < 0)
-        ok = failed(error, "Stopping trigger rumble");
+    if (d->info.rumble && !controller_motor(d, false, 0, 0, 0, error)) ok = false;
+    if (d->info.trigger_rumble && !controller_motor(d, true, 0, 0, 0, error)) ok = false;
     for (unsigned i = 0; i < 6; ++i)
         if (d->info.sensors[i] &&
             SDL_GameControllerIsSensorEnabled(d->handle, (SDL_SensorType)(i + 1)) &&
-            SDL_GameControllerSetSensorEnabled(d->handle, (SDL_SensorType)(i + 1), SDL_FALSE) < 0)
-            ok = failed(error, "Disabling controller sensor");
+            !controller_sensor(d, (SDL_SensorType)(i + 1), false, error)) ok = false;
     return ok;
 }
 static void describe(struct device *d) {
@@ -178,6 +206,10 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
             }
             p->devices = grown;
             p->device_capacity = capacity;
+        }
+        if (p->joystick && p->joystick_instance == instance) {
+            next.rumble = p->joystick_rumble;
+            p->joystick_rumble = (input_motor_output){0};
         }
         p->devices[p->device_count++] = next;
         if (p->options.device_changed)
@@ -374,7 +406,8 @@ static bool release_all(qa_input_platform *p, double time, qa_error *error) {
     return ok;
 }
 void qa_input_platform_destroy(qa_input_platform *p) {
-    if (!p)
+    /* A failed checked abort retains its real endpoints and their owner. */
+    if (!p || p->settings_ticket)
         return;
     qa_error ignored = {0};
     if (p->native_owned) {
@@ -775,6 +808,7 @@ bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, doubl
             SDL_JoystickClose(p->joystick);
             p->joystick = NULL;
             p->joystick_instance = -1;
+            p->joystick_rumble = (input_motor_output){0};
             report(p, "SDL source joystick disconnected.\n");
             return ok;
         }
@@ -1023,6 +1057,574 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
     p->midi_fd = fd;
     return true;
 }
+typedef struct input_output_transition {
+    struct device *device;
+    input_motor_output rumble, triggers;
+    bool motor_attempted[2];
+    bool retire_motors;
+    bool sensor_enabled[6], sensor_desired[6], sensor_attempted[6];
+} input_output_transition;
+struct qa_input_platform_settings_ticket {
+    qa_input_platform *platform;
+    qa_input_platform_settings desired;
+    qa_input_platform_settings_requirements requirements;
+    unsigned haptic_routes, calibration_routes;
+    struct seat_route routes[4];
+    qa_input_seat *configuration[4];
+    bool gyro_enabled[4], previous_gyro_enabled[4];
+    SDL_Window *window;
+    uint32_t window_id;
+    int keyboard;
+    bool focused;
+    qa_input_focus focus;
+    SDL_Joystick *joystick, *previous_joystick;
+    int32_t joystick_instance;
+    int midi_fd, previous_midi_fd;
+    qa_midi_device *midi_devices;
+    size_t midi_count;
+    double now;
+    input_output_transition *outputs;
+    size_t output_count;
+    input_motor_output source_rumble;
+    bool source_motor_attempted;
+    bool owns_joystick, owns_midi, owns_midi_devices;
+    bool previous_relative, previous_grab, previous_text, relative, text;
+    bool capture_attempted, prepared, aborting, terminal, published;
+    char diagnostic[320];
+};
+static uint32_t motor_remaining(const input_motor_output *v) {
+    uint64_t now = SDL_GetTicks64();
+    uint64_t elapsed = now >= v->ticks ? now - v->ticks : 0;
+    return elapsed < v->duration ? v->duration - (uint32_t)elapsed : 0;
+}
+static bool motor_retirement_known(const input_motor_output *v, qa_error *error) {
+    if (!v->requested || v->applied) return true;
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
+        "Native motor retirement requires a retained successful output request");
+    return false;
+}
+static int32_t settings_controller(const qa_input_platform_settings_ticket *t, unsigned slot) {
+    const struct seat_route *r = &t->routes[slot];
+    if (!r->seat) return -1;
+    if (t->requirements.next_source_slot == (int)slot && t->joystick_instance >= 0)
+        return t->joystick_instance;
+    return r->instance == t->joystick_instance ? -1 : r->instance;
+}
+static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_error *error) {
+    qa_input_platform *p = t->platform;
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->gyro_enabled[slot] &&
+        !t->previous_gyro_enabled[slot] && !device(p, settings_controller(t, slot))) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Requested gyro configuration has no native controller sensor owner");
+        return false;
+    }
+    if (p->device_count) {
+        t->outputs = calloc(p->device_count, sizeof(*t->outputs));
+        if (!t->outputs) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining native input output transitions");
+            return false;
+        }
+    }
+    /* Preflight every retirement before issuing the first native output. */
+    for (size_t i = 0; i < p->device_count; ++i) {
+        struct device *d = &p->devices[i]; bool affected = false;
+        for (unsigned slot = 0; slot < 4; ++slot) if (t->haptic_routes & (1u << slot)) {
+            const struct seat_route *r = &t->routes[slot];
+            if (d->info.instance == r->haptic_instance ||
+                ((t->requirements.controller_routes & (1u << slot)) && d->info.instance == r->instance)) affected = true;
+        }
+        if (t->requirements.source_changed &&
+            (d->info.instance == p->joystick_instance || d->info.instance == t->joystick_instance)) affected = true;
+        bool retire_motors = affected;
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (((t->calibration_routes & (1u << slot)) && t->routes[slot].calibration_sensor &&
+                    t->routes[slot].calibration_instance == d->info.instance) ||
+                ((qa_input_platform_controller(p, slot) == d->info.instance || settings_controller(t, slot) == d->info.instance) &&
+                t->gyro_enabled[slot] != t->previous_gyro_enabled[slot])) affected = true;
+        if (!affected) continue;
+        if (SDL_GameControllerGetAttached(d->handle) != SDL_TRUE)
+            return failed(error, "Retained controller disconnected during input preparation");
+        if (retire_motors && (!motor_retirement_known(&d->rumble, error) ||
+            !motor_retirement_known(&d->triggers, error))) return false;
+        input_output_transition *v = &t->outputs[t->output_count++];
+        v->device = d; v->rumble = d->rumble; v->triggers = d->triggers;
+        v->retire_motors = retire_motors;
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (settings_controller(t, slot) == d->info.instance && t->gyro_enabled[slot] &&
+                !t->previous_gyro_enabled[slot] && !d->info.sensors[SDL_SENSOR_GYRO - 1]) {
+                qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Prepared controller has no requested gyro sensor");
+                return false;
+            }
+        for (unsigned sensor = 0; sensor < 6; ++sensor) if (d->info.sensors[sensor]) {
+            v->sensor_enabled[sensor] = SDL_GameControllerIsSensorEnabled(d->handle,
+                (SDL_SensorType)(sensor + 1)) == SDL_TRUE;
+            v->sensor_desired[sensor] = v->sensor_enabled[sensor];
+        }
+        if (d->info.sensors[SDL_SENSOR_GYRO - 1]) {
+            bool enabled = false, changed = false;
+            for (unsigned slot = 0; slot < 4; ++slot) {
+                const struct seat_route *r = &t->routes[slot];
+                if (r->seat && settings_controller(t, slot) == d->info.instance) {
+                    if (t->gyro_enabled[slot]) enabled = true;
+                }
+                if (t->gyro_enabled[slot] != t->previous_gyro_enabled[slot] &&
+                    (qa_input_platform_controller(p, slot) == d->info.instance ||
+                        settings_controller(t, slot) == d->info.instance)) changed = true;
+                if ((t->calibration_routes & (1u << slot)) && r->calibration_sensor &&
+                    r->calibration_instance == d->info.instance) changed = true;
+            }
+            if (changed) v->sensor_desired[SDL_SENSOR_GYRO - 1] = enabled;
+        }
+    }
+    if (t->requirements.source_changed && p->joystick && !device(p, p->joystick_instance)) {
+        t->source_rumble = p->joystick_rumble;
+        if (!motor_retirement_known(&t->source_rumble, error)) return false;
+    }
+    for (size_t i = 0; i < t->output_count; ++i) {
+        input_output_transition *v = &t->outputs[i];
+        input_motor_output *motors[2] = {&v->rumble, &v->triggers};
+        for (unsigned motor = 0; motor < 2; ++motor) {
+            const input_motor_output *old = motors[motor];
+            if (!v->retire_motors || !old->requested || !(old->low || old->high) || !motor_remaining(old)) continue;
+            v->motor_attempted[motor] = true;
+            if (!controller_motor(v->device, motor != 0, 0, 0, 0, error)) return false;
+        }
+        for (unsigned sensor = 0; sensor < 6; ++sensor) {
+            if (v->sensor_enabled[sensor] == v->sensor_desired[sensor]) continue;
+            v->sensor_attempted[sensor] = true;
+            if (!controller_sensor(v->device, (SDL_SensorType)(sensor + 1), v->sensor_desired[sensor], error)) return false;
+        }
+    }
+    if (t->source_rumble.requested && (t->source_rumble.low || t->source_rumble.high) &&
+        motor_remaining(&t->source_rumble)) {
+        t->source_motor_attempted = true;
+        if (!source_motor(p, 0, 0, 0, error)) return false;
+    }
+    return true;
+}
+static bool settings_outputs_abort(qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (t->source_motor_attempted) {
+        uint32_t remaining = motor_remaining(&t->source_rumble);
+        if (!source_motor(t->platform, remaining ? t->source_rumble.low : 0,
+            remaining ? t->source_rumble.high : 0, remaining, error)) return false;
+        t->source_motor_attempted = false;
+    }
+    for (size_t i = t->output_count; i > 0; --i) {
+        input_output_transition *v = &t->outputs[i - 1];
+        for (unsigned sensor = 6; sensor > 0; --sensor) if (v->sensor_attempted[sensor - 1]) {
+            if (!controller_sensor(v->device, (SDL_SensorType)sensor, v->sensor_enabled[sensor - 1], error)) return false;
+            if ((SDL_GameControllerIsSensorEnabled(v->device->handle, (SDL_SensorType)sensor) == SDL_TRUE) !=
+                v->sensor_enabled[sensor - 1]) {
+                qa_error_set(error, QA_ERROR_IO, 0, "Input sensor abort did not restore its retained native mode");
+                return false;
+            }
+            v->sensor_attempted[sensor - 1] = false;
+        }
+        for (unsigned motor = 2; motor > 0; --motor) if (v->motor_attempted[motor - 1]) {
+            const input_motor_output *old = motor == 2 ? &v->triggers : &v->rumble;
+            uint32_t remaining = motor_remaining(old);
+            if (!controller_motor(v->device, motor == 2, remaining ? old->low : 0,
+                remaining ? old->high : 0, remaining, error)) return false;
+            v->motor_attempted[motor - 1] = false;
+        }
+    }
+    return true;
+}
+static bool settings_current(const qa_input_platform_settings_ticket *t, qa_error *error) {
+    qa_input_platform *p = t ? t->platform : NULL;
+    if (!p || t->terminal || p->settings_ticket != t || !p->native_owned ||
+        p->native_initializing || p->native_startup != INPUT_NATIVE_READY ||
+        p->joystick != t->previous_joystick || p->midi_fd != t->previous_midi_fd ||
+        p->window != t->window_id || p->keyboard != t->keyboard ||
+        (t->window_id && SDL_GetWindowFromID(t->window_id) != t->window)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its actual native owner");
+        return false;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        const struct seat_route *a = &p->seats[i], *b = &t->routes[i];
+        if (a->seat != b->seat || a->instance != b->instance ||
+            a->selection.kind != b->selection.kind || a->selection.ordinal != b->selection.ordinal ||
+            memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) ||
+            a->selection.serial != b->selection.serial ||
+            a->haptic_instance != b->haptic_instance || a->calibration_instance != b->calibration_instance ||
+            a->calibration_sensor != b->calibration_sensor || memcmp(&a->haptic, &b->haptic, sizeof(a->haptic))) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its retained physical routes");
+            return false;
+        }
+        if (t->configuration[i] &&
+            qa_input_seat_gamepad_tuning(t->configuration[i])->gyro_enabled != t->gyro_enabled[i]) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared input gyro configuration changed");
+            return false;
+        }
+    }
+    qa_input_seat *s = t->keyboard >= 0 ? p->seats[t->keyboard].seat : NULL;
+    if ((s && qa_input_seat_focused(s)) != t->focused || (s && qa_input_seat_focus(s) != t->focus)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings capture lost its retained keyboard focus");
+        return false;
+    }
+    return true;
+}
+static bool settings_capture(const qa_input_platform_settings_ticket *t, bool relative,
+    bool grab, bool text, qa_error *error) {
+    bool success = true;
+    if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) &&
+        SDL_SetRelativeMouseMode(relative ? SDL_TRUE : SDL_FALSE) < 0)
+        success = failed(error, "Preparing input relative mouse capture");
+    if (t->window) SDL_SetWindowGrab(t->window, grab ? SDL_TRUE : SDL_FALSE);
+    if (text) SDL_StartTextInput(); else SDL_StopTextInput();
+    if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) ||
+        (t->window && SDL_GetWindowGrab(t->window) != (grab ? SDL_TRUE : SDL_FALSE)) ||
+        SDL_IsTextInputActive() != (text ? SDL_TRUE : SDL_FALSE)) {
+        if (success) qa_error_set(error, QA_ERROR_IO, 0, "Native input capture did not reach the prepared mode");
+        success = false;
+    }
+    return success;
+}
+static bool settings_open_midi(qa_input_platform_settings_ticket *t, qa_error *error) {
+    t->midi_fd = -1;
+    t->owns_midi_devices = true;
+    if (!qa_input_midi_devices(&t->midi_devices, &t->midi_count, error)) return false;
+    if (t->desired.midi_device < 0 || (size_t)t->desired.midi_device >= t->midi_count) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "MIDI device index %d is outside %zu devices",
+            t->desired.midi_device, t->midi_count);
+        return false;
+    }
+    int fd = open(t->midi_devices[t->desired.midi_device].path,
+        O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Opening MIDI input: %s", strerror(errno));
+        return false;
+    }
+    t->midi_fd = fd; t->owns_midi = true;
+    struct stat status;
+    if (fstat(fd, &status) < 0 || !S_ISCHR(status.st_mode)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "MIDI input is not a character device");
+        return false;
+    }
+    return true;
+}
+bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
+    qa_input_seat *const configuration[4], double now, qa_input_platform_settings_ticket **out, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    if (!desired || !configuration || !out || *out || !isfinite(now) || now < 0 ||
+        !isfinite(desired->joystick_threshold) || !isfinite(desired->joystick_ball_scale) ||
+        p->native_startup != INPUT_NATIVE_READY || p->native_initializing) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings require an idle native owner and empty ticket");
+        return false;
+    }
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        qa_input_seat *active = p->seats[slot].seat, *candidate = configuration[slot];
+        if ((active != NULL) != (candidate != NULL) ||
+            (active && active != candidate && !qa_input_seat_configuration_ready(active, candidate, error))) {
+            if (!error || error->code == QA_OK)
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings require the actual physical seat configurations");
+            return false;
+        }
+    }
+    qa_input_platform_settings_ticket *t = calloc(1, sizeof(*t));
+    if (!t) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining input settings preparation"); return false; }
+    t->platform = p; t->desired = *desired; t->now = now; t->keyboard = p->keyboard;
+    t->previous_joystick = t->joystick = p->joystick;
+    t->joystick_instance = p->joystick_instance;
+    t->previous_midi_fd = t->midi_fd = p->midi_fd;
+    t->midi_devices = p->midi_devices; t->midi_count = p->midi_count;
+    t->window_id = p->window; t->window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
+    memcpy(t->routes, p->seats, sizeof(t->routes));
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        t->configuration[slot] = configuration[slot];
+        t->gyro_enabled[slot] = configuration[slot] && qa_input_seat_gamepad_tuning(configuration[slot])->gyro_enabled;
+        t->previous_gyro_enabled[slot] = p->seats[slot].seat &&
+            qa_input_seat_gamepad_tuning(p->seats[slot].seat)->gyro_enabled;
+    }
+    qa_input_seat *keyboard = p->keyboard >= 0 ? p->seats[p->keyboard].seat : NULL;
+    t->focused = keyboard && qa_input_seat_focused(keyboard);
+    t->focus = keyboard ? qa_input_seat_focus(keyboard) : QA_INPUT_GAME;
+    t->previous_relative = SDL_GetRelativeMouseMode() == SDL_TRUE;
+    t->previous_grab = t->window && SDL_GetWindowGrab(t->window) == SDL_TRUE;
+    t->previous_text = SDL_IsTextInputActive() == SDL_TRUE;
+    p->settings_ticket = t; *out = t;
+    if (t->window_id && !t->window) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost the retained native window");
+        return false;
+    }
+    int source = desired->joystick_seat, midi = desired->midi_seat;
+    source = source >= 1 && source <= 4 && p->seats[source - 1].seat ? source - 1 : -1;
+    midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
+    bool enabled = integer(p, "in_joystick", 0) != 0;
+    bool acquire_source = desired->joystick_enabled &&
+        (desired->restart_requested || !enabled || desired->windows_joystick != p->windows_joystick);
+    if (acquire_source) {
+        int count = SDL_NumJoysticks();
+        if (count < 0) return failed(error, "Enumerating prepared source joystick");
+        t->joystick = NULL; t->joystick_instance = -1;
+        for (int index = 0; index < count; ++index) {
+            t->joystick = SDL_JoystickOpen(index);
+            if (t->joystick) break;
+        }
+        if (t->joystick) {
+            t->owns_joystick = true; t->joystick_instance = SDL_JoystickInstanceID(t->joystick);
+            if (t->joystick_instance < 0 || SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
+                return failed(error, "Qualifying prepared source joystick");
+        } else snprintf(t->diagnostic, sizeof(t->diagnostic), "No source joystick found.\n");
+    } else if (!desired->joystick_enabled) {
+        t->joystick = NULL; t->joystick_instance = -1;
+    }
+    bool midi_enabled = variable(p, "in_midi", 0) != 0;
+    bool acquire_midi = desired->midi_enabled &&
+        (desired->restart_requested || !midi_enabled || desired->midi_device != integer(p, "in_mididevice", 0));
+    if (acquire_midi) {
+        t->midi_devices = NULL; t->midi_count = 0;
+        qa_error warning = {0};
+        if (!settings_open_midi(t, &warning)) {
+            if (t->owns_midi) {
+                int fd = t->midi_fd; t->midi_fd = -1; t->owns_midi = false;
+                if (close(fd) < 0) {
+                    qa_error_set(error, QA_ERROR_IO, 0, "Closing unqualified MIDI input: %s", strerror(errno));
+                    return false;
+                }
+            }
+            size_t length = strlen(t->diagnostic);
+            snprintf(t->diagnostic + length, sizeof(t->diagnostic) - length, "WARNING: %s\n", warning.message);
+        }
+    } else if (!desired->midi_enabled) {
+        t->midi_fd = -1; t->midi_devices = NULL; t->midi_count = 0;
+        t->owns_midi_devices = true;
+    }
+    qa_input_platform_settings_requirements *r = &t->requirements;
+    *r = (qa_input_platform_settings_requirements){
+        .source_changed = desired->restart_requested || t->joystick_instance != p->joystick_instance || source != p->source_slot ||
+            desired->windows_joystick != p->windows_joystick || desired->joystick_enabled != enabled,
+        .midi_changed = desired->restart_requested || t->midi_fd != p->midi_fd || midi != p->midi_slot || desired->midi_channel != p->midi_channel,
+        .source_slot = p->source_slot, .next_source_slot = source,
+        .midi_slot = p->midi_slot, .next_midi_slot = midi,
+        .joystick_instance = p->joystick_instance, .next_joystick_instance = t->joystick_instance};
+    if (r->source_changed) for (unsigned i = 0; i < 4; ++i)
+        if (p->seats[i].seat && (desired->restart_requested || (p->seats[i].instance >= 0 &&
+            (p->seats[i].instance == p->joystick_instance || p->seats[i].instance == t->joystick_instance))))
+            r->controller_routes |= 1u << i;
+    t->haptic_routes = t->calibration_routes = r->controller_routes;
+    if (r->source_changed && p->source_slot >= 0) {
+        t->haptic_routes |= 1u << p->source_slot;
+        t->calibration_routes |= 1u << p->source_slot;
+    }
+    if (r->source_changed && source >= 0) t->calibration_routes |= 1u << source;
+    if (!settings_outputs_prepare(t, error)) return false;
+    t->relative = t->focused && t->focus == QA_INPUT_GAME && desired->mouse_available && !desired->no_grab;
+    t->text = t->focused && (t->focus == QA_INPUT_CONSOLE || t->focus == QA_INPUT_CHAT || t->focus == QA_INPUT_UI);
+    if (t->window) {
+        t->capture_attempted = true;
+        if (!settings_capture(t, t->relative, t->relative, t->text, error)) return false;
+    } else { t->relative = t->previous_relative; t->text = t->previous_text; }
+    t->prepared = true; return settings_current(t, error);
+}
+bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *t,
+    qa_input_platform_settings_requirements *out, qa_error *error) {
+    if (!out || !t || !t->prepared || !settings_current(t, error)) return false;
+    *out = t->requirements; return true;
+}
+const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *t) {
+    return t && t->prepared && !t->terminal ? t->platform : NULL;
+}
+qa_input_seat *qa_input_platform_settings_seat(const qa_input_platform_settings_ticket *t, unsigned slot) {
+    return t && t->prepared && !t->terminal && slot < 4 ? t->routes[slot].seat : NULL;
+}
+bool qa_input_platform_settings_keys(const qa_input_platform_settings_ticket *t, bool midi,
+    int *keys, size_t capacity, size_t *count, qa_error *error) {
+    if (!count || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
+    int held[272]; size_t length = 0;
+    if (midi) {
+        for (int key = 0; key < 256; ++key)
+            if (t->platform->midi_held[key]) held[length++] = key;
+    } else {
+        static const int axes[16] = {QA_KEY_LEFT, QA_KEY_RIGHT, QA_KEY_UP, QA_KEY_DOWN,
+            QA_KEY_JOY1 + 15, QA_KEY_JOY1 + 16, QA_KEY_JOY1 + 17, QA_KEY_JOY1 + 18,
+            QA_KEY_JOY1 + 19, QA_KEY_JOY1 + 20, QA_KEY_JOY1 + 21, QA_KEY_JOY1 + 22,
+            QA_KEY_JOY1 + 23, QA_KEY_JOY1 + 24, QA_KEY_JOY1 + 25, QA_KEY_JOY1 + 26};
+        for (unsigned key = 0; key < 256; ++key)
+            if (t->platform->source.buttons[key]) held[length++] = QA_KEY_JOY1 + (int)key;
+        for (unsigned axis = 0; axis < 16; ++axis) {
+            if (!(t->platform->source.old_axes & (1u << axis))) continue;
+            bool duplicate = false;
+            for (size_t i = 0; i < length; ++i) if (held[i] == axes[axis]) duplicate = true;
+            if (!duplicate) held[length++] = axes[axis];
+        }
+    }
+    *count = length;
+    if (capacity < length) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings pressed-key output is too small");
+        return false;
+    }
+    if (length) memcpy(keys, held, length * sizeof(*keys));
+    return true;
+}
+const char *qa_input_platform_settings_diagnostic(const qa_input_platform_settings_ticket *t) {
+    return t && t->prepared && t->published && t->diagnostic[0] ? t->diagnostic : NULL;
+}
+bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_ticket *t, unsigned slot,
+    qa_input_release_scope *out, int *keys, size_t capacity, qa_error *error) {
+    if (!out || slot >= 4 || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
+    int held[528], partial[272]; size_t length = 0, count = 0;
+    if (t->routes[slot].seat && t->requirements.source_changed && t->requirements.source_slot == (int)slot) {
+        if (!qa_input_platform_settings_keys(t, false, held, 528, &length, error)) return false;
+    }
+    if (t->routes[slot].seat && t->requirements.midi_changed && t->requirements.midi_slot == (int)slot) {
+        if (!qa_input_platform_settings_keys(t, true, partial, 272, &count, error)) return false;
+        for (size_t i = 0; i < count; ++i) {
+            bool duplicate = false;
+            for (size_t j = 0; j < length; ++j) if (held[j] == partial[i]) duplicate = true;
+            if (!duplicate) held[length++] = partial[i];
+        }
+    }
+    if (capacity < length) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input release scope pressed-key output is too small");
+        return false;
+    }
+    if (length) memcpy(keys, held, length * sizeof(*keys));
+    *out = (qa_input_release_scope){
+        .all = t->desired.restart_requested && t->routes[slot].seat,
+        .clear_gamepad = t->routes[slot].seat && ((t->requirements.controller_routes & (1u << slot)) != 0 ||
+            (t->requirements.source_changed && t->requirements.source_slot == (int)slot)),
+        .controller = (t->requirements.controller_routes & (1u << slot)) ? t->routes[slot].instance : -1,
+        .keys = keys, .key_count = length};
+    return true;
+}
+bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_error *error) {
+    if (!t || !t->prepared || t->aborting || !settings_current(t, error)) return false;
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
+        t->configuration[slot] != t->routes[slot].seat &&
+        !qa_input_seat_configuration_ready(t->routes[slot].seat, t->configuration[slot], error)) return false;
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        int keys[528]; qa_input_release_scope scope;
+        if (!qa_input_platform_settings_release_scope(t, slot, &scope, keys, 528, error)) return false;
+        if (scope.all || scope.clear_gamepad || scope.controller >= 0 || scope.key_count) {
+            if (!release) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint change has no completed source release continuation");
+                return false;
+            }
+            if (!qa_input_release_ready(release[slot], t->routes[slot].seat, &scope, error)) return false;
+        }
+    }
+    if (t->joystick && SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
+        return failed(error, "Prepared source joystick disconnected");
+    if (t->midi_fd >= 0) {
+        struct stat status;
+        if (fstat(t->midi_fd, &status) < 0 || !S_ISCHR(status.st_mode)) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Prepared MIDI input lost its actual character endpoint");
+            return false;
+        }
+    }
+    for (size_t i = 0; i < t->output_count; ++i) {
+        const input_output_transition *v = &t->outputs[i];
+        if (SDL_GameControllerGetAttached(v->device->handle) != SDL_TRUE)
+            return failed(error, "Prepared controller output lost its retained native device");
+        const input_motor_output *motors[2] = {&v->device->rumble, &v->device->triggers};
+        for (unsigned motor = 0; motor < 2; ++motor) if (v->motor_attempted[motor] &&
+            (!motors[motor]->requested || !motors[motor]->applied || motors[motor]->low ||
+                motors[motor]->high || motors[motor]->duration)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared native motor retirement changed");
+            return false;
+        }
+        for (unsigned sensor = 0; sensor < 6; ++sensor) if (v->device->info.sensors[sensor] &&
+            (SDL_GameControllerIsSensorEnabled(v->device->handle, (SDL_SensorType)(sensor + 1)) == SDL_TRUE) !=
+                v->sensor_desired[sensor]) return failed(error, "Prepared controller sensor mode changed");
+    }
+    if (t->source_motor_attempted && (!t->platform->joystick_rumble.requested ||
+        !t->platform->joystick_rumble.applied || t->platform->joystick_rumble.low ||
+        t->platform->joystick_rumble.high || t->platform->joystick_rumble.duration)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared source motor retirement changed");
+        return false;
+    }
+    return !t->window || (SDL_GetRelativeMouseMode() == (t->relative ? SDL_TRUE : SDL_FALSE) &&
+        SDL_GetWindowGrab(t->window) == (t->relative ? SDL_TRUE : SDL_FALSE) &&
+        SDL_IsTextInputActive() == (t->text ? SDL_TRUE : SDL_FALSE)) ||
+        failed(error, "Prepared input capture changed before publication");
+}
+bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (!t || t->terminal || !settings_current(t, error)) return false;
+    t->aborting = true;
+    if (t->capture_attempted) {
+        if (t->previous_text) SDL_StartTextInput(); else SDL_StopTextInput();
+        if (t->window) SDL_SetWindowGrab(t->window, t->previous_grab ? SDL_TRUE : SDL_FALSE);
+        bool success = true;
+        if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) &&
+            SDL_SetRelativeMouseMode(t->previous_relative ? SDL_TRUE : SDL_FALSE) < 0)
+            success = failed(error, "Restoring input relative mouse capture");
+        if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) ||
+            (t->window && SDL_GetWindowGrab(t->window) != (t->previous_grab ? SDL_TRUE : SDL_FALSE)) ||
+            SDL_IsTextInputActive() != (t->previous_text ? SDL_TRUE : SDL_FALSE)) {
+            if (success) qa_error_set(error, QA_ERROR_IO, 0, "Input capture abort did not restore the retained native modes");
+            success = false;
+        }
+        if (!success) return false;
+    }
+    if (!settings_outputs_abort(t, error)) return false;
+    bool success = true;
+    if (t->owns_midi) {
+        int fd = t->midi_fd; t->midi_fd = -1; t->owns_midi = false;
+        if (close(fd) < 0) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Closing aborted MIDI input: %s", strerror(errno)); success = false;
+        }
+    }
+    if (t->owns_midi_devices) { free(t->midi_devices); t->midi_devices = NULL; t->owns_midi_devices = false; }
+    if (t->owns_joystick) { SDL_JoystickClose(t->joystick); t->joystick = NULL; t->owns_joystick = false; }
+    t->platform->settings_ticket = NULL; t->terminal = true; return success;
+}
+void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
+    qa_input_platform *p = t->platform;
+    SDL_Joystick *previous_joystick = p->joystick;
+    bool retire_joystick = previous_joystick && (t->owns_joystick || previous_joystick != t->joystick);
+    p->joystick = t->joystick; p->joystick_instance = t->joystick_instance;
+    if (t->requirements.joystick_instance != t->requirements.next_joystick_instance)
+        p->joystick_rumble = (input_motor_output){0};
+    t->joystick = previous_joystick; t->owns_joystick = retire_joystick;
+    int previous_midi = p->midi_fd;
+    bool retire_midi = previous_midi >= 0 && previous_midi != t->midi_fd;
+    p->midi_fd = t->midi_fd; t->midi_fd = previous_midi; t->owns_midi = retire_midi;
+    if (t->owns_midi_devices) {
+        qa_midi_device *previous_devices = p->midi_devices;
+        p->midi_devices = t->midi_devices; p->midi_count = t->midi_count;
+        t->midi_devices = previous_devices;
+    }
+    p->mouse_available = t->desired.mouse_available;
+    p->windows_joystick = t->desired.windows_joystick;
+    p->source_slot = t->requirements.next_source_slot; p->midi_slot = t->requirements.next_midi_slot;
+    p->midi_channel = t->desired.midi_channel; p->now = t->now;
+    if (t->requirements.source_changed) p->source = (qa_source_joystick){0};
+    if (t->requirements.midi_changed) {
+        p->midi = (qa_midi_decoder){0};
+        memset(p->midi_held, 0, sizeof(p->midi_held));
+    }
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        struct seat_route *r = &p->seats[slot];
+        if (t->haptic_routes & (1u << slot)) {
+            qa_haptic_pattern_release(r->haptic.pattern);
+            r->haptic.pattern = NULL; r->haptic.last_index = -1;
+            r->haptic_instance = qa_input_platform_controller(p, slot);
+        }
+        if (r->seat && ((t->calibration_routes & (1u << slot)) ||
+            t->gyro_enabled[slot] != t->previous_gyro_enabled[slot])) {
+            qa_gamepad_calibration_reset(qa_input_seat_gamepad(r->seat));
+            r->calibration_sensor = false; r->calibration_instance = -1;
+        }
+    }
+    if (t->window) p->capture = t->relative;
+    p->settings_ticket = NULL; t->terminal = t->published = true;
+}
+bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (!t) return true;
+    if (!t->terminal) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket still retains its native preparation");
+        return false;
+    }
+    bool success = true;
+    if (t->owns_joystick) SDL_JoystickClose(t->joystick);
+    if (t->owns_midi && close(t->midi_fd) < 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Closing prepared MIDI input: %s", strerror(errno)); success = false;
+    }
+    if (t->owns_midi_devices) free(t->midi_devices);
+    free(t->outputs);
+    free(t); return success;
+}
 static bool restart_devices(qa_input_platform *p, double time, qa_error *error) {
     p->now = time;
     if (!qa_input_device_settings_register(p->options.cvars, error) ||
@@ -1044,6 +1646,7 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
         SDL_JoystickClose(p->joystick);
     p->joystick = NULL;
     p->joystick_instance = -1;
+    p->joystick_rumble = (input_motor_output){0};
     if (integer(p, "in_joystick", 0) != 0) {
         if (p->windows_joystick) {
             if (!qa_source_joystick_release(&p->source, time, source_key, p, error))
@@ -1100,8 +1703,7 @@ static bool initialize_native(qa_input_platform *p, double time, qa_error *error
     for (size_t i = 0; i < p->device_count; ++i)
         if (!stop_device(p, p->devices[i].info.instance, error)) success = false;
     if (p->joystick && SDL_JoystickHasRumble(p->joystick) &&
-        SDL_JoystickRumble(p->joystick, 0, 0, 0) < 0)
-        success = failed(error, "Stopping source joystick rumble");
+        !source_motor(p, 0, 0, 0, error)) success = false;
     if (success) {
         SDL_GameControllerEventState(SDL_ENABLE);
         SDL_JoystickEventState(SDL_ENABLE);
@@ -1201,6 +1803,7 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
         SDL_JoystickClose(p->joystick);
         p->joystick = NULL;
         p->joystick_instance = -1;
+        p->joystick_rumble = (input_motor_output){0};
     }
     unsigned axes = 0;
     if (p->joystick) {
@@ -1359,9 +1962,8 @@ bool qa_input_platform_rumble(qa_input_platform *p, int32_t instance, float low,
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Joystick does not support vibration");
             return false;
         }
-        return SDL_JoystickRumble(p->joystick, (uint16_t)lroundf(low * 65535),
-                                  (uint16_t)lroundf(high * 65535), duration) == 0 ||
-               failed(error, "Joystick rumble");
+        return source_motor(p, (uint16_t)lroundf(low * 65535),
+            (uint16_t)lroundf(high * 65535), duration, error);
     }
     struct device *d = required_device(p, instance, error);
     if (!d)
@@ -1372,9 +1974,8 @@ bool qa_input_platform_rumble(qa_input_platform *p, int32_t instance, float low,
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Controller does not support vibration");
         return false;
     }
-    return SDL_GameControllerRumble(d->handle, (uint16_t)lroundf(low * 65535),
-                                    (uint16_t)lroundf(high * 65535), duration) == 0 ||
-           failed(error, "Controller rumble");
+    return controller_motor(d, false, (uint16_t)lroundf(low * 65535),
+        (uint16_t)lroundf(high * 65535), duration, error);
 }
 bool qa_input_platform_trigger_rumble(qa_input_platform *p, int32_t instance, float left,
                                       float right, uint32_t duration, qa_error *error) {
@@ -1389,9 +1990,8 @@ bool qa_input_platform_trigger_rumble(qa_input_platform *p, int32_t instance, fl
                      "Controller does not support trigger vibration");
         return false;
     }
-    return SDL_GameControllerRumbleTriggers(d->handle, (uint16_t)lroundf(left * 65535),
-                                            (uint16_t)lroundf(right * 65535), duration) == 0 ||
-           failed(error, "Controller trigger rumble");
+    return controller_motor(d, true, (uint16_t)lroundf(left * 65535),
+        (uint16_t)lroundf(right * 65535), duration, error);
 }
 bool qa_input_platform_led(qa_input_platform *p, int32_t instance, uint8_t red, uint8_t green,
                            uint8_t blue, qa_error *error) {
@@ -1417,9 +2017,7 @@ bool qa_input_platform_sensor(qa_input_platform *p, int32_t instance, SDL_Sensor
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Controller does not support this sensor");
         return false;
     }
-    return SDL_GameControllerSetSensorEnabled(d->handle, sensor, enabled ? SDL_TRUE : SDL_FALSE) ==
-               0 ||
-           failed(error, "Controller sensor");
+    return controller_sensor(d, sensor, enabled, error);
 }
 bool qa_input_platform_gyro(qa_input_platform *p, unsigned slot, bool enabled, qa_error *error) {
     if (!native_owner(p, error)) return false;
@@ -1490,7 +2088,7 @@ bool qa_input_platform_tactile(qa_input_platform *p, unsigned slot, qa_vfs *vfs,
     return ok;
 }
 void qa_input_platform_tactile_invalidate(qa_input_platform *p) {
-    if (!p || !p->native_owned) return;
+    if (!p || !p->native_owned || p->settings_ticket) return;
     qa_error ignored = {0};
     for (unsigned i = 0; i < 4; ++i)
         (void)qa_haptic_stop(&p->seats[i].haptic, &ignored);

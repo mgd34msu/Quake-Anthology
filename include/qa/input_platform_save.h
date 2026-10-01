@@ -25,7 +25,10 @@ bool qa_input_platform_checkpoint(const qa_input_platform *, const qa_input_plat
     qa_buffer *, qa_error *);
 /* Decode only into a detached owner. The active platform keeps sole native
  * ownership; the guard borrows both heaps through the final publication cut.
- * Exact native endpoint identity and current SDL mode/sensor state must match.
+ * Exact native endpoint identity, SDL mode/sensor state, and the actual issued
+ * motor/sensor request provenance must match. Motor records qualify the live
+ * owner; SDL provides no motor-state getter and this codec does not replay
+ * native output. Pending settings preparations cannot be captured or imported.
  * No rescanning, MIDI reads, input release, routing or output callbacks run. */
 bool qa_input_platform_restore(qa_input_platform *detached, const qa_input_platform *active,
     const qa_input_platform_checkpoint_refs *, qa_bytes,

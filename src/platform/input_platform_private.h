@@ -3,9 +3,20 @@
 #include "qa/input_platform.h"
 #include "qa/vfs.h"
 
+typedef struct input_motor_output {
+    bool requested, applied;
+    uint16_t low, high;
+    uint32_t duration;
+    uint64_t ticks;
+} input_motor_output;
+typedef struct input_sensor_output {
+    bool requested, applied, enabled;
+} input_sensor_output;
 struct device {
     SDL_GameController *handle;
     qa_controller_info info;
+    input_motor_output rumble, triggers;
+    input_sensor_output sensor_output[6];
 };
 struct seat_route {
     qa_input_platform *platform;
@@ -33,6 +44,7 @@ struct qa_input_platform {
     int old_controller_events, old_joystick_events;
     qa_haptic_cache *haptics;
     SDL_Joystick *joystick;
+    input_motor_output joystick_rumble;
     int32_t joystick_instance;
     qa_source_joystick source;
     bool windows_joystick, mouse_available;
@@ -45,6 +57,7 @@ struct qa_input_platform {
     bool native_owned;
     input_native_startup native_startup;
     bool native_initializing;
+    qa_input_platform_settings_ticket *settings_ticket;
 };
 bool input_platform_haptic_bindings_ready(const qa_input_platform *);
 void input_platform_route_contexts_rebind(qa_input_platform *);
