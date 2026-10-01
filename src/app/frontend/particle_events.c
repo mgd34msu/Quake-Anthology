@@ -3,6 +3,9 @@
 #include "save_private.h"
 #include "visual_access.h"
 #include "qa/game_q2_feedback.h"
+#include "qa/application_native_q2_presentation.h"
+#include "qa/application_native_q2_client.h"
+#include "particle_clock.h"
 
 enum { FRONTEND_PARTICLE_CAPACITY = 4096, FRONTEND_STEAM_CAPACITY = 32,
        FRONTEND_Q2_IMPACT_CAPACITY = 32 };
@@ -35,17 +38,122 @@ struct frontend_particle_state {
     frontend_steam steam[FRONTEND_STEAM_CAPACITY];
     size_t steam_count;
     uint64_t sample_ns;
+    qa_actor_owner clock_source;
+    uint64_t clock_map_revision, client_ns, client_host_ns, server_ns, server_frame;
+    uint64_t client_frame;
+    bool client_clock, client_pending;
 };
+static bool particle_state(qa_frontend *frontend, qa_error *error)
+{
+    if (frontend->particles) return true;
+    frontend->particles = calloc(1, sizeof(*frontend->particles));
+    if (!frontend->particles)
+        return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend particle continuation");
+    frontend->particles->sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
+    return true;
+}
+
+bool frontend_particle_source_begin(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
+{
+    qa_application_map_view map;
+    if (frontend->options.dedicated || frontend_network_remote(frontend) ||
+        qa_application_get_state(frontend->application) != QA_APPLICATION_RUNNING ||
+        !qa_application_map_read(frontend->application, &map)) return true;
+    qa_application_native_q2_presentation source;
+    bool found;
+    if (!qa_application_native_q2_presentation_selected(frontend->application, &source, &found, error))
+        return false;
+    if (!found || source.edition != QA_Q2_CLASSIC) {
+        if (frontend->particles) frontend->particles->client_clock = frontend->particles->client_pending = false;
+        return true;
+    }
+    bool local = false;
+    for (uint32_t i = 0; i < frontend->options.seats; ++i) {
+        uint32_t seat;
+        qa_application_native_q2_client client;
+        bool present;
+        if (!frontend_seat_launch_id_read(frontend, i, &seat)) continue;
+        if (!qa_application_native_q2_presentation_local(frontend->application, &source,
+                seat, &client, &present, error)) return false;
+        local = local || present;
+    }
+    if (!local) {
+        if (frontend->particles) frontend->particles->client_clock = frontend->particles->client_pending = false;
+        return true;
+    }
+    if (!particle_state(frontend, error)) return false;
+    frontend_particle_state *state = frontend->particles;
+    if (state->client_pending)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sampling has an uncompleted committed frame");
+    if (!state->client_clock || state->clock_source != source.source_owner ||
+        state->clock_map_revision != source.map_revision) {
+        state->client_ns = 0;
+        state->clock_source = source.source_owner;
+        state->clock_map_revision = source.map_revision;
+        state->client_clock = true;
+    }
+    if (frontend->time_ns < elapsed_ns || state->client_ns > UINT64_MAX - elapsed_ns)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sample clock duration overflow");
+    state->client_ns += elapsed_ns;
+    state->client_host_ns = frontend->time_ns;
+    state->client_frame = frontend->frame_number;
+    state->client_pending = true;
+    return true;
+}
+
+bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
+{
+    frontend_particle_state *state = frontend->particles;
+    if (!state || !state->client_clock) return true;
+    qa_application_native_q2_presentation source;
+    bool found;
+    if (!state->client_pending || state->client_frame != frontend->frame_number ||
+        state->client_host_ns != frontend->time_ns ||
+        !qa_application_native_q2_presentation_selected(frontend->application, &source, &found, error) ||
+        !found || source.edition != QA_Q2_CLASSIC || source.source_owner != state->clock_source ||
+        source.map_revision != state->clock_map_revision)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sampling lost its committed physical source frame");
+    uint64_t lower = source.server_time_ns > UINT64_C(100000000) ?
+        source.server_time_ns - UINT64_C(100000000) : 0;
+    if (state->client_ns > source.server_time_ns) state->client_ns = source.server_time_ns;
+    else if (state->client_ns < lower) state->client_ns = lower;
+    state->server_ns = source.server_time_ns;
+    state->server_frame = source.clock.frame.number;
+    state->client_pending = false;
+    return true;
+}
+
+static bool client_sample(qa_frontend *frontend, uint64_t *sample, uint64_t *server,
+    float *back_lerp, bool *classic, qa_error *error)
+{
+    frontend_particle_state *state = frontend->particles;
+    *classic = state && state->client_clock;
+    if (!*classic) {
+        *sample = *server = qa_session_elapsed(qa_application_session(frontend->application));
+        *back_lerp = 0;
+        return true;
+    }
+    qa_application_native_q2_presentation source;
+    bool found;
+    if (state->client_pending || state->client_frame != frontend->frame_number ||
+        state->client_host_ns != frontend->time_ns ||
+        !qa_application_native_q2_presentation_selected(frontend->application, &source, &found, error) ||
+        !found || source.edition != QA_Q2_CLASSIC || source.source_owner != state->clock_source ||
+        source.map_revision != state->clock_map_revision || source.server_time_ns != state->server_ns ||
+        source.clock.frame.number != state->server_frame || state->client_ns > state->server_ns ||
+        state->server_ns - state->client_ns > UINT64_C(100000000))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particles lost their actual completed client sample");
+    *sample = state->client_ns;
+    *server = state->server_ns;
+    *back_lerp = (float)((double)(state->server_ns - state->client_ns) / 100000000.0);
+    return true;
+}
 static bool impact_model(qa_frontend *, frontend_particle_owner *, uint8_t,
     bool acquire, qa_scene_model **, qa_error *);
 static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
     frontend_particle_owner **out, qa_error *error)
 {
-    if (!frontend->particles) {
-        frontend->particles = calloc(1, sizeof(*frontend->particles));
-        if (!frontend->particles) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend particle continuation");
-        frontend->particles->sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
-    }
+    if (!particle_state(frontend, error)) return false;
     for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next)
         if (owner->provider == provider && owner->family == family) { *out = owner; return true; }
     frontend_particle_owner *owner = calloc(1, sizeof(*owner));
@@ -86,9 +194,42 @@ void frontend_particle_reset_round(qa_frontend *frontend)
 }
 static bool particle_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; uint32_t version = 2;
+    uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; uint32_t version = 3;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPT", 4) &&
-        qa_source_save_u32(io, &version) && version == 2;
+        qa_source_save_u32(io, &version) && version == 3;
+}
+static bool client_clock_fields(qa_frontend *frontend, qa_source_save_io *io,
+    frontend_particle_state *state)
+{
+    if (state->client_pending || !qa_source_save_bool(io, &state->client_clock)) return false;
+    if (!state->client_clock) return true;
+    if (!frontend_save_provider(io, frontend->application, &state->clock_source) ||
+        !state->clock_source || !qa_source_save_u64(io, &state->client_ns) ||
+        !qa_source_save_u64(io, &state->client_host_ns) || !qa_source_save_u64(io, &state->server_ns) ||
+        !qa_source_save_u64(io, &state->server_frame) || !qa_source_save_u64(io, &state->client_frame) ||
+        state->client_ns > state->server_ns || state->server_ns - state->client_ns > UINT64_C(100000000))
+        return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        /* MEDIA imports precede the real saved session-clock join. Keep the
+         * decoded receipt inert; final canonical capture qualifies it only
+         * after application_save_foundation_finish restores those clocks. */
+        qa_application_map_view map;
+        if (!qa_application_map_read(frontend->application, &map)) return false;
+        state->clock_map_revision = map.revision;
+        return true;
+    }
+    if (state->client_host_ns != frontend->time_ns ||
+        state->client_frame == UINT64_MAX ||
+        state->client_frame + 1 != frontend->frame_number)
+        return false;
+    qa_application_native_q2_presentation source;
+    bool found;
+    if (!qa_application_native_q2_presentation_retained_selected(frontend->application, &source, &found, io->error) ||
+        !found || source.edition != QA_Q2_CLASSIC || source.source_owner != state->clock_source ||
+        source.server_time_ns != state->server_ns || source.clock.frame.number != state->server_frame)
+        return false;
+    if (state->clock_map_revision != source.map_revision) return false;
+    return true;
 }
 static bool particle_fields(qa_source_save_io *io, frontend_particle_owner *owner)
 {
@@ -130,7 +271,8 @@ bool frontend_particle_checkpoint(qa_frontend *frontend, qa_buffer *out, qa_erro
         frontend_particle_state *state = frontend->particles;
         uint64_t sample = state->sample_ns; size_t count = 0;
         for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) ++count;
-        ok = qa_source_save_u64(&io, &sample) && qa_source_save_count(&io, &count, SIZE_MAX);
+        ok = qa_source_save_u64(&io, &sample) && client_clock_fields(frontend, &io, state) &&
+            qa_source_save_count(&io, &count, SIZE_MAX);
         for (frontend_particle_owner *owner = state->owners; ok && owner; owner = owner->next) {
             frontend_particle_owner copy = *owner; uint32_t family = owner->family;
             ok = frontend_save_provider(&io, frontend->application, &copy.provider) &&
@@ -156,7 +298,8 @@ bool frontend_particle_restore(qa_frontend *frontend, qa_bytes bytes, qa_error *
     if (ok && present) {
         frontend->particles = calloc(1, sizeof(*frontend->particles));
         if (!frontend->particles) ok = frontend_fail(error, QA_ERROR_MEMORY, "restoring particle owner");
-        else ok = qa_source_save_u64(&io, &frontend->particles->sample_ns) && qa_source_save_count(&io, &count, bytes.size / 8);
+        else ok = qa_source_save_u64(&io, &frontend->particles->sample_ns) &&
+            client_clock_fields(frontend, &io, frontend->particles) && qa_source_save_count(&io, &count, bytes.size / 8);
         for (size_t i = 0; ok && i < count; ++i) {
             qa_actor_owner provider = 0; uint32_t family = 0;
             ok = frontend_save_provider(&io, frontend->application, &provider) && provider && qa_source_save_u32(&io, &family) &&
@@ -243,6 +386,12 @@ static frontend_q2_impact *impact_allocate(frontend_particle_owner *owner, int64
 static bool q2_damage_particles(qa_frontend *frontend, frontend_particle_owner *owner,
     const qa_builtin_event *event, qa_error *error)
 {
+    uint64_t sample, server;
+    float back_lerp;
+    bool classic;
+    if (!client_sample(frontend, &sample, &server, &back_lerp, &classic, error)) return false;
+    uint64_t birth = classic ? sample : event->time_ns;
+    uint64_t impact_time = classic ? server : event->time_ns;
     uint32_t color; int count; bool fixed = false;
     const char *sound = NULL;
     switch (event->code) {
@@ -266,12 +415,12 @@ static bool q2_damage_particles(qa_frontend *frontend, frontend_particle_owner *
         origin.z = event->origin.z + (float)(particle_random(owner) & 7) - 4 + distance * event->direction.z;
         velocity.z = particle_signed(owner) * 20;
         owner->q2[owner->count++] = (qa_scene_q2_particle_state){
-            .spawn_milliseconds = (int64_t)(event->time_ns / UINT64_C(1000000)),
+            .spawn_milliseconds = (int64_t)(birth / UINT64_C(1000000)),
             .origin = origin, .velocity = velocity, .acceleration = {0, 0, -40},
             .color = selected, .alpha = 1, .alpha_velocity = -1 / (.5f + particle_unit(owner) * .3f)};
     }
     if (event->code == QA_Q2_DAMAGE_BULLET_SPARKS) {
-        int64_t now = (int64_t)(event->time_ns / UINT64_C(1000000));
+        int64_t now = (int64_t)(impact_time / UINT64_C(1000000));
         for (uint8_t kind = 1; kind <= 2; ++kind) {
             qa_scene_model *model;
             if (!impact_model(frontend, owner, kind, true, &model, error)) return false;
@@ -366,6 +515,10 @@ static bool force_wall(frontend_particle_owner *owner, const qa_q2_map_event *ev
 }
 bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
 {
+    uint64_t q2_sample, server;
+    float back_lerp;
+    bool classic;
+    if (!client_sample(frontend, &q2_sample, &server, &back_lerp, &classic, error)) return false;
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "particle event queue changed");
@@ -383,24 +536,25 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;
         frontend_particle_owner *owner;
         if (!particle_owner(frontend, source.provider, QA_GAME_Q2, &owner, error)) return false;
+        uint64_t birth = classic ? q2_sample : source.time_ns;
         if (source.event.kind == QA_Q2_MAP_FORCE_WALL) {
-            if (!force_wall(owner, &source.event, source.time_ns, error)) return false;
+            if (!force_wall(owner, &source.event, birth, error)) return false;
             continue;
         }
-        if (source.event.slot == -1) { (void)steam_particles(owner, &source.event, source.time_ns); continue; }
+        if (source.event.slot == -1) { (void)steam_particles(owner, &source.event, birth); continue; }
         frontend_particle_state *state = frontend->particles;
         if (state->steam_count == FRONTEND_STEAM_CAPACITY) continue;
         double ns = trunc((double)source.event.duration * 1e6);
-        if (ns < 0 || ns >= (double)UINT64_MAX || (uint64_t)ns > UINT64_MAX - source.time_ns)
+        if (ns < 0 || ns >= (double)UINT64_MAX || (uint64_t)ns > UINT64_MAX - birth)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "steam duration exceeds presentation clock");
         frontend_steam *steam = &state->steam[state->steam_count++];
         *steam = (frontend_steam){.owner = owner, .event = source.event,
-            .end_ns = source.time_ns + (uint64_t)ns, .next_ns = source.time_ns};
+            .end_ns = birth + (uint64_t)ns, .next_ns = birth};
         steam->event.arguments = NULL; steam->event.argument_count = 0;
     }
     if (!frontend->particles) return true;
     frontend_particle_state *state = frontend->particles;
-    uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
+    uint64_t now = q2_sample;
     size_t retained = 0;
     for (size_t i = 0; i < state->steam_count; ++i) {
         frontend_steam steam = state->steam[i];
@@ -416,6 +570,10 @@ bool frontend_particle_draw(qa_frontend *frontend, const qa_scene_view *view, qa
     if (!frontend->particles) return true;
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     double seconds = (double)now / 1e9;
+    uint64_t q2_sample, server;
+    float back_lerp;
+    bool classic;
+    if (!client_sample(frontend, &q2_sample, &server, &back_lerp, &classic, error)) return false;
     for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next) {
         qa_bytes palette;
         qa_scene_family family = owner->family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
@@ -423,7 +581,7 @@ bool frontend_particle_draw(qa_frontend *frontend, const qa_scene_view *view, qa
         for (size_t i = 0; owner->q2 && i < FRONTEND_Q2_IMPACT_CAPACITY; ++i) {
             const frontend_q2_impact *impact = &owner->impacts[i];
             if (!impact->kind) continue;
-            double fraction = ((double)(now / UINT64_C(1000000)) - impact->start_milliseconds) / 100;
+            double fraction = ((double)(q2_sample / UINT64_C(1000000)) - impact->start_milliseconds) / 100;
             double source_frame = floor(fraction);
             if (source_frame >= (impact->kind == 1 ? 3 : 1)) continue;
             uint32_t current = source_frame < 0 ? 0 : (uint32_t)source_frame;
@@ -437,8 +595,9 @@ bool frontend_particle_draw(qa_frontend *frontend, const qa_scene_view *view, qa
                 .previous_origin = impact->origin, .family = QA_SCENE_Q2,
                 .color = {1, 1, 1, impact->kind == 1 ? (float)(1 - fraction / 3) : 1},
                 .frame = current + 1, .old_frame = current,
+                .back_lerp = classic ? back_lerp : (float)(1 - (fraction - current)),
                 .flags = impact->kind == 1 ? 32u : 8u, .entity = (uint32_t)i,
-                .identity_light = 1, .seconds = seconds,
+                .identity_light = 1, .seconds = (double)q2_sample / 1e9,
                 .ambient = {1, 1, 1}, .source_path = impact_path(impact->kind)};
             if (frontend->scene_world)
                 qa_scene_world_sample_light(frontend->scene_world, impact->origin,
@@ -453,7 +612,7 @@ bool frontend_particle_draw(qa_frontend *frontend, const qa_scene_view *view, qa
                 origin = particle->origin; index = particle->color & 255;
             } else {
                 const qa_scene_q2_particle_state *particle = &owner->q2[i - 1];
-                if (!qa_scene_q2_particle_sample(particle, (int64_t)(now / UINT64_C(1000000)), &origin, &alpha)) continue;
+                if (!qa_scene_q2_particle_sample(particle, (int64_t)(q2_sample / UINT64_C(1000000)), &origin, &alpha)) continue;
                 index = particle->color & 255;
             }
             qa_scene_vec4 color = {palette.data[index * 3] / 255.0f, palette.data[index * 3 + 1] / 255.0f,
@@ -475,10 +634,14 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
     double seconds = (double)now / 1e9;
     double elapsed = now >= state->sample_ns ? (double)(now - state->sample_ns) / 1e9 : 0;
     state->sample_ns = now;
+    uint64_t q2_sample, server;
+    float back_lerp;
+    bool classic;
+    if (!client_sample(frontend, &q2_sample, &server, &back_lerp, &classic, error)) return false;
     for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) {
         for (size_t i = 0; owner->q2 && i < FRONTEND_Q2_IMPACT_CAPACITY; ++i) {
             frontend_q2_impact *impact = &owner->impacts[i];
-            double source_frame = floor(((double)(now / UINT64_C(1000000)) - impact->start_milliseconds) / 100);
+            double source_frame = floor(((double)(q2_sample / UINT64_C(1000000)) - impact->start_milliseconds) / 100);
             if (impact->kind && source_frame >= (impact->kind == 1 ? 3 : 1))
                 *impact = (frontend_q2_impact){0};
         }
@@ -491,7 +654,7 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
                 owner->q1[retained++] = particle;
             } else {
                 qa_vec3 origin; float alpha;
-                if (!qa_scene_q2_particle_sample(&owner->q2[i], (int64_t)(now / UINT64_C(1000000)), &origin, &alpha) ||
+                if (!qa_scene_q2_particle_sample(&owner->q2[i], (int64_t)(q2_sample / UINT64_C(1000000)), &origin, &alpha) ||
                     owner->q2[i].alpha_velocity == -10000) continue;
                 owner->q2[retained++] = owner->q2[i];
             }
