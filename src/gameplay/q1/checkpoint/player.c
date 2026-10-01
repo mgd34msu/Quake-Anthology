@@ -123,6 +123,46 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, bool, player->continuous);
     Q1_SAVE(io, bool, player->arsenal);
     Q1_SAVE(io, bool, player->character);
+    Q1_SAVE(io, bool, player->source_client);
+    Q1_SAVE(io, u32, player->client_slot);
+    if (player->source_client ? player->client_slot >= io->game->options.max_clients
+                              : player->client_slot != 0)
+        return q1_save_fail(io, "Q1 source client continuation has an invalid admitted slot");
+    Q1_SAVE(io, float, player->source_frags);
+    Q1_SAVE(io, float, player->source_team);
+    Q1_SAVE(io, bool, player->source_observer);
+    Q1_SAVE(io, bool, player->source_no_target);
+    Q1_SAVE(io, bool, player->source_god_mode);
+    Q1_SAVE(io, i32, player->source_impulse);
+    Q1_SAVE(io, bool, player->source_use);
+    Q1_SAVE(io, bool, player->source_death_recorded);
+    Q1_SAVE(io, double, player->source_respawn_requested_at);
+    uint32_t info_count=io->reading?0:(uint32_t)player->source_info_count;
+    if((!io->reading && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
+    if(io->reading) {
+        if(io->offset>io->input.size || info_count>(io->input.size-io->offset)/8 ||
+           (uint64_t)info_count>SIZE_MAX/sizeof(*player->source_info))
+            return q1_save_fail(io,"Q1 source userinfo map exceeds its saved extent");
+        q1_source_client_clear(player);
+        if(info_count && !(player->source_info=calloc(info_count,sizeof(*player->source_info))))
+            return q1_save_fail(io,"Allocating Q1 source userinfo continuation");
+        player->source_info_count=info_count;
+    }
+    for(uint32_t i=0;i<info_count;++i) {
+        Q1_SAVE(io,string,player->source_info[i].key);
+        Q1_SAVE(io,string,player->source_info[i].value);
+        qa_strings *strings=qa_session_strings(io->game->services.session);
+        if(!qa_strings_cstr(strings,player->source_info[i].key) ||
+           !qa_strings_cstr(strings,player->source_info[i].value))
+            return q1_save_fail(io,"Q1 source userinfo key and value require actual C strings");
+        for(uint32_t j=0;j<i;++j)
+            if(player->source_info[j].key==player->source_info[i].key)
+                return q1_save_fail(io,"Duplicate Q1 source userinfo key");
+    }
+    if(!player->source_client && (info_count || player->source_frags!=0 || player->source_team!=0 ||
+        player->source_observer || player->source_no_target || player->source_god_mode || player->source_impulse ||
+        player->source_use || player->source_death_recorded || player->source_respawn_requested_at!=0))
+        return q1_save_fail(io,"Unadmitted Q1 player has source client state");
     if (!character(io, &player->character_state))
         return false;
     if (player->wetsuit_scaled_level > 3)

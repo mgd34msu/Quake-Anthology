@@ -36,7 +36,8 @@ static bool same_target(const qa_target_binding *a, const qa_target_binding *b) 
     return qa_actor_id_equal(a->actor, b->actor) && a->source == b->source &&
         a->context == b->context && a->read == b->read && a->use == b->use &&
         a->field == b->field && a->set_target == b->set_target &&
-        a->set_delay == b->set_delay && a->set_targetname == b->set_targetname;
+        a->set_delay == b->set_delay && a->set_targetname == b->set_targetname &&
+        a->remap_shader == b->remap_shader;
 }
 /* Candidate storage never owns shared services or published bindings. */
 static void storage_free(qa_q1_game *g) {
@@ -47,6 +48,7 @@ static void storage_free(qa_q1_game *g) {
     }
     while (g->allocated_players) {
         q1_player *next = g->allocated_players->allocation_next;
+        q1_source_client_clear(g->allocated_players);
         free(g->allocated_players);
         g->allocated_players = next;
     }
@@ -241,6 +243,13 @@ static bool players(q1_save_io *io, qa_q1_game *g) {
         }
         if (!q1_save_player(io, player))
             return false;
+        if (player->source_client)
+            for (uint32_t j = 0; j < g->capacity; ++j) {
+                const q1_player *other = g->players[j];
+                if (other && other != player && other->source_client &&
+                    other->client_slot == player->client_slot)
+                    return q1_save_fail(io, "Duplicate Q1 source client slot continuation");
+            }
         if (io->reading) {
             if (player->id.slot >= g->capacity || g->players[player->id.slot])
                 return q1_save_fail(io, "Duplicate Q1 player continuation");

@@ -138,6 +138,51 @@ const q1_actor *q1_entity_const(const qa_q1_game *g, qa_actor_id actor) {
     const q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
 }
+bool qa_q1_player_source_present(const qa_q1_game *g, qa_actor_id actor) {
+    if (!g || g->destroy_pending || g->continuation_pending || actor.slot >= g->capacity ||
+        !qa_actors_get(qa_session_actors(g->services.session), actor))
+        return false;
+    const q1_player *player = g->players[actor.slot];
+    return player && player->active && qa_actor_id_equal(player->id, actor);
+}
+bool qa_q1_native_client_slot_prepared(const qa_q1_game *g, qa_actor_id actor,
+                                        uint32_t *out, qa_error *error) {
+    if (!g || !out || g->destroy_pending || actor.slot >= g->capacity ||
+        !qa_actors_get(qa_session_actors(g->services.session), actor)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 source client is not admitted");
+        return false;
+    }
+    const q1_player *player = g->players[actor.slot];
+    if (!player || !player->active || !qa_actor_id_equal(player->id, actor) ||
+        !player->source_client || player->client_slot >= g->options.max_clients) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 actor has no source client slot");
+        return false;
+    }
+    *out = player->client_slot;
+    return true;
+}
+bool qa_q1_native_client_slot(const qa_q1_game *g, qa_actor_id actor,
+                               uint32_t *out, qa_error *error) {
+    if (g && g->continuation_pending) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 source client is not admitted");
+        return false;
+    }
+    return qa_q1_native_client_slot_prepared(g, actor, out, error);
+}
+bool qa_q1_source_client_actor(const qa_q1_game *g, uint32_t slot, qa_actor_id *out) {
+    if (!g || !out || g->destroy_pending || g->continuation_pending ||
+        slot >= g->options.max_clients)
+        return false;
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        const q1_player *player = g->players[i];
+        if (player && player->source_client && player->client_slot == slot &&
+            qa_q1_player_source_present(g, player->id)) {
+            *out = player->id;
+            return true;
+        }
+    }
+    return false;
+}
 q1_player *q1_player_get(qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
@@ -157,6 +202,7 @@ q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error)
     if (player) {
         g->spare_players = player->pool_next;
         q1_player *next = player->allocation_next;
+        q1_source_client_clear(player);
         memset(player, 0, sizeof(*player));
         player->allocation_next = next;
     } else {
@@ -183,6 +229,46 @@ q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error)
             : 100;
     g->players[actor.slot] = player;
     return player;
+}
+bool qa_q1_source_bind_client(qa_q1_game *g, uint32_t slot, qa_actor_id actor,
+                               qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = false;
+    if (slot >= g->options.max_clients || actor.slot >= g->capacity || !q1_alive(g, actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, slot,
+                     "Q1 source client admission needs its actual slot and live shared actor");
+        goto finish;
+    }
+    q1_player *player = g->players[actor.slot];
+    if (player && (!player->active || !qa_actor_id_equal(player->id, actor))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 player slot still awaits source release");
+        goto finish;
+    }
+    if (player && player->source_client) {
+        ok = player->client_slot == slot;
+        if (!ok) qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Q1 actor has another source client slot");
+        goto finish;
+    }
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        const q1_player *other = g->players[i];
+        if (other && other->active && other->source_client && other->client_slot == slot) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Q1 source client slot is already admitted");
+            goto finish;
+        }
+    }
+    player = q1_player_allocate(g, actor, error);
+    if (!player)
+        goto finish;
+    player->client_slot = slot;
+    player->source_client = true;
+    player->source_team = 1;
+    player->source_respawn_requested_at = -1;
+    ok = true;
+finish:
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool q1_alive(qa_q1_game *g, qa_actor_id actor) {
     return g && !g->destroy_pending &&
@@ -229,7 +315,7 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
     if (!entity && !player)
         return false;
     *target = (qa_q1_target){
-        .player = player && (player->arsenal || player->character),
+        .player = player && (player->source_client || player->arsenal || player->character),
         .aimed_damage = entity && entity->aimed_damage,
         .view_height = player ? 22
                        : entity && entity->kind == Q1_MONSTER &&
@@ -446,6 +532,12 @@ static void released(void *context, qa_session *session, qa_actor_record actor) 
     (void)session;
     qa_q1_game_actor_released(context, actor);
 }
+static bool command_actor(void *context, qa_session *session, qa_actor_id actor) {
+    const qa_q1_game *g = context;
+    uint32_t slot;
+    return g && session == g->services.session &&
+        qa_q1_native_client_slot(g, actor, &slot, NULL);
+}
 
 bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options *options,
                        const qa_q1_host *host, qa_q1_game **out, qa_error *error) {
@@ -520,6 +612,13 @@ bool qa_q1_game_command_begin(qa_q1_game *g, uint64_t time_ns, uint64_t source_e
     g->elapsed = (double)source_elapsed_ns / 1000000000.0;
     return true;
 }
+bool qa_q1_game_clock_read(const qa_q1_game *g, uint64_t *time_ns, double *elapsed_seconds) {
+    if (!g || !time_ns || !elapsed_seconds || g->destroy_pending || g->continuation_pending)
+        return false;
+    *time_ns = g->time_ns;
+    *elapsed_seconds = g->elapsed;
+    return true;
+}
 bool qa_q1_game_operation_live(const qa_q1_game_operation *operation) {
     return operation && operation->game && !operation->game->destroy_pending;
 }
@@ -566,6 +665,7 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     }
     while (g->allocated_players) {
         q1_player *next = g->allocated_players->allocation_next;
+        q1_source_client_clear(g->allocated_players);
         free(g->allocated_players);
         g->allocated_players = next;
     }
@@ -592,6 +692,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
         .prepare_frame = prepare_frame,
         .begin_frame = begin_frame,
         .actor_frame = actor_frame,
+        .command_actor = command_actor,
         .actor_released = released};
     g->component_admitted = true;
     return true;
@@ -624,6 +725,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     q1_player *player = g->players[actor.id.slot];
     if (player && qa_actor_id_equal(player->id, actor.id)) {
         g->players[actor.id.slot] = NULL;
+        q1_source_client_clear(player);
         player->active = false;
         player->pool_next = g->retired_players;
         g->retired_players = player;
@@ -703,21 +805,84 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     return qa_world_link(g->services.world, entity->id, NULL, error);
 }
-static bool think_callback(void *context, qa_actor_id actor, const qa_source_frame *frame,
+static bool think_callback(void *, qa_actor_id, const qa_think_scope *, qa_error *);
+static bool schedule_source_think(qa_q1_game *g, q1_actor *entity, double due,
+                                   q1_think_kind kind, uint64_t minimum_ns, qa_error *error) {
+    double ns = due > 0 ? ceil(due * 1000000000.0) : 0;
+    if (!isfinite(ns) || ns >= (double)UINT64_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 think deadline out of range");
+        return false;
+    }
+    uint64_t projected = (uint64_t)ns;
+    if (projected < minimum_ns)
+        projected = minimum_ns;
+    qa_think think = {.actor = entity->id,
+                      .execution_provider = g->options.provider,
+                      .callback_id = (uint32_t)kind,
+                      .due_ns = projected,
+                      .boundary = QA_THINK_DURING_PHYSICS,
+                      .callback = think_callback,
+                      .context = g};
+    if (!qa_session_schedule(g->services.session, &think, error))
+        return false;
+    entity->think = kind;
+    entity->next_think = due;
+    return true;
+}
+static bool think_callback(void *context, qa_actor_id actor, const qa_think_scope *scope,
                            qa_error *error) {
     qa_q1_game *g = context;
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
+    qa_clock_kind clock = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE;
+    bool admitted = scope &&
+        ((scope->kind == QA_THINK_WORLD_FRAME &&
+          scope->source.frame.provider == g->options.provider &&
+          scope->source.frame.kind == clock) ||
+         (scope->kind == QA_THINK_SOURCE_COMMAND &&
+          scope->source.command.provider == g->options.provider &&
+          scope->source.command.kind == clock &&
+          qa_actor_id_equal(scope->source.command.actor, actor)));
+    if (!admitted) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 think source admission mismatch");
+        return operation_finish(&operation, false, error);
+    }
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
         return operation_finish(&operation, true, error);
+    double callback_time = (double)scope->time_ns / 1000000000.0;
+    if (entity->physics.motion != QA_PHYSICS_PUSH) {
+        uint64_t start_ns = scope->interval_start_ns;
+        uint64_t elapsed_ns = scope->interval_elapsed_ns;
+        double current = (double)start_ns / 1000000000.0;
+        if (start_ns > UINT64_MAX - elapsed_ns) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 think source interval overflow");
+            return operation_finish(&operation, false, error);
+        }
+        double due = entity->next_think;
+        if (!(due > 0))
+            return operation_finish(&operation, true, error);
+        if (due > current + (double)elapsed_ns / 1000000000.0) {
+            uint64_t end_ns = start_ns + elapsed_ns;
+            if (end_ns == UINT64_MAX) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 think cannot defer beyond source clock");
+                return operation_finish(&operation, false, error);
+            }
+            bool okay = schedule_source_think(g, entity, due, entity->think, end_ns + 1, error);
+            return operation_finish(&operation, okay, error);
+        }
+        callback_time = fmax(current, due);
+    }
     double previous = g->time;
+    double previous_elapsed = g->elapsed;
     uint64_t previous_ns = g->time_ns;
-    g->time_ns = frame->time_ns;
-    g->time = (double)frame->time_ns / 1000000000.0;
+    g->time_ns = scope->time_ns;
+    g->time = callback_time;
+    g->elapsed = (double)scope->interval_elapsed_ns / 1000000000.0;
     bool result = q1_think(g, entity, error);
     g->time = previous;
+    g->elapsed = previous_elapsed;
     g->time_ns = previous_ns;
     return operation_finish(&operation, result, error);
 }
@@ -765,22 +930,7 @@ bool q1_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_think_kind ki
         entity->next_think = due;
         return true;
     }
-    if (due >= (double)UINT64_MAX / 1000000000.0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 think deadline out of range");
-        return false;
-    }
-    qa_think think = {.actor = entity->id,
-                      .execution_provider = g->options.provider,
-                      .callback_id = (uint32_t)kind,
-                      .due_ns = due > 0 ? (uint64_t)(due * 1000000000.0) : 0,
-                      .boundary = QA_THINK_DURING_PHYSICS,
-                      .callback = think_callback,
-                      .context = g};
-    if (!qa_session_schedule(g->services.session, &think, error))
-        return false;
-    entity->think = kind;
-    entity->next_think = due;
-    return true;
+    return schedule_source_think(g, entity, due, kind, 0, error);
 }
 bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_think_kind kind = entity->think;
@@ -1242,7 +1392,12 @@ bool qa_q1_game_pusher_think(qa_q1_game *g, qa_actor_id actor, const qa_source_f
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 pusher continuation");
         return false;
     }
-    return think_callback(g, actor, frame, error);
+    qa_think_scope scope = {.kind = QA_THINK_WORLD_FRAME,
+                            .source.frame = *frame,
+                            .time_ns = frame->time_ns,
+                            .interval_start_ns = frame->start_ns,
+                            .interval_elapsed_ns = frame->elapsed_ns};
+    return think_callback(g, actor, &scope, error);
 }
 static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
     q1_actor *entity = q1_entity(g, outcome->request.target);
@@ -1300,7 +1455,7 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         player = NULL;
     if (!entity && !player)
         return false;
-    bool is_player = player && (player->character || player->arsenal);
+    bool is_player = player && (player->source_client || player->character || player->arsenal);
     *out = (qa_builtin_actor_traits){
         .classname = entity ? entity->classname : 0,
         .owner = entity ? entity->owner : (qa_actor_id){0},

@@ -89,6 +89,10 @@ typedef struct qa_q2_player_event {
 } qa_q2_player_event;
 typedef struct qa_q2_player_rules {
     const char *password, *spectator_password, *spawn_point, *map_name, *start_items;
+    const qa_string_id *map_list;
+    size_t map_list_count;
+    qa_string_id next_map;
+    bool map_list_shuffle;
     uint32_t max_spectators, max_clients;
     bool cheats, coop_squad_respawn, coop_instanced_items, coop_lives, coop_player_collision;
     int coop_num_lives;
@@ -231,6 +235,10 @@ typedef struct qa_q2_players_checkpoint {
     qa_q2_landmark landmark;
     qa_vec3 camera_origin, camera_angles;
     qa_q2_player_noise_record noise[2];
+    qa_string_id *map_list;
+    size_t map_list_count;
+    qa_string_id next_map_rule;
+    bool map_list_shuffle;
 } qa_q2_players_checkpoint;
 /* Capture owns the variable arrays. Save codecs encode fields and remap item
  * and resource identities; embedded actor IDs are zeroed in favor of saved
@@ -240,6 +248,8 @@ bool qa_q2_player_restore(qa_q2_game *, qa_actor_id, const qa_q2_player_checkpoi
 void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *);
 bool qa_q2_players_capture(qa_q2_game *, qa_q2_players_checkpoint *, qa_error *);
 bool qa_q2_players_restore(qa_q2_game *, const qa_q2_players_checkpoint *, qa_error *);
+void qa_q2_players_checkpoint_free(qa_q2_players_checkpoint *);
+bool qa_q2_players_end_deathmatch_level(qa_q2_game *,qa_error *);
 bool qa_q2_player_noise_read(const qa_q2_game *, bool secondary, qa_q2_player_noise_record *);
 bool qa_q2_player_help_computer(qa_q2_game *, qa_actor_id, qa_error *);
 void qa_q2_player_rules_default(qa_q2_player_rules *);

@@ -322,6 +322,8 @@ typedef struct q1_character {
     double next_animation, pain_until, air_until, hazard_at;
     float fall_speed, drown_damage;
 } q1_character;
+struct qa_q1_source_client_view;
+typedef struct q1_source_info {qa_string_id key,value;} q1_source_info;
 typedef struct q1_player {
     struct q1_player *allocation_next, *pool_next;
     qa_actor_id id;
@@ -355,7 +357,15 @@ typedef struct q1_player {
     } grapple_weapon;
     float max_health, drown_damage;
     qa_vec3 punch;
-    bool active, continuous, arsenal, character;
+    uint32_t client_slot;
+    bool active, continuous, arsenal, character, source_client;
+    q1_source_info *source_info;
+    size_t source_info_count;
+    float source_frags,source_team;
+    bool source_observer,source_no_target,source_god_mode;
+    int32_t source_impulse;
+    bool source_use,source_death_recorded;
+    double source_respawn_requested_at;
     q1_character character_state;
 } q1_player;
 typedef struct q1_actor_snapshot {
@@ -369,6 +379,9 @@ struct qa_q1_game {
     qa_builtin_services services;
     qa_q1_options options;
     qa_q1_host host;
+    void *source_client_context;
+    bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
+    bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);
     q1_map_runtime *maps;
     q1_actor **actors, *allocated_actors, *spare_actors, *retired_actors;
     q1_player **players, *allocated_players, *spare_players, *retired_players;
@@ -396,6 +409,7 @@ struct qa_q1_game {
     uint8_t rune_knight_melee, enemy_range;
     bool enemy_visible;
 };
+void q1_source_client_clear(q1_player *);
 
 extern const q1_frame q1_frames[];
 bool q1_map_spawn(qa_q1_game *, q1_actor *, const qa_q1_spawn *, bool *, qa_error *);
@@ -672,6 +686,7 @@ bool q1_power_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_grapple_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_grapple_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_grapple_weapon_launch(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_grapple_weapon_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_grapple_touch(qa_q1_game *, q1_actor *, qa_actor_id, const qa_touch_contact *, qa_error *);
 void q1_grapple_released(qa_q1_game *, qa_actor_id);
 bool q1_power_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);

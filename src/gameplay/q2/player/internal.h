@@ -23,6 +23,7 @@ typedef struct q2_players {
     qa_q2_player_rules rules;
     qa_q2_player_services services;
     char *rule_strings[5];
+    qa_string_id *rotation_maps;
     qa_actor_id corpses[8];
     unsigned corpse_index, death_animation, pain_animation;
     bool intermission, exit, camera_set, has_landmark, deadly_killbox;

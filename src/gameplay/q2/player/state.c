@@ -48,6 +48,7 @@ void q2_players_close(qa_q2_game *g) {
         return;
     for (size_t i = 0; i < 5; i++)
         free(g->player_runtime->rule_strings[i]);
+    free(g->player_runtime->rotation_maps);
     q2_player_list *list = g->player_runtime->lists;
     while (list) {
         q2_player_list *next = list->next;
@@ -83,10 +84,23 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
         !isfinite(r->flood_wait_seconds) || r->flood_wait_seconds < 0 || !isfinite(r->roll_angle) ||
         !isfinite(r->run_pitch) || !isfinite(r->run_roll) || !isfinite(r->bob_up) ||
         !isfinite(r->bob_pitch) || !isfinite(r->bob_roll) || !qa_vec_finite(r->gun_offset) ||
-        !isfinite(r->autosave_minimum_seconds) || r->autosave_minimum_seconds < 0) {
+        !isfinite(r->autosave_minimum_seconds) || r->autosave_minimum_seconds < 0 ||
+        (r->map_list_count && !r->map_list) || r->map_list_count>UINT32_MAX ||
+        r->map_list_count>SIZE_MAX/sizeof(*r->map_list)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player services or rules");
         return false;
     }
+    qa_strings *strings=qa_session_strings(g->services.session);
+    if((r->next_map && !qa_strings_text(strings,r->next_map).data)) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 rotation nextmap has no actual source string");return false;
+    }
+    for(size_t i=0;i<r->map_list_count;++i)
+        if(!qa_strings_text(strings,r->map_list[i]).data) {
+            qa_error_set(e,QA_ERROR_ARGUMENT,i,"Q2 rotation entry has no actual source string");return false;
+        }
+    qa_string_id *rotation=r->map_list_count?malloc(r->map_list_count*sizeof(*rotation)):NULL;
+    if(r->map_list_count && !rotation) {qa_error_set(e,QA_ERROR_MEMORY,0,"Copying actual Q2 rotation rules");return false;}
+    if(r->map_list_count) memcpy(rotation,r->map_list,r->map_list_count*sizeof(*rotation));
     const char *values[] = {r->password, r->spectator_password, r->spawn_point, r->map_name,
                             r->start_items};
     char *copies[5] = {0};
@@ -94,10 +108,12 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
         if (!(copies[i] = copy_text(values[i]))) {
             for (size_t j = 0; j < 5; j++)
                 free(copies[j]);
+            free(rotation);
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Copying Q2 player rules");
             return false;
         }
     q2_players *p = g->player_runtime;
+    free(p->rotation_maps);p->rotation_maps=rotation;
     for (size_t i = 0; i < 5; i++) {
         free(p->rule_strings[i]);
         p->rule_strings[i] = copies[i];
@@ -109,6 +125,7 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
     p->rules.spawn_point = copies[2];
     p->rules.map_name = copies[3];
     p->rules.start_items = copies[4];
+    p->rules.map_list=p->rotation_maps;
     return true;
 }
 q2_actor *q2_client(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -242,39 +259,73 @@ bool q2_player_inventory_set(qa_q2_game *g, qa_actor_id id, const qa_inventory_e
             return false;
     return true;
 }
-bool qa_q2_player_carry_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_carry *out,
-                                qa_error *e) {
+typedef struct player_carry_capture_call {
+    qa_q2_game *game;
+    qa_q2_player_carry *out;
+} player_carry_capture_call;
+
+static bool player_carry_capture(void *context, qa_actor_id id, qa_error *e) {
+    player_carry_capture_call *call = context;
+    qa_q2_game *g = call->game;
+    qa_q2_player_carry *out = call->out;
     q2_actor *a = q2_client(g, id, e);
     qa_combat_state combat;
     if (!a || !out || !qa_combat_read(g->services.combat, id, &combat, e))
         return false;
+    if (!q2_actor_live(g, id)) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, id.slot, "Q2 player retired during carry capture");
+        return false;
+    }
     q2_power_state *powers = q2_powers(g, id, e);
     if (!powers)
         return false;
-    int32_t score;
-    if (!q2_player_score_read(g, id, &score, e))
-        return false;
     qa_q2_player_carry c = {.health = combat.health,
                             .maximum_health = powers->maximum_health,
-                            .armor = combat.armor,
-                            .weapon = a->weapon_bound ? a->weapon.weapon : QA_Q2_WEAPON_NONE,
-                            .selected_item = a->client->info.selected_item,
-                            .score = score,
-                            .power_cubes = powers->power_cubes,
-                            .flags = (a->client->info.god ? 16u : 0) |
-                                     (a->client->info.notarget ? 32u : 0) |
-                                     (combat.armor.powered.kind != QA_POWER_NONE ? 4096u : 0) |
-                                     (a->client->info.flashlight ? 0x400000u : 0) |
-                                     (a->client->auto_shield_enabled ? 0x40000000u : 0)};
+                            .armor = combat.armor};
     if (!q2_player_inventory_copy(g, id, &c.inventory, &c.count, e))
         return false;
+    if (!q2_actor_live(g, id)) {
+        qa_q2_player_carry_free(&c);
+        qa_error_set(e, QA_ERROR_NOT_FOUND, id.slot, "Q2 player retired during carry capture");
+        return false;
+    }
+    c.weapon = a->weapon_bound ? a->weapon.weapon : QA_Q2_WEAPON_NONE;
+    c.selected_item = a->client->info.selected_item;
+    if (!q2_player_score_read(g, id, &c.score, e)) {
+        qa_q2_player_carry_free(&c);
+        return false;
+    }
+    if (!q2_actor_live(g, id)) {
+        qa_q2_player_carry_free(&c);
+        qa_error_set(e, QA_ERROR_NOT_FOUND, id.slot, "Q2 player retired during carry capture");
+        return false;
+    }
+    c.flags = (a->client->info.god ? 16u : 0) |
+              (a->client->info.notarget ? 32u : 0) |
+              (combat.armor.powered.kind != QA_POWER_NONE ? 4096u : 0) |
+              (a->client->info.flashlight ? 0x400000u : 0) |
+              (a->client->auto_shield_enabled ? 0x40000000u : 0);
+    c.power_cubes = powers->power_cubes;
     *out = c;
     return true;
 }
-bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_carry *c,
+bool qa_q2_player_carry_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_carry *out,
                                 qa_error *e) {
+    player_carry_capture_call call = {.game = g, .out = out};
+    return qa_q2_run_actor(g, id, player_carry_capture, &call, e);
+}
+
+typedef struct player_carry_restore_call {
+    qa_q2_game *game;
+    qa_q2_player_carry carry;
+} player_carry_restore_call;
+
+static bool player_carry_restore(void *context, qa_actor_id id, qa_error *e) {
+    player_carry_restore_call *call = context;
+    qa_q2_game *g = call->game;
+    const qa_q2_player_carry *c = &call->carry;
     q2_actor *a = q2_client(g, id, e);
-    if (!a || !c || (c->count && !c->inventory) || !isfinite(c->health) ||
+    if (!a || (c->count && !c->inventory) || !isfinite(c->health) ||
         !isfinite(c->maximum_health) || c->maximum_health <= 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player carry");
         return false;
@@ -282,12 +333,15 @@ bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_playe
     q2_power_state *powers = q2_powers(g, id, e);
     if (!powers)
         return false;
-    if (!q2_player_inventory_set(g, id, c->inventory, c->count, e))
+    if (!qa_combat_set_health(g->services.combat, id, c->health, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (!qa_combat_set_health(g->services.combat, id, c->health, e) ||
-        !qa_combat_set_armor(g->services.combat, id, &c->armor, e))
+    if (!qa_combat_set_armor(g->services.combat, id, &c->armor, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (!q2_player_inventory_set(g, id, c->inventory, c->count, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
@@ -300,15 +354,39 @@ bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_playe
     s->info.notarget = (c->flags & 32) != 0;
     s->info.flashlight = (c->flags & 0x400000) != 0;
     s->auto_shield_enabled = (c->flags & 0x40000000u) != 0;
-    if (a->weapon_bound) {
-        a->weapon.weapon = c->weapon;
-        a->weapon.pending = QA_Q2_WEAPON_NONE;
-    }
     qa_combat_state traits;
     if (!qa_combat_read_traits(g->services.combat, id, &traits, e))
         return false;
+    if (!q2_actor_live(g, id))
+        return true;
     traits.invulnerable = s->info.god;
-    return qa_combat_set_traits(g->services.combat, id, &traits, e);
+    if (!qa_combat_set_traits(g->services.combat, id, &traits, e))
+        return false;
+    if (q2_actor_live(g, id) && a->weapon_bound) {
+        a->weapon.weapon = c->weapon;
+        a->weapon.pending = QA_Q2_WEAPON_NONE;
+    }
+    return true;
+}
+bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_carry *c,
+                                qa_error *e) {
+    if (!c || (c->count && !c->inventory) ||
+        c->count > SIZE_MAX / sizeof(*c->inventory)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player carry");
+        return false;
+    }
+    player_carry_restore_call call = {.game = g, .carry = *c};
+    qa_inventory_entry *inventory = c->count ? malloc(c->count * sizeof(*inventory)) : NULL;
+    if (c->count && !inventory) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Copying Q2 player carry inventory");
+        return false;
+    }
+    if (c->count)
+        memcpy(inventory, c->inventory, c->count * sizeof(*inventory));
+    call.carry.inventory = inventory;
+    bool ok = qa_q2_run_actor(g, id, player_carry_restore, &call, e);
+    free(inventory);
+    return ok;
 }
 bool qa_q2_player_notarget(qa_q2_game *g, qa_actor_id id, bool *enabled, qa_error *error) {
     q2_actor *source = q2_actor_get(g, id, false, NULL);

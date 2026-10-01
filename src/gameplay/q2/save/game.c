@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(5)
+#define Q2_SAVE_VERSION UINT32_C(6)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -88,6 +88,7 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
          qa_q2_players_capture(g, &players, e) && q2_save_players(&io, &players) &&
          qa_q2_entities_capture(g, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters);
+    qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
     if (!ok) { free(io.output.data); return false; }
@@ -165,6 +166,7 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");
     if (ok) ok = qa_q2_entities_validate_links(g, e);
     if (ok) g->actor_sequence = runtime.actor_sequence;
+    qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
     g->restoring_continuation = false;

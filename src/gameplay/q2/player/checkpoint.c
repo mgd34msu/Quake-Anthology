@@ -168,7 +168,7 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_players *p = g->player_runtime;
-    qa_q2_players_checkpoint s = {.version = 1,
+    qa_q2_players_checkpoint s = {.version = 2,
                                   .corpse_index = p->corpse_index,
                                   .death_animation = p->death_animation,
                                   .pain_animation = p->pain_animation,
@@ -184,7 +184,9 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
                                   .next_map = p->next_map,
                                   .landmark = p->landmark,
                                   .camera_origin = p->camera_origin,
-                                  .camera_angles = p->camera_angles};
+                                  .camera_angles = p->camera_angles,
+                                  .map_list_count=p->rules.map_list_count,.next_map_rule=p->rules.next_map,
+                                  .map_list_shuffle=p->rules.map_list_shuffle};
     for (size_t i = 0; i < 8; i++)
         if (!q2_save_reference(g, p->corpses[i], &s.corpses[i], e))
             return false;
@@ -197,19 +199,29 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
     if (!q2_save_reference(g, p->landmark.player, &s.landmark_player, e))
         return false;
     s.landmark.player = (qa_actor_id){0};
+    if(s.map_list_count) {
+        s.map_list=malloc(s.map_list_count*sizeof(*s.map_list));
+        if(!s.map_list) {qa_error_set(e,QA_ERROR_MEMORY,0,"Capturing actual Q2 rotation order");return false;}
+        memcpy(s.map_list,p->rotation_maps,s.map_list_count*sizeof(*s.map_list));
+    }
     *out = s;
     return true;
 }
 bool qa_q2_players_restore(qa_q2_game *g, const qa_q2_players_checkpoint *s, qa_error *e) {
-    if (!g || !s || s->version != 1 || s->corpse_index >= 8 || s->death_animation >= 3 ||
+    if (!g || !s || s->version != 2 || s->corpse_index >= 8 || s->death_animation >= 3 ||
         s->pain_animation >= 3 || !q2_saved_resource(g, s->next_map) ||
         !q2_saved_landmark(g, &s->landmark) || !qa_vec_finite(s->camera_origin) ||
-        !qa_vec_finite(s->camera_angles)) {
+        !qa_vec_finite(s->camera_angles) || !q2_saved_resource(g,s->next_map_rule) ||
+        s->map_list_count>UINT32_MAX || s->map_list_count>SIZE_MAX/sizeof(*s->map_list) ||
+        (s->map_list_count && !s->map_list)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 players runtime checkpoint");
         return false;
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
+    for(size_t i=0;i<s->map_list_count;++i) if(!q2_saved_resource(g,s->map_list[i])) {
+        qa_error_set(e,QA_ERROR_FORMAT,i,"Invalid Q2 source rotation map");return false;
+    }
     q2_players next = *g->player_runtime;
     for (size_t i = 0; i < 8; i++)
         if (!q2_resolve_reference(g, s->corpses[i], &next.corpses[i], e))
@@ -241,6 +253,16 @@ bool qa_q2_players_restore(qa_q2_game *g, const qa_q2_players_checkpoint *s, qa_
     next.next_map = s->next_map;
     next.camera_origin = s->camera_origin;
     next.camera_angles = s->camera_angles;
+    qa_string_id *rotation=s->map_list_count?malloc(s->map_list_count*sizeof(*rotation)):NULL;
+    if(s->map_list_count && !rotation) {qa_error_set(e,QA_ERROR_MEMORY,0,"Restoring actual Q2 rotation order");return false;}
+    if(s->map_list_count) memcpy(rotation,s->map_list,s->map_list_count*sizeof(*rotation));
+    free(next.rotation_maps);next.rotation_maps=rotation;next.rules.map_list=rotation;
+    next.rules.map_list_count=s->map_list_count;next.rules.next_map=s->next_map_rule;
+    next.rules.map_list_shuffle=s->map_list_shuffle;
     *g->player_runtime = next;
     return true;
+}
+void qa_q2_players_checkpoint_free(qa_q2_players_checkpoint *checkpoint) {
+    if(!checkpoint) return;
+    free(checkpoint->map_list);*checkpoint=(qa_q2_players_checkpoint){0};
 }
