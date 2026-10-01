@@ -36,7 +36,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 3, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 4, role = o->role, abi = o->abi, owner = o->owner;
     bool engine_present = o->engine_cvars != NULL;
     bool engine_alias = engine_present && o->engine_cvars == o->cvars;
     uint32_t engine_dialect = engine_present ? qa_cvars_dialect(o->engine_cvars) : 0;
@@ -93,7 +93,8 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         o->client.command_values != NULL, o->client.source_actor != NULL,
         o->collision.geometry != NULL, o->collision.load_map != NULL,
         o->presentation.seat != NULL, o->presentation.fonts != NULL,
-        o->presentation.configuration != NULL, o->presentation.update_screen != NULL
+        o->presentation.configuration != NULL, o->presentation.update_screen != NULL,
+        o->source_entity != NULL, o->source_entity_context != NULL
     };
     for (size_t i = 0; ok && i < sizeof(installed) / sizeof(*installed); ++i) {
         bool present = installed[i];

@@ -92,6 +92,7 @@ typedef struct q3_call {
     uint64_t arguments[16];
     size_t count;
     qa_qvm *vm;
+    const qa_qvm_call *source_call;
     qa_native_instance *native;
     qa_native_profile native_profile;
     qa_native_host *native_host;

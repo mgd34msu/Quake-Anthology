@@ -35,6 +35,9 @@ void qa_qvm_image_release(qa_qvm_image *image);
 const qa_sha256_digest *qa_qvm_image_digest(const qa_qvm_image *image);
 const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, size_t *count);
 size_t qa_qvm_image_memory_size(const qa_qvm_image *image);
+/* A source global word must fit data/literal/BSS, excluding allocation padding
+ * and the source stack. This only qualifies immutable artifact ownership. */
+bool qa_qvm_qualify_global_word(const qa_qvm_image *, uint32_t offset, qa_error *);
 
 typedef struct qa_qvm_compatibility {
     qa_qvm_abi abi;
@@ -87,8 +90,17 @@ typedef struct qa_qvm_options {
 
 bool qa_qvm_create(qa_qvm_image *, const qa_qvm_options *, qa_qvm **out, qa_error *);
 bool qa_qvm_destroy(qa_qvm *, qa_error *);
+/* Includes source execution, write delivery, publication and lifecycle callbacks. */
+bool qa_qvm_can_destroy(const qa_qvm *);
 bool qa_qvm_invoke(qa_qvm *, uint32_t instruction, const int32_t *words, size_t count, int32_t *result, qa_error *);
+/* Set started only when the admitted source entry or its bound implementation
+ * begins, after argument-frame setup. It remains set on a source failure. */
+bool qa_qvm_invoke_started(qa_qvm *, uint32_t instruction, const int32_t *words,
+    size_t count, int32_t *result, bool *started, qa_error *);
 bool qa_qvm_restart(qa_qvm *, qa_bytes replacement_image, qa_error *);
+/* Same-artifact map restart retains the admitted image/executor and resets RAM
+ * from that image's immutable initialized data without reopening its source. */
+bool qa_qvm_restart_original(qa_qvm *, qa_error *);
 bool qa_qvm_active(const qa_qvm *);
 uint32_t qa_qvm_break_count(const qa_qvm *);
 qa_qvm_role qa_qvm_get_role(const qa_qvm *);
@@ -102,6 +114,39 @@ size_t qa_qvm_memory_size(const qa_qvm *);
 const qa_sha256_digest *qa_qvm_digest(const qa_qvm *);
 bool qa_qvm_call_argument(const qa_qvm_call *, size_t index, int32_t *, qa_error *);
 bool qa_qvm_call_set_argument(const qa_qvm_call *, size_t index, int32_t, qa_error *);
+
+/* Original callback words use OP_CALL's signed convention: nonnegative source
+ * function entries, or -1-trap for imported services. The exact admitted image
+ * and current callback token are required. Imported calls use the ordinary
+ * role/ABI dispatcher and a real nested argument frame. */
+bool qa_qvm_invoke_source_callback(const qa_qvm_call *, const qa_qvm_image *,
+    int32_t pointer, const int32_t *words, size_t count, int32_t *, qa_error *);
+/* Pure capability qualification from immutable data/literal/BSS extents.
+ * Scratch begins at their aligned end and stays below the 64 KiB source stack
+ * reservation. This does not grant a mutable memory lease. */
+bool qa_qvm_source_scratch_qualify(const qa_qvm_image *, size_t length,
+    uint32_t *offset, qa_error *);
+typedef bool (*qa_qvm_source_scratch_fn)(void *, const qa_qvm_call *,
+    uint32_t offset, qa_error *);
+/* The same current source token remains valid in perform. A real execution
+ * stack floor protects scratch from all nested source calls. Save/restore is
+ * scoped, including nested uses of the same span and failed source calls.
+ * Restore commits the original RAM even if write delivery allocation fails;
+ * that failure is reported and never presented as successful delivery. */
+bool qa_qvm_source_scratch(const qa_qvm_call *, const qa_qvm_image *, size_t length,
+    qa_qvm_source_scratch_fn perform, void *, qa_error *);
+typedef struct qa_qvm_source_frame { uint32_t start, end; } qa_qvm_source_frame;
+/* The current intercepted function has not entered its original OP_ENTER yet.
+ * Returns that original local frame from its real caller stack, without masking.
+ * Requires the exact image and current function token before proceeding. */
+bool qa_qvm_call_source_frame(const qa_qvm_call *, const qa_qvm_image *,
+    qa_qvm_source_frame *, qa_error *);
+typedef bool (*qa_qvm_source_word_fn)(void *, const qa_qvm_call *, qa_error *);
+/* Project one qualified global word for this intercepted function and restore
+ * its exact prior bytes after perform, including cancellation/source failure.
+ * Restoration commits RAM even if write delivery cannot allocate. */
+bool qa_qvm_source_global_word(const qa_qvm_call *, const qa_qvm_image *,
+    uint32_t offset, int32_t value, qa_qvm_source_word_fn, void *, qa_error *);
 
 /* Raw offsets are checked without masking. Host pointer APIs mask only the
  * base word and treat zero as NULL. Mutable host writes use these operations. */
@@ -126,6 +171,9 @@ bool qa_qvm_bind_resolver(qa_qvm *, qa_qvm_function_resolver, void *, qa_qvm_bin
 bool qa_qvm_unbind(qa_qvm *, qa_qvm_binding, qa_error *);
 bool qa_qvm_proceed(const qa_qvm_call *, int32_t *result, qa_error *);
 bool qa_qvm_cancel(const qa_qvm_call *, qa_error *);
+/* Observe an outstanding source cancellation from the current callback token.
+ * The observation does not consume cancellation or change its ancestor scope. */
+bool qa_qvm_call_cancelled(const qa_qvm_call *, bool *, qa_error *);
 bool qa_qvm_local_word(const qa_qvm_call *, uint32_t offset, int32_t *, qa_error *);
 
 typedef bool (*qa_qvm_branch_fn)(void *, const qa_qvm_call *, bool original, bool *taken, qa_error *);

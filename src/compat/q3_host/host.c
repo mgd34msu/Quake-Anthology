@@ -70,7 +70,7 @@ static bool qvm_call(void *context, const qa_qvm_call *source, int32_t trap,
         qa_qvm_get_role(source->vm) != host->options.role || qa_qvm_get_abi(source->vm) != host->options.abi)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 call belongs to another module host");
     const q3_signature *signature;
-    q3_call call = {.host = host, .source_service = trap, .vm = source->vm,
+    q3_call call = {.host = host, .source_service = trap, .vm = source->vm, .source_call = source,
         .memory = {source->vm, 4, vm_read, vm_write, vm_string}};
     if (!q3_signature_find(host->options.role, host->options.abi, trap, &signature, &call.service, error)) return false;
     call.count = signature->count;
@@ -270,6 +270,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
             qa_cvars_dialect(options->engine_cvars) != QA_CONSOLE_Q3 ||
             qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
+        (!!options->source_entity != !!options->source_entity_context) ||
+        (options->source_entity && options->role != QA_QVM_CGAME) ||
         options->server.maximum_clients > 64)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 module host options");
     qa_q3_host *host = calloc(1, sizeof(*host));

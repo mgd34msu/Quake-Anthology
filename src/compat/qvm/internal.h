@@ -47,6 +47,10 @@ bool qa_qvm_execution_source_callback(const qa_qvm_call *, const qa_qvm_image *,
     int32_t, const int32_t *, size_t, int32_t *, qa_error *);
 bool qa_qvm_execution_source_scratch(const qa_qvm_call *, const qa_qvm_image *,
     size_t, qa_qvm_source_scratch_fn, void *, qa_error *);
+bool qa_qvm_execution_source_frame(const qa_qvm_call *, const qa_qvm_image *,
+    qa_qvm_source_frame *, qa_error *);
+bool qa_qvm_execution_source_word(const qa_qvm_call *, const qa_qvm_image *,
+    uint32_t, int32_t, qa_qvm_source_word_fn, void *, qa_error *);
 /* Cleanup of a qualified active source scratch lease. RAM restoration commits
  * before fallible publication and still commits when delivery cannot allocate. */
 bool qa_qvm_memory_restore_scratch(qa_qvm *, uint32_t, qa_bytes, qa_error *);

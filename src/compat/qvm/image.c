@@ -145,3 +145,10 @@ const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, s
     return image == NULL ? NULL : image->instructions;
 }
 size_t qa_qvm_image_memory_size(const qa_qvm_image *image) { return image == NULL ? 0 : image->memory_size; }
+
+bool qa_qvm_qualify_global_word(const qa_qvm_image *image, uint32_t offset, qa_error *error)
+{
+    uint64_t end = image ? (uint64_t)image->data_length + image->literal_length + image->bss_length : 0;
+    return (image && !(offset & 3) && (uint64_t)offset + 4 <= end) ||
+        qa_qvm_error(error, QA_ERROR_ARGUMENT, offset, "QVM source global word leaves immutable data/literal/BSS extent");
+}

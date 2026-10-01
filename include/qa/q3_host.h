@@ -19,6 +19,7 @@ typedef struct qa_q3_key qa_q3_key;
 typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_font_library qa_font_library;
 typedef struct qa_scene_image qa_scene_image;
+typedef struct qa_q3_ref_entity qa_q3_ref_entity;
 
 typedef struct qa_q3_host_calendar {
     int32_t second, minute, hour, day, month, year, weekday, year_day, is_dst;
@@ -88,6 +89,11 @@ typedef struct qa_q3_host_presentation_services {
     bool (*update_screen)(void *, qa_error *);
 } qa_q3_host_presentation_services;
 
+/* Pure decoding of the original fixed-width refEntity record. */
+bool qa_q3_host_ref_entity_decode(qa_bytes, qa_q3_ref_entity *, qa_error *);
+typedef bool (*qa_q3_host_source_entity_fn)(void *, const qa_qvm_call *,
+    int32_t original_pointer, const qa_q3_ref_entity *, bool *suppress, qa_error *);
+
 typedef struct qa_q3_host_options {
     qa_qvm_role role;
     qa_qvm_abi abi;
@@ -134,6 +140,10 @@ typedef struct qa_q3_host_options {
     qa_q3_host_client_services client;
     qa_q3_host_collision_services collision;
     qa_q3_host_presentation_services presentation;
+    /* Original CGAME QVM submissions retain their current syscall token and
+     * unmasked signed pointer. The source role owns this callback/context. */
+    qa_q3_host_source_entity_fn source_entity;
+    void *source_entity_context;
     /* Successful create consumes this lease. A failed create leaves it with
      * the caller. Release runs once after all host users and source teardown. */
     void *frontend_lifetime;

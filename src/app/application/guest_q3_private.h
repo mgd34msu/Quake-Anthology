@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_PRIVATE_H
 
 #include "internal.h"
+#include "guest_q3_equipment_profile.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,7 +44,8 @@ typedef struct q3g_artifact {
     qa_qvm_image *image;
     qa_native_module *module;
     qa_native_declaration *declaration;
-    qa_buffer primary;
+    qa_buffer primary, equipment_presentation;
+    application_q3_equipment_profile equipment_profile;
     bool qvm;
 } q3g_artifact;
 typedef struct q3g_role {

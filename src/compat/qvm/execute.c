@@ -1369,6 +1369,53 @@ bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image
     if (!restored) { *error = cleanup; return false; }
     return true;
 }
+
+bool qa_qvm_execution_source_frame(const qa_qvm_call *call, const qa_qvm_image *image,
+    qa_qvm_source_frame *out, qa_error *error)
+{
+    if (!qa_qvm_execution_token(call, error)) return false;
+    qa_qvm *vm = call->vm;
+    host_scope *host = state(vm)->host;
+    source_call *source = host->owner;
+    if (!image || image != vm->image || !out || host->kind != HOST_FUNCTION ||
+        !source || !source->active || source->proceeded || state(vm)->counter)
+        return error_at(error, 0, "QVM source frame requires its current original function before proceeding");
+    int32_t extent = image->instructions[source->instruction].operand;
+    uint32_t start;
+    if (extent < 8 || (extent & 3) ||
+        !stack_address(vm, (int64_t)source->stack - extent, &start, error) ||
+        start < host->frame->floor)
+        return error_at(error, source->instruction, "QVM original local frame exceeds its active stack reservation");
+    *out = (qa_qvm_source_frame){start, source->stack};
+    return true;
+}
+
+bool qa_qvm_execution_source_word(const qa_qvm_call *call, const qa_qvm_image *image,
+    uint32_t offset, int32_t value, qa_qvm_source_word_fn perform, void *context, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    qa_qvm_source_frame frame;
+    if (!perform)
+        return error_at(error, offset, "QVM scoped global word requires its original function callback");
+    if (!qa_qvm_execution_source_frame(call, image, &frame, error)) return false;
+    if (!qa_qvm_qualify_global_word(image, offset, error)) return false;
+    qa_qvm *vm = call->vm;
+    execution *exec = state(vm);
+    if (!healthy(vm, error)) return false;
+    uint8_t saved[4], projected[4];
+    if (!qa_qvm_read(vm, offset, saved, sizeof(saved), error)) return false;
+    qa_store_u32le(projected, (uint32_t)value);
+    bool ok = qa_qvm_write(vm, offset, (qa_bytes){projected, sizeof(projected)}, error);
+    if (ok) ok = perform(context, call, error);
+    if (!ok && (!exec->cancelled || error->code != QA_OK)) latch(vm, error);
+    qa_error first = *error, cleanup = {0};
+    bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, sizeof(saved)}, &cleanup);
+    if (exec->failed) { *error = exec->failure; return false; }
+    if (!ok) { *error = first; return false; }
+    if (!restored) { *error = cleanup; return false; }
+    return true;
+}
 uint32_t qa_qvm_break_count(const qa_qvm *vm) { return state(vm) == NULL ? 0 : (uint32_t)state(vm)->breaks; }
 
 static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requested,

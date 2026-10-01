@@ -409,6 +409,8 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         q3g_artifact *artifact = engine->artifacts; engine->artifacts = artifact->next;
         qa_qvm_image_release(artifact->image); qa_native_module_release(artifact->module);
         qa_native_declaration_destroy(artifact->declaration); qa_buffer_free(&artifact->primary);
+        qa_buffer_free(&artifact->equipment_presentation);
+        application_q3_equipment_profile_free(&artifact->equipment_profile);
         free(artifact->path); free(artifact);
     }
     application_guest_q3_save_clear(engine);

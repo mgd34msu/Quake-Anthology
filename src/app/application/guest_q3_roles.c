@@ -193,10 +193,17 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         shared->path = q3g_copy_text(path, error);
         if (!shared->path) { free(shared); goto failed; }
         shared->kind = kind; shared->abi = options.abi; shared->qvm = use_qvm;
+        if (role->image && kind == QA_QVM_CGAME && !application_q3_equipment_profile_read(role->image, kind,
+            shared->abi, (qa_bytes){compatibility.equipment_presentation.data,
+                compatibility.equipment_presentation.size}, &shared->equipment_profile, error)) {
+            free(shared->path); free(shared); goto failed;
+        }
         shared->image = role->image; qa_qvm_image_retain(shared->image);
         shared->module = role->module; qa_native_module_retain(shared->module);
         shared->declaration = role->declaration;
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
+        shared->equipment_presentation = compatibility.equipment_presentation;
+        compatibility.equipment_presentation = (qa_buffer){0};
         shared->next = engine->artifacts; engine->artifacts = shared; role->artifact = shared;
     }
     q3g_server_bind(role, &options);

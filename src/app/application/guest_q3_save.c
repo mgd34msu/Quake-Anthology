@@ -369,7 +369,7 @@ enum { ROLE_INITIALIZED = 1, ROLE_RETIRED = 2, ROLE_READY = 4,
 typedef struct saved_artifact {
     char *path;
     uint32_t kind, abi;
-    qa_sha256_digest digest, primary_digest;
+    qa_sha256_digest digest, primary_digest, equipment_digest;
     q3g_artifact *actual;
 } saved_artifact;
 typedef struct saved_projection {
@@ -489,9 +489,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 3;
+    uint32_t version = 4;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 3 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 4 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
@@ -501,7 +501,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid original GAME console continuation");
     if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (!saved->artifact_count || saved->artifact_count > (io->input.size - io->offset) / 82)
+        if (!saved->artifact_count || saved->artifact_count > (io->input.size - io->offset) / 114)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 artifact inventory extent");
         saved->artifacts = calloc(saved->artifact_count, sizeof(*saved->artifacts));
         if (!saved->artifacts) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 artifact inventory");
@@ -512,7 +512,8 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
             !qa_source_save_u32(io, &artifact->kind) || artifact->kind > QA_QVM_UI ||
             !qa_source_save_u32(io, &artifact->abi) || artifact->abi > QA_QVM_Q3_116N ||
             !qa_source_save_bytes(io, artifact->digest.bytes, 32) ||
-            !qa_source_save_bytes(io, artifact->primary_digest.bytes, 32))
+            !qa_source_save_bytes(io, artifact->primary_digest.bytes, 32) ||
+            !qa_source_save_bytes(io, artifact->equipment_digest.bytes, 32))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
         for (size_t j = 0; j < i; ++j)
             if (artifact->kind == saved->artifacts[j].kind && !strcmp(artifact->path, saved->artifacts[j].path))
@@ -613,6 +614,8 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
         saved->artifacts[i] = (saved_artifact){.path = a->path, .kind = a->kind,
             .abi = a->abi, .digest = *qa_qvm_image_digest(a->image), .actual = a};
         qa_sha256((qa_bytes){a->primary.data, a->primary.size}, &saved->artifacts[i].primary_digest);
+        qa_sha256((qa_bytes){a->equipment_presentation.data, a->equipment_presentation.size},
+            &saved->artifacts[i].equipment_digest);
     }
     i = 0;
     for (q3g_role *r = engine->roles; r; r = r->next, ++i) {
@@ -765,16 +768,24 @@ static bool prepare_artifact(application_provider *provider, struct application_
             &artifact->image, &compatibility, error);
     }
     if (ok) {
-        qa_sha256_digest primary_digest;
+        qa_sha256_digest primary_digest, equipment_digest;
         qa_sha256((qa_bytes){compatibility.primary.data, compatibility.primary.size}, &primary_digest);
+        qa_sha256((qa_bytes){compatibility.equipment_presentation.data,
+            compatibility.equipment_presentation.size}, &equipment_digest);
         ok = compatibility.abi == (qa_qvm_abi)saved->abi &&
             qa_sha256_equal(qa_qvm_image_digest(artifact->image), &saved->digest) &&
-            qa_sha256_equal(&primary_digest, &saved->primary_digest);
+            qa_sha256_equal(&primary_digest, &saved->primary_digest) &&
+            qa_sha256_equal(&equipment_digest, &saved->equipment_digest);
         if (!ok) application_fail(error, QA_ERROR_FORMAT, "Q3 artifact or source declaration differs from saved content");
     }
     if (ok) {
         artifact->abi = compatibility.abi;
         artifact->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
+        artifact->equipment_presentation = compatibility.equipment_presentation;
+        compatibility.equipment_presentation = (qa_buffer){0};
+        ok = artifact->kind != QA_QVM_CGAME || application_q3_equipment_profile_read(artifact->image, artifact->kind,
+            artifact->abi, (qa_bytes){artifact->equipment_presentation.data,
+                artifact->equipment_presentation.size}, &artifact->equipment_profile, error);
     }
     qa_qvm_compatibility_free(&compatibility);
     return ok;

@@ -11,11 +11,11 @@ static qa_vec3 record_vector(const uint8_t *bytes)
                      qa_load_f32le(bytes + 8)};
 }
 
-static bool ref_entity(q3_call *call, qa_q3_ref_entity *out, qa_error *error)
+bool qa_q3_host_ref_entity_decode(qa_bytes source, qa_q3_ref_entity *out, qa_error *error)
 {
-    uint8_t bytes[140];
-    if (!q3_read(call, call->arguments[0], bytes, sizeof(bytes), error))
-        return false;
+    if (!out || !source.data || source.size != 140)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 refEntity requires its complete original record");
+    const uint8_t *bytes = source.data;
     int32_t kind = qa_load_i32le(bytes);
     if (kind < QA_Q3_REF_MODEL || kind > QA_Q3_REF_PORTAL)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "invalid Q3 render entity kind");
@@ -39,6 +39,13 @@ static bool ref_entity(q3_call *call, qa_q3_ref_entity *out, qa_error *error)
     memcpy(entity.color, bytes + 116, sizeof(entity.color));
     *out = entity;
     return true;
+}
+
+static bool ref_entity(q3_call *call, qa_q3_ref_entity *out, qa_error *error)
+{
+    uint8_t bytes[140];
+    return q3_read(call, call->arguments[0], bytes, sizeof(bytes), error) &&
+        qa_q3_host_ref_entity_decode((qa_bytes){bytes, sizeof(bytes)}, out, error);
 }
 
 static bool refdef(q3_call *call, qa_q3_refdef *out, qa_error *error)
@@ -261,7 +268,15 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         ok = qa_q3_presentation_clear(seat, error);
     } else if (service == (ui ? 22 : 41)) {
         qa_q3_ref_entity entity;
-        ok = ref_entity(call, &entity, error) && qa_q3_presentation_entity(seat, &entity, error);
+        bool suppress = false;
+        ok = ref_entity(call, &entity, error);
+        if (ok && !ui && call->source_call && call->host->options.source_entity) {
+            int32_t pointer;
+            ok = qa_qvm_call_argument(call->source_call, 0, &pointer, error) &&
+                call->host->options.source_entity(call->host->options.source_entity_context,
+                    call->source_call, pointer, &entity, &suppress, error);
+        }
+        if (ok && !suppress) ok = qa_q3_presentation_entity(seat, &entity, error);
     } else if (service == (ui ? 23 : 42) || (!ui && service == 87)) {
         ok = polygons(call, seat, service == 87, error);
     } else if (service == (ui ? 24 : 43) || (!ui && service == 85)) {
