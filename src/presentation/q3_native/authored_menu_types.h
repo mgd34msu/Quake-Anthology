@@ -152,9 +152,9 @@ float	FloatSwap (const float *f);
 
 static ID_INLINE short BigShort( short l) { return ShortSwap(l); }
 #define LittleShort
-static ID_INLINE int BigLong(int l) { LongSwap(l); }
+static ID_INLINE int BigLong(int l) { return LongSwap(l); }
 #define LittleLong
-static ID_INLINE float BigFloat(const float *l) { FloatSwap(l); }
+static ID_INLINE float BigFloat(const float *l) { return FloatSwap(l); }
 #define LittleFloat
 
 #define	PATH_SEP '\\'
@@ -309,9 +309,9 @@ inline static float LittleFloat (const float *l) { return FloatSwap(l); }
 #if !idppc
 static short BigShort( short l) { return ShortSwap(l); }
 #define LittleShort
-static int BigLong(int l) { LongSwap(l); }
+static int BigLong(int l) { return LongSwap(l); }
 #define LittleLong
-static float BigFloat(const float *l) { FloatSwap(l); }
+static float BigFloat(const float *l) { return FloatSwap(l); }
 #define LittleFloat
 #else
 #define BigShort
@@ -325,6 +325,10 @@ static float LittleFloat (const float *l) { return FloatSwap(l); }
 #endif
 
 //=============================================================
+
+#ifndef ID_INLINE
+#define ID_INLINE inline
+#endif
 
 typedef unsigned char 		byte;
 

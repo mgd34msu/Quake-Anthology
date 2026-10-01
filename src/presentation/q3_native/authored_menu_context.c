@@ -41,6 +41,7 @@ char *q3menu_parse(char **text, qboolean allow_line_break)
 {
     q3menu_context *context = q3menu_active();
     context->common_parser.token[0] = 0;
+    context->common_parser.token_length = 0;
     if (!text || !*text || context->failed) return context->common_parser.token;
     qa_common_cursor cursor;
     qa_bytes bytes = {(const uint8_t *)*text, strlen(*text)};
@@ -141,7 +142,7 @@ int q3menu_source_token(int handle, pc_token_t *out)
         return 0;
     }
     if (!found) return 0;
-    qa_bytes value = qa_script_token_value(&token);
+    qa_bytes value = token.kind==QA_SCRIPT_STRING?qa_script_token_value(&token):token.text;
     if (value.size >= sizeof(out->string)) { q3menu_error(0, "Authored menu token exceeds source storage"); return 0; }
     memcpy(out->string, value.data, value.size); out->string[value.size] = 0;
     out->type = token.kind == QA_SCRIPT_NUMBER ? TT_NUMBER : token.kind == QA_SCRIPT_STRING ? TT_STRING :

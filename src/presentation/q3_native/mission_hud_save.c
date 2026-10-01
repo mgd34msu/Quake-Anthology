@@ -33,6 +33,13 @@ static bool font(qa_source_save_io *io,q3n_mission_hud *o,fontInfo_t *font,unsig
             source.advance!=g->x_skip*record.glyph_scale||source.bearing_y!=g->top*record.glyph_scale||
             source.uv.x!=g->s||source.uv.y!=g->t||source.uv.z!=g->s2||source.uv.w!=g->t2||
             ((source.image!=NULL)!=(g->handle!=0)))return false;
+        if(source.image) {
+            const qa_material *material=o->options.assets->shaders[g->handle-1]; bool retained=false;
+            for(size_t stage=0;stage<material->stage_count&&!retained;++stage)
+                for(size_t image=0;image<material->stages[stage].image_count;++image)
+                    if(material->stages[stage].images[image]==source.image) { retained=true; break; }
+            if(!retained)return false;
+        }
     }
     if(io->direction==QA_SOURCE_SAVE_READ)q3nm_font_import(&record,font); return true;
 }
@@ -61,9 +68,9 @@ static bool blob(qa_source_save_io *io,qa_buffer *b)
 }
 static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 {
-    uint8_t magic[4]={'Q','3','M','H'}; uint32_t version=1,seat=o->options.seat;
+    uint8_t magic[4]={'Q','3','M','H'}; uint32_t version=1,seat=o->options.seat; bool shared_weapon_hud=o->options.shared_weapon_hud;
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MH",4)||!qa_source_save_u32(io,&version)||version!=1||
-        !qa_source_save_u32(io,&seat)||seat!=o->options.seat)return false;
+        !qa_source_save_u32(io,&seat)||seat!=o->options.seat||!qa_source_save_bool(io,&shared_weapon_hud)||shared_weapon_hud!=o->options.shared_weapon_hud)return false;
     qa_buffer menus={0}; bool ok=true;
     if(io->direction==QA_SOURCE_SAVE_WRITE)ok=q3menu_checkpoint(o->menus,&menus,io->error);
     if(ok)ok=blob(io,&menus);
@@ -72,13 +79,13 @@ static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
     qa_buffer_free(&menus); if(!ok||!assets(io,o))return false;
     if(!qa_source_save_bytes(io,o->system_chat,256)||!qa_source_save_bytes(io,o->team_chat,sizeof(o->team_chat))||
         !memchr(o->system_chat,0,256)||!memchr(o->team_chat[0],0,256)||!memchr(o->team_chat[1],0,256)||
-        !qa_source_save_i32(io,&o->selected_score)||o->selected_score<0||o->selected_score>=64||
+        !qa_source_save_i32(io,&o->selected_score)||o->selected_score< -1||o->selected_score>=64||
         !qa_source_save_i32(io,&o->cursor_x)||o->cursor_x<0||o->cursor_x>640||
         !qa_source_save_i32(io,&o->cursor_y)||o->cursor_y<0||o->cursor_y>480||
         !qa_source_save_i32(io,&o->active_cursor)||!q3nh_handle(o->options.assets,o->active_cursor,Q3P_SHADER)||
         !qa_source_save_i32(io,&o->event_handling)||!qa_source_save_i32(io,&o->voice_time)||
         !qa_source_save_i32(io,&o->order_time)||!qa_source_save_i32(io,&o->current_order)||!qa_source_save_bool(io,&o->order_pending)||
-        !qa_source_save_bool(io,&o->loaded)||!qa_source_save_i32(io,&o->scoreboard_menu)||
+        !qa_source_save_bool(io,&o->loaded)||!qa_source_save_bool(io,&o->text_policy_active)||!qa_source_save_i32(io,&o->scoreboard_menu)||
         o->scoreboard_menu< -1||o->scoreboard_menu>=o->menus->menu_count||!qa_source_save_i32(io,&o->captured_menu)||
         o->captured_menu< -1||o->captured_menu>=o->menus->menu_count||!qa_source_save_i32(io,&o->spectator_offset)||
         o->spectator_offset<0||o->spectator_offset>1023||!qa_source_save_i32(io,&o->spectator_time)||

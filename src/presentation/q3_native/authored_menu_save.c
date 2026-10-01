@@ -4,7 +4,7 @@
 static bool integer(qa_source_save_io *io,int *v) { int32_t n=*v; if(!qa_source_save_i32(io,&n))return false; if(io->direction==QA_SOURCE_SAVE_READ)*v=n; return true; }
 static bool boolean(qa_source_save_io *io,qboolean *v) { bool b=*v!=0; if(!qa_source_save_bool(io,&b))return false; if(io->direction==QA_SOURCE_SAVE_READ)*v=b?qtrue:qfalse; return true; }
 static bool floats(qa_source_save_io *io,float *v,size_t n) { for(size_t i=0;i<n;++i)if(!q3nh_float(io,v+i))return false; return true; }
-static bool string(qa_source_save_io *io,q3menu_context *c,const char **v)
+static bool pooled_string(qa_source_save_io *io,q3menu_context *c,const char **v,bool active)
 {
     int32_t offset=-1;
     if(io->direction==QA_SOURCE_SAVE_WRITE&&*v) {
@@ -13,10 +13,13 @@ static bool string(qa_source_save_io *io,q3menu_context *c,const char **v)
         else if(!**v)offset=-2; else return false;
     }
     if(!qa_source_save_i32(io,&offset)||offset< -2||offset>=(int32_t)sizeof(c->string_pool))return false;
-    if(offset>=0&&(offset>=c->string_pool_index||!memchr(c->string_pool+offset,0,(size_t)(c->string_pool_index-offset))))return false;
+    size_t extent=active?(size_t)c->string_pool_index:sizeof(c->string_pool);
+    if(offset>=0&&((size_t)offset>=extent||!memchr(c->string_pool+offset,0,extent-(size_t)offset)))return false;
     if(io->direction==QA_SOURCE_SAVE_READ)*v=offset==-1?NULL:offset==-2?"":c->string_pool+offset;
     return true;
 }
+static bool string(qa_source_save_io *io,q3menu_context *c,const char **v)
+{ return pooled_string(io,c,v,true); }
 static bool allocation(qa_source_save_io *io,q3menu_context *c,void **v,int expected)
 {
     int32_t index=-1;
@@ -29,7 +32,9 @@ static bool allocation(qa_source_save_io *io,q3menu_context *c,void **v,int expe
     if(io->direction==QA_SOURCE_SAVE_READ)*v=index<0?NULL:c->allocation.bytes+c->allocations[index].offset;
     return true;
 }
-bool q3menu_save_string(qa_source_save_io *io,q3menu_context *c,const char **v) { return string(io,c,v); }
+/* String_Init rewinds the pool; cached asset names retain its old bytes. */
+bool q3menu_save_string(qa_source_save_io *io,q3menu_context *c,const char **v)
+{ return pooled_string(io,c,v,false); }
 static bool menu_ref(qa_source_save_io *io,q3menu_context *c,menuDef_t **v)
 {
     int32_t index=-1;
@@ -61,7 +66,11 @@ static bool item(qa_source_save_io *io,q3menu_context *c,itemDef_t *v,const qa_q
         !integer(io,&v->numColors)||v->numColors<0||v->numColors>MAX_COLOR_RANGES)return false;
     if(io->direction==QA_SOURCE_SAVE_READ)v->parent=parent;
     for(unsigned i=0;i<MAX_COLOR_RANGES;++i)if(!floats(io,v->colorRanges[i].color,4)||!q3nh_float(io,&v->colorRanges[i].low)||!q3nh_float(io,&v->colorRanges[i].high))return false;
-    return q3nh_float(io,&v->special)&&integer(io,&v->cursorPos)&&allocation(io,c,&v->typeData,-1);
+    int data_kind=v->type==ITEM_TYPE_LISTBOX?Q3MENU_LIST:v->type==ITEM_TYPE_MULTI?Q3MENU_MULTI:
+        v->type==ITEM_TYPE_MODEL?Q3MENU_MODEL:
+        v->type==ITEM_TYPE_TEXT||v->type==ITEM_TYPE_EDITFIELD||v->type==ITEM_TYPE_NUMERICFIELD||
+        v->type==ITEM_TYPE_YESNO||v->type==ITEM_TYPE_BIND||v->type==ITEM_TYPE_SLIDER?Q3MENU_EDIT:-1;
+    return q3nh_float(io,&v->special)&&integer(io,&v->cursorPos)&&allocation(io,c,&v->typeData,data_kind);
 }
 static bool menu(qa_source_save_io *io,q3menu_context *c,menuDef_t *m,const qa_q3_presentation_assets *a)
 {

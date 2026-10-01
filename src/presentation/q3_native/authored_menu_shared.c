@@ -2434,6 +2434,8 @@ itemDef_t *Menu_SetPrevCursorItem(menuDef_t *menu) {
       menu->cursorItem = menu->itemCount -1;
     }
 
+    if (menu->cursorItem < 0 || menu->cursorItem >= menu->itemCount) break;
+
 		if (Item_SetFocus(menu->items[menu->cursorItem], DC->cursorx, DC->cursory)) {
 			Menu_HandleMouseMove(menu, menu->items[menu->cursorItem]->window.rect.x + 1, menu->items[menu->cursorItem]->window.rect.y + 1);
       return menu->items[menu->cursorItem];
@@ -2462,6 +2464,8 @@ itemDef_t *Menu_SetNextCursorItem(menuDef_t *menu) {
       wrapped = qtrue;
       menu->cursorItem = 0;
     }
+
+    if (menu->cursorItem < 0 || menu->cursorItem >= menu->itemCount) break;
 		if (Item_SetFocus(menu->items[menu->cursorItem], DC->cursorx, DC->cursory)) {
 			Menu_HandleMouseMove(menu, menu->items[menu->cursorItem]->window.rect.x + 1, menu->items[menu->cursorItem]->window.rect.y + 1);
       return menu->items[menu->cursorItem];
@@ -2645,13 +2649,13 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down) {
 
 		case K_F11:
 			if (DC->getCVarValue("developer")) {
-				if (!DC->executeText) { q3menu_error(0,"executeText is unavailable in the CGAME menu context"); return; }
 				debugMode ^= 1;
 			}
 			break;
 
 		case K_F12:
 			if (DC->getCVarValue("developer")) {
+				if (!DC->executeText) { q3menu_error(0,"executeText is unavailable in the CGAME menu context"); return; }
 				DC->executeText(EXEC_APPEND, "screenshot\n");
 			}
 			break;
@@ -3230,6 +3234,7 @@ Controls_GetConfig
 */
 void Controls_GetConfig( void )
 {
+	if (!DC->getBindingBuf) { q3menu_error(0,"Key binding reads are unavailable in the CGAME menu context"); return; }
 	int		i;
 	int		twokeys[2];
 

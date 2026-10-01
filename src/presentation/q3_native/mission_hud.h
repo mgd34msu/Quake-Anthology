@@ -7,12 +7,15 @@ typedef struct q3n_mission_hud_options {
     qa_application *application;
     const qa_application_native_q3_presentation *source;
     qa_native_q3_client_service *client;
+    qa_native_q3_wire_reader *reader;
     qa_application_q3_client_context recipient;
     qa_vfs *content;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     qa_font_library *fonts;
     uint32_t seat;
+    /* Presence comes from the genuine physical-seat HUD/equipment reader. */
+    bool shared_weapon_hud;
     void *context;
     int32_t (*milliseconds)(void *);
     void (*print)(void *, const char *);
@@ -42,6 +45,8 @@ bool q3n_mission_hud_menu_buffer(q3n_mission_hud *, const q3n_frame *, const cha
 bool q3n_mission_hud_load_menus(q3n_mission_hud *, const q3n_frame *, const char *, qa_error *);
 bool q3n_mission_hud_reset(q3n_mission_hud *, const q3n_frame *, bool strings, qa_error *);
 bool q3n_mission_hud_select(q3n_mission_hud *, const q3n_frame *, bool next, qa_error *);
+bool q3n_mission_hud_next_order(q3n_mission_hud *, const q3n_frame *, qa_error *);
+bool q3n_mission_hud_check_order(q3n_mission_hud *, const q3n_frame *, qa_error *);
 bool q3n_mission_hud_scroll(q3n_mission_hud *, const q3n_frame *, bool down, qa_error *);
 bool q3n_mission_hud_checkpoint(const q3n_mission_hud *, qa_buffer *, qa_error *);
 bool q3n_mission_hud_restore(q3n_mission_hud *, qa_bytes, qa_error *);

@@ -20,7 +20,7 @@ struct q3n_mission_hud {
     char system_chat[256], team_chat[2][256];
     int32_t selected_score, cursor_x, cursor_y, active_cursor, event_handling, voice_time;
     int32_t order_time, current_order;
-    bool order_pending, busy, loaded;
+    bool order_pending, busy, loaded, text_policy_active;
     int32_t scoreboard_menu, captured_menu;
     int32_t spectator_offset, spectator_time, spectator_paint_x, spectator_paint_x2;
     float spectator_width;
@@ -48,4 +48,5 @@ const q3n_client_info *q3nm_client(q3n_mission_hud *, int);
 const char *q3nm_location(q3n_mission_hud *, int);
 void q3nm_font_record(const fontInfo_t *, qa_q3_font_record *);
 void q3nm_font_import(const qa_q3_font_record *, fontInfo_t *);
+bool q3nm_preferences(q3n_mission_hud *);
 #endif

@@ -46,7 +46,8 @@ void q3nm_text(float x,float y,float scale,float input[4],const char *text,float
     bool force=o->frame->preferences.high_contrast||o->frame->preferences.color_mode!=QA_UI_COLOR_STANDARD;
     if(o->frame->preferences.high_contrast) { color[0]=color[1]=color[2]=1; style=6; }
     if(nominal>0) { bool handled; q3nm_result(q3nh_font_text(&o->draw,x,y,text?text:"",nominal,color,force,
-        style==3||style==6,limit,QA_FONT_ALIGN_LEFT,true,&handled)); if(handled||o->menus->failed)return; }
+        style==3||style==6,limit,QA_FONT_ALIGN_LEFT,true,&handled)); if(handled)o->text_policy_active=true;
+        if(handled||o->menus->failed)return; }
     scale*=font->glyphScale*o->frame->preferences.text_scale; adjust*=o->frame->preferences.text_scale;
     int count=0; q3nm_result(q3nh_color(&o->draw,color));
     for(const unsigned char *p=(const unsigned char *)text;p&&*p&&!o->menus->failed&&(limit<=0||count<limit);++p) {
@@ -63,16 +64,26 @@ void q3nm_text(float x,float y,float scale,float input[4],const char *text,float
 float q3nm_limit(const char *text,float x,float y,float scale,const float input[4],float max_x,int limit)
 {
     q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return 0;
+    if(!text)text="";
     fontInfo_t *font=selected_font(scale); float nominal=line_height(font,scale);
     if(nominal>0) { float width,height; bool handled;
         if(!q3nh_font_metric(&o->draw,text?text:"",nominal,limit,&width,&height,&handled)) { q3nm_result(false); return 0; }
         if(handled) {
-            int fit=0; float advance=0; bool clipped=false;
-            for(int count=1;count<=(int)strlen(text)&&(limit<=0||count<=limit);++count) {
-                float measured; bool alternate;
-                if(!q3nh_font_metric(&o->draw,text,nominal,count,&measured,&height,&alternate)) { q3nm_result(false); return 0; }
-                if(x+measured>max_x) { clipped=true; break; } fit=count; advance=measured;
-                if(measured==width)break;
+            qa_font_selection selection=o->draw.typography.fonts;
+            if(o->frame->preferences.typeface==QA_UI_TYPEFACE_STANDARD)selection.primary=NULL;
+            qa_font_layout_options options={.text={(const uint8_t *)text,strlen(text)},
+                .scale=nominal*o->draw.typography.text_scale/8,.color={1,1,1,1},
+                .color_codes=QA_FONT_COLOR_Q3,.force_color=true,.max_glyphs=limit>0?(size_t)limit:0};
+            qa_font_layout layout;
+            if(!qa_font_layout_build(&selection,&options,&o->draw.scene->storage,&layout,o->menus->error)) { q3nm_result(false); return 0; }
+            if(!layout.glyph_count)return max_x;
+            const qa_font_line *line=layout.lines; int fit=0; float advance=0; bool clipped=false;
+            for(size_t i=0;i<line->glyph_count;++i) {
+                float end=line->width;
+                if(i+1<line->glyph_count) { const qa_font_positioned_glyph *next=&layout.glyphs[line->first_glyph+i+1]; qa_font_info info;
+                    if(!qa_font_describe(next->glyph.font,&info)) { q3nm_result(false); return 0; }
+                    end=next->rect.x-next->glyph.bearing_x*layout.line_height/fmaxf(1,info.line_height); }
+                if(x+end>max_x) { clipped=true; break; } fit=(int)(i+1); advance=end;
             }
             if(fit>0) { float color[4]; memcpy(color,input,sizeof(color)); q3nm_text(x,y,scale,color,text,0,fit,0); }
             return clipped?0:x+advance;

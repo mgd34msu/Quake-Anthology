@@ -1,5 +1,7 @@
 /* cg_newdraw.c owner draws, with the Team Arena stat schema. GPL-2.0-or-later. */
 #include "mission_hud_internal.h"
+#include "qa/application_equipment.h"
+#include <float.h>
 
 const q3n_client_info *q3nm_client(q3n_mission_hud *o,int index)
 {
@@ -10,7 +12,7 @@ const q3n_client_info *q3nm_client(q3n_mission_hud *o,int index)
 const char *q3nm_location(q3n_mission_hud *o,int index)
 {
     const char *text=NULL; uint64_t revision;
-    q3nm_result(qa_application_native_q3_presentation_configstring(o->options.application,&o->frame->source,
+    q3nm_result(qa_native_q3_wire_reader_configstring(o->frame->reader,
         (uint32_t)(608+index),&text,&revision,o->menus->error)); return text&&*text?text:"unknown";
 }
 int q3nm_selected(q3n_mission_hud *o)
@@ -41,7 +43,18 @@ float q3nm_value(int id)
     case CG_SELECTEDPLAYER_ARMOR:ci=selected(o); return ci?(float)ci->dynamic.armor:-1;
     case CG_SELECTEDPLAYER_HEALTH:ci=selected(o); return ci?(float)ci->dynamic.health:-1;
     case CG_PLAYER_ARMOR_VALUE:return (float)p->stats[4];
-    case CG_PLAYER_AMMO_VALUE:{ int weapon=entity_weapon(o); return weapon>0&&weapon<16?(float)p->ammo[weapon]:-1; }
+    case CG_PLAYER_AMMO_VALUE:{
+        if(o->options.shared_weapon_hud) {
+            qa_application_equipment_view equipment;
+            if(!qa_application_equipment_read(o->options.application,o->frame->viewing_actor,&equipment,o->menus->error)||
+                !qa_application_equipment_current(o->options.application,&equipment)||!q3nm_current(o,o->frame,o->menus->error)) {
+                q3nm_result(false); return -1; }
+            if(!equipment.has_weapon_status||!equipment.finite_ammo)return -1;
+            if(!isfinite(equipment.ammo_count)||fabs(equipment.ammo_count)>FLT_MAX) {
+                q3nm_result(q3ne_fail(o->menus->error,QA_ERROR_FORMAT,"Shared Mission HUD ammo leaves source float extent")); return -1; }
+            return (float)equipment.ammo_count;
+        }
+        int weapon=entity_weapon(o); return weapon>0&&weapon<16?(float)p->ammo[weapon]:-1; }
     case CG_PLAYER_SCORE:return (float)p->persistant[0]; case CG_PLAYER_HEALTH:return (float)p->stats[0];
     case CG_RED_SCORE:return o->commands?(float)o->commands->scores1:-1;
     case CG_BLUE_SCORE:return o->commands?(float)o->commands->scores2:-1; default:return -1;
@@ -92,8 +105,8 @@ static const char *team_name(q3n_mission_hud *o,bool blue)
 int q3nm_owner_width(int id,float scale)
 { q3n_mission_hud *o=q3nm_active(); const char *text=id==CG_GAME_TYPE?type_text(o):id==CG_GAME_STATUS?status_text(o):
     id==CG_KILLER?killer(o):id==CG_RED_NAME?team_name(o,false):id==CG_BLUE_NAME?team_name(o,true):""; return q3nm_width(text,scale,0); }
-static void pic(q3n_mission_hud *o,rectDef_t r,int asset) { q3nm_result(q3nh_picture(&o->draw,r.x,r.y,r.w,r.h,asset)); }
-static void tint(q3n_mission_hud *o,const float *color) { q3nm_result(q3nh_color(&o->draw,color)); }
+static void pic(q3n_mission_hud *o,rectDef_t r,int asset) { if(!o->menus->failed)q3nm_result(q3nh_picture(&o->draw,r.x,r.y,r.w,r.h,asset)); }
+static void tint(q3n_mission_hud *o,const float *color) { if(!o->menus->failed)q3nm_result(q3nh_color(&o->draw,color)); }
 static void text(rectDef_t r,float scale,float color[4],const char *value,int style)
 { q3nm_text(r.x,r.y+r.h,scale,color,value,0,0,style); }
 static void number(q3n_mission_hud *o,rectDef_t r,float scale,float color[4],int value,int picture,int style)
@@ -102,7 +115,7 @@ static const qa_q3_item *powerup(int index)
 { size_t count; const qa_q3_item *items=qa_q3_items(QA_Q3_TEAM_ARENA,&count); for(size_t i=0;i<count;++i)
     if((items[i].kind==QA_Q3_ITEM_POWERUP||items[i].kind==QA_Q3_ITEM_PERSISTENT||items[i].kind==QA_Q3_ITEM_TEAM)&&items[i].tag==index)return &items[i]; return NULL; }
 static void item_picture(q3n_mission_hud *o,rectDef_t r,const qa_q3_item *item)
-{ int handle=0; if(item&&item->icon)q3nm_result(qa_q3_register_shader(o->options.assets,item->icon,true,&handle,o->menus->error)); pic(o,r,handle); }
+{ int handle=0; if(o->menus->failed)return; if(item&&item->icon)q3nm_result(qa_q3_register_shader(o->options.assets,item->icon,true,&handle,o->menus->error)); pic(o,r,handle); }
 static void armor(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
     const q3n_media_view *m=q3n_media_read(o->frame->media);
@@ -111,6 +124,7 @@ static void armor(q3n_mission_hud *o,rectDef_t r,bool flat)
 }
 static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
+    if(o->options.shared_weapon_hud)return;
     const q3n_media_view *m=q3n_media_read(o->frame->media); int weapon;
     if(flat||(!o->settings.draw_3d_icons&&o->settings.draw_icons)) { weapon=o->frame->local_player.weapon;
         if(weapon>=0&&weapon<16&&m->weapons[weapon].ammo_icon)pic(o,r,m->weapons[weapon].ammo_icon); }
@@ -120,8 +134,8 @@ static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 static void player_head(q3n_mission_hud *o,rectDef_t r)
 {
     q3n_hud_state *s=&o->hud->state; const q3n_player_feedback *p=q3n_player_state_feedback(o->frame->player_state); int time=o->frame->time;
-    if(p&&p->damage_time&&time-p->damage_time<500) {
-        float frac=(time-p->damage_time)/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
+    if(p&&p->damage_time&&q3ne_sub(time,p->damage_time)<500) {
+        float frac=(float)q3ne_sub(time,p->damage_time)/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
         r.x-=stretch*0.5f+p->damage_x*stretch*0.5f; s->head_start_yaw=180+p->damage_x*45;
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI); s->head_start_time=time;
@@ -185,7 +199,7 @@ static void team_info(q3n_mission_hud *o,rectDef_t r,float text_y,float scale,fl
 {
     int count=o->commands->num_sorted_team_players,team=o->frame->local_player.persistant[3]; if(count>8)count=8;
     for(int i=0;i<count;++i) { const q3n_client_info *ci=q3nm_client(o,o->commands->sorted_team_players[i]); if(ci&&ci->info_valid&&ci->team==team)(void)q3nm_width(ci->name,scale,0); }
-    for(int i=1;i<64;++i) { const char *value; uint64_t rev; if(qa_application_native_q3_presentation_configstring(o->options.application,&o->frame->source,608u+(uint32_t)i,&value,&rev,o->menus->error)) {
+    for(int i=1;i<64;++i) { const char *value; uint64_t rev; if(qa_native_q3_wire_reader_configstring(o->frame->reader,608u+(uint32_t)i,&value,&rev,o->menus->error)) {
         if(*value)(void)q3nm_width(value,scale,0); } else q3nm_result(false); }
     float y=r.y;
     for(int i=0;i<count;++i) {
@@ -233,13 +247,13 @@ static void medal(q3n_mission_hud *o,int id,rectDef_t r,float scale,const float 
 void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id,int flags,int align,
     float special,float scale,float color[4],int picture,int style)
 {
-    (void)text_x; q3n_mission_hud *o=q3nm_active(); if(!o->settings.draw_status||!o->commands)return;
+    (void)text_x; q3n_mission_hud *o=q3nm_active(); if(o->menus->failed||!o->settings.draw_status||!o->commands)return;
     rectDef_t r={x,y,w,h}; bool flat=(flags&CG_SHOW_2DONLY)!=0; const q3n_media_view *m=q3n_media_read(o->frame->media);
     const qa_q3_player *p=&o->frame->local_player; const q3n_client_info *ci; const char *value;
     switch(id) {
     case CG_PLAYER_ARMOR_ICON:armor(o,r,flat); break; case CG_PLAYER_ARMOR_ICON2D:armor(o,r,true); break;
     case CG_PLAYER_AMMO_ICON:ammo(o,r,flat); break; case CG_PLAYER_AMMO_ICON2D:ammo(o,r,true); break;
-    case CG_PLAYER_AMMO_VALUE:if(entity_weapon(o)&&q3nm_value(id)>-1)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
+    case CG_PLAYER_AMMO_VALUE:if(!o->options.shared_weapon_hud&&entity_weapon(o)&&q3nm_value(id)>-1)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_PLAYER_ARMOR_VALUE:case CG_PLAYER_HEALTH:case CG_PLAYER_SCORE:case CG_SELECTEDPLAYER_HEALTH:number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_SELECTEDPLAYER_ARMOR:if(q3nm_value(id)>0)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_SELECTEDPLAYER_HEAD:case CG_VOICE_HEAD:q3nm_result(q3nh_head(&o->draw,x,y,w,h,id==CG_VOICE_HEAD?o->commands->current_voice_client:selected_index(o),qa_v3(0,180,0))); break;
@@ -273,22 +287,47 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
     case CG_1STPLACE:case CG_2NDPLACE:{ int score=id==CG_1STPLACE?o->commands->scores1:o->commands->scores2; if(score!=-9999)q3nm_text(x,y,scale,color,q3menu_format("%2d",score),0,0,style); break; }
     }
 }
-bool q3n_mission_hud_select(q3n_mission_hud *o,const q3n_frame *f,bool next,qa_error *e)
+static bool pending_order(q3n_mission_hud *o,qa_error *e)
 {
-    q3menu_context *previous; if(!q3nm_begin(o,f,e,&previous))return false; bool ok=o->commands!=NULL;
+    if(!o->commands)return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission order requires actual Team command state");
+    if(o->commands->game_type<4||!o->order_pending)return true; bool ok=true;
     static const char *team[]={"offense","defend","patrol","followme","returnflag","followflagcarrier","camp"};
-    static const char *personal[]={"onoffense","ondefense","onpatrol","onfollow","onreturnflag","onfollowcarrier","oncamping"};
+    static const char *personal[]={"onoffense","ondefense","onpatrol","onfollow","ongetflag","onfollowcarrier","oncamping"};
     static const char *buttons[]={"+button7; wait; -button7","+button8; wait; -button8","+button9; wait; -button9","+button10; wait; -button10",NULL,NULL,NULL};
     int index=q3nm_integer(o,"cg_currentSelectedPlayer");
-    if(ok&&o->commands->game_type>=4&&o->order_pending) {
+    {
         int order=o->current_order-1; bool valid=order>=0&&order<7; const char *command=NULL;
         if(index==o->commands->num_sorted_team_players) { if(valid)command=q3menu_format("cmd vsay_team %s\n",team[order]); else ok=q3ne_fail(e,QA_ERROR_FORMAT,"Everyone order has no source voice command"); }
-        else if(index>=0&&index<o->commands->num_sorted_team_players) { int client=o->commands->sorted_team_players[index];
-            if(client==f->local_player.clientNum&&valid) { ok=qa_native_q3_client_console(o->options.client,q3menu_format("teamtask %d\n",o->current_order),e); command=q3menu_format("cmd vsay_team %s\n",personal[order]); }
+        else if(index>=0&&index<8) { int client=o->commands->sorted_team_players[index];
+            if(client==o->frame->local_player.clientNum&&valid) { ok=qa_native_q3_client_console(o->options.client,q3menu_format("teamtask %d\n",o->current_order),e); command=q3menu_format("cmd vsay_team %s\n",personal[order]); }
             else if(valid)command=q3menu_format("cmd vtell %d %s\n",client,team[order]); }
+        else ok=q3ne_fail(e,QA_ERROR_FORMAT,"Mission order selected player leaves source team array");
         if(ok&&command)ok=qa_native_q3_client_console(o->options.client,command,e);
-        if(ok&&valid&&buttons[order])ok=qa_native_q3_client_console(o->options.client,buttons[order],e); o->order_pending=false;
+        if(ok&&valid&&buttons[order])ok=qa_native_q3_client_console(o->options.client,buttons[order],e); if(ok)o->order_pending=false;
     }
+    return ok;
+}
+bool q3n_mission_hud_check_order(q3n_mission_hud *o,const q3n_frame *f,qa_error *e)
+{ q3menu_context *previous; if(!q3nm_begin(o,f,e,&previous))return false;
+    bool ok=!o->order_pending||f->time<=o->order_time||pending_order(o,e); return q3nm_end(o,previous,ok); }
+bool q3n_mission_hud_next_order(q3n_mission_hud *o,const q3n_frame *f,qa_error *e)
+{
+    q3menu_context *previous; if(!q3nm_begin(o,f,e,&previous))return false;
+    if(!o->commands)return q3nm_end(o,previous,q3ne_fail(e,QA_ERROR_ARGUMENT,"Next Mission order requires actual Team command state"));
+    const q3n_client_info *ci=q3nm_client(o,f->local_player.clientNum); if(!ci)return q3nm_end(o,previous,false);
+    if(!ci->team_leader) { int index=q3nm_integer(o,"cg_currentSelectedPlayer");
+        if(index<0||index>=8)return q3nm_end(o,previous,q3ne_fail(e,QA_ERROR_FORMAT,"Next Mission order selected player leaves source team array"));
+        if(o->commands->sorted_team_players[index]!=f->local_player.clientNum)return q3nm_end(o,previous,true); }
+    if(o->current_order<7) { o->current_order=q3ne_plus(o->current_order,1);
+        if(o->current_order==5&&!team_flag(o,false))o->current_order=q3ne_plus(o->current_order,1);
+        if(o->current_order==6&&!team_flag(o,true))o->current_order=q3ne_plus(o->current_order,1); }
+    else o->current_order=1;
+    o->order_pending=true; o->order_time=q3ne_plus(f->time,3000); return q3nm_end(o,previous,true);
+}
+bool q3n_mission_hud_select(q3n_mission_hud *o,const q3n_frame *f,bool next,qa_error *e)
+{
+    q3menu_context *previous; if(!q3nm_begin(o,f,e,&previous))return false; bool ok=pending_order(o,e);
+    int index=q3nm_integer(o,"cg_currentSelectedPlayer");
     if(ok) {
         int count=o->commands->num_sorted_team_players; index=next?(index>=0&&index<count?index+1:0):(index>0&&index<count?index-1:count);
         ok=qa_native_q3_client_cvar_integer(o->options.client,"cg_currentSelectedPlayer",index,e);

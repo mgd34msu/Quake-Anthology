@@ -107,7 +107,7 @@ bool q3n_mission_hud_score_selection(q3n_mission_hud *o,const q3n_frame *f,const
 bool q3n_mission_hud_paint(q3n_mission_hud *o,const q3n_frame *f,bool scoreboard,bool first,qa_error *e)
 {
     q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false;
-    if(!q3nh_preferences(&o->draw))return q3nm_end(o,p,false);
+    if(!q3nm_preferences(o))return q3nm_end(o,p,false);
     if(scoreboard) {
         if(o->scoreboard_menu>=0)o->menus->menus[o->scoreboard_menu].window.flags&=~WINDOW_FORCED;
         if(o->scoreboard_menu<0&&o->commands) { menuDef_t *m=Menus_FindByName(o->commands->game_type>=3?"teamscore_menu":"score_menu");
@@ -186,6 +186,6 @@ bool q3n_mission_hud_key(q3n_mission_hud *o,const q3n_frame *f,int32_t key,bool 
 }
 bool q3n_mission_hud_scroll(q3n_mission_hud *o,const q3n_frame *f,bool down,qa_error *e)
 { q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false;
-    if(o->scoreboard_menu>=0&&o->commands) { menuDef_t *m=&o->menus->menus[o->scoreboard_menu];
-        if(o->commands->game_type>=3) { Menu_ScrollFeeder(m,5,down); Menu_ScrollFeeder(m,6,down); } else Menu_ScrollFeeder(m,11,down); }
+    if(o->scoreboard_menu>=0&&o->hud->state.scoreboard_showing) { menuDef_t *m=&o->menus->menus[o->scoreboard_menu];
+        Menu_ScrollFeeder(m,11,down); Menu_ScrollFeeder(m,5,down); Menu_ScrollFeeder(m,6,down); }
     return q3nm_end(o,p,true); }

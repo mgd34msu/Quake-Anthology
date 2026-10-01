@@ -1,5 +1,6 @@
 /* Team Arena cg_main/cg_newdraw, id Software 1999-2005, GPL-2.0-or-later. */
 #include "mission_hud_internal.h"
+#include "qa/font_save.h"
 #include "qa/text.h"
 
 q3n_mission_hud *q3nm_active(void) { return q3menu_active()->owner; }
@@ -22,7 +23,7 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
         context.service_owner != o->options.recipient.service_owner || context.console != o->options.recipient.console ||
         context.frontend_lifetime != o->options.recipient.frontend_lifetime || context.cvars != o->options.recipient.cvars ||
         context.source_cvars != o->options.recipient.source_cvars || !context.native_source ||
-        f->client_service != o->options.client)
+        f->client_service != o->options.client || f->reader!=o->options.reader || !qa_native_q3_wire_reader_current(o->options.reader))
         return q3ne_fail(e, QA_ERROR_ARGUMENT, "Mission HUD left its private CGAME recipient or native source");
     return true;
 }
@@ -54,6 +55,16 @@ bool q3nm_end(q3n_mission_hud *o, q3menu_context *previous, bool result)
     result = result && !o->menus->failed && q3nm_current(o, o->frame, o->menus->error);
     if(!result&&o->menus->error&&o->menus->error->code==QA_OK)q3ne_fail(o->menus->error,QA_ERROR_FORMAT,"Mission HUD source operation failed");
     o->frame = NULL; o->commands = NULL; o->menus->error = NULL; o->busy = false; q3menu_leave(previous); return result;
+}
+bool q3nm_preferences(q3n_mission_hud *o)
+{
+    if(!q3nh_preferences(&o->draw))return false;
+    bool requested=o->frame->preferences.text_scale!=1||o->frame->preferences.typeface!=QA_UI_TYPEFACE_STANDARD;
+    if(requested||o->text_policy_active)for(uint32_t i=0;i<o->menus->allocation_count;++i)
+        if(o->menus->allocations[i].kind==Q3MENU_ITEM) {
+            itemDef_t *item=(void *)(o->menus->allocation.bytes+o->menus->allocations[i].offset); item->textRect.w=0;
+        }
+    o->text_policy_active=requested; return true;
 }
 static void print(const char *format, ...)
 { q3n_mission_hud *o=q3nm_active(); char text[4096]; va_list a; va_start(a,format); vsnprintf(text,sizeof(text),format,a); va_end(a); o->options.print(o->options.context,text); q3nm_result(q3nm_current(o,o->frame,o->menus->error)); }
@@ -135,7 +146,8 @@ static qboolean owner_key(int id,int flags,float *special,int key) { (void)id; (
 static void music(const char *intro,const char *loop) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(qa_q3_presentation_music(o->frame->presentation,intro,loop,o->menus->error)); }
 static void music_stop(void) { music("",""); }
 static qa_scene_rect_f movie_rect(q3n_mission_hud *o,float x,float y,float w,float h)
-{ float scale=o->frame->preferences.hud_scale; return (qa_scene_rect_f){320+(x-320)*scale,240+(y-240)*scale,w*scale,h*scale}; }
+{ float scale=o->draw.scene?o->frame->preferences.hud_scale:1;
+    return (qa_scene_rect_f){320+(x-320)*scale,240+(y-240)*scale,w*scale,h*scale}; }
 static int movie(const char *path,float x,float y,float w,float h) { q3n_mission_hud *o=q3nm_active(); int hnd=-1;
     if(!o->menus->failed)q3nm_result(qa_q3_presentation_movie_play(o->frame->presentation,path,movie_rect(o,x,y,w,h),2,&hnd,o->menus->error)); return hnd; }
 static void movie_stop(int h) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed&&h>=0)q3nm_result(qa_q3_presentation_movie_stop(o->frame->presentation,h,false,o->menus->error)); }
@@ -191,14 +203,21 @@ static int32_t random_integer(void *context) { q3n_mission_hud *o=context; retur
 static bool create(const q3n_mission_hud_options *options,const qa_native_q3_client_basis *basis,q3n_mission_hud **out,qa_error *e)
 {
     const qa_native_q3_client_services *services=options?qa_native_q3_client_services_read(options->client):NULL;
+    qa_native_q3_wire_basis wire={0};
     if(!options||!out||*out||!basis||basis->product!=QA_Q3_TEAM_ARENA||basis->application!=options->application||
         basis->seat!=options->seat||basis->receiver!=options->recipient.receiver||basis->source_owner!=options->recipient.source_owner||
         basis->physical_client!=options->recipient.source_client||!qa_actor_id_equal(basis->viewing_actor,options->recipient.source_actor)||!options->client||
         options->content!=basis->content||!options->assets||!options->presentation||!options->fonts||!options->milliseconds||!options->print||!options->key_catcher||
+        qa_font_library_content(options->fonts)!=options->assets->options.provider.mounts||
+        qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images||
         options->presentation->options.assets!=options->assets||!services||services->client.session!=options->recipient.session||
         services->client.service_owner!=options->recipient.service_owner||services->client.frontend_lifetime!=options->recipient.frontend_lifetime||
         services->client.console!=options->recipient.console||services->client.cvars!=options->recipient.cvars||
-        services->client.source_cvars!=options->recipient.source_cvars||!services->client.native_source)
+        services->client.source_cvars!=options->recipient.source_cvars||!services->client.native_source||
+        !qa_native_q3_wire_reader_basis(options->reader,&wire,e)||wire.application!=options->application||wire.session!=basis->session||
+        wire.source_game!=basis->source_game||wire.source_owner!=basis->source_owner||wire.receiver!=basis->receiver||
+        wire.seat!=basis->seat||wire.physical_client!=basis->physical_client||!qa_actor_id_equal(wire.actor,basis->viewing_actor)||
+        wire.publication_generation!=basis->publication_generation||wire.map_revision!=basis->map_revision)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD requires actual selected CGAME content and private seat services");
     q3n_mission_hud *o=calloc(1,sizeof(*o)); if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating native mission HUD");
     o->options=*options; o->options.source=NULL; o->source_game=basis->source_game;
