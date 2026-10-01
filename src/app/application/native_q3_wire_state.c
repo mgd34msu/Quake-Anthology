@@ -1288,8 +1288,18 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
         if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index,
                                                value, error)) return false;
         client->config_commands[index] = number;
-        if (changed && index == 1 && !leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
-            qa_q3_configstring(client->gamestate, 1), error)) return false;
+        /* SystemInfo may enter other command parsers. Preserve the immutable
+         * reached command and restore its actual argv after that effect. */
+        char *command_text = copy_text(text, error);
+        if (!command_text) return false;
+        bool okay = !(changed && index == 1) || leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
+            qa_q3_configstring(client->gamestate, 1), error);
+        qa_command_tokens restored = {0};
+        if (okay) okay = qa_command_tokenize(command_text, QA_CONSOLE_Q3, false, &restored, error);
+        free(command_text);
+        if (!okay) return false;
+        qa_command_tokens_free(lease->arguments);
+        *lease->arguments = restored;
     }
     if (*present && args->count && !strcmp(args->values[0], "map_restart") &&
         !leased_effect(lease, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
@@ -1674,6 +1684,132 @@ static bool write_record(void *context, size_t offset, qa_bytes bytes, qa_error 
     (void)error;
     memcpy((uint8_t *)context + offset, bytes.data, bytes.size);
     return true;
+}
+static bool reader_arguments_fields(qa_source_save_io *io,qa_command_tokens *arguments)
+{
+    const size_t maximum=9216;
+    bool allocated=arguments->storage!=NULL;
+    if (io->direction==QA_SOURCE_SAVE_WRITE &&
+        ((arguments->values!=NULL)!=allocated || (arguments->args_text!=NULL)!=allocated ||
+         (!allocated && arguments->count)))
+        return fields_failure(io,"Native reader argument allocation is inconsistent");
+    if (!qa_source_save_bool(io,&allocated) || !qa_source_save_count(io,&arguments->count,1024)) return false;
+    if (!allocated) return !arguments->count || fields_failure(io,"Native reader arguments have no owned storage");
+    size_t extent=0;
+    if (io->direction==QA_SOURCE_SAVE_WRITE) {
+        for (size_t i=0;i<arguments->count;++i) {
+            if (arguments->values[i]!=arguments->storage+extent)
+                return fields_failure(io,"Native reader argument view differs from its packed owner");
+            size_t length=strlen(arguments->values[i])+1;
+            if (length>maximum-extent) return fields_failure(io,"Native reader argument storage exceeds source token extent");
+            extent+=length;
+        }
+    }
+    if (!qa_source_save_count(io,&extent,maximum)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (io->offset>io->input.size || extent>io->input.size-io->offset)
+            return fields_failure(io,"Native reader argument storage is truncated");
+        arguments->storage=calloc(extent?extent:1,1);
+        arguments->values=calloc(arguments->count?arguments->count:1,sizeof(*arguments->values));
+        if (!arguments->storage || !arguments->values) {
+            io->failed=true; return application_fail(io->error,QA_ERROR_MEMORY,"Restoring native reader argument storage");
+        }
+    }
+    if (!qa_source_save_bytes(io,arguments->storage,extent)) return false;
+    size_t offset=0;
+    for (size_t i=0;i<arguments->count;++i) {
+        if (offset>=extent) return fields_failure(io,"Native reader argument table exceeds its storage");
+        char *end=memchr(arguments->storage+offset,0,extent-offset);
+        if (!end) return fields_failure(io,"Native reader argument has no terminator");
+        if (io->direction==QA_SOURCE_SAVE_READ) arguments->values[i]=arguments->storage+offset;
+        offset=(size_t)(end-arguments->storage)+1;
+    }
+    if (offset!=extent) return fields_failure(io,"Native reader argument storage retains an unproduced token tail");
+    size_t length=io->direction==QA_SOURCE_SAVE_WRITE?strlen(arguments->args_text)+1:0;
+    if (!qa_source_save_count(io,&length,maximum+1) || !length)
+        return fields_failure(io,"Native reader args text extent is invalid");
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (io->offset>io->input.size || length>io->input.size-io->offset)
+            return fields_failure(io,"Native reader args text is truncated");
+        arguments->args_text=malloc(length);
+        if (!arguments->args_text) {
+            io->failed=true; return application_fail(io->error,QA_ERROR_MEMORY,"Restoring native reader args text");
+        }
+    }
+    if (!qa_source_save_bytes(io,arguments->args_text,length) || arguments->args_text[length-1] ||
+        memchr(arguments->args_text,0,length-1)) return fields_failure(io,"Native reader args text terminator is invalid");
+    offset=0;
+    for (size_t i=1;i<arguments->count;++i) {
+        size_t bytes=strlen(arguments->values[i]);
+        if (i>1 && (offset>=length-1 || arguments->args_text[offset++]!=' '))
+            return fields_failure(io,"Native reader args text separator differs from its actual argv");
+        if (bytes>length-1-offset || memcmp(arguments->args_text+offset,arguments->values[i],bytes))
+            return fields_failure(io,"Native reader args text differs from its actual argv");
+        offset+=bytes;
+    }
+    return offset==length-1 || fields_failure(io,"Native reader args text retains an unproduced tail");
+}
+static bool reader_fields(qa_source_save_io *io,const qa_native_q3_wire_basis *basis,
+    qa_native_q3_wire_reader *continuation,const native_q3_wire_client *client)
+{
+    uint8_t magic[4]={'Q','3','W','R'}; uint32_t schema=1,product=basis->product;
+    qa_actor_owner source=basis->source_owner,receiver=basis->receiver;
+    uint32_t seat=basis->seat,slot=basis->physical_client;
+    uint64_t publication=basis->publication_generation,map=basis->map_revision;
+    qa_actor_id actor=basis->actor;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3WR",4) ||
+        !qa_source_save_u32(io,&schema) || schema!=1 ||
+        !qa_source_save_string(io,&source) || source!=basis->source_owner ||
+        !qa_source_save_u64(io,&receiver) || receiver!=basis->receiver ||
+        !qa_source_save_u32(io,&product) || product!=(uint32_t)basis->product ||
+        !qa_source_save_u32(io,&seat) || seat!=basis->seat ||
+        !qa_source_save_u32(io,&slot) || slot!=basis->physical_client ||
+        !qa_source_save_u64(io,&publication) || publication!=basis->publication_generation ||
+        !qa_source_save_u64(io,&map) || map!=basis->map_revision ||
+        !qa_source_save_actor(io,&actor) || !qa_actor_id_equal(actor,basis->actor))
+        return fields_failure(io,"Native reader continuation has a different installed source binding");
+    if (!reader_arguments_fields(io,&continuation->owned_arguments) ||
+        !qa_source_save_i32(io,&continuation->receipt_sequence) ||
+        !qa_source_save_bool(io,&continuation->has_receipt) ||
+        !qa_source_save_bool(io,&continuation->receipt_present)) return false;
+    if (continuation->receipt_sequence<0 || continuation->receipt_sequence>client->reliable.sequence ||
+        (continuation->has_receipt && (!continuation->receipt_sequence || !continuation->owned_arguments.storage)))
+        return fields_failure(io,"Native reader receipt exceeds its actual reliable history");
+    return true;
+}
+bool qa_native_q3_wire_reader_checkpoint(const qa_native_q3_wire_reader *reader,qa_buffer *out,qa_error *error)
+{
+    qa_native_q3_wire_basis basis;
+    if (!out || out->data || out->size || !qa_native_q3_wire_reader_idle(reader) ||
+        !qa_native_q3_wire_reader_basis(reader,&basis,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native reader capture requires its idle installed owner");
+    qa_native_q3_wire_reader *owner=(qa_native_q3_wire_reader *)reader;
+    ++owner->calls; ++owner->wire->calls;
+    qa_native_q3_wire_reader copy=*owner; qa_source_save_io io={0};
+    bool okay=qa_source_save_writer(&io,basis.session,error) &&
+        reader_fields(&io,&basis,&copy,&owner->wire->clients[owner->slot]) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); --owner->wire->calls; --owner->calls;
+    return okay;
+}
+bool qa_native_q3_wire_reader_restore(qa_native_q3_wire_reader *reader,qa_bytes bytes,qa_error *error)
+{
+    qa_native_q3_wire_basis basis;
+    if (!qa_native_q3_wire_reader_idle(reader) || !qa_native_q3_wire_reader_basis(reader,&basis,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native reader restore requires its idle imported source owner");
+    ++reader->calls; ++reader->wire->calls;
+    qa_native_q3_wire_reader candidate={0}; qa_source_save_io io={0};
+    bool okay=qa_source_save_reader(&io,basis.session,bytes,error) &&
+        reader_fields(&io,&basis,&candidate,&reader->wire->clients[reader->slot]) && qa_source_save_finish(&io,NULL);
+    if (okay) {
+        qa_command_tokens_free(&reader->owned_arguments);
+        reader->owned_arguments=candidate.owned_arguments;
+        reader->receipt_sequence=candidate.receipt_sequence;
+        reader->has_receipt=candidate.has_receipt; reader->receipt_present=candidate.receipt_present;
+        candidate.owned_arguments=(qa_command_tokens){0};
+    }
+    qa_command_tokens_free(&candidate.owned_arguments);
+    qa_source_save_dispose(&io); --reader->wire->calls; --reader->calls;
+    return okay;
 }
 
 static bool command_fields(qa_source_save_io *io, qa_q3_usercmd *command)

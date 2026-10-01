@@ -24,6 +24,15 @@ static bool leave(q3n_media *m, bool okay) { m->busy = false; return okay; }
 bool q3n_media_idle(const q3n_media *m) { return m && !m->busy; }
 const q3n_media_view *q3n_media_read(const q3n_media *m)
 { return q3n_media_idle(m) ? &m->view : NULL; }
+qa_q3_presentation_assets *q3n_media_assets(const q3n_media *m)
+{ return m ? m->options.assets : NULL; }
+bool q3n_media_loading_read(const q3n_media *m,q3n_loading_media *out,qa_error *e)
+{
+    if (!m || !out) return q3p_fail(e,QA_ERROR_ARGUMENT,"Native loading observation requires its actual media owner");
+    *out=(q3n_loading_media){.product=m->options.product,.assets=m->options.assets,
+        .proportional=m->view.graphics[Q3N_G_CHARSET_PROP],.initialized=m->loading_graphics};
+    return true;
+}
 bool q3n_media_create(const q3n_media_options *options, q3n_media **out, qa_error *error)
 {
     if (!options || !options->assets || !out ||

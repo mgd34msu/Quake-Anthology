@@ -112,6 +112,12 @@ typedef struct q3n_media_options {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
 } q3n_media_options;
+typedef struct q3n_loading_media {
+    qa_q3_product product;
+    qa_q3_presentation_assets *assets;
+    int32_t proportional;
+    bool initialized;
+} q3n_loading_media;
 /* The GAME cut qualifies physical source ownership; the reader supplies reached
  * client configstrings. World binding belongs to the outer owner. */
 typedef struct q3n_media_load {
@@ -128,6 +134,10 @@ bool q3n_media_create(const q3n_media_options *, q3n_media **, qa_error *);
 void q3n_media_destroy(q3n_media *);
 bool q3n_media_idle(const q3n_media *);
 const q3n_media_view *q3n_media_read(const q3n_media *);
+qa_q3_presentation_assets *q3n_media_assets(const q3n_media *);
+/* Pure observation is valid inside an authored loading callback while the
+ * media owner is busy. It performs no registration or renderer work. */
+bool q3n_media_loading_read(const q3n_media *, q3n_loading_media *, qa_error *);
 bool q3n_media_loading_graphics(q3n_media *, qa_error *);
 bool q3n_media_load_sounds(q3n_media *, const q3n_media_load *, qa_error *);
 bool q3n_media_load_graphics(q3n_media *, const q3n_media_load *, qa_error *);

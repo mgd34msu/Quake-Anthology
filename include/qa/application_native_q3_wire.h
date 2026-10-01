@@ -63,5 +63,10 @@ bool qa_native_q3_wire_reader_actor(qa_native_q3_wire_reader *, uint32_t source_
 bool qa_native_q3_wire_reader_reliable(qa_native_q3_wire_reader *, const char *, qa_error *);
 bool qa_native_q3_wire_reader_effect(qa_native_q3_wire_reader *, qa_application_q3_client_effect,
     const char *, qa_error *);
+/* The actual GAME/wire graph is imported first. These pure codecs retain the
+ * reader's owned arguments and receipt continuation against its exact installed
+ * binding. Restore runs no tokenizer, reliable claim or frontend effect. */
+bool qa_native_q3_wire_reader_checkpoint(const qa_native_q3_wire_reader *, qa_buffer *, qa_error *);
+bool qa_native_q3_wire_reader_restore(qa_native_q3_wire_reader *, qa_bytes, qa_error *);
 
 #endif
