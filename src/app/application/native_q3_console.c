@@ -2,6 +2,41 @@
 
 #include <stdlib.h>
 #include <ctype.h>
+#include <string.h>
+
+typedef struct q3_engine_cvar {
+    const char *name, *value;
+    uint32_t flags;
+} q3_engine_cvar;
+
+/* q3ServerCvarDefinitions and collisionMapCvarDefinitions registration order.
+ * A NULL default is the actual incoming map identity, not a retained old map. */
+static const q3_engine_cvar engine_cvars[] = {
+    {"protocol", "68", QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
+    {"sv_pure", "1", QA_CVAR_SYSTEMINFO},
+    {"sv_allowDownload", "0", QA_CVAR_SERVERINFO},
+    {"sv_maxRate", "0", QA_CVAR_SERVERINFO},
+    {"sv_fps", "20", 0},
+    {"sv_serverid", "0", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
+    {"sv_paks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
+    {"sv_pakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
+    {"sv_referencedPaks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
+    {"sv_referencedPakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
+    {"sv_maxclients", "8", QA_CVAR_SERVERINFO | QA_CVAR_LATCH},
+    {"mapname", NULL, QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
+    {"sv_mapname", "", QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
+    {"sv_privateClients", "0", QA_CVAR_SERVERINFO},
+    {"sv_privatePassword", "", QA_CVAR_TEMPORARY},
+    {"sv_reconnectlimit", "3", 0},
+    {"sv_minPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
+    {"sv_maxPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
+    {"sv_floodProtect", "1", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
+    {"sv_strictAuth", "1", QA_CVAR_ARCHIVE},
+    {"bot_enable", "1", 0},
+    {"cm_noAreas", "0", QA_CVAR_CHEAT},
+    {"cm_noCurves", "0", QA_CVAR_CHEAT},
+    {"cm_playerCurveClip", "1", QA_CVAR_ARCHIVE | QA_CVAR_CHEAT}
+};
 
 struct application_native_q3_console {
     application_provider *provider;
@@ -158,16 +193,65 @@ bool application_native_q3_console_at(application_provider *provider, qa_console
     return true;
 }
 
-bool application_native_q3_console_create(application_provider *provider, qa_error *error)
+static bool startup_cvar(struct application_native_q3_console *owner,
+    const char *name, qa_error *error)
+{
+    const qa_cvar_view *startup = qa_cvars_find(owner->provider->application->cvars, name);
+    if (!startup) return true;
+    if (startup->owner && startup->owner != owner->provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "native Q3 startup cvar belongs to another source");
+    return qa_cvars_set(owner->cvars, name,
+        startup->latched_value ? startup->latched_value : startup->value, true, error);
+}
+
+static bool register_engine_cvars(struct application_native_q3_console *owner,
+    const char *map_path, qa_error *error)
+{
+    const char *name = !strncmp(map_path, "maps/", 5) ? map_path + 5 : map_path;
+    size_t length = strlen(name);
+    if (length >= 4 && !strcmp(name + length - 4, ".bsp")) length -= 4;
+    if (!length)
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "native Q3 startup map has no source identity");
+    char *map = malloc(length + 1);
+    if (!map)
+        return application_fail(error, QA_ERROR_MEMORY,
+                                "retaining native Q3 startup map identity");
+    memcpy(map, name, length);
+    map[length] = 0;
+
+    bool okay = true;
+    for (size_t i = 0; okay && i < sizeof(engine_cvars) / sizeof(engine_cvars[0]); ++i) {
+        const q3_engine_cvar *definition = &engine_cvars[i];
+        okay = qa_cvars_register(owner->cvars, definition->name,
+            definition->value ? definition->value : map, definition->flags,
+            owner->provider->owner, NULL, error);
+    }
+    if (okay) okay = qa_cvars_set(owner->cvars, "sv_mapname", map, true, error);
+    for (size_t i = 0; okay && i < sizeof(engine_cvars) / sizeof(engine_cvars[0]); ++i) {
+        const char *variable = engine_cvars[i].name;
+        if (!strcmp(variable, "mapname") || !strcmp(variable, "sv_mapname")) continue;
+        okay = startup_cvar(owner, variable, error);
+    }
+    if (okay)
+        okay = qa_cvars_set(owner->cvars, "mapname", map, true, error) &&
+               qa_cvars_set(owner->cvars, "sv_mapname", map, true, error) &&
+               qa_cvars_register(owner->cvars, "dedicated", "0", 0,
+                   owner->provider->owner, NULL, error) &&
+               startup_cvar(owner, "dedicated", error);
+    free(map);
+    return okay;
+}
+
+bool application_native_q3_console_create(application_provider *provider,
+    const char *map_path, qa_error *error)
 {
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->owner ||
         !provider->application || !provider->application->session || !provider->launch ||
         !provider->product || provider->product->family != QA_GAME_Q3 ||
-        provider->close_pending || provider->native_q3_console)
+        !map_path || provider->close_pending || provider->native_q3_console)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 console requires its actual source owner");
-    const qa_cvar_view *capacity = qa_cvars_find(provider->application->cvars, "sv_maxclients");
-    if (capacity && capacity->owner && capacity->owner != provider->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 startup capacity belongs to another source");
     struct application_native_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q3 source console");
     owner->provider = provider;
@@ -180,11 +264,7 @@ bool application_native_q3_console_create(application_provider *provider, qa_err
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
-    if (!owner->console ||
-        !qa_cvars_register(owner->cvars, "sv_maxclients", "8",
-            QA_CVAR_SERVERINFO | QA_CVAR_LATCH | QA_CVAR_ARCHIVE, provider->owner, NULL, error) ||
-        (capacity && !qa_cvars_set(owner->cvars, "sv_maxclients",
-            capacity->latched_value ? capacity->latched_value : capacity->value, true, error))) {
+    if (!owner->console || !register_engine_cvars(owner, map_path, error)) {
         qa_console_destroy(owner->console);
         qa_cvars_destroy(owner->cvars);
         free(owner);

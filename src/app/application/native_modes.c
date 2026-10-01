@@ -1,8 +1,19 @@
 #include "internal.h"
 #include "native_maps.h"
 #include "native_q3_console.h"
+#include "native_q3_clients.h"
+#include "native_q3_settings.h"
+#include "native_q3_wire_state.h"
+#include "native_q3_votes.h"
+#include "native_q3_objectives.h"
+#include "native_q3_team_status.h"
+#include "native_q3_match.h"
+#include "native_q3_session.h"
 #include "q3_restart.h"
+#include "guest_q3_restart.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/game_q3_shader_remap.h"
+#include "qa/game_q3_source.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,41 +60,71 @@ application_provider *application_mode_provider(qa_application *app, qa_mode_id 
 
 static bool native_q3_mode(application_provider *p, qa_mode_id id) {
     qa_mode_view view;
-    return application_mode_provider(p->application, id) == p &&
+    return application_native_q3_mode_source_provider(p->application, id) == p &&
         qa_modes_read(p->application->modes, id, &view, NULL) &&
         view.rules.source >= QA_MODE_Q3 && view.rules.kind >= QA_MODE_FFA &&
         view.rules.kind <= QA_MODE_HARVESTER;
 }
 
+bool application_native_q3_mode_frame_owned(qa_application *app, qa_mode_id id) {
+    application_provider *p = app ? application_native_q3_mode_source_provider(app, id) : NULL;
+    return p && p->kind == APPLICATION_PROVIDER_Q3 && p->constructed && p->attached &&
+        !p->close_pending && p->state.q3 && application_native_q3_console_settings_bound(p) &&
+        native_q3_mode(p, id);
+}
+
+bool application_native_mode_q3_team_status_bound(void *opaque, qa_mode_id id) {
+    qa_application *app = opaque;
+    application_provider *p = app ? application_native_q3_mode_source_provider(app, id) : NULL;
+    return p && p == application_world_provider(app, QA_ROLE_ENTITIES, "") &&
+        native_q3_mode(p, id) && application_native_q3_team_status_bound(p);
+}
+
+bool application_native_mode_q3_source_match_exit(void *opaque, qa_mode_id mode,
+    qa_string_id reason, qa_error *error) {
+    qa_application *app = opaque;
+    application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (!p || p->kind != APPLICATION_PROVIDER_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 match exit has no actual native GAME source");
+    return application_native_q3_match_log_exit(p, mode, reason, error);
+}
+
+bool application_native_q3_source_world_initialize(void *opaque, qa_error *error) {
+    application_provider *p = opaque;
+    return application_native_q3_match_init(p, error) &&
+        application_native_q3_session_initialize(p, error);
+}
+
 static bool q3_settings_values(application_provider *p, qa_mode_q3_settings *out, qa_error *e) {
-    qa_cvars *cvars = application_native_q3_console_registry(p);
-    const qa_cvar_view *enable = qa_cvars_find(cvars, "g_doWarmup");
-    const qa_cvar_view *warmup = qa_cvars_find(cvars, "g_warmup");
-    const qa_cvar_view *time = qa_cvars_find(cvars, "timelimit");
-    const qa_cvar_view *frag = qa_cvars_find(cvars, "fraglimit");
-    const qa_cvar_view *capture = qa_cvars_find(cvars, "capturelimit");
-    if (!enable || !warmup || !time || !frag || !capture ||
-        enable->owner != p->owner || warmup->owner != p->owner || time->owner != p->owner ||
-        frag->owner != p->owner || capture->owner != p->owner)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings have no actual scoped cvar owners");
-    *out = (qa_mode_q3_settings){.do_warmup = enable->integer, .warmup_seconds = warmup->integer,
-        .time_limit_minutes = time->integer, .frag_limit = frag->integer,
-        .capture_limit = capture->integer, .warmup_modification_count = warmup->modification_count};
+    const application_native_q3_cvar_snapshot *warmup;
+    *out = (qa_mode_q3_settings){0};
+    if (!application_native_q3_settings_integer(p, "g_doWarmup", &out->do_warmup, e) ||
+        !application_native_q3_settings_integer(p, "g_warmup", &out->warmup_seconds, e) ||
+        !application_native_q3_settings_integer(p, "timelimit", &out->time_limit_minutes, e) ||
+        !application_native_q3_settings_integer(p, "fraglimit", &out->frag_limit, e) ||
+        !application_native_q3_settings_integer(p, "capturelimit", &out->capture_limit, e) ||
+        !application_native_q3_settings_snapshot(p, "g_warmup", &warmup, e)) return false;
+    out->warmup_modification_count = warmup->modification_count;
     return true;
 }
 
 bool application_native_mode_q3_clock(void *opaque, qa_mode_id mode, int32_t *out, qa_error *e) {
     qa_application *app = opaque;
-    application_provider *p = application_mode_provider(app, mode);
-    if (!p || p->kind != APPLICATION_PROVIDER_Q3 || !p->state.q3 || !out ||
+    application_provider *p = application_native_q3_mode_source_provider(app, mode);
+    if (!p || !out ||
         !native_q3_mode(p, mode))
-        return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 mode has no actual native source clock");
-    return qa_q3_source_clock(p->state.q3, out, e);
+        return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 mode has no actual source clock");
+    if (p->kind == APPLICATION_PROVIDER_Q3 && p->state.q3)
+        return qa_q3_source_clock(p->state.q3, out, e);
+    if ((p->kind == APPLICATION_PROVIDER_QVM || p->kind == APPLICATION_PROVIDER_NATIVE) &&
+        p->component.clock.kind == QA_CLOCK_Q3)
+        return application_q3_guest_round_clock(p, out, e);
+    return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 mode has no running GAME clock owner");
 }
 
 bool application_native_mode_q3_warmup_restart(void *opaque, qa_mode_id mode, qa_error *e) {
     qa_application *app = opaque;
-    application_provider *p = application_mode_provider(app, mode);
+    application_provider *p = application_native_q3_mode_source_provider(app, mode);
     qa_cvars *cvars = application_native_q3_console_registry(p);
     const qa_cvar_view *flag = qa_cvars_find(cvars, "g_restarted");
     if (!p || !native_q3_mode(p, mode) || !flag || flag->owner != p->owner)
@@ -134,31 +175,6 @@ static bool q3_settings_ready(application_provider *p, bool admitted, qa_error *
     return true;
 }
 
-static bool q3_settings_validate(void *opaque, const char *value, qa_error *e) {
-    application_provider *p = opaque;
-    (void)value;
-    return q3_settings_ready(p, application_native_q3_console_settings_bound(p), e);
-}
-
-static void q3_settings_changed(void *opaque, const char *value) {
-    application_provider *p = opaque;
-    qa_application *app = p->application;
-    qa_error error = {0};
-    qa_mode_q3_settings settings;
-    (void)value;
-    if (!application_native_q3_console_borrow(p, &error)) {
-        application_fault(app, &error);
-        return;
-    }
-    bool okay = q3_settings_values(p, &settings, &error);
-    for (size_t i = 0; okay && i < app->mode_count; ++i) {
-        qa_mode_id id = app->mode_ids[i];
-        if (native_q3_mode(p, id)) okay = qa_modes_q3_settings_update(app->modes, id, &settings, &error);
-    }
-    application_native_q3_console_release(p);
-    if (!okay) application_fault(app, &error);
-}
-
 static bool q3_initial_rules(application_provider *p, qa_mode_rules *out, bool *found, qa_error *e) {
     qa_application *app = p->application;
     const qa_launch_snapshot *snapshot = app->routing_snapshot;
@@ -188,39 +204,42 @@ static bool q3_initial_rules(application_provider *p, qa_mode_rules *out, bool *
 bool application_native_q3_settings_register(application_provider *p, qa_error *e) {
     if (!q3_settings_ready(p, false, e)) return false;
     if (application_native_q3_console_settings_bound(p)) return true;
+    if (p->application->operation == APPLICATION_PERSISTING) {
+        if (!application_native_q3_settings_initialized(p))
+            return application_fail(e, QA_ERROR_ARGUMENT, "restored Q3 mode has no imported source settings");
+        application_native_q3_console_settings_commit(p);
+        return true;
+    }
     qa_q3_rules native;
     qa_mode_rules rules = {0};
     bool found;
     if (!qa_q3_rules_read(p->state.q3, &native, e) || !q3_initial_rules(p, &rules, &found, e)) return false;
-    char values[9][64];
+    char values[6][64];
     snprintf(values[0], sizeof(values[0]), "%d", native.game_type);
     snprintf(values[1], sizeof(values[1]), "%d", found ? rules.frag_limit : 20);
     snprintf(values[2], sizeof(values[2]), "%.9g", found ? (double)rules.time_limit_minutes : 0.0);
     snprintf(values[3], sizeof(values[3]), "%d", found ? rules.capture_limit : 8);
     snprintf(values[4], sizeof(values[4]), "%d", found && rules.warmup_seconds ? rules.warmup_seconds : 20);
     snprintf(values[5], sizeof(values[5]), "%d", found && rules.warmup_seconds != 0);
-    strcpy(values[6], "0");
-    strcpy(values[7], "0");
-    strcpy(values[8], "0");
     static const char *names[] = {"g_gametype", "fraglimit", "timelimit", "capturelimit",
-        "g_warmup", "g_doWarmup", "g_restarted", "sv_enableRankings", "sv_rankingsActive"};
+        "g_warmup", "g_doWarmup"};
+    static const char *defaults[] = {"0", "20", "0", "8", "20", "0"};
     static const uint32_t flags[] = {QA_CVAR_SERVERINFO | QA_CVAR_USERINFO | QA_CVAR_LATCH,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
-        QA_CVAR_ARCHIVE, 0, QA_CVAR_READONLY, 0, QA_CVAR_READONLY};
+        QA_CVAR_ARCHIVE, 0};
     qa_cvars *cvars = application_native_q3_console_registry(p);
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
-        if (!qa_cvars_register(cvars, names[i], values[i], flags[i], p->owner, NULL, e)) return false;
-    qa_cvar_binding binding = {.owner = p->owner, .user = p,
-        .validate = q3_settings_validate, .changed = q3_settings_changed};
-    size_t i = 1;
-    for (; i <= 5; ++i)
-        if (!qa_cvars_bind(cvars, names[i], &binding, e)) break;
-    if (i <= 5) {
-        while (i > 1) qa_cvars_unbind(cvars, names[--i], p->owner);
-        return false;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        bool existed = qa_cvars_find(cvars, names[i]) != NULL;
+        if (!qa_cvars_register(cvars, names[i], defaults[i], flags[i], p->owner, NULL, e) ||
+            (!existed && !qa_cvars_set(cvars, names[i], values[i], true, e))) return false;
     }
+    bool friendly_existed = qa_cvars_find(cvars, "g_friendlyFire") != NULL;
+    if (!qa_cvars_register(cvars, "g_friendlyFire", "0", QA_CVAR_ARCHIVE, p->owner, NULL, e) ||
+        (!friendly_existed && native.friendly_fire &&
+         !qa_cvars_set(cvars, "g_friendlyFire", "1", true, e))) return false;
+    if (!application_native_q3_settings_register_cache(p, __DATE__, e)) return false;
     application_native_q3_console_settings_commit(p);
     return true;
 }
@@ -232,11 +251,8 @@ bool application_native_q3_settings_install(application_provider *p, qa_error *e
     qa_application *app = p->application;
     qa_mode_q3_settings settings;
     if (!q3_settings_values(p, &settings, e)) return false;
-    const qa_cvar_view *flag = qa_cvars_find(application_native_q3_console_registry(p), "g_restarted");
-    if (!flag || flag->owner != p->owner)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings have no actual restart flag");
-    int32_t restarted = flag->integer;
-    bool admitted = false;
+    int32_t restarted;
+    if (!application_native_q3_settings_integer(p, "g_restarted", &restarted, e)) return false;
     for (size_t i = 0; i < app->mode_count; ++i) {
         qa_mode_id id = app->mode_ids[i];
         if (!native_q3_mode(p, id)) continue;
@@ -246,9 +262,8 @@ bool application_native_q3_settings_install(application_provider *p, qa_error *e
         if (!qa_modes_q3_settings_read(app->modes, id, &current, &present, e)) return false;
         if (!present && (!application_native_mode_q3_clock(app, id, &now, e) ||
             !qa_modes_q3_settings_admit(app->modes, id, &settings, now, restarted, e))) return false;
-        if (!present) admitted = true;
     }
-    return !admitted || qa_cvars_set(application_native_q3_console_registry(p), "g_restarted", "0", true, e);
+    return true;
 }
 
 bool application_native_q3_settings_reconnect(application_provider *p, qa_error *e) {
@@ -270,6 +285,159 @@ bool application_native_q3_settings_reconnect(application_provider *p, qa_error 
             return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings differ from their restored source cvars");
     }
     return true;
+}
+
+bool application_native_q3_settings_source_remap(void *opaque, qa_error *error) {
+    application_provider *p = opaque;
+    const char *red, *blue;
+    int32_t time;
+    return application_native_q3_settings_string(p, "g_redteam", &red, error) &&
+        application_native_q3_settings_string(p, "g_blueteam", &blue, error) &&
+        qa_q3_source_clock(p->state.q3, &time, error) &&
+        qa_q3_shader_remap_teams(p->state.q3, red, blue, time, error);
+}
+
+static bool q3_source_rules(application_provider *p, qa_error *error) {
+    qa_q3_rules rules;
+    int32_t friendly_fire, blood;
+    if (!qa_q3_rules_read(p->state.q3, &rules, error) ||
+        !application_native_q3_settings_integer(p, "g_gametype", &rules.game_type, error) ||
+        !application_native_q3_settings_integer(p, "dmflags", &rules.dmflags, error) ||
+        !application_native_q3_settings_integer(p, "g_friendlyFire", &friendly_fire, error) ||
+        !application_native_q3_settings_integer(p, "com_blood", &blood, error) ||
+        !application_native_q3_settings_integer(p, "g_forcerespawn", &rules.force_respawn_seconds, error) ||
+        !application_native_q3_settings_number(p, "g_gravity", &rules.gravity, error) ||
+        !application_native_q3_settings_number(p, "g_quadfactor", &rules.quad_factor, error) ||
+        !application_native_q3_settings_number(p, "g_knockback", &rules.knockback, error) ||
+        !application_native_q3_settings_number(p, "g_weaponrespawn", &rules.weapon_respawn_seconds, error) ||
+        !application_native_q3_settings_number(p, "g_weaponTeamRespawn", &rules.team_weapon_respawn_seconds, error))
+        return false;
+    if (p->product && !strcmp(p->product->campaign, "missionpack") &&
+        !application_native_q3_settings_integer(p, "g_proxMineTimeout", &rules.proximity_timeout_ms, error))
+        return false;
+    rules.friendly_fire = friendly_fire != 0;
+    rules.blood = blood != 0;
+    return qa_q3_set_source_rules(p->state.q3, &rules, error);
+}
+
+bool application_native_q3_settings_source_init(application_provider *p, qa_error *error) {
+    return q3_source_rules(p, error) &&
+        (application_world_provider(p->application, QA_ROLE_ENTITIES, "") != p ||
+         (application_native_q3_votes_reset(p, error) &&
+          application_native_q3_team_status_initialize(p, error)));
+}
+
+bool application_native_q3_source_team_items(void *opaque, qa_error *error) {
+    return application_native_q3_objectives_initialize(opaque, error);
+}
+
+bool application_native_q3_settings_source_modes(application_provider *p, qa_error *error) {
+    qa_mode_q3_settings settings;
+    qa_application *app = p->application;
+    if (!q3_settings_values(p, &settings, error)) return false;
+    for (size_t i = 0; i < app->mode_count; ++i) {
+        if (!native_q3_mode(p, app->mode_ids[i])) continue;
+        qa_mode_q3_settings current;
+        bool present;
+        if (!qa_modes_q3_settings_read(app->modes, app->mode_ids[i], &current, &present, error) ||
+            (present && !qa_modes_q3_settings_update(app->modes, app->mode_ids[i], &settings, error))) return false;
+    }
+    return true;
+}
+
+static bool q3_source_info(application_provider *p, qa_error *error) {
+    if (!application_native_q3_console_borrow(p, error)) return false;
+    qa_cvars *cvars = application_native_q3_console_registry(p);
+    qa_buffer system = {0}, server = {0};
+    bool okay = qa_cvars_info(cvars, QA_CVAR_SYSTEMINFO, 8192, &system, error) &&
+        qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &server, error) &&
+        qa_q3_configstring_write(p->state.q3, 1, (const char *)system.data, error) &&
+        qa_q3_configstring_write(p->state.q3, 0, (const char *)server.data, error);
+    qa_buffer_free(&system);
+    qa_buffer_free(&server);
+    application_native_q3_console_release(p);
+    return okay;
+}
+
+bool application_native_q3_settings_source_loaded(application_provider *p, qa_error *error) {
+    qa_application *app = p->application;
+    const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
+    if (!map || !application_native_q3_settings_force_set(p, "mapname", map, error) ||
+        !application_native_q3_settings_force_set(p, "sv_mapname", map, error)) return false;
+    return application_native_q3_settings_remap_teams(p, error) &&
+        application_native_q3_settings_update(p, error) && q3_source_rules(p, error) &&
+        application_native_q3_settings_source_modes(p, error) && q3_source_info(p, error);
+}
+
+bool application_native_q3_settings_source_frame(void *opaque,
+    const qa_source_frame *frame, qa_error *error) {
+    application_provider *p = opaque;
+    qa_application *app = p ? p->application : NULL;
+    if (!app || !frame || frame->provider != p->owner || frame->phase != QA_FRAME_ENTRY ||
+        app->operation != APPLICATION_ADVANCING || !p->constructed || !p->attached ||
+        p->close_pending || app->destroy_requested || !app->modes ||
+        !application_native_q3_console_settings_bound(p))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 settings update has no genuine GAME frame");
+    if (!application_native_q3_settings_update(p, error) || !q3_source_rules(p, error)) return false;
+    return application_native_q3_settings_source_modes(p, error);
+}
+
+static bool q3_list_entities(application_provider *p, qa_error *error) {
+    int32_t list;
+    if (!application_native_q3_settings_integer(p, "g_listEntity", &list, error)) return false;
+    if (!list) return true;
+    for (uint32_t slot = 0; slot < 1024; ++slot) {
+        const char *name;
+        if (!qa_q3_source_classname_read(p->state.q3, slot, &name, error)) return false;
+        if (!name) name = "(null)";
+        int length = snprintf(NULL, 0, "%4u: %s\n", slot, name);
+        if (length < 0) return application_fail(error, QA_ERROR_FORMAT, "Q3 entity listing cannot format its source row");
+        char *text = malloc((size_t)length + 1);
+        if (!text) return application_fail(error, QA_ERROR_MEMORY, "Q3 entity listing cannot retain its source row");
+        snprintf(text, (size_t)length + 1, "%4u: %s\n", slot, name);
+        bool okay = application_native_q3_console_print(p, text, error);
+        free(text);
+        if (!okay) return false;
+    }
+    return application_native_q3_settings_force_set(p, "g_listEntity", "0", error);
+}
+
+bool application_native_q3_source_end_frame(void *opaque,
+    const qa_source_frame *frame, qa_error *error) {
+    application_provider *p = opaque;
+    qa_application *app = p ? p->application : NULL;
+    qa_source_frame active;
+    int32_t time;
+    if (!app || !frame || p->kind != APPLICATION_PROVIDER_Q3 ||
+        frame->provider != p->owner || frame->kind != QA_CLOCK_Q3 ||
+        frame->phase != QA_CLIENT_END_FRAME || app->operation != APPLICATION_ADVANCING ||
+        !p->constructed || !p->attached || p->close_pending || app->destroy_requested ||
+        !application_native_q3_console_settings_bound(p) || !app->modes ||
+        !qa_session_active_frame(app->session, p->owner, &active) ||
+        active.phase != frame->phase || active.number != frame->number ||
+        active.start_ns != frame->start_ns || active.time_ns != frame->time_ns ||
+        active.elapsed_ns != frame->elapsed_ns ||
+        !qa_q3_source_clock(p->state.q3, &time, error) ||
+        (uint32_t)time != (uint32_t)(frame->time_ns / UINT64_C(1000000)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source tail has no genuine END frame");
+    for (size_t i = 0; i < app->mode_count; ++i) {
+        qa_mode_id mode = app->mode_ids[i];
+        if (!native_q3_mode(p, mode)) continue;
+        qa_actor_owner source_owner;
+        bool source_owned = application_native_q3_mode_source(app, mode, &source_owner) &&
+            source_owner == p->owner;
+        bool okay = source_owned
+            ? qa_modes_q3_source_frame(app->modes, mode, frame->time_ns,
+                frame->elapsed_ns, error)
+            : qa_modes_frame(app->modes, mode, frame->time_ns, frame->elapsed_ns, error);
+        if (!okay) return false;
+    }
+    if (application_world_provider(app, QA_ROLE_ENTITIES, "") == p &&
+        (!application_native_q3_match_frame(p, frame, error) ||
+         !application_native_q3_team_status(p, error) ||
+         !application_native_q3_votes_frame(p, error))) return false;
+    return application_native_q3_settings_check_cvars(p, error) &&
+        q3_list_entities(p, error) && q3_source_info(p, error);
 }
 
 bool application_native_mode_emit(void *opaque, qa_mode_id mode,

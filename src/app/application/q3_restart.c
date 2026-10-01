@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "q3_restart.h"
 #include "guest_q3_restart.h"
+#include "q3_round.h"
+#include "q3_world_restart.h"
+#include "native_q3_clients.h"
 #include "qa/launch_identity.h"
 
 #include <stdio.h>
@@ -78,7 +81,7 @@ bool application_q3_restart_clock(application_provider *provider, int32_t *out, 
     return true;
 }
 static bool qualify(application_q3_restart *state, qa_application *app, qa_error *error) {
-    application_provider *provider = app ? application_mode_provider(app, state->mode) : NULL;
+    application_provider *provider = app ? application_native_q3_mode_source_provider(app, state->mode) : NULL;
     const qa_launch_snapshot *current = app ? snapshot(app) : NULL;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(current);
     const char *identity = app && app->session ?
@@ -123,7 +126,7 @@ bool application_q3_restart_enqueue(application_q3_restart *state, qa_applicatio
         return true;
     if (state->busy)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round continuation cannot reenter");
-    application_provider *provider = application_mode_provider(app, intent->mode);
+    application_provider *provider = application_native_q3_mode_source_provider(app, intent->mode);
     if (!provider || !provider->launch || !provider->product ||
         provider->product->family != QA_GAME_Q3 || !provider->product->identity)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 restart has no selected GAME provider");
@@ -149,7 +152,7 @@ bool application_q3_restart_enqueue(application_q3_restart *state, qa_applicatio
 }
 bool application_q3_restart_request(application_q3_restart *state, qa_application *app,
     qa_mode_id mode, const qa_command_invocation *command, qa_error *error) {
-    application_provider *provider = app ? application_mode_provider(app, mode) : NULL;
+    application_provider *provider = app ? application_native_q3_mode_source_provider(app, mode) : NULL;
     if (!provider || !command || !command->raw || !command->argc || !command->argv ||
         command->context.owner != provider->owner || command->context.dialect != QA_CONSOLE_Q3 ||
         !qa_application_command_context_active(app, &command->context))
@@ -187,7 +190,7 @@ bool application_q3_restart_prepare(application_q3_restart *state, qa_applicatio
     qa_application_travel_view travel;
     if (qa_application_travel_read(app, &travel)) { application_q3_restart_cancel(state); return true; }
     if (!boundary(app, error) || !application_q3_restart_reconnect(state, app, error)) return false;
-    application_provider *provider = application_mode_provider(app, state->mode);
+    application_provider *provider = application_native_q3_mode_source_provider(app, state->mode);
     if (state->scheduled && !state->announced) {
         char text[32]; snprintf(text, sizeof(text), "%d", state->due_ms);
         app->operation = APPLICATION_CONFIGURING;
@@ -209,7 +212,17 @@ bool application_q3_restart_prepare(application_q3_restart *state, qa_applicatio
     if (now < state->due_ms) return true;
     bool mutated = false;
     state->busy = true;
-    bool okay = application_q3_round_restart(app, provider, state->mode, &mutated, error);
+    bool compatible = false;
+    bool okay = application_q3_round_compatible(app, provider, state->mode,
+                                               &compatible, error);
+    if (okay)
+        okay = compatible
+            ? application_q3_round_restart(app, provider, state->mode, &mutated, error)
+            : application_q3_world_restart(app, provider, state->mode, &mutated, error);
+    if (!okay && !mutated && error && error->code == QA_ERROR_UNSUPPORTED) {
+        *error = (qa_error){0};
+        okay = application_q3_world_restart(app, provider, state->mode, &mutated, error);
+    }
     state->busy = false;
     if (mutated) application_q3_restart_mutated(state, app);
     if (okay && !mutated)

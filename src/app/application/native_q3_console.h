@@ -3,7 +3,11 @@
 
 #include "internal.h"
 
-bool application_native_q3_console_create(application_provider *, qa_error *);
+/* map_path is the actual incoming map, before public map metadata is replaced.
+ * Engine defaults and genuine startup current/latch values share this owner;
+ * empty package cvars are not evidence that pure metadata was prepared. */
+bool application_native_q3_console_create(application_provider *, const char *map_path,
+    qa_error *);
 bool application_native_q3_console_destroy(application_provider *, qa_error *);
 bool application_native_q3_console_idle(const application_provider *);
 bool application_native_q3_console_borrow(application_provider *, qa_error *);
