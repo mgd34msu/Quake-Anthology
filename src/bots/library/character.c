@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "character_load.h"
 
 static const char default_path[] = "bots/default_c.c";
 void qa_bot_character_retain(qa_bot_character *c) {
@@ -266,12 +267,13 @@ static bool load_skill(qa_bot_library *library, const char *path, float skill,
         *out = c;
     return true;
 }
-bool qa_bot_character_load(qa_bot_library *library, const char *path, float skill,
-                           qa_bot_character **out, qa_error *e) {
-    if (library == NULL || path == NULL || out == NULL || !isfinite(skill)) {
+bool bot_character_load(qa_bot_library *library, const char *path, float skill,
+                        qa_bot_character **out, bool *interpolated, qa_error *e) {
+    if (library == NULL || path == NULL || out == NULL || !interpolated || !isfinite(skill)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot character request");
         return false;
     }
+    *interpolated = false;
     skill = fmaxf(1, fminf(5, skill));
     qa_bot_character *c = NULL;
     bool found;
@@ -330,7 +332,13 @@ bool qa_bot_character_load(qa_bot_library *library, const char *path, float skil
         return false;
     }
     *out = c;
+    *interpolated = true;
     return true;
+}
+bool qa_bot_character_load(qa_bot_library *library, const char *path, float skill,
+                           qa_bot_character **out, qa_error *e) {
+    bool interpolated;
+    return bot_character_load(library, path, skill, out, &interpolated, e);
 }
 static const qa_bot_character_value *get(const qa_bot_character *c, uint32_t index, qa_error *e) {
     if (c == NULL || index >= 80) {

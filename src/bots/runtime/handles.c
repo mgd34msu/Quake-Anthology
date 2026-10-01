@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "../checkpoint_internal.h"
+#include "../library/character_load.h"
+#include "qa/bots_log_consumers.h"
 #include <stdio.h>
 
 void bot_runtime_handles_close(qa_bot_runtime *r) {
@@ -20,20 +22,24 @@ bool qa_bot_runtime_character_load(qa_bot_runtime *r, const char *path, float sk
                                    uint32_t *out, qa_error *e) {
     if (!bot_runtime_mutable(r, e)) return false;
     if (!out || !path) return bot_runtime_fail(e, "missing character path/handle output");
+    *out = 0;
     r->busy = true;
     qa_bot_character *character;
-    bool ok = qa_bot_character_load(r->library, path, skill, &character, e);
-    r->busy = false;
-    if (!ok) return false;
-    *out = 0;
-    uint32_t available = 0;
+    bool interpolated;
+    bool ok = bot_character_load(r->library, path, skill, &character, &interpolated, e);
+    if (!ok) { r->busy = false; return false; }
+    uint32_t available = 0, handle = 0;
     for (uint32_t i = 0; i < r->options.maximum_states; ++i) {
-        if (r->characters[i] == character) { *out = i + 1; break; }
+        if (r->characters[i] == character) { handle = i + 1; break; }
         if (!available && !r->characters[i]) available = i + 1;
     }
-    if (*out || !available) qa_bot_character_release(character);
-    else { r->characters[available - 1] = character; *out = available; }
-    return true;
+    if (handle || !available) qa_bot_character_release(character);
+    else { r->characters[available - 1] = character; handle = available; }
+    if (handle && interpolated)
+        ok = qa_bot_character_dump(r->library, r->log, r->characters[handle - 1], e);
+    if (ok) *out = handle;
+    r->busy = false;
+    return ok;
 }
 bool qa_bot_runtime_character_free(qa_bot_runtime *r, uint32_t id, qa_error *e) {
     if (r && r->closed) return true;
