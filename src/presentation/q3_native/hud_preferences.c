@@ -48,7 +48,8 @@ void q3nh_palette(const q3n_hud_draw *d,const float input[4],float output[4])
 }
 static bool alternate(const q3n_hud_draw *d,const char *text)
 {
-    if(d->frame->preferences.typeface==QA_UI_TYPEFACE_BOLD)return true;
+    if(d->frame->preferences.typeface==QA_UI_TYPEFACE_BOLD)
+        return qa_utf8_valid((qa_bytes){(const uint8_t *)text,strlen(text)});
     for(const unsigned char *p=(const unsigned char *)text;*p;++p)if(*p>=128)
         return qa_utf8_valid((qa_bytes){(const uint8_t *)text,strlen(text)});
     return false;

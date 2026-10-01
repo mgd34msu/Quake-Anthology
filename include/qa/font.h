@@ -77,6 +77,8 @@ typedef struct qa_font_q3_options {
  * owner thread unless the caller supplies external synchronization. */
 qa_font_library *qa_font_library_create(qa_vfs *, qa_scene_resources *, qa_error *);
 void qa_font_library_destroy(qa_font_library *);
+/* The exact borrowed view supplied to this library's constructor. */
+const qa_vfs *qa_font_library_content(const qa_font_library *);
 bool qa_font_classic_create(qa_font_library *, const char *name, const qa_scene_image *,
                             qa_font_color_policy, const qa_font **out, qa_error *);
 /* Explicit authored atlas metrics; the library retains the actual image and

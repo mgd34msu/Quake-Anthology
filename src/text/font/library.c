@@ -91,6 +91,10 @@ qa_font_library *qa_font_library_create(qa_vfs *vfs, qa_scene_resources *resourc
     return library;
 }
 
+const qa_vfs *qa_font_library_content(const qa_font_library *library) {
+    return library ? library->vfs : NULL;
+}
+
 void qa_font_internal_destroy(qa_font *font) {
     if (!font)
         return;
