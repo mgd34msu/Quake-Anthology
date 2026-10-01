@@ -100,6 +100,7 @@ static bool particle_explosion(void *context,const q3n_frame *f,const char *name
 bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native **out,qa_error *e)
 {
     if(!options || !out || *out || !options->application || !options->client || !options->reader || !options->presentation || !options->frame_settings ||
+        (options->begin_frame==NULL)!=(options->end_frame==NULL) ||
         !qa_native_q3_wire_reader_idle(options->reader) ||
         !qa_native_q3_client_service_idle(options->client) || (!restoring && !qa_q3_presentation_idle(options->presentation)))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native CGAME requires its genuine idle client and backend");
@@ -169,7 +170,19 @@ static q3n_frame frame_base(q3n_native *o,const qa_application_native_q3_present
         .client_service=o->options.client,.reader=o->options.reader,.entities=o->entities,.seat=o->seat,.viewing_client=o->physical_client,
         .physical_presentation_seat=o->physical_presentation_seat,
         .viewing_actor=o->viewing_actor,.time=source->source_time_ms,.frame_milliseconds=o->frame_milliseconds,
-        .client_frame=o->client_frame,.refdef=o->previous_refdef};
+        .client_frame=o->client_frame,.refdef=o->previous_refdef,.view_angles=o->previous_view_angles};
+}
+bool q3n_native_command_frame(q3n_native *o,q3n_frame *out,qa_error *e)
+{
+    qa_application_native_q3_presentation source; uint32_t physical; qa_actor_id actor;
+    qa_q3_player player; bool found;
+    if(!o || !out || !o->initialized || !q3n_native_idle(o) || !q3nn_source(o,&source,e) ||
+        !qa_application_native_q3_presentation_local(o->options.application,&source,o->seat,
+            &physical,&actor,&player,&found,e) || !found || physical!=o->physical_client ||
+        !qa_actor_id_equal(actor,o->viewing_actor))
+        return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native console requires its idle completed source and actual local player");
+    *out=frame_base(o,&source); out->local_player=player; out->has_local_player=true;
+    return true;
 }
 bool q3n_native_initialize(q3n_native *o,int32_t baseline,qa_error *e)
 {
@@ -325,7 +338,7 @@ static bool timescale(q3n_native *o,qa_error *e)
     return qa_native_q3_client_cvar_number(client,"cg_timescale",value,e) &&
         (speed.number==0 || qa_native_q3_client_set_timescale(client,value,e));
 }
-static bool draw(q3n_native *o,int32_t latest,bool *rendered,qa_error *e)
+static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,qa_error *e)
 {
     if(!qa_native_q3_client_refresh(o->options.client,e) || !qa_native_q3_client_update(o->options.client,e))return false;
     qa_application_native_q3_presentation source;
@@ -357,6 +370,11 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,qa_error *e)
     if(commands->map_restart) {
         q3n_player_state_round(o->player_state);
         if(!q3n_server_commands_map_restart_taken(o->commands,&f,e))return false;
+    }
+    if(o->options.begin_frame) {
+        *begun=true;
+        if(!o->options.begin_frame(o->options.frame_context,&f,e) ||
+            !qa_application_native_q3_presentation_current(f.application,&source))return false;
     }
     bool fresh=!o->has_source_frame || o->source_frame_number!=source.source_frame.number;
     memset(o->seen,0,sizeof(o->seen));
@@ -420,6 +438,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,qa_error *e)
     }
     if(!timescale(o,e))return false;
     o->previous_refdef=f.refdef;
+    o->previous_view_angles=f.view_angles;
     bool tournament=f.local_player.persistant[3]==3 && (f.local_player.pmFlags&8192);
     if(!tournament) {
         if(!q3n_hud_tile_clear(o->hud,&f,backend.options.viewport,e))return false;
@@ -449,7 +468,9 @@ bool q3n_native_draw(q3n_native *o,int32_t latest,bool *rendered,qa_error *e)
     if(!o || !rendered || !o->initialized || !q3n_native_idle(o) || !q3n_native_current(o))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native draw requires its actual initialized idle recipient");
     *rendered=false; o->busy=true;
-    bool ok=draw(o,latest,rendered,e);
+    bool begun=false;
+    bool ok=draw(o,latest,rendered,&begun,e);
+    if(begun)o->options.end_frame(o->options.frame_context);
     o->frame_options=NULL; o->busy=false;
     if(!ok)o->faulted=true;
     return ok;

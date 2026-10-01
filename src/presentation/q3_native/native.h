@@ -25,6 +25,12 @@ typedef struct q3n_native_options {
     q3n_hud_options hud;
     q3n_server_command_options commands;
     q3n_player_fx_backend player_fx;
+    void *frame_context;
+    /* Prepare true selected composition after reached commands and before
+     * snapshot events/PS warnings. End releases its borrowed frame even when
+     * begin or any subsequent source callback fails. It submits no source. */
+    bool (*begin_frame)(void *,const q3n_frame *,qa_error *);
+    void (*end_frame)(void *);
     void *packet_context;
     bool (*packet_body)(void *, const q3n_frame *, const qa_application_native_q3_entity *,
         q3n_entity *, const qa_q3_ref_entity *, bool *consumed, qa_error *);
@@ -80,6 +86,9 @@ bool q3n_native_destroy(q3n_native *, qa_error *);
 bool q3n_native_owners_read(const q3n_native *, q3n_native_owners *, qa_error *);
 bool q3n_native_recipient(q3n_native *, qa_application_q3_client_context *, qa_error *);
 bool q3n_native_current(const q3n_native *);
+/* Actual completed source/recipient and retained camera state for an idle
+ * native console invocation. Raw PS is borrowed from this observation only. */
+bool q3n_native_command_frame(q3n_native *, q3n_frame *, qa_error *);
 bool q3n_native_initialize(q3n_native *, int32_t actual_command_baseline, qa_error *);
 bool q3n_native_draw(q3n_native *, int32_t actual_latest_command, bool *rendered, qa_error *);
 /* The actual CGAME cvar callback reloads a physical CS_PLAYERS row. */

@@ -31,6 +31,7 @@ struct q3n_native {
     uint64_t source_frame_number;
     int32_t old_time, frame_milliseconds, client_frame;
     qa_q3_refdef previous_refdef;
+    qa_vec3 previous_view_angles;
     bool has_source_frame, initialized, busy, faulted;
     const q3n_native_frame_options *frame_options;
 };

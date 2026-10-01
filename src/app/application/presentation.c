@@ -37,6 +37,8 @@ static q3g_role *client_role(application_provider *provider, qa_qvm_role kind, u
 
 static bool client_ready(q3g_role *role)
 {
+    if (application_q3_guest_role_loading(role->engine->provider, role->kind, role->seat))
+        return false;
     if (role->native_client) {
         const qa_q3_host_client_services *client = &role->client_services;
         return client->gamestate != NULL &&

@@ -87,7 +87,8 @@ static bool fields(qa_source_save_io *io,q3n_native *o)
         !qa_actor_id_equal(actor,o->viewing_actor) || !qa_source_save_u64(io,&o->source_frame_number) ||
         !qa_source_save_i32(io,&o->old_time) || !qa_source_save_i32(io,&o->frame_milliseconds) || o->frame_milliseconds<0 ||
         !qa_source_save_i32(io,&o->client_frame) || !qa_source_save_bool(io,&o->has_source_frame) ||
-        !qa_source_save_bool(io,&o->initialized) || !qa_source_save_bool(io,&o->faulted) || !refdef(io,&o->previous_refdef))return false;
+        !qa_source_save_bool(io,&o->initialized) || !qa_source_save_bool(io,&o->faulted) ||
+        !refdef(io,&o->previous_refdef) || !vector(io,&o->previous_view_angles))return false;
     const qa_native_q3_client_services *services=qa_native_q3_client_services_read(o->options.client);
     if(!services || services->client.initialized!=o->initialized)return false;
     for(uint32_t i=0;i<QA_Q3_SOURCE_ENTITIES;++i)if(!entity(io,o,i))return false;
