@@ -1,5 +1,6 @@
 /* ai-main.ts setupClient and ai-combat.ts BotDeathmatchAI setup continuation. */
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_setup.h"
 #include "source_storage.h"
 
@@ -144,7 +145,7 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
     if(!bot_ai_source_client(b,s,&source_client,e) ||
        !bot_ai_client_name(b,source_client,name,sizeof(name),true,e)) return false;
     qa_bot_chat_set_name(chat,name,source_client);
-    s->source_chat.last_frame_health=s->player.inventory[QA_BOT_INV_HEALTH];
+    s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
     if(!s->player.source_state_available)
         return bot_ai_fail(e,"Bot setup lacks its retained source player state");
     s->source_chat.last_hit_count=s->player.source_state.persistant[1];

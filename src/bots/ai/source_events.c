@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_events.h"
 #include "source_orders.h"
 #include <stdio.h>
@@ -120,7 +121,7 @@ bool bot_ai_source_check_event(qa_bots *b,bot_ai_state *s,const qa_q3_entity *en
         if(entity->number!=self || !live(b,s)) return true;
         char sound[128];bool valid;
         if(!sound_name(b,"EV_GENERAL_SOUND",entity->eventParm,sound,&valid,e)) return false;
-        if(valid && live(b,s) && !strcmp(sound,"*falling1.wav") && s->player.inventory[QA_BOT_INV_TELEPORTER]>0)
+        if(valid && live(b,s) && !strcmp(sound,"*falling1.wav") && bot_ai_inventory_value(s,QA_BOT_INV_TELEPORTER)>0)
             return qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_USE,e);
         return true;
     }
@@ -139,10 +140,9 @@ static bool snapshot_avoid(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity
         if(!live(b,s)) return true;
         if(team!=1 && team!=2) team=0;
         if(entity->generic1!=team) {
-            int32_t *inventory=s->player.inventory;
-            bool armed=(inventory[QA_BOT_INV_PLASMA]>0 && inventory[QA_BOT_INV_CELLS]>0) ||
-                (inventory[QA_BOT_INV_ROCKET]>0 && inventory[QA_BOT_INV_ROCKETS]>0) ||
-                (inventory[QA_BOT_INV_BFG]>0 && inventory[QA_BOT_INV_BFG_AMMO]>0);
+            bool armed=(bot_ai_inventory_value(s,QA_BOT_INV_PLASMA)>0 && bot_ai_inventory_value(s,QA_BOT_INV_CELLS)>0) ||
+                (bot_ai_inventory_value(s,QA_BOT_INV_ROCKET)>0 && bot_ai_inventory_value(s,QA_BOT_INV_ROCKETS)>0) ||
+                (bot_ai_inventory_value(s,QA_BOT_INV_BFG)>0 && bot_ai_inventory_value(s,QA_BOT_INV_BFG_AMMO)>0);
             if(armed) {
                 qa_bot_avoid_spot spot={.origin=vector(entity->pos.base),.radius=160,.type=1};
                 if(!qa_bot_moves_avoid_spot(qa_bot_runtime_moves(b->runtime),s->movement,&spot,e)) return false;

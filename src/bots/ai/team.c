@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_storage.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
@@ -152,9 +153,9 @@ static bool same_mode(qa_mode_id a, qa_mode_id b) {
     return a.slot==b.slot && a.generation==b.generation;
 }
 bool bot_ai_carrying(qa_bots *b,bot_ai_state *s,bool *carrying,qa_error *e) {
-    *carrying=s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0 ||
-        s->player.inventory[QA_BOT_INV_NEUTRAL_FLAG]>0 || s->player.inventory[QA_BOT_INV_RED_CUBE]>0 ||
-        s->player.inventory[QA_BOT_INV_BLUE_CUBE]>0;
+    *carrying=bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0 ||
+        bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 ||
+        bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0;
     if(!b->services.modes || !s->view.mode.generation) return true;
     *carrying=false;
     qa_mode_statistics statistics;

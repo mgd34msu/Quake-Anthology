@@ -593,6 +593,35 @@ bool q3n_clients_initialize(q3n_clients *owner, qa_application *app,
 bool q3n_clients_reload(q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, const q3n_client_settings *settings, qa_error *error)
 { return sync(owner, app, cut, settings, true, error); }
+bool q3n_clients_reset(q3n_clients *owner, qa_application *app,
+    const qa_application_native_q3_presentation *cut, qa_error *error)
+{
+    if (!q3n_clients_idle(owner) || !app || !cut || !qa_q3_assets_idle(owner->options.assets))
+        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client reset requires its idle genuine media owner");
+    if (!source_current(owner, app, cut, error)) return false;
+    owner->busy = true; uint64_t revisions[64]; bool ok = true;
+    for (uint32_t i = 0; i < 64 && ok; ++i) {
+        const char *text;
+        ok = qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + i, &text, &revisions[i], error);
+    }
+    if (ok) ok = source_current(owner, app, cut, error);
+    for (uint32_t i = 0; i < 64 && ok; ++i) {
+        const char *text; uint64_t revision;
+        ok = qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + i, &text, &revision, error);
+        if (ok && revision != revisions[i])
+            ok = q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 reached client table changed during reset admission");
+    }
+    if (ok) ok = source_current(owner, app, cut, error);
+    if (ok) {
+        for (uint32_t i = 0; i < 64; ++i) {
+            uint64_t media_revision = owner->clients[i].media_revision;
+            q3n_animation_dispose(&owner->holders[i]);
+            owner->clients[i] = (q3n_client_info){.observed = true, .physical_client = i,
+                .configstring_revision = revisions[i], .media_revision = media_revision};
+        }
+    }
+    owner->busy = false; return ok;
+}
 bool q3n_clients_load_deferred(q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, const q3n_client_settings *settings, qa_error *error)
 {
@@ -639,10 +668,10 @@ bool q3n_clients_dynamic_write(q3n_clients *owner, qa_application *app,
     uint64_t configstring_revision, uint64_t media_revision, const q3n_client_dynamic *value, qa_error *error)
 {
     if (!q3n_clients_idle(owner) || !value || index >= 64 || !app || !cut ||
-        cut->product != owner->options.product || !owner->clients[index].info_valid ||
+        cut->product != owner->options.product || !owner->clients[index].observed ||
         owner->clients[index].configstring_revision != configstring_revision ||
         owner->clients[index].media_revision != media_revision)
-        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 dynamic client state requires its exact physical media row");
+        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 dynamic client state requires its exact observed physical row");
     const char *text; uint64_t revision;
     if (!source_current(owner, app, cut, error) ||
         !qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + index, &text, &revision, error)) return false;

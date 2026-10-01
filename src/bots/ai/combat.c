@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_inventory.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
        BOT_SHOT=1|0x2000000|0x4000000, BOT_FIRE_RELEASED=1, BOT_RADIAL=2 };
@@ -163,7 +164,7 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t choice = s->view.weapon;
     bool ok = s->retired || !bot_ai_live(b, s->view.actor) ||
         qa_bot_knowledge_choose(b->runtime, s->weapons, weapons, count,
-            s->player.inventory, b->inventory_scratch, &choice, e);
+            bot_ai_inventory(s), b->inventory_scratch, &choice, e);
     b->services.arsenal_end(b->services.context, lease);
     if (ok && !s->retired && bot_ai_live(b, s->view.actor)) {
         if (s->view.weapon != choice) s->weapon_change_time = b->time;
@@ -174,7 +175,7 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
 bool bot_ai_retreat(qa_bots *b, bot_ai_state *s, bool *retreat, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
-    float aggression = qa_bot_knowledge_aggression(weapons, count, s->view.weapon, s->player.inventory);
+    float aggression = qa_bot_knowledge_aggression(weapons, count, s->view.weapon, bot_ai_inventory(s));
     b->services.arsenal_end(b->services.context, lease);
     *retreat = aggression < 50 || s->player.carrying_objective;
     return true;
@@ -184,8 +185,8 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     float alertness, easy;
     if (!bot_ai_character_float(b, s, BOT_C_ALERTNESS, 0, 1, &alertness, e) ||
         !bot_ai_character_float(b, s, BOT_C_EASY_FRAGGER, 0, 1, &easy, e)) return false;
-    bool hurt = s->last_health > s->player.inventory[QA_BOT_INV_HEALTH];
-    s->last_health=s->player.inventory[QA_BOT_INV_HEALTH];
+    bool hurt = s->last_health > bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
+    s->last_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
     float best = INFINITY;
     if (bot_ai_live(b, s->view.enemy)) {
         qa_body_state enemy;
@@ -321,8 +322,11 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(!present || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy) || target.dead) return true;
     s->enemy_origin=target.origin;s->enemy_velocity=target.velocity;
     qa_vec3 displacement=qa_vec_sub(target.origin,s->player.origin);
-    s->player.inventory[QA_BOT_INV_ENEMY_DISTANCE]=(int32_t)fminf(hypotf(displacement.x,displacement.y),INT32_MAX-127.0f);
-    s->player.inventory[QA_BOT_INV_ENEMY_HEIGHT]=(int32_t)fmaxf(INT32_MIN,fminf(displacement.z,INT32_MAX-127.0f));
+    bot_source_inventory inventory={b,s};
+    if(!bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_HEIGHT,
+        (int32_t)fmaxf(INT32_MIN,fminf(displacement.z,INT32_MAX-127.0f)),e) ||
+       !bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_DISTANCE,
+        (int32_t)fminf(hypotf(displacement.x,displacement.y),INT32_MAX-127.0f),e)) return false;
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     qa_bot_weapon_knowledge selected={0};bool exists=false;

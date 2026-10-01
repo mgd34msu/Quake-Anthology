@@ -10,8 +10,7 @@ static bool continuation_valid(const qa_q3_client_peer *p, qa_error *error)
     if ((!p->demo && (!p->channel || qa_q3_channel_role(p->channel) != QA_Q3_CLIENT ||
         pending > QA_Q3_RELIABLE + 1)) ||
         (p->demo && p->channel) || p->reliable.sequence < 0 ||
-        p->server_message_sequence < 0 || p->server_command_sequence < 0 ||
-        p->last_executed_server_command < 0 || p->latest_snapshot < 0 ||
+        p->server_message_sequence < 0 || p->latest_snapshot < 0 ||
         (p->has_snapshot && p->latest_snapshot > p->server_message_sequence) ||
         p->disconnect_packets > 3 || (!p->disconnect_started && p->disconnect_packets) ||
         (p->disconnect_packets == 3 && !p->disconnected) ||

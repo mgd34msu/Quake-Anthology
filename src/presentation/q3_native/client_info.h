@@ -55,6 +55,11 @@ bool q3n_clients_initialize(q3n_clients *, qa_application *,
  * changes, including a modification whose integer value remains unchanged. */
 bool q3n_clients_reload(q3n_clients *, qa_application *,
     const qa_application_native_q3_presentation *, const q3n_client_settings *, qa_error *);
+/* Console disposal clears the genuine donor cells and animation holders.
+ * Reached row stamps survive so ordinary sync cannot replay unchanged CS;
+ * a later explicit CS registration or force-model reload may load them again. */
+bool q3n_clients_reset(q3n_clients *, qa_application *,
+    const qa_application_native_q3_presentation *, qa_error *);
 bool q3n_clients_load_deferred(q3n_clients *, qa_application *,
     const qa_application_native_q3_presentation *, const q3n_client_settings *, qa_error *);
 bool q3n_clients_custom_sound(q3n_clients *, int32_t physical_client,

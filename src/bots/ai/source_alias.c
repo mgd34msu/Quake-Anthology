@@ -12,6 +12,15 @@ bool bot_ai_source_alias_bind(qa_bots *bots, bot_ai_state *state, qa_error *erro
     return true;
 }
 
+bool qa_bots_source_memory_bind(qa_bots *bots,qa_error *error)
+{
+    if(!bot_ai_mutable(bots,error)) return false;
+    for(uint32_t source=0;source<64;++source)
+        if(bots->source_cells[source] &&
+           !bot_ai_source_alias_bind(bots,bots->source_cells[source],error)) return false;
+    return true;
+}
+
 bool qa_bots_source_weapon_handle(qa_bots *bots,qa_actor_id actor,uint32_t *out,qa_error *error)
 {
     bot_ai_state *state=bot_ai_actor(bots,actor);

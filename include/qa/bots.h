@@ -34,7 +34,6 @@ typedef struct qa_bot_player {
     int32_t delta_angles[3];
     uint32_t presence;
     int32_t current_weapon, weapon_state, weapon_time_ms;
-    int32_t inventory[QA_BOT_INVENTORY_SIZE];
     qa_actor_id last_attacker, last_victim;
     int32_t deaths, kills, last_damage_cause;
     float air_time, teleport_time;
@@ -107,7 +106,8 @@ typedef struct qa_bot_services {
     qa_builtin_services shared;
     qa_modes *modes;
     bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_error *);
-    bool (*inventory)(void *, qa_actor_id, const qa_bot_player *, int32_t *, qa_error *);
+    bool (*inventory)(void *, qa_actor_id, const qa_bot_player *,
+                       const qa_bot_inventory_target *, qa_error *);
     bool (*entity)(void *, qa_actor_id, qa_bot_entity *, qa_error *);
     bool (*entity_extent)(void *, uint32_t *, qa_error *);
     bool (*entity_list)(void *, qa_builtin_actor_snapshot *, qa_error *);
@@ -193,6 +193,7 @@ bool qa_bots_interbreed_end_match(qa_bots *, qa_error *);
 bool qa_bots_test_aas(qa_bots *, qa_vec3, qa_error *);
 bool qa_bots_level_reset(qa_bots *, qa_error *);
 bool qa_bots_source_begin(qa_bots *,qa_actor_id,qa_vec3,int32_t weapon,qa_error *);
+bool qa_bots_source_memory_bind(qa_bots *,qa_error *);
 bool qa_bots_read(const qa_bots *, qa_actor_id, qa_bot_view *, qa_error *);
 bool qa_bots_move_to(qa_bots *, qa_actor_id, qa_vec3, qa_bot_order_status *, qa_error *);
 bool qa_bots_follow(qa_bots *, qa_actor_id, qa_actor_id target, qa_bot_order_status *, qa_error *);

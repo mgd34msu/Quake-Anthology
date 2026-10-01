@@ -10,6 +10,14 @@ static double count(application_bots *bots,qa_actor_id actor,qa_item_id item) {
     qa_inventory_entry entry;
     return item && qa_inventory_entry_read(bots->application->inventory,actor,item,&entry,NULL)?entry.count:0;
 }
+static const qa_q2_item_definition *q2_item_identity(const qa_q2_game *game,qa_item_id item) {
+    size_t count=qa_q2_item_count(game);
+    for(size_t index=0;index<count;++index) {
+        const qa_q2_item_definition *candidate=qa_q2_item_at(game,index);
+        if(candidate->item==item) return candidate;
+    }
+    return NULL;
+}
 static int32_t integer(double value) {
     if(!isfinite(value) || value==0) return 0;
     double reduced=fmod(trunc(value),4294967296.0);
@@ -117,7 +125,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(source==QA_Q2_IONRIPPER) fact.horizontal=tanf(3.14159265358979323846f/180)*8192;
             if(source==QA_Q2_PHALANX) fact.horizontal=tanf(1.5f*3.14159265358979323846f/180)*8192;
             if(source==QA_Q2_ETF_RIFLE) fact.speed=rerelease?1150:750;
-            const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
+            const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
             if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 registered weapon lost its actual item declaration");
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             describe(value,(int)ordinal+1,(int)ordinal+1,item->item,item->ammo,fact,count(bots,observed,item->item)>0);
@@ -147,7 +155,7 @@ bool application_bot_arsenal(void *opaque,qa_actor_id actor,const qa_bot_weapon_
 void application_bot_arsenal_end(void *opaque,void *lease) {
     application_bots *bots=opaque;if(lease==bots && bots->arsenal_leases) --bots->arsenal_leases;
 }
-bool application_bot_inventory(application_bots *bots,qa_actor_id actor,int32_t inventory[QA_BOT_INVENTORY_SIZE],qa_error *error) {
+bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa_bot_inventory_target *inventory,qa_error *error) {
     application_provider *provider=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
     if(!provider || provider->kind>APPLICATION_PROVIDER_Q3)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Bot inventory has no actual native selected arsenal");
@@ -155,23 +163,25 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,int32_t 
         qa_q3_player_state player;
         if(!qa_q3_player_read(provider->state.q3,actor,&player)) actor=(qa_actor_id){0};
     }
-    memset(inventory,0,200*sizeof(*inventory));
+    for(int32_t index=0;index<200;++index)
+        if(!qa_bot_inventory_write(inventory,index,0,error)) return false;
     qa_combat_state combat;
-    if(qa_combat_read(bots->application->combat,actor,&combat,NULL)) {
-        inventory[QA_BOT_INV_HEALTH]=integer(combat.health);
-        inventory[QA_BOT_INV_ARMOR]=combat.armor.regular.kind==QA_ARMOR_NONE?0:integer(combat.armor.regular.points);
-    }
+    bool present=qa_combat_read(bots->application->combat,actor,&combat,NULL);
+    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,present?integer(combat.health):0,error) ||
+       !qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,
+           present && combat.armor.regular.kind!=QA_ARMOR_NONE?integer(combat.armor.regular.points):0,error)) return false;
     if(provider->kind==APPLICATION_PROVIDER_Q1) {
         double time,started;bool intermission;
         if(!qa_q1_bot_clock_read(provider->state.q1,&time,&intermission,&started,error)) return false;
-        inventory[QA_BOT_INV_QUAD]=qa_q1_game_power_expires(provider->state.q1,actor,QA_Q1_QUAD)>time;
+        if(!qa_bot_inventory_write(inventory,QA_BOT_INV_QUAD,
+            qa_q1_game_power_expires(provider->state.q1,actor,QA_Q1_QUAD)>time,error)) return false;
         for(int source=0;source<=QA_Q1_LIGHTNING;++source) {
             qa_item_id item,ammo;bool covered,usable;
             if(!qa_q1_bot_weapon_items(provider->state.q1,(qa_q1_weapon)source,&item,&ammo,&covered,error)) return false;
             if(!covered) continue;
             if(!qa_q1_bot_weapon_usable(provider->state.q1,actor,(qa_q1_weapon)source,&usable,error)) return false;
-            inventory[65+source]=usable;
-            inventory[97+source]=integer(count(bots,actor,ammo));
+            if(!qa_bot_inventory_write(inventory,65+source,usable,error) ||
+               !qa_bot_inventory_write(inventory,97+source,integer(count(bots,actor,ammo)),error)) return false;
         }
     } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
         uint32_t registered_count;
@@ -180,19 +190,25 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,int32_t 
             const qa_q2_weapon_definition *definition;
             if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,ordinal,&definition,error)) return false;
             if(!q2_base[definition->weapon].pellets) continue;
-            const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
+            const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
             if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 inventory lost its registered weapon declaration");
-            inventory[65+ordinal]=count(bots,actor,item->item)>0;
-            inventory[97+ordinal]=integer(count(bots,actor,item->ammo));
+            if(!qa_bot_inventory_write(inventory,(int32_t)(65+ordinal),count(bots,actor,item->item)>0,error) ||
+               !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),integer(count(bots,actor,item->ammo)),error)) return false;
         }
     } else {
         static const int weapon_indices[]={0,4,6,5,7,8,9,10,11,13,14};
         static const int ammo_indices[]={0,0,19,18,20,23,22,24,21,25,0};
-        for(int source=1;source<=QA_Q3_W_GRAPPLE;++source) {
+        static const int weapons[]={1,3,2,4,5,6,7,8,9,10};
+        for(size_t index=0;index<sizeof(weapons)/sizeof(*weapons);++index) {
+            int source=weapons[index];
             qa_item_id item=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
+            if(!qa_bot_inventory_write(inventory,weapon_indices[source],count(bots,actor,item)>0,error)) return false;
+        }
+        static const int ammunition[]={3,2,4,8,6,5,7,9};
+        for(size_t index=0;index<sizeof(ammunition)/sizeof(*ammunition);++index) {
+            int source=ammunition[index];
             qa_item_id ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
-            inventory[weapon_indices[source]]=count(bots,actor,item)>0;
-            if(ammo_indices[source]) inventory[ammo_indices[source]]=integer(count(bots,actor,ammo));
+            if(!qa_bot_inventory_write(inventory,ammo_indices[source],integer(count(bots,actor,ammo)),error)) return false;
         }
     }
     return true;
@@ -237,7 +253,7 @@ bool application_bot_weapon_resolve(application_bots *bots,qa_actor_id actor,int
         const qa_q2_weapon_definition *definition;
         if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,(uint32_t)slot-1,&definition,error)) return false;
         if(!q2_base[definition->weapon].pellets) return true;
-        const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
+        const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
         if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 weapon resolution lost its registered item");
         if(count(bots,actor,item->item)>0 && (!item->ammo || count(bots,actor,item->ammo)>=definition->quantity)) *out=item->item;
     } else if(provider->kind==APPLICATION_PROVIDER_Q3 && slot<=QA_Q3_W_GRAPPLE) {

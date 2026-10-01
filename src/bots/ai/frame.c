@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "source_report.h"
 #include "source_command.h"
+#include "source_inventory.h"
+#include "source_alias.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -86,12 +88,11 @@ bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *ar
     return true;
 }
 bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
+    if(!s->source_span.data && !bot_ai_source_alias_bind(b,s,e)) return false;
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     int32_t old_inventory[QA_BOT_INVENTORY_SIZE];
-    memcpy(old_inventory,s->player.inventory,sizeof(old_inventory));
     if (!qa_bot_actions_reset(actions, s->view.client, e) || !player(b, s, e)) return false;
     if (s->retired) return true;
-    memcpy(s->player.inventory,old_inventory,sizeof(old_inventory));
     if (!bot_ai_console(b, s, e)) return false;
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
     qa_bot_view_delta(&s->angles, s->player.delta_angles, true);
@@ -106,8 +107,11 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         ok=bot_ai_source_intermission(b,s,&intermission,e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
         if (ok && !intermission) {
+            bot_source_inventory inventory={b,s};
+            qa_bot_inventory_target target=bot_ai_source_inventory_target(&inventory);
             ok=bot_ai_source_set_teleport_time(b,s,e) &&
-                b->services.inventory(b->services.context,s->view.actor,&s->player,s->player.inventory,e);
+                bot_ai_source_inventory_snapshot(&inventory,old_inventory,e) &&
+                b->services.inventory(b->services.context,s->view.actor,&s->player,&target,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
             if(ok) ok=bot_ai_source_task_preference(b,s,old_inventory,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -116,7 +120,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
             qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
             int32_t contents;
             if(ok) ok = navigation && qa_bot_navigation_contents(navigation, s->player.eye, &contents, e);
-            if (ok && (s->player.inventory[QA_BOT_INV_ENVIRO] > 0 || !(contents & (8 | 16 | 32))))
+            if (ok && (bot_ai_inventory_value(s,QA_BOT_INV_ENVIRO) > 0 || !(contents & (8 | 16 | 32))))
                 s->last_air_time = b->time;
         }
         if (ok) ok = bot_ai_messages(b, s, e);
@@ -143,7 +147,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         }
         if (ok) ok = bot_ai_decide(b, s, e);
         if(ok && !s->retired && bot_ai_live(b,s->view.actor)) {
-            s->source_chat.last_frame_health=s->player.inventory[QA_BOT_INV_HEALTH];
+            s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
             if(!s->player.source_state_available) ok=bot_ai_fail(e,"bot frame lacks its retained source player state");
             else s->source_chat.last_hit_count=s->player.source_state.persistant[1];
         }

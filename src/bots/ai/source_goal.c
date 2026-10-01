@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_goal.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
@@ -205,14 +206,15 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
 }
 
 static bool persistent_equipment(bot_ai_state *s) {
-    const int32_t *inventory=s->player.inventory;
-    if(s->team_arena && !inventory[41] && !inventory[42] && !inventory[43] && !inventory[44]) return false;
-    if(inventory[QA_BOT_INV_HEALTH]<60 ||
-       (inventory[QA_BOT_INV_HEALTH]<80 && inventory[QA_BOT_INV_ARMOR]<40)) return false;
+    if(s->team_arena && !bot_ai_inventory_value(s,41) && !bot_ai_inventory_value(s,42) &&
+       !bot_ai_inventory_value(s,43) && !bot_ai_inventory_value(s,44)) return false;
+    if(bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60 ||
+       (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<80 && bot_ai_inventory_value(s,QA_BOT_INV_ARMOR)<40)) return false;
     static const struct {uint8_t weapon,ammo,minimum;} equipment[]={
         {13,25,7},{10,24,5},{9,22,50},{8,23,5},{15,26,5},{16,27,5},{17,28,40},{11,21,20}};
     for(size_t i=0;i<sizeof(equipment)/sizeof(*equipment);++i)
-        if(inventory[equipment[i].weapon]>0 && inventory[equipment[i].ammo]>equipment[i].minimum) return true;
+        if(bot_ai_inventory_value(s,equipment[i].weapon)>0 &&
+           bot_ai_inventory_value(s,equipment[i].ammo)>equipment[i].minimum) return true;
     return false;
 }
 static bool weakness(qa_bots *b,bot_ai_state *s,float *out,qa_error *e) {
@@ -225,8 +227,8 @@ static bool weakness(qa_bots *b,bot_ai_state *s,float *out,qa_error *e) {
     }
     b->services.arsenal_end(b->services.context,lease);
     if(!alive(b,s)) return true;
-    *out=tactics.melee || s->player.inventory[QA_BOT_INV_HEALTH]<40?100:
-        tactics.weakness>0?tactics.weakness:s->player.inventory[QA_BOT_INV_HEALTH]<60?80:0;
+    *out=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
+        tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
     return true;
 }
 
@@ -247,14 +249,13 @@ bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error
     if(random>camper) {s->source_goal.camp_time=b->time;return true;}
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-    float aggression=alive(b,s)?qa_bot_knowledge_aggression(weapons,count,s->view.weapon,s->player.inventory):0;
+    float aggression=alive(b,s)?qa_bot_knowledge_aggression(weapons,count,s->view.weapon,bot_ai_inventory(s)):0;
     b->services.arsenal_end(b->services.context,lease);
     if(!alive(b,s) || aggression<50) return true;
-    const int32_t *inventory=s->player.inventory;
     /* Source ai_dmq3.c indexes inventory[INVENTORY_ROCKETS < 10]. */
-    if((inventory[QA_BOT_INV_ROCKET]<=0 || inventory[0]!=0) &&
-       (inventory[QA_BOT_INV_RAIL]<=0 || inventory[QA_BOT_INV_SLUGS]<10) &&
-       (inventory[QA_BOT_INV_BFG]<=0 || inventory[QA_BOT_INV_BFG_AMMO]<10)) return true;
+    if((bot_ai_inventory_value(s,QA_BOT_INV_ROCKET)<=0 || bot_ai_inventory_value(s,0)!=0) &&
+       (bot_ai_inventory_value(s,QA_BOT_INV_RAIL)<=0 || bot_ai_inventory_value(s,QA_BOT_INV_SLUGS)<10) &&
+       (bot_ai_inventory_value(s,QA_BOT_INV_BFG)<=0 || bot_ai_inventory_value(s,QA_BOT_INV_BFG_AMMO)<10)) return true;
     qa_bot_navigation *nav=navigation(b,s);
     const qa_nav_graph_view *graph=nav?qa_navigation_graph(qa_bot_navigation_runtime(nav)):NULL;
     if(!graph || !graph->node_count) return true;
@@ -453,11 +454,11 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
 }
 
 static bool carrying_flag(const bot_ai_state *s,bool neutral) {
-    return neutral?s->player.inventory[QA_BOT_INV_NEUTRAL_FLAG]>0:
-        s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0;
+    return neutral?bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0:
+        bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0;
 }
 static bool carrying_cubes(const bot_ai_state *s) {
-    return s->player.inventory[QA_BOT_INV_RED_CUBE]>0 || s->player.inventory[QA_BOT_INV_BLUE_CUBE]>0;
+    return bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0;
 }
 static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
     int32_t mode=b->source_goals.game_type,type=s->long_term_goal;

@@ -98,7 +98,7 @@ typedef struct application_bots {
 } application_bots;
 
 bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_error *);
-bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,int32_t *,qa_error *);
+bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,const qa_bot_inventory_target *,qa_error *);
 bool application_bot_source_weapon(application_bots *,qa_actor_id,int32_t *,int32_t *,qa_error *);
 bool application_bot_entity(void *,qa_actor_id,qa_bot_entity *,qa_error *);
 bool application_bot_arsenal(void *,qa_actor_id,const qa_bot_weapon_knowledge **,size_t *,void **,qa_error *);
@@ -131,7 +131,7 @@ bool application_bots_guest_bind(qa_application *,application_provider *,qa_q3_h
 qa_actor_id application_bot_client_actor(application_bots *,int32_t);
 qa_bot_navigation *application_bot_navigation(void *,int32_t);
 bool application_bot_movement_input(void *,qa_actor_id,qa_movement_input *,qa_error *);
-bool application_bot_inventory(application_bots *,qa_actor_id,int32_t [QA_BOT_INVENTORY_SIZE],qa_error *);
+bool application_bot_inventory(application_bots *,qa_actor_id,const qa_bot_inventory_target *,qa_error *);
 bool application_bot_weapon_slot(application_provider *,int32_t source,int32_t *,qa_error *);
 bool application_bot_weapon_resolve(application_bots *,qa_actor_id,int32_t slot,qa_item_id *,qa_error *);
 qa_actor_id application_bot_actor(void *,int32_t);

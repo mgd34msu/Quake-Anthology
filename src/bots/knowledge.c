@@ -32,57 +32,64 @@ qa_bot_weapon_tactics qa_bot_weapon_tactics_for(const qa_bot_weapon_knowledge *c
         .predict_occluded_splash=role==4 || role==5 || role==9,
         .accuracy_characteristic=p ? p->accuracy : -1,.skill_characteristic=p ? p->skill : -1};
 }
-static int32_t inventory_value(const int32_t *inventory,int32_t index)
+static int32_t inventory_value(qa_bot_inventory_bytes inventory,int32_t index)
 {
-    return index>=0 && index<QA_BOT_INVENTORY_SIZE ? inventory[index] : 0;
+    return qa_bot_inventory_value(inventory,index);
 }
-static bool owned(const qa_bot_weapon_knowledge *c,const int32_t *inventory)
+static bool owned(const qa_bot_weapon_knowledge *c,qa_bot_inventory_bytes inventory)
 {
     if(c->personality_role<0) return inventory_value(inventory,c->weapon.weapon_inventory)>0;
     const role_profile *p=profile(c->personality_role);
     return p && inventory_value(inventory,p->weapon)>0;
 }
-static int32_t ammunition(const qa_bot_weapon_knowledge *c,const int32_t *inventory)
+static int32_t ammunition(const qa_bot_weapon_knowledge *c,qa_bot_inventory_bytes inventory)
 {
     if(c->personality_role<0)
         return c->weapon.ammo_amount==0 ? 999 : inventory_value(inventory,c->weapon.ammo_inventory);
     const role_profile *p=profile(c->personality_role);
     return !p?0:p->ammo<0?999:inventory_value(inventory,p->ammo);
 }
+static bool source_inventory_read(void *context,int32_t index,int32_t *out,qa_error *error)
+{
+    const qa_bot_inventory_bytes *inventory=context;
+    if(index<0 || (size_t)index>=inventory->count) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Fuzzy inventory index exceeds its source array");return false;
+    }
+    *out=inventory_value(*inventory,index);return true;
+}
 bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
                               const qa_bot_weapon_knowledge *candidates,size_t count,
-                              const int32_t inventory[QA_BOT_INVENTORY_SIZE],
+                              qa_bot_inventory_bytes inventory,
                               int32_t scratch[QA_BOT_INVENTORY_SIZE],int32_t *out,qa_error *e)
 {
-    if (!runtime || !inventory || !scratch || scratch==inventory || !out || (count && !candidates)) {
+    if (!runtime || !inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE ||
+        !scratch || !out || (count && !candidates)) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid bot arsenal choice input"); return false;
     }
-    memcpy(scratch,inventory,QA_BOT_INVENTORY_SIZE*sizeof(*scratch));
     float best=0; double best_rate=0;
     int32_t choice=0,best_role=-1;
-    double distance=hypot((double)inventory[QA_BOT_INV_ENEMY_DISTANCE],(double)inventory[QA_BOT_INV_ENEMY_HEIGHT]);
     for (size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *c=candidates+i;
         int32_t role=qa_bot_weapon_role(c);
-        const int32_t *observed=inventory;
+        qa_bot_inventory_view observed={.count=inventory.count,.context=&inventory,.read=source_inventory_read};
         if (!c->weapon.valid) continue;
         const role_profile *p=profile(role);
         if (!p) continue;
         bool projection=c->personality_role<0;
         if (projection) {
-            if(!owned(c,inventory) || ammunition(c,inventory)<c->weapon.ammo_amount ||
-               (c->ranged_limit && distance>c->maximum_range)) continue;
+            if(!owned(c,inventory) || ammunition(c,inventory)<c->weapon.ammo_amount) continue;
+            double distance=hypot((double)inventory_value(inventory,QA_BOT_INV_ENEMY_DISTANCE),
+                (double)inventory_value(inventory,QA_BOT_INV_ENEMY_HEIGHT));
+            if(c->ranged_limit && distance>c->maximum_range) continue;
+            for(int32_t index=0;index<QA_BOT_INVENTORY_SIZE;++index)
+                scratch[index]=inventory_value(inventory,index);
             scratch[p->weapon]=1;
             if (p->ammo>=0) scratch[p->ammo]=ammunition(c,inventory);
-            observed=scratch;
+            observed=(qa_bot_inventory_view){.data=scratch,.count=QA_BOT_INVENTORY_SIZE};
         }
         float weight=0; bool found;
-        bool ok=qa_bot_runtime_weapon_weight(runtime,handle,(uint32_t)role,observed,
-                                              QA_BOT_INVENTORY_SIZE,&weight,&found,e);
-        if (projection) {
-            scratch[p->weapon]=inventory[p->weapon];
-            if (p->ammo>=0) scratch[p->ammo]=inventory[p->ammo];
-        }
+        bool ok=qa_bot_runtime_weapon_weight_view(runtime,handle,(uint32_t)role,&observed,
+                                              &weight,&found,e);
         if (!ok) return false;
         if (!found) continue;
         double rate=c->weapon.reload>0 ? c->selected_projectile_damage*c->weapon.projectile_count/c->weapon.reload : 0;
@@ -94,10 +101,10 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
     return true;
 }
 int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,size_t count,
-                                    const int32_t inventory[QA_BOT_INVENTORY_SIZE],bool team_arena)
+                                    qa_bot_inventory_bytes inventory,bool team_arena)
 {
     static const uint8_t roles[]={2,3,8,6,13,11,7,5,9};
-    if (!inventory || (count && !candidates)) return -1;
+    if (!inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE || (count && !candidates)) return -1;
     for (size_t r=0;r<sizeof(roles)/sizeof(*roles);++r) {
         if (!team_arena && (roles[r]==13 || roles[r]==11)) continue;
         for (size_t i=0;i<count;++i) {
@@ -112,9 +119,9 @@ int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,si
     return -1;
 }
 int32_t qa_bot_knowledge_travel(const qa_bot_weapon_knowledge *candidates,size_t count,
-                                const int32_t inventory[QA_BOT_INVENTORY_SIZE],qa_nav_travel mode)
+                                qa_bot_inventory_bytes inventory,qa_nav_travel mode)
 {
-    if (!inventory || (count && !candidates) || mode<0 || mode>=QA_NAV_TRAVEL_COUNT)
+    if (!inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE || (count && !candidates) || mode<0 || mode>=QA_NAV_TRAVEL_COUNT)
         return -1;
     for (size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *c=candidates+i;
@@ -125,17 +132,17 @@ int32_t qa_bot_knowledge_travel(const qa_bot_weapon_knowledge *candidates,size_t
     return -1;
 }
 float qa_bot_knowledge_aggression(const qa_bot_weapon_knowledge *candidates,size_t count,
-                                   int32_t weapon,const int32_t inventory[QA_BOT_INVENTORY_SIZE])
+                                   int32_t weapon,qa_bot_inventory_bytes inventory)
 {
     static const struct { uint8_t role,ammo,value; } ranks[]={
         {9,7,100},{7,5,95},{6,50,90},{5,5,90},{8,40,85},{4,10,80},{3,10,50}
     };
-    if (!inventory || (count && !candidates)) return 0;
+    if (!inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE || (count && !candidates)) return 0;
     bool melee=false;
     for (size_t i=0;i<count;++i) if (candidates[i].weapon.number==weapon) { melee=candidates[i].melee; break; }
-    if (inventory[QA_BOT_INV_QUAD] && (!melee || inventory[QA_BOT_INV_ENEMY_DISTANCE]<80)) return 70;
-    int32_t health=inventory[QA_BOT_INV_HEALTH],armor=inventory[QA_BOT_INV_ARMOR];
-    if (inventory[QA_BOT_INV_ENEMY_HEIGHT]>200 || health<60 || (health<80 && armor<40)) return 0;
+    if (inventory_value(inventory,QA_BOT_INV_QUAD) && (!melee || inventory_value(inventory,QA_BOT_INV_ENEMY_DISTANCE)<80)) return 70;
+    int32_t health=inventory_value(inventory,QA_BOT_INV_HEALTH),armor=inventory_value(inventory,QA_BOT_INV_ARMOR);
+    if (inventory_value(inventory,QA_BOT_INV_ENEMY_HEIGHT)>200 || health<60 || (health<80 && armor<40)) return 0;
     for (size_t r=0;r<sizeof(ranks)/sizeof(*ranks);++r)
         for (size_t i=0;i<count;++i)
             if (qa_bot_weapon_role(candidates+i)==ranks[r].role && owned(candidates+i,inventory) &&

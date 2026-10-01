@@ -1,5 +1,6 @@
 /* Q3 ai_team.c and ai_dmq3.c policy over the retained GAME and botlib owners. */
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_goal.h"
@@ -427,14 +428,14 @@ static bool known_bot_leader(qa_bots *b, bot_ai_state *s, bool *out, qa_error *e
     return true;
 }
 static bool picked(const bot_ai_state *s, const int32_t *before, uint32_t index) {
-    return before[index]==0 && s->player.inventory[index]>=1;
+    return before[index]==0 && bot_ai_inventory_value(s,index)>=1;
 }
 bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
                                    const int32_t *old_inventory, qa_error *e) {
     if(!alive(b,s) || !s->team_arena || b->source_goals.game_type<=3) return true;
     int offense=-1;
     if(picked(s,old_inventory,QA_BOT_INV_KAMIKAZE) || picked(s,old_inventory,QA_BOT_INV_INVULNERABILITY)) offense=1;
-    if(!s->player.inventory[QA_BOT_INV_KAMIKAZE] && !s->player.inventory[QA_BOT_INV_INVULNERABILITY]) {
+    if(!bot_ai_inventory_value(s,QA_BOT_INV_KAMIKAZE) && !bot_ai_inventory_value(s,QA_BOT_INV_INVULNERABILITY)) {
         if(picked(s,old_inventory,QA_BOT_INV_SCOUT)) offense=1;
         if(picked(s,old_inventory,QA_BOT_INV_GUARD)) offense=1;
         if(picked(s,old_inventory,QA_BOT_INV_DOUBLER)) offense=0;
@@ -792,7 +793,7 @@ static bool aggression(qa_bots *b, bot_ai_state *s, float *out, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons=NULL;size_t count=0;void *lease=NULL;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
     bool valid=!count || weapons;
-    if(valid && alive(b,s)) *out=qa_bot_knowledge_aggression(weapons,count,s->view.weapon,s->player.inventory);
+    if(valid && alive(b,s)) *out=qa_bot_knowledge_aggression(weapons,count,s->view.weapon,bot_ai_inventory(s));
     b->services.arsenal_end(b->services.context,lease);
     return valid?true:bot_ai_fail(e,"Source aggression received a missing admitted arsenal");
 }
@@ -833,7 +834,7 @@ static bool common_seek(qa_bots *b, bot_ai_state *s, bool one_flag, bool harvest
 }
 static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t team;
-    if(s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0) {
+    if(bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0) {
         if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e)) return false;
             if(!alive(b,s)) return true;
@@ -927,7 +928,7 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
 }
 static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t team;
-    if(s->player.inventory[QA_BOT_INV_NEUTRAL_FLAG]>0) {
+    if(bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0) {
         if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e) || !source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
@@ -1002,7 +1003,7 @@ bool bot_ai_source_go_harvest(qa_bots *b, bot_ai_state *s, qa_error *e) {
 }
 static bool seek_bases(qa_bots *b, bot_ai_state *s, bool harvester, qa_error *e) {
     int32_t team;
-    if(harvester && (s->player.inventory[QA_BOT_INV_RED_CUBE]>0 || s->player.inventory[QA_BOT_INV_BLUE_CUBE]>0)) {
+    if(harvester && (bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0)) {
         if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e) || !source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
@@ -1056,12 +1057,12 @@ bool bot_ai_source_team_goals(qa_bots *b, bot_ai_state *s, bool retreat, qa_erro
     int32_t type=b->source_goals.game_type;bool ok=true;
     if(type==4) {
         if(!retreat) ok=seek_ctf(b,s,e);
-        else if((s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0) &&
+        else if((bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0) &&
                 s->long_term_goal!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
     } else if(s->team_arena) {
         if(type==5) {
             if(!retreat) ok=seek_one_flag(b,s,e);
-            else if(s->player.inventory[QA_BOT_INV_NEUTRAL_FLAG]>0 && s->long_term_goal!=BOT_LTG_RUSH_BASE) {
+            else if(bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0 && s->long_term_goal!=BOT_LTG_RUSH_BASE) {
                 int32_t team;
                 ok=rush(b,s,e) && source_team(b,s,&team,e);
                 if(ok && alive(b,s)) ok=bot_ai_source_alternate_route(b,s,opposite(team),e) && team_status(b,s,e);
@@ -1069,7 +1070,7 @@ bool bot_ai_source_team_goals(qa_bots *b, bot_ai_state *s, bool retreat, qa_erro
         } else if(type==6) {if(!retreat) ok=seek_bases(b,s,false,e);}
         else if(type==7) {
             if(!retreat) ok=seek_bases(b,s,true,e);
-            else if((s->player.inventory[QA_BOT_INV_RED_CUBE]>0 || s->player.inventory[QA_BOT_INV_BLUE_CUBE]>0) &&
+            else if((bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0) &&
                     s->long_term_goal!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
         }
     }

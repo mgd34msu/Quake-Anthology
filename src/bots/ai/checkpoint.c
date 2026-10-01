@@ -162,6 +162,7 @@ typedef struct bot_prepared_record {
     bot_goal_restore *goals;
     bot_weapon_restore *weapons;
     qa_bot_input *actions;
+    qa_bot_source_span source_span;
     char *character_request;
     char *admission_name;
 } bot_prepared_record;
@@ -170,6 +171,8 @@ static bool prepare(qa_bots *b,const qa_bots_checkpoint *checkpoint,bot_prepared
     for(uint32_t i=0;i<checkpoint->count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
         bot_ai_state *s=b->source_cells[record->state.acquired_source_client];
+        if(!qa_bot_source_record_span(&b->services.memory,record->state.source_record,
+            &prepared[i].source_span,e)) return false;
         size_t path_size=record->state.admitted_character?strlen(record->state.admitted_character)+1:0;
         if(path_size) {
         prepared[i].character_request=malloc(path_size);
@@ -253,6 +256,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             if(prepared[i].actions) *prepared[i].actions=record->actions;
             bot_ai_state *state=b->source_cells[record->state.acquired_source_client];
             free(state->admitted_character);free(state->admitted_name);*state=record->state;
+            state->source_span=prepared[i].source_span;
             state->admitted_character=prepared[i].character_request;prepared[i].character_request=NULL;
             state->admitted_name=prepared[i].admission_name;prepared[i].admission_name=NULL;
         }

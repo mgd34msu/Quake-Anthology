@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_inventory.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
@@ -44,8 +45,10 @@ bool bot_ai_source_reached_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *
 }
 static bool choose(qa_bots *b, bot_ai_state *s, bool nearby, const qa_bot_goal *long_term,
                      float range, bool *found, qa_error *e) {
-    qa_bot_goal_choice query={.origin=s->player.origin,.inventory=s->player.inventory,
-        .inventory_count=QA_BOT_INVENTORY_SIZE,.travel_flags=s->travel_flags,
+    bot_source_inventory inventory={b,s};
+    qa_bot_inventory_view source=bot_ai_source_inventory_view(&inventory);
+    qa_bot_goal_choice query={.origin=s->player.origin,.inventory_source=&source,
+        .travel_flags=s->travel_flags,
         .nearby=nearby,.long_term=long_term,.maximum_time=range};
     return qa_bot_goals_choose(goals(b),s->goals,&query,found,e);
 }
@@ -87,7 +90,7 @@ static bool nearby(qa_bots *b,bot_ai_state *s,const qa_bot_goal *long_term,
     float range,bool *found,qa_error *e) {
     if(!bot_ai_source_go_for_air(b,s,long_term,range,found,e)) return false;
     if(*found || s->retired || !bot_ai_live(b,s->view.actor)) return true;
-    if(s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0) {
+    if(bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0) {
         qa_bot_nav_route_query query={.area=s->area,.origin=s->player.origin,.has_origin=true,
             .goal_area=(uint32_t)s->team_goal.area,.travel_flags=BOT_DEFAULT_TRAVEL};
         qa_bot_nav_route route;
@@ -98,10 +101,10 @@ static bool nearby(qa_bots *b,bot_ai_state *s,const qa_bot_goal *long_term,
 }
 static float objective_nearby_range(qa_bots *b,bot_ai_state *s,float range) {
     int32_t type=b->source_goals.game_type;
-    if(type==4 && (s->player.inventory[QA_BOT_INV_RED_FLAG]>0 || s->player.inventory[QA_BOT_INV_BLUE_FLAG]>0)) return 50;
+    if(type==4 && (bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0)) return 50;
     if(s->team_arena) {
-        if(type==5 && s->player.inventory[QA_BOT_INV_NEUTRAL_FLAG]>0) return 50;
-        if(type==7 && (s->player.inventory[QA_BOT_INV_RED_CUBE]>0 || s->player.inventory[QA_BOT_INV_BLUE_CUBE]>0)) return 80;
+        if(type==5 && bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0) return 50;
+        if(type==7 && (bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0)) return 80;
     }
     return range;
 }
@@ -132,14 +135,14 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(contents&(16|32)) s->travel_flags|=0x600000;
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-    bool grapple=qa_bot_knowledge_travel(weapons,count,s->player.inventory,QA_NAV_GRAPPLE)>=0;
+    bool grapple=qa_bot_knowledge_travel(weapons,count,bot_ai_inventory(s),QA_NAV_GRAPPLE)>=0;
     bool rocket=false,bfg=false;
     for(size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *weapon=weapons+i;
         int32_t own=weapon->weapon.weapon_inventory,ammo=weapon->weapon.ammo_inventory;
-        if(!weapon->weapon.valid || own<0 || own>=QA_BOT_INVENTORY_SIZE || !s->player.inventory[own] ||
-           ammo<0 || ammo>=QA_BOT_INVENTORY_SIZE || s->player.inventory[ammo]<3 ||
-           s->player.inventory[ammo]<weapon->weapon.ammo_amount) continue;
+        if(!weapon->weapon.valid || own<0 || own>=QA_BOT_INVENTORY_SIZE || !bot_ai_inventory_value(s,own) ||
+           ammo<0 || ammo>=QA_BOT_INVENTORY_SIZE || bot_ai_inventory_value(s,ammo)<3 ||
+           bot_ai_inventory_value(s,ammo)<weapon->weapon.ammo_amount) continue;
         rocket|=(weapon->travel_modes&QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP))!=0;
         bfg|=(weapon->travel_modes&QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP))!=0;
     }
@@ -148,8 +151,8 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(b->controls.grapple && grapple) s->travel_flags|=0x4000;
     if(b->controls.rocket_jump && s->view.decision!=QA_BOT_RETREATING &&
        s->view.decision!=QA_BOT_BATTLE_NEARBY && (rocket || bfg) &&
-       !s->player.inventory[QA_BOT_INV_QUAD] && s->player.inventory[QA_BOT_INV_HEALTH]>=60 &&
-       (s->player.inventory[QA_BOT_INV_HEALTH]>=90 || s->player.inventory[QA_BOT_INV_ARMOR]>=40)) {
+       !bot_ai_inventory_value(s,QA_BOT_INV_QUAD) && bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=60 &&
+       (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=90 || bot_ai_inventory_value(s,QA_BOT_INV_ARMOR)>=40)) {
         float propensity;
         if(!bot_ai_character_float(b,s,BOT_C_WEAPON_JUMP,0,1,&propensity,e)) return false;
         if(propensity>=.5f) s->travel_flags|=(rocket?0x1000:0)|(bfg?0x2000:0);
@@ -227,8 +230,8 @@ static bool enemy_state(qa_bots *b, bot_ai_state *s, bool *alive, bool *visible,
 }
 static bool battle(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     bool carrying=s->player.carrying_objective;
-    if((s->player.inventory[QA_BOT_INV_HEALTH]<40 && s->player.inventory[QA_BOT_INV_TELEPORTER]>0 && !carrying) ||
-       (s->player.inventory[QA_BOT_INV_HEALTH]<60 && s->player.inventory[QA_BOT_INV_MEDKIT]>0))
+    if((bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40 && bot_ai_inventory_value(s,QA_BOT_INV_TELEPORTER)>0 && !carrying) ||
+       (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60 && bot_ai_inventory_value(s,QA_BOT_INV_MEDKIT)>0))
         if(!qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_USE,e)) return false;
     return bot_ai_choose_weapon(b,s,e) && bot_ai_attack(b,s,moving,e);
 }
@@ -312,7 +315,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         qa_bot_decision node=s->view.decision;
         if(node==QA_BOT_STANDING) {
-            if(s->source_chat.last_frame_health>s->player.inventory[QA_BOT_INV_HEALTH]) {
+            if(s->source_chat.last_frame_health>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_hit_talking(b,s,&chat,e));
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
@@ -368,7 +371,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(activation.shoot) {
                     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
                     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-                    int32_t weapon=qa_bot_knowledge_activation(weapons,count,s->player.inventory,s->team_arena);
+                    int32_t weapon=qa_bot_knowledge_activation(weapons,count,bot_ai_inventory(s),s->team_arena);
                     b->services.arsenal_end(b->services.context,lease);
                     if(s->retired || !bot_ai_live(b,s->view.actor) ||
                        !bot_ai_live(b,activation.target) || !bot_ai_live(b,activation.blocker)) return true;
@@ -479,7 +482,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(random<.2f) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
                 }
                 bool chat=false;
-                if(s->source_chat.last_frame_health>s->player.inventory[QA_BOT_INV_HEALTH]) {
+                if(s->source_chat.last_frame_health>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
                     DECISION_CALL(bot_ai_source_chat_hit_no_death(b,s,&chat,e));
                 }
                 if(!chat) {

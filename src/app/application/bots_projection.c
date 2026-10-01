@@ -4,6 +4,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q2_bots.h"
 #include "bot_world.h"
 #include "bots_knowledge.h"
 #include <limits.h>
@@ -62,35 +63,48 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected original arsenal has no native bot weapon observation");
     return true;
 }
-static void native_inventory(const qa_q3_player *ps,int32_t *inventory,bool weapons) {
-    bool team_arena=ps->product==QA_Q3_TEAM_ARENA;unsigned shift=team_arena?1u:0u;
-    inventory[QA_BOT_INV_HEALTH]=ps->stats[0];inventory[QA_BOT_INV_ARMOR]=ps->stats[3+shift];
-    static const int weapon_inventory[]={0,QA_BOT_INV_GAUNTLET,QA_BOT_INV_MACHINEGUN,QA_BOT_INV_SHOTGUN,
-        QA_BOT_INV_GRENADE,QA_BOT_INV_ROCKET,QA_BOT_INV_LIGHTNING,QA_BOT_INV_RAIL,QA_BOT_INV_PLASMA,
-        QA_BOT_INV_BFG,QA_BOT_INV_GRAPPLE,QA_BOT_INV_NAIL,QA_BOT_INV_PROX,QA_BOT_INV_CHAINGUN};
-    static const int ammo_inventory[]={0,0,QA_BOT_INV_BULLETS,QA_BOT_INV_SHELLS,QA_BOT_INV_GRENADES,
-        QA_BOT_INV_ROCKETS,QA_BOT_INV_LIGHTNING_AMMO,QA_BOT_INV_SLUGS,QA_BOT_INV_CELLS,
-        QA_BOT_INV_BFG_AMMO,0,QA_BOT_INV_NAILS,QA_BOT_INV_MINES,QA_BOT_INV_BELT};
-    size_t count=team_arena?sizeof(weapon_inventory)/sizeof(*weapon_inventory):11;
-    for(size_t i=1;weapons && i<count;++i) {
-        inventory[weapon_inventory[i]]=(ps->stats[2+shift]&(1u<<i))!=0;
-        if(ammo_inventory[i]) inventory[ammo_inventory[i]]=ps->ammo[i];
-    }
+static bool native_items(const qa_q3_player *ps,const qa_bot_inventory_target *inventory,qa_error *error) {
+    bool team_arena=ps->product==QA_Q3_TEAM_ARENA;
+    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,ps->stats[0],error)) return false;
+    static const int holdable_inventory[]={QA_BOT_INV_TELEPORTER,QA_BOT_INV_MEDKIT,
+        QA_BOT_INV_KAMIKAZE,QA_BOT_INV_PORTAL,QA_BOT_INV_INVULNERABILITY};
+    static const int holdable_models[]={26,27,36,37,38};
+    for(size_t i=0;i<(team_arena?5u:2u);++i)
+        if(!qa_bot_inventory_write(inventory,holdable_inventory[i],ps->stats[1]==holdable_models[i],error)) return false;
     static const int powerup_inventory[]={0,QA_BOT_INV_QUAD,QA_BOT_INV_ENVIRO,QA_BOT_INV_HASTE,
         QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT,QA_BOT_INV_RED_FLAG,
         QA_BOT_INV_BLUE_FLAG,QA_BOT_INV_NEUTRAL_FLAG};
-    count=team_arena?10:9;
-    for(size_t i=1;i<count;++i) inventory[powerup_inventory[i]]=ps->powerups[i]!=0;
-    inventory[QA_BOT_INV_TELEPORTER]=ps->stats[1]==26;inventory[QA_BOT_INV_MEDKIT]=ps->stats[1]==27;
+    for(size_t i=1;i<(team_arena?10u:9u);++i)
+        if(!qa_bot_inventory_write(inventory,powerup_inventory[i],ps->powerups[i]!=0,error)) return false;
     if(team_arena) {
-        inventory[QA_BOT_INV_KAMIKAZE]=ps->stats[1]==36;
-        inventory[QA_BOT_INV_PORTAL]=ps->stats[1]==37;
-        inventory[QA_BOT_INV_INVULNERABILITY]=ps->stats[1]==38;
-        inventory[QA_BOT_INV_SCOUT]=ps->stats[2]==42;inventory[QA_BOT_INV_GUARD]=ps->stats[2]==43;
-        inventory[QA_BOT_INV_DOUBLER]=ps->stats[2]==44;inventory[QA_BOT_INV_AMMO_REGEN]=ps->stats[2]==45;
-        inventory[QA_BOT_INV_RED_CUBE]=ps->persistant[3]==1?ps->generic1:0;
-        inventory[QA_BOT_INV_BLUE_CUBE]=ps->persistant[3]==1?0:ps->generic1;
+        static const int persistent_inventory[]={QA_BOT_INV_SCOUT,QA_BOT_INV_GUARD,
+            QA_BOT_INV_DOUBLER,QA_BOT_INV_AMMO_REGEN};
+        for(size_t i=0;i<4;++i)
+            if(!qa_bot_inventory_write(inventory,persistent_inventory[i],ps->stats[2]==(int32_t)(42+i),error)) return false;
+        if(!qa_bot_inventory_write(inventory,QA_BOT_INV_RED_CUBE,ps->persistant[3]==1?ps->generic1:0,error) ||
+           !qa_bot_inventory_write(inventory,QA_BOT_INV_BLUE_CUBE,ps->persistant[3]==1?0:ps->generic1,error)) return false;
     }
+    return true;
+}
+static bool shared_powers(application_bots *bots,application_provider *source,qa_actor_id actor,
+    const qa_bot_inventory_target *inventory,qa_error *error) {
+    bool quad=false,enviro=false;
+    if(source && source->kind==APPLICATION_PROVIDER_Q1) {
+        double time,started;bool intermission;
+        if(!qa_q1_bot_clock_read(source->state.q1,&time,&intermission,&started,error)) return false;
+        quad=qa_q1_game_power_expires(source->state.q1,actor,QA_Q1_QUAD)>time;
+        enviro=qa_q1_game_power_expires(source->state.q1,actor,QA_Q1_SUIT)>time;
+    } else if(source && source->kind==APPLICATION_PROVIDER_Q2) {
+        uint64_t time,started;bool intermission;qa_q2_powerups powers;
+        if(!qa_q2_bot_clock_read(source->state.q2,&time,&intermission,&started,error)) return false;
+        if(qa_actors_get(qa_session_actors(bots->application->session),actor)) {
+            if(!qa_q2_powerups_read(source->state.q2,actor,&powers,error)) return false;
+            quad=powers.quad_until_ns>time;
+            enviro=powers.breather_until_ns>time || powers.enviro_until_ns>time;
+        }
+    } else return application_fail(error,QA_ERROR_ARGUMENT,"Shared bot powers require their actual Q1 or Q2 source");
+    return qa_bot_inventory_write(inventory,QA_BOT_INV_QUAD,quad,error) &&
+        qa_bot_inventory_write(inventory,QA_BOT_INV_ENVIRO,enviro,error);
 }
 static bool native_player(application_bots *bots,application_provider *source,qa_actor_id actor,
     qa_bot_player *out,qa_error *error) {
@@ -119,25 +133,24 @@ static bool native_player(application_bots *bots,application_provider *source,qa
     out->eye.z+=(float)ps.viewheight;memcpy(out->delta_angles,ps.deltaAngles,sizeof(out->delta_angles));
     out->last_attacker=application_bot_actor(bots,ps.persistant[6]);
     out->last_victim=application_bot_actor(bots,source_player.last_killed_client);
-    application_provider *arsenal=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
-    native_inventory(&ps,out->inventory,arsenal==source);
-    return arsenal && arsenal!=source?application_bot_inventory(bots,actor,out->inventory,error):true;
+    return true;
 }
 bool application_bot_inventory_update(void *opaque,qa_actor_id actor,const qa_bot_player *sample,
-    int32_t *inventory,qa_error *error) {
+    const qa_bot_inventory_target *inventory,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=application_bot_source(bots);
     if(!application_bots_knowledge_update(bots,actor,error)) return false;
-    if(bots->shared_world && sample && sample->source_state_available && inventory) {
-        native_inventory(&sample->source_state,inventory,false);
-        return application_bot_inventory(bots,actor,inventory,error);
-    }
+    if(bots->shared_world && sample && sample->source_state_available && inventory)
+        return application_bot_inventory(bots,actor,inventory,error) &&
+            shared_powers(bots,source,actor,inventory,error);
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || !sample || !sample->source_state_available ||
        !inventory || !qa_actors_get(qa_session_actors(bots->application->session),actor))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot inventory requires its retained actual Q3 PS sample");
     application_provider *arsenal=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
     if(!arsenal) return application_fail(error,QA_ERROR_NOT_FOUND,"bot inventory selected arsenal is absent");
-    native_inventory(&sample->source_state,inventory,arsenal==source);
-    return arsenal==source || application_bot_inventory(bots,actor,inventory,error);
+    unsigned shift=sample->source_state.product==QA_Q3_TEAM_ARENA?1u:0u;
+    return application_bot_inventory(bots,actor,inventory,error) &&
+        qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,sample->source_state.stats[3+shift],error) &&
+        native_items(&sample->source_state,inventory,error);
 }
 bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
@@ -154,8 +167,7 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
             .presence=2,.current_weapon=ps->weapon,.weapon_state=ps->weaponState,
             .source_state=*ps,.source_state_available=true};
         out->eye.z+=(float)ps->viewheight;
-        native_inventory(ps,out->inventory,false);
-        return application_bot_inventory(bots,actor,out->inventory,error);
+        return true;
     }
     if(source && source->kind==APPLICATION_PROVIDER_Q3) return native_player(bots,source,actor,out,error);
     qa_builtin_services services=application_builtin_services(application,application->world,application->physics);
@@ -176,8 +188,6 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         if(motion->active && qa_actor_id_equal(motion->actor,actor) && motion->reason==QA_BUILTIN_MOTION_TELEPORT)
             out->teleport_sequence=motion->revision;
     }
-    out->inventory[QA_BOT_INV_HEALTH]=quantity(combat.health);
-    out->inventory[QA_BOT_INV_ARMOR]=quantity(combat.armor.regular.points);
     qa_builtin_actor_traits traits;
     if(services.actor_traits(services.context,actor,&traits)) out->invisible=traits.invisible;
     application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
@@ -188,10 +198,6 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         qa_q1_player_view player;
         if(qa_q1_player_read(arsenal->state.q1,actor,&player)) {
             out->current_weapon=(int32_t)player.weapon+1;out->weapon_state=out->firing?3:0;
-            double now=(double)source_ns/1e9;
-            out->inventory[QA_BOT_INV_QUAD]=player.power_expires[QA_Q1_QUAD]>now;
-            out->inventory[QA_BOT_INV_INVISIBILITY]=player.power_expires[QA_Q1_INVISIBILITY]>now;
-            out->inventory[QA_BOT_INV_ENVIRO]=player.power_expires[QA_Q1_SUIT]>now;
         }
     } else if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state player;
@@ -208,22 +214,6 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         out->deaths=player.deaths;out->spawn_sequence=player.spawn_count;out->grapple_pull=player.grapple_pull;
         out->teleported=player.teleport_lock_ms>0;
         out->air_time=(float)player.air_out_time/1000;
-        static const int inventory[]={0,QA_BOT_INV_QUAD,QA_BOT_INV_ENVIRO,QA_BOT_INV_HASTE,
-            QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT,QA_BOT_INV_RED_FLAG,
-            QA_BOT_INV_BLUE_FLAG,QA_BOT_INV_NEUTRAL_FLAG,QA_BOT_INV_SCOUT,QA_BOT_INV_GUARD,
-            QA_BOT_INV_DOUBLER,QA_BOT_INV_AMMO_REGEN};
-        int32_t now=(int32_t)(uint32_t)(source_ns/1000000);
-        for(size_t i=1;i<sizeof(inventory)/sizeof(*inventory) && i<QA_Q3_POWERUP_COUNT;++i)
-            out->inventory[inventory[i]]=player.powerups[i]>now;
-        if(player.holdable==QA_Q3_H_TELEPORTER) out->inventory[QA_BOT_INV_TELEPORTER]=1;
-        if(player.holdable==QA_Q3_H_MEDKIT) out->inventory[QA_BOT_INV_MEDKIT]=1;
-        if(player.holdable==QA_Q3_H_KAMIKAZE) out->inventory[QA_BOT_INV_KAMIKAZE]=1;
-        if(player.holdable==QA_Q3_H_PORTAL) out->inventory[QA_BOT_INV_PORTAL]=1;
-        if(player.holdable==QA_Q3_H_INVULNERABILITY) out->inventory[QA_BOT_INV_INVULNERABILITY]=1;
-        if(player.persistent==QA_Q3_P_SCOUT) out->inventory[QA_BOT_INV_SCOUT]=1;
-        if(player.persistent==QA_Q3_P_GUARD) out->inventory[QA_BOT_INV_GUARD]=1;
-        if(player.persistent==QA_Q3_P_DOUBLER) out->inventory[QA_BOT_INV_DOUBLER]=1;
-        if(player.persistent==QA_Q3_P_AMMOREGEN) out->inventory[QA_BOT_INV_AMMO_REGEN]=1;
     }
     if(control.state.kind==QA_MOVEMENT_Q3) {
         memcpy(out->delta_angles,control.state.data.q3.delta_angle_words,sizeof(out->delta_angles));
@@ -242,9 +232,7 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         qa_mode_view mode;if(!qa_modes_read(application->modes,application->primary_mode,&mode,error)) return false;
         out->intermission=mode.phase==QA_MODE_INTERMISSION || mode.phase==QA_MODE_FINISHED;
     }
-    return arsenal && (arsenal->kind==APPLICATION_PROVIDER_Q1 || arsenal->kind==APPLICATION_PROVIDER_Q2 ||
-                       arsenal->kind==APPLICATION_PROVIDER_Q3)?
-        application_bot_inventory(bots,actor,out->inventory,error):true;
+    return true;
 }
 bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;

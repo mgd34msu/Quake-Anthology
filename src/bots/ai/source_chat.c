@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_inventory.h"
 #include "source_chat.h"
 #include "source_goal.h"
 #include "source_orders.h"
@@ -193,7 +194,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     if(!s->player.source_state_available) return bot_ai_fail(e,"Source chat position lacks retained curPs");
     if(s->player.source_state.pmType==3) {*out=true;return true;}
     static const int powerups[]={QA_BOT_INV_QUAD,QA_BOT_INV_HASTE,QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT};
-    for(size_t i=0;i<5;++i) if(s->player.inventory[powerups[i]]!=0) return true;
+    for(size_t i=0;i<5;++i) if(bot_ai_inventory_value(s,powerups[i])!=0) return true;
     qa_vec3 below=s->player.origin,above=below;int32_t point;
     below.z-=24.0f;above.z+=32.0f;
     qa_actor_id pass=bot_ai_source_actor(b,s->view.entity);

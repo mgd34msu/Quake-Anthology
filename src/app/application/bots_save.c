@@ -581,7 +581,8 @@ bool application_bots_save_finish(qa_application *app,qa_error *error) {
     /* Recapture proves complete source continuation and admitted identity after
      * all shared stores and guest continuations have finished reconnecting. */
     qa_buffer actual={0},nav={0};bots->restoring=false;
-    bool ok=application_bots_save_capture(app,&actual,error) &&
+    bool ok=(!bots->population || qa_bots_source_memory_bind(bots->population,error)) &&
+        application_bots_save_capture(app,&actual,error) &&
         actual.size==bots->saved_bot_record.size && !memcmp(actual.data,bots->saved_bot_record.data,actual.size) &&
         application_navigation_save_capture(app,&nav,error) && nav.size==bots->saved_navigation_record.size &&
         !memcmp(nav.data,bots->saved_navigation_record.data,nav.size);

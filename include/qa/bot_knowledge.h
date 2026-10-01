@@ -3,6 +3,7 @@
 
 #include "qa/bot_runtime.h"
 #include "qa/inventory.h"
+#include "qa/bots_inventory.h"
 
 #define QA_BOT_INVENTORY_SIZE 256
 enum {
@@ -50,17 +51,18 @@ int32_t qa_bot_weapon_role(const qa_bot_weapon_knowledge *);
 qa_bot_weapon_tactics qa_bot_weapon_tactics_for(const qa_bot_weapon_knowledge *);
 /* Candidates preserve selected-arsenal order. No candidate becomes a source
  * weapon merely by sharing its learned personality role. The caller owns a
- * retained scratch inventory, distinct from its canonical observation. */
+ * retained scratch inventory for each explicit foreign-weapon source slice.
+ * Ordinary fuzzy reads borrow the actual little-endian source array. */
 bool qa_bot_knowledge_choose(qa_bot_runtime *,uint32_t weapon_state,
                               const qa_bot_weapon_knowledge *,size_t,
-                              const int32_t inventory[QA_BOT_INVENTORY_SIZE],
+                              qa_bot_inventory_bytes inventory,
                               int32_t scratch[QA_BOT_INVENTORY_SIZE],int32_t *,qa_error *);
 int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *,size_t,
-                                    const int32_t inventory[QA_BOT_INVENTORY_SIZE],bool team_arena);
+                                    qa_bot_inventory_bytes inventory,bool team_arena);
 int32_t qa_bot_knowledge_travel(const qa_bot_weapon_knowledge *,size_t,
-                                const int32_t inventory[QA_BOT_INVENTORY_SIZE],qa_nav_travel);
+                                qa_bot_inventory_bytes inventory,qa_nav_travel);
 float qa_bot_knowledge_aggression(const qa_bot_weapon_knowledge *,size_t,int32_t current_weapon,
-                                   const int32_t inventory[QA_BOT_INVENTORY_SIZE]);
+                                   qa_bot_inventory_bytes inventory);
 /* Uses the same canonical preview receipts as actual pickup planning. */
 bool qa_bot_knowledge_pickup(const qa_bot_weapon_knowledge *,size_t,
                               const qa_supply_preview_result *,double *,qa_error *);
