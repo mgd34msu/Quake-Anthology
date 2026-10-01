@@ -88,6 +88,7 @@ typedef struct q2_actor {
     uint64_t extra_effects;
     uint64_t combat_surprise_ns;
     uint64_t character_birth_epoch;
+    bool character_immortal, character_no_damage_effects;
     qa_actor_owner combat_life_owner;
     uint64_t combat_life_birth_epoch, combat_death_ns;
     bool combat_life_present, combat_no_knockback, combat_alive_knockback_only;

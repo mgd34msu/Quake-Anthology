@@ -20,7 +20,11 @@ bool qa_q2_combat_actor_read(const qa_q2_game *game, qa_actor_id actor,
     const q2_actor *state = game->actors[actor.slot];
     if (!state || !qa_actor_id_equal(state->id, actor)) return false;
     qa_q2_combat_actor view = {.character = state->client || state->monster || state->entity,
-        .player = state->client != NULL, .monster = state->monster != NULL};
+        .player = state->client != NULL, .monster = state->monster != NULL,
+        .immortal = state->client && game->options.edition == QA_Q2_RERELEASE &&
+            state->character_immortal,
+        .no_damage_effects = game->options.edition == QA_Q2_RERELEASE &&
+            state->character_no_damage_effects};
     if (state->monster) {
         view.has_enemy = state->monster->enemy.registry != 0;
         view.suppress_pain = state->monster->ducked;

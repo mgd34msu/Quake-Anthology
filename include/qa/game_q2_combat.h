@@ -16,6 +16,7 @@ typedef struct qa_q2_combat_actor {
     bool character, player, monster, has_enemy, suppress_pain, defender_sphere;
     /* Classic Q2 monster_start retains the same edict's death no-kick flag. */
     bool birth_preserves_death_knockback;
+    bool immortal, no_damage_effects;
 } qa_q2_combat_actor;
 
 typedef struct qa_q2_combat_life {

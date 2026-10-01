@@ -480,6 +480,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                        .born_ns = g->now_ns,
                                        .expire_ns = UINT64_MAX,
                                        .next_ns = lm ? q2_deadline(g->now_ns, Q2_NS) : UINT64_MAX};
+    hook->character_no_damage_effects = rr;
     hook->physics_bound = true;
     hook->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     hook->physics.motion = QA_PHYSICS_FLY_MISSILE;

@@ -2,6 +2,7 @@
 #include "control_frame.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
+#include "supplies.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -264,6 +265,9 @@ bool application_actor_released(void *opaque, qa_session *session,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "actor release reached the wrong application");
 
+    application_supplies_actor_released(application->supplies, released);
+    application_native_q1_wire_actor_released(application, released.id);
+
     bool ok = true;
     qa_error first = {0};
     qa_error current = {0};
@@ -381,6 +385,8 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
 {
     qa_application *application = opaque;
     if (!application_native_q1_wire_damage(application, outcome, error))
+        return false;
+    if (!application_native_q2_combat_before_reaction(application, outcome, error))
         return false;
     application_provider *effects = application_provider_for(
         application, outcome->request.target, QA_ROLE_EFFECTS, "");
@@ -542,7 +548,7 @@ static bool provider_invulnerable(application_provider *provider,
 
 static bool force_death(qa_application *application,
                         const qa_damage_request *request, int32_t final_health,
-                        bool source_death, qa_error *error)
+                        bool source_death, application_provider *q2_source, qa_error *error)
 {
     if (application == NULL || application->combat == NULL ||
         application->destroy_requested ||
@@ -566,7 +572,23 @@ static bool force_death(qa_application *application,
     if (traits.health <= 0 && !source_death)
         return true;
     bool react = true;
-    if (source_death) {
+    if (q2_source) {
+        qa_q2_player_info player;
+        if (q2_source->application != application || q2_source->kind != APPLICATION_PROVIDER_Q2 ||
+            !q2_source->constructed || !q2_source->attached || q2_source->close_pending ||
+            request->attack.combat_provider != q2_source->owner ||
+            !qa_actor_id_equal(request->target, request->attack.attacker) ||
+            !qa_actor_id_equal(request->target, request->attack.inflictor) ||
+            request->attack.cause.kind != QA_CAUSE_Q2 ||
+            ((uint32_t)request->attack.cause.source.q2.means_of_death &
+                ~UINT32_C(0x08000000)) != 23 ||
+            !qa_q2_player_read(q2_source->state.q2, request->target, &player) || !player.connected)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "source suicide requires its actual Q2 client");
+        if (traits.health != 0)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Q2 source suicide has not committed its health-zero boundary");
+    } else if (source_death) {
         application_provider *source = application_world_provider(
             application, QA_ROLE_ENTITIES, "");
         qa_q3_player_state player;
@@ -595,13 +617,13 @@ static bool force_death(qa_application *application,
         .result = {.applied_damage = request->amount,
                    .reaction = QA_REACTION_DEATH},
         .mutations = &mutation,
-        .mutation_count = 1,
+        .mutation_count = q2_source ? 0 : 1,
     };
     traits.invulnerable = false;
-    bool ok = qa_combat_set_traits(application->combat, request->target,
+    bool ok = q2_source || (qa_combat_set_traits(application->combat, request->target,
                                     &traits, error) &&
               qa_combat_set_health(application->combat, request->target,
-                                    final_health, error);
+                                    final_health, error));
     if (ok && react)
         ok = qa_combat_source_reaction(application->combat, request,
                                          &outcome.result, error);
@@ -616,13 +638,22 @@ static bool force_death(qa_application *application,
 bool application_force_death(void *opaque, const qa_damage_request *request,
                               qa_error *error)
 {
-    return force_death(opaque, request, -999, false, error);
+    return force_death(opaque, request, -999, false, NULL, error);
 }
 
 bool application_source_force_death(qa_application *application,
     const qa_damage_request *request, int32_t final_health, qa_error *error)
 {
-    return force_death(application, request, final_health, true, error);
+    return force_death(application, request, final_health, true, NULL, error);
+}
+
+bool application_native_q2_source_suicide(void *opaque, const qa_damage_request *request,
+                                          qa_error *error)
+{
+    application_provider *source = opaque;
+    if (!source || !request)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source suicide lost its owner");
+    return force_death(source->application, request, 0, true, source, error);
 }
 
 static bool combat_invulnerable(void *opaque, qa_actor_id actor)
@@ -771,8 +802,12 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
                        : application->provider_count;
     for (size_t index = 0; index < count; ++index)
         if (providers[index] != provider &&
-            provider_traits(providers[index], actor, out))
+            provider_traits(providers[index], actor, out)) {
+            out->has_life = false;
+            out->birth_epoch = 0;
+            out->dead = false;
             return true;
+        }
     return false;
 }
 

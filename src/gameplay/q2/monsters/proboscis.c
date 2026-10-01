@@ -356,6 +356,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         .attack = {.attacker = owner, .weapon_provider = game->options.owner,
                     .combat_provider = game->options.owner,
                     .cause = qa_q2_damage_cause(game->options.edition, game->options.product, 0, 0)}};
+    actor->character_no_damage_effects = !segment;
     actor->physics_bound = true;
     actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     actor->physics.q2_rerelease = true;

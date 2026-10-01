@@ -19,6 +19,10 @@ static float number(const qa_cvars *cvars, const char *name) {
     const qa_cvar_view *value = qa_cvars_find(cvars, name);
     return value ? value->number : 0;
 }
+static bool integer_enabled(const qa_cvars *cvars, const char *name) {
+    const qa_cvar_view *value = qa_cvars_find(cvars, name);
+    return value && value->integer != 0;
+}
 static const char *text(const qa_cvars *cvars, const char *name) {
     const qa_cvar_view *value = qa_cvars_find(cvars, name);
     return value ? value->value : "";
@@ -38,12 +42,14 @@ uint32_t qa_q2_source_deathmatch_flags(const qa_cvars *cvars) {
         bool enabled = (number(cvars, rules[i].name) != 0) != rules[i].inverted;
         flags = enabled ? flags | rules[i].mask : flags & ~rules[i].mask;
     }
-    static const struct { const char *name; uint32_t mask; } pickups[] = {
-        {"g_no_health", 1}, {"g_no_items", 2}, {"g_no_armor", 2048},
+    static const struct { const char *name; uint32_t mask; bool inverted; } integer_rules[] = {
+        {"g_no_health", 1, false}, {"g_no_items", 2, false}, {"g_no_armor", 2048, false},
+        {"g_friendly_fire", 256, true},
     };
-    for (size_t i = 0; i < sizeof(pickups) / sizeof(*pickups); ++i) {
-        const qa_cvar_view *setting = qa_cvars_find(cvars, pickups[i].name);
-        flags = setting && setting->integer != 0 ? flags | pickups[i].mask : flags & ~pickups[i].mask;
+    for (size_t i = 0; i < sizeof(integer_rules) / sizeof(*integer_rules); ++i) {
+        const qa_cvar_view *setting = qa_cvars_find(cvars, integer_rules[i].name);
+        bool enabled = (setting && setting->integer != 0) != integer_rules[i].inverted;
+        flags = enabled ? flags | integer_rules[i].mask : flags & ~integer_rules[i].mask;
     }
     return flags;
 }
@@ -69,7 +75,9 @@ bool qa_q2_source_player_rules(const qa_cvars *cvars, qa_q2_player_rules *rules,
     candidate.flood_messages = (unsigned)flood;
     candidate.password = text(cvars, "password");
     candidate.spectator_password = text(cvars, "spectator_password");
-    candidate.cheats = number(cvars, "cheats") != 0;
+    candidate.cheats = rerelease(cvars) ? integer_enabled(cvars, "cheats") :
+        number(cvars, "cheats") != 0;
+    candidate.teamplay = rerelease(cvars) && integer_enabled(cvars, "teamplay");
     candidate.flood_seconds = number(cvars, "flood_persecond");
     candidate.flood_wait_seconds = number(cvars, "flood_waitdelay");
     candidate.roll_speed = number(cvars, "sv_rollspeed");
@@ -187,9 +195,9 @@ bool qa_q2_source_apply(qa_q2_game *game, const qa_cvars *cvars, bool reset_rota
         items.instanced_coop = rules.coop_instanced_items;
         items.weapon_respawn_seconds = number(cvars, "g_weapon_respawn_time");
         items.random_items = number(cvars, "g_dm_random_items") != 0;
-        items.no_mines = number(cvars, "g_no_mines") != 0 || (flags & 0x20000u) != 0;
-        items.no_nukes = number(cvars, "g_no_nukes") != 0 || (flags & 0x80000u) != 0;
-        items.no_spheres = number(cvars, "g_no_spheres") != 0 || (flags & 0x40000u) != 0;
+        items.no_mines = integer_enabled(cvars, "g_no_mines") || (flags & 0x20000u) != 0;
+        items.no_nukes = integer_enabled(cvars, "g_no_nukes") || (flags & 0x80000u) != 0;
+        items.no_spheres = integer_enabled(cvars, "g_no_spheres") || (flags & 0x40000u) != 0;
         items.hunter_camera = number(cvars, "huntercam") != 0;
     } else if (game->options.product == QA_Q2_ROGUE) {
         uint32_t flags = qa_q2_source_deathmatch_flags(cvars);

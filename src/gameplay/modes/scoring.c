@@ -65,6 +65,12 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
     mode_stat_add(v, &dead->stats.deaths, 1);
     bool self = qa_actor_id_equal(victim, attacker),
          friendly = killer && !self && qa_modes_same_team(m, v->id, victim, attacker);
+    const qa_damage_cause *cause = &outcome->request.attack.cause;
+    if (!ordinary && self &&
+        v->value.rules.source >= QA_MODE_Q2 && v->value.rules.source < QA_MODE_Q3 &&
+        cause->kind == QA_CAUSE_Q2 && cause->source.q2.native == QA_Q2_CAUSE_RERELEASE &&
+        cause->source.q2.no_point_loss)
+        primary_score = false;
     if (v->value.rules.kind == QA_MODE_HORDE) {
         qa_actor_id recipient = ordinary ? ordinary->recipient : killer ? attacker : victim;
         int32_t change = ordinary ? ordinary->delta : !killer || self ? -1 : 1;

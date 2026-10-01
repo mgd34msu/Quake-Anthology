@@ -291,7 +291,19 @@ static bool source_effect(void *opaque, qa_combat *combat, qa_damage_effect_stag
     qa_q2_combat_rules rules;
     if (!source_rules(provider, &rules, error) || combat != provider->application->combat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 damage effect lost its selected source");
-    if (rules.edition != QA_Q2_RERELEASE || stage != QA_DAMAGE_BEFORE_MOMENTUM || request->radius)
+    if (rules.edition != QA_Q2_RERELEASE) return true;
+    if (stage == QA_DAMAGE_LETHAL_HEALTH) {
+        qa_builtin_actor_traits victim;
+        qa_q2_combat_actor victim_q2;
+        if (!character_traits(provider->application, request->target,
+                              &victim, &victim_q2, error)) return false;
+        if (victim_q2.immortal && effect->amount <= 0) {
+            effect->amount = 1;
+            effect->reaction = QA_REACTION_PAIN;
+        }
+        return true;
+    }
+    if (stage != QA_DAMAGE_BEFORE_MOMENTUM || request->radius)
         return true;
     qa_combat_state target;
     if (!qa_combat_read(combat, request->target, &target, error)) return false;

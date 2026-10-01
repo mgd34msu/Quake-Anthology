@@ -53,7 +53,7 @@ typedef struct qa_equipment_source {
     bool (*admit)(void *, qa_actor_id, qa_error *);
     bool (*frame)(void *, uint64_t now_ns, uint64_t elapsed_ns, qa_error *);
     bool (*fire)(void *, qa_actor_id, const qa_equipment_controls *, qa_error *);
-    bool (*release)(void *, qa_actor_id, qa_error *);
+    bool (*release)(void *, qa_actor_id, bool force, qa_error *);
     bool (*pull)(void *, qa_actor_id, qa_vec3 forward, qa_vec3 *, bool *, qa_error *);
     bool (*saved_actor)(void *, qa_actor_id, qa_error *);
 } qa_equipment_source;

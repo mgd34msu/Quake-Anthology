@@ -172,12 +172,16 @@ bool qa_equipment_destroy_checked(qa_equipment *g, qa_error *e) {
     free(g);
     return true;
 }
-static bool equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+static bool release_grapple(qa_equipment *g, qa_actor_id actor, bool force, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
         return true;
     p->state.grapple_pressed = false;
     p->state.grapple_released = false;
+    if (force) {
+        p->state.controls.grapple_held = false;
+        p->state.controls.prediction = false;
+    }
     switch (p->state.selection.grapple) {
     case QA_GRAPPLE_THREEWAVE:
     case QA_GRAPPLE_ROGUE:
@@ -187,12 +191,15 @@ static bool equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_err
     case QA_GRAPPLE_LMCTF:
         return qa_q2_grapple_reset(p->grapple.q2, actor, QA_Q2_LMCTF_GRAPPLE, e);
     case QA_GRAPPLE_Q3:
-        return p->grapple.release ? p->grapple.release(p->grapple.context, actor, e) :
+        return p->grapple.release ? p->grapple.release(p->grapple.context, actor, force, e) :
             qa_q3_release_grapple(p->grapple.q3, actor, e);
     case QA_GRAPPLE_DISABLED:
         return true;
     }
     return mode_fail(e, "invalid grapple mechanic");
+}
+static bool equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+    return release_grapple(g, actor, true, e);
 }
 static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipment_selection *selection,
                         const qa_equipment_source_selection *sources,
@@ -489,7 +496,8 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
         return s->selection.retain_on_weapon_change ? true
                                                     : qa_equipment_release_grapple(g, actor, e);
     if (released)
-        return qa_equipment_release_grapple(g, actor, e);
+        return s->selection.grapple == QA_GRAPPLE_Q3 && p->grapple.release
+            ? release_grapple(g, actor, false, e) : qa_equipment_release_grapple(g, actor, e);
     switch (s->selection.grapple) {
     case QA_GRAPPLE_DISABLED:
         return true;

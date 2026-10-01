@@ -299,7 +299,8 @@ static bool give_lookup(qa_q2_game *g, const char *requested, const char *first,
 }
 static bool give_ammo(qa_q2_game *g, qa_actor_id actor, const qa_q2_item_definition *d, bool exact,
                       int amount, qa_error *e) {
-    qa_supply *supply = q2_item_supply(g, actor);
+    qa_supply *supply;
+    if (!q2_item_supply(g, actor, &supply, e)) return false;
     if (!supply || !qa_supply_maps(supply, d->item, false)) {
         int previous;
         if (!q2_count(g, actor, d->item, &previous, e))
@@ -487,7 +488,8 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
         return options->supplemental_give(options->context, a->id, extra.definition.item, false, 0,
                                           &accepted, e);
     }
-    qa_supply *supply = q2_item_supply(g, a->id);
+    qa_supply *supply;
+    if (!q2_item_supply(g, a->id, &supply, e)) return false;
     if ((d->weapon || d->kind == QA_Q2_ITEM_AMMO) &&
         (!supply || !qa_supply_maps(supply, d->item, d->kind != QA_Q2_ITEM_AMMO)) &&
         selected && services->give_item) {
@@ -720,12 +722,37 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         qa_combat_state combat;
         if (!qa_combat_read(g->services.combat, id, &combat, e))
             return false;
+        if (!q2_actor_live(g, id)) return true;
+        qa_damage_request suicide = {.target = id, .amount = 100000,
+            .attack = {.attacker = id, .inflictor = id, .combat_provider = g->options.owner,
+                .time_ns = g->now_ns,
+                .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 23, 0)}};
+        if (!qa_attack_next(&g->sequence, &suicide.attack, e)) return false;
+        if (g->options.edition == QA_Q2_RERELEASE)
+            suicide.attack.cause.source.q2.no_point_loss = p->rules.teamplay;
         s->info.god = false;
         combat.invulnerable = false;
         if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
             return false;
-        return !q2_actor_live(g, id) ||
-               q2_player_environment_damage(g, a, fmaxf(1, combat.health) + 1, 23, 32, e);
+        if (!q2_actor_live(g, id)) return true;
+        if (!qa_combat_set_health(g->services.combat, id, 0, e)) return false;
+        if (!q2_actor_live(g, id)) return true;
+        if (g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE) {
+            if (!qa_q2_clear_trackers(g, id, e)) return false;
+            if (!q2_actor_live(g, id)) return true;
+            if (a->powers && a->powers->sphere.registry) {
+                qa_actor_id sphere = a->powers->sphere;
+                a->powers->sphere = (qa_actor_id){0};
+                if (q2_actor_live(g, sphere) && !qa_session_release(g->services.session, sphere, e))
+                    return false;
+                if (!q2_actor_live(g, id)) return true;
+            }
+        }
+        if (services->suicide)
+            return services->suicide(services->context, &suicide, e);
+        qa_damage_outcome death = {.request = suicide,
+            .result = {.applied_damage = 100000, .reaction = QA_REACTION_DEATH}};
+        return q2_player_death(g, a, &death, e);
     }
     if (equal_name(command, "putaway")) {
         s->show_inventory = s->show_scores = s->show_help = false;
@@ -747,7 +774,9 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         s->animation_end = last[wave];
         return q2_player_print(g, id, 2, names[wave], e);
     }
-    if (equal_name(command, "god") || equal_name(command, "notarget") ||
+    if (equal_name(command, "god") ||
+        (g->options.edition == QA_Q2_RERELEASE && equal_name(command, "immortal")) ||
+        equal_name(command, "notarget") ||
         equal_name(command, "noclip") || equal_name(command, "give") ||
         equal_name(command, "target")) {
         if ((g->options.edition == QA_Q2_RERELEASE ? p->rules.max_clients > 1
@@ -770,7 +799,10 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
             return g->services.use_targets(g->services.context, id, id, target, 0, 0, e);
         }
         bool enabled;
-        if (equal_name(command, "god")) {
+        if (equal_name(command, "immortal")) {
+            a->character_immortal = !a->character_immortal;
+            enabled = a->character_immortal;
+        } else if (equal_name(command, "god")) {
             s->info.god = !s->info.god;
             enabled = s->info.god;
             qa_combat_state combat;

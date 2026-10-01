@@ -98,10 +98,11 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
     qa_error ignored;
     if (qa_combat_read_traits(g->services.combat, id, &combat, &ignored)) {
         combat.can_take_damage = true;
+        combat.no_knockback = true;
         if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
             return false;
     } else {
-        combat = (qa_combat_state){.can_take_damage = true};
+        combat = (qa_combat_state){.can_take_damage = true, .no_knockback = true};
         if (!qa_combat_create_actor(g->services.combat, id, &combat, e))
             return false;
     }
@@ -116,6 +117,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         .gib_flags = flags,
         .visible = true,
         .expire_ns = q2_deadline(g->now_ns, (uint64_t)((10 + q2_random(g) * 10) * 1e9))};
+    a->character_no_damage_effects = rr;
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     a->physics.q2_rerelease = rr;
