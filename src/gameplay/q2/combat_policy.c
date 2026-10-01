@@ -6,7 +6,8 @@
 bool qa_q2_combat_rules_read(const qa_q2_game *game, qa_q2_combat_rules *out) {
     if (!game || !out) return false;
     *out = (qa_q2_combat_rules){.owner = game->options.owner,
-        .edition = game->options.edition, .skill = game->options.skill,
+        .edition = game->options.edition, .product = game->options.product,
+        .skill = game->options.skill,
         .deathmatch_flags = game->options.deathmatch_flags,
         .deathmatch = game->options.deathmatch, .cooperative = game->options.cooperative};
     return true;
@@ -42,6 +43,20 @@ bool qa_q2_combat_weapon_owned(const qa_q2_game *game, qa_item_id item) {
     for (size_t i = 0; i < QA_Q2_WEAPON_COUNT; ++i)
         if (game->items[i] == item) return true;
     return false;
+}
+
+bool qa_q2_combat_surprise(qa_q2_game *game, qa_actor_id actor, bool has_enemy,
+                           bool *bonus, qa_error *error) {
+    if (!game || !bonus || game->options.edition != QA_Q2_RERELEASE ||
+        game->continuation_pending || game->continuation_failed || game->restoring_continuation) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 surprise requires its current COMBAT source");
+        return false;
+    }
+    q2_actor *state = q2_actor_get(game, actor, true, error);
+    if (!state) return false;
+    *bonus = !has_enemy || state->combat_surprise_ns == game->now_ns;
+    if (*bonus) state->combat_surprise_ns = game->now_ns;
+    return true;
 }
 
 bool qa_q2_combat_power_armor_source(const qa_q2_game *game, qa_powered_armor *armor) {

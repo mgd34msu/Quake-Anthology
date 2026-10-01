@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(9)
+#define Q2_SAVE_VERSION UINT32_C(10)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;

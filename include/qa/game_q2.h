@@ -373,6 +373,7 @@ typedef struct qa_q2_actor_checkpoint {
     uint32_t version;
     uint64_t source_order;
     uint64_t extra_effects;
+    uint64_t combat_surprise_ns;
     float alpha;
     bool lmctf_plasma_bounce;
     bool weapon_bound, physics_bound;

@@ -6,6 +6,7 @@
 typedef struct qa_q2_combat_rules {
     qa_actor_owner owner;
     qa_q2_edition edition;
+    qa_q2_product product;
     int skill;
     uint32_t deathmatch_flags;
     bool deathmatch, cooperative;
@@ -20,6 +21,9 @@ typedef struct qa_q2_combat_actor {
 bool qa_q2_combat_rules_read(const qa_q2_game *, qa_q2_combat_rules *);
 bool qa_q2_combat_actor_read(const qa_q2_game *, qa_actor_id, qa_q2_combat_actor *);
 bool qa_q2_combat_weapon_owned(const qa_q2_game *, qa_item_id);
+/* Commits this COMBAT source's equal-frame surprise history on the exact
+ * canonical actor. No body, health, armor, or simulation is created. */
+bool qa_q2_combat_surprise(qa_q2_game *, qa_actor_id, bool has_enemy, bool *bonus, qa_error *);
 /* Qualifies a copied powered armor value with its actual GAME source. */
 bool qa_q2_combat_power_armor_source(const qa_q2_game *, qa_powered_armor *);
 

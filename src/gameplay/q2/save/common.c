@@ -102,6 +102,7 @@ static bool projectile(q2_save_io *io, qa_q2_projectile_checkpoint *s) {
 }
 bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
     Q2U(version); Q2T(source_order); Q2T(extra_effects); Q2F(alpha); Q2B(lmctf_plasma_bounce);
+    Q2T(combat_surprise_ns);
     Q2B(weapon_bound); Q2B(physics_bound);
     if (!weapon(io, &s->weapon) || !input(io, &s->input)) return false;
     Q2I(silencer);

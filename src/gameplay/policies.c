@@ -262,18 +262,22 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         same_team(&target, has_attacker ? &attacker : NULL) && !source.friendly_fire &&
         !source.nuke)
         damage = 0;
+    if (source.reject_friendly_damage && !flags.no_protection && !source.nuke)
+        damage = 0;
     if (source.easy_skill && !source.deathmatch && source.player &&
         (!source.rerelease || damage != 0)) {
         damage /= 2;
-        if (damage < 1)
+        if (damage == 0)
             damage = 1;
     }
-    if (source.defender_sphere && source.player && damage != 0) {
+    if (source.rerelease)
+        damage = multiply_integer(damage, source.damage_scale);
+    if (source.defender_sphere && source.player && (!source.rerelease || damage != 0)) {
         damage /= 2;
-        if (damage < 1)
+        if (damage == 0)
             damage = 1;
     }
-    if (!request->radius && source.monster && source.attacker_player && !source.has_enemy &&
+    if (!source.rerelease && !request->radius && source.monster && source.attacker_player && !source.has_enemy &&
         target.health > 0)
         damage = multiply_integer(damage, 2);
     qa_damage_effect value = {.amount = (float)damage, .allowed = true};
@@ -316,7 +320,7 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         return false;
     if (!qa_combat_live(combat, request->target))
         return true;
-    if (value.allowed &&
+    if (value.allowed && !source.team_armor_protect &&
         !absorb(combat, policy, request, QA_PROTECTION_POWERED, amount, flags, &power, error))
         return false;
     if (!qa_combat_live(combat, request->target))
@@ -334,7 +338,7 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         return false;
     if (!qa_combat_live(combat, request->target))
         return true;
-    if (value.allowed && !absorb(combat, policy, request, QA_PROTECTION_REGULAR, (float)after_power,
+    if (value.allowed && !source.team_armor_protect && !absorb(combat, policy, request, QA_PROTECTION_REGULAR, (float)after_power,
                                  flags, &regular, error))
         return false;
     if (!qa_combat_live(combat, request->target))
@@ -358,7 +362,8 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
                                  .power_saved = power,
                                  .armor_saved = regular + protection_saved,
                                  .blood = (float)take,
-                                 .knockback = (float)knockback};
+                                 .knockback = (float)knockback,
+                                 .has_q2_damage = true, .q2_damage = (float)damage};
     if (!protected_health) {
         value = (qa_damage_effect){.amount = (float)damage, .allowed = true};
         if (!effect(combat, policy, QA_DAMAGE_BEFORE_HEALTH, request, &value, error))
@@ -374,8 +379,12 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         if (!current(combat, request, &target, &attacker, &has_attacker, error))
             return false;
     }
-    if (!take)
+    if (!take) {
+        value = (qa_damage_effect){.amount = 0, .allowed = true, .reaction = QA_REACTION_NONE};
+        if (!effect(combat, policy, QA_DAMAGE_AFTER_HEALTH, request, &value, error)) return false;
+        if (!qa_combat_live(combat, request->target)) *result = (qa_damage_result){0};
         return true;
+    }
     float health = fmaxf(-999, truncf(target.health - (float)take));
     qa_reaction reaction = health <= 0 ? QA_REACTION_DEATH
                            : source.suppress_pain ? QA_REACTION_NONE : QA_REACTION_PAIN;

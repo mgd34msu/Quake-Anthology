@@ -227,6 +227,16 @@ bool qa_combat_register_policy(qa_combat *combat, const qa_combat_policy *policy
     qa_combat_policy_admission_abort(token);
     return false;
 }
+bool qa_combat_policy_family(const qa_combat *combat, qa_actor_owner provider,
+                             qa_game_family *out) {
+    if (!combat || !provider || !out) return false;
+    for (size_t i = 0; i < combat->policy_count; ++i)
+        if (combat->policies[i].provider == provider) {
+            *out = combat->policies[i].family;
+            return true;
+        }
+    return false;
+}
 bool qa_combat_unregister_policy(qa_combat *combat, qa_actor_owner provider, qa_error *error) {
     if (!qa_combat_idle(combat)) return qa_combat_argument(error, "cannot change policies during combat");
     for (size_t i = 0; i < combat->policy_count; ++i) if (combat->policies[i].provider == provider) {
@@ -665,6 +675,9 @@ static bool result_valid(const qa_damage_result *result, qa_error *error) {
     if (result->has_feedback && (result->feedback_family < QA_GAME_Q1 || result->feedback_family > QA_GAME_Q3 ||
         !isfinite(result->power_saved) || !isfinite(result->armor_saved) || !isfinite(result->blood) || !isfinite(result->knockback)))
         return qa_combat_argument(error, "invalid source damage feedback");
+    if (result->has_q2_damage && (!result->has_feedback ||
+        result->feedback_family != QA_GAME_Q2 || !isfinite(result->q2_damage)))
+        return qa_combat_argument(error, "invalid Q2 pre-protection damage feedback");
     return true;
 }
 static bool cursor_reconciled(qa_combat *combat, qa_combat_cursor *cursor, qa_error *error) {
@@ -757,7 +770,21 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
         *saved = result; return true;
     }
     qa_combat_state current; qa_armor_result result;
-    if (!read_state(combat, entry, &current, error) || !qa_armor_absorb(&current.armor, amount, flags, context, &channel, &result, error)) return false;
+    if (!read_state(combat, entry, &current, error)) return false;
+    qa_armor_context victim = *context;
+    if (combat->hooks.armor_context) {
+        ++combat->active_calls;
+        bool ok = combat->hooks.armor_context(combat->hooks.context, request, &current,
+                                               &captured, &victim, error);
+        --combat->active_calls;
+        if (!ok || !cursor_reconciled(combat, cursor, error)) return false;
+        if (!qa_combat_live(combat, request->target)) { *saved = 0; return true; }
+        entry = record(combat, request->target);
+        if (!entry || entry->serial != cursor->binding_serial)
+            return qa_combat_argument(error, "victim armor context changed its storage owner");
+        if (!read_state(combat, entry, &current, error)) return false;
+    }
+    if (!qa_armor_absorb(&current.armor, amount, flags, &victim, &channel, &result, error)) return false;
     if (!qa_armor_equal(current.armor, result.armor) && !qa_combat_set_armor(combat, request->target, &result.armor, error)) return false;
     *saved = channel == QA_PROTECTION_REGULAR ? result.regular_saved : result.power_saved;
     return true;
@@ -836,8 +863,19 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         }
     }
     bool allowed = true;
+    if (!source && policy.prepare) {
+        ++combat->active_calls;
+        bool ok = policy.prepare(policy.context, request, &allowed, error);
+        --combat->active_calls;
+        if (!ok || !qa_damage_request_validate(request, error)) return false;
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+        if (record(combat, request->target) != entry || entry->serial != serial ||
+            request->attack.combat_provider != policy.provider)
+            return qa_combat_argument(error, "damage preparation changed its selected authority");
+    }
     if (combat->hooks.damage_allowed) {
-        ++combat->active_calls; allowed = combat->hooks.damage_allowed(combat->hooks.context, request); --combat->active_calls;
+        ++combat->active_calls; bool permitted = combat->hooks.damage_allowed(combat->hooks.context, request); --combat->active_calls;
+        allowed = allowed && permitted;
     }
     if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
     if (record(combat, request->target) != entry || entry->serial != serial) return qa_combat_argument(error, "damage source changed its owner");

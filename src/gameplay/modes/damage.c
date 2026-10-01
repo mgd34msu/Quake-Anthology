@@ -33,6 +33,12 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
     if (!v->value.rules.enabled)
         return true;
     qa_mode_source source = v->value.rules.source;
+    qa_game_family family;
+    if (!qa_combat_policy_family(m->options.services.combat, request->attack.combat_provider,
+                                 &family))
+        return mode_fail(e, "mode damage effect has no registered selected combat policy");
+    bool q2_mode = source == QA_MODE_Q2_CTF || source == QA_MODE_LMCTF;
+    bool selected_q2_mode = q2_mode && family == QA_GAME_Q2;
     mode_member *attacker = mode_member_get(m, v, request->attack.attacker),
                 *target = mode_member_get(m, v, request->target);
     bool friendly = attacker && target && !qa_actor_id_equal(attacker->actor, target->actor) &&
@@ -48,21 +54,32 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
         m->options.hooks.grapple_pulling &&
         m->options.hooks.grapple_pulling(m->options.hooks.context, request->target))
         effect->allowed = false;
-    if (stage == QA_DAMAGE_AFTER_QUAD) {
+    qa_damage_effect_stage attack_stage = selected_q2_mode
+        ? QA_DAMAGE_BEFORE_MOMENTUM : QA_DAMAGE_AFTER_QUAD;
+    if (stage == attack_stage) {
         if (!qa_modes_attack_damage(m, id, request->attack.attacker, effect->amount,
                                     &effect->amount, e))
             return false;
+    }
+    if (stage == QA_DAMAGE_AFTER_QUAD) {
         if (source <= QA_MODE_Q1_HORDE && source != QA_MODE_ROGUE &&
             !qa_modes_resist_damage(m, id, request->target, effect->amount, &effect->amount, e))
             return false;
-        if (!qa_modes_player_hurt(m, id, request, e))
+        if (!selected_q2_mode && !qa_modes_player_hurt(m, id, request, e))
             return false;
     }
-    if (stage == QA_DAMAGE_AFTER_POWER && (source == QA_MODE_Q2_CTF || source == QA_MODE_LMCTF) &&
+    qa_damage_effect_stage resistance_stage = selected_q2_mode && source == QA_MODE_Q2_CTF
+        ? QA_DAMAGE_AFTER_ARMOR : QA_DAMAGE_AFTER_POWER;
+    if (stage == resistance_stage && q2_mode &&
+        !(selected_q2_mode && source == QA_MODE_Q2_CTF && effect->amount == 0) &&
         !qa_modes_resist_damage(m, id, request->target, effect->amount, &effect->amount, e))
         return false;
     if (stage == QA_DAMAGE_AFTER_ARMOR && source == QA_MODE_ROGUE &&
         !qa_modes_resist_damage(m, id, request->target, effect->amount, &effect->amount, e))
+        return false;
+    if (stage == QA_DAMAGE_AFTER_HEALTH && selected_q2_mode &&
+        (source == QA_MODE_Q2_CTF || effect->amount != 0) &&
+        !qa_modes_player_hurt(m, id, request, e))
         return false;
     if (source == QA_MODE_THREEWAVE && !v->value.rules.start_map) {
         int32_t flags = v->value.rules.teamplay;

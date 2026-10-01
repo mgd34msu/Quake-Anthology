@@ -2220,14 +2220,22 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
   if (!q2m_refresh(&context, error))
     return false;
   struct qa_q2_monster *monster = context.monster;
-  monster->last_attack = outcome->request.attack;
-  monster->last_damage_point = outcome->request.point;
-  monster->pending_damage += outcome->result.applied_damage;
-  monster->pending_kick += outcome->request.knockback;
   qa_actor_id attacker = outcome->request.attack.attacker;
   bool dying = outcome->result.reaction == QA_REACTION_DEATH ||
                context.combat.health <= 0.0f;
-  if (!dying && outcome->result.applied_damage > 0.0f &&
+  bool q2_feedback = outcome->result.has_feedback && outcome->result.feedback_family == QA_GAME_Q2;
+  if (dying || game->options.edition == QA_Q2_CLASSIC || !outcome->result.has_q2_damage ||
+      outcome->result.q2_damage > 0.0f) {
+    monster->last_attack = outcome->request.attack;
+    monster->last_damage_point = outcome->request.point;
+    monster->pending_damage += outcome->result.applied_damage;
+    monster->pending_kick += outcome->result.has_feedback ? outcome->result.knockback :
+                                                          outcome->request.knockback;
+  }
+  bool reacts = (q2_feedback && game->options.edition == QA_Q2_CLASSIC) ||
+      (outcome->result.has_q2_damage ? outcome->result.q2_damage > 0.0f :
+                                      outcome->result.applied_damage > 0.0f);
+  if (!dying && reacts &&
       !q2m_react_to_damage(&context, attacker, error))
     return false;
   if (!q2m_alive(&context))

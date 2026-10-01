@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "control_frame.h"
+#include "native_q2_combat_policy.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -680,7 +681,8 @@ qa_combat_hooks application_combat_hooks(qa_application *application)
                              .source_reaction_confirmed = confirmed_death,
                              .confirmed = confirmed_damage,
                              .invulnerable = combat_invulnerable,
-                             .effect = combat_effect};
+                             .effect = combat_effect,
+                             .armor_context = application_native_q2_armor_context};
 }
 
 static bool builtin_players(void *opaque, qa_actor_id *actors, size_t capacity,

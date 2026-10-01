@@ -111,9 +111,10 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     if (a == NULL)
         return false;
     const q2_projectile *p = &a->projectile;
-    qa_q2_actor_checkpoint snapshot = {.version = 2,
+    qa_q2_actor_checkpoint snapshot = {.version = 3,
                                        .source_order = a->source_order,
                                        .extra_effects = a->extra_effects,
+                                       .combat_surprise_ns = a->combat_surprise_ns,
                                        .alpha = a->alpha,
                                        .weapon_bound = a->weapon_bound,
                                        .physics_bound = a->physics_bound,
@@ -186,7 +187,7 @@ static bool valid_resource(qa_q2_game *g, qa_string_id id) {
 }
 bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkpoint *s,
                          qa_error *e) {
-    if (g == NULL || s == NULL || s->version != 2 || s->source_order == 0 || s->silencer < 0 ||
+    if (g == NULL || s == NULL || s->version != 3 || s->source_order == 0 || s->silencer < 0 ||
         !isfinite(s->alpha) ||
         !qa_vec_finite(s->input.angles) || !isfinite(s->input.gravity) ||
         !isfinite(s->input.view_height) || (unsigned)s->input.hand > QA_Q2_CENTER_HAND ||
@@ -320,6 +321,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     a->hand_grenade_bound = s->hand_grenade_bound;
     a->hand_grenade = s->hand_grenade;
     a->extra_effects = s->extra_effects;
+    a->combat_surprise_ns = s->combat_surprise_ns;
     a->alpha = s->alpha;
     a->lmctf_plasma_bounce = s->lmctf_plasma_bounce;
     q2_actor_order(g, a, s->source_order);

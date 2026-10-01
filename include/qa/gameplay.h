@@ -80,6 +80,7 @@ typedef struct qa_damage_flags {
     float regular_scale;
 } qa_damage_flags;
 typedef struct qa_armor_context { float screen_facing_dot; bool q2_profile, rerelease, ctf, alive; } qa_armor_context;
+typedef struct qa_damage_geometry { qa_vec3 direction, point, normal; } qa_damage_geometry;
 typedef struct qa_armor_result { qa_armor armor; float power_saved, regular_saved; } qa_armor_result;
 qa_damage_flags qa_attack_flags(const qa_attack *);
 bool qa_armor_validate(const qa_armor *, qa_error *);
@@ -113,6 +114,10 @@ typedef struct qa_damage_result {
     qa_game_family feedback_family;
     bool has_feedback, battlesuit;
     float power_saved, armor_saved, blood, knockback;
+    /* Actual selected Q2 damage after source modifiers, before protection.
+     * It remains distinct from blood and armor savings. */
+    bool has_q2_damage;
+    float q2_damage;
 } qa_damage_result;
 typedef struct qa_damage_outcome {
     bool stale, survived;
@@ -186,6 +191,8 @@ typedef struct qa_combat_hooks {
      * The shared hook follows that policy's local effect once per stage. */
     bool (*effect)(void *, qa_combat *, qa_damage_effect_stage,
                     const qa_damage_request *, qa_damage_effect *, qa_error *);
+    bool (*armor_context)(void *, const qa_damage_request *, const qa_combat_state *,
+                            const qa_damage_geometry *, qa_armor_context *, qa_error *);
 } qa_combat_hooks;
 typedef enum qa_protection_admission { QA_PROTECTION_CLAIM, QA_PROTECTION_REPLACE_PRIMARY, QA_PROTECTION_REPLACE_CURRENT } qa_protection_admission;
 typedef struct qa_protection_claim {
@@ -197,7 +204,6 @@ typedef struct qa_protection_lease { qa_actor_id actor; uint64_t serial; qa_prot
 typedef struct qa_protection_store { bool regular, powered; qa_armor before, after; } qa_protection_store;
 typedef struct qa_protection_observer qa_protection_observer;
 bool qa_protection_observe(qa_protection_observer *, const qa_protection_store *, qa_error *);
-typedef struct qa_damage_geometry { qa_vec3 direction, point, normal; } qa_damage_geometry;
 typedef struct qa_protection_binding {
     void *context;
     bool (*read)(void *, qa_armor *, qa_error *);
@@ -210,7 +216,8 @@ typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, s
 typedef struct qa_q2_combat_context {
     bool player, monster, attacker_player, has_enemy, easy_skill, deathmatch, rerelease;
     bool defender_sphere, team_damage_enabled, friendly_fire, nuke, no_knockback;
-    bool movable, reject_team_damage, suppress_pain;
+    bool movable, reject_team_damage, suppress_pain, team_armor_protect, reject_friendly_damage;
+    int32_t damage_scale;
 } qa_q2_combat_context;
 typedef struct qa_q3_combat_context {
     bool player, attacker_player, attacker_guard, intermission, noclip;
@@ -227,6 +234,9 @@ typedef struct qa_combat_policy {
     qa_actor_owner provider;
     qa_game_family family;
     void *context;
+    /* Runs once on the actual canonical request before its damage cursor.
+     * Original source executors retain their own preparation. */
+    bool (*prepare)(void *, qa_damage_request *, bool *allowed, qa_error *);
     bool (*describe)(void *, const qa_damage_request *, const qa_combat_state *, const qa_combat_state *, qa_combat_context *, qa_error *);
     /* Effects can reenter combat. Each subsequent stage rereads authority.
      * LETHAL_HEALTH uses amount as proposed health, not damage. */
@@ -242,6 +252,8 @@ bool qa_combat_destroy(qa_combat *, qa_error *);
 bool qa_combat_idle(const qa_combat *);
 void qa_combat_actor_released(qa_combat *, qa_actor_record);
 bool qa_combat_register_policy(qa_combat *, const qa_combat_policy *, qa_error *);
+/* Pure published descriptor query; absence leaves the output unchanged. */
+bool qa_combat_policy_family(const qa_combat *, qa_actor_owner, qa_game_family *);
 typedef struct qa_combat_policy_admission qa_combat_policy_admission;
 /* Prepare reserves capacity without publishing a policy. Remove an existing
  * owner before replacement commit. Commit allocates/calls nothing and consumes

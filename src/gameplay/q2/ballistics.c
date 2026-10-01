@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_source.h"
 
 static bool sky(const qa_trace_result *t) {
     return (t->surface_flags & 4) != 0 ||
@@ -40,6 +41,45 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
     }
     request->attack.sequence = ++g->sequence;
     request->attack.time_ns = g->now_ns;
+    if (g->hooks.prepare_damage)
+        return g->hooks.prepare_damage(g->hooks.context, request, allowed, e);
+    if (g->options.edition != QA_Q2_RERELEASE || request->attack.cause.kind != QA_CAUSE_Q2 ||
+        qa_actor_id_equal(request->target, request->attack.attacker) ||
+        qa_attack_flags(&request->attack).no_protection)
+        return true;
+    bool target_player, attacker_player;
+    if (!q2_target_creature(g, request->target, NULL, &target_player, e) ||
+        !q2_target_creature(g, request->attack.attacker, NULL, &attacker_player, e))
+        return false;
+    if (!q2_actor_live(g, request->target)) {
+        *allowed = false;
+        return true;
+    }
+    if (!target_player || !attacker_player || !q2_actor_live(g, request->attack.attacker))
+        return true;
+    bool same_team = g->options.cooperative;
+    if (!same_team) {
+        float teamplay;
+        if (!qa_q2_source_value(g, "teamplay", 0, &teamplay, e))
+            return false;
+        if (g->arsenal_rules != QA_Q2_WEAPON_RULES_CTF && truncf(teamplay) == 0)
+            return true;
+        qa_combat_state target, attacker;
+        if (!qa_combat_read(g->services.combat, request->target, &target, e) ||
+            !qa_combat_read(g->services.combat, request->attack.attacker, &attacker, e))
+            return false;
+        same_team = target.team != 0 && target.team == attacker.team;
+    }
+    if (same_team) {
+        request->attack.cause.source.q2.friendly_fire = true;
+        request->attack.cause.source.q2.means_of_death |= INT32_C(0x08000000);
+        if (request->attack.cause.source.q2.native == QA_Q2_CAUSE_CLASSIC)
+            request->attack.cause.source.q2.native_value |= INT32_C(0x08000000);
+        uint32_t means = (uint32_t)request->attack.cause.source.q2.means_of_death &
+                         ~UINT32_C(0x08000000);
+        if ((g->options.deathmatch_flags & 256u) != 0 && means != 47)
+            request->amount = 0;
+    }
     return true;
 }
 bool q2_prepare_radius_damage(void *context, qa_damage_request *request, bool *allowed,

@@ -51,6 +51,9 @@ static const q2_source_cvar rerelease[] = {
     {"g_weapon_respawn_time", "30", 0}, {"g_dm_weapons_stay", "0", 0},
     {"g_dm_instant_items", "1", 0}, {"g_dm_same_level", "0", 0},
     {"g_no_health", "0", 0}, {"g_no_items", "0", 0}, {"g_no_armor", "0", 0},
+    {"g_friendly_fire", "0", 0},
+    {"g_instagib", "0", 0}, {"g_damage_scale", "1", 0}, {"ai_damage_scale", "1", 0},
+    {"g_teamplay_armor_protect", "0", 0},
     {"g_no_mines", "0", 0}, {"g_no_nukes", "0", 0}, {"g_no_spheres", "0", 0},
     {"g_dm_random_items", "0", 0}, {"g_dm_no_quadfire_drop", "0", 0},
     {"g_dm_no_quad_drop", "0", 0}, {"g_dm_no_stack_double", "0", 0},
@@ -67,7 +70,7 @@ static const q2_source_cvar rogue[] = {
 static const q2_source_cvar lmctf[] = {
     {"ctfflags", "0", QA_CVAR_SERVERINFO}, {"refset", "0", QA_CVAR_SERVERINFO},
     {"runes", "15", QA_CVAR_SERVERINFO}, {"countdown_time", "15", 0}, {"autolock", "0", 0},
-    {"fastswitch", "0", 0},
+    {"fastswitch", "0", 0}, {"disabled_weps", "0", 0},
 };
 
 struct application_native_q2_console {
@@ -136,6 +139,9 @@ static bool read_script(void *opaque, const qa_command_context *context, const c
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 script belongs to a retired publication");
     if (owner->scripts.read)
         return owner->scripts.read(owner->scripts.context, context, path, out, lease, error);
+    if (application_startup_source_scripts(owner->provider))
+        return application_startup_source_script_read(owner->provider, owner->console,
+            context, path, out, lease, error);
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(owner->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource);
@@ -145,6 +151,8 @@ static bool read_script(void *opaque, const qa_command_context *context, const c
 static void release_script(void *opaque, void *lease) {
     struct application_native_q2_console *owner = opaque;
     if (owner->scripts.release) owner->scripts.release(owner->scripts.context, lease);
+    else if (application_startup_source_scripts(owner->provider))
+        application_startup_source_script_release(owner->provider, owner->console, lease);
     else qa_resource_release(lease);
 }
 static void script_complete(void *opaque, const qa_command_context *context,
