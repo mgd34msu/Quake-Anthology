@@ -71,55 +71,13 @@ static bool alias_number(const char *value,double *out,bool allow_empty)
 {
     if (!value) return false;
     qa_bytes input={(const uint8_t *)value,strlen(value)};
-    size_t cursor=0,start=SIZE_MAX,end=0;
-    uint32_t scalar;
-    while (cursor<input.size) {
-        size_t begin=cursor;
-        if (!qa_utf8_next(input,&cursor,&scalar)) return false;
-        if (!qa_unicode_whitespace(scalar)) {
-            if (start==SIZE_MAX) start=begin;
-            end=cursor;
-        }
+    if (!allow_empty) {
+        size_t cursor=0; uint32_t scalar; bool present=false;
+        while (qa_utf8_next(input,&cursor,&scalar))
+            if (!qa_unicode_whitespace(scalar)) { present=true; break; }
+        if (!present) return false;
     }
-    if (start==SIZE_MAX) { if (allow_empty) *out=0; return allow_empty; }
-    input=(qa_bytes){input.data+start,end-start};
-    size_t at=0;
-    bool negative=input.data[0]=='-';
-    bool sign=negative || input.data[0]=='+';
-    if (sign) ++at;
-    if (input.size-at==8 && !memcmp(input.data+at,"Infinity",8)) {
-        *out=negative?-INFINITY:INFINITY; return true;
-    }
-    if (!sign && input.size>2 && input.data[0]=='0') {
-        unsigned radix=input.data[1]=='x'||input.data[1]=='X'?16:
-            input.data[1]=='b'||input.data[1]=='B'?2:input.data[1]=='o'||input.data[1]=='O'?8:0;
-        if (radix) {
-            double number=0;
-            for (size_t i=2;i<input.size;++i) {
-                unsigned char c=input.data[i];
-                unsigned digit=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:
-                    c>='A'&&c<='F'?c-'A'+10:UINT_MAX;
-                if (digit>=radix) return false;
-                number=number*radix+digit;
-            }
-            *out=number; return true;
-        }
-    }
-    size_t digits=0;
-    while (at<input.size && input.data[at]>='0' && input.data[at]<='9') { ++at; ++digits; }
-    if (at<input.size && input.data[at]=='.') {
-        ++at;
-        while (at<input.size && input.data[at]>='0' && input.data[at]<='9') { ++at; ++digits; }
-    }
-    if (!digits) return false;
-    if (at<input.size && (input.data[at]=='e' || input.data[at]=='E')) {
-        ++at;
-        if (at<input.size && (input.data[at]=='+' || input.data[at]=='-')) ++at;
-        size_t begin=at;
-        while (at<input.size && input.data[at]>='0' && input.data[at]<='9') ++at;
-        if (at==begin) return false;
-    }
-    return at==input.size && qa_parse_number(input,out,NULL);
+    return qa_parse_ecmascript_number(input,out,NULL);
 }
 static const char *alias_read(const cvar_alias *alias,const char *source,char out[32])
 {

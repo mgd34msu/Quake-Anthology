@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/ui_save.h"
+#include "qa/ui_presentation_prepare.h"
 
 #define FIELD(type, object, name) do { if (!qa_source_save_##type(io,&(object)->name)) return false; } while (0)
 static bool pair(qa_source_save_io *io, qa_input_pair *p)
@@ -120,7 +121,7 @@ static bool token_write(qa_source_save_io *io, const qa_ui *ui, const qa_ui_chec
 }
 bool qa_ui_checkpoint(const qa_ui *ui, const qa_ui_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!ui || !out || ui->handling || ui->drawing) return ui_fail(error,"UI capture requires an idle controller");
+    if (!out || !qa_ui_presentation_idle(ui)) return ui_fail(error,"UI capture requires an idle controller");
     if (!clock_ready(ui,refs,error)) return false;
     qa_ui saved=*ui; qa_source_save_io io;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
@@ -130,7 +131,7 @@ bool qa_ui_checkpoint(const qa_ui *ui, const qa_ui_checkpoint_refs *refs, qa_buf
 }
 bool qa_ui_restore(qa_ui *ui, const qa_ui_checkpoint_refs *refs, qa_bytes bytes, qa_error *error)
 {
-    if (!ui || ui->handling || ui->drawing || ui->depth || ui->field_count || ui->input_token)
+    if (!qa_ui_presentation_idle(ui) || ui->depth || ui->field_count || ui->input_token)
         return ui_fail(error,"UI restore requires an empty idle qualified controller");
     if (!clock_ready(ui,refs,error)) return false;
     qa_ui saved=*ui; saved.stack=NULL; saved.fields=NULL; saved.stack_capacity=saved.field_capacity=0;

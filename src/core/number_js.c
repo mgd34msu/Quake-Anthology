@@ -1,6 +1,7 @@
 #include "qa/text.h"
 #include <fenv.h>
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -164,4 +165,92 @@ bool qa_format_ecmascript_number(double value,char out[32],qa_error *error)
         return false;
     }
     return true;
+}
+
+static unsigned radix_digit(unsigned char c)
+{
+    return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:
+        c>='A'&&c<='F'?c-'A'+10:UINT_MAX;
+}
+static bool radix_number(qa_bytes input,unsigned radix,double *out)
+{
+    unsigned width=radix==16?4:radix==8?3:1,total=0;
+    uint64_t significand=0; bool guard=false,sticky=false;
+    for (size_t i=2;i<input.size;++i) {
+        unsigned digit=radix_digit(input.data[i]);
+        if (digit>=radix) return false;
+        for (unsigned bit=width;bit;--bit) {
+            bool value=(digit&(1u<<(bit-1)))!=0;
+            if (!total && !value) continue;
+            if (total<53) significand=(significand<<1)|(unsigned)value;
+            else if (total==53) guard=value;
+            else sticky|=value;
+            if (total<1025) ++total;
+        }
+    }
+    if (total<=53) *out=(double)significand;
+    else if (total>1024) *out=INFINITY;
+    else {
+        if (guard && (sticky || (significand&1u))) ++significand;
+        *out=scalbn((double)significand,(int)total-53);
+    }
+    return true;
+}
+static bool parse_js(qa_bytes input,double *out,qa_error *error)
+{
+    size_t cursor=0,start=SIZE_MAX,end=0; uint32_t scalar;
+    while (cursor<input.size) {
+        size_t begin=cursor;
+        if (!qa_utf8_next(input,&cursor,&scalar)) return false;
+        if (!qa_unicode_whitespace(scalar)) {
+            if (start==SIZE_MAX) start=begin;
+            end=cursor;
+        }
+    }
+    if (start==SIZE_MAX) { *out=0; return true; }
+    input=(qa_bytes){input.data+start,end-start};
+    size_t at=0;
+    bool negative=input.data[0]=='-',sign=negative || input.data[0]=='+';
+    if (sign) ++at;
+    if (input.size-at==8 && !memcmp(input.data+at,"Infinity",8)) {
+        *out=negative?-INFINITY:INFINITY; return true;
+    }
+    if (!sign && input.size>2 && input.data[0]=='0') {
+        unsigned radix=input.data[1]=='x'||input.data[1]=='X'?16:
+            input.data[1]=='b'||input.data[1]=='B'?2:input.data[1]=='o'||input.data[1]=='O'?8:0;
+        if (radix) return radix_number(input,radix,out);
+    }
+    size_t digits=0;
+    while (at<input.size && input.data[at]>='0' && input.data[at]<='9') { ++at; ++digits; }
+    if (at<input.size && input.data[at]=='.') {
+        ++at;
+        while (at<input.size && input.data[at]>='0' && input.data[at]<='9') { ++at; ++digits; }
+    }
+    if (!digits) return false;
+    if (at<input.size && (input.data[at]=='e' || input.data[at]=='E')) {
+        ++at;
+        if (at<input.size && (input.data[at]=='+' || input.data[at]=='-')) ++at;
+        size_t begin=at;
+        while (at<input.size && input.data[at]>='0' && input.data[at]<='9') ++at;
+        if (at==begin) return false;
+    }
+    return at==input.size && qa_parse_number(input,out,error);
+}
+bool qa_parse_ecmascript_number(qa_bytes input,double *out,qa_error *error)
+{
+    if (!out || (input.size && !input.data) || input.size==SIZE_MAX) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid ECMAScript numeric input"); return false;
+    }
+    int rounding=fegetround();
+    if (rounding<0 || fesetround(FE_TONEAREST)!=0) {
+        qa_error_set(error,QA_ERROR_IO,0,"Selecting ECMAScript numeric rounding"); return false;
+    }
+    double value=0; bool ok=parse_js(input,&value,error);
+    bool restored=fesetround(rounding)==0;
+    if (!ok || !restored) {
+        if (!restored || !error || error->code==QA_OK)
+            qa_error_set(error,restored?QA_ERROR_FORMAT:QA_ERROR_IO,0,"Parsing ECMAScript numeric text");
+        return false;
+    }
+    *out=value; return true;
 }

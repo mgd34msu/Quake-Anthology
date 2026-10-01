@@ -1,0 +1,20 @@
+#ifndef QA_FRONTEND_INPUT_SHUTDOWN_H
+#define QA_FRONTEND_INPUT_SHUTDOWN_H
+#include "internal.h"
+#include "qa/application_engine_shutdown.h"
+
+typedef struct frontend_input_shutdown frontend_input_shutdown;
+/* Prepare before the actual ENGINE detach. Every constructed physical seat
+ * retains its genuine all-input release; failure may return a retained owner. */
+bool frontend_input_shutdown_prepare(qa_frontend *,double now_ms,
+    frontend_input_shutdown **,qa_error *);
+/* Execute only at a returned live-source boundary. Waits report complete=false;
+ * a failed entered programme remains retained and is never replayed. */
+bool frontend_input_shutdown_advance(frontend_input_shutdown *,bool *complete,qa_error *);
+/* Final ENGINE detach disposes retained history under the actual loan, after
+ * pure qualification of every seat and captured programme. No dispatch runs. */
+bool frontend_input_shutdown_retire(frontend_input_shutdown *,
+    const qa_application_engine_shutdown *,qa_error *);
+bool frontend_input_shutdown_abort(frontend_input_shutdown *,qa_error *);
+bool frontend_input_shutdown_destroy(frontend_input_shutdown **,qa_error *);
+#endif

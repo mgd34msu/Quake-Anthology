@@ -9,6 +9,7 @@
 typedef struct ui_cursor { qa_ui_id menu, control; float scroll; } ui_cursor;
 typedef struct ui_field { qa_ui_id menu, control; size_t cursor, top; uint64_t revision; bool overstrike, scrolled; } ui_field;
 struct qa_ui {
+    struct qa_ui_presentation_ticket *presentation_ticket;
     qa_ui_options options;
     qa_ui_menu_registration *menus;
     size_t menu_count, menu_capacity;

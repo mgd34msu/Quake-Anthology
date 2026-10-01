@@ -50,6 +50,13 @@ bool qa_input_release_abort(qa_input_release *, qa_input_release_outcome *, qa_e
  * It dispatches no commands and cannot use a changed publication as evidence. */
 bool qa_input_release_retirement_ready(const qa_input_release *, qa_console_release_disposition,
     qa_console_release_retirement_fn, void *, qa_error *);
+/* Native retirement checks the exact retained seat, held snapshot and scope
+ * before disposing an entered endpoint. Every captured history uses the
+ * actual retirement qualifier; an empty physical scope has no source history
+ * to qualify. This neither requires nor claims source command completion. */
+bool qa_input_release_retirement_scope_ready(const qa_input_release *, const qa_input_seat *,
+    const qa_input_release_scope *, qa_console_release_disposition,
+    qa_console_release_retirement_fn, void *, qa_error *);
 /* The complete parent may preflight every retained history before consuming
  * any. Publication requires that admission and runs no source callbacks. */
 void qa_input_release_retirement_publish(qa_input_release *);

@@ -172,11 +172,11 @@ bool qa_input_release_advance(qa_input_release *owner,qa_input_release_outcome *
     }
     return true;
 }
-bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *seat,
+static bool physical_ready(const qa_input_release *owner,const qa_input_seat *seat,
     const qa_input_release_scope *required,qa_error *error)
 {
     if (!owner || !seat || owner->seat!=seat || seat->release!=owner || owner->advancing ||
-        !owner->complete || owner->fault.code!=QA_OK || !scope_valid(required) ||
+        !scope_valid(required) ||
         (!owner->scope.all && required->all) ||
         (required->clear_gamepad && !owner->scope.clear_gamepad && owner->scope.controller<0) ||
         (!owner->scope.all && required->controller>=0 && owner->scope.controller!=required->controller) ||
@@ -188,10 +188,30 @@ bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *s
         if (!qa_input_physical_equal(owner->snapshot[i].input,seat->held[i].input) ||
             owner->snapshot[i].binding!=seat->held[i].binding)
             return fail(error,"actual held input changed during source release");
+    return true;
+}
+bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *seat,
+    const qa_input_release_scope *required,qa_error *error)
+{
+    if (!physical_ready(owner,seat,required,error) || !owner->complete || owner->fault.code!=QA_OK)
+        return fail(error,"input release has no completed matching physical proof");
     for (size_t i=0;i<owner->count;++i)
         if (owner->records[i].program &&
             !qa_console_release_ready(owner->records[i].program,seat->options.console,error)) return false;
     return qa_input_seat_context_ready(seat,&seat->options.context,error);
+}
+bool qa_input_release_retirement_scope_ready(const qa_input_release *owner,const qa_input_seat *seat,
+    const qa_input_release_scope *required,qa_console_release_disposition disposition,
+    qa_console_release_retirement_fn qualify,void *context,qa_error *error)
+{
+    if (!qualify || !physical_ready(owner,seat,required,error) ||
+        disposition<QA_CONSOLE_RELEASE_RETIRED_ACTOR || disposition>QA_CONSOLE_RELEASE_DETACHED_SOURCE ||
+        !qa_console_idle(seat->options.console))
+        return fail(error,"input retirement lacks its retained physical scope and source qualifier");
+    for (size_t i=0;i<owner->count;++i)
+        if (owner->records[i].program && !qa_console_release_retirement_ready(owner->records[i].program,
+            disposition,qualify,context,error)) return false;
+    return true;
 }
 void qa_input_release_publish(qa_input_release *owner)
 {

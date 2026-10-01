@@ -1565,8 +1565,9 @@ bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_t
         .keys = keys, .key_count = length};
     return true;
 }
-static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
-    const qa_input_release *const release[4], qa_error *error) {
+static bool settings_releases_qualified(const qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_console_release_disposition disposition,
+    qa_console_release_retirement_fn qualify, void *context, qa_error *error) {
     if (!t || !t->prepared || (t->aborting && !t->retiring) || !settings_current(t, error)) return false;
     for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
         t->configuration[slot] != t->routes[slot].seat &&
@@ -1582,10 +1583,17 @@ static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint change has no completed source release continuation");
                 return false;
             }
-            if (!qa_input_release_ready(release[slot], t->routes[slot].seat, &scope, error)) return false;
+            if (qualify) {
+                if (!qa_input_release_retirement_scope_ready(release[slot], t->routes[slot].seat,
+                    &scope, disposition, qualify, context, error)) return false;
+            } else if (!qa_input_release_ready(release[slot], t->routes[slot].seat, &scope, error)) return false;
         }
     }
     return true;
+}
+static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_error *error) {
+    return settings_releases_qualified(t, release, QA_CONSOLE_RELEASE_RETIRED_ACTOR, NULL, NULL, error);
 }
 qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *t) {
     if (t && t->published) return QA_INPUT_PLATFORM_SETTINGS_PUBLISHED;
@@ -1724,6 +1732,18 @@ bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket
         return false;
     }
     if (!settings_releases_ready(t, release, error)) return false;
+    t->retiring = true;
+    return settings_dispose(t, error);
+}
+bool qa_input_platform_settings_retire_entered_disposition(qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_console_release_disposition disposition,
+    qa_console_release_retirement_fn qualify, void *context, qa_error *error) {
+    if (!t || !t->endpoint_entered || !qualify ||
+        disposition < QA_CONSOLE_RELEASE_RETIRED_ACTOR || disposition > QA_CONSOLE_RELEASE_DETACHED_SOURCE) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input retirement requires its actual entered owner disposition");
+        return false;
+    }
+    if (!settings_releases_qualified(t, release, disposition, qualify, context, error)) return false;
     t->retiring = true;
     return settings_dispose(t, error);
 }

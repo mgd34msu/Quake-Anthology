@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/ui_save.h"
+#include "qa/ui_presentation_prepare.h"
 
 bool qa_ui_idle(const qa_ui *ui) { return ui && !ui->handling && !ui->drawing; }
 
@@ -186,7 +187,7 @@ bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
 bool qa_ui_set_presentation(qa_ui *ui, const qa_font_selection *fonts, float text_scale,
     qa_ui_color_mode color_mode, qa_error *error)
 {
-    if (!qa_ui_idle(ui) || !fonts || fonts->seat != ui->options.seat ||
+    if (!qa_ui_presentation_idle(ui) || !fonts || fonts->seat != ui->options.seat ||
         !isfinite(text_scale) || text_scale < .75f || text_scale > 2 ||
         color_mode < QA_UI_COLOR_STANDARD || color_mode > QA_UI_COLOR_MONOCHROME)
         return ui_fail(error, "UI presentation requires idle matching font and text owners");
@@ -308,8 +309,8 @@ bool qa_ui_unregister(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
 bool qa_ui_destroy(qa_ui *ui, double time, qa_error *error) {
     if (!ui)
         return true;
-    if (ui->handling)
-        return ui_fail(error, "UI callback is active");
+    if (!qa_ui_presentation_idle(ui))
+        return ui_fail(error, "UI presentation or callback is retained");
     if (!qa_ui_close_all(ui, time, error))
         return false;
     free(ui->fields);
@@ -340,4 +341,58 @@ bool qa_ui_capture_binding(qa_ui *ui, bool capture, qa_error *error) {
 }
 const qa_error *qa_ui_error(const qa_ui *ui) {
     return ui && ui->error.code != QA_OK ? &ui->error : NULL;
+}
+
+struct qa_ui_presentation_ticket {
+    qa_ui *ui;
+    qa_ui_presentation previous,desired;
+};
+bool qa_ui_presentation_idle(const qa_ui *ui)
+{ return qa_ui_idle(ui) && !ui->presentation_ticket; }
+static bool same_fonts(const qa_font_selection *a,const qa_font_selection *b)
+{
+    return a->seat==b->seat && a->classic==b->classic && a->primary==b->primary &&
+        a->fallbacks==b->fallbacks && a->fallback_count==b->fallback_count;
+}
+bool qa_ui_presentation_prepare(qa_ui *ui,const qa_font_selection *fonts,float text_scale,
+    qa_ui_color_mode color_mode,qa_ui_presentation_ticket **out,qa_error *error)
+{
+    if (!qa_ui_presentation_idle(ui) || !out || *out || !fonts || fonts->seat!=ui->options.seat ||
+        !isfinite(text_scale) || text_scale<.75f || text_scale>2 ||
+        color_mode<QA_UI_COLOR_STANDARD || color_mode>QA_UI_COLOR_MONOCHROME)
+        return ui_fail(error,"UI preparation requires its idle actual presentation and empty ticket");
+    qa_font_selection qualified;
+    if (!qa_font_selection_init(&qualified,fonts->seat,fonts->classic,fonts->primary,
+        fonts->fallbacks,fonts->fallback_count,error)) return false;
+    qa_ui_presentation_ticket *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual UI presentation"); return false; }
+    ticket->ui=ui;
+    ticket->previous=(qa_ui_presentation){ui->options.fonts,ui->text_scale,ui->color_mode};
+    ticket->desired=(qa_ui_presentation){qualified,text_scale,color_mode};
+    ui->presentation_ticket=ticket; *out=ticket; return true;
+}
+bool qa_ui_presentation_ready(const qa_ui_presentation_ticket *ticket,qa_error *error)
+{
+    const qa_ui *ui=ticket?ticket->ui:NULL;
+    if (!qa_ui_idle(ui) || ui->presentation_ticket!=ticket ||
+        !same_fonts(&ui->options.fonts,&ticket->previous.fonts) ||
+        ui->text_scale!=ticket->previous.text_scale || ui->color_mode!=ticket->previous.color_mode)
+        return ui_fail(error,"UI presentation lost its actual prepared owner");
+    qa_font_selection qualified;
+    const qa_font_selection *fonts=&ticket->desired.fonts;
+    return qa_font_selection_init(&qualified,fonts->seat,fonts->classic,fonts->primary,
+        fonts->fallbacks,fonts->fallback_count,error);
+}
+void qa_ui_presentation_publish(qa_ui_presentation_ticket *ticket)
+{
+    qa_ui *ui=ticket->ui;
+    ui->options.fonts=ticket->desired.fonts;
+    ui->text_scale=ticket->desired.text_scale; ui->color_mode=ticket->desired.color_mode;
+    ui->presentation_ticket=NULL; free(ticket);
+}
+bool qa_ui_presentation_abort(qa_ui_presentation_ticket *ticket,qa_error *error)
+{
+    if (!ticket || !qa_ui_idle(ticket->ui) || ticket->ui->presentation_ticket!=ticket)
+        return ui_fail(error,"UI presentation abort requires its returned actual owner");
+    ticket->ui->presentation_ticket=NULL; free(ticket); return true;
 }

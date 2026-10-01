@@ -131,6 +131,14 @@ bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_er
  * the ticket is destroyable. This disposition never claims source rollback. */
 bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
+/* The same native cleanup under actual actor/source retirement authority.
+ * Exact retained physical scope and every captured source history qualify
+ * before cleanup; completion/current publication is not substituted for
+ * retirement. Keep all release tickets until terminal RETIRED, including a
+ * terminal close error. Cleanup refusals retain them for the next retry. */
+bool qa_input_platform_settings_retire_entered_disposition(qa_input_platform_settings_ticket *,
+    const qa_input_release *const release[4], qa_console_release_disposition,
+    qa_console_release_retirement_fn, void *, qa_error *);
 void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *);
 bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket *, qa_error *);
 size_t qa_input_platform_device_count(const qa_input_platform *);
