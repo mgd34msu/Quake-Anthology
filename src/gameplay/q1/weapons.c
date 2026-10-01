@@ -278,7 +278,21 @@ bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t atta
                               .flags = (uint32_t)player->weapon};
     return qa_builtin_emit(&g->services, &event, error);
 }
-static bool reset_inventory(qa_q1_game *g, qa_actor_id actor, bool extensions, qa_error *error) {
+static bool inventory_current(qa_q1_game_operation *operation, qa_actor_id actor,
+    q1_player *player, qa_error *error) {
+    if (qa_q1_game_operation_live(operation) && q1_alive(operation->game, actor) &&
+        q1_player_get(operation->game, actor) == player)
+        return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+        "Q1 inventory initialization retired its source player");
+    return false;
+}
+static bool reset_inventory(qa_q1_game_operation *operation, qa_actor_id actor,
+    bool extensions, qa_error *error) {
+    qa_q1_game *g = operation->game;
+    q1_player *player = q1_player_get(g, actor);
+    if (!inventory_current(operation, actor, player, error))
+        return false;
     qa_inventory_entry entries[QA_Q1_WEAPON_COUNT + QA_Q1_AMMO_COUNT];
     size_t weapons = extensions ? QA_Q1_WEAPON_COUNT : QA_Q1_LIGHTNING + 1;
     size_t ammo = extensions ? QA_Q1_AMMO_COUNT : QA_Q1_CELLS + 1;
@@ -305,12 +319,10 @@ static bool reset_inventory(qa_q1_game *g, qa_actor_id actor, bool extensions, q
             if (!qa_inventory_configure(g->services.inventory, actor, &entries[i], NULL, NULL,
                                         error))
                 return false;
-            if (!q1_alive(g, actor)) {
-                qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 inventory reset retired its actor");
+            if (!inventory_current(operation, actor, player, error))
                 return false;
-            }
         }
-    return true;
+    return inventory_current(operation, actor, player, error);
 }
 bool qa_q1_player_inventory_reset(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     qa_q1_game_operation operation = {0};
@@ -321,11 +333,33 @@ bool qa_q1_player_inventory_reset(qa_q1_game *g, qa_actor_id actor, qa_error *er
     if (!player || !player->arsenal) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 inventory reset needs an arsenal");
     } else {
-        result = reset_inventory(g, actor, true, error) &&
+        result = reset_inventory(&operation, actor, true, error) &&
                  (g->options.program != QA_Q1_MG3 || q1_mg3_capacities(g, player, error));
         if (result && !q1_alive(g,actor)) {
             qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 inventory reset requested teardown");
             result = false;
+        }
+    }
+    qa_q1_game_operation_end(&operation);
+    return result;
+}
+bool qa_q1_player_inventory_initialize(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool result = false;
+    if (!player || !player->arsenal) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "Q1 inventory initialization needs an admitted arsenal");
+    } else {
+        result = reset_inventory(&operation, actor, false, error) &&
+            q1_inventory_register(&operation, actor, error) &&
+            inventory_current(&operation, actor, player, error);
+        if (result) {
+            player->max_health = 100;
+            result = q1_inventory_attach(&operation, player, error) &&
+                inventory_current(&operation, actor, player, error);
         }
     }
     qa_q1_game_operation_end(&operation);
@@ -348,7 +382,7 @@ bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventor
         result = q1_inventory_bind(g, player, error);
         goto finish;
     }
-    if (initial_inventory && !reset_inventory(g, actor, false, error))
+    if (initial_inventory && !reset_inventory(&operation, actor, false, error))
         goto finish;
     if (!q1_inventory_register(&operation, actor, error))
         goto finish;

@@ -339,10 +339,15 @@ bool qa_q1_spawn_multi_explosion(qa_q1_game *, qa_vec3 origin, float radius, flo
                                  float duration, float pause, float volume, qa_actor_id *,
                                  qa_error *);
 /* An arsenal can attach to any existing shared player. Character selection is
- * independent; attach never replaces body, health, armor or movement. */
+ * independent; attach preserves body, armor and movement. MG3 admission applies
+ * its actual health capacity and clamps health to that capacity. */
 bool qa_q1_player_attach(qa_q1_game *, qa_actor_id, bool initial_inventory, qa_error *);
 /* Reset this source arsenal's inventory entries, preserving foreign namespaces. */
 bool qa_q1_player_inventory_reset(qa_q1_game *, qa_actor_id, qa_error *);
+/* Initialize an admitted arsenal's base inventory, preserve its registered
+ * extension counts, set its base health capacity to 100, then apply the selected
+ * program's extension capacities. */
+bool qa_q1_player_inventory_initialize(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
 /* Publish genuine source controls without requiring a selected native arsenal
  * or running weapon effects. The existing source clock remains unchanged. */
