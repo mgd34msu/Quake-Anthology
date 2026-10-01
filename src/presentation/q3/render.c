@@ -187,7 +187,7 @@ static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
     qa_scene_family, const qa_q3_ref_entity *, qa_scene_model_input *);
 
 static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
-    const qa_q3_presentation_assets *shader_assets,
+    const qa_q3_presentation_assets *skin_assets, const qa_q3_presentation_assets *shader_assets,
     const qa_q3_scene_options *options,
                           const qa_q3_ref_entity *entity, uint32_t order, qa_error *error)
 {
@@ -219,7 +219,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
             &world, order, q3p_color(entity->color), p->frame, error);
     }
     qa_scene_model_input input;
-    if (!model_input(p, assets, shader_assets, options, entity, order, transform, &input, error)) return false;
+    if (!model_input(p, skin_assets, shader_assets, options, entity, order, transform, &input, error)) return false;
     input.source_path = qa_resource_path(model->resource);
     float radius;
     const qa_model *base = q3p_model_source(model, 0);
@@ -345,7 +345,7 @@ bool qa_q3_presentation_selected_registered(qa_q3_presentation *p,
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     if (!model || model->world)
         return q3p_fail(error, QA_ERROR_FORMAT, "Selected equipment registry has no actual non-world model holder");
-    return submit_model(p, assets, assets, options, entity, order, error);
+    return submit_model(p, assets, assets, assets, options, entity, order, error);
 }
 
 bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
@@ -369,7 +369,69 @@ bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
     styled.custom_shader = source_pass->custom_shader; styled.shader_time = source_pass->shader_time;
     memset(styled.color, 255, sizeof(styled.color));
     if (material) memcpy(styled.color, source_pass->color, sizeof(styled.color));
-    return submit_model(p, assets, source_assets, options, &styled, order, error);
+    return submit_model(p, assets, assets, source_assets, options, &styled, order, error);
+}
+
+bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entity,
+    const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
+    const qa_q3_scene_options *options, uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!p || !assets || !entity || !source_pass || source_assets != p->options.assets ||
+        !options || !frame || !p->busy || p->submission != options || p->frame != frame ||
+        !qa_q3_assets_idle(assets) || source_assets->busy != 1 || source_assets->capturing ||
+        source_assets->codec_busy || !q3p_assets_children_idle(source_assets) ||
+        entity->kind != QA_Q3_REF_MODEL || entity->model <= 0 || order >= 1022 ||
+        source_pass->kind != QA_Q3_REF_MODEL || !isfinite(source_pass->shader_time) ||
+        !isfinite(source_pass->shader_texcoord.x) || !isfinite(source_pass->shader_texcoord.y) ||
+        !qa_vec_finite(source_pass->lighting_origin) || !isfinite(source_pass->shadow_plane))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected body pass requires its real posed model and primary material namespaces");
+    const q3p_model *model;
+    if (!q3p_model_get(assets, entity->model, &model, error)) return false;
+    if (!model || model->world)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Selected body pass has no actual non-world model holder");
+    const qa_material *shader;
+    if (!q3p_shader_get(source_assets, source_pass->custom_shader, &shader, error)) return false;
+    qa_q3_ref_entity styled = *entity;
+    styled.custom_shader = source_pass->custom_shader;
+    styled.custom_skin = shader ? 0 : source_pass->custom_skin;
+    memcpy(styled.color, source_pass->color, sizeof(styled.color));
+    styled.shader_texcoord = source_pass->shader_texcoord;
+    styled.shader_time = source_pass->shader_time;
+    styled.flags = source_pass->flags;
+    styled.lighting_origin = source_pass->lighting_origin;
+    styled.shadow_plane = source_pass->shadow_plane;
+    styled.non_normalized_axes = source_pass->non_normalized_axes;
+    return submit_model(p, assets, source_assets, source_assets, options, &styled, order, error);
+}
+
+bool qa_q3_presentation_body_material_equal(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *a,
+    const qa_q3_ref_entity *b, bool *equal, qa_error *error)
+{
+    if (!p || !a || !b || !equal || assets != p->options.assets || !p->busy || !p->submission ||
+        !p->frame || assets->busy != 1 || assets->capturing || assets->codec_busy || !q3p_assets_children_idle(assets))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Body material comparison requires its actual primary submission lease");
+    *equal = false;
+    if (memcmp(a->color, b->color, sizeof(a->color)) ||
+        a->shader_texcoord.x != b->shader_texcoord.x || a->shader_texcoord.y != b->shader_texcoord.y ||
+        a->shader_time != b->shader_time || a->flags != b->flags ||
+        a->lighting_origin.x != b->lighting_origin.x || a->lighting_origin.y != b->lighting_origin.y ||
+        a->lighting_origin.z != b->lighting_origin.z || a->shadow_plane != b->shadow_plane ||
+        a->non_normalized_axes != b->non_normalized_axes) return true;
+    const qa_material *first, *second;
+    if (!q3p_shader_get(assets, a->custom_shader, &first, error) ||
+        !q3p_shader_get(assets, b->custom_shader, &second, error)) return false;
+    if (!!first != !!second) return true;
+    if (first) { *equal = !strcmp(first->name, second->name); return true; }
+    const qa_model_skin_map *x, *y;
+    if (!q3p_skin_get(assets, a->custom_skin, &x, error) ||
+        !q3p_skin_get(assets, b->custom_skin, &y, error)) return false;
+    if (!!x != !!y || (x && x->count != y->count)) return true;
+    if (x) for (size_t i = 0; i < x->count; ++i)
+        if (strcmp(x->mappings[i].surface, y->mappings[i].surface) ||
+            strcmp(x->mappings[i].shader, y->mappings[i].shader)) return true;
+    *equal = true; return true;
 }
 
 static bool submit_effect(qa_q3_presentation *p, const qa_q3_scene_options *options,
@@ -432,7 +494,7 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
         }
         uint32_t order = options->first_entity + (uint32_t)i;
         if (entity.kind == QA_Q3_REF_MODEL) {
-            if (!submit_model(p, p->options.assets, p->options.assets, options, &entity, order, error)) return false;
+            if (!submit_model(p, p->options.assets, p->options.assets, p->options.assets, options, &entity, order, error)) return false;
         } else if (!(entity.flags & 2) || options->world.view.clip_enabled) {
             if (!submit_effect(p, options, &entity, order, error)) return false;
         }

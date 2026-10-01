@@ -199,6 +199,15 @@ bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *,
     const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
     const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+/* Retain the selected model's pose while applying every captured body material
+ * field. Skin and shader handles both resolve in the actual primary registry. */
+bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
+    const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_body_material_equal(qa_q3_presentation *,
+    const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *,
+    const qa_q3_ref_entity *, bool *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);
