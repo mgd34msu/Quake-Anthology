@@ -9,19 +9,20 @@
 #include "../../bots/save_fields.h"
 #include "bot_world.h"
 #include "bots_transport.h"
+#include "bots_catalog.h"
 #include <limits.h>
 
 typedef struct bot_app_record {
-    qa_bytes requirements,runtime,population,shared_world,transport;
+    qa_bytes requirements,runtime,population,shared_world,transport,catalogue;
 } bot_app_record;
 
 static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=5;
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=6;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==5?true:
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==6?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
 }
 
@@ -202,11 +203,15 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
         guest=guest->next;
     }
     bool shared=io->direction==QA_SOURCE_SAVE_WRITE?bots->shared_world!=NULL:false;
+    bool catalogue=io->direction==QA_SOURCE_SAVE_WRITE?bots->catalogue!=NULL:false;
     bool native_shared=bots->source->kind==APPLICATION_PROVIDER_Q1 || bots->source->kind==APPLICATION_PROVIDER_Q2;
     return qa_source_save_bool(io,&shared) && (!shared || native_shared) &&
+        qa_source_save_bool(io,&catalogue) && qa_source_save_bool(io,&bots->catalogue_ready) &&
+        (!bots->catalogue_ready || catalogue) && (!catalogue || shared || bots->source->kind==APPLICATION_PROVIDER_Q3) &&
         snapshot_field(io,bots) && section(io,&record->requirements) && record->requirements.size &&
         section(io,&record->runtime) && record->runtime.size && section(io,&record->population) &&
         section(io,&record->shared_world) && section(io,&record->transport) &&
+        section(io,&record->catalogue) && (record->catalogue.size!=0)==catalogue &&
         (record->shared_world.size!=0)==shared && (record->transport.size!=0)==shared;
 }
 bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *error) {
@@ -214,7 +219,7 @@ bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *
        (app->bots->restoring || app->bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
         app->bots->round || app->bots->original || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application bots are borrowed or restoring");
-    qa_buffer requirements={0},runtime={0},population={0},shared_world={0},transport={0};application_bots *bots=app->bots;
+    qa_buffer requirements={0},runtime={0},population={0},shared_world={0},transport={0},catalogue={0};application_bots *bots=app->bots;
     bool present=bots!=NULL,ok=true;
     if(present) ok=qa_bots_save_requirements_capture(bots->runtime,bots->population,&requirements,error) &&
         qa_bot_runtime_save_capture(app->session,bots->runtime,&runtime,error) &&
@@ -226,14 +231,15 @@ bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *
             application_bot_transport_fields(&transport_io,bots->transport) && qa_source_save_finish(&transport_io,&transport);
         qa_source_save_dispose(&transport_io);
     }
+    if(ok && present && bots->catalogue) ok=qa_bot_catalog_capture(bots->catalogue,&catalogue,error);
     bot_app_record record={.requirements={requirements.data,requirements.size},.runtime={runtime.data,runtime.size},
         .population={population.data,population.size},.shared_world={shared_world.data,shared_world.size},
-        .transport={transport.data,transport.size}};
+        .transport={transport.data,transport.size},.catalogue={catalogue.data,catalogue.size}};
     qa_source_save_io io={0};
     ok=ok && qa_source_save_writer(&io,app->session,error) && app_signature(&io) &&
         qa_source_save_bool(&io,&present) && (!present || fields(&io,bots,&record)) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);qa_buffer_free(&requirements);qa_buffer_free(&runtime);qa_buffer_free(&population);
-    qa_buffer_free(&shared_world);qa_buffer_free(&transport);return ok;
+    qa_buffer_free(&shared_world);qa_buffer_free(&transport);qa_buffer_free(&catalogue);return ok;
 }
 static application_bot_graph *graph_at(application_bots *bots,size_t ordinal) {
     application_bot_graph *g=bots->graphs;
@@ -406,6 +412,7 @@ bool application_bots_save_prepare(qa_application *app,qa_bytes bytes,qa_bytes n
         bots->saved_bot_record=bytes;bots->saved_navigation_record=nav;
         bots->saved_runtime=record.runtime;bots->saved_population=record.population;
         bots->saved_shared_world=record.shared_world;bots->saved_transport=record.transport;
+        bots->saved_catalogue=record.catalogue;
     }
     bool nav_present=false;
     if(ok) ok=qa_source_save_reader(&io,app->session,nav,error) && bot_save_signature(&io,nav_magic) &&
@@ -456,6 +463,8 @@ bool application_bots_save_restore(qa_application *app,qa_bytes bytes,qa_error *
     ok=ok && (!saved.name || (name && !strcmp(saved.name,name))) &&
         qa_bot_runtime_save_restore(app->session,bots->runtime,bots->saved_runtime,saved.name?&map:NULL,error) &&
         (!bots->population || qa_bots_population_restore(bots->population,bots->saved_population,error));
+    if(ok && bots->saved_catalogue.size)
+        ok=application_bots_catalog_create(bots,error) && qa_bot_catalog_restore(bots->catalogue,bots->saved_catalogue,error);
     qa_bot_runtime_saved_map_free(&saved);if(ok) bots->runtime_restored=true;return ok;
 }
 static application_bot_graph *binding_graph(application_bots *bots,qa_bot_navigation *navigation) {
@@ -561,5 +570,5 @@ bool application_bots_save_finish(qa_application *app,qa_error *error) {
     }
     bots->saved_bot_record=(qa_bytes){0};bots->saved_navigation_record=(qa_bytes){0};
     bots->saved_runtime=(qa_bytes){0};bots->saved_population=(qa_bytes){0};
-    bots->saved_shared_world=(qa_bytes){0};bots->saved_transport=(qa_bytes){0};return true;
+    bots->saved_shared_world=(qa_bytes){0};bots->saved_transport=(qa_bytes){0};bots->saved_catalogue=(qa_bytes){0};return true;
 }

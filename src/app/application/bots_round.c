@@ -1,5 +1,6 @@
 #include "bots_round.h"
 #include "bots_private.h"
+#include "bots_catalog.h"
 #include "guest_q3_private.h"
 #include "map_players_private.h"
 #include "q3_world_restart.h"
@@ -408,6 +409,8 @@ bool application_bots_round_begin(application_bots_round *cut,qa_error *error) {
         qa_bots_destroy(bots->population,error);--bots->calls;
     if(!ok) {bots->round_phase=APPLICATION_BOT_ROUND_FAILED;return false;}
     bots->population=NULL;
+    if(!qa_bot_catalog_destroy(bots->catalogue,error)) {bots->round_phase=APPLICATION_BOT_ROUND_FAILED;return false;}
+    bots->catalogue=NULL;bots->catalogue_ready=false;
     return true;
 }
 bool application_bots_round_bind(application_bots_round *cut,qa_error *error) {
@@ -436,6 +439,7 @@ bool application_bots_round_bind(application_bots_round *cut,qa_error *error) {
     qa_builtin_snapshot_free(&bots->pickup_snapshot);
     qa_bot_services services=application_bots_services(bots);
     if(cut->had_population && !qa_bots_create_round(bots->runtime,&services,&bots->population,error)) goto failed;
+    if(cut->had_population && !application_bots_catalog_initialize(bots,true,error)) goto failed;
     qa_clock_state clock;
     if(!qa_session_clock(bots->application->session,cut->provider->owner,&clock)) goto failed;
     cut->bound_frame=clock.frame_number;cut->bound_elapsed=clock.elapsed_ns;

@@ -10,6 +10,7 @@
 #include "native_q3_wire_state.h"
 #include "bot_world_bind.h"
 #include "bots_transport.h"
+#include "bots_catalog.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -83,7 +84,9 @@ bool application_bots_initial_settings(qa_application *app,const qa_launch_seat 
     application_bots *bots=app?app->bots:NULL;char path[160];
     if(!bots || !seat || !seat->bot || !character || !skill || !isfinite(seat->bot_skill))
         return application_fail(error,QA_ERROR_ARGUMENT,"original bot settings require the actual prepared source and launch seat");
-    if(!character_path(bots,seat->name,path,error)) return false;
+    if(bots->catalogue) {
+        if(!application_bots_catalog_character(app,seat->name,path,sizeof(path),error)) return false;
+    } else if(!character_path(bots,seat->name,path,error)) return false;
     size_t size=strlen(path)+1;
     if(size>capacity) return application_fail(error,QA_ERROR_ARGUMENT,"original bot character path exceeds its output extent");
     memcpy(character,path,size);*skill=seat->bot_skill;return true;
@@ -628,10 +631,13 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     if(!bots) return true;
     if(bots->calls || bots->arsenal_leases || bots->pickup_borrowed || bots->mover_borrowed ||
        !qa_bots_can_destroy(bots->population) || !qa_bot_runtime_can_destroy(bots->runtime) ||
-       !application_bot_world_can_destroy(bots->shared_world) || !application_bot_transport_can_destroy(bots->transport))
+       !application_bot_world_can_destroy(bots->shared_world) || !application_bot_transport_can_destroy(bots->transport) ||
+       !qa_bot_catalog_can_destroy(bots->catalogue) || bots->catalogue_seat)
         return application_fail(error,QA_ERROR_ARGUMENT,"application bot owners are executing a callback");
     if(application_q3_guest_bots_borrowed(bots->application,bots->runtime))
         return application_fail(error,QA_ERROR_ARGUMENT,"original GAME hosts still borrow the actual bot runtime");
+    if(!qa_bot_catalog_destroy(bots->catalogue,error)) return false;
+    bots->catalogue=NULL;bots->catalogue_ready=false;
     if(!qa_bots_destroy(bots->population,error)) return false;
     bots->population=NULL;
     if(!qa_bot_runtime_destroy(bots->runtime,error)) return false;
@@ -661,7 +667,8 @@ bool application_bots_can_destroy(const qa_application *application) {
     application_bots *bots=application?application->bots:NULL;
     return !bots || (!bots->calls && !bots->arsenal_leases && !bots->pickup_borrowed && !bots->mover_borrowed &&
         qa_bots_can_destroy(bots->population) && qa_bot_runtime_can_destroy(bots->runtime) &&
-        application_bot_world_can_destroy(bots->shared_world) && application_bot_transport_can_destroy(bots->transport));
+        application_bot_world_can_destroy(bots->shared_world) && application_bot_transport_can_destroy(bots->transport) &&
+        qa_bot_catalog_can_destroy(bots->catalogue) && !bots->catalogue_seat);
 }
 bool application_bots_destroy(qa_application *application,qa_error *error) {
     if(!application || !application->bots) return true;
@@ -765,7 +772,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .source_event_time=bot_source_event_time,.print=bot_print,
         .console=bot_console,.userinfo=bot_userinfo,.get_userinfo=bot_get_userinfo,.set_userinfo=bot_set_userinfo,
         .source_game_type=bot_game_type,.exit_level=bot_exit_level,.insert_console_command=bot_insert_command,.random=bot_random,
-        .controls=controls,.set_think_time=think_time,.activation=application_bot_activation,
+        .controls=controls,.set_think_time=think_time,.check_spawn=application_bots_catalog_check_spawn,.activation=application_bot_activation,
         .predict_motion=application_bot_predict_motion};
 }
 bool application_bots_prepare(qa_application *application,const qa_launch_choices *choices,
@@ -946,6 +953,7 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
     if(!qa_bot_runtime_weapon_allocate(bots->runtime,&bots->metadata_weapon,error) || !bots->metadata_weapon) return false;
     qa_bot_services ai=application_bots_services(bots);
     if(!qa_bots_create(bots->runtime,&ai,&bots->population,error)) return false;
+    if(!application_bots_catalog_initialize(bots,false,error)) return false;
     for(uint32_t i=0;i<bots->capacity;++i) {
         if(!choices->seats[i].bot) continue;
         if(bots->shared_world) {
@@ -960,7 +968,7 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
             char info[1024],character[160],skill[48];size_t length=strlen(actual);
             if(length>=sizeof(info)) length=sizeof(info)-1;
             memcpy(info,actual,length);info[length]=0;
-            if(!character_path(bots,choices->seats[i].name,character,error)) return false;
+            if(!application_bots_catalog_character(application,choices->seats[i].name,character,sizeof(character),error)) return false;
             snprintf(skill,sizeof(skill),"%.9g",(double)choices->seats[i].bot_skill);
             if(!qa_q3_info_set(info,sizeof(info),"characterfile",character,error) ||
                !qa_q3_info_set(info,sizeof(info),"skill",skill,error) ||
@@ -977,7 +985,7 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
             continue;
         }
         char character[160];
-        if(!character_path(bots,choices->seats[i].name,character,error)) return false;
+        if(!application_bots_catalog_character(application,choices->seats[i].name,character,sizeof(character),error)) return false;
         application_provider *source=bot_source(bots);
         const qa_product *product=source?source->product:NULL;
         int32_t entity;if(!application_bot_entity_number(bots,bots->seats[i].actor,&entity,error)) return false;
@@ -997,7 +1005,7 @@ bool application_bots_native_q3_initialize(application_provider *provider,qa_err
        !provider->constructed || !provider->attached || !provider->map_bound ||
        provider->close_pending || bots->restoring || bots->calls || bots->producing)
         return application_fail(error,QA_ERROR_ARGUMENT,"native source BotAISetup requires its actual live prepared map owner");
-    if(bots->population) return true;
+    if(bots->population) return application_bots_catalog_initialize(bots,false,error);
     if(!qa_bot_runtime_initialized(bots->runtime)) {
         const char *game_type;int32_t result;
         if(!application_native_q3_settings_string(provider,"g_gametype",&game_type,error) ||
@@ -1010,7 +1018,8 @@ bool application_bots_native_q3_initialize(application_provider *provider,qa_err
     if(!bots->metadata_weapon &&
        (!qa_bot_runtime_weapon_allocate(bots->runtime,&bots->metadata_weapon,error) || !bots->metadata_weapon)) return false;
     qa_bot_services services=application_bots_services(bots);
-    return qa_bots_create(bots->runtime,&services,&bots->population,error);
+    return qa_bots_create(bots->runtime,&services,&bots->population,error) &&
+        application_bots_catalog_initialize(bots,false,error);
 }
 
 static float bot_source_atof(const char *text) {
@@ -1055,6 +1064,47 @@ bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool
         .character_file=character,.name=name,.team=team,.skill=skill,.mode=bots->application->primary_mode,.restart=restart};
     ++bots->calls;bool okay=qa_bots_admit_source(bots->population,&admission,accepted,error);--bots->calls;
     return okay;
+}
+
+bool application_bots_client_prepare(qa_application *app,qa_actor_id actor,uint32_t physical_client,qa_error *error) {
+    application_bots *bots=app?app->bots:NULL;int32_t actual;
+    if(!bots || !bots->population || !qa_bot_runtime_initialized(bots->runtime) ||
+       !qa_bot_runtime_loaded(bots->runtime) || bots->restoring || bots->calls ||
+       bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
+       !qa_actors_get(qa_session_actors(app->session),actor) ||
+       !bot_source_client(bots,actor,&actual,error) || actual<0 || (uint32_t)actual!=physical_client)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot admission requires its actual initialized source client and selected movement");
+    application_player_record *record=NULL;
+    for(size_t i=0;app->players && i<app->players->count;++i)
+        if(!app->players->records[i].retiring && qa_actor_id_equal(app->players->records[i].actor,actor)) {
+            record=app->players->records+i;break;
+        }
+    if(!record || !record->bot || record->client_slot!=physical_client)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot admission has no genuine local source roster record");
+    application_bot_seat *seat=NULL;
+    for(uint32_t i=0;i<bots->capacity;++i)
+        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=bots->seats+i;break;}
+    if(!seat) {
+        for(uint32_t i=0;i<bots->capacity;++i)
+            if(!bots->seats[i].actor.registry || bots->seats[i].retired) {seat=bots->seats+i;break;}
+        if(!seat) {
+            if(bots->capacity==UINT32_MAX || (size_t)bots->capacity+1>SIZE_MAX/sizeof(*bots->seats))
+                return application_fail(error,QA_ERROR_MEMORY,"bot navigation roster exceeds its extent");
+            application_bot_seat *grown=realloc(bots->seats,((size_t)bots->capacity+1)*sizeof(*grown));
+            if(!grown) return application_fail(error,QA_ERROR_MEMORY,"growing actual bot navigation roster");
+            bots->seats=grown;seat=grown+bots->capacity++;*seat=(application_bot_seat){0};
+        }
+        qa_bot_navigation_destroy(seat->navigation);
+        *seat=(application_bot_seat){.actor=actor,.seat=record->seat,.library_client=actor.slot};
+    }
+    if(!seat->navigation && !application_bot_navigation_bind(bots,seat,error)) return false;
+    if(bots->shared_world) {
+        qa_actor_id connected=application_bot_transport_actor(bots->transport,physical_client);
+        if(connected.registry && !qa_actor_id_equal(connected,actor))
+            return application_fail(error,QA_ERROR_ARGUMENT,"bot source connection still belongs to another actor generation");
+        if(!connected.registry && !application_bot_transport_open(bots->transport,physical_client,actor,error)) return false;
+    }
+    return true;
 }
 
 bool application_bots_native_q3_connect(application_provider *provider,qa_actor_id actor,

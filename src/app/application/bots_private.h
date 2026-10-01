@@ -4,6 +4,7 @@
 #include "internal.h"
 #include "qa/bots.h"
 #include "qa/bots_save.h"
+#include "qa/bots_catalog.h"
 #include <math.h>
 
 static inline int32_t application_bot_angle_word(float angle) {
@@ -50,6 +51,10 @@ typedef struct application_bots {
     application_provider *source;
     qa_bot_runtime *runtime;
     qa_bots *population;
+    qa_bot_catalog *catalogue;
+    char catalogue_name[36];
+    bool catalogue_spawn,catalogue_ready;
+    const qa_launch_seat *catalogue_seat;
     struct application_bot_world *shared_world;
     struct application_bot_world_binding *shared_binding;
     struct application_bot_transport *transport;
@@ -78,6 +83,7 @@ typedef struct application_bots {
     bool restoring, navigation_restored, runtime_restored;
     qa_bytes saved_bot_record, saved_navigation_record, saved_runtime, saved_population;
     qa_bytes saved_shared_world,saved_transport;
+    qa_bytes saved_catalogue;
     bool *saved_file_references;
     size_t saved_file_reference_count;
     application_bot_round_phase round_phase;
@@ -110,6 +116,7 @@ bool application_native_q3_match_bots_end(application_provider *,qa_error *);
 bool application_bots_test_aas(application_provider *,qa_vec3,qa_error *);
 bool application_bots_native_q3_initialize(application_provider *,qa_error *);
 bool application_bots_native_q3_connect(application_provider *,qa_actor_id,bool,bool *,qa_error *);
+bool application_bots_client_prepare(qa_application *,qa_actor_id,uint32_t,qa_error *);
 bool application_bots_shared_connect(application_bots *,uint32_t,bool,bool *,qa_error *);
 bool application_bots_shared_construct(application_bots *,bool,qa_error *);
 bool application_bots_prepare(qa_application *,const qa_launch_choices *,const qa_bsp_view *,const qa_entities *,qa_error *);
