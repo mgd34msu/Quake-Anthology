@@ -13,6 +13,7 @@
 #include "guest_q3_restart.h"
 #include "q3_campaign_launch.h"
 #include "startup_flow.h"
+#include "native_q2_checkpoint.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -351,6 +352,14 @@ static bool construct_and_reserve(qa_application *application,
                 break;
             }
             admission->constructed = true;
+        }
+        if (image != NULL && provider->kind == APPLICATION_PROVIDER_Q2) {
+            const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
+                provider->launch->selection.instance);
+            if (!application_native_q2_checkpoint_prepare(provider, record, error)) {
+                okay = false;
+                break;
+            }
         }
         if (!provider->component_attached && provider->component.owner != 0) {
             qa_actor_owner retiring =
