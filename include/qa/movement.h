@@ -176,6 +176,10 @@ typedef struct qa_movement_input {
     qa_bounds invulnerability_bounds;
     qa_movement_environment environment;
     uint64_t time_ns, elapsed_ns;
+    /* Private NQ prediction may follow a signed foreign source clock. This
+     * retains that real seconds value independently of event nanoseconds. */
+    bool has_source_seconds;
+    double source_seconds;
     bool prediction, snap_initial;
     qa_vec3 view_offset;
     /* Original rerelease generic slide retains this shared pml.origin scratch.

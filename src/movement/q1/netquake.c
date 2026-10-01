@@ -448,6 +448,12 @@ static bool nq_physics(nq_move *m) {
 }
 
 static bool nq_profile(qa_move_context *c) {
+    if (c->input->has_source_seconds &&
+        (!c->input->prediction || !isfinite(c->input->source_seconds))) {
+        qa_error_set(c->error, QA_ERROR_ARGUMENT, 0, "NQ prediction requires a finite actual source clock");
+        c->failed = true;
+        return false;
+    }
     if (c->input->profile.data.nq.edition == QA_Q1_QUAKE64) {
         qa_error_set(c->error, QA_ERROR_UNSUPPORTED, 0, "Quake64 movement requires a qualified source physics profile");
         c->failed = true;
@@ -458,7 +464,8 @@ static bool nq_profile(qa_move_context *c) {
 
 bool qa_move_nq_prepare(qa_move_context *c) {
     if (!nq_profile(c)) return false;
-    nq_move move = { .dt = c->dt, .time = (double)c->time_ns / 1000000000.0 };
+    nq_move move = { .dt = c->dt, .time = c->input->has_source_seconds
+        ? c->input->source_seconds : (double)c->time_ns / 1000000000.0 };
     q1_init(&move.base, c, false);
     c->state->data.nq.view_angles = c->command.angles;
     bool ok = nq_client_think(&move);
@@ -474,7 +481,8 @@ bool qa_move_nq_prepare(qa_move_context *c) {
 
 bool qa_move_nq_physics(qa_move_context *c) {
     if (!nq_profile(c)) return false;
-    nq_move move = { .dt = c->dt, .time = (double)c->time_ns / 1000000000.0 };
+    nq_move move = { .dt = c->dt, .time = c->input->has_source_seconds
+        ? c->input->source_seconds : (double)c->time_ns / 1000000000.0 };
     q1_init(&move.base, c, false);
     bool ok = nq_physics(&move);
     if (!c->removed) q1_restore_mode(&move.base);

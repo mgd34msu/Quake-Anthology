@@ -164,6 +164,10 @@ typedef struct qa_application_control_prediction_configuration {
     float view_height;
     int32_t water_level, water_type;
     bool q3_character, q3_arsenal;
+    bool native_q3_character, native_q3_arsenal;
+    float fractional_weapon_ms;
+    uint32_t external_weapon_slot;
+    int32_t requested_weapon;
 } qa_application_control_prediction_configuration;
 
 typedef struct qa_application_camera_view {

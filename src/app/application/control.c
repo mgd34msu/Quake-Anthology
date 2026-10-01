@@ -2384,7 +2384,20 @@ bool qa_application_control_prediction_read(qa_application *application,
         .water_level = record->water_level, .water_type = record->water_type,
         .q3_character = character->component.clock.kind == QA_CLOCK_Q3,
         .q3_arsenal = arsenal->component.clock.kind == QA_CLOCK_Q3,
+        .native_q3_character = character->kind == APPLICATION_PROVIDER_Q3,
+        .native_q3_arsenal = arsenal->kind == APPLICATION_PROVIDER_Q3,
+        .requested_weapon = -1,
     };
+    if (result.native_q3_arsenal) {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &player) ||
+            !(player.selections & QA_Q3_ARSENAL))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Prediction lost its genuine native Q3 arsenal record");
+        result.fractional_weapon_ms = player.fractional_weapon_ms;
+        result.external_weapon_slot = player.external_slot;
+        result.requested_weapon = player.requested_weapon == player.weapon ? -1 : (int32_t)player.requested_weapon;
+    }
     result.input.state = record->state;
     result.input.profile = record->profile;
     result.input.shape.bounds = result.input.current_bounds = body.bounds;
