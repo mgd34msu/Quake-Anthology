@@ -1,12 +1,36 @@
 #include "internal.h"
 
+/* Registry handles are nonnegative size_t values admitted through INT32_MAX.
+ * This opaque signed source token cannot alias any real private handle. */
+enum { ENGINE_CHEATS_HANDLE = -2 };
+
+static bool engine_name(q3_call *call, const char *name)
+{
+    qa_q3_host_options *options = &call->host->options;
+    const char *engine = "sv_cheats";
+    const unsigned char *key = (const unsigned char *)name;
+    while (*key && *engine) {
+        unsigned char character = *key++;
+        if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+        if (character != (unsigned char)*engine++) return false;
+    }
+    return !*key && !*engine && options->role == QA_QVM_GAME && options->engine_cvars;
+}
+
+static qa_cvars *named_owner(q3_call *call, const char *name)
+{
+    return engine_name(call, name) ? call->host->options.engine_cvars : call->host->options.cvars;
+}
+
 static bool update(q3_call *call, uint64_t pointer, qa_error *error)
 {
     uint8_t input[272];
     if (!q3_read(call, pointer, input, sizeof(input), error)) return false;
     int32_t handle = qa_load_i32le(input);
-    const qa_cvar_view *view = handle >= 0
-                                  ? qa_cvars_handle(call->host->options.cvars, (size_t)handle) : NULL;
+    const qa_cvar_view *view = handle == ENGINE_CHEATS_HANDLE &&
+        call->host->options.role == QA_QVM_GAME && call->host->options.engine_cvars
+        ? qa_cvars_find(call->host->options.engine_cvars, "sv_cheats")
+        : handle >= 0 ? qa_cvars_handle(call->host->options.cvars, (size_t)handle) : NULL;
     if (!view || (uint32_t)view->modification_count == qa_load_u32le(input + 4)) return true;
     size_t length = strlen(view->value);
     uint32_t modification = (uint32_t)view->modification_count;
@@ -27,17 +51,19 @@ static bool register_vm(q3_call *call, qa_error *error)
     qa_buffer name = {0}, value = {0};
     bool ok = q3_string(call, call->arguments[1], &name, error) &&
               q3_string(call, call->arguments[2], &value, error);
-    if (ok) ok = qa_cvars_register(call->host->options.cvars, (const char *)name.data,
+    qa_cvars *cvars = ok ? named_owner(call, (const char *)name.data) : NULL;
+    bool engine = ok && engine_name(call, (const char *)name.data);
+    if (ok) ok = qa_cvars_register(cvars, (const char *)name.data,
                                     (const char *)value.data, (uint32_t)call->arguments[3],
-                                    call->host->options.service_owner, NULL, error);
-    if (ok) ok = qa_cvars_retain_shared(call->host->options.cvars, (const char *)name.data, error);
+                                    engine ? 0 : call->host->options.service_owner, NULL, error);
+    if (ok && !engine) ok = qa_cvars_retain_shared(cvars, (const char *)name.data, error);
     if (ok && call->arguments[0]) {
-        const qa_cvar_view *view = qa_cvars_find(call->host->options.cvars, (const char *)name.data);
+        const qa_cvar_view *view = qa_cvars_find(cvars, (const char *)name.data);
         uint8_t admitted[272];
-        if (!view || view->handle > INT32_MAX)
+        if (!view || (!engine && view->handle > INT32_MAX))
             ok = q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 cvar handle exceeds its source width");
         else {
-            uint32_t handle = (uint32_t)view->handle;
+            uint32_t handle = engine ? (uint32_t)ENGINE_CHEATS_HANDLE : (uint32_t)view->handle;
             ok = q3_read(call, call->arguments[0], admitted, sizeof(admitted), error) &&
                  q3_write_word(call, call->arguments[0], handle, error) &&
                  q3_write_word(call, call->arguments[0] + 4, UINT32_MAX, error) &&
@@ -73,6 +99,7 @@ q3_service_result q3_cvars(q3_call *call, int32_t *result, qa_error *error)
     qa_buffer name = {0}, value = {0};
     if (!q3_string(call, call->arguments[0], &name, error)) return Q3_FAILED;
     const char *key = (const char *)name.data;
+    cvars = named_owner(call, key);
     const qa_cvar_view *view = qa_cvars_find(cvars, key);
     bool ok = true;
     if (trap == (ui ? 3 : 5)) {

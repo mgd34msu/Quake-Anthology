@@ -94,6 +94,7 @@ struct application_q3_guest {
     qa_world *world;
     q3g_role *roles, *game;
     q3g_artifact *artifacts;
+    struct application_guest_q3_console *console;
     qa_q3_product product;
     qa_q3_gamestate gamestate;
     q3g_client clients[64];

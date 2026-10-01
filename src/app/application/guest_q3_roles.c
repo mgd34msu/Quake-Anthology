@@ -2,6 +2,10 @@
 #include "guest_input_private.h"
 #include "guest_projection_private.h"
 #include "bots_private.h"
+#include "q3_world_restart.h"
+#include "native_q3_wire_state.h"
+#include "q3_campaign_launch.h"
+#include "guest_q3_console.h"
 
 static bool qvm_path(const char *path)
 {
@@ -12,12 +16,12 @@ static bool qvm_path(const char *path)
         (suffix[2] == 'v' || suffix[2] == 'V') && (suffix[3] == 'm' || suffix[3] == 'M');
 }
 
-bool q3g_role_destroy(q3g_role *role, qa_error *error)
+bool q3g_role_consume(q3g_role *role, qa_error *error)
 {
     if (!role || role->engine->calls || role->initialized)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role must be idle and shut down before release");
-    if (role->vm && qa_qvm_active(role->vm))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role executor is active");
+    if (role->vm && !qa_qvm_can_destroy(role->vm))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role executor has an admitted source or lifecycle callback");
     if (role->native && !qa_native_host_destroy_ready(role->native))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 role executor is active");
     if (!application_guest_projection_close(role, error)) return false;
@@ -31,9 +35,16 @@ bool q3g_role_destroy(q3g_role *role, qa_error *error)
     /* OS loader destructors can still use imports and the shared bridge. */
     if (role->native) {
         ++role->engine->calls;
-        ok = qa_native_host_destroy(role->native, &first);
+        ok = qa_native_host_destroy_owned(&role->native, &first);
         --role->engine->calls;
-        role->native = NULL;
+        if (role->native) { if (error) *error = first; return false; }
+        qa_q3_host_native_consumed(role->host);
+        if (role == role->engine->game) q3g_game_aliases(role->engine, role);
+    }
+    if (role->vm) {
+        if (!qa_qvm_destroy(role->vm, error)) return false;
+        role->vm = NULL;
+        qa_q3_host_qvm_consumed(role->host);
         if (role == role->engine->game) q3g_game_aliases(role->engine, role);
     }
     if (role->host) {
@@ -45,14 +56,17 @@ bool q3g_role_destroy(q3g_role *role, qa_error *error)
         role->host = NULL;
         if (role == role->engine->game) q3g_game_aliases(role->engine, role);
     }
-    if (role->vm) {
-        if (!qa_qvm_destroy(role->vm, error)) return false;
-        role->vm = NULL;
-        if (role == role->engine->game) q3g_game_aliases(role->engine, role);
-    }
+    if (!application_native_q3_wire_client_unbind(&role->native_client, error)) return false;
+    role->client_source = NULL;
     /* Keep only the descriptor for a later close retry; consumed executors and
      * source shutdown callbacks must not be repeated after a cleanup fault. */
     if (!ok) { if (error) *error = first; return false; }
+    return true;
+}
+
+bool q3g_role_destroy(q3g_role *role, qa_error *error)
+{
+    if (!q3g_role_consume(role, error)) return false;
     qa_qvm_image_release(role->image);
     qa_native_module_release(role->module);
     if (!role->artifact) qa_native_declaration_destroy(role->declaration);
@@ -112,6 +126,10 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         role->service_owner, &options, error);
     --engine->calls;
     if (!services_ready) goto failed;
+    if (kind == QA_QVM_GAME && !saved_owner && !engine->game &&
+        (!application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) ||
+         !application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) ||
+         !application_guest_q3_console_startup(provider, error))) goto failed;
     options.world = engine->world;
     options.service_owner = role->service_owner;
     if (engine->entity_text)
@@ -281,28 +299,42 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     return true;
 }
 
-bool q3g_role_shutdown(q3g_role *role, qa_error *error)
+bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
 {
     if (!role || role->engine->calls || !qa_world_idle(role->engine->world) ||
-        (role->vm && qa_qvm_active(role->vm)) ||
+        (role->vm && !qa_qvm_can_destroy(role->vm)) ||
         (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 shutdown requires idle source and world callbacks");
     if (!role->initialized) return true;
+    if (role->kind == QA_QVM_GAME && !application_guest_input_detach(role, error)) return false;
     /* Consume the callback attempt before source code can reenter its owner.
      * Failure does not authorize a second partially performed shutdown. */
     role->initialized = false;
-    bool ok;
+    role->shutdown_entry = role->kind == QA_QVM_GAME;
+    bool prior_entry = role->engine->round.source_entry;
+    role->engine->round.source_entry = true;
+    bool ok, started = false;
+    ++role->engine->calls;
     if (role->native) {
-        ++role->engine->calls;
-        ok = qa_native_shutdown(qa_native_host_instance(role->native), error);
-        --role->engine->calls;
+        ok = qa_native_host_shutdown(role->native, role->kind == QA_QVM_GAME && restart, error);
+        qa_native_lifecycle lifecycle = qa_native_get_lifecycle(qa_native_host_instance(role->native));
+        started = lifecycle == QA_NATIVE_SHUT_DOWN || lifecycle == QA_NATIVE_RESTART_READY;
     } else {
-        int32_t restart = 0, result;
-        ok = q3g_call(role, role->kind == QA_QVM_UI ? 2 : 1,
-            role->kind == QA_QVM_GAME ? &restart : NULL,
-            role->kind == QA_QVM_GAME ? 1 : 0, &result, error);
+        int32_t words[] = {role->kind == QA_QVM_UI ? 2 : 1, restart ? 1 : 0}, result;
+        ok = qa_qvm_invoke_started(role->vm, 0, words,
+            role->kind == QA_QVM_GAME ? 2 : 1, &result, &started, error);
     }
-    role->retired = true;
+    --role->engine->calls;
+    role->engine->round.source_entry = prior_entry;
+    role->shutdown_entry = false;
+    role->initialized = !started;
+    return ok;
+}
+
+bool q3g_role_shutdown(q3g_role *role, bool restart, qa_error *error)
+{
+    bool ok = q3g_role_shutdown_source(role, restart, error);
+    if (role && !role->initialized) role->retired = true;
     return ok;
 }
 
@@ -330,7 +362,7 @@ bool q3g_role_restart(q3g_role *role, q3g_role **out, qa_error *error)
     uint32_t seat = role->seat;
     bool primary = role->primary, game = role == engine->game;
     qa_error shutdown_error = {0};
-    bool shut_down = q3g_role_shutdown(role, &shutdown_error);
+    bool shut_down = q3g_role_shutdown(role, false, &shutdown_error);
     q3g_role *next = role->next;
     if (!q3g_role_destroy(role, error)) {
         if (!shut_down && error) *error = shutdown_error;

@@ -10,6 +10,8 @@
 #include "qa/q3_abi.h"
 #include "qa/source_save.h"
 #include "native_q3_wire_state.h"
+#include "guest_q3_console.h"
+#include "qa/cvars_save.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -391,8 +393,8 @@ typedef struct saved_role {
     q3g_role *actual;
 } saved_role;
 typedef struct q3g_restore {
-    qa_buffer storage, state_storage;
-    qa_bytes state;
+    qa_buffer storage, state_storage, cvar_storage;
+    qa_bytes state, cvars;
     char *entity_text;
     uint32_t product;
     uint64_t sequence;
@@ -419,6 +421,7 @@ static void saved_free(q3g_restore *saved)
     if (saved->owns_text) free(saved->entity_text);
     free(saved->artifacts); free(saved->roles);
     qa_buffer_free(&saved->state_storage); qa_buffer_free(&saved->storage);
+    qa_buffer_free(&saved->cvar_storage);
     free(saved);
 }
 
@@ -486,14 +489,17 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 2;
+    uint32_t version = 3;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 2 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 3 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
-        !blob(io, &saved->state, 12) ||
-        !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
+        !blob(io, &saved->state, 12))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid coupled Q3 provider envelope");
+    bool console = saved->cvars.size != 0;
+    if (!qa_source_save_bool(io, &console) || (console && !blob(io, &saved->cvars, 12)) ||
+        !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
+        return state_fail(io, QA_ERROR_FORMAT, "Invalid original GAME console continuation");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (!saved->artifact_count || saved->artifact_count > (io->input.size - io->offset) / 82)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 artifact inventory extent");
@@ -572,7 +578,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         }
         if (!blob(io, &role->executor, 160) || !portable_executor(role->executor, io->error)) return false;
     }
-    return (primaries == 1 && games <= 1) ||
+    return (primaries == 1 && games <= 1 && console == (games == 1)) ||
         state_fail(io, QA_ERROR_FORMAT, "Q3 source inventory has no unique primary/game role");
 }
 
@@ -654,6 +660,14 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     }
     if (!application_guest_q3_state_capture(provider, &saved->state_storage, error)) { saved_free(saved); return false; }
     saved->state = (qa_bytes){saved->state_storage.data, saved->state_storage.size};
+    qa_cvars *cvars = application_guest_q3_console_registry(provider);
+    if ((cvars != NULL) != (engine->game != NULL) ||
+        (cvars && qa_cvars_find(cvars, "sv_cheats"))) {
+        saved_free(saved);
+        return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
+    }
+    if (cvars && !qa_cvars_save_capture(cvars, &saved->cvar_storage, error)) { saved_free(saved); return false; }
+    saved->cvars = (qa_bytes){saved->cvar_storage.data, saved->cvar_storage.size};
     *out = saved; return true;
 }
 
@@ -862,6 +876,16 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     }
     struct application_q3_guest *engine = q3g_engine(provider);
     engine->restoration = saved; engine->role_sequence = saved->sequence;
+    qa_cvars *cvars = application_guest_q3_console_registry(provider);
+    if ((cvars != NULL) != (saved->game != 0))
+        return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME has another private console owner");
+    if (cvars) {
+        qa_cvars_restore *ticket = NULL;
+        if (!qa_cvars_save_prepare(cvars, saved->cvars, &ticket, error)) return false;
+        if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); return false; }
+        if (qa_cvars_find(cvars, "sv_cheats"))
+            return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
+    }
     memcpy(engine->seats, saved->seats, sizeof(engine->seats));
     if (saved->entity_text && !(engine->entity_text = q3g_copy_text(saved->entity_text, error))) return false;
     for (size_t i = 0; i < saved->artifact_count; ++i)

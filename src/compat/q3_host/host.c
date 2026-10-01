@@ -266,6 +266,9 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         options->client_time_from_game ||
         (!!options->client_time_cvars != !!options->client_time_owner) ||
         (options->role == QA_QVM_GAME && options->client_time_cvars) ||
+        (options->engine_cvars && (options->role != QA_QVM_GAME || !options->cvars ||
+            qa_cvars_dialect(options->engine_cvars) != QA_CONSOLE_Q3 ||
+            qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
         options->server.maximum_clients > 64)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 module host options");

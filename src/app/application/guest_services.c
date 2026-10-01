@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "native_q3_console.h"
+#include "native_q1_console.h"
+#include "guest_q3_console.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -51,10 +53,17 @@ static void release_script(void *context, void *lease)
 static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
 {
     qa_application *application = context;
-    for (application_provider *p = application->live_providers; command && p; p = p->next_live)
+    for (application_provider *p = application->live_providers; command && p; p = p->next_live) {
+        if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q1)
+            return p->constructed && p->attached && !p->close_pending
+                ? application_native_q1_console_registry(p) : NULL;
         if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q3)
             return p->constructed && p->attached && !p->close_pending
                 ? application_native_q3_cvar_owner(p, name) : NULL;
+        if (p->owner == command->owner && application_guest_q3_console_registry(p))
+            return p->constructed && p->attached && !p->close_pending
+                ? application_guest_q3_cvar_owner(p, name) : NULL;
+    }
     return application->cvars;
 }
 
@@ -72,6 +81,7 @@ bool application_console_create(qa_application *application, qa_error *error)
         .user = application, .print = cvar_print};
     application->cvars = qa_cvars_create(&cvars, error);
     if (application->cvars == NULL) return false;
+    if (!qa_cvars_register(application->cvars, "sv_cheats", "", 0, 0, NULL, error)) return false;
     qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,
         .user = application, .print = application_console_print,
@@ -89,7 +99,8 @@ static void guest_print(void *context, const char *text)
     application_provider *provider = context;
     qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_SERVER};
-    qa_console_emit(provider->application->console, &command, text);
+    qa_console *console = application_guest_q3_console_owner(provider);
+    qa_console_emit(console ? console : provider->application->console, &command, text);
 }
 
 static uint32_t guest_milliseconds(void *context)
@@ -146,10 +157,8 @@ static bool guest_load_collision(void *context, const char *path, qa_error *erro
     if (path == NULL || map == NULL || application->world == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND, "guest collision map is not published");
     if (!strncmp(path, "maps/", 5)) path += 5;
-    if (!strncmp(map, "maps/", 5)) map += 5;
     size_t path_length = strlen(path), map_length = strlen(map);
-    if (path_length >= 4 && !strcmp(path + path_length - 4, ".bsp")) path_length -= 4;
-    if (map_length >= 4 && !strcmp(map + map_length - 4, ".bsp")) map_length -= 4;
+    if (path_length > 4 && !strcmp(path + path_length - 4, ".bsp")) path_length -= 4;
     if (path_length != map_length || memcmp(path, map, map_length))
         return application_fail(error, QA_ERROR_ARGUMENT, "guest requested collision for a different map");
     return true;
@@ -184,6 +193,13 @@ bool application_q3_guest_services(qa_application *application,
             .world_actor = guest_world_actor},
         .collision = {.context = application, .geometry = guest_geometry,
             .load_map = guest_load_collision}};
+    if (role == QA_QVM_GAME) {
+        services.cvars = application_guest_q3_console_registry(provider);
+        services.console = application_guest_q3_console_owner(provider);
+        services.engine_cvars = application->cvars;
+        if (!services.cvars || !services.console)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME has no private console owner");
+    }
     for (size_t i = 0; i < qa_vfs_mount_count(services.mounts); ++i) {
         qa_vfs_mount_info mount;
         if (qa_vfs_mount_at(services.mounts, i, &mount) && mount.writable) {
@@ -198,7 +214,11 @@ bool application_q3_guest_services(qa_application *application,
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 UI/cgame needs a platform/client service owner");
     if (services.session != application->session || services.owner != provider->owner ||
         services.service_owner != service_owner ||
-        services.role != role || services.cvars == NULL || services.console == NULL)
+        services.role != role || services.cvars == NULL || services.console == NULL ||
+        (role == QA_QVM_GAME &&
+            (services.cvars != application_guest_q3_console_registry(provider) ||
+             services.console != application_guest_q3_console_owner(provider) ||
+             services.engine_cvars != application->cvars)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed core ownership");
     *out = services;
     return true;

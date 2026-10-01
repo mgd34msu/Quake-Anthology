@@ -98,6 +98,9 @@ typedef struct qa_q3_host_options {
      * lifetime; zero retains the standalone actor-owner convention. */
     uint64_t service_owner;
     qa_cvars *cvars;
+    /* GAME alone may borrow its shared engine sv_cheats owner. Other names
+     * and ordinary handles remain in the actual private GAME registry. */
+    qa_cvars *engine_cvars;
     /* Optional client timing authority supplied by the actual constructor.
      * A local CGAME factory may request its real GAME registry before the
      * client binding is installed. The application resolves that request
