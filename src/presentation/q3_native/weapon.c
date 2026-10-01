@@ -34,9 +34,12 @@ static qa_q3_ref_entity reference(qa_q3_ref_kind kind,int32_t model)
 }
 static bool frame_valid(const q3n_frame *f,qa_error *e)
 {
-    return f && f->weapons && f->assets==f->weapons->options.assets && f->source.product==f->weapons->options.product &&
+    return f && !f->effects_source && f->weapons && f->assets==f->weapons->options.assets && q3n_frame_product(f)==f->weapons->options.product &&
         f->media && f->events && f->presentation && f->weapon_settings && f->entities &&
-        qa_application_native_q3_presentation_current(f->application,&f->source) ? true :
+        q3n_frame_current(f) && (!f->remote ||
+            (q3n_media_assets(f->media)==f->assets && q3n_clients_assets(f->clients)==f->assets &&
+                q3n_media_remote_current(f->media,&f->remote->source,e) &&
+                q3n_clients_remote_current(f->clients,&f->remote->source,e))) ? true :
         q3p_fail(e,QA_ERROR_ARGUMENT,"Native weapon needs its actual current source frame");
 }
 static bool emit(const q3n_frame *f,const qa_q3_ref_entity *ref,qa_error *e)
@@ -62,22 +65,20 @@ const q3n_weapon_selection *q3n_weapons_selection(const q3n_weapons *w)
 void q3n_weapons_set_selected(q3n_weapons *w,int32_t weapon,int32_t time)
 { if (q3n_weapons_idle(w) && weapon>=0 && weapon<16) w->selection=(q3n_weapon_selection){weapon,time}; }
 static uint32_t owned(const q3n_frame *f)
-{ return (uint32_t)f->local_player.stats[f->source.product==QA_Q3_ARENA?2:3]; }
+{ return (uint32_t)q3n_frame_snapshot_player(f)->stats[q3n_frame_product(f)==QA_Q3_ARENA?2:3]; }
 static bool selectable(const q3n_frame *f,int32_t weapon)
-{ return f->local_player.ammo[weapon]!=0 && (owned(f)&(1u<<(uint32_t)weapon))!=0; }
+{ return q3n_frame_snapshot_player(f)->ammo[weapon]!=0 && (owned(f)&(1u<<(uint32_t)weapon))!=0; }
 void q3n_weapons_select(const q3n_frame *f,int32_t weapon)
 {
-    if (!f || !q3n_weapons_idle(f->weapons) || !f->has_local_player ||
-        !qa_application_native_q3_presentation_current(f->application,&f->source) ||
-        (f->local_player.pmFlags&4096) || weapon<1 || weapon>15) return;
+    if (!f || !q3n_weapons_idle(f->weapons) || !q3n_frame_current(f) ||
+        !q3n_frame_snapshot_player(f) || (q3n_frame_snapshot_player(f)->pmFlags&4096) || weapon<1 || weapon>15) return;
     f->weapons->selection.time=f->time;
     if (owned(f)&(1u<<(uint32_t)weapon)) f->weapons->selection.weapon=weapon;
 }
 void q3n_weapons_cycle(const q3n_frame *f,int32_t direction)
 {
-    if (!f || !q3n_weapons_idle(f->weapons) || !f->has_local_player ||
-        !qa_application_native_q3_presentation_current(f->application,&f->source) ||
-        (f->local_player.pmFlags&4096) || (direction!=1 && direction!=-1)) return;
+    if (!f || !q3n_weapons_idle(f->weapons) || !q3n_frame_current(f) ||
+        !q3n_frame_snapshot_player(f) || (q3n_frame_snapshot_player(f)->pmFlags&4096) || (direction!=1 && direction!=-1)) return;
     q3n_weapon_selection *selection=&f->weapons->selection; selection->time=f->time;
     int32_t original=selection->weapon;
     for (int32_t i=0;i<16;++i) {
@@ -88,7 +89,7 @@ void q3n_weapons_cycle(const q3n_frame *f,int32_t direction)
 }
 bool q3n_weapons_out_of_ammo(const q3n_frame *f,qa_error *e)
 {
-    if (!frame_valid(f,e) || !f->has_local_player) return q3p_fail(e,QA_ERROR_ARGUMENT,"CG_WeaponSelectable: cg.snap == NULL");
+    if (!frame_valid(f,e) || !q3n_frame_snapshot_player(f)) return q3p_fail(e,QA_ERROR_ARGUMENT,"CG_WeaponSelectable: cg.snap == NULL");
     f->weapons->selection.time=f->time;
     for (int32_t i=15;i>0;--i) if (selectable(f,i)) { f->weapons->selection.weapon=i; break; }
     return true;
@@ -140,7 +141,7 @@ bool q3n_weapons_fire(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
 {
     if (!frame_valid(f,e) || !cent || !state) return false;
     if (!state->weapon) return true;
-    if (state->weapon<0 || state->weapon>=(f->source.product==QA_Q3_ARENA?11:14))
+    if (state->weapon<0 || state->weapon>=(q3n_frame_product(f)==QA_Q3_ARENA?11:14))
         return q3p_fail(e,QA_ERROR_FORMAT,"CG_FireWeapon: ent->weapon >= WP_NUM_WEAPONS");
     const q3n_weapon_media *w;
     if (!weapon(f,state->weapon,false,&w,e)) return false;
@@ -155,18 +156,20 @@ bool q3n_weapons_fire(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
     }
     return w->eject_brass==Q3N_BRASS_NONE || f->weapon_settings->brass_time<=0 || brass(f,cent,w->eject_brass,e);
 }
-static bool source_entity(const q3n_frame *f,int32_t number,qa_application_native_q3_entity *out,qa_error *e)
+static bool source_entity(const q3n_frame *f,int32_t number,qa_q3_entity *out,qa_error *e)
 {
-    if (number<0 || number>=1024 || (uint32_t)number>=f->source.entity_count)
+    if (number<0 || number>=1024 || (uint32_t)number>=q3n_frame_entity_capacity(f))
         return q3p_fail(e,QA_ERROR_FORMAT,"Native weapon source entity number is out of range");
-    return qa_application_native_q3_presentation_entity(f->application,&f->source,(uint32_t)number,out,e);
+    q3n_entity *cent; bool present;
+    return q3n_frame_entity(f,(uint32_t)number,out,&cent,&present,e);
 }
 static bool lightning(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,qa_vec3 origin,qa_error *e)
 {
     if (state->weapon!=6) return true;
     qa_vec3 angles=cent->lerp_angles;
     float true_lightning=f->weapon_settings->true_lightning;
-    if (f->has_local_player && state->number==f->local_player.clientNum && true_lightning!=0) {
+    const qa_q3_player *predicted=q3n_frame_predicted_player(f);
+    if (predicted && state->number==predicted->clientNum && true_lightning!=0) {
         float *actual[3]={&angles.x,&angles.y,&angles.z}; const float view[3]={f->view_angles.x,f->view_angles.y,f->view_angles.z};
         for (size_t i=0;i<3;++i) {
             float delta=add(*actual[i],-view[i]); if (delta>180) delta=add(delta,-360); if (delta< -180) delta=add(delta,360);
@@ -208,7 +211,7 @@ static bool spin(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,f
         cent->barrel_time=f->time;
         cent->barrel_angle=mul((float)((uint32_t)integer(mul(angle,65536.0f/360.0f))&65535u),360.0f/65536.0f);
         cent->barrel_spinning=firing;
-        if (f->source.product==QA_Q3_TEAM_ARENA && state->weapon==13 && !firing &&
+        if (q3n_frame_product(f)==QA_Q3_TEAM_ARENA && state->weapon==13 && !firing &&
             !start_sound(f,q3n_media_read(f->media)->sounds[Q3N_S_CHAINGUN_WIND],NULL,state->number,2,e)) return false;
     }
     *out=angle; return true;
@@ -236,11 +239,12 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     const q3n_weapon_media *w;
     if (!weapon(f,state->weapon,true,&w,e)) return false;
     qa_q3_ref_entity gun=attached(parent,w->weapon_model);
-    if (ps && f->has_local_player && f->local_player.weapon==7 && f->local_player.weaponState==3) {
-        uint8_t color=(uint8_t)((uint32_t)integer(mul(255,add(1,-divide((float)f->local_player.weaponTime,1500))))&255u);
+    const qa_q3_player *predicted=q3n_frame_predicted_player(f);
+    if (ps && predicted && predicted->weapon==7 && predicted->weaponState==3) {
+        uint8_t color=(uint8_t)((uint32_t)integer(mul(255,add(1,-divide((float)predicted->weaponTime,1500))))&255u);
         gun.color[0]=gun.color[2]=color; gun.color[1]=gun.color[3]=0;
     } else if (ps) memset(gun.color,255,sizeof(gun.color));
-    if (replacement && !ps && f->weapons->options.held_replacement) {
+    if (replacement && !f->remote && !ps && f->weapons->options.held_replacement) {
         bool suppressed=false;
         if (!f->weapons->options.held_replacement(f->weapons->options.context,f,state,parent,&suppressed,e)) return false;
         if (!frame_valid(f,e)) return false;
@@ -263,10 +267,10 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
         q3n_angles_axis(qa_v3(0,0,angle),barrel.axis);
         if (!attach(f,&barrel,&gun,"tag_barrel",true,e) || !powered(f,&barrel,state->powerups,e)) return false;
     }
-    qa_application_native_q3_entity non_predicted;
+    qa_q3_entity non_predicted;
     if (!source_entity(f,state->clientNum,&non_predicted,e)) return false;
     q3n_entity *source_cent=&f->entities[state->clientNum];
-    if (!((state->weapon==6 || state->weapon==1 || state->weapon==10) && (non_predicted.state.eFlags&256)))
+    if (!((state->weapon==6 || state->weapon==1 || state->weapon==10) && (non_predicted.eFlags&256)))
         if (difference(f->time,cent->muzzle_flash_time)>20 && !cent->railgun_flash) return true;
     qa_q3_ref_entity flash=attached(parent,w->flash_model);
     if (!flash.model) return true;
@@ -280,8 +284,8 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     }
     if (!attach(f,&flash,&gun,"tag_flash",true,e)) return false;
     if (!f->preferences.reduced_flashes && !emit(f,&flash,e)) return false;
-    if (ps || f->third_person || !f->has_local_player || state->number!=f->local_player.clientNum) {
-        if (!lightning(f,source_cent,&non_predicted.state,flash.origin,e)) return false;
+    if (ps || f->third_person || !predicted || state->number!=predicted->clientNum) {
+        if (!lightning(f,source_cent,&non_predicted,flash.origin,e)) return false;
         if (state->weapon==7 && cent->railgun_flash) {
             cent->railgun_flash=true;
             if (!q3n_weapons_rail(f,state->clientNum,&flash.origin,cent->rail_impact,e)) return false;
@@ -299,14 +303,28 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
 {
     return player_weapon(f,f?f->assets:NULL,parent,ps,cent,state,true,NULL,e);
 }
+static bool remote_entity_valid(const q3n_frame *f,const q3n_remote_entity *source,qa_error *e)
+{
+    if(frame_valid(f,e) && f->remote && source && source->frame==f->remote &&
+        source->current && source->presentation && (source->published || source->predicted) &&
+        q3n_remote_entity_current(source)) return true;
+    return q3p_fail(e,QA_ERROR_ARGUMENT,"Remote weapon needs its actual reached entity receipt");
+}
+bool q3n_weapons_player_remote(const q3n_frame *f,const qa_q3_ref_entity *parent,
+    const q3n_remote_entity *source,qa_error *e)
+{
+    if(!remote_entity_valid(f,source,e)) return false;
+    return player_weapon(f,f->assets,parent,NULL,source->presentation,source->current,false,NULL,e) &&
+        remote_entity_valid(f,source,e);
+}
 bool q3n_weapons_player_parent(const q3n_frame *f,const qa_q3_presentation_assets *parent_assets,
     const qa_q3_ref_entity *parent,q3n_entity *cent,const qa_q3_entity *state,
     bool *submitted,qa_error *e)
 {
     if (submitted) *submitted=false;
-    if (!submitted || !frame_valid(f,e) || !parent_assets || !qa_q3_assets_idle(parent_assets) ||
+    if (!submitted || !frame_valid(f,e) || f->remote || !parent_assets || !qa_q3_assets_idle(parent_assets) ||
         !parent || parent->kind!=QA_Q3_REF_MODEL || parent->model<=0 || !cent || !state ||
-        state->number<0 || (uint32_t)state->number>=f->source.entity_count ||
+        state->number<0 || (uint32_t)state->number>=q3n_frame_entity_capacity(f) ||
         state->number>=1024 || cent!=&f->entities[state->number])
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Primary held weapon requires its actual character parent and source centity");
     qa_model_tag tag; bool found;
@@ -331,22 +349,25 @@ static bool torso_frame(const qa_player_animation_config *config,int32_t frame,i
 }
 bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e)
 {
-    if (!frame_valid(f,e) || !view || !f->has_local_player) return false;
-    const qa_q3_player *ps=&f->local_player;
-    if (f->weapons->options.view_replacement) {
+    if (!frame_valid(f,e) || !view || !q3n_frame_predicted_player(f)) return false;
+    const qa_q3_player *ps=q3n_frame_predicted_player(f);
+    if (!f->remote && f->weapons->options.view_replacement) {
         bool consumed=false;
         if (!f->weapons->options.view_replacement(f->weapons->options.context,f,ps,&consumed,e) || !frame_valid(f,e)) return false;
         if (consumed) return true;
     }
     if (!view->predicted_entity || !view->predicted_state)
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Primary view weapon requires its actual predicted entity and state");
+    if(f->remote && (view->predicted_entity!=f->remote->predicted_entity ||
+        view->predicted_state!=f->remote->predicted_state))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Remote view weapon requires its actual predicted entity continuation");
     if (ps->persistant[3]==3 || ps->pmType==5 || f->third_person) return true;
     const q3n_weapon_settings *settings=f->weapon_settings;
     if (!settings->draw_gun) {
         if (!(ps->eFlags&256)) return true;
-        qa_application_native_q3_entity row;
+        qa_q3_entity row;
         if (!source_entity(f,ps->clientNum,&row,e)) return false;
-        return lightning(f,&f->entities[ps->clientNum],&row.state,ma(f->refdef.origin,-8,f->refdef.axis[2]),e);
+        return lightning(f,&f->entities[ps->clientNum],&row,ma(f->refdef.origin,-8,f->refdef.axis[2]),e);
     }
     if (view->test_gun) return true;
     const q3n_weapon_media *w;
@@ -645,12 +666,13 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
     if (!frame_valid(f,e) || !cent || !state) return false;
     const q3n_weapon_media *w;
     if (!weapon(f,state->weapon,false,&w,e)) return false;
-    if (w->trail==Q3N_TRAIL_NONE) return true;
-    if (w->trail==Q3N_TRAIL_PLASMA) return plasma(f,cent,state,e);
+    bool grapple=state->eType==11;
+    if (!grapple && w->trail==Q3N_TRAIL_NONE) return true;
+    if (!grapple && w->trail==Q3N_TRAIL_PLASMA) return plasma(f,cent,state,e);
     qa_vec3 origin;
     if (!q3n_trajectory(&state->pos,f->time,&origin,e)) return false;
-    if (w->trail==Q3N_TRAIL_GRAPPLE) {
-        cent->trail_time=f->time; qa_application_native_q3_entity owner;
+    if (grapple || w->trail==Q3N_TRAIL_GRAPPLE) {
+        cent->trail_time=f->time; qa_q3_entity owner;
         if (!source_entity(f,state->otherEntityNum,&owner,e)) return false;
         q3n_entity *client=&f->entities[state->otherEntityNum]; qa_vec3 axis[3]; q3n_angles_axis(client->lerp_angles,axis);
         qa_vec3 start=ma(plus(client->lerp_origin,qa_v3(0,0,26)),-6,axis[2]);
@@ -680,17 +702,22 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
     }
     return true;
 }
+bool q3n_weapons_trail_remote(const q3n_frame *f,const q3n_remote_entity *source,qa_error *e)
+{
+    return remote_entity_valid(f,source,e) && q3n_weapons_trail(f,source->presentation,source->current,e) &&
+        remote_entity_valid(f,source,e);
+}
 bool q3n_weapons_impact(const q3n_frame *f,int32_t number,int32_t client,qa_vec3 origin,qa_vec3 direction,q3n_impact_sound type,qa_error *e)
 {
     if (!frame_valid(f,e)) return false;
     const q3n_media_view *media=q3n_media_read(f->media);
     int32_t model=0,shader=0,sound=0,mark=0,duration=600;
     float radius=32,light=0; qa_vec3 light_color={1,1,0}; bool sprite=false;
-    int32_t impact=f->source.product==QA_Q3_ARENA && (number==12 || number==13)?0:number;
+    int32_t impact=q3n_frame_product(f)==QA_Q3_ARENA && (number==12 || number==13)?0:number;
     switch (impact) {
     default:
     case 11:
-        if (f->source.product==QA_Q3_TEAM_ARENA) {
+        if (q3n_frame_product(f)==QA_Q3_TEAM_ARENA) {
             sound=media->sounds[type==Q3N_IMPACT_FLESH?Q3N_S_NAIL_FLESH:type==Q3N_IMPACT_METAL?Q3N_S_NAIL_METAL:Q3N_S_NAIL_HIT];
             mark=media->graphics[Q3N_G_HOLE_MARK]; radius=12; break;
         }
@@ -754,22 +781,23 @@ bool q3n_weapons_impact(const q3n_frame *f,int32_t number,int32_t client,qa_vec3
 static bool missile_player(const q3n_frame *f,int32_t weapon_number,qa_vec3 origin,qa_vec3 direction,int32_t target,qa_error *e)
 {
     q3n_effect_bleed(f,origin,target);
-    if (weapon_number==4 || weapon_number==5 || (f->source.product==QA_Q3_TEAM_ARENA && (weapon_number==11 || weapon_number==12 || weapon_number==13)))
+    if (weapon_number==4 || weapon_number==5 || (q3n_frame_product(f)==QA_Q3_TEAM_ARENA && (weapon_number==11 || weapon_number==12 || weapon_number==13)))
         return q3n_weapons_impact(f,weapon_number,0,origin,direction,Q3N_IMPACT_FLESH,e);
     return true;
 }
 static bool muzzle_point(const q3n_frame *f,int32_t number,qa_vec3 *out,bool *found,qa_error *e)
 {
     *found=false;
-    if (!f->has_local_player) return q3p_fail(e,QA_ERROR_ARGUMENT,"CG_CalcMuzzlePoint: cg.snap == NULL");
+    const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
+    if (!snapshot) return q3p_fail(e,QA_ERROR_ARGUMENT,"CG_CalcMuzzlePoint: cg.snap == NULL");
     qa_vec3 angles,origin; float height;
-    if (number==f->local_player.clientNum) { origin=from(f->local_player.origin); angles=from(f->local_player.viewangles); height=(float)f->local_player.viewheight; }
+    if (number==snapshot->clientNum) { origin=from(snapshot->origin); angles=from(snapshot->viewangles); height=(float)snapshot->viewheight; }
     else {
-        qa_application_native_q3_entity row;
+        qa_q3_entity row;
         if (!source_entity(f,number,&row,e)) return false;
         if (!f->entities[number].valid) return true;
-        origin=from(row.state.pos.base); angles=from(row.state.apos.base);
-        int32_t animation=row.state.legsAnim&~128; height=animation==13 || animation==23?12:26;
+        origin=from(row.pos.base); angles=from(row.apos.base);
+        int32_t animation=row.legsAnim&~128; height=animation==13 || animation==23?12:26;
     }
     qa_vec3 axis[3]; q3n_angles_axis(angles,axis); origin.z=add(origin.z,height);
     *out=ma(origin,14,axis[0]); *found=true; return true;
@@ -860,10 +888,10 @@ static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
         if (!q3n_events_trace_number(f,&trace,&target,e)) return false;
         qa_vec3 normal=trace.contact?trace.contact_plane.normal:qa_v3(0,0,0);
         bool player=false;
-        if (target>=0 && target<1022 && (uint32_t)target<f->source.entity_count) {
-            qa_application_native_q3_entity row;
+        if (target>=0 && target<1022 && (uint32_t)target<q3n_frame_entity_capacity(f)) {
+            qa_q3_entity row;
             if (!source_entity(f,target,&row,e)) return false;
-            player=row.state.eType==1;
+            player=row.eType==1;
         }
         if (player) { if (!missile_player(f,3,trace.end,normal,target,e)) return false; }
         else if (!q3n_weapons_impact(f,3,0,trace.end,normal,(trace.surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
@@ -875,7 +903,10 @@ bool q3n_weapons_event(void *context,const q3n_frame *f,q3n_entity *cent,const q
     (void)context;
     if (!frame_valid(f,e) || !cent || !state) return false;
     switch (event) {
-    case 21: return !f->has_local_player || state->number!=f->local_player.clientNum || q3n_weapons_out_of_ammo(f,e);
+    case 21: {
+        const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
+        return !snapshot || state->number!=snapshot->clientNum || q3n_weapons_out_of_ammo(f,e);
+    }
     case 23: return q3n_weapons_fire(f,cent,state,e);
     case 50: return missile_player(f,state->weapon,position,q3n_events_direction(state->eventParm),state->otherEntityNum,e);
     case 51: case 52: return q3n_weapons_impact(f,state->weapon,0,position,q3n_events_direction(state->eventParm),event==51?Q3N_IMPACT_DEFAULT:Q3N_IMPACT_METAL,e);
@@ -896,7 +927,10 @@ bool q3n_weapons_draw_selection(const q3n_frame *f,const q3n_weapon_drawing *dra
 {
     if (!frame_valid(f,e) || !drawing || !drawing->fade_color || !drawing->set_color || !drawing->picture || !drawing->string_length || !drawing->big_string)
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Native weapon selection requires the actual HUD drawing services");
-    if (!f->has_local_player || f->local_player.stats[0]<=0) return true;
+    const qa_q3_player *predicted=q3n_frame_predicted_player(f);
+    if (!predicted || predicted->stats[0]<=0) return true;
+    const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
+    if(!snapshot) return q3p_fail(e,QA_ERROR_ARGUMENT,"Weapon selection requires its actual snapshot PS");
     float color[4]; bool visible;
     if (!drawing->fade_color(drawing->context,f->weapons->selection.time,1400,color,&visible,e) || !frame_valid(f,e)) return false;
     if (!visible) return true;
@@ -911,13 +945,13 @@ bool q3n_weapons_draw_selection(const q3n_frame *f,const q3n_weapon_drawing *dra
         const q3n_weapon_media *w;
         if (!weapon(f,i,true,&w,e) || !drawing->picture(drawing->context,(float)x,380,32,32,w->weapon_icon,e) || !frame_valid(f,e)) return false;
         if (i==f->weapons->selection.weapon && (!drawing->picture(drawing->context,(float)(x-4),376,40,40,media->graphics[Q3N_G_SELECT],e) || !frame_valid(f,e))) return false;
-        if (!f->local_player.ammo[i] && (!drawing->picture(drawing->context,(float)x,380,32,32,media->graphics[Q3N_G_NOAMMO],e) || !frame_valid(f,e))) return false;
+        if (!snapshot->ammo[i] && (!drawing->picture(drawing->context,(float)x,380,32,32,media->graphics[Q3N_G_NOAMMO],e) || !frame_valid(f,e))) return false;
         x+=40;
     }
     const q3n_weapon_media *selected;
     if (!weapon(f,f->weapons->selection.weapon,false,&selected,e)) return false;
     if (selected->item_index>=0) {
-        const qa_q3_item *item=qa_q3_items(f->source.product,NULL)+selected->item_index;
+        const qa_q3_item *item=qa_q3_items(q3n_frame_product(f),NULL)+selected->item_index;
         if (item->name) {
             size_t length=drawing->string_length(drawing->context,item->name);
             if (!frame_valid(f,e) || length>(size_t)INT32_MAX/16) return q3p_fail(e,QA_ERROR_FORMAT,"Native weapon name drawing extent overflow");

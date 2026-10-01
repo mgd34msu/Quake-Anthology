@@ -59,7 +59,7 @@ void q3n_effect_spawn(const q3n_frame *f, qa_vec3 origin)
     for(unsigned i=0;i<4;++i)v->color[i]=1;
     v->ref.shader_time=q3ne_div((float)f->time,1000); q3ne_identity(v->ref.axis);
     v->ref.model=m->graphics[Q3N_G_TELEPORT_MODEL]; v->ref.origin=origin;
-    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : f->source.product;
+    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
     v->ref.origin.z=q3ne_add(origin.z,product==QA_Q3_ARENA?-24:16);
     if(product==QA_Q3_ARENA)v->ref.custom_shader=m->graphics[Q3N_G_TELEPORT_SHADER];
 }
@@ -98,7 +98,8 @@ void q3n_effect_bleed(const q3n_frame *f, qa_vec3 origin, int32_t client)
     v->start_time=f->time; v->end_time=q3ne_plus(f->time,500);
     v->ref.origin=origin; v->ref.rotation=(float)(q3n_events_rand(f->events)%360); v->ref.radius=24;
     v->ref.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_BLOOD_EXPLOSION];
-    if(f->has_local_player && client==f->local_player.clientNum)v->ref.flags|=2;
+    const qa_q3_player *ps=q3n_frame_snapshot_player(f);
+    if(ps && client==ps->clientNum)v->ref.flags|=2;
 }
 q3n_local_entity *q3n_effect_gib(const q3n_frame *f, qa_vec3 origin, qa_vec3 velocity, int32_t model)
 {
@@ -144,7 +145,8 @@ void q3n_effect_big_explode(const q3n_frame *f, qa_vec3 origin)
 void q3n_effect_score(const q3n_frame *f, int32_t client, qa_vec3 origin, int32_t score)
 {
     q3n_events *o=f->events;
-    if(!f->has_local_player || client!=f->local_player.clientNum || !f->event_settings->score_plum)return;
+    const qa_q3_player *ps=f->remote?q3n_frame_predicted_player(f):q3n_frame_snapshot_player(f);
+    if(!ps || client!=ps->clientNum || !f->event_settings->score_plum)return;
     q3n_local_entity *v=q3n_local_allocate(o,Q3N_LE_SCORE_PLUM,QA_Q3_REF_SPRITE);
     v->start_time=f->time; v->end_time=q3ne_plus(f->time,4000); v->life_rate=q3ne_life(v->start_time,v->end_time);
     for(unsigned i=0;i<4;++i)v->color[i]=1;
@@ -156,7 +158,7 @@ static int32_t hit_sound(q3n_events *o, const q3n_media_view *m, q3n_sound a, q3
 { int32_t value=q3n_events_rand(o)&3; return m->sounds[value<2?a:value==2?b:c]; }
 bool q3n_effect_mission(const q3n_frame *f, int32_t event, qa_vec3 origin, qa_vec3 angles, qa_error *error)
 {
-    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : f->source.product;
+    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
     if(product!=QA_Q3_TEAM_ARENA)return q3ne_fail(error,QA_ERROR_FORMAT,"Missionpack effect reached baseq3 cgame");
     const q3n_media_view *m=q3n_media_read(f->media); q3n_events *o=f->events;
     q3n_local_entity *v=NULL;

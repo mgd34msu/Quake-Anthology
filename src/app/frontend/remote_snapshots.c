@@ -364,6 +364,30 @@ bool frontend_remote_snapshots_entity_write(frontend_remote_snapshots *s,const f
         return fail(e,QA_ERROR_ARGUMENT,"Remote centity authoring lost its genuine CGAME frame scope");
     *out=&s->entities[number]; return true;
 }
+bool frontend_remote_snapshots_entity_trajectory(frontend_remote_snapshots *s,
+    const frontend_remote_snapshots_view *v,uint32_t number,int32_t current_before,int32_t next_before,
+    int32_t current_after,int32_t next_after,qa_error *e)
+{
+    frontend_remote_centity *row;
+    if(!frontend_remote_snapshots_entity_write(s,v,number,&row,e)) return false;
+    if(!row->published || row->current.number!=(int32_t)number ||
+        row->current.pos.type!=current_before || row->next.pos.type!=next_before ||
+        current_after!=QA_TRAJECTORY_INTERPOLATE || next_after!=QA_TRAJECTORY_INTERPOLATE)
+        return fail(e,QA_ERROR_ARGUMENT,"Remote smoothing lost its genuine private trajectory rows");
+    row->current.pos.type=current_after; row->next.pos.type=next_after;
+    return frontend_remote_snapshots_current(s,v) || frontend_remote_snapshots_callback_current(s,v);
+}
+bool frontend_remote_snapshots_entity_weapon(frontend_remote_snapshots *s,
+    const frontend_remote_snapshots_view *v,uint32_t number,int32_t before,int32_t after,qa_error *e)
+{
+    frontend_remote_centity *row;
+    if(!frontend_remote_snapshots_entity_write(s,v,number,&row,e)) return false;
+    if(!row->published || row->current.number!=(int32_t)number || row->current.weapon!=before ||
+        after<0 || after>=16)
+        return fail(e,QA_ERROR_ARGUMENT,"Remote weapon presentation lost its genuine private entity row");
+    row->current.weapon=after;
+    return frontend_remote_snapshots_current(s,v) || frontend_remote_snapshots_callback_current(s,v);
+}
 bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *s,
     const frontend_network_prediction_source *source,const qa_q3_prediction_scene_entity_view *entity,int32_t *out,qa_error *e)
 {

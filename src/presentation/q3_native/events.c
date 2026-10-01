@@ -28,6 +28,12 @@ bool q3n_events_create_effects(const q3n_event_options *options, q3n_events **ou
     owner->options = *options; owner->standalone_effects = true;
     owner->smoke_seed = 0x92; q3ne_local_reset(owner); *out = owner; return true;
 }
+bool q3n_events_create_remote(const q3n_event_options *options, q3n_events **out, qa_error *error)
+{
+    if(!out || *out)return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 events require an empty actual owner");
+    if(!q3n_events_create(options,out,error))return false;
+    (*out)->remote_source=true; return true;
+}
 void q3n_events_destroy(q3n_events *o) { if(o && !o->busy)free(o); }
 bool q3n_events_idle(const q3n_events *o) { return !o || !o->busy; }
 const q3n_event_state *q3n_events_state(const q3n_events *o) { return o?&o->state:NULL; }
@@ -77,7 +83,7 @@ bool q3ne_current(const q3n_frame *f, qa_error *error)
                 f->time == q3ne_word((uint32_t)(event->time_ns / UINT64_C(1000000))) &&
                 f->effect_pose_current && f->effect_pose_current(f->effect_output_context);
         }
-        if (!f->events || !f->events->standalone_effects || !f->event_settings || !f->presentation ||
+        if (!f->events || !f->events->standalone_effects || f->events->remote_source || f->remote || !f->event_settings || !f->presentation ||
             !media || f->events->options.assets != f->assets ||
             f->events->options.product != source->q3_product || media->product != source->q3_product ||
             f->clients || f->has_local_player || !clock ||
@@ -85,8 +91,19 @@ bool q3ne_current(const q3n_frame *f, qa_error *error)
             return q3ne_fail(error, QA_ERROR_ARGUMENT, "Standalone Q3 effects lost their actual producer, registry or clock");
         return true;
     }
+    if(f && f->remote) {
+        if(!f->events || !f->events->remote_source || f->events->standalone_effects ||
+           !f->event_settings || !f->presentation || !f->clients || !media || f->effect_event ||
+           f->events->options.assets!=f->assets || f->events->options.product!=q3n_frame_product(f) ||
+           media->product!=q3n_frame_product(f) || q3n_media_assets(f->media)!=f->assets ||
+           q3n_clients_assets(f->clients)!=f->assets ||
+           !q3n_frame_current(f) || !q3n_clients_remote_current(f->clients,&f->remote->source,error) ||
+           !q3n_media_remote_current(f->media,&f->remote->source,error))
+            return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 effects lost their actual Network/cache presentation cut");
+        return true;
+    }
     if(!f || !f->events || !f->event_settings || !f->presentation || !f->clients || !f->media ||
-       f->events->standalone_effects || f->effect_event ||
+       f->events->standalone_effects || f->events->remote_source || f->effect_event ||
        f->events->options.assets!=f->assets || f->events->options.product!=f->source.product ||
        !media || media->product!=f->source.product ||
        !qa_application_native_q3_presentation_current(f->application,&f->source))
@@ -120,6 +137,7 @@ bool q3n_events_trace_number(const q3n_frame *f, const qa_trace_result *trace, i
     if(!trace || !out || !q3ne_current(f,error))return false;
     if(trace->hit==QA_TRACE_HIT_NONE) { *out=1023; return true; }
     if(trace->hit==QA_TRACE_HIT_WORLD) { *out=1022; return true; }
+    if(f->remote)return q3n_remote_frame_trace_number(f->remote,trace,out,error) && q3ne_current(f,error);
     for(uint32_t i=0;i<f->source.entity_count;++i) {
         qa_application_native_q3_entity actual;
         if(!qa_application_native_q3_presentation_entity(f->application,&f->source,i,&actual,error))return false;
@@ -134,7 +152,7 @@ static bool custom(const q3n_frame *f, int32_t number, int32_t channel, const ch
 }
 static bool center(const q3n_frame *f, const char *text, qa_error *error)
 {
-    return f->events->options.center_print(f->events->options.context,f,text,f->source.product==QA_Q3_ARENA?143:144,16,error) && q3ne_current(f,error);
+    return f->events->options.center_print(f->events->options.context,f,text,q3n_frame_product(f)==QA_Q3_ARENA?143:144,16,error) && q3ne_current(f,error);
 }
 static bool pain(const q3n_frame *f, q3n_entity *cent, int32_t number, int32_t health, qa_error *error)
 {
@@ -143,9 +161,17 @@ static bool pain(const q3n_frame *f, q3n_entity *cent, int32_t number, int32_t h
     if(!custom(f,number,3,name,error))return false;
     cent->player.pain_time=f->time; cent->player.pain_direction=!cent->player.pain_direction; return true;
 }
+static bool remote_cache(const q3n_frame *f,const q3n_entity *cent,qa_error *error)
+{
+    if(!f->remote)return true;
+    if(cent==f->remote->predicted_entity)return q3n_remote_frame_current(f->remote);
+    q3n_remote_entity row;
+    return q3n_remote_frame_entity(f->remote,cent->physical,&row,error) &&
+        row.presentation==cent && row.published && q3n_remote_entity_current(&row);
+}
 bool q3n_events_pain(const q3n_frame *f, q3n_entity *cent, int32_t number, int32_t health, qa_error *error)
 {
-    if(!cent || !q3ne_current(f,error) || f->events->busy)return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 pain requires its idle event owner");
+    if(!cent || !q3ne_current(f,error) || f->events->busy || !remote_cache(f,cent,error))return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 pain requires its idle event owner");
     f->events->busy=true; bool ok=pain(f,cent,number,health,error); f->events->busy=false; return ok;
 }
 bool q3n_events_buffer(q3n_events *o, int32_t sound, qa_error *error)
@@ -163,14 +189,15 @@ static bool buffered(const q3n_frame *f, q3n_sound key, qa_error *error)
 static bool team_sound(const q3n_frame *f, int32_t event, qa_error *error)
 {
     const q3n_client_info *ci=q3n_clients_get(f->clients,f->viewing_client); int32_t team=ci?ci->team:0;
+    const qa_q3_player *ps=q3n_frame_snapshot_player(f);
     switch(event) {
     case 0:case 1:return buffered(f,team==(event==0?1:2)?Q3N_S_CAPTURE_YOUR_TEAM:Q3N_S_CAPTURE_OPPONENT,error);
     case 2:case 3:return buffered(f,team==(event==2?1:2)?Q3N_S_RETURN_YOUR_TEAM:Q3N_S_RETURN_OPPONENT,error) && buffered(f,event==2?Q3N_S_BLUE_FLAG_RETURNED:Q3N_S_RED_FLAG_RETURNED,error);
     case 4:case 5: {
-        if(f->local_player.powerups[event==4?8:7] || f->local_player.powerups[9])return true;
+        if(ps->powerups[event==4?8:7] || ps->powerups[9])return true;
         if(team!=1 && team!=2)return true;
         int32_t threatened=event==4?2:1;
-        if(f->source.product==QA_Q3_TEAM_ARENA && f->source.game_type==5)
+        if(q3n_frame_product(f)==QA_Q3_TEAM_ARENA && q3n_frame_game_type(f)==5)
             return buffered(f,team==threatened?Q3N_S_YOUR_TEAM_TOOK_FLAG:Q3N_S_ENEMY_TOOK_FLAG,error);
         return buffered(f,team==threatened?Q3N_S_ENEMY_TOOK_YOUR_FLAG:Q3N_S_YOUR_TEAM_TOOK_ENEMY_FLAG,error);
     }
@@ -180,13 +207,14 @@ static bool team_sound(const q3n_frame *f, int32_t event, qa_error *error)
     case 10:return buffered(f,Q3N_S_RED_LEADS,error);
     case 11:return buffered(f,Q3N_S_BLUE_LEADS,error);
     case 12:return buffered(f,Q3N_S_TEAMS_TIED,error);
-    case 13:return f->source.product==QA_Q3_TEAM_ARENA?q3ne_sound(f,q3n_media_read(f->media)->sounds[Q3N_S_KAMIKAZE_FAR],NULL,f->local_player.clientNum,7,true,error):true;
+    case 13:return q3n_frame_product(f)==QA_Q3_TEAM_ARENA?q3ne_sound(f,q3n_media_read(f->media)->sounds[Q3N_S_KAMIKAZE_FAR],NULL,q3n_frame_snapshot_player(f)->clientNum,7,true,error):true;
     default:return true;
     }
 }
 static bool reached_configstring(const q3n_frame *f, uint32_t index,
     const char **text, uint64_t *revision, qa_error *error)
 {
+    if(f->remote)return q3n_frame_configstring(f,index,text,revision,error) && q3ne_current(f,error);
     qa_native_q3_wire_basis basis;
     if(!q3ne_current(f,error) ||
        !qa_native_q3_wire_reader_basis(f->reader,&basis,error))return false;
@@ -218,6 +246,7 @@ static void place(int32_t rank, char out[64])
 }
 static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
 {
+    const qa_q3_player *ps=q3n_frame_snapshot_player(f);
     int32_t target=s->otherEntityNum, attacker=s->otherEntityNum2, mod=s->eventParm;
     if(target<0 || target>=64)return q3ne_fail(error,QA_ERROR_FORMAT,"CG_Obituary: target out of range");
     char victim[32], killer[32], output[256], own[80]; bool vp=false,kp=false;
@@ -232,7 +261,7 @@ static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
     case 14:message="sank like a rock";break;case 15:message="melted";break;case 16:message="does a back flip into the lava";break;
     case 21:message="saw the light";break;case 22:message="was in the wrong place";break;
     }
-    bool mission=f->source.product==QA_Q3_TEAM_ARENA;
+    bool mission=q3n_frame_product(f)==QA_Q3_TEAM_ARENA;
     if(attacker==target) {
         const char *self=gender==QA_MODEL_FEMALE?"herself":gender==QA_MODEL_NEUTER?"itself":"himself";
         const char *possessive=gender==QA_MODEL_FEMALE?"her":gender==QA_MODEL_NEUTER?"its":"his";
@@ -245,15 +274,15 @@ static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
         else { snprintf(own,sizeof(own),"killed %s",self); message=own; }
     }
     if(message) { snprintf(output,sizeof(output),"%s %s.\n",victim,message); f->events->options.print(f->events->options.context,output); return q3ne_current(f,error); }
-    if(attacker==f->local_player.clientNum) {
-        if(f->source.game_type<3) {
-            char rank[64]; place(q3ne_plus(f->local_player.persistant[2],1),rank);
-            snprintf(output,sizeof(output),"You fragged %s\n%s place with %d",victim,rank,f->local_player.persistant[0]);
+    if(attacker==ps->clientNum) {
+        if(q3n_frame_game_type(f)<3) {
+            char rank[64]; place(q3ne_plus(ps->persistant[2],1),rank);
+            snprintf(output,sizeof(output),"You fragged %s\n%s place with %d",victim,rank,ps->persistant[0]);
         } else snprintf(output,sizeof(output),"You fragged %s",victim);
         if((!mission || !(f->event_settings->single_player_active && f->event_settings->camera_orbit)) && !center(f,output,error))return false;
     }
     if(!kp) { attacker=1022; memcpy(killer,"noname",7); }
-    else if(target==f->local_player.clientNum)memcpy(f->events->state.killer_name,killer,strlen(killer)+1);
+    else if(target==ps->clientNum)memcpy(f->events->state.killer_name,killer,strlen(killer)+1);
     if(attacker!=1022) {
         switch(mod) {
         case 2:message="was pummeled by";break;case 3:message="was machinegunned by";break;case 1:message="was gunned down by";break;
@@ -278,11 +307,11 @@ static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
 static bool use_item(const q3n_frame *f, const qa_q3_entity *s, int32_t event, qa_error *error)
 {
     int32_t holdable=event-Q3N_EV_USE_ITEM0; if(holdable<0 || holdable>6)holdable=0;
-    if(s->number==f->local_player.clientNum) {
+    if(s->number==q3n_frame_snapshot_player(f)->clientNum) {
         char text[160];
         if(!holdable)memcpy(text,"No item to use",15);
         else {
-            size_t count; const qa_q3_item *items=qa_q3_items(f->source.product,&count),*found=NULL;
+            size_t count; const qa_q3_item *items=qa_q3_items(q3n_frame_product(f),&count),*found=NULL;
             for(size_t i=1;i<count;++i)if(items[i].kind==QA_Q3_ITEM_HOLDABLE && items[i].tag==holdable) { found=&items[i]; break; }
             if(!found)return q3ne_fail(error,QA_ERROR_FORMAT,"BG_FindItemForHoldable has no authored product item");
             snprintf(text,sizeof(text),"Use %s",found->name);
@@ -296,12 +325,15 @@ static bool use_item(const q3n_frame *f, const qa_q3_entity *s, int32_t event, q
             const q3n_client_info *ci=q3n_clients_get(f->clients,(uint32_t)s->clientNum);
             if(!ci)return q3ne_fail(error,QA_ERROR_FORMAT,"Medkit event has no actual client-info row");
             q3n_client_dynamic dynamic=ci->dynamic; dynamic.medkit_usage_time=f->time;
-            if(!q3n_clients_dynamic_write(f->clients,f->application,&f->source,(uint32_t)s->clientNum,
-                ci->configstring_revision,ci->media_revision,&dynamic,error))return false;
+            bool ok=f->remote?q3n_clients_remote_dynamic_write(f->clients,&f->remote->source,(uint32_t)s->clientNum,
+                ci->configstring_revision,ci->media_revision,&dynamic,error):
+                q3n_clients_dynamic_write(f->clients,f->application,&f->source,(uint32_t)s->clientNum,
+                ci->configstring_revision,ci->media_revision,&dynamic,error);
+            if(!ok || !q3ne_current(f,error))return false;
         }
         return q3ne_sound(f,m->sounds[Q3N_S_MEDKIT],NULL,s->number,5,false,error);
     }
-    if(f->source.product==QA_Q3_TEAM_ARENA) {
+    if(q3n_frame_product(f)==QA_Q3_TEAM_ARENA) {
         if(holdable==3 || holdable==4)return true;
         if(holdable==5)return q3ne_sound(f,m->sounds[Q3N_S_USE_INVULNERABILITY],NULL,s->number,5,false,error);
     }
@@ -309,20 +341,20 @@ static bool use_item(const q3n_frame *f, const qa_q3_entity *s, int32_t event, q
 }
 static bool pickup(const q3n_frame *f, const qa_q3_entity *s, bool global, qa_error *error)
 {
-    size_t count; const qa_q3_item *items=qa_q3_items(f->source.product,&count);
+    size_t count; const qa_q3_item *items=qa_q3_items(q3n_frame_product(f),&count);
     if(s->eventParm<1 || (size_t)s->eventParm>=count)return true;
     const qa_q3_item *item=&items[s->eventParm]; const q3n_media_view *m=q3n_media_read(f->media);
     int32_t sound=0, number=s->number; bool emit=true;
     if(global) {
-        number=f->local_player.clientNum; emit=item->sound!=NULL;
+        number=q3n_frame_snapshot_player(f)->clientNum; emit=item->sound!=NULL;
         if(emit && (!qa_q3_register_sound(f->assets,item->sound,false,&sound,error) || !q3ne_current(f,error)))return false;
     } else if(item->kind==QA_Q3_ITEM_POWERUP || item->kind==QA_Q3_ITEM_TEAM)sound=m->sounds[Q3N_S_NORMAL_HEALTH];
     else if(item->kind==QA_Q3_ITEM_PERSISTENT) {
-        emit=f->source.product==QA_Q3_TEAM_ARENA && item->tag>=10 && item->tag<=13;
+        emit=q3n_frame_product(f)==QA_Q3_TEAM_ARENA && item->tag>=10 && item->tag<=13;
         if(emit) { const q3n_sound types[]={Q3N_S_SCOUT,Q3N_S_GUARD,Q3N_S_DOUBLER,Q3N_S_AMMOREGEN}; sound=m->sounds[types[item->tag-10]]; }
     } else if(!qa_q3_register_sound(f->assets,item->sound,false,&sound,error) || !q3ne_current(f,error))return false;
     if(emit && !q3ne_sound(f,sound,NULL,number,0,false,error))return false;
-    if(s->number==f->local_player.clientNum) {
+    if(s->number==q3n_frame_snapshot_player(f)->clientNum) {
         q3n_event_state *state=&f->events->state;
         state->item_pickup=s->eventParm; state->item_pickup_time=state->item_pickup_blend_time=f->time;
         if(item->kind==QA_Q3_ITEM_WEAPON && f->event_settings->autoswitch && item->tag!=2)
@@ -352,9 +384,12 @@ static const char *event_name(int32_t event)
     };
     return event>=0 && (size_t)event<sizeof(names)/sizeof(names[0])?names[event]:"UNKNOWN";
 }
-static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_vec3 position, qa_error *error)
+static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_vec3 position,
+    const q3n_remote_entity *actual, qa_error *error)
 {
     q3n_events *o=f->events; const q3n_media_view *m=q3n_media_read(f->media);
+    const qa_q3_player *ps=q3n_frame_snapshot_player(f);
+    const qa_q3_player *predicted=f->remote?q3n_frame_predicted_player(f):ps;
     int32_t event=s->event&~0x300, client=s->clientNum<0 || s->clientNum>=64?0:s->clientNum;
     const q3n_client_info *ci=q3n_clients_get(f->clients,(uint32_t)client);
     if(f->event_settings->debug_events) {
@@ -362,7 +397,7 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
         o->options.print(o->options.context,text); if(!q3ne_current(f,error))return false;
     }
     bool unknown=event<0 || event>Q3N_EV_TAUNT_PATROL || event==Q3N_EV_USE_ITEM15 || event==Q3N_EV_BULLET ||
-       (f->source.product==QA_Q3_ARENA && ((event>=Q3N_EV_PROX_STICK && event<=Q3N_EV_LIGHTNING) || event>=Q3N_EV_TAUNT_YES));
+       (q3n_frame_product(f)==QA_Q3_ARENA && ((event>=Q3N_EV_PROX_STICK && event<=Q3N_EV_LIGHTNING) || event>=Q3N_EV_TAUNT_YES));
     if(f->event_settings->debug_events) {
         char text[80]; snprintf(text,sizeof(text),"%s\n",unknown?"UNKNOWN":event_name(event));
         o->options.print(o->options.context,text); if(!q3ne_current(f,error))return false;
@@ -383,9 +418,9 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
         if(event==Q3N_EV_FALL_SHORT) { if(!q3ne_sound(f,m->sounds[Q3N_S_LAND],NULL,s->number,0,false,error))return false; }
         else if(!custom(f,s->number,event==Q3N_EV_FALL_MEDIUM?3:0,event==Q3N_EV_FALL_MEDIUM?"*pain100_1.wav":"*fall1.wav",error))return false;
         if(event==Q3N_EV_FALL_FAR)cent->player.pain_time=f->time;
-        if(client==f->local_player.clientNum) { o->state.land_change=(float)(-8*(event-Q3N_EV_FALL_SHORT+1)); o->state.land_time=f->time; } break;
+        if(predicted && client==predicted->clientNum) { o->state.land_change=(float)(-8*(event-Q3N_EV_FALL_SHORT+1)); o->state.land_time=f->time; } break;
     case Q3N_EV_STEP4:case Q3N_EV_STEP8:case Q3N_EV_STEP12:case Q3N_EV_STEP16: {
-        if(client!=f->local_player.clientNum || f->event_settings->demo_playback || (f->local_player.pmFlags&4096) || f->event_settings->no_predict || f->event_settings->synchronous_clients)break;
+        if(!predicted || client!=predicted->clientNum || f->event_settings->demo_playback || (ps->pmFlags&4096) || f->event_settings->no_predict || f->event_settings->synchronous_clients)break;
         int32_t delta=q3ne_sub(f->time,o->state.step_time);
         float old=delta<200?q3ne_div(q3ne_mul(o->state.step_change,(float)q3ne_sub(200,delta)),200):0;
         o->state.step_change=fminf(32,q3ne_add(old,(float)(4*(event-Q3N_EV_STEP4+1)))); o->state.step_time=f->time; break;
@@ -408,12 +443,17 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
     case Q3N_EV_WATER_CLEAR:return custom(f,s->number,0,"*gasp.wav",error);
     case Q3N_EV_ITEM_PICKUP:case Q3N_EV_GLOBAL_ITEM_PICKUP:return pickup(f,s,event==Q3N_EV_GLOBAL_ITEM_PICKUP,error);
     case Q3N_EV_NOAMMO:
-        if(s->number!=f->local_player.clientNum)break;
+        if(s->number!=ps->clientNum)break;
         return o->options.weapon_event(o->options.context,f,cent,s,event,position,error) && q3ne_current(f,error);
     case Q3N_EV_CHANGE_WEAPON:return q3ne_sound(f,m->sounds[Q3N_S_SELECT],NULL,s->number,0,false,error);
     case Q3N_EV_FIRE_WEAPON:case Q3N_EV_MISSILE_HIT:case Q3N_EV_MISSILE_MISS:case Q3N_EV_MISSILE_METAL:
     case Q3N_EV_BULLET_WALL:case Q3N_EV_BULLET_FLESH:case Q3N_EV_SHOTGUN:case Q3N_EV_RAIL:
-        if(event==Q3N_EV_RAIL)s->weapon=7;
+        if(event==Q3N_EV_RAIL) {
+            if(f->remote && (!actual ||
+                !q3n_remote_frame_entity_weapon(actual,actual->current->weapon,7,error) ||
+                !q3ne_current(f,error)))return false;
+            s->weapon=7;
+        }
         return o->options.weapon_event(o->options.context,f,cent,s,event,position,error) && q3ne_current(f,error);
     case Q3N_EV_TELEPORT_IN:case Q3N_EV_TELEPORT_OUT:
         if(!q3ne_sound(f,m->sounds[event==Q3N_EV_TELEPORT_IN?Q3N_S_TELE_IN:Q3N_S_TELE_OUT],NULL,s->number,0,false,error))return false;
@@ -439,16 +479,16 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
             if(current_revision!=revision)
                 return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 reached event sound changed during registration");
         }
-        return q3ne_sound(f,sound,NULL,event==Q3N_EV_GENERAL_SOUND?s->number:f->local_player.clientNum,event==Q3N_EV_GENERAL_SOUND?3:0,false,error);
+        return q3ne_sound(f,sound,NULL,event==Q3N_EV_GENERAL_SOUND?s->number:ps->clientNum,event==Q3N_EV_GENERAL_SOUND?3:0,false,error);
     }
     case Q3N_EV_TEAM_SOUND:return team_sound(f,s->eventParm,error);
-    case Q3N_EV_PAIN:return s->number==f->local_player.clientNum?true:pain(f,cent,s->number,s->eventParm,error);
+    case Q3N_EV_PAIN:return s->number==ps->clientNum?true:pain(f,cent,s->number,s->eventParm,error);
     case Q3N_EV_DEATH1:case Q3N_EV_DEATH2:case Q3N_EV_DEATH3: {
         char name[24]; snprintf(name,sizeof(name),"*death%d.wav",event-Q3N_EV_DEATH1+1); return custom(f,s->number,3,name,error);
     }
     case Q3N_EV_OBITUARY:return obituary(f,s,error);
     case Q3N_EV_QUAD:case Q3N_EV_BATTLESUIT:case Q3N_EV_REGEN:
-        if(s->number==f->local_player.clientNum) { o->state.powerup_active=event==Q3N_EV_QUAD?1:event==Q3N_EV_BATTLESUIT?2:5; o->state.powerup_time=f->time; }
+        if(s->number==ps->clientNum) { o->state.powerup_active=event==Q3N_EV_QUAD?1:event==Q3N_EV_BATTLESUIT?2:5; o->state.powerup_time=f->time; }
         return q3ne_sound(f,m->sounds[event==Q3N_EV_QUAD?Q3N_S_QUAD:event==Q3N_EV_BATTLESUIT?Q3N_S_PROTECT:Q3N_S_REGEN],NULL,s->number,4,false,error);
     case Q3N_EV_GIB:
         if(!(s->eFlags&512) && !q3ne_sound(f,m->sounds[Q3N_S_GIB],NULL,s->number,5,false,error))return false;
@@ -466,12 +506,14 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
 }
 static bool admit(const q3n_frame *f, qa_error *error)
 {
-    if(!q3ne_current(f,error) || f->events->busy || !f->weapons || !f->has_local_player ||
-       f->local_player.product!=f->source.product)
-        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 events require an idle owner and actual local snapshot player");
+    if(!q3ne_current(f,error) || f->events->busy || !f->weapons || !q3n_frame_snapshot_player(f) ||
+       (f->remote && !q3n_frame_predicted_player(f)) ||
+       q3n_frame_snapshot_player(f)->product!=q3n_frame_product(f))
+        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 events require an idle owner and actual snapshot player");
     f->events->busy=true; return true;
 }
-static bool present(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_vec3 position, qa_error *error)
+static bool present(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_vec3 position,
+    const q3n_remote_entity *actual, qa_error *error)
 {
     q3n_events *o=f->events;
     if(o->options.event_replacement) {
@@ -480,16 +522,26 @@ static bool present(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_ve
            !q3ne_current(f,error))return false;
         if(suppressed)return true;
     }
-    return dispatch(f,s,cent,position,error);
+    return dispatch(f,s,cent,position,actual,error);
 }
 bool q3n_events_player(const q3n_frame *f, const qa_q3_entity *source, q3n_entity *cent, qa_error *error)
 {
-    if(!source || !cent || !admit(f,error))return false;
-    qa_q3_entity scratch=*source; bool ok=present(f,&scratch,cent,cent->lerp_origin,error); f->events->busy=false; return ok;
+    if(!source || !cent || !f || !remote_cache(f,cent,error) || !admit(f,error))return false;
+    q3n_remote_entity actual; const q3n_remote_entity *row=NULL;
+    bool ok=true;
+    if(f->remote) {
+        ok=cent==f->remote->predicted_entity?q3n_remote_frame_predicted(f->remote,&actual,error):
+            q3n_remote_frame_entity(f->remote,cent->physical,&actual,error);
+        if(ok) { row=&actual; ok=actual.presentation==cent && (actual.predicted || actual.published); }
+    }
+    qa_q3_entity scratch=*source;
+    if(ok)ok=present(f,&scratch,cent,cent->lerp_origin,row,error) &&
+        (!row || q3n_remote_entity_current(row));
+    f->events->busy=false; return ok;
 }
 bool q3n_events_apply(const q3n_frame *f, const qa_application_native_q3_entity *actual, q3n_entity *cent, qa_error *error)
 {
-    if(!actual || !cent || !actual->present || !cent->valid || !qa_actor_id_equal(actual->binding.actor,cent->actor) ||
+    if(!f || f->remote || !actual || !cent || !actual->present || !cent->valid || !qa_actor_id_equal(actual->binding.actor,cent->actor) ||
        actual->binding.number!=(int32_t)cent->physical || actual->state.number!=(int32_t)cent->physical)
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 event has stale actor generation or physical source binding");
     if(!admit(f,error))return false;
@@ -510,8 +562,36 @@ bool q3n_events_apply(const q3n_frame *f, const qa_application_native_q3_entity 
         if(s.modelindex<0 || (size_t)s.modelindex>=m->inline_count) { ok=q3ne_fail(error,QA_ERROR_FORMAT,"Event sound has no actual inline midpoint"); goto end; }
         sound_origin=q3ne_sum(sound_origin,m->inline_models[s.modelindex].midpoint);
     }
-    ok=qa_q3_presentation_sound_position(f->presentation,s.number,sound_origin,error) && q3ne_current(f,error) && present(f,&s,cent,cent->lerp_origin,error);
+    ok=qa_q3_presentation_sound_position(f->presentation,s.number,sound_origin,error) && q3ne_current(f,error) && present(f,&s,cent,cent->lerp_origin,NULL,error);
 end:
+    f->events->busy=false; return ok;
+}
+bool q3n_events_apply_remote(const q3n_frame *f,const q3n_remote_entity *actual,
+    const qa_q3_entity *source,qa_vec3 position,qa_error *error)
+{
+    if(!f || !f->remote || !actual || actual->frame!=f->remote || !actual->published ||
+       actual->predicted || f->remote->snapshots.stage!=Q3N_REMOTE_SNAPSHOT_CALLBACK ||
+       !actual->presentation || !source || !qa_vec_finite(position) ||
+       !q3n_remote_entity_current(actual))
+        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 event lacks its actual deduplicated cache callback");
+    const qa_q3_entity *raw=actual->current;
+    int32_t number=raw->eType>13 && (raw->eFlags&16)?raw->otherEntityNum:raw->number;
+    int32_t event=raw->eType>13?q3ne_sub(raw->eType,13):raw->event;
+    if(source->number!=number || source->event!=event ||
+       actual->presentation->previous_event!=(raw->eType>13?1:raw->event))
+        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 event differs from its actual deduplicated source ES");
+    if(!admit(f,error))return false;
+    qa_q3_entity scratch=*source;
+    qa_vec3 sound_origin=position; bool ok=true;
+    if(scratch.solid==0xffffff) {
+        const q3n_media_view *m=q3n_media_read(f->media);
+        if(scratch.modelindex<0 || (size_t)scratch.modelindex>=m->inline_count)
+            ok=q3ne_fail(error,QA_ERROR_FORMAT,"Remote event sound has no actual inline midpoint");
+        else sound_origin=q3ne_sum(sound_origin,m->inline_models[scratch.modelindex].midpoint);
+    }
+    if(ok)ok=qa_q3_presentation_sound_position(f->presentation,scratch.number,sound_origin,error) &&
+        q3ne_current(f,error) && q3n_remote_entity_current(actual) &&
+        present(f,&scratch,actual->presentation,position,actual,error) && q3n_remote_entity_current(actual);
     f->events->busy=false; return ok;
 }
 bool q3n_events_finish(const q3n_frame *f, qa_error *error)
@@ -524,7 +604,7 @@ bool q3n_events_finish(const q3n_frame *f, qa_error *error)
         else {
             int32_t sound=o->sound_buffer[o->sound_out];
             if(sound) {
-                ok=q3ne_sound(f,sound,NULL,f->local_player.clientNum,7,true,error);
+                ok=q3ne_sound(f,sound,NULL,q3n_frame_snapshot_player(f)->clientNum,7,true,error);
                 if(ok) { o->sound_buffer[o->sound_out]=0; o->sound_out=(o->sound_out+1)%20; o->sound_time=q3ne_plus(f->time,750); }
             }
         }

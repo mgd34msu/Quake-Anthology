@@ -105,6 +105,11 @@ bool q3n_weapons_out_of_ammo(const q3n_frame *, qa_error *);
 bool q3n_weapons_fire(const q3n_frame *, q3n_entity *, const qa_q3_entity *, qa_error *);
 bool q3n_weapons_player(const q3n_frame *, const qa_q3_ref_entity *parent,
     const qa_q3_player *or_null, q3n_entity *, const qa_q3_entity *, qa_error *);
+/* Decoded physical rows and the separately owned predictedPlayerEntity have
+ * source receipts, independently of local selected EQUIPMENT actor bindings. */
+bool q3n_weapons_player_remote(const q3n_frame *, const qa_q3_ref_entity *parent,
+    const q3n_remote_entity *, qa_error *);
+bool q3n_weapons_trail_remote(const q3n_frame *, const q3n_remote_entity *, qa_error *);
 /* Only the first attachment tag uses the supplied character registry. Weapon
  * models, passes, sounds and continuation remain the actual primary source.
  * No replacement callback runs; a missing tag or gun admits no replacement. */

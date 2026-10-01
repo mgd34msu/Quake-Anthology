@@ -42,6 +42,9 @@ typedef struct qa_equipment_source_selection {
 } qa_equipment_source_selection;
 typedef struct qa_equipment_source {
     qa_actor_owner owner;
+    /* A genuine external weapon-slot source supplies its canonical item;
+     * admission grants its count without replacing another source's catalog. */
+    qa_item_id weapon_item;
     qa_q1_game *q1;
     qa_q2_game *q2;
     qa_q3_game *q3;

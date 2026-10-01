@@ -32,7 +32,7 @@ struct q3n_events {
     uint32_t local_count, mark_count;
     q3n_stored_mark marks[Q3N_MARK_CAPACITY];
     int32_t sound_buffer[20], sound_in, sound_out, sound_time;
-    bool standalone_effects, busy;
+    bool standalone_effects, remote_source, busy;
 };
 enum q3n_source_event {
     Q3N_EV_NONE, Q3N_EV_FOOTSTEP, Q3N_EV_FOOTSTEP_METAL, Q3N_EV_FOOTSPLASH,

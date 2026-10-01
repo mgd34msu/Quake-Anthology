@@ -40,6 +40,9 @@ typedef struct q3n_event_options {
         const qa_q3_entity *scratch, int32_t event, qa_vec3 position, qa_error *);
 } q3n_event_options;
 bool q3n_events_create(const q3n_event_options *, q3n_events **, qa_error *);
+/* The native remote constructor retains the same real event/UI/weapon/world
+ * services, qualified by Network receipts instead of a local GAME reader. */
+bool q3n_events_create_remote(const q3n_event_options *, q3n_events **, qa_error *);
 /* Standalone ClientEffects/LocalEntitySystem owns genuine world collision and
  * mark projection services, with no client event dispatcher or UI callbacks. */
 bool q3n_events_create_effects(const q3n_event_options *, q3n_events **, qa_error *);
@@ -54,6 +57,10 @@ float q3n_events_random(q3n_events *);
 float q3n_events_crandom(q3n_events *);
 qa_vec3 q3n_events_direction(int32_t source_byte);
 bool q3n_events_apply(const q3n_frame *, const qa_application_native_q3_entity *, q3n_entity *, qa_error *);
+/* The snapshot owner has already performed CG_CheckEvents deduplication and
+ * authored this scratch ES. Dispatch it once against that exact cache row. */
+bool q3n_events_apply_remote(const q3n_frame *, const q3n_remote_entity *,
+    const qa_q3_entity *scratch, qa_vec3 position, qa_error *);
 /* Playerstate transitions use the same source dispatcher but own their event
  * sequence deduplication in the caller's retained playerstate continuation. */
 bool q3n_events_player(const q3n_frame *, const qa_q3_entity *, q3n_entity *, qa_error *);

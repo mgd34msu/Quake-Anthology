@@ -31,6 +31,7 @@ typedef struct application_equipment_runtime_options {
 } application_equipment_runtime_options;
 typedef struct application_equipment_runtime_source {
     qa_actor_owner selected_owner, gear_owner;
+    qa_item_id weapon_item;
     qa_string_id service_owner;
     const qa_launch_instance *descriptor;
     const qa_resource *artifact;

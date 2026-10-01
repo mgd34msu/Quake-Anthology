@@ -1,4 +1,5 @@
 #include "packet.h"
+#include "packet_remote.h"
 #include "attachments.h"
 #include "trajectory.h"
 #include "qa/game_q3.h"
@@ -59,34 +60,76 @@ static bool range(int32_t index, size_t count, const char *kind, qa_error *error
     if(index>=0 && (size_t)index<count) return true;
     qa_error_set(error,QA_ERROR_FORMAT,0,"Native Q3 %s index %d is outside its actual registry",kind,index); return false;
 }
-static bool body(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
-    const q3n_packet_imports *imports,const qa_q3_ref_entity *ref,qa_error *error) {
-    return imports->body ? imports->body(imports->context,f,source,entity,ref,error)
-        : qa_q3_presentation_entity(f->presentation,ref,error);
+typedef struct packet_source {
+    const qa_q3_entity *state;
+    const qa_application_native_q3_entity *local;
+    const q3n_remote_entity *remote;
+} packet_source;
+typedef struct packet_imports {
+    const q3n_packet_imports *local;
+    const q3n_packet_remote_imports *remote;
+} packet_imports;
+static bool current(const q3n_frame *f,const packet_source *source,qa_error *error) {
+    if (q3n_frame_current(f) && (!source->remote ||
+        (q3n_remote_entity_current(source->remote) && q3n_media_assets(f->media)==f->assets &&
+            q3n_media_remote_current(f->media,&f->remote->source,error)))) return true;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native packet source changed during presentation"); return false;
 }
-bool q3n_packet_sound_position(const q3n_frame *f,const qa_application_native_q3_entity *source,
+static bool body(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const packet_imports *imports,const qa_q3_ref_entity *ref,qa_error *error) {
+    bool ok;
+    if(imports->remote && imports->remote->body)
+        ok=imports->remote->body(imports->remote->context,f,source->remote,entity,ref,error);
+    else if(imports->local && imports->local->body)
+        ok=imports->local->body(imports->local->context,f,source->local,entity,ref,error);
+    else ok=qa_q3_presentation_entity(f->presentation,ref,error);
+    return ok && current(f,source,error);
+}
+static bool player(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const packet_imports *imports,qa_error *error) {
+    bool ok=imports->remote ? imports->remote->player(imports->remote->context,f,source->remote,entity,error)
+        : imports->local->player(imports->local->context,f,source->local,entity,error);
+    return ok && current(f,source,error);
+}
+static bool trail(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const packet_imports *imports,const q3n_weapon_media *weapon,bool grapple,qa_error *error) {
+    bool ok=imports->remote ? imports->remote->trail(imports->remote->context,f,source->remote,entity,weapon,grapple,error)
+        : imports->local->trail(imports->local->context,f,source->local,entity,weapon,grapple,error);
+    return ok && current(f,source,error);
+}
+static bool powerups(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const packet_imports *imports,const qa_q3_ref_entity *ref,int32_t team,qa_error *error) {
+    bool ok=imports->remote ? imports->remote->powerups(imports->remote->context,f,source->remote,entity,ref,team,error)
+        : imports->local->powerups(imports->local->context,f,source->local,entity,ref,team,error);
+    return ok && current(f,source,error);
+}
+static int32_t random_value(const packet_imports *imports) {
+    return imports->remote ? imports->remote->rand(imports->remote->context) : imports->local->rand(imports->local->context);
+}
+static bool sound_position(const q3n_frame *f,const packet_source *source,
     const q3n_entity *entity,qa_error *error) {
     const q3n_media_view *media=q3n_media_read(f->media); qa_vec3 origin=entity->lerp_origin;
-    if(source->state.solid==0xffffff) {
-        if(!range(source->state.modelindex,media->inline_count,"inline model",error)) return false;
-        origin=plus(origin,media->inline_models[source->state.modelindex].midpoint);
+    if(source->state->solid==0xffffff) {
+        if(!range(source->state->modelindex,media->inline_count,"inline model",error)) return false;
+        origin=plus(origin,media->inline_models[source->state->modelindex].midpoint);
     }
-    return qa_q3_presentation_sound_position(f->presentation,source->state.number,origin,error);
+    return qa_q3_presentation_sound_position(f->presentation,source->state->number,origin,error) && current(f,source,error);
 }
-static bool effects(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,qa_error *error) {
-    const qa_q3_entity *s=&source->state; const q3n_media_view *media=q3n_media_read(f->media);
-    if(!q3n_packet_sound_position(f,source,entity,error)) return false;
+static bool effects(const q3n_frame *f,const packet_source *source,q3n_entity *entity,qa_error *error) {
+    const qa_q3_entity *s=source->state; const q3n_media_view *media=q3n_media_read(f->media);
+    if(!sound_position(f,source,entity,error)) return false;
     if(!entity->loop_stopped && s->loopSound && (!range(s->loopSound,256,"sound",error) ||
         !qa_q3_presentation_loop(f->presentation,media->game_sounds[s->loopSound],s->number,entity->lerp_origin,
-            qa_v3(0,0,0),s->eType==7,error))) return false;
+            qa_v3(0,0,0),s->eType==7,error) || !current(f,source,error))) return false;
     uint32_t light=(uint32_t)s->constantLight;
     return !light || qa_q3_presentation_light(f->presentation,entity->lerp_origin,(float)((light>>24)&255u)*4,
-        qa_v3((float)(light&255u),(float)((light>>8)&255u),(float)((light>>16)&255u)),false,error);
+        qa_v3((float)(light&255u),(float)((light>>8)&255u),(float)((light>>16)&255u)),false,error) && current(f,source,error);
 }
-static bool item(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
-    const q3n_packet_options *options,const q3n_packet_imports *imports,qa_error *error) {
-    const qa_q3_entity *s=&source->state; const q3n_media_view *media=q3n_media_read(f->media);
-    size_t count; const qa_q3_item *items=qa_q3_items(f->source.product,&count);
+static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const q3n_packet_options *options,const packet_imports *imports,qa_error *error) {
+    const qa_q3_entity *s=source->state; const q3n_media_view *media=q3n_media_read(f->media);
+    qa_q3_product product=q3n_frame_product(f);
+    size_t count; const qa_q3_item *items=qa_q3_items(product,&count);
     if(!range(s->modelindex,count,"item",error)) return false;
     if(!s->modelindex || (s->eFlags&128)) return true;
     const qa_q3_item *definition=&items[s->modelindex]; const q3n_item_media *visual=&media->items[s->modelindex];
@@ -116,17 +159,17 @@ static bool item(const q3n_frame *f,const qa_application_native_q3_entity *sourc
     if(definition->kind==QA_Q3_ITEM_WEAPON || definition->kind==QA_Q3_ITEM_ARMOR) ref.flags|=1;
     if(weapon) {
         scale_axis(ref.axis,1.5f); ref.non_normalized_axes=true;
-        if(f->source.product==QA_Q3_TEAM_ARENA && !qa_q3_presentation_loop(f->presentation,
-            media->sounds[Q3N_S_WEAPON_HOVER],s->number,entity->lerp_origin,qa_v3(0,0,0),false,error)) return false;
+        if(product==QA_Q3_TEAM_ARENA && (!qa_q3_presentation_loop(f->presentation,
+            media->sounds[Q3N_S_WEAPON_HOVER],s->number,entity->lerp_origin,qa_v3(0,0,0),false,error) || !current(f,source,error))) return false;
     }
-    if(f->source.product==QA_Q3_TEAM_ARENA && definition->kind==QA_Q3_ITEM_HOLDABLE && definition->tag==QA_Q3_H_KAMIKAZE) {
+    if(product==QA_Q3_TEAM_ARENA && definition->kind==QA_Q3_ITEM_HOLDABLE && definition->tag==QA_Q3_H_KAMIKAZE) {
         scale_axis(ref.axis,2); ref.non_normalized_axes=true;
     }
     if(!body(f,source,entity,imports,&ref,error)) return false;
-    if(f->source.product==QA_Q3_TEAM_ARENA && weapon && weapon->barrel_model) {
+    if(product==QA_Q3_TEAM_ARENA && weapon && weapon->barrel_model) {
         qa_q3_ref_entity barrel={.kind=QA_Q3_REF_MODEL,.model=weapon->barrel_model,
             .lighting_origin=ref.lighting_origin,.shadow_plane=ref.shadow_plane,.flags=ref.flags};
-        if(!q3n_attach(f->assets,&barrel,&ref,"tag_barrel",true,error)) return false;
+        if(!q3n_attach(f->assets,&barrel,&ref,"tag_barrel",true,error) || !current(f,source,error)) return false;
         memcpy(barrel.axis,ref.axis,sizeof(ref.axis)); barrel.non_normalized_axes=ref.non_normalized_axes;
         if(!body(f,source,entity,imports,&barrel,error)) return false;
     }
@@ -139,19 +182,23 @@ static bool item(const q3n_frame *f,const qa_application_native_q3_entity *sourc
     }
     return true;
 }
-static bool missile(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
-    const q3n_packet_imports *imports,bool grapple,qa_error *error) {
-    const qa_q3_entity *s=&source->state; const q3n_media_view *media=q3n_media_read(f->media);
-    int32_t weapon_index=s->weapon>(f->source.product==QA_Q3_TEAM_ARENA ? 14 : 11) ? 0 : s->weapon;
+static bool missile(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const packet_imports *imports,bool grapple,qa_error *error) {
+    const qa_q3_entity *s=source->state;
+    qa_q3_product product=q3n_frame_product(f);
+    if(source->remote && s->weapon>(product==QA_Q3_TEAM_ARENA ? 14 : 11) &&
+        (!q3n_remote_frame_entity_weapon(source->remote,s->weapon,0,error) || !current(f,source,error))) return false;
+    const q3n_media_view *media=q3n_media_read(f->media);
+    int32_t weapon_index=s->weapon>(product==QA_Q3_TEAM_ARENA ? 14 : 11) ? 0 : s->weapon;
     if(!range(weapon_index,16,"weapon",error)) return false;
     const q3n_weapon_media *weapon=&media->weapons[weapon_index]; entity->lerp_angles=vector(s->angles);
     if((grapple || weapon->trail!=Q3N_TRAIL_NONE) &&
-        !imports->trail(imports->context,f,source,entity,weapon,grapple,error)) return false;
-    if(!grapple && weapon->missile_light && !qa_q3_presentation_light(f->presentation,
-        entity->lerp_origin,weapon->missile_light,weapon->missile_light_color,false,error)) return false;
+        !trail(f,source,entity,imports,weapon,grapple,error)) return false;
+    if(!grapple && weapon->missile_light && (!qa_q3_presentation_light(f->presentation,
+        entity->lerp_origin,weapon->missile_light,weapon->missile_light_color,false,error) || !current(f,source,error))) return false;
     if(!grapple && weapon->missile_sound) {
         qa_vec3 velocity; if(!q3n_trajectory_delta(&s->pos,f->time,&velocity,error) ||
-            !qa_q3_presentation_loop(f->presentation,weapon->missile_sound,s->number,entity->lerp_origin,velocity,false,error)) return false;
+            !qa_q3_presentation_loop(f->presentation,weapon->missile_sound,s->number,entity->lerp_origin,velocity,false,error) || !current(f,source,error)) return false;
     }
     qa_q3_ref_entity ref={.origin=entity->lerp_origin,.old_origin=entity->lerp_origin};
     if(!grapple && s->weapon==QA_Q3_W_PLASMA) {
@@ -159,25 +206,25 @@ static bool missile(const q3n_frame *f,const qa_application_native_q3_entity *so
         return body(f,source,entity,imports,&ref,error);
     }
     ref.kind=QA_Q3_REF_MODEL; ref.model=weapon->missile_model; ref.skin=f->client_frame&1; ref.flags=weapon->missile_render_flags|64;
-    if(!grapple && f->source.product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX && s->generic1==2)
+    if(!grapple && product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX && s->generic1==2)
         ref.model=media->graphics[Q3N_G_BLUE_PROX_MINE];
     qa_vec3 direction=missile_direction(&s->pos);
     if(grapple) { ref.axis[0]=direction; return body(f,source,entity,imports,&ref,error); }
     if(s->pos.type!=0) direction_axis(direction,f->time/4,ref.axis);
-    else if(f->source.product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX) q3n_angles_axis(entity->lerp_angles,ref.axis);
+    else if(product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX) q3n_angles_axis(entity->lerp_angles,ref.axis);
     else direction_axis(direction,s->time,ref.axis);
-    return imports->powerups(imports->context,f,source,entity,&ref,0,error);
+    return powerups(f,source,entity,imports,&ref,0,error);
 }
-static bool team(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
-    const q3n_packet_options *options,const q3n_packet_imports *imports,qa_error *error) {
-    const qa_q3_entity *s=&source->state; const q3n_media_view *media=q3n_media_read(f->media);
+static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const q3n_packet_options *options,const packet_imports *imports,qa_error *error) {
+    const qa_q3_entity *s=source->state; const q3n_media_view *media=q3n_media_read(f->media);
     qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL,.origin=entity->lerp_origin,.lighting_origin=entity->lerp_origin};
-    q3n_angles_axis(vector(s->angles),ref.axis); int32_t game_type=f->source.game_type;
-    if(game_type==4 || (f->source.product==QA_Q3_TEAM_ARENA && game_type==5)) {
+    q3n_angles_axis(vector(s->angles),ref.axis); int32_t game_type=q3n_frame_game_type(f);
+    if(game_type==4 || (q3n_frame_product(f)==QA_Q3_TEAM_ARENA && game_type==5)) {
         ref.model=media->graphics[s->modelindex==1 ? Q3N_G_RED_FLAG_BASE : s->modelindex==2 ? Q3N_G_BLUE_FLAG_BASE : Q3N_G_NEUTRAL_FLAG_BASE];
         return body(f,source,entity,imports,&ref,error);
     }
-    if(f->source.product!=QA_Q3_TEAM_ARENA) return true;
+    if(q3n_frame_product(f)!=QA_Q3_TEAM_ARENA) return true;
     if(game_type==7) {
         ref.model=media->graphics[s->modelindex==1 || s->modelindex==2 ? Q3N_G_HARVESTER : Q3N_G_HARVESTER_NEUTRAL];
         ref.custom_skin=s->modelindex==1 ? media->graphics[Q3N_G_HARVESTER_RED_SKIN] : s->modelindex==2 ? media->graphics[Q3N_G_HARVESTER_BLUE_SKIN] : 0;
@@ -201,7 +248,7 @@ static bool team(const q3n_frame *f,const qa_application_native_q3_entity *sourc
     if(!body(f,source,entity,imports,&ref,error)) return false;
     if(elapsed>threshold) {
         if(!entity->muzzle_flash_time) {
-            if(!qa_q3_presentation_sound(f->presentation,media->sounds[Q3N_S_OBELISK_RESPAWN],&entity->lerp_origin,1023,5,false,error)) return false;
+            if(!qa_q3_presentation_sound(f->presentation,media->sounds[Q3N_S_OBELISK_RESPAWN],&entity->lerp_origin,1023,5,false,error) || !current(f,source,error)) return false;
             entity->muzzle_flash_time=1;
         }
         float spin=divide(mul(mul(16,(float)acos((double)add(1,-amount))),180),3.14159265358979323846f);
@@ -211,21 +258,10 @@ static bool team(const q3n_frame *f,const qa_application_native_q3_entity *sourc
     }
     return true;
 }
-bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
-    const q3n_packet_options *options,const q3n_packet_imports *imports,qa_error *error) {
-    const qa_q3_entity *s=&source->state; const q3n_media_view *media=q3n_media_read(f->media);
-    uint32_t physical;
-    if(!media || !imports || !imports->rand || !imports->player || !imports->trail || !imports->powerups ||
-        !qa_application_native_q3_presentation_current(f->application,&f->source) || f->time!=f->source.source_time_ms ||
-        !qa_actor_id_equal(entity->actor,source->binding.actor) || !entity->valid || !source->present ||
-        !qa_q3_source_actor_slot(f->source.source_game,source->binding.actor,&physical,error) || physical!=entity->physical) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native packet lacks its actual qualified source and child consumers"); return false;
-    }
-    if(s->eType>=13) return true;
-    qa_q3_trajectory pos=s->pos;
-    if(!options->smooth_clients && s->number<64) pos.type=1;
-    if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||
-        !q3n_trajectory(&s->apos,f->time,&entity->lerp_angles,error) || !effects(f,source,entity,error)) return false;
+static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
+    const q3n_packet_options *options,const packet_imports *imports,qa_error *error) {
+    const qa_q3_entity *s=source->state; const q3n_media_view *media=q3n_media_read(f->media);
+    if(!effects(f,source,entity,error)) return false;
     qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL};
     switch(s->eType) {
     case 8: case 9: case 10: return true;
@@ -234,9 +270,9 @@ bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity 
         if(!range(s->modelindex,256,"game model",error)) return false;
         ref.model=media->game_models[s->modelindex]; ref.frame=ref.old_frame=s->frame;
         ref.origin=ref.old_origin=entity->lerp_origin; q3n_angles_axis(entity->lerp_angles,ref.axis);
-        if(f->has_local_player && s->number==f->local_player.clientNum) ref.flags|=2;
+        if(q3n_frame_snapshot_player(f) && s->number==q3n_frame_snapshot_player(f)->clientNum) ref.flags|=2;
         return body(f,source,entity,imports,&ref,error);
-    case 1: return imports->player(imports->context,f,source,entity,error);
+    case 1: return player(f,source,entity,imports,error);
     case 2: return item(f,source,entity,options,imports,error);
     case 3: return missile(f,source,entity,imports,false,error);
     case 4:
@@ -260,8 +296,10 @@ bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity 
     }
     case 7: {
         if(!s->clientNum || f->time<entity->misc_time) return true;
-        if(!range(s->eventParm,256,"sound",error) || !qa_q3_presentation_sound(f->presentation,media->game_sounds[s->eventParm],NULL,s->number,4,false,error)) return false;
-        float random=divide((float)((uint32_t)imports->rand(imports->context)&32767u),32767), crandom=mul(2,add(random,-0.5f));
+        if(!range(s->eventParm,256,"sound",error) || !qa_q3_presentation_sound(f->presentation,media->game_sounds[s->eventParm],NULL,s->number,4,false,error) || !current(f,source,error)) return false;
+        int32_t random_word=random_value(imports);
+        if(!current(f,source,error)) return false;
+        float random=divide((float)((uint32_t)random_word&32767u),32767), crandom=mul(2,add(random,-0.5f));
         entity->misc_time=integer(add((float)sum(f->time,word((uint32_t)s->frame*100u)),mul((float)word((uint32_t)s->clientNum*100u),crandom)));
         return true;
     }
@@ -269,4 +307,139 @@ bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity 
     case 12: return team(f,source,entity,options,imports,error);
     default: qa_error_set(error,QA_ERROR_FORMAT,0,"Bad native Q3 entity type: %d",s->eType); return false;
     }
+}
+
+bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
+    const q3n_packet_options *options,const q3n_packet_imports *imports,qa_error *error) {
+    uint32_t physical;
+    if(!f || f->remote || !source || !entity || !options || !q3n_media_read(f->media) ||
+        !imports || !imports->rand || !imports->player || !imports->trail || !imports->powerups ||
+        !qa_application_native_q3_presentation_current(f->application,&f->source) || f->time!=f->source.source_time_ms ||
+        !qa_actor_id_equal(entity->actor,source->binding.actor) || !entity->valid || !source->present ||
+        !qa_q3_source_actor_slot(f->source.source_game,source->binding.actor,&physical,error) || physical!=entity->physical) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native packet lacks its actual qualified source and child consumers"); return false;
+    }
+    if(source->state.eType>=13) return true;
+    qa_q3_trajectory pos=source->state.pos;
+    if(!options->smooth_clients && source->state.number<64) pos.type=1;
+    if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||
+        !q3n_trajectory(&source->state.apos,f->time,&entity->lerp_angles,error)) return false;
+    packet_source observed={.state=&source->state,.local=source};
+    packet_imports callbacks={.local=imports};
+    return packet_entity(f,&observed,entity,options,&callbacks,error);
+}
+
+bool q3n_packet_sound_position(const q3n_frame *f,const qa_application_native_q3_entity *source,
+    const q3n_entity *entity,qa_error *error) {
+    if(!f || f->remote || !source || !entity || !q3n_media_read(f->media)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native sound position lacks its actual local source"); return false;
+    }
+    packet_source observed={.state=&source->state,.local=source};
+    return current(f,&observed,error) && sound_position(f,&observed,entity,error);
+}
+
+static bool remote_valid(const q3n_frame *f,const q3n_remote_entity *source,qa_error *error) {
+    if(f && f->remote && source && source->frame==f->remote && source->current &&
+        source->presentation && q3n_frame_current(f) && q3n_remote_entity_current(source) &&
+        q3n_media_assets(f->media)==f->assets && q3n_media_remote_current(f->media,&f->remote->source,error)) return true;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote packet lacks its actual reached entity receipt"); return false;
+}
+static float lerp_angle(float from,float to,float fraction) {
+    float delta=add(to,-from);
+    if(delta>180) to=add(to,-360);
+    if(delta< -180) to=add(to,360);
+    return add(from,mul(fraction,add(to,-from)));
+}
+bool q3n_packet_remote_predict(const q3n_frame *f,qa_error *error) {
+    if(!f || !f->remote || !q3n_frame_current(f) || !f->remote->predicted_player ||
+        !f->remote->predicted_state || !f->remote->predicted_entity ||
+        f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction needs its retained CG player-state owner"); return false;
+    }
+    qa_q3_player *p=f->remote->predicted_player;
+    qa_q3_entity *s=f->remote->predicted_state;
+    s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40 ? 10 : 1;
+    s->pos.type=1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
+    s->apos.type=1; memcpy(s->apos.base,p->viewangles,sizeof(s->apos.base)); s->angles2[1]=(float)p->movementDir;
+    s->legsAnim=p->legsAnim; s->torsoAnim=p->torsoAnim; s->clientNum=p->clientNum;
+    s->eFlags=p->stats[0]<=0 ? p->eFlags|1 : p->eFlags&~1;
+    if(p->externalEvent) { s->event=p->externalEvent; s->eventParm=p->externalEventParm; }
+    else if(p->entityEventSequence<p->eventSequence) {
+        int32_t oldest=difference(p->eventSequence,2);
+        if(p->entityEventSequence<oldest) p->entityEventSequence=oldest;
+        uint32_t sequence=(uint32_t)p->entityEventSequence;
+        s->event=p->events[sequence&1u]|(int32_t)((sequence&3u)<<8);
+        s->eventParm=p->eventParms[sequence&1u]; p->entityEventSequence=word(sequence+1u);
+    }
+    s->weapon=p->weapon; s->groundEntityNum=p->groundEntityNum; s->powerups=0;
+    for(unsigned i=0;i<16;++i) if(p->powerups[i]) s->powerups|=(int32_t)(1u<<i);
+    s->loopSound=p->loopSound; s->generic1=p->generic1;
+    f->remote->predicted_entity->loop_stopped=false;
+    return q3n_frame_current(f) || (qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction lost its CG owner"),false);
+}
+bool q3n_packet_remote_lerp(const q3n_frame *f,const q3n_remote_entity *source,
+    const q3n_packet_options *options,qa_error *error) {
+    if(!options || !remote_valid(f,source,error) || (!source->predicted && !source->published)) return false;
+    const qa_q3_snapshot *snapshot=f->remote->snapshots.snapshot;
+    const qa_q3_snapshot *next=f->remote->snapshots.next_snapshot;
+    if(!snapshot) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote entity position needs its actual snapshot"); return false; }
+    const qa_q3_entity *s=source->current;
+    q3n_entity *entity=source->presentation;
+    if(!options->smooth_clients && s->number<64) {
+        if(!source->next) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote smoothing needs its actual private next state"); return false;
+        }
+        if(!q3n_remote_frame_entity_trajectory(source,s->pos.type,source->next->pos.type,1,1,error) ||
+            !remote_valid(f,source,error)) return false;
+    }
+    qa_q3_trajectory pos=s->pos;
+    if(source->interpolate && (pos.type==1 || (pos.type==3 && s->number<64))) {
+        if(!next || !source->next) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"CG_InterpolateEntityPosition: cg.nextSnap == NULL"); return false;
+        }
+        int32_t delta=difference(next->server_time,snapshot->server_time);
+        float fraction=delta ? divide((float)difference(f->time,snapshot->server_time),(float)delta) : 0;
+        qa_q3_trajectory next_pos=source->next->pos;
+        qa_vec3 a,b;
+        if(!q3n_trajectory(&pos,snapshot->server_time,&a,error) ||
+            !q3n_trajectory(&next_pos,next->server_time,&b,error)) return false;
+        entity->lerp_origin=plus(a,scale(plus(b,scale(a,-1)),fraction));
+        if(!q3n_trajectory(&s->apos,snapshot->server_time,&a,error) ||
+            !q3n_trajectory(&source->next->apos,next->server_time,&b,error)) return false;
+        entity->lerp_angles=qa_v3(lerp_angle(a.x,b.x,fraction),lerp_angle(a.y,b.y,fraction),lerp_angle(a.z,b.z,fraction));
+        return true;
+    }
+    if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||
+        !q3n_trajectory(&s->apos,f->time,&entity->lerp_angles,error)) return false;
+    if(!source->predicted && s->groundEntityNum>0 && s->groundEntityNum<1022) {
+        q3n_remote_entity mover;
+        if(!q3n_remote_frame_entity(f->remote,(uint32_t)s->groundEntityNum,&mover,error)) return false;
+        if(mover.current->eType==4) {
+            qa_vec3 previous,position,discarded;
+            if(!q3n_trajectory(&mover.current->pos,snapshot->server_time,&previous,error) ||
+                !q3n_trajectory(&mover.current->apos,snapshot->server_time,&discarded,error) ||
+                !q3n_trajectory(&mover.current->pos,f->time,&position,error) ||
+                !q3n_trajectory(&mover.current->apos,f->time,&discarded,error)) return false;
+            entity->lerp_origin=plus(entity->lerp_origin,plus(position,scale(previous,-1)));
+        }
+    }
+    return true;
+}
+bool q3n_packet_remote_entity(const q3n_frame *f,const q3n_remote_entity *source,
+    const q3n_packet_options *options,const q3n_packet_remote_imports *imports,qa_error *error) {
+    if(!remote_valid(f,source,error) || !options || !q3n_media_read(f->media) ||
+        (!source->predicted && (!source->published || !source->current_valid)) || !imports || !imports->rand ||
+        !imports->player || !imports->trail || !imports->powerups) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote packet lacks its actual row and child consumers"); return false;
+    }
+    if(source->current->eType>=13) return true;
+    if(!q3n_packet_remote_lerp(f,source,options,error)) return false;
+    packet_source observed={.state=source->current,.remote=source};
+    packet_imports callbacks={.remote=imports};
+    return packet_entity(f,&observed,source->presentation,options,&callbacks,error);
+}
+bool q3n_packet_remote_sound_position(const q3n_frame *f,const q3n_remote_entity *source,qa_error *error) {
+    if(!remote_valid(f,source,error) || (!source->published && !source->predicted) || !q3n_media_read(f->media)) return false;
+    packet_source observed={.state=source->current,.remote=source};
+    return sound_position(f,&observed,source->presentation,error);
 }

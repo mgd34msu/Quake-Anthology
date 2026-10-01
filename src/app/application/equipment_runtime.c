@@ -347,7 +347,9 @@ bool application_equipment_runtime_source_at(const application_equipment_runtime
 {
     if (!runtime || runtime->closing || !out || index >= runtime->count || !runtime->sources[index].descriptor)
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source index is outside its actual roster");
-    *out = runtime->sources[index].view; return true;
+    *out = runtime->sources[index].view;
+    out->weapon_item = runtime->sources[index].source.weapon_item;
+    return true;
 }
 bool application_equipment_runtime_actor_released(application_equipment_runtime *runtime,
     qa_actor_record record, qa_error *error)
@@ -413,9 +415,9 @@ bool application_equipment_runtime_destroy(application_equipment_runtime *runtim
 
 static bool runtime_header(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','E','R','T'}; uint32_t version = 2;
+    uint8_t magic[4] = {'Q','E','R','T'}; uint32_t version = 3;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QERT", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 2;
+        qa_source_save_u32(io, &version) && version == 3;
 }
 static bool saved_blob(qa_source_save_io *io, qa_bytes *bytes)
 {
@@ -427,6 +429,7 @@ static bool saved_blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 typedef struct saved_source {
     qa_actor_owner selected, owner;
+    qa_item_id weapon_item;
     qa_string_id service_owner;
     qa_sha256_digest descriptor, image;
     uint64_t attack_sequence;
@@ -441,6 +444,7 @@ static bool source_fields(qa_source_save_io *io, saved_source *saved)
         !qa_source_save_bool(io, &saved->gear)) return false;
     if (!saved->gear) return true;
     return qa_source_save_string(io, &saved->owner) && saved->owner &&
+        qa_source_save_string(io, &saved->weapon_item) && saved->weapon_item &&
         qa_source_save_string(io, &saved->service_owner) && saved->service_owner &&
         qa_source_save_bytes(io, saved->image.bytes, sizeof(saved->image.bytes)) &&
         qa_source_save_u64(io, &saved->attack_sequence) &&
@@ -461,6 +465,10 @@ static bool decode_roster(application_equipment_runtime *runtime, qa_bytes bytes
         equipment_source *source = &runtime->sources[i];
         okay = source_fields(&io, &rows[i]) && rows[i].selected == source->view.selected_owner &&
             qa_sha256_equal(&rows[i].descriptor, &source->view.descriptor->identity);
+        if (okay && rows[i].gear) {
+            const char *item = qa_strings_cstr(qa_session_strings(runtime->options.services.session), rows[i].weapon_item);
+            okay = item && !strcmp(item, "q3:weapon/grapple");
+        }
         for (size_t j = 0; okay && j < i; ++j)
             if (rows[i].selected == rows[j].selected || (rows[i].gear && rows[j].gear &&
                 (rows[i].owner == rows[j].owner || rows[i].service_owner == rows[j].service_owner))) okay = false;
@@ -565,6 +573,9 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
         source->artifact = artifact->resource; source->view.artifact = artifact->resource; qa_resource_retain(artifact->resource);
         source->view.acquisition = &source->acquisition; source->view.content = artifact->view;
         source->view.definition = application_q3_grapple_profile_definition(profile);
+        qa_item_id weapon_item = saved ? saved->weapon_item : 0;
+        if (!saved) okay = qa_builtin_resource(&runtime->options.services,
+            "q3:weapon/grapple", &weapon_item, error);
         source->component = (qa_component){.owner = source->view.gear_owner,
             .clock = runtime->options.world_source->component.clock, .state = source, .prepare_frame = prepare_frame};
         application_q3_gear_options options = {.profile = profile,
@@ -579,8 +590,9 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
             .services = runtime->options.services, .context = source, .current = source_current,
             .target_count = target_count, .target = target, .damage = damage, .velocity = velocity,
             .configstring = configstring};
-        okay = application_q3_gear_create(&options, saved != NULL, &source->view.gear, error);
+        if (okay) okay = application_q3_gear_create(&options, saved != NULL, &source->view.gear, error);
         if (okay) source->source = (qa_equipment_source){.owner = source->view.selected_owner,
+            .weapon_item = weapon_item,
             .context = source, .current = source_current, .admit = admit, .frame = command_frame,
             .fire = fire, .release = release, .pull = pull, .saved_actor = saved_actor};
         if (okay && saved) {
@@ -624,6 +636,7 @@ static bool source_capture(void *context, qa_buffer *out, qa_error *error)
         if (okay && saved.gear) {
             okay = source->attached && application_q3_gear_checkpoint(source->view.gear, &executor, error);
             saved.owner = source->view.gear_owner; saved.service_owner = source->view.service_owner;
+            saved.weapon_item = source->source.weapon_item;
             saved.image = *qa_qvm_image_digest(source->view.gear->image); saved.attack_sequence = source->attack_sequence;
             saved.milliseconds = source->milliseconds; saved.frame = source->frame; saved.prepared = source->prepared;
             saved.entities = (qa_bytes){source->view.gear->entities.data, source->view.gear->entities.size};
@@ -684,6 +697,7 @@ static bool source_restore(void *context, qa_bytes bytes, qa_error *error)
         okay = saved[i].gear == (gear != NULL);
         if (!okay || !gear) continue;
         okay = source->attached && source->view.gear_owner == saved[i].owner &&
+            source->source.weapon_item == saved[i].weapon_item &&
             source->view.service_owner == saved[i].service_owner &&
             qa_sha256_equal(&saved[i].image, qa_qvm_image_digest(gear->image)) &&
             source->attack_sequence == saved[i].attack_sequence &&

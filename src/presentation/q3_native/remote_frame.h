@@ -47,6 +47,8 @@ typedef struct q3n_remote_source_view {
 
 bool q3n_remote_source_create(const q3n_remote_source_options *, q3n_remote_source **, qa_error *);
 bool q3n_remote_source_destroy(q3n_remote_source *, qa_error *);
+qa_native_q3_remote_client_service *q3n_remote_source_client(const q3n_remote_source *);
+bool q3n_remote_source_idle(const q3n_remote_source *);
 bool q3n_remote_source_read(const q3n_remote_source *, q3n_remote_source_view *, qa_error *);
 bool q3n_remote_source_current(const q3n_remote_source_view *);
 bool q3n_remote_source_configstring(const q3n_remote_source *, uint32_t,
@@ -103,6 +105,7 @@ typedef struct q3n_remote_frame_options {
     /* The actual separate predictedPlayerEntity continuation is retained by
      * CGAME. Packet presentation alone projects PS into this private ES. */
     qa_q3_entity *predicted_state;
+    qa_q3_entity *predicted_next_state;
     q3n_entity *predicted_entity;
     /* CGAME's private prediction copy retains BG event conversion across
      * stereo/draw calls. It is distinct from prediction.player and raw PS. */
@@ -115,6 +118,9 @@ typedef struct q3n_remote_frame_options {
     bool (*entity)(void *, const q3n_remote_frame *, uint32_t, q3n_remote_entity *, qa_error *);
     bool (*entity_event)(void *, const q3n_remote_frame *, uint32_t,
         int32_t event, int32_t parameter, qa_error *);
+    bool (*entity_trajectory)(void *, const q3n_remote_entity *,
+        int32_t current_before, int32_t next_before, int32_t current_after, int32_t next_after, qa_error *);
+    bool (*entity_weapon)(void *, const q3n_remote_entity *, int32_t before, int32_t after, qa_error *);
     bool (*prediction_error_clear)(void *, const q3n_remote_frame *, qa_error *);
     /* The collision producer proves its own raw entity-number witness. No
      * decoded ES number is converted into an invented canonical actor. */
@@ -126,6 +132,7 @@ struct q3n_remote_frame {
     q3n_remote_snapshot_receipt snapshots;
     q3n_remote_prediction_receipt prediction;
     qa_q3_entity *predicted_state;
+    qa_q3_entity *predicted_next_state;
     q3n_entity *predicted_entity;
     qa_q3_player *predicted_player;
     const qa_q3_player *transition_player, *previous_player;
@@ -136,6 +143,9 @@ struct q3n_remote_frame {
     bool (*entity)(void *, const q3n_remote_frame *, uint32_t, q3n_remote_entity *, qa_error *);
     bool (*entity_event)(void *, const q3n_remote_frame *, uint32_t,
         int32_t event, int32_t parameter, qa_error *);
+    bool (*entity_trajectory)(void *, const q3n_remote_entity *,
+        int32_t current_before, int32_t next_before, int32_t current_after, int32_t next_after, qa_error *);
+    bool (*entity_weapon)(void *, const q3n_remote_entity *, int32_t before, int32_t after, qa_error *);
     bool (*prediction_error_clear)(void *, const q3n_remote_frame *, qa_error *);
     bool (*trace_number)(void *, const q3n_remote_frame *, const qa_trace_result *, int32_t *, qa_error *);
 };
@@ -146,6 +156,11 @@ bool q3n_remote_frame_predicted(const q3n_remote_frame *, q3n_remote_entity *, q
 bool q3n_remote_entity_current(const q3n_remote_entity *);
 bool q3n_remote_frame_entity_event(const q3n_remote_frame *, uint32_t,
     int32_t event, int32_t parameter, qa_error *);
+/* Expected values qualify mutation of the actual CGAME cache owner. These
+ * stores never author Network snapshots, predictor PS or GAME state. */
+bool q3n_remote_frame_entity_trajectory(const q3n_remote_entity *,
+    int32_t current_before, int32_t next_before, int32_t current_after, int32_t next_after, qa_error *);
+bool q3n_remote_frame_entity_weapon(const q3n_remote_entity *, int32_t before, int32_t after, qa_error *);
 bool q3n_remote_frame_prediction_error_clear(const q3n_remote_frame *, qa_error *);
 bool q3n_remote_frame_trace_number(const q3n_remote_frame *, const qa_trace_result *, int32_t *, qa_error *);
 

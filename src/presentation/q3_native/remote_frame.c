@@ -112,6 +112,10 @@ bool q3n_remote_source_destroy(q3n_remote_source *s, qa_error *e)
         return fail(e, QA_ERROR_ARGUMENT, "Remote source commands and retained Network callbacks must unwind before retirement");
     free(s); return true;
 }
+qa_native_q3_remote_client_service *q3n_remote_source_client(const q3n_remote_source *s)
+{ return s ? s->options.client : NULL; }
+bool q3n_remote_source_idle(const q3n_remote_source *s)
+{ return !s || !s->busy; }
 bool q3n_remote_source_read(const q3n_remote_source *s, q3n_remote_source_view *out, qa_error *e)
 {
     if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing remote source receipt output");
@@ -281,7 +285,7 @@ bool q3n_remote_source_restore(const q3n_remote_source_options *o, qa_bytes byte
 static bool frame_shape(const q3n_remote_frame *f)
 {
     if (!f || !f->source.owner || !f->client || !f->context || !f->current || !f->entity ||
-        !f->entity_event || !f->trace_number ||
+        !f->entity_event || !f->entity_trajectory || !f->entity_weapon || !f->trace_number ||
         (f->snapshots.stage != Q3N_REMOTE_INITIALIZATION && f->snapshots.stage != Q3N_REMOTE_SNAPSHOT_CALLBACK &&
             f->snapshots.stage != Q3N_REMOTE_PREDICTION_CALLBACK && f->snapshots.stage != Q3N_REMOTE_COMPLETED_FRAME) ||
         (f->snapshots.stage == Q3N_REMOTE_SNAPSHOT_CALLBACK && !f->snapshots.callback_scope) ||
@@ -290,6 +294,8 @@ static bool frame_shape(const q3n_remote_frame *f)
         f->snapshots.command_sequence != f->source.reached_command ||
         (f->snapshots.next_snapshot && !f->snapshots.snapshot) ||
         (f->predicted_state == NULL) != (f->predicted_entity == NULL) ||
+        (f->predicted_next_state == NULL) != (f->predicted_entity == NULL) ||
+        (f->predicted_state && f->predicted_state == f->predicted_next_state) ||
         (f->predicted_player == NULL) != (f->predicted_entity == NULL) ||
         (f->transition_player == NULL) != (f->previous_player == NULL)) return false;
     if (f->snapshots.stage == Q3N_REMOTE_INITIALIZATION) {
@@ -335,11 +341,13 @@ bool q3n_remote_frame_read(const q3n_remote_frame_options *o, q3n_remote_frame *
     if (!o || !out || !o->source.owner) return fail(e, QA_ERROR_ARGUMENT, "Missing actual remote frame receipt");
     q3n_remote_frame f = {.client = o->source.owner->options.client, .source = o->source,
         .snapshots = o->snapshots, .prediction = o->prediction, .predicted_state = o->predicted_state,
+        .predicted_next_state = o->predicted_next_state,
         .predicted_entity = o->predicted_entity, .predicted_player = o->predicted_player,
         .transition_player = o->transition_player,
         .previous_player = o->previous_player, .initialization_scope = o->initialization_scope,
         .transition_scope = o->transition_scope,
         .context = o->context, .current = o->current, .entity = o->entity, .entity_event = o->entity_event,
+        .entity_trajectory = o->entity_trajectory, .entity_weapon = o->entity_weapon,
         .prediction_error_clear = o->prediction_error_clear, .trace_number = o->trace_number};
     if (!q3n_remote_frame_current(&f)) return fail(e, QA_ERROR_ARGUMENT, "Remote frame lost its real snapshot/prediction or entered callback receipt");
     *out = f; return true;
@@ -364,7 +372,7 @@ bool q3n_remote_frame_predicted(const q3n_remote_frame *f, q3n_remote_entity *ou
     if (!out || !q3n_remote_frame_current(f) || !f->predicted_state || !f->predicted_entity ||
         f->predicted_state->number < 0 || f->predicted_state->number >= QA_Q3_ENTITY_NONE)
         return fail(e, QA_ERROR_ARGUMENT, "Predicted centity requires its actual separate presentation owner");
-    *out = (q3n_remote_entity){.frame = f, .current = f->predicted_state,
+    *out = (q3n_remote_entity){.frame = f, .current = f->predicted_state, .next = f->predicted_next_state,
         .presentation = f->predicted_entity, .number = (uint32_t)f->predicted_state->number,
         .current_valid = f->predicted_entity->valid, .predicted = true}; return true;
 }
@@ -398,6 +406,26 @@ bool q3n_remote_frame_entity_event(const q3n_remote_frame *f, uint32_t number,
         return fail(e, QA_ERROR_ARGUMENT, "Remote player event requires its actual published private centity");
     return f->entity_event(f->context, f, number, event, parameter, e) &&
         (q3n_remote_frame_current(f) || fail(e, QA_ERROR_ARGUMENT, "Remote event store retired its actual cache receipt"));
+}
+bool q3n_remote_frame_entity_trajectory(const q3n_remote_entity *row,
+    int32_t current_before, int32_t next_before, int32_t current_after, int32_t next_after, qa_error *e)
+{
+    if (!q3n_remote_entity_current(row) || (!row->predicted && !row->published) || !row->next ||
+        row->current->pos.type != current_before || row->next->pos.type != next_before)
+        return fail(e, QA_ERROR_ARGUMENT, "Remote trajectory store lost its actual private row or expected values");
+    const q3n_remote_frame *f = row->frame;
+    return f->entity_trajectory(f->context, row, current_before, next_before, current_after, next_after, e) &&
+        ((q3n_remote_entity_current(row) && row->current->pos.type == current_after && row->next->pos.type == next_after) ||
+            fail(e, QA_ERROR_ARGUMENT, "Remote trajectory store differs from its actual private cache result"));
+}
+bool q3n_remote_frame_entity_weapon(const q3n_remote_entity *row, int32_t before, int32_t after, qa_error *e)
+{
+    if (!q3n_remote_entity_current(row) || (!row->predicted && !row->published) || row->current->weapon != before)
+        return fail(e, QA_ERROR_ARGUMENT, "Remote weapon store lost its actual private row or expected value");
+    const q3n_remote_frame *f = row->frame;
+    return f->entity_weapon(f->context, row, before, after, e) &&
+        ((q3n_remote_entity_current(row) && row->current->weapon == after) ||
+            fail(e, QA_ERROR_ARGUMENT, "Remote weapon store differs from its actual private cache result"));
 }
 bool q3n_remote_frame_prediction_error_clear(const q3n_remote_frame *f, qa_error *e)
 {

@@ -69,6 +69,11 @@ bool frontend_remote_snapshots_callback_entity(const frontend_remote_snapshots *
  * override. Network snapshot storage and the movement predictor are absent. */
 bool frontend_remote_snapshots_entity_write(frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
     uint32_t number, frontend_remote_centity **, qa_error *);
+bool frontend_remote_snapshots_entity_trajectory(frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
+    uint32_t number, int32_t current_before, int32_t next_before,
+    int32_t current_after, int32_t next_after, qa_error *);
+bool frontend_remote_snapshots_entity_weapon(frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
+    uint32_t number, int32_t before, int32_t after, qa_error *);
 bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *,
     const frontend_network_prediction_source *, const qa_q3_prediction_scene_entity_view *, int32_t *, qa_error *);
 bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *, qa_error *);
