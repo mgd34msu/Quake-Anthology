@@ -14,7 +14,11 @@ static void place_string(int32_t value,char out[64])
 static bool client_score(q3n_hud_draw *d,float y,const q3n_command_score *score,const float color[4],float fade,bool large,bool *local)
 {
     const q3n_command_state *c=q3n_server_commands_state(d->commands);
-    if(score->client<0 || score->client>=c->max_clients)return q3ne_fail(d->error,QA_ERROR_FORMAT,"Scoreboard source client is outside actual source array");
+    if(score->client<0 || score->client>=c->max_clients) {
+        char text[64]; snprintf(text,sizeof(text),"Bad score->client: %i\n",score->client);
+        d->player->options.print(d->player->options.context,text);
+        return q3nh_current(d->owner,d->frame,d->error);
+    }
     const q3n_client_info *ci=q3n_clients_get(d->frame->clients,(uint32_t)score->client); if(!ci)return false;
     const q3n_media_view *m=q3n_media_read(d->frame->media); float icon_y=large?y-8:y,icon_size=large?32:16; char text[256];
     if(ci->dynamic.powerups&(1<<9)) { if(!q3nh_flag(d,80,icon_y,icon_size,icon_size,0,false))return false; }
@@ -34,7 +38,7 @@ static bool client_score(q3n_hud_draw *d,float y,const q3n_command_score *score,
     if(score->ping==-1)snprintf(text,sizeof(text)," connecting    %s",ci->name);
     else if(ci->team==3)snprintf(text,sizeof(text)," SPECT %3i %4i %s",score->ping,score->time,ci->name);
     else snprintf(text,sizeof(text),"%5i %4i %4i %s",score->score,score->ping,score->time,ci->name);
-    const qa_q3_player *p=&d->frame->local_player;
+    const qa_q3_player *p=q3n_frame_snapshot_player(d->frame);
     if(score->client==p->clientNum) {
         *local=true; int32_t rank=p->persistant[3]==3 || c->game_type>=3?-1:p->persistant[2]&~0x4000;
         float highlight[4]={rank==0?0:0.7f,rank==0 || rank==1?0:0.7f,rank==1 || rank==2?0:0.7f,q3ne_mul(fade,0.7f)};
@@ -60,13 +64,13 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
 {
     q3nh_anchor(d,320,240);
     q3n_hud_state *s=&d->owner->state; const q3n_command_state *c=q3n_server_commands_state(d->commands);
-    const qa_q3_player *p=&d->frame->local_player; *showing=false;
-    if(d->settings->paused || (c->game_type==2 && p->pmType==5)) {
+    const qa_q3_player *p=q3n_frame_snapshot_player(d->frame),*predicted=q3n_frame_predicted_player(d->frame); *showing=false;
+    if(d->settings->paused || (c->game_type==2 && predicted->pmType==5)) {
         s->deferred_player_loading=0; s->scoreboard_first_time=true; return true;
     }
     if(c->warmup && !s->show_scores)return true;
     float color[4]={1,1,1,1};
-    if(!s->show_scores && p->pmType!=3 && p->pmType!=5 && !q3nh_fade(d->frame->time,s->score_fade_time,200,color)) {
+    if(!s->show_scores && predicted->pmType!=3 && predicted->pmType!=5 && !q3nh_fade(d->frame->time,s->score_fade_time,200,color)) {
         s->deferred_player_loading=0; s->scoreboard_first_time=true; q3n_events_clear_killer(d->frame->events); return true;
     }
     if(d->owner->product==QA_Q3_TEAM_ARENA) {
@@ -136,7 +140,7 @@ bool q3nh_tourney(q3n_hud_draw *d)
         if(!o->options.client_command(o->options.context,d->frame,"score",d->error) || !q3nh_current(o,d->frame,d->error))return false;
     }
     const float black[4]={0,0,0,1}; const char *motd; uint64_t revision;
-    if(!q3nh_fill(d,0,0,640,480,black) || !qa_native_q3_wire_reader_configstring(d->frame->reader,
+    if(!q3nh_fill(d,0,0,640,480,black) || !q3n_frame_configstring(d->frame,
        4,&motd,&revision,d->error) || !giant(d,8,*motd?motd:"Scoreboard"))return false;
     int32_t seconds=d->frame->time/1000,minutes=seconds/60; seconds%=60; char text[64];
     snprintf(text,sizeof(text),"%i:%i%i",minutes,seconds/10,seconds%10); if(!giant(d,64,text))return false;

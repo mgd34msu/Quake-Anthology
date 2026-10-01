@@ -5,9 +5,11 @@ const float q3nh_white[4]={1,1,1,1},q3nh_normal[4]={1,0.69f,0,1},q3nh_red[4]={1,
 static const float colors[8][4]={{0,0,0,1},{1,0,0,1},{0,1,0,1},{1,1,0,1},{0,0,1,1},{0,1,1,1},{1,0,1,1},{1,1,1,1}};
 bool q3nh_current(q3n_hud *o,const q3n_frame *f,qa_error *e)
 {
-    return o && f && o->options.application==f->application && o->source_game==f->source.source_game &&
-        o->options.assets==f->assets && o->options.seat==f->seat && o->product==f->source.product &&
-        f->has_local_player && f->time==f->source.source_time_ms && q3ne_current(f,e)?true:
+    return o && f && o->options.application==f->application &&
+        o->options.assets==f->assets && o->options.seat==f->seat && o->product==q3n_frame_product(f) &&
+        q3n_frame_predicted_player(f) && q3n_frame_snapshot_player(f) && (f->remote?o->options.remote_client==f->remote->client:
+            !o->options.remote_client && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
+        q3ne_current(f,e)?true:
         q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 HUD requires the actual completed GAME and physical viewing seat");
 }
 size_t q3nh_strlen(const char *s)
@@ -152,7 +154,7 @@ bool q3nh_flag(q3n_hud_draw *d,float x,float y,float w,float h,int32_t team,bool
         return q3nh_model(d,x,y,w,h,m->graphics[team==1?Q3N_G_RED_FLAG:team==2?Q3N_G_BLUE_FLAG:Q3N_G_NEUTRAL_FLAG],0,icon_origin(b,0.5f),angles);
     }
     if(d->settings->draw_icons) {
-        size_t count; const qa_q3_item *items=qa_q3_items(d->frame->source.product,&count);
+        size_t count; const qa_q3_item *items=qa_q3_items(q3n_frame_product(d->frame),&count);
         for(size_t i=1;i<count;++i)if(items[i].kind==QA_Q3_ITEM_TEAM && items[i].tag==(int32_t)powerup)
             return q3nh_picture(d,x,y,w,h,m->items[i].icon);
     }
@@ -166,10 +168,10 @@ bool q3nh_team_background(q3n_hud_draw *d,float x,float y,float w,float h,float 
     return q3nh_color(d,NULL) && ok;
 }
 bool q3nh_sound(q3n_hud_draw *d,q3n_sound sound,int32_t channel)
-{ return q3ne_sound(d->frame,q3n_media_read(d->frame->media)->sounds[sound],NULL,d->frame->local_player.clientNum,channel,true,d->error); }
+{ return q3ne_sound(d->frame,q3n_media_read(d->frame->media)->sounds[sound],NULL,q3n_frame_predicted_player(d->frame)->clientNum,channel,true,d->error); }
 bool q3nh_location(q3n_hud_draw *d,int32_t index,const char **out)
 {
     if(index<0 || index>=64)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD source location index is invalid");
-    uint64_t revision; return qa_native_q3_wire_reader_configstring(d->frame->reader,
+    uint64_t revision; return q3n_frame_configstring(d->frame,
         608u+(uint32_t)index,out,&revision,d->error);
 }

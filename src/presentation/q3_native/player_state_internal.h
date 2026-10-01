@@ -63,4 +63,28 @@ static inline bool q3nh_handle(const qa_q3_presentation_assets *a,int32_t h,q3p_
 static inline bool q3nh_capture(const qa_q3_presentation_assets *a,bool busy,qa_error *e)
 { return a && !busy && a->capturing && a->busy==1 && !a->codec_busy?true:
     q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 private codec requires its actual asset capture lease"); }
+static inline bool q3nh_remote_basis_fields(qa_source_save_io *io,
+    const qa_native_q3_remote_client_service *client)
+{
+    if(!client)return true;
+    qa_native_q3_remote_client_basis basis;
+    if(!qa_native_q3_remote_client_basis_read(client,&basis,io->error))return false;
+    uint64_t owner=basis.connection.owner,generation=basis.connection.generation,epoch=basis.epoch;
+    uint64_t restart=basis.restart_generation,configuration=basis.configuration_generation;
+    uint64_t receiver=basis.client.receiver,service=basis.client.service_owner,publication=basis.publication_generation;
+    uint32_t slot=basis.connection.slot,physical=basis.physical_client;
+    int32_t message=basis.initial_message,command=basis.initial_command;
+    return qa_source_save_u64(io,&owner) && owner==basis.connection.owner &&
+        qa_source_save_u64(io,&generation) && generation==basis.connection.generation &&
+        qa_source_save_u32(io,&slot) && slot==basis.connection.slot &&
+        qa_source_save_u64(io,&epoch) && epoch==basis.epoch &&
+        qa_source_save_u64(io,&restart) && restart==basis.restart_generation &&
+        qa_source_save_u64(io,&configuration) && configuration==basis.configuration_generation &&
+        qa_source_save_u64(io,&publication) && publication==basis.publication_generation &&
+        qa_source_save_u64(io,&receiver) && receiver==basis.client.receiver &&
+        qa_source_save_u64(io,&service) && service==basis.client.service_owner &&
+        qa_source_save_u32(io,&physical) && physical==basis.physical_client &&
+        qa_source_save_i32(io,&message) && message==basis.initial_message &&
+        qa_source_save_i32(io,&command) && command==basis.initial_command;
+}
 #endif

@@ -3,6 +3,7 @@
 
 #include "events.h"
 #include "qa/application_native_q3_client.h"
+#include "qa/application_native_q3_remote_client.h"
 
 typedef struct q3n_player_state q3n_player_state;
 /* Prepared equipment admission for this actual source frame. Installation of
@@ -16,6 +17,7 @@ typedef struct q3n_player_state_options {
     const qa_application_native_q3_presentation *source;
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
+    qa_native_q3_remote_client_service *remote_client;
     uint32_t seat;
     void *context;
     void (*print)(void *, const char *);
@@ -38,11 +40,24 @@ typedef struct q3n_player_feedback {
 bool q3n_player_state_create(const q3n_player_state_options *, q3n_player_state **, qa_error *);
 /* Pure installed-basis construction during aggregate PERSISTING import. */
 bool q3n_player_state_create_restored(const q3n_player_state_options *, q3n_player_state **, qa_error *);
+/* Pure construction from the retained, received CLIENT service. The outer
+ * remote owner imports its transport and service before private continuation. */
+bool q3n_player_state_create_remote(const q3n_player_state_options *, q3n_player_state **, qa_error *);
 void q3n_player_state_destroy(q3n_player_state *);
 bool q3n_player_state_idle(const q3n_player_state *);
 const q3n_player_feedback *q3n_player_state_feedback(const q3n_player_state *);
 bool q3n_player_state_transition(q3n_player_state *, const q3n_frame *,
     const q3n_player_state_context *, qa_error *);
+/* Entered snapshot/prediction callbacks provide their own genuine current and
+ * previous PS receipts. The CGAME owner retains only event/feedback history. */
+bool q3n_player_state_transition_remote(q3n_player_state *, const q3n_frame *,
+    const qa_q3_player *current, const qa_q3_player *previous,
+    const q3n_player_state_context *, qa_error *);
+bool q3n_player_state_respawn_remote(q3n_player_state *, const q3n_frame *, qa_error *);
+/* The returned child callback contributes this genuine teleport request to
+ * the snapshot owner before prediction. Taking it clears only that request. */
+bool q3n_player_state_remote_teleport_take(q3n_player_state *, bool *, qa_error *);
+bool q3n_player_state_prediction_finish(q3n_player_state *, const q3n_frame *, bool show_miss, qa_error *);
 bool q3n_player_state_changed_events(q3n_player_state *, const q3n_frame *, bool show_miss, qa_error *);
 /* DrawReward owns queue advancement; actual sounds remain backend handles. */
 bool q3n_player_state_reward(q3n_player_state *, const q3n_frame *, q3n_reward *, float *alpha, bool *visible, qa_error *);

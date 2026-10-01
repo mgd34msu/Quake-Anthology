@@ -4,7 +4,7 @@
 static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
 {
     if(!d->settings->team_overlay)return true;
-    const q3n_command_state *c=q3n_server_commands_state(d->commands); int32_t team=d->frame->local_player.persistant[3];
+    const q3n_command_state *c=q3n_server_commands_state(d->commands); int32_t team=q3n_frame_snapshot_player(d->frame)->persistant[3];
     if(team!=1 && team!=2)return true;
     int32_t count=c->num_sorted_team_players<8?c->num_sorted_team_players:8,players=0;
     float player_width=0,location_width=0,cell=8*d->frame->preferences.text_scale;
@@ -56,9 +56,10 @@ static bool upper(q3n_hud_draw *d)
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float y=0; char text[128];
     if(c->game_type>=3 && d->settings->team_overlay==1 && !team_overlay(d,&y,true,true))return false;
     if(d->settings->draw_snapshot) {
-        /* The direct native source has a completed frame receipt, rather than
-         * a network snapshot number. Display that actual ordinal explicitly. */
-        snprintf(text,sizeof(text),"time:%i frame:%llu cmd:%i",d->frame->source.source_time_ms,
+        if(d->frame->remote)snprintf(text,sizeof(text),"time:%i snap:%i cmd:%i",
+            d->frame->remote->snapshots.snapshot->server_time,
+            d->frame->remote->source.publication.latest_message,d->frame->remote->snapshots.command_sequence);
+        else snprintf(text,sizeof(text),"time:%i frame:%llu cmd:%i",d->frame->source.source_time_ms,
             (unsigned long long)d->frame->source.source_frame.number,c->server_command_sequence);
         if(!q3nh_right(d,635,y+2,text,1))return false; y+=20*d->frame->preferences.text_scale;
     }
@@ -79,14 +80,14 @@ static bool upper(q3n_hud_draw *d)
         if(!q3nh_right(d,635,y+2,text,1))return false; y+=20*d->frame->preferences.text_scale;
     }
     if(d->settings->draw_attacker) {
-        const qa_q3_player *p=&d->frame->local_player; q3n_player_feedback *g=&d->player->feedback;
+        const qa_q3_player *p=q3n_frame_predicted_player(d->frame); q3n_player_feedback *g=&d->player->feedback;
         int32_t client=p->persistant[6];
-        if(p->stats[0]>0 && g->attacker_time && client>=0 && client<64 && client!=p->clientNum) {
+        if(p->stats[0]>0 && g->attacker_time && client>=0 && client<64 && client!=q3n_frame_snapshot_player(d->frame)->clientNum) {
             if(q3ne_sub(d->frame->time,g->attacker_time)>10000)g->attacker_time=0;
             else {
                 if(!q3nh_head(d,580,y,60,60,client,qa_v3(0,180,0)))return false;
                 const char *info; uint64_t revision; char name[64];
-                if(!qa_native_q3_wire_reader_configstring(d->frame->reader,544u+(uint32_t)client,
+                if(!q3n_frame_configstring(d->frame,544u+(uint32_t)client,
                     &info,&revision,d->error) || !qa_q3_info_value(info,"n",name,sizeof(name),d->error) ||
                    !q3nh_right(d,640,y+60,name,0.5f))return false;
             }
@@ -106,7 +107,7 @@ static bool free_score(q3n_hud_draw *d,float *x,float y,int32_t score,bool selec
 }
 static bool scores(q3n_hud_draw *d,float *y)
 {
-    const q3n_command_state *c=q3n_server_commands_state(d->commands); const qa_q3_player *p=&d->frame->local_player;
+    const q3n_command_state *c=q3n_server_commands_state(d->commands); const qa_q3_player *p=q3n_frame_snapshot_player(d->frame);
     int32_t first=c->scores1,second=c->scores2; float row=24*d->frame->preferences.text_scale;
     *y-=row; float y1=*y,x=640; char text[32]; const q3n_media_view *m=q3n_media_read(d->frame->media);
     if(c->game_type>=3) {
@@ -132,7 +133,7 @@ static bool scores(q3n_hud_draw *d,float *y)
 }
 static bool powerups(q3n_hud_draw *d,float y)
 {
-    const qa_q3_player *p=&d->frame->local_player; if(p->stats[0]<=0)return true;
+    const qa_q3_player *p=q3n_frame_snapshot_player(d->frame); if(p->stats[0]<=0)return true;
     unsigned sorted[16],count=0; int32_t remaining[16];
     for(unsigned i=0;i<16;++i)if(p->powerups[i]) {
         int32_t time=q3ne_sub(p->powerups[i],d->frame->time); if(time<0 || time>999000)continue;
@@ -163,7 +164,7 @@ static bool powerups(q3n_hud_draw *d,float y)
 }
 static bool pickup(q3n_hud_draw *d,float y)
 {
-    if(d->frame->local_player.stats[0]<=0)return true; y-=48;
+    if(q3n_frame_snapshot_player(d->frame)->stats[0]<=0)return true; y-=48;
     const q3n_event_state *g=q3n_events_state(d->frame->events); float color[4];
     if(!g->item_pickup || !q3nh_fade(d->frame->time,g->item_pickup_time,3000,color))return true;
     size_t count; const qa_q3_item *items=qa_q3_items(d->owner->product,&count);
@@ -195,7 +196,7 @@ bool q3nh_team_chat(q3n_hud_draw *d)
         last=q3ne_plus(last,1); if(!q3n_server_commands_chat_drawn(d->commands,d->frame,last,d->error))return false;
     }
     float row=8*d->frame->preferences.text_scale,h=(float)q3ne_sub(c->team_chat_position,last)*row;
-    int32_t team=d->frame->local_player.persistant[3];
+    int32_t team=q3n_frame_snapshot_player(d->frame)->persistant[3];
     float color[4]={team==1?1:0,team!=1 && team!=2?1:0,team==2?1:0,0.33f};
     if(!q3nh_color(d,color) || !q3nh_picture(d,0,420-h,640,h,q3n_media_read(d->frame->media)->graphics[Q3N_G_TEAM_STATUS_BAR]) || !q3nh_color(d,NULL))return false;
     for(int32_t i=q3ne_sub(c->team_chat_position,1);i>=last;i=q3ne_sub(i,1)) {

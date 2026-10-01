@@ -9,6 +9,8 @@ typedef struct q3n_hud_settings {
     bool crosshair_health, draw_crosshair_names, draw_ammo_warning, paused;
     bool draw_snapshot, draw_fps, draw_timer, draw_attacker, lagometer, no_predict, synchronous_clients;
     int32_t crosshair, crosshair_x, crosshair_y, team_overlay, team_chat_height, team_chat_time;
+    /* Constructor-cached cgs.localServer, projected by the actual CLIENT. */
+    int32_t local_server;
     float crosshair_size, center_time;
 } q3n_hud_settings;
 typedef struct q3n_hud_options {
@@ -16,6 +18,7 @@ typedef struct q3n_hud_options {
     const qa_application_native_q3_presentation *source;
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
+    qa_native_q3_remote_client_service *remote_client;
     uint32_t seat;
     /* Actual physical compositor ordinal; the authored source seat ID may
      * differ. UI/fonts borrow this frontend seat until parent retirement. */
@@ -47,6 +50,7 @@ typedef struct q3n_hud_state {
 } q3n_hud_state;
 bool q3n_hud_create(const q3n_hud_options *, q3n_hud **, qa_error *);
 bool q3n_hud_create_restored(const q3n_hud_options *, q3n_hud **, qa_error *);
+bool q3n_hud_create_remote(const q3n_hud_options *, q3n_hud **, qa_error *);
 void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);

@@ -2,9 +2,11 @@
 
 static bool fields(qa_source_save_io *io,q3n_hud *o)
 {
-    uint8_t magic[4]={'Q','3','H','D'}; uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3HD",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-       !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat)return false;
+    const char *signature=o->options.remote_client?"Q3HR":"Q3HD";
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&version) || version!=1 ||
+       !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
+       !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
     q3n_hud_state *s=&o->state;
     if(!qa_source_save_bytes(io,s->center_print,sizeof(s->center_print)) || !memchr(s->center_print,0,sizeof(s->center_print)) ||
        !qa_source_save_i32(io,&s->center_print_time) || !qa_source_save_i32(io,&s->center_print_y) ||

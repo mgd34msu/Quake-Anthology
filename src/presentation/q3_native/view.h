@@ -17,6 +17,7 @@ typedef struct q3n_view_options {
     const qa_application_native_q3_presentation *source;
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
+    qa_native_q3_remote_client_service *remote_client;
     uint32_t seat;
     void *context;
     bool (*set_view_size)(void *, int32_t, qa_error *);
@@ -24,6 +25,8 @@ typedef struct q3n_view_options {
     void (*print)(void *, const char *);
 } q3n_view_options;
 typedef struct q3n_view_state {
+    /* Prediction error/hyperspace belong to this owner for local GAME only.
+     * Remote view reads the genuine predictor receipt instead. */
     int32_t bob_cycle, next_orbit_time, zoom_time, predicted_error_time;
     float bob_fraction_sin, xy_speed, zoom_sensitivity;
     qa_vec3 kick_angles, kick_origin, predicted_error;
@@ -31,6 +34,7 @@ typedef struct q3n_view_state {
 } q3n_view_state;
 bool q3n_view_create(const q3n_view_options *, q3n_view **, qa_error *);
 bool q3n_view_create_restored(const q3n_view_options *, q3n_view **, qa_error *);
+bool q3n_view_create_remote(const q3n_view_options *, q3n_view **, qa_error *);
 void q3n_view_destroy(q3n_view *);
 bool q3n_view_idle(const q3n_view *);
 const q3n_view_state *q3n_view_read(const q3n_view *);

@@ -2,20 +2,24 @@
 
 static bool fields(qa_source_save_io *io,q3n_player_state *o)
 {
-    uint8_t magic[4]={'Q','3','P','S'}; uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-       !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat)return false;
+    const char *signature=o->options.remote_client?"Q3PR":"Q3PS";
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&version) || version!=1 ||
+       !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
+       !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
     q3n_transition_history *h=&o->history;
-    if(!qa_source_save_bool(io,&h->valid) || !qa_source_save_actor(io,&h->viewing_actor) ||
-       !qa_source_save_actor(io,&h->followed_actor) || !qa_source_save_u32(io,&h->viewing_client) || h->viewing_client>=64 ||
-       !qa_source_save_u64(io,&h->source_frame) || !qa_source_save_i32(io,&h->source_time) ||
-       !qa_source_save_i32(io,&h->client_num) || h->client_num<0 || h->client_num>=64 ||
-       !qa_source_save_i32(io,&h->damage_event) || !qa_source_save_i32(io,&h->viewheight) ||
-       !qa_source_save_i32(io,&h->external_event) || !qa_source_save_i32(io,&h->event_sequence) ||
-       !qa_source_save_i32(io,&h->health) || !qa_source_save_i32(io,&h->e_flags))return false;
-    for(unsigned i=0;i<2;++i)if(!qa_source_save_i32(io,&h->events[i]))return false;
-    for(unsigned i=0;i<15;++i)if(!qa_source_save_i32(io,&h->persistant[i]))return false;
-    for(unsigned i=0;i<16;++i)if(!qa_source_save_i32(io,&h->powerups[i]))return false;
+    if(!o->options.remote_client) {
+        if(!qa_source_save_bool(io,&h->valid) || !qa_source_save_actor(io,&h->viewing_actor) ||
+           !qa_source_save_actor(io,&h->followed_actor) || !qa_source_save_u32(io,&h->viewing_client) || h->viewing_client>=64 ||
+           !qa_source_save_u64(io,&h->source_frame) || !qa_source_save_i32(io,&h->source_time) ||
+           !qa_source_save_i32(io,&h->client_num) || h->client_num<0 || h->client_num>=64 ||
+           !qa_source_save_i32(io,&h->damage_event) || !qa_source_save_i32(io,&h->viewheight) ||
+           !qa_source_save_i32(io,&h->external_event) || !qa_source_save_i32(io,&h->event_sequence) ||
+           !qa_source_save_i32(io,&h->health) || !qa_source_save_i32(io,&h->e_flags))return false;
+        for(unsigned i=0;i<2;++i)if(!qa_source_save_i32(io,&h->events[i]))return false;
+        for(unsigned i=0;i<15;++i)if(!qa_source_save_i32(io,&h->persistant[i]))return false;
+        for(unsigned i=0;i<16;++i)if(!qa_source_save_i32(io,&h->powerups[i]))return false;
+    }
     q3n_player_feedback *g=&o->feedback;
     if(!qa_source_save_i32(io,&g->duck_time) || !qa_source_save_i32(io,&g->attacker_time) ||
        !qa_source_save_i32(io,&g->damage_kick_end_time) || !qa_source_save_i32(io,&g->low_ammo_warning) ||
@@ -36,7 +40,8 @@ static bool fields(qa_source_save_io *io,q3n_player_state *o)
     }
     if(!qa_source_save_i32(io,&o->event_sequence))return false;
     for(unsigned i=0;i<16;++i)if(!qa_source_save_i32(io,&o->predictable_events[i]))return false;
-    return qa_source_save_bool(io,&o->map_restart) && (!h->valid || (h->viewing_actor.registry && h->followed_actor.registry));
+    return qa_source_save_bool(io,&o->map_restart) &&
+        (o->options.remote_client || !h->valid || (h->viewing_actor.registry && h->followed_actor.registry));
 }
 bool q3n_player_state_checkpoint(const q3n_player_state *borrowed,qa_buffer *out,qa_error *e)
 {

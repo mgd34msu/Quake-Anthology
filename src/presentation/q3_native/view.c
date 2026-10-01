@@ -4,15 +4,18 @@
 static bool current(q3n_view *o,const q3n_frame *f,qa_error *e)
 {
     return o && f && !o->busy && o->options.application==f->application &&
-        o->source_game==f->source.source_game && o->options.assets==f->assets &&
-        o->options.seat==f->seat && o->product==f->source.product && f->has_local_player &&
-        f->time==f->source.source_time_ms && q3ne_current(f,e)?true:
+        o->options.assets==f->assets && o->options.seat==f->seat &&
+        o->product==q3n_frame_product(f) && q3n_frame_predicted_player(f) &&
+        (f->remote?o->options.remote_client==f->remote->client &&
+            f->remote->snapshots.stage==Q3N_REMOTE_COMPLETED_FRAME:
+            !o->options.remote_client && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
+        q3ne_current(f,e)?true:
         q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 view requires its exact completed source and seat");
 }
 bool q3n_view_create(const q3n_view_options *options,q3n_view **out,qa_error *e)
 {
     if(!options || !out || *out || !options->assets || !options->source || !options->application ||
-       !options->set_view_size || !options->set_third_person_angle_value || !options->print ||
+       options->remote_client || !options->set_view_size || !options->set_third_person_angle_value || !options->print ||
        !qa_application_native_q3_presentation_current(options->application,options->source))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 view requires actual GAME and its cached CGAME cvars");
     q3n_view *o=calloc(1,sizeof(*o));
@@ -24,13 +27,25 @@ bool q3n_view_create(const q3n_view_options *options,q3n_view **out,qa_error *e)
 bool q3n_view_create_restored(const q3n_view_options *options,q3n_view **out,qa_error *e)
 {
     qa_native_q3_client_basis basis;
-    if(!options || !out || *out || !options->assets || !options->set_view_size || !options->set_third_person_angle_value ||
+    if(!options || !out || *out || !options->assets || options->remote_client || !options->set_view_size || !options->set_third_person_angle_value ||
        !options->print || !options->client || !qa_native_q3_client_basis_read(options->client,&basis,e) ||
        basis.application!=options->application || basis.seat!=options->seat)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Restored Q3 view requires its actual installed source and client basis");
     q3n_view *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating restored native Q3 view");
     o->options=*options; o->options.source=NULL; o->source_game=basis.source_game; o->product=basis.product; *out=o; return true;
+}
+bool q3n_view_create_remote(const q3n_view_options *options,q3n_view **out,qa_error *e)
+{
+    qa_native_q3_remote_client_basis basis;
+    if(!options || !out || *out || !options->assets || options->source || options->client ||
+       !options->remote_client || !options->set_view_size || !options->set_third_person_angle_value || !options->print ||
+       !qa_native_q3_remote_client_basis_read(options->remote_client,&basis,e) ||
+       basis.application!=options->application || basis.client.seat!=options->seat)
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Remote Q3 view requires its actual retained CLIENT basis");
+    q3n_view *o=calloc(1,sizeof(*o));
+    if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating remote native Q3 view");
+    o->options=*options; o->product=basis.product; o->state.zoom_sensitivity=1; *out=o; return true;
 }
 void q3n_view_destroy(q3n_view *o) { if(o && !o->busy)free(o); }
 bool q3n_view_idle(const q3n_view *o) { return o && !o->busy; }
@@ -40,15 +55,16 @@ void q3n_view_zoom(q3n_view *o,bool down,int32_t time)
 void q3n_view_kick(q3n_view *o,qa_vec3 angles,qa_vec3 origin)
 { if(o && !o->busy && qa_vec_finite(angles) && qa_vec_finite(origin)) { o->state.kick_angles=angles; o->state.kick_origin=origin; } }
 void q3n_view_error(q3n_view *o,qa_vec3 error,int32_t time)
-{ if(o && !o->busy && qa_vec_finite(error)) { o->state.predicted_error=error; o->state.predicted_error_time=time; } }
-void q3n_view_hyperspace(q3n_view *o,bool value) { if(o && !o->busy)o->state.hyperspace=value; }
+{ if(o && !o->busy && !o->options.remote_client && qa_vec_finite(error)) { o->state.predicted_error=error; o->state.predicted_error_time=time; } }
+void q3n_view_hyperspace(q3n_view *o,bool value) { if(o && !o->busy && !o->options.remote_client)o->state.hyperspace=value; }
 static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3n_player_feedback *g)
 {
-    const qa_q3_player *p=&f->local_player; q3n_view_state *v=&o->state;
+    const qa_q3_player *p=q3n_frame_predicted_player(f); q3n_view_state *v=&o->state;
     qa_q3_refdef *r=&f->refdef;
-    if(p->pmType==5)return;
-    if(p->stats[0]<=0) {
-        f->view_angles=qa_v3(-15,(float)p->stats[q3nh_dead_yaw_stat(o->product)],40);
+    if(q3n_frame_snapshot_player(f)->pmType==5)return;
+    const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
+    if(snapshot->stats[0]<=0) {
+        f->view_angles=qa_v3(-15,(float)snapshot->stats[q3nh_dead_yaw_stat(o->product)],40);
         r->origin.z=q3ne_add(r->origin.z,(float)p->viewheight); return;
     }
     qa_vec3 angles=q3ne_sum(f->view_angles,v->kick_angles);
@@ -83,7 +99,7 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
 }
 static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,float angle,qa_error *e)
 {
-    const qa_q3_player *p=&f->local_player; qa_q3_refdef *r=&f->refdef;
+    const qa_q3_player *p=q3n_frame_predicted_player(f); qa_q3_refdef *r=&f->refdef;
     r->origin.z=q3ne_add(r->origin.z,(float)p->viewheight); qa_vec3 focus_angles=f->view_angles;
     if(p->stats[0]<=0)focus_angles.y=f->view_angles.y=(float)p->stats[q3nh_dead_yaw_stat(o->product)];
     if(focus_angles.x>45)focus_angles.x=45;
@@ -110,7 +126,7 @@ static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,flo
 static bool fov(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,bool *in_water,qa_error *e)
 {
     qa_q3_refdef *r=&f->refdef; float horizontal=90;
-    if(f->local_player.pmType!=5) {
+    if(q3n_frame_predicted_player(f)->pmType!=5) {
         horizontal=s->dm_flags&16?90:q3nh_clamp(s->fov,1,160); float zoom=q3nh_clamp(s->zoom_fov,1,160);
         float fraction=q3ne_div((float)q3ne_sub(f->time,o->state.zoom_time),150);
         if(o->state.zoomed)horizontal=fraction>1?zoom:q3ne_add(horizontal,q3ne_mul(fraction,q3ne_add(zoom,-horizontal)));
@@ -135,35 +151,45 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
 {
     if(!s || !in_water || !ps || !current(o,f,e) || viewport.width<2 || viewport.height<2 ||
        !q3n_player_state_idle(ps) || ps->source_game!=o->source_game || ps->options.application!=o->options.application ||
-       ps->options.assets!=o->options.assets || ps->options.seat!=o->options.seat)return false;
+       ps->options.assets!=o->options.assets || ps->options.seat!=o->options.seat ||
+       ps->options.remote_client!=o->options.remote_client)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps); o->busy=true;
-    int32_t size=f->local_player.pmType==5?100:s->view_size; bool ok=true;
+    const qa_q3_player *snapshot=q3n_frame_snapshot_player(f),*predicted=q3n_frame_predicted_player(f);
+    int32_t size=snapshot->pmType==5?100:s->view_size; bool ok=true;
     if(size<30 || size>100) { size=size<30?30:100; ok=o->options.set_view_size(o->options.context,size,e) && q3ne_current(f,e); }
     memset(&f->refdef,0,sizeof(f->refdef)); qa_q3_refdef *r=&f->refdef;
     r->width=(int32_t)(((int64_t)viewport.width*size)/100)&~1;
     r->height=(int32_t)(((int64_t)viewport.height*size)/100)&~1;
+    if(r->width<=0 || r->height<=0) {
+        o->busy=false; return q3ne_fail(e,QA_ERROR_ARGUMENT,"Q3 camera requires a positive authored viewport");
+    }
     r->x=((int32_t)viewport.width-r->width)/2; r->y=((int32_t)viewport.height-r->height)/2;
-    r->time=f->time; r->origin=q3ne_array(f->local_player.origin); f->view_angles=q3ne_array(f->local_player.viewangles);
-    f->third_person=s->third_person || f->local_player.stats[0]<=0;
-    if(f->local_player.pmType!=5) {
-        q3n_view_state *v=&o->state; v->bob_cycle=(f->local_player.bobCycle&128)>>7;
-        v->bob_fraction_sin=fabsf((float)sin((double)q3ne_mul(q3ne_div((float)(f->local_player.bobCycle&127),127),3.14159274101257324219f)));
-        v->xy_speed=q3ne_f(sqrtf(q3ne_add(q3ne_mul(f->local_player.velocity[0],f->local_player.velocity[0]),
-            q3ne_mul(f->local_player.velocity[1],f->local_player.velocity[1]))));
+    r->time=f->time; r->origin=q3ne_array(predicted->origin); f->view_angles=q3ne_array(predicted->viewangles);
+    if(f->remote)memcpy(r->area_mask,f->remote->snapshots.snapshot->area_mask,sizeof(r->area_mask));
+    f->third_person=s->third_person || snapshot->stats[0]<=0;
+    if(predicted->pmType!=5) {
+        q3n_view_state *v=&o->state; v->bob_cycle=(predicted->bobCycle&128)>>7;
+        v->bob_fraction_sin=fabsf((float)sin((double)q3ne_mul(q3ne_div((float)(predicted->bobCycle&127),127),3.14159274101257324219f)));
+        v->xy_speed=q3ne_f(sqrtf(q3ne_add(q3ne_mul(predicted->velocity[0],predicted->velocity[0]),
+            q3ne_mul(predicted->velocity[1],predicted->velocity[1]))));
         float angle=s->third_person_angle;
         if(s->camera_orbit_integer && f->time>v->next_orbit_time) {
             v->next_orbit_time=q3ne_plus(f->time,s->camera_orbit_delay); angle=q3ne_add(angle,s->camera_orbit_value);
             if(ok)ok=o->options.set_third_person_angle_value(o->options.context,angle,e) && q3ne_current(f,e);
         }
-        if(g->this_frame_teleport) { v->predicted_error=qa_v3(0,0,0); v->predicted_error_time=0; }
+        if(!f->remote && g->this_frame_teleport) { v->predicted_error=qa_v3(0,0,0); v->predicted_error_time=0; }
         if(s->error_decay>0) {
-            float factor=q3ne_div(q3ne_add(s->error_decay,-(float)q3ne_sub(f->time,v->predicted_error_time)),s->error_decay);
-            if(factor>0 && factor<1)r->origin=q3ne_sum(r->origin,q3ne_scale(v->predicted_error,factor));
-            else v->predicted_error_time=0;
+            int32_t error_time=f->remote?f->remote->prediction.prediction_error_time:v->predicted_error_time;
+            qa_vec3 error=f->remote?f->remote->prediction.prediction_error:v->predicted_error;
+            float factor=q3ne_div(q3ne_add(s->error_decay,-(float)q3ne_sub(f->time,error_time)),s->error_decay);
+            if(factor>0 && factor<1)r->origin=q3ne_sum(r->origin,q3ne_scale(error,factor));
+            else if(f->remote) {
+                if(ok)ok=q3n_remote_frame_prediction_error_clear(f->remote,e) && q3ne_current(f,e);
+            } else v->predicted_error_time=0;
         }
         if(ok && f->third_person)ok=third_person(o,f,s,angle,e);
         else if(ok)first_person(o,f,s,g);
-        if(v->hyperspace)r->flags|=1|4;
+        if(f->remote?f->remote->prediction.hyperspace:v->hyperspace)r->flags|=1|4;
     }
     q3nh_axis(f->view_angles,r->axis);
     if(ok)ok=fov(o,f,s,in_water,e) && q3ne_current(f,e);
@@ -172,7 +198,8 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
 bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings *s,const q3n_player_state *ps,qa_error *e)
 {
     if(!s || !ps || !current(o,f,e) || ps->source_game!=o->source_game || ps->options.assets!=o->options.assets ||
-       ps->options.application!=o->options.application || ps->options.seat!=o->options.seat)return false;
+       ps->options.application!=o->options.application || ps->options.seat!=o->options.seat ||
+       ps->options.remote_client!=o->options.remote_client)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps);
     int32_t elapsed=q3ne_int(q3ne_add((float)f->time,-g->damage_time));
     if(!g->damage_value || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
