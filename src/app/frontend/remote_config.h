@@ -26,6 +26,10 @@ bool frontend_remote_config_read(const frontend_remote_config *,frontend_remote_
 bool frontend_remote_config_current(const frontend_remote_config *,const frontend_remote_config_view *);
 bool frontend_remote_config_pending(const frontend_remote_config *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *);
+bool frontend_remote_config_registries(const frontend_remote_config *,qa_application *,
+    const qa_application_startup_source *,qa_cvars *namespaces[8],qa_console **hosted_game,qa_error *);
+bool frontend_remote_config_bindings(const frontend_remote_config *,qa_application *,
+    const qa_application_startup_source *,const qa_input_seat *,qa_input_seat **,qa_error *);
 qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_configs *,qa_application *,
     const qa_launch_snapshot *,unsigned physical_ordinal);
 bool frontend_remote_config_acquire(frontend_remote_config *,frontend_client_registry **,qa_error *);
@@ -45,6 +49,13 @@ void frontend_remote_configs_finish(frontend_remote_configs *,qa_application *,c
 bool frontend_remote_config_preinit(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_error *);
 bool frontend_remote_config_retire(frontend_remote_configs *,qa_application *,const qa_application_startup_source *,qa_error *);
+bool frontend_remote_config_retire_hosted(frontend_remote_configs *,qa_application *,
+    const qa_application_startup_source *,qa_error *);
+bool frontend_remote_config_bind_hosted(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,const qa_application_startup_source *,qa_cvars **,qa_error *);
+void frontend_remote_config_publish_hosted(frontend_remote_configs *,qa_application *,const qa_application_startup_source *);
+bool frontend_remote_configs_retire_staged_parent(frontend_remote_configs *,qa_application *,
+    const qa_application_startup_source *,qa_error *);
 void frontend_remote_configs_rebind(frontend_remote_configs *,qa_frontend *,frontend_config_store *);
 bool frontend_remote_configs_visit(const frontend_remote_configs *,const qa_application_content_visitor *,qa_error *);
 bool frontend_remote_configs_save(frontend_remote_configs *,qa_application *,qa_error *);

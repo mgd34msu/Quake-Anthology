@@ -6,6 +6,7 @@
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "save_private.h"
+#include "source_restore.h"
 #include "qa/cvars_save.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -33,6 +34,8 @@ struct frontend_remote_config {
     qa_sha256_digest saved_identity;
     qa_application_console_scope scope;
     qa_command_context command;
+    qa_application_startup_source retarget_origin;
+    const void *retarget_game_storage;
     uint64_t declaration_owner;
     qa_console *console,*hosted_console;
     qa_cvars *owned,*cvars,*q3_mouse,*q3_view,*movement_mouse;
@@ -50,6 +53,7 @@ struct frontend_remote_config {
     qa_movement_kind movement;
     size_t callback_references;
     bool hosted,hosted_pending,found,configured,released,published,running,imported,secondary_pending,write_registered,dump_registered;
+    bool frontend_retired,retargeting;
     qa_error failure;
 };
 struct frontend_remote_configs {
@@ -75,7 +79,7 @@ static bool scope_equal(qa_application_console_scope a,qa_application_console_sc
 { return a.provider==b.provider && a.kind==b.kind && a.seat==b.seat; }
 static bool active(const frontend_remote_config *row,const qa_command_context *command)
 {
-    return row && command && command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
+    return row && !row->retargeting && command && command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
         command->owner==row->scope.provider && command->seat==row->scope.seat &&
         command->session==row->command.session && qa_application_command_context_active(row->application,command);
 }
@@ -130,7 +134,7 @@ bool frontend_remote_config_phase(const frontend_remote_configs *owner,const voi
 }
 bool frontend_remote_config_read(const frontend_remote_config *row,frontend_remote_config_view *out)
 {
-    if (!row || !out || !row->registry || !row->cvars || !row->keys || row->running || row->imported || !descriptor(row) ||
+    if (!row || !out || !row->registry || !row->cvars || !row->keys || row->running || row->imported || row->retargeting || !descriptor(row) ||
         frontend_client_registry_cvars(row->registry)!=row->cvars) return false;
     *out=(frontend_remote_config_view){row,descriptor(row),row->scope,row->console,row->cvars,
         row->q3_mouse,row->q3_view,row->movement_mouse,row->keys,row->physical_seat,row->movement,
@@ -150,9 +154,48 @@ bool frontend_remote_config_pending(const frontend_remote_config *row,qa_applica
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source)
 {
     const qa_launch_instance *held=descriptor(row);
-    return row && source && source->descriptor && held && !row->published && !row->imported &&
+    return row && source && source->descriptor && held && !row->published && !row->imported && !row->retargeting &&
         row->application==application && row->candidate==candidate && row->console==source->console &&
         row->cvars==source->cvars && scope_equal(row->scope,source->scope) && held->storage==source->descriptor->storage;
+}
+bool frontend_remote_config_registries(const frontend_remote_config *row,qa_application *application,
+    const qa_application_startup_source *source,qa_cvars *namespaces[8],qa_console **hosted_game,qa_error *error)
+{
+    const qa_launch_instance *held=descriptor(row);
+    if (!row || !application || !source || !source->descriptor || !namespaces || !hosted_game ||
+        row->application!=application || row->imported || row->retargeting || !row->configured || !row->released ||
+        !held || held->storage!=source->descriptor->storage ||
+        !scope_equal(row->scope,source->scope) || row->console!=source->console || row->cvars!=source->cvars ||
+        !row->registry || frontend_client_registry_cvars(row->registry)!=row->cvars ||
+        !row->q3_mouse || !row->q3_view || !row->movement_mouse)
+        return fail(error,QA_ERROR_ARGUMENT,"Host namespaces leave their retained CLIENT configuration");
+    namespaces[QA_Q3_HOST_CVAR_CLIENT-1]=row->cvars;
+    namespaces[QA_Q3_HOST_CVAR_MOUSE-1]=row->q3_mouse;
+    namespaces[QA_Q3_HOST_CVAR_Q3_VIEW-1]=row->q3_view;
+    namespaces[QA_Q3_HOST_CVAR_SELECTED_VIEW-1]=row->movement_mouse;
+    *hosted_game=row->hosted?row->hosted_console:NULL;
+    return true;
+}
+bool frontend_remote_config_bindings(const frontend_remote_config *row,qa_application *application,
+    const qa_application_startup_source *source,const qa_input_seat *physical,qa_input_seat **out,qa_error *error)
+{
+    qa_cvars *namespaces[8]={0}; qa_console *hosted=NULL;
+    if (!physical || !out) return fail(error,QA_ERROR_ARGUMENT,"CLIENT binding access needs its physical seat and output");
+    if (!frontend_remote_config_registries(row,application,source,namespaces,&hosted,error)) return false;
+    qa_frontend *f=row->owner->frontend;
+    if (!f->seats || row->physical_seat>=f->options.seats ||
+        f->seats[row->physical_seat].input!=physical || qa_input_seat_ordinal(physical)!=row->physical_seat)
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT binding access lost its actual stable physical seat");
+    qa_input_seat *input=NULL;
+    if (hosted) {
+        frontend_config_source *game=frontend_config_store_source(row->owner->manager,hosted);
+        if (!game || frontend_config_source_seat_cvars(game,row->scope.seat)!=row->cvars)
+            return fail(error,QA_ERROR_ARGUMENT,"CLIENT bindings lost their actual hosted GAME-seat heap");
+        input=frontend_config_source_input(game,row->scope.seat);
+    } else input=row->published?f->seats[row->physical_seat].input:row->input;
+    if (!input || qa_input_seat_ordinal(input)!=row->physical_seat)
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT bindings have no matching physical dictionary owner");
+    *out=input; return true;
 }
 qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_configs *owner,qa_application *application,
     const qa_launch_snapshot *candidate,unsigned ordinal)
@@ -166,7 +209,7 @@ qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_con
 }
 bool frontend_remote_config_acquire(frontend_remote_config *row,frontend_client_registry **out,qa_error *error)
 {
-    if (!row || !row->configured || !row->released || row->running || !row->registry ||
+    if (!row || !row->configured || !row->released || row->running || row->retargeting || !row->registry ||
         frontend_client_registry_cvars(row->registry)!=row->cvars)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT acquisition requires its completed actual preparation");
     return frontend_client_registry_retain(row->registry,out,error);
@@ -207,6 +250,11 @@ static qa_input_seat *binding_seat(void *context,const qa_command_context *comma
 {
     frontend_remote_config *row=context;
     if (!active(row,command)) return NULL;
+    if (row->hosted) {
+        frontend_config_source *game=frontend_config_store_source(row->owner->manager,row->hosted_console);
+        if (!game || frontend_config_source_seat_cvars(game,row->scope.seat)!=row->cvars) return NULL;
+        return frontend_config_source_input(game,row->scope.seat);
+    }
     qa_frontend *f=row->owner->frontend;
     return row->published?f->seats && row->physical_seat<f->options.seats?f->seats[row->physical_seat].input:NULL:row->input;
 }
@@ -663,7 +711,7 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
 {
     for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next) {
         if (row->application!=application || row->published || row->candidate!=candidate) continue;
-        if (!row->configured || row->running || row->failure.code!=QA_OK || row->imported ||
+        if (!row->configured || row->running || row->failure.code!=QA_OK || row->imported || row->retargeting ||
             !frontend_authored_bindings_completed(row->authored) || !qa_console_idle(row->console) ||
             qa_console_pending(row->console) || !frontend_config_files_idle(row->files))
             return fail(error,QA_ERROR_ARGUMENT,"CLIENT publication requires its completed actual configuration");
@@ -695,7 +743,7 @@ void frontend_remote_configs_finish(frontend_remote_configs *owner,qa_applicatio
     }
     for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next) {
         if (row->application!=application || row->published || row->candidate!=candidate) continue;
-        if (published) {
+        if (published && !row->retargeting) {
             release_input(row); row->published=true; row->candidate=NULL;
         }
     }
@@ -743,6 +791,14 @@ static bool destroy_row(frontend_remote_config *row,qa_error *error)
     qa_seat_settings_free(&row->settings);
     qa_launch_instance_lease_release(row->metadata); free(row->saved_instance); free(row->saved_registry); free(row); return true;
 }
+static bool retarget_origin(const frontend_remote_config *row,const qa_application_startup_source *source)
+{
+    const qa_application_startup_source *held=&row->retarget_origin;
+    return row->retargeting && source && source->descriptor && held->descriptor &&
+        source->descriptor->storage==held->descriptor->storage && source->console==held->console &&
+        source->cvars==held->cvars && scope_equal(source->scope,held->scope) &&
+        source->declaration_owner==held->declaration_owner;
+}
 bool frontend_remote_config_retire(frontend_remote_configs *owner,qa_application *application,
     const qa_application_startup_source *source,qa_error *error)
 {
@@ -751,11 +807,133 @@ bool frontend_remote_config_retire(frontend_remote_configs *owner,qa_application
     if (!*link) return true;
     frontend_remote_config *row=*link,*next=row->next;
     const qa_launch_instance *held=descriptor(row);
-    if (row->application!=application || row->cvars!=source->cvars || !source->descriptor || !held ||
-        held->storage!=source->descriptor->storage || !scope_equal(row->scope,source->scope))
+    if (row->application!=application || (!retarget_origin(row,source) &&
+        (row->cvars!=source->cvars || !source->descriptor || !held ||
+        held->storage!=source->descriptor->storage || !scope_equal(row->scope,source->scope))))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement names another retained physical source");
     if (!destroy_row(row,error)) return false;
     *link=next; return true;
+}
+bool frontend_remote_config_retire_hosted(frontend_remote_configs *owner,qa_application *application,
+    const qa_application_startup_source *source,qa_error *error)
+{
+    if (!owner || !application || !source || !source->descriptor ||
+        !qa_application_q3_client_configuration_retiring(application,source))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT cleanup requires its entered physical retirement loan");
+    frontend_remote_config *row=frontend_remote_config_find(owner,source->console);
+    if (!row) return true;
+    const qa_launch_instance *held=descriptor(row);
+    if (!row->hosted || row->application!=application || !held ||
+        (!retarget_origin(row,source) && (held->storage!=source->descriptor->storage ||
+        row->cvars!=source->cvars || !scope_equal(row->scope,source->scope))))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT cleanup names another physical configuration");
+    if (!row->frontend_retired) {
+        if (!row->keys || !frontend_source_retire_client_configuration(owner->frontend,application,source,row->keys,error)) return false;
+        row->frontend_retired=true;
+    }
+    return frontend_remote_config_retire(owner,application,source,error);
+}
+bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *target,
+    const qa_application_startup_source *backing,qa_cvars **out,qa_error *error)
+{
+    if (!owner || !application || !candidate || candidate!=qa_application_launch(application) ||
+        !target || !target->descriptor || !target->console || !target->cvars || !out || *out ||
+        !backing || !backing->descriptor || backing->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME ||
+        !backing->console || !backing->cvars || frontend_network_remote(owner->frontend))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding needs its actual new publication and GAME tuple");
+    frontend_config_source *game=frontend_config_store_source(owner->manager,backing->console);
+    qa_application_startup_source actual;
+    if (!game || !frontend_config_source_primary(game) || !frontend_config_source_tuple(game,&actual) ||
+        actual.descriptor->storage!=backing->descriptor->storage || actual.cvars!=backing->cvars ||
+        !scope_equal(actual.scope,backing->scope))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding lost its exact configured GAME parent");
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
+    const qa_launch_instance *receiver=qa_launch_snapshot_find(candidate,target->descriptor->selection.instance);
+    const qa_launch_instance *parent=qa_launch_snapshot_find(candidate,backing->descriptor->selection.instance);
+    const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    size_t ordinal=0;
+    while (choices && ordinal<choices->seat_count && choices->seats[ordinal].id!=target->scope.seat) ++ordinal;
+    qa_frontend *f=owner->frontend;
+    if (!receiver || receiver->storage!=target->descriptor->storage || !parent ||
+        parent->storage!=backing->descriptor->storage || !entities || strcmp(entities->instance,parent->selection.instance) ||
+        !choices || ordinal>=choices->seat_count || ordinal>=f->options.seats || !f->seats ||
+        !f->seats[ordinal].input || (target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME && target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding changed its genuine receiver or authored seat");
+    frontend_remote_config *row=frontend_remote_config_find(owner,target->console);
+    if (row && (!retarget_origin(row,target) || row->application!=application || row->candidate!=candidate ||
+        row->hosted_console!=backing->console))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding already owns another retained transition");
+    if (!row) {
+        row=calloc(1,sizeof(*row));
+        if (!row) return fail(error,QA_ERROR_MEMORY,"Retaining actual hosted CLIENT rebinding");
+        row->owner=owner; row->application=application; row->candidate=candidate; row->scope=target->scope;
+        row->console=target->console; row->command=target->command; row->declaration_owner=target->declaration_owner;
+        row->hosted=true; row->hosted_console=backing->console; row->physical_seat=(uint32_t)ordinal;
+        row->retargeting=row->frontend_retired=true; row->retarget_game_storage=parent->storage;
+        if (!qa_launch_instance_retain_metadata(receiver,&row->metadata,error)) { free(row); return false; }
+        row->retarget_origin=*target; row->retarget_origin.descriptor=descriptor(row);
+        row->next=owner->rows; owner->rows=row;
+    }
+    const qa_launch_binding *movement=qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=target->scope.seat},QA_ROLE_MOVEMENT,"");
+    const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
+    if (!selected || selected->selection.clock.kind>QA_MOVEMENT_Q3)
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks its selected movement source");
+    row->movement=selected->selection.clock.kind;
+    if (!row->registry && !frontend_config_source_acquire_seat_registry(game,row->scope.seat,&row->registry,error)) return false;
+    row->cvars=frontend_client_registry_cvars(row->registry);
+    frontend_key_profile *profile=frontend_config_source_keys(game);
+    if (!profile || (row->keys && row->keys!=profile))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lost its new GAME key profile");
+    if (!row->keys) {
+        if (!frontend_key_profile_retain(profile,error)) return false;
+        row->keys=profile; row->files=frontend_key_profile_files(profile);
+    }
+    row->q3_mouse=row->q3_view=row->movement_mouse=frontend_config_source_mouse_cvars(game,row->scope.seat);
+    if (!row->cvars || !row->files || !row->q3_mouse)
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks actual GAME-seat settings");
+    if (!row->authored && !frontend_config_source_clone_bindings(game,row->scope.seat,&row->authored,error)) return false;
+    if (!frontend_authored_bindings_completed(row->authored))
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding precedes its completed GAME seat configuration");
+    row->input=frontend_config_source_input(game,row->scope.seat);
+    if (!row->input) return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding lost its actual GAME input owner");
+    if (!install_commands(row,error)) return false;
+    row->configured=row->released=true; *out=row->cvars; return true;
+}
+void frontend_remote_config_publish_hosted(frontend_remote_configs *owner,qa_application *application,
+    const qa_application_startup_source *source)
+{
+    frontend_remote_config *row=source?frontend_remote_config_find(owner,source->console):NULL;
+    if (!row || !row->retargeting || row->application!=application || !source->descriptor ||
+        descriptor(row)->storage!=source->descriptor->storage || !scope_equal(row->scope,source->scope) ||
+        row->cvars!=source->cvars || qa_console_cvars(row->console)!=row->cvars || !row->configured || !row->released) return;
+    row->command=source->command; row->declaration_owner=source->declaration_owner;
+    release_input(row);
+    row->published=true; row->candidate=NULL; row->retargeting=false;
+    row->retarget_origin=(qa_application_startup_source){0}; row->retarget_game_storage=NULL;
+}
+bool frontend_remote_configs_retire_staged_parent(frontend_remote_configs *owner,qa_application *application,
+    const qa_application_startup_source *source,qa_error *error)
+{
+    if (!owner || !application || !source || !source->descriptor ||
+        source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME || !source->console)
+        return fail(error,QA_ERROR_ARGUMENT,"Unadopted CLIENT cleanup needs its entered physical GAME parent");
+    for (const frontend_remote_config *row=owner->rows;row;row=row->next) {
+        if (row->application!=application || !row->retargeting || row->hosted_console!=source->console) continue;
+        if (!row->frontend_retired || row->retarget_game_storage!=source->descriptor->storage || row->running || row->phase ||
+            !qa_console_idle(row->console) || (row->cvars && qa_console_cvars(row->console)==row->cvars))
+            return fail(error,QA_ERROR_ARGUMENT,"Unadopted CLIENT still owns an entered or physically bound namespace");
+    }
+    frontend_remote_config **link=&owner->rows;
+    while (*link) {
+        frontend_remote_config *row=*link;
+        if (row->application!=application || !row->retargeting || row->hosted_console!=source->console) { link=&row->next; continue; }
+        frontend_remote_config *next=row->next;
+        if (!destroy_row(row,error)) return false;
+        *link=next;
+    }
+    return true;
 }
 bool frontend_remote_configs_destroy(frontend_remote_configs *owner,qa_error *error)
 {
@@ -773,7 +951,7 @@ bool frontend_remote_configs_visit(const frontend_remote_configs *owner,const qa
 {
     for (const frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next) {
         const qa_launch_instance *held=descriptor(row);
-        if (!held || !row->published || row->imported || row->running || row->phase ||
+        if (!held || !row->published || row->imported || row->retargeting || row->running || row->phase ||
             !frontend_config_files_visit(row->files,visitor,error) ||
             !visitor->pool(visitor->context,qa_catalog_resources(qa_launch_instance_catalog(held)),error) ||
             !visitor->catalog(visitor->context,qa_launch_instance_catalog(held),error) ||

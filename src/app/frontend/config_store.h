@@ -5,11 +5,18 @@
 #include "keys.h"
 #include "client_registry.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/q3_host.h"
 
 typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_config_source frontend_config_source;
 typedef struct frontend_remote_config frontend_remote_config;
 typedef struct frontend_authored_bindings frontend_authored_bindings;
+typedef struct frontend_config_host_cvars {
+    const frontend_config_store *manager;
+    qa_application *application;
+    qa_application_startup_source source,parent_game;
+    bool has_parent;
+} frontend_config_host_cvars;
 
 /* The manager retains actual source ConfigStores and isolated logical input
  * during preparation. Its hooks and context outlive the application. */
@@ -72,6 +79,26 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *,const q
     const qa_command_context *,const char *);
 qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *,const qa_console *,
     const qa_command_context *,size_t);
+/* Stable host namespace roles borrow this exact physical constructor. A
+ * supplemental hosted CLIENT supplies its actual GAME parent; prepared CLIENT
+ * rows already retain that association. Structurally bound import is allowed
+ * before the enclosing restore finishes. Neither operation reads cvar names. */
+bool frontend_config_store_registry_reference(const frontend_config_store *,qa_application *,
+    const qa_application_startup_source *,const qa_application_startup_source *parent_game,
+    const qa_cvars *,qa_q3_host_cvar_namespace *,qa_error *);
+bool frontend_config_store_registry_resolve(const frontend_config_store *,qa_application *,
+    const qa_application_startup_source *,const qa_application_startup_source *parent_game,
+    qa_q3_host_cvar_namespace,qa_cvars **,qa_error *);
+/* The actual factory/CLIENT lease retains this callback root through host
+ * destruction. GAME uses its existing manager row as that retained root. */
+bool frontend_config_host_cvars_prepare(frontend_config_host_cvars *,const frontend_config_store *,qa_application *,
+    const qa_application_startup_source *,const qa_application_startup_source *parent_game,
+    qa_q3_host_cvar_services *,qa_error *);
+/* Binding traps borrow the dictionary of this exact retained CLIENT while
+ * physical key/catcher/release ownership stays with the stable seat root. */
+bool frontend_config_host_bindings(void *,const qa_input_seat *,qa_input_seat **,qa_error *);
+bool frontend_config_source_host_cvars(frontend_config_source *,qa_q3_host_cvar_services *,qa_error *);
+bool frontend_config_source_tuple(const frontend_config_source *,qa_application_startup_source *);
 /* The caller qualifies and prepares the stable native seat transfer before
  * publication; it commits that prepared transfer at the actual outcome. */
 bool frontend_config_source_primary(const frontend_config_source *);

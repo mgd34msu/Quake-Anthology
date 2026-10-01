@@ -9,6 +9,7 @@
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "native_q3_client.h"
+#include "selected_effects.h"
 #include "save_private.h"
 #include "qa/cvars_save.h"
 #include <inttypes.h>
@@ -216,6 +217,14 @@ frontend_config_files *frontend_config_source_files(const frontend_config_source
 frontend_key_profile *frontend_config_source_keys(const frontend_config_source *source) { return source?source->keys:NULL; }
 qa_cvars *frontend_config_source_cvars(const frontend_config_source *source) { return source?source->cvars:NULL; }
 qa_console *frontend_config_source_console(const frontend_config_source *source) { return source?source->console:NULL; }
+bool frontend_config_source_tuple(const frontend_config_source *source,qa_application_startup_source *out)
+{
+    if (!source || !out || source->imported || !source->configured || !source->released ||
+        !instance(source) || !source->console || !source->cvars ||
+        qa_console_cvars(source->console)!=source->cvars) return false;
+    *out=(qa_application_startup_source){instance(source),source->scope,source->console,source->cvars,
+        source->command,source->declaration_owner}; return true;
+}
 qa_application_console_scope frontend_config_source_scope(const frontend_config_source *source)
 { return source?source->scope:(qa_application_console_scope){0}; }
 bool frontend_config_source_primary(const frontend_config_source *source) { return source && source->primary; }
@@ -411,6 +420,158 @@ qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manag
     if (source->movement) rows[count++]=source->movement;
     if (source->fallback && source->fallback!=source->movement) rows[count++]=source->fallback;
     return ordinal<count?rows[ordinal]:NULL;
+}
+static frontend_config_source *namespace_game(const frontend_config_store *manager,qa_application *application,
+    const qa_application_startup_source *authority,qa_error *error)
+{
+    frontend_config_source *source=authority?frontend_config_store_source(manager,authority->console):NULL;
+    const qa_launch_instance *held=source?instance(source):NULL;
+    if (!source || !authority->descriptor || source->application!=application || source->imported ||
+        !source->configured || !source->released ||
+        !held || held->storage!=authority->descriptor->storage || !game_scope(authority->scope) ||
+        !same_scope(source->scope,authority->scope) || source->cvars!=authority->cvars ||
+        qa_console_cvars(source->console)!=source->cvars) {
+        fail(error,QA_ERROR_ARGUMENT,"Host namespaces leave their actual GAME configuration"); return NULL;
+    }
+    return source;
+}
+static bool registry_inventory(const frontend_config_store *manager,qa_application *application,
+    const qa_application_startup_source *authority,const qa_application_startup_source *parent_game,
+    qa_cvars *rows[8],qa_error *error)
+{
+    if (!manager || !application || !authority || !authority->descriptor || !authority->descriptor->storage ||
+        !authority->scope.provider || !authority->console || !authority->cvars ||
+        qa_console_cvars(authority->console)!=authority->cvars)
+        return fail(error,QA_ERROR_ARGUMENT,"Host namespace inventory needs its physical constructor tuple");
+    rows[QA_Q3_HOST_CVAR_ENGINE-1]=qa_application_cvars(application);
+    frontend_config_source *game=NULL;
+    if (game_scope(authority->scope)) {
+        if (parent_game) return fail(error,QA_ERROR_ARGUMENT,"GAME namespace inventory cannot acquire another parent");
+        game=namespace_game(manager,application,authority,error);
+        if (!game) return false;
+    } else if (client_scope(authority->scope)) {
+        qa_application_startup_source actual; qa_error ordinary={0};
+        bool current=qa_application_q3_client_configuration_read(application,authority->scope.provider,authority->scope.seat,&actual,&ordinary) &&
+            actual.descriptor && actual.descriptor->storage==authority->descriptor->storage &&
+            same_scope(actual.scope,authority->scope) && actual.console==authority->console && actual.cvars==authority->cvars;
+        if (!current && !qa_application_q3_client_configuration_entered(application,authority))
+            return fail(error,QA_ERROR_ARGUMENT,"Host namespaces differ from the retained physical CLIENT slot");
+        frontend_remote_config *client=frontend_config_store_client(manager,authority->console);
+        if (client) {
+            qa_console *hosted=NULL;
+            if (!frontend_remote_config_registries(client,application,authority,rows,&hosted,error)) return false;
+            game=hosted?frontend_config_store_source(manager,hosted):NULL;
+            if (hosted && (!game || game->application!=application || game->imported || !game->configured ||
+                !game->released || !instance(game) ||
+                !game_scope(game->scope) || qa_console_cvars(game->console)!=game->cvars))
+                return fail(error,QA_ERROR_ARGUMENT,"Host namespaces lost their retained hosted GAME parent");
+            if (parent_game && namespace_game(manager,application,parent_game,error)!=game)
+                return fail(error,QA_ERROR_ARGUMENT,"Host namespaces name another actual GAME parent");
+        } else {
+            game=namespace_game(manager,application,parent_game,error);
+            size_t seat=game?seat_index(game,authority->scope.seat):0;
+            if (!game || seat>=game->seat_count || game->seats[seat].cvars!=authority->cvars ||
+                !game->seats[seat].registry || frontend_client_registry_cvars(game->seats[seat].registry)!=authority->cvars)
+                return fail(error,QA_ERROR_ARGUMENT,"Supplemental CLIENT namespaces lack their real GAME-seat heap");
+            rows[QA_Q3_HOST_CVAR_CLIENT-1]=authority->cvars;
+            rows[QA_Q3_HOST_CVAR_MOUSE-1]=game->seats[seat].mouse;
+            rows[QA_Q3_HOST_CVAR_SELECTED_VIEW-1]=game->seats[seat].mouse;
+        }
+    } else return fail(error,QA_ERROR_ARGUMENT,"Host namespaces have no genuine GAME or CLIENT scope");
+    if (game) {
+        rows[QA_Q3_HOST_CVAR_GAME-1]=game->cvars;
+        rows[QA_Q3_HOST_CVAR_MOVEMENT-1]=game->movement;
+        rows[QA_Q3_HOST_CVAR_FALLBACK-1]=game->fallback;
+    }
+    if (!rows[QA_Q3_HOST_CVAR_ENGINE-1] &&
+        !qa_application_startup_source_engine_cvars(application,authority,&rows[QA_Q3_HOST_CVAR_ENGINE-1],error)) return false;
+    return rows[QA_Q3_HOST_CVAR_ENGINE-1]!=NULL || fail(error,QA_ERROR_ARGUMENT,"Host namespaces lost canonical ENGINE");
+}
+bool frontend_config_store_registry_reference(const frontend_config_store *manager,qa_application *application,
+    const qa_application_startup_source *source,const qa_application_startup_source *parent_game,
+    const qa_cvars *registry,qa_q3_host_cvar_namespace *out,qa_error *error)
+{
+    qa_cvars *rows[8]={0};
+    if (!registry || !out) return fail(error,QA_ERROR_ARGUMENT,"Host namespace reference needs its actual registry and output");
+    if (!registry_inventory(manager,application,source,parent_game,rows,error)) return false;
+    for (size_t i=0;i<8;++i) if (rows[i]==registry) { *out=(qa_q3_host_cvar_namespace)(i+1); return true; }
+    return fail(error,QA_ERROR_ARGUMENT,"Registry is absent from this retained host namespace inventory");
+}
+bool frontend_config_store_registry_resolve(const frontend_config_store *manager,qa_application *application,
+    const qa_application_startup_source *source,const qa_application_startup_source *parent_game,
+    qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
+{
+    qa_cvars *rows[8]={0};
+    if (!out || reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW)
+        return fail(error,QA_ERROR_ARGUMENT,"Host namespace role leaves its retained inventory");
+    if (!registry_inventory(manager,application,source,parent_game,rows,error)) return false;
+    if (!rows[reference-1]) return fail(error,QA_ERROR_ARGUMENT,"Host namespace role has no retained physical registry");
+    *out=rows[reference-1]; return true;
+}
+static bool host_registry_reference(void *context,const qa_cvars *registry,qa_q3_host_cvar_namespace *out,qa_error *error)
+{
+    frontend_config_host_cvars *owner=context;
+    return owner && frontend_config_store_registry_reference(owner->manager,owner->application,&owner->source,
+        owner->has_parent?&owner->parent_game:NULL,registry,out,error);
+}
+static bool host_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
+{
+    frontend_config_host_cvars *owner=context;
+    return owner && frontend_config_store_registry_resolve(owner->manager,owner->application,&owner->source,
+        owner->has_parent?&owner->parent_game:NULL,reference,out,error);
+}
+bool frontend_config_host_cvars_prepare(frontend_config_host_cvars *owner,const frontend_config_store *manager,
+    qa_application *application,const qa_application_startup_source *source,const qa_application_startup_source *parent_game,
+    qa_q3_host_cvar_services *out,qa_error *error)
+{
+    qa_cvars *engine=NULL;
+    if (!owner || owner->manager || !out)
+        return fail(error,QA_ERROR_ARGUMENT,"Host namespace callbacks need an empty retained factory context");
+    if (!frontend_config_store_registry_resolve(manager,application,source,parent_game,QA_Q3_HOST_CVAR_ENGINE,&engine,error)) return false;
+    *owner=(frontend_config_host_cvars){.manager=manager,.application=application,.source=*source,
+        .parent_game=parent_game?*parent_game:(qa_application_startup_source){0},.has_parent=parent_game!=NULL};
+    *out=(qa_q3_host_cvar_services){owner,host_registry_reference,host_registry_resolve}; return true;
+}
+bool frontend_config_host_bindings(void *context,const qa_input_seat *physical,qa_input_seat **out,qa_error *error)
+{
+    frontend_config_host_cvars *owner=context;
+    qa_cvars *rows[8]={0};
+    if (!owner || !physical || !out || !client_scope(owner->source.scope) ||
+        !registry_inventory(owner->manager,owner->application,&owner->source,
+            owner->has_parent?&owner->parent_game:NULL,rows,error))
+        return fail(error,QA_ERROR_ARGUMENT,"Host bindings need their actual retained CLIENT namespace");
+    frontend_remote_config *client=frontend_config_store_client(owner->manager,owner->source.console);
+    if (client) return frontend_remote_config_bindings(client,owner->application,&owner->source,physical,out,error);
+    frontend_config_source *game=namespace_game(owner->manager,owner->application,&owner->parent_game,error);
+    size_t ordinal=game?seat_index(game,owner->source.scope.seat):0;
+    qa_frontend *f=owner->manager->frontend;
+    if (!game || ordinal>=game->seat_count || !f->seats || ordinal>=f->options.seats ||
+        f->seats[ordinal].input!=physical || qa_input_seat_ordinal(physical)!=ordinal)
+        return fail(error,QA_ERROR_ARGUMENT,"Supplemental CLIENT bindings lost their stable physical seat");
+    qa_input_seat *input=frontend_config_source_input(game,owner->source.scope.seat);
+    if (!input || qa_input_seat_ordinal(input)!=ordinal)
+        return fail(error,QA_ERROR_ARGUMENT,"Supplemental CLIENT bindings lack their genuine dictionary owner");
+    *out=input; return true;
+}
+static bool game_registry_reference(void *context,const qa_cvars *registry,qa_q3_host_cvar_namespace *out,qa_error *error)
+{
+    frontend_config_source *source=context; qa_application_startup_source tuple;
+    if (!frontend_config_source_tuple(source,&tuple)) return fail(error,QA_ERROR_ARGUMENT,"GAME namespace callback lost its retained owner");
+    return frontend_config_store_registry_reference(source->manager,source->application,&tuple,NULL,registry,out,error);
+}
+static bool game_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
+{
+    frontend_config_source *source=context; qa_application_startup_source tuple;
+    if (!frontend_config_source_tuple(source,&tuple)) return fail(error,QA_ERROR_ARGUMENT,"GAME namespace callback lost its retained owner");
+    return frontend_config_store_registry_resolve(source->manager,source->application,&tuple,NULL,reference,out,error);
+}
+bool frontend_config_source_host_cvars(frontend_config_source *source,qa_q3_host_cvar_services *out,qa_error *error)
+{
+    qa_application_startup_source tuple; qa_cvars *engine=NULL;
+    if (!out || !frontend_config_source_tuple(source,&tuple) ||
+        !frontend_config_store_registry_resolve(source->manager,source->application,&tuple,NULL,QA_Q3_HOST_CVAR_ENGINE,&engine,error))
+        return fail(error,QA_ERROR_ARGUMENT,"GAME host namespace callbacks lack their retained configuration row");
+    *out=(qa_q3_host_cvar_services){source,game_registry_reference,game_registry_resolve}; return true;
 }
 static bool read(void *context,frontend_script_scope scope,const char *name,const qa_command_context *command,
     qa_bytes *bytes,void **lease,qa_error *error)
@@ -1281,6 +1442,9 @@ static bool begin_retire(void *context,qa_application *application,
     /* A failed constructor can have no manager row. The native owner still
      * qualifies the exact metadata storage and never retires a same-name
      * published source's reader merely because its interned owner matches. */
+    if (!frontend_selected_effects_retire_source(manager->frontend,owner,selected,error)) return false;
+    if (source && authority->scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME &&
+        !frontend_remote_configs_retire_staged_parent(manager->clients,application,authority,error)) return false;
     return !frontend_native_q3_count(manager->frontend) ||
         frontend_native_q3_retire_source(manager->frontend,owner,selected,error);
 }
@@ -1396,6 +1560,22 @@ static bool startup_source(void *context,qa_application *application,const qa_la
     *primary=binding && !strcmp(binding->instance,selected->selection.instance);
     return true;
 }
+static bool retire_hosted(void *context,qa_application *application,const qa_application_startup_source *source,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return manager && frontend_remote_config_retire_hosted(manager->clients,application,source,error);
+}
+static bool bind_hosted(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_startup_source *target,const qa_application_startup_source *backing,qa_cvars **out,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return manager && frontend_remote_config_bind_hosted(manager->clients,application,candidate,target,backing,out,error);
+}
+static void publish_hosted(void *context,qa_application *application,const qa_application_startup_source *source)
+{
+    frontend_config_store *manager=context;
+    frontend_remote_config_publish_hosted(manager->clients,application,source);
+}
 frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_error *error)
 {
     if (!frontend) return fail(error,QA_ERROR_ARGUMENT,"Configuration manager needs its actual frontend owner"),NULL;
@@ -1410,7 +1590,8 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,.cvar_owner=cvar_owner,.visible_cvars=visible_cvars,
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
         .carry_source_variables=carry_variables,.configuration_store=configuration_store,.program_source=program_source,
-        .startup_source=startup_source};
+        .startup_source=startup_source,.retire_hosted_configuration=retire_hosted,
+        .bind_hosted_configuration=bind_hosted,.publish_hosted_configuration=publish_hosted};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
