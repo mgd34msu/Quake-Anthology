@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_qc_visual.h"
 
 static const char *resource_text(qa_application *application, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(application->session), id) : NULL;
@@ -60,10 +61,16 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->source_flags = source.flags;
         out->powerups = source.powerups;
         out->alpha = source.alpha;
+        out->source_entity = source.source_entity;
+        out->has_source_entity = source.has_source_entity;
+        out->source_number = source.has_source_entity ? source.source_number : -1;
+        out->source_client = source.has_source_entity ? source.source_client : -1;
+        if (source.has_source_entity) out->frame = source.source_entity.frame;
         out->visible = source.kind != QA_Q3_ENTITY_HIDDEN;
         return true;
     }
     case APPLICATION_PROVIDER_QC:
+        return application_qc_visual(provider, actor, out, error);
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
         return false;
@@ -85,6 +92,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
                                     "Mode object has no live source content owner");
         qa_application_visual_view view = {.actor = actor, .provider = source->owner,
             .content = source->product->id, .old_frame = -1, .alpha = 1, .scale = 1,
+            .source_number = -1, .source_client = -1,
             .models = {resource_text(application, object.model)}, .frame = object.frame,
             .skin = object.skin, .effects = object.effects, .visible = object.visible,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
@@ -111,7 +119,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         .character = character ? character->owner : 0,
         .content = appearance->product->id,
         .character_content = character ? character->product->id : 0,
-        .old_frame = -1, .alpha = 1, .scale = 1};
+        .old_frame = -1, .alpha = 1, .scale = 1, .source_number = -1, .source_client = -1};
     if (!qa_world_body_read(application->world, actor, &view.body, error))
         return false;
     qa_error observed = {0};

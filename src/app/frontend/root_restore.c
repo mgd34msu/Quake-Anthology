@@ -57,8 +57,8 @@ bool frontend_roots_attach_restored(qa_frontend *f,frontend_world_inventory *roo
             frontend_scene_root_view other;
             if (!frontend_world_inventory_model_at(roots,j,&other)) { free(name); return false; }
             if (other.owner.kind!=FRONTEND_SCENE_OWNER_VISUAL || other.owner.owner!=root.owner.owner || j==i) continue;
-            if (other.owner.row==root.owner.row || !strcmp(other.visual_path,root.visual_path)) {
-                free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance roots repeat a physical cache row or retained path");
+            if (other.owner.row==root.owner.row) {
+                free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance roots repeat a physical cache row");
             }
             if (other.owner.row==root.owner.row-1) previous=true;
         }
