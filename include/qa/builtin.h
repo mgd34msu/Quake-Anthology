@@ -69,6 +69,9 @@ typedef struct qa_builtin_actor_traits {
     bool damageable_target, no_source_friendly_fire, grounded;
     float view_height, gib_health, max_health;
     uint64_t hostile_until_ns;
+    /* Semantic source births, qualified by the selected CHARACTER owner. */
+    uint64_t birth_epoch;
+    bool has_life, dead;
 } qa_builtin_actor_traits;
 
 /* Borrowed connection/selected-character projection, never a second player

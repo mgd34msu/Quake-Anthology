@@ -2,6 +2,8 @@
 #define QA_APPLICATION_NATIVE_Q2_COMBAT_POLICY_H
 
 #include "internal.h"
+bool application_native_q2_combat_before_reaction(qa_application *, const qa_damage_outcome *,
+                                                qa_error *);
 bool application_native_q2_armor_context(void *, const qa_damage_request *,
     const qa_combat_state *, const qa_damage_geometry *, qa_armor_context *, qa_error *);
 

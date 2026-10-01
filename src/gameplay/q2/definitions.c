@@ -76,6 +76,39 @@ static const qa_q2_weapon_definition grapples[] = {
       B(4) | B(5), false),
 };
 #undef D
+bool qa_q2_weapon_profile_identity(const qa_q2_options *options, qa_q2_weapon weapon,
+                                    qa_q2_weapon_identity *out) {
+    if (!out) return false;
+    *out = (qa_q2_weapon_identity){0};
+    if (!options || (unsigned)options->product > QA_Q2_N64 ||
+        (unsigned)options->edition > QA_Q2_RERELEASE ||
+        (unsigned)options->arsenal_rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (options->arsenal_rules == QA_Q2_WEAPON_RULES_BASE && options->native_hook) ||
+        weapon <= QA_Q2_WEAPON_NONE || weapon >= QA_Q2_WEAPON_COUNT)
+        return false;
+    const qa_q2_weapon_definition *tables[] = {
+        base,
+        options->product == QA_Q2_XATRIX || options->edition == QA_Q2_RERELEASE ? xatrix : NULL,
+        options->product == QA_Q2_ROGUE || options->edition == QA_Q2_RERELEASE ? rogue : NULL,
+    };
+    const size_t counts[] = {sizeof(base) / sizeof(*base),
+        sizeof(xatrix) / sizeof(*xatrix), sizeof(rogue) / sizeof(*rogue)};
+    const qa_q2_weapon_definition *definition = NULL;
+    for (size_t table = 0; !definition && table < sizeof(tables) / sizeof(*tables); ++table)
+        if (tables[table])
+            for (size_t i = 0; i < counts[table]; ++i)
+                if (tables[table][i].weapon == weapon) { definition = tables[table] + i; break; }
+    if (!definition && options->arsenal_rules == QA_Q2_WEAPON_RULES_CTF &&
+        options->native_hook && weapon == QA_Q2_GRAPPLE)
+        definition = grapples;
+    if (!definition && options->arsenal_rules == QA_Q2_WEAPON_RULES_LMCTF) {
+        if (weapon == QA_Q2_LMCTF_PLASMA) definition = grapples + 2;
+        else if (options->native_hook && weapon == QA_Q2_LMCTF_HOOK) definition = grapples + 1;
+    }
+    if (!definition) return false;
+    *out = (qa_q2_weapon_identity){definition->item, definition->name};
+    return true;
+}
 static void install(qa_q2_game *g, const qa_q2_weapon_definition *d, size_t count) {
     for (size_t i = 0; i < count; ++i) {
         if (g->definitions[d[i].weapon].name == NULL)

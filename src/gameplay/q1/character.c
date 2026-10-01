@@ -56,6 +56,7 @@ bool qa_q1_character_attach(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         return true;
     player->character = true;
     player->character_state = (q1_character){.life = QA_Q1_ALIVE,
+                                             .birth_epoch = 1,
                                              .frame = 12,
                                              .view_offset = {0, 0, 22},
                                              .air_until = g->time + 12,
@@ -383,7 +384,13 @@ bool qa_q1_character_respawn(qa_q1_game *g, qa_actor_id actor, const float *heal
     q1_player *player = character(g, actor, error);
     if (!player)
         return false;
+    if (player->character_state.birth_epoch == UINT64_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 character birth epoch exhausted");
+        return false;
+    }
+    uint64_t birth_epoch = player->character_state.birth_epoch + 1;
     player->character_state = (q1_character){.life = QA_Q1_ALIVE,
+                                             .birth_epoch = birth_epoch,
                                              .frame = 12,
                                              .view_offset = {0, 0, 22},
                                              .air_until = g->time + 12,

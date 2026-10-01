@@ -75,6 +75,7 @@ static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     next->target = entity->target;
     next->initial_angles = point ? point->initial_angles : target.angles;
     next->state.monster = (q1_monster){.species = entity->state.monster.species,
+                                       .birth_epoch = 1,
                                        .enemy = entity->state.monster.enemy};
     next->physics.enemy = entity->state.monster.enemy;
     next->physics.goal = entity->physics.goal;

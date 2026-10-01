@@ -213,6 +213,11 @@ typedef struct qa_q2_options {
     uint64_t seed;
     uint64_t frame_ns;
 } qa_q2_options;
+typedef struct qa_q2_weapon_identity { const char *item, *name; } qa_q2_weapon_identity;
+/* Borrowed identities from the selected native arsenal's actual definition
+ * tables. No GAME allocation or equipment-only hook admission occurs. */
+bool qa_q2_weapon_profile_identity(const qa_q2_options *, qa_q2_weapon,
+                                    qa_q2_weapon_identity *);
 typedef struct qa_q2_monster_spawn_options {
     const char *classname;
     uint32_t spawnflags;
@@ -374,6 +379,10 @@ typedef struct qa_q2_actor_checkpoint {
     uint64_t source_order;
     uint64_t extra_effects;
     uint64_t combat_surprise_ns;
+    uint64_t character_birth_epoch;
+    qa_actor_owner combat_life_owner;
+    uint64_t combat_life_birth_epoch, combat_death_ns;
+    bool combat_life_present, combat_no_knockback, combat_alive_knockback_only;
     float alpha;
     bool lmctf_plasma_bounce;
     bool weapon_bound, physics_bound;

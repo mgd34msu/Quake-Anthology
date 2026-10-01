@@ -129,9 +129,16 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
     if (!qa_combat_read(app->combat, request->target, &target_state, error)) return false;
     if (!target_state.can_take_damage) return true;
     qa_builtin_actor_traits target, attacker;
-    qa_q2_combat_actor ignored;
-    if (!character_traits(app, request->target, &target, &ignored, error) ||
-        !character_traits(app, request->attack.attacker, &attacker, &ignored, error)) return false;
+    qa_q2_combat_actor target_q2, attacker_q2;
+    if (!character_traits(app, request->target, &target, &target_q2, error) ||
+        !character_traits(app, request->attack.attacker, &attacker, &attacker_q2, error)) return false;
+    if (target.has_life) {
+        application_provider *character = application_provider_for(app, request->target,
+            QA_ROLE_CHARACTER, "");
+        if (!live_provider(character) ||
+            !qa_q2_combat_life_bind(policy->state.q2, request->target, character->owner,
+                target.birth_epoch, target_q2.birth_preserves_death_knockback, error)) return false;
+    }
     if (!target.player || !attacker.player) return true;
     if (rules.edition == QA_Q2_RERELEASE) {
         int32_t instagib;
@@ -186,6 +193,13 @@ static bool describe(void *opaque, const qa_damage_request *request,
     qa_q2_combat_actor target_q2, attacker_q2;
     if (!character_traits(app, request->target, &target, &target_q2, error) ||
         !character_traits(app, request->attack.attacker, &attacker, &attacker_q2, error)) return false;
+    application_provider *character = application_provider_for(app, request->target,
+        QA_ROLE_CHARACTER, "");
+    qa_q2_combat_life life = {0};
+    bool retained_life = target.has_life && live_provider(character) &&
+        qa_q2_combat_life_read(provider->state.q2, request->target, &life) &&
+        life.present && life.character_owner == character->owner &&
+        life.birth_epoch == target.birth_epoch;
     qa_physics_properties physical;
     if (!app->physics || !app->physics->services.read ||
         !app->physics->services.read(app->physics->services.context, request->target, &physical))
@@ -232,7 +246,9 @@ static bool describe(void *opaque, const qa_damage_request *request,
                 request->attack.cause.kind == QA_CAUSE_Q2 &&
                 (((uint32_t)request->attack.cause.source.q2.means_of_death &
                     ~UINT32_C(0x08000000)) == 47),
-            .no_knockback = target_state->no_knockback,
+            .no_knockback = target_state->no_knockback || (retained_life &&
+                (life.no_knockback || (life.alive_knockback_only &&
+                    (!target.dead || life.death_ns != life.source_ns)))),
             .movable = physical.motion != QA_PHYSICS_STATIONARY &&
                 physical.motion != QA_PHYSICS_BOUNCE && physical.motion != QA_PHYSICS_PUSH &&
                 physical.motion != QA_PHYSICS_STOP,
@@ -247,6 +263,26 @@ static bool describe(void *opaque, const qa_damage_request *request,
             .damage_scale = damage_scale,
             .suppress_pain = target_q2.suppress_pain}};
     return true;
+}
+
+bool application_native_q2_combat_before_reaction(qa_application *app,
+    const qa_damage_outcome *outcome, qa_error *error) {
+    if (!app || !outcome || !outcome->result.has_feedback ||
+        outcome->result.feedback_family != QA_GAME_Q2 ||
+        outcome->result.reaction != QA_REACTION_DEATH) return true;
+    application_provider *policy = application_provider_for(app, outcome->request.target,
+        QA_ROLE_COMBAT, "");
+    if (!live_provider(policy) || policy->kind != APPLICATION_PROVIDER_Q2 ||
+        policy->owner != outcome->request.attack.combat_provider) return true;
+    qa_builtin_actor_traits target;
+    qa_q2_combat_actor target_q2;
+    if (!character_traits(app, outcome->request.target, &target, &target_q2, error)) return false;
+    if (!target.has_life || (!target.player && !target.monster)) return true;
+    application_provider *character = application_provider_for(app, outcome->request.target,
+        QA_ROLE_CHARACTER, "");
+    return live_provider(character) && qa_q2_combat_life_died(policy->state.q2,
+        outcome->request.target, character->owner, target.birth_epoch,
+        target_q2.birth_preserves_death_knockback, error);
 }
 
 static bool source_effect(void *opaque, qa_combat *combat, qa_damage_effect_stage stage,

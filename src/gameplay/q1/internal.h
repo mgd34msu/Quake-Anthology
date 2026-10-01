@@ -167,6 +167,8 @@ typedef struct q1_species {
 } q1_species;
 typedef struct q1_monster {
     const q1_species *species;
+    uint64_t birth_epoch;
+    bool dead;
     qa_string_id path;
     uint16_t current_frame, next_frame;
     qa_actor_id enemy, old_enemy, charmer, charm_goal, move_target, previous_corner;
@@ -312,6 +314,7 @@ typedef struct q1_character {
     qa_q1_character_input input;
     qa_q1_character_pose pose;
     qa_q1_life life;
+    uint64_t birth_epoch;
     qa_string_id model;
     int32_t frame;
     qa_q1_frame_range animation;
@@ -384,6 +387,7 @@ struct qa_q1_game {
     bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
     bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);
     q1_map_runtime *maps;
+    struct q1_wire_state *wire;
     q1_actor **actors, *allocated_actors, *spare_actors, *retired_actors;
     q1_player **players, *allocated_players, *spare_players, *retired_players;
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
@@ -708,7 +712,10 @@ bool q1_drop_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_rogue_toss(qa_q1_game *, q1_player *, bool weapon, qa_error *);
 int q1_weapon_rank(const qa_q1_game *, qa_q1_weapon);
 bool q1_enable_combos(qa_q1_game *, q1_player *, qa_error *);
+bool q1_enable_combos_read(qa_q1_game *, qa_actor_id, q1_player *, qa_error *);
 qa_q1_weapon q1_combo_weapon(qa_q1_game *, q1_player *, qa_q1_weapon);
 qa_q1_weapon q1_best_weapon_before(qa_q1_game *, q1_player *, const qa_pickup_receipt *, size_t);
+bool q1_best_weapon_before_read(qa_q1_game *, qa_actor_id, q1_player *,
+    const qa_pickup_receipt *, size_t, qa_q1_weapon *, qa_error *);
 
 #endif

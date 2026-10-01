@@ -343,6 +343,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         entity->effects &= ~8u;
     if (m->counted_death)
         return true;
+    m->dead = true;
     bool foundation =
         !m->addon.enabled && (spec->species == QA_Q1_ARMY || spec->species == QA_Q1_DOG);
     qa_actor_id killer = foundation && m->enemy.registry ? m->enemy : attacker;

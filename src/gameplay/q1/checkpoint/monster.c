@@ -24,6 +24,10 @@ static bool species(q1_save_io *io, q1_monster *m) {
 bool q1_save_monster(q1_save_io *io, q1_monster *m) {
     if (!species(io, m))
         return false;
+    Q1_SAVE(io, u64, m->birth_epoch);
+    Q1_SAVE(io, bool, m->dead);
+    if (!m->birth_epoch)
+        return q1_save_fail(io, "Q1 monster continuation has no semantic birth");
     Q1_SAVE(io, string, m->path);
     Q1_SAVE(io, u16, m->current_frame);
     Q1_SAVE(io, u16, m->next_frame);

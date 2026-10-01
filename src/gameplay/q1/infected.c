@@ -134,6 +134,10 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         return gibs(g, entity, body.origin, health, false, error);
     }
+    if (m->birth_epoch == UINT64_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot, "Q1 monster birth epoch exhausted");
+        return false;
+    }
     if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -165,6 +169,8 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     combat.can_take_damage = true;
     if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error))
         return false;
+    ++m->birth_epoch;
+    m->dead = false;
     if (zombie)
         entity->spawnflags = 128;
     else {
@@ -183,6 +189,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (moved)
         return q1_monster_play(g, entity, zombie ? "zombie_paina1" : "demon1_pain1", error);
     m->counted_death = true;
+    m->dead = true;
     if (!q1_monster_death_report(g, entity, m->enemy, true, error))
         return false;
     if (!q1_alive(g, entity->id))

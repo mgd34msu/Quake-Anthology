@@ -40,6 +40,7 @@ static bool character(q1_save_io *io, q1_character *value) {
                                !pose->pain.count || !pose->death.count))
         return q1_save_fail(io, "Q1 saved character model has empty animation ranges");
     Q1_SAVE_ENUM(io, value->life, QA_Q1_RESPAWNABLE);
+    Q1_SAVE(io, u64, value->birth_epoch);
     Q1_SAVE(io, string, value->model);
     Q1_SAVE(io, i32, value->frame);
     if (!range(io, &value->animation))
@@ -171,6 +172,8 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
         return q1_save_fail(io,"Unadmitted Q1 player has source client state");
     if (!character(io, &player->character_state))
         return false;
+    if (player->character && !player->character_state.birth_epoch)
+        return q1_save_fail(io, "Q1 character continuation has no semantic birth");
     if (player->wetsuit_scaled_level > 3)
         return q1_save_fail(io, "Invalid saved Q1 wetsuit water level");
     if (io->reading)

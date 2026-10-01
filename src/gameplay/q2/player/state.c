@@ -512,6 +512,9 @@ bool q2_client_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *ou
     *out = (qa_builtin_actor_traits){
         .classname = r ? r->definition : 0,
         .player = !s->corpse,
+        .has_life = !s->corpse && a->character_birth_epoch != 0,
+        .birth_epoch = !s->corpse ? a->character_birth_epoch : 0,
+        .dead = !s->corpse && s->info.dead,
         .spectator = s->info.spectator,
         .no_target = s->info.notarget,
         .invisible = a->powers && a->powers->values.invisibility_until_ns > g->now_ns,

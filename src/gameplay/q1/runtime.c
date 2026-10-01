@@ -1,5 +1,6 @@
 #include "boss_internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include "wire_internal.h"
 #include <float.h>
 
 static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
@@ -657,6 +658,7 @@ void qa_q1_game_destroy(qa_q1_game *g) {
                 qa_pickups_observation_close(g->services.pickups,
                                               g->actors[i]->pickup_observation, NULL);
     q1_map_destroy(g);
+    q1_wire_destroy(g);
     qa_supply_destroy(g->source_supply);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
@@ -711,6 +713,7 @@ bool qa_q1_game_combat_policy(qa_q1_game *g, qa_combat_policy *out, qa_error *er
 void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
+    q1_wire_actor_released(g, actor.id);
     q1_grapple_released(g, actor.id);
     q1_map_rotation_released(g, actor.id);
     q1_map_addon_released(g, actor.id);
@@ -761,6 +764,8 @@ bool q1_create(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_act
         return false;
     qa_combat_state combat = {.mass = 100};
     qa_builtin_spawn spawn = {.owner = g->options.provider, .definition = name, .combat = &combat};
+    if (!q1_wire_allocate_slot(g, &spawn.has_source, &spawn.source_slot, error))
+        return false;
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &spawn, &actor, error))
         return false;
@@ -1174,6 +1179,8 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
         *out = (qa_actor_id){0};
         return true;
     }
+    if (!q1_wire_spawn_declarations(g, spawn, error))
+        return false;
     qa_string_id name;
     if (!qa_builtin_resource(&g->services, spawn->classname, &name, error))
         return false;
@@ -1186,6 +1193,9 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
                                 .combat = &combat};
     if (initial)
         request.body = *initial;
+    if (!request.has_source &&
+        !q1_wire_allocate_slot(g, &request.has_source, &request.source_slot, error))
+        return false;
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &request, &actor, error))
         return false;
@@ -1460,6 +1470,11 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         .classname = entity ? entity->classname : 0,
         .owner = entity ? entity->owner : (qa_actor_id){0},
         .player = is_player,
+        .has_life = (player && player->character) || (entity && entity->kind == Q1_MONSTER),
+        .birth_epoch = player && player->character ? player->character_state.birth_epoch
+                        : entity && entity->kind == Q1_MONSTER ? entity->state.monster.birth_epoch : 0,
+        .dead = player && player->character ? player->character_state.life != QA_Q1_ALIVE
+                : entity && entity->kind == Q1_MONSTER && entity->state.monster.dead,
         .monster = entity && (entity->physics.flags & QA_PHYSICS_MONSTER),
         .aimed_damage = entity && entity->aimed_damage,
         .grounded = entity && (entity->physics.flags & QA_PHYSICS_ONGROUND),

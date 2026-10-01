@@ -122,6 +122,10 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
         return !q2_actor_live(g, id) || qa_world_link(g->services.world, id, NULL, e);
     }
     bool was_waiting = s->awaiting_respawn;
+    if (a->character_birth_epoch == UINT64_MAX) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, id.slot, "Q2 character birth epoch exhausted");
+        return false;
+    }
     s->awaiting_respawn = false;
     s->respawn_timeout_ns = 0;
     s->has_pending_landmark = false;
@@ -149,6 +153,7 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
     }
     if (!q2_actor_live(g, id))
         return true;
+    ++a->character_birth_epoch;
     s->info.dead = s->gibbed = false;
     s->old_water = 0;
     s->air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);

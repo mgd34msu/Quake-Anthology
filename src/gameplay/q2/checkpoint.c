@@ -111,10 +111,17 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     if (a == NULL)
         return false;
     const q2_projectile *p = &a->projectile;
-    qa_q2_actor_checkpoint snapshot = {.version = 3,
+    qa_q2_actor_checkpoint snapshot = {.version = 4,
                                        .source_order = a->source_order,
                                        .extra_effects = a->extra_effects,
                                        .combat_surprise_ns = a->combat_surprise_ns,
+                                       .character_birth_epoch = a->character_birth_epoch,
+                                       .combat_life_owner = a->combat_life_owner,
+                                       .combat_life_birth_epoch = a->combat_life_birth_epoch,
+                                       .combat_death_ns = a->combat_death_ns,
+                                       .combat_life_present = a->combat_life_present,
+                                       .combat_no_knockback = a->combat_no_knockback,
+                                       .combat_alive_knockback_only = a->combat_alive_knockback_only,
                                        .alpha = a->alpha,
                                        .weapon_bound = a->weapon_bound,
                                        .physics_bound = a->physics_bound,
@@ -187,7 +194,13 @@ static bool valid_resource(qa_q2_game *g, qa_string_id id) {
 }
 bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkpoint *s,
                          qa_error *e) {
-    if (g == NULL || s == NULL || s->version != 3 || s->source_order == 0 || s->silencer < 0 ||
+    if (g == NULL || s == NULL || s->version != 4 || s->source_order == 0 || s->silencer < 0 ||
+        (s->combat_life_present ? !s->combat_life_owner :
+         (s->combat_life_owner || s->combat_life_birth_epoch || s->combat_death_ns ||
+          s->combat_no_knockback || s->combat_alive_knockback_only)) ||
+        (s->combat_no_knockback && g->options.edition != QA_Q2_CLASSIC) ||
+        (s->combat_alive_knockback_only && g->options.edition != QA_Q2_RERELEASE) ||
+        (!s->combat_alive_knockback_only && s->combat_death_ns) ||
         !isfinite(s->alpha) ||
         !qa_vec_finite(s->input.angles) || !isfinite(s->input.gravity) ||
         !isfinite(s->input.view_height) || (unsigned)s->input.hand > QA_Q2_CENTER_HAND ||
@@ -322,6 +335,13 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     a->hand_grenade = s->hand_grenade;
     a->extra_effects = s->extra_effects;
     a->combat_surprise_ns = s->combat_surprise_ns;
+    a->character_birth_epoch = s->character_birth_epoch;
+    a->combat_life_owner = s->combat_life_owner;
+    a->combat_life_birth_epoch = s->combat_life_birth_epoch;
+    a->combat_death_ns = s->combat_death_ns;
+    a->combat_life_present = s->combat_life_present;
+    a->combat_no_knockback = s->combat_no_knockback;
+    a->combat_alive_knockback_only = s->combat_alive_knockback_only;
     a->alpha = s->alpha;
     a->lmctf_plasma_bounce = s->lmctf_plasma_bounce;
     q2_actor_order(g, a, s->source_order);

@@ -6,7 +6,7 @@
 #include "qa/game_q1_checkpoint.h"
 #include "qa/persistence_gameplay.h"
 
-enum { Q1_SAVE_VERSION = 12 };
+enum { Q1_SAVE_VERSION = 14 };
 typedef struct q1_save_io {
     qa_q1_game *game;
     qa_strings *dictionary;
@@ -45,6 +45,8 @@ bool q1_save_entity(q1_save_io *, q1_actor *);
 bool q1_save_monster(q1_save_io *, q1_monster *);
 bool q1_save_map(q1_save_io *, q1_map_state *, q1_door_group **, size_t);
 bool q1_save_runtime(q1_save_io *, qa_q1_game *);
+bool q1_save_wire(q1_save_io *, qa_q1_game *);
+bool q1_save_wire_validate(q1_save_io *, qa_q1_game *);
 bool q1_save_map_runtime(q1_save_io *, q1_map_runtime *);
 
 #define Q1_SAVE(io, kind, member)                                                                  \

@@ -575,6 +575,9 @@ bool qa_q3_actor_traits(const qa_q3_game *game, qa_actor_id actor, qa_builtin_ac
     *out = (qa_builtin_actor_traits){.gib_health = -40};
     if (entry->kind == Q3_ACTOR_PLAYER) {
         out->player = true;
+        out->has_life = (entry->state.player.selections & QA_Q3_CHARACTER) != 0;
+        out->birth_epoch = out->has_life ? entry->state.player.spawn_count : 0;
+        out->dead = out->has_life && entry->state.player.dead;
         out->spectator = entry->state.player.spectator;
         out->no_target = entry->state.player.no_target;
         out->view_height = entry->state.player.view_height;

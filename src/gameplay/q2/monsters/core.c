@@ -1516,6 +1516,11 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  "Q2 actor already has native monster state");
     return false;
   }
+  if (actor->character_birth_epoch == UINT64_MAX) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
+                 "Q2 monster birth epoch exhausted");
+    return false;
+  }
   struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
   if (monster == NULL) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -1763,6 +1768,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     return false;
   }
   monster->initialized = true;
+  ++actor->character_birth_epoch;
   if (definition->species == Q2M_STALKER && (monster->spawnflags & 8u)) {
     actor->physics.gravity_direction.z = 1;
     context.body.angles.z = 180;
@@ -1944,6 +1950,9 @@ bool q2_monster_traits(qa_q2_game *game, qa_actor_id id,
     return false;
   out->classname = monster->classname;
   out->monster = true;
+  out->has_life = game->actors[id.slot]->character_birth_epoch != 0;
+  out->birth_epoch = game->actors[id.slot]->character_birth_epoch;
+  out->dead = monster->dead;
   out->invisible = !monster->visible;
   out->aimed_damage = true;
   out->laser_immune = monster->definition->species == Q2M_CARRIER ||

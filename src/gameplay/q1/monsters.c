@@ -864,6 +864,7 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         spec = q1_infected_form(QA_Q1_HELLKNIGHT, corpse);
     entity->kind = Q1_MONSTER;
     entity->state.monster = (q1_monster){.species = spec,
+                                         .birth_epoch = 1,
                                          .path = entity->target,
                                          .current_frame = q1_frame_index(spec->stand),
                                          .next_frame = q1_frame_index(spec->stand)};

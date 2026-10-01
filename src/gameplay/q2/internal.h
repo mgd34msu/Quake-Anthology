@@ -87,6 +87,10 @@ typedef struct q2_actor {
     uint64_t source_order;
     uint64_t extra_effects;
     uint64_t combat_surprise_ns;
+    uint64_t character_birth_epoch;
+    qa_actor_owner combat_life_owner;
+    uint64_t combat_life_birth_epoch, combat_death_ns;
+    bool combat_life_present, combat_no_knockback, combat_alive_knockback_only;
     float alpha;
     bool lmctf_plasma_bounce;
     qa_actor_id id;

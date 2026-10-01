@@ -137,6 +137,7 @@ bool q1_boss_colored_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &e->state.monster;
+    m->dead = true;
     if (m->addon.boss == Q1_BOSS_OLDNEW || m->addon.boss == Q1_BOSS_FINAL)
         return q1_major_boss_die(g, e, attacker, error);
     if (m->addon.boss == Q1_BOSS_GHOST) {
