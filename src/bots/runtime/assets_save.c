@@ -101,12 +101,14 @@ static bool collect(const qa_bot_runtime *runtime, qa_bot_saved_assets *set, qa_
     if (last != library->last_character)
         return fail(error, "Bot character cache tail differs from its actual ordered list");
     if (!add(set, QA_BOT_SAVED_WEAPONS, runtime->weapon_config, false, error)) return false;
+    for(const bot_weapon_config_identity *identity=runtime->weapon_pointers.configs;identity;identity=identity->next)
+        if(!identity->config->source->disposed &&
+           !add(set,QA_BOT_SAVED_WEIGHTS,identity->config,false,error)) return false;
+    for(const bot_weapon_pointer *pointer=runtime->weapon_pointers.first;pointer;pointer=pointer->next)
+        if(pointer->kind==BOT_WEAPON_POINTER_CONFIG && !pointer->config->source->disposed &&
+           !add(set,QA_BOT_SAVED_WEIGHTS,pointer->config,false,error)) return false;
     for (uint32_t i = 0; i < runtime->options.maximum_states; ++i) {
-        if (!add(set, QA_BOT_SAVED_CHARACTER, runtime->characters[i], false, error) ||
-            !add(set, QA_BOT_SAVED_WEIGHTS, runtime->weapons[i].weights, false, error)) return false;
-        const qa_bot_weapon_selector *selector = runtime->weapons[i].selector;
-        if (selector && (!add(set, QA_BOT_SAVED_WEAPONS, selector->config, false, error) ||
-                         !add(set, QA_BOT_SAVED_WEIGHTS, selector->weights, false, error))) return false;
+        if (!add(set, QA_BOT_SAVED_CHARACTER, runtime->characters[i], false, error)) return false;
     }
     if (runtime->goals) {
         if (!add(set, QA_BOT_SAVED_ITEMS, runtime->goals->items, false, error)) return false;

@@ -13,6 +13,8 @@
 #include "qa/bot_observations_save.h"
 #include "qa/script_defines_save.h"
 #include "qa/bots_allocator_save.h"
+#include "source_weapon_save.h"
+#include "../library/source_fuzzy_store.h"
 
 enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, MEMORY, PART_COUNT };
 typedef struct runtime_state {
@@ -30,9 +32,9 @@ static bool fail(qa_error *error, const char *message)
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 4;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 5;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 4 ? true :
+        qa_source_save_u32(io, &version) && version == 5 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 
@@ -159,6 +161,15 @@ static bool chat_decode(void *context, uint64_t id, qa_bot_chat_asset **out, qa_
     if (!qa_bot_saved_asset_resolve(context, QA_BOT_SAVED_CHAT, id, &object, error)) return false;
     *out = (qa_bot_chat_asset *)object; return true;
 }
+static bool weapon_reference(void *context,qa_bot_weights *weights,uint64_t *id,bool *found,qa_error *error) {
+    *found=weights && weights->source && !weights->source->disposed;
+    return !*found || qa_bot_saved_asset_id(context,QA_BOT_SAVED_WEIGHTS,weights,id,error);
+}
+static bool weapon_resolve(void *context,uint64_t id,qa_bot_weights **out,qa_error *error) {
+    const void *object;
+    if(!qa_bot_saved_asset_resolve(context,QA_BOT_SAVED_WEIGHTS,id,&object,error)) return false;
+    *out=(qa_bot_weights *)object;return true;
+}
 static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const qa_bot_saved_assets *assets,
                            const qa_bot_chat_restored_states *chat_states)
 {
@@ -166,6 +177,8 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
     void *object = runtime->weapon_config;
     bool ok = reference(io, assets, QA_BOT_SAVED_WEAPONS, &object);
     if (reading && ok) { runtime->weapon_config = object; qa_bot_weapons_retain(object); }
+    bot_weapon_weight_refs refs={.context=(void *)assets,.reference=weapon_reference,.resolve=weapon_resolve};
+    if(ok) ok=bot_weapon_pointer_fields(io,runtime->memory,&runtime->weapon_pointers,&refs);
     size_t count = runtime->options.maximum_states;
     if (ok) ok = qa_source_save_count(io, &count, runtime->options.maximum_states) && count == runtime->options.maximum_states;
     if (ok && reading && count > (io->input.size - io->offset) / 5)
@@ -178,42 +191,12 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
         if (reading && ok) { runtime->characters[i] = object; qa_bot_character_retain(object); }
         bot_weapon_state *weapon = &runtime->weapons[i];
         if (ok) ok = qa_source_save_bool(io, &weapon->used);
-        object = weapon->weights;
-        if (ok) ok = reference(io, assets, QA_BOT_SAVED_WEIGHTS, &object);
-        if (reading && ok) { weapon->weights = object; qa_bot_weights_retain(object); }
-        bool selector = !reading && weapon->selector != NULL;
-        if (ok) ok = qa_source_save_bool(io, &selector);
-        if (ok && selector) {
-            void *config = reading ? NULL : weapon->selector->config;
-            void *weights = reading ? NULL : weapon->selector->weights;
-            ok = reference(io, assets, QA_BOT_SAVED_WEAPONS, &config) && config && config == runtime->weapon_config &&
-                 reference(io, assets, QA_BOT_SAVED_WEIGHTS, &weights) && weights && weights == weapon->weights;
-            size_t indices = config ? qa_bot_weapons_read(config)->weapon_capacity : 0;
-            if (ok) ok = qa_source_save_count(io, &indices, SIZE_MAX) && indices == qa_bot_weapons_read(config)->weapon_capacity;
-            if (ok && reading) {
-                if (indices > (io->input.size - io->offset) / 4)
-                    ok = bot_save_fail(io, QA_ERROR_FORMAT, "Truncated bot weapon selector mapping");
-                if (ok) {
-                    weapon->selector=calloc(1,sizeof(*weapon->selector));
-                    if(!weapon->selector) ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring captured weapon selector");
-                    else {
-                        weapon->selector->config=config;qa_bot_weapons_retain(config);
-                        weapon->selector->weights=weights;qa_bot_weights_retain(weights);
-                        if(indices) {
-                            weapon->selector->indices=malloc(indices*sizeof(*weapon->selector->indices));
-                            if(!weapon->selector->indices)
-                                ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring captured weapon index map");
-                        }
-                        if(ok) ok=qa_bot_weight_workspace_create(&weapon->selector->workspace,io->error);
-                    }
-                }
-                if (!ok) io->failed = true;
-            }
-            for (size_t j = 0; ok && j < indices; ++j) {
-                int32_t value = reading ? 0 : weapon->selector->indices[j];
-                ok = qa_source_save_i32(io, &value);
-                if(ok && reading) weapon->selector->indices[j]=value;
-            }
+        if(ok && weapon->used) {
+            ok=bot_weapon_record_fields(io,runtime->memory,&weapon->record) &&
+                qa_source_save_u64(io,&weapon->revision) && weapon->revision<=UINT64_C(9007199254740991);
+            qa_bot_weights *weights;uint32_t index_pointer;
+            if(ok) ok=bot_weapon_config_get(&runtime->weapon_pointers,&weapon->record,&weights,io->error) &&
+                bot_weapon_record_read(&weapon->record,BOT_WEAPON_INDEX_POINTER,&index_pointer,io->error);
         }
         bool chat = !reading && runtime->chats[i] != NULL; size_t index = 0;
         if (ok) ok = qa_source_save_bool(io, &chat);
@@ -229,7 +212,6 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
                 }
             }
         }
-        if (ok) ok = weapon->used || (!weapon->weights && !weapon->selector);
     }
     if (!ok && !io->failed) return bot_save_fail(io, QA_ERROR_FORMAT, "Invalid runtime bot asset or handle mapping");
     return ok;
@@ -319,8 +301,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         runtime->library->options.preprocessor.globals!=runtime->globals)
         return fail(error, "Bot runtime import requires its actual empty detached constructor");
     for (size_t i = 0; i < runtime->options.maximum_states; ++i)
-        if (runtime->characters[i] || runtime->chats[i] || runtime->weapons[i].used ||
-            runtime->weapons[i].weights || runtime->weapons[i].selector)
+        if (runtime->characters[i] || runtime->chats[i] || runtime->weapons[i].used)
             return fail(error, "Detached bot runtime already owns handle continuations");
     runtime_state state = {0}; qa_bytes parts[PART_COUNT] = {0}; qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io) &&

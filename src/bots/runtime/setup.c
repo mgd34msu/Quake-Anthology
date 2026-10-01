@@ -199,30 +199,9 @@ static bool setup_weapons(qa_bot_runtime *r, int32_t *result, qa_error *e) {
         if (e) *e = local;
         return false;
     }
-    size_t count = r->options.maximum_states;
-    qa_bot_weapon_selector **selectors = calloc(count, sizeof(*selectors));
-    if (!selectors) {
-        qa_bot_weapons_release(config);
-        qa_error_set(e, QA_ERROR_MEMORY, count, "preparing weapon configuration selection maps");
-        return false;
-    }
-    bool ok = true;
-    for (size_t i = 0; ok && i < count; ++i)
-        if (r->weapons[i].weights)
-            ok = qa_bot_weapon_selector_create(config, r->weapons[i].weights, &selectors[i], e);
-    if (ok) {
-        for (size_t i = 0; i < count; ++i) {
-            qa_bot_weapon_selector_destroy(r->weapons[i].selector);
-            r->weapons[i].selector = selectors[i];
-        }
-        qa_bot_weapons_release(r->weapon_config);
-        r->weapon_config = config;
-    } else {
-        for (size_t i = 0; i < count; ++i) qa_bot_weapon_selector_destroy(selectors[i]);
-        qa_bot_weapons_release(config);
-    }
-    free(selectors);
-    return ok;
+    qa_bot_weapons_release(r->weapon_config);
+    r->weapon_config=config;
+    return true;
 }
 static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
     int32_t count, game_type, maximum;

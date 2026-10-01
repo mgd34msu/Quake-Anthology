@@ -84,6 +84,7 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     qa_bot_runtime *r = calloc(1, sizeof(*r));
     if (!r) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating bot runtime"); return false; }
     r->options = *options;
+    bot_weapon_pointers_init(&r->weapon_pointers);
     r->options.maximum_states = maximum;
     r->services = *services;
     r->characters = calloc(maximum, sizeof(*r->characters));
@@ -105,6 +106,9 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     r->globals = (qa_script_defines *)qa_bot_library_global_defines(r->library);
     qa_script_defines_retain(r->globals);
     r->options.library.preprocessor.globals = r->globals;
+    if(!qa_bot_weight_workspace_create(&r->weapon_workspace,e)) {
+        (void)qa_bot_runtime_destroy(r,NULL);return false;
+    }
     qa_bot_log_services log={.context=r,.open=log_open,.print=log_print};
     if(!qa_bot_log_create(&log,&r->log,e)) {
         (void)qa_bot_runtime_destroy(r,NULL);return false;
@@ -120,6 +124,12 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     return true;
 }
 static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
+    if(source) {
+        r->busy=true;
+        bool ok=bot_runtime_weapons_shutdown(r,error);
+        r->busy=false;
+        if(!ok) return false;
+    }
     bot_runtime_handles_close(r);
     qa_bot_moves_destroy(r->moves); r->moves = NULL;
     qa_bot_goals_destroy(r->goals); r->goals = NULL;
@@ -155,6 +165,7 @@ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     qa_bot_bsp_close(r->bsp);
     free(r->map_name);
     free(r->characters); free(r->weapons); free(r->chats);
+    qa_bot_weight_workspace_destroy(r->weapon_workspace);
     qa_script_defines_release(r->globals);
     (void)qa_bot_memory_release(r->memory,NULL);
     free(r);

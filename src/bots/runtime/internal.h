@@ -2,16 +2,12 @@
 #define QA_BOT_RUNTIME_INTERNAL_H
 #include "qa/bot_runtime.h"
 #include "qa/bots_allocator.h"
+#include "source_weapon_state.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <limits.h>
 
-typedef struct bot_weapon_state {
-    bool used;
-    qa_bot_weights *weights;
-    qa_bot_weapon_selector *selector;
-} bot_weapon_state;
 typedef struct bot_observation_link {
     size_t previous, next, hash_next;
 } bot_observation_link;
@@ -29,6 +25,8 @@ struct qa_bot_runtime {
     qa_bot_chat **chats;
     qa_bot_character **characters;
     bot_weapon_state *weapons;
+    bot_weapon_pointers weapon_pointers;
+    qa_bot_weight_workspace *weapon_workspace;
     qa_bot_weapons *weapon_config;
     qa_bot_entity_info *entities;
     qa_bot_goal_entity *goal_entities;
@@ -48,6 +46,7 @@ bool bot_runtime_owners_idle(qa_bot_runtime *, qa_error *);
 bool bot_runtime_variable(qa_bot_runtime *, const char *, const char *, const qa_bot_variable **, qa_error *);
 bool bot_runtime_integer(qa_bot_runtime *, const char *, const char *, int32_t *, qa_error *);
 void bot_runtime_handles_close(qa_bot_runtime *);
+bool bot_runtime_weapons_shutdown(qa_bot_runtime *,qa_error *);
 bool bot_runtime_observations_resize(qa_bot_runtime *, size_t, qa_error *);
 bool bot_runtime_owners_create(qa_bot_runtime *, qa_error *);
 void bot_runtime_observations_clear(qa_bot_runtime *);

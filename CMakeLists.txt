@@ -131,6 +131,7 @@ add_library(qa_console STATIC
     src/console/program.c
     src/console/release.c
     src/console/text.c
+    src/console/frame_time.c
     src/console/cvars.c
     src/console/commands.c
     src/console/field.c
@@ -321,6 +322,8 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/scourge.c
     src/gameplay/q1/selection.c
     src/gameplay/q1/species.c
+    src/gameplay/q1/source_travel.c
+    src/gameplay/q1/source_travel_state.c
     src/gameplay/q1/sphere_points.c
     src/gameplay/q1/teleport.c
     src/gameplay/q1/weapons.c
@@ -411,6 +414,8 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/physics.c
     src/gameplay/q2/player/admission.c
     src/gameplay/q2/player/checkpoint.c
+    src/gameplay/q2/player/character.c
+    src/gameplay/q2/player/feedback.c
     src/gameplay/q2/player/commands.c
     src/gameplay/q2/player/death.c
     src/gameplay/q2/player/environment.c
@@ -578,6 +583,7 @@ add_library(qa_bots STATIC
     src/bots/goals/report.c
     src/bots/goals/save.c
     src/bots/goals/source_weights.c
+    src/bots/goals/source_state.c
     src/bots/knowledge.c
     src/bots/library/bsp.c
     src/bots/library/bsp_save.c
@@ -588,13 +594,21 @@ add_library(qa_bots STATIC
     src/bots/library/items.c
     src/bots/library/assets_save.c
     src/bots/library/equipment_save.c
+    src/bots/library/source_fuzzy.c
+    src/bots/library/source_fuzzy_operations.c
+    src/bots/library/source_fuzzy_parse.c
+    src/bots/library/source_fuzzy_store.c
+    src/bots/library/source_fuzzy_save.c
+    src/bots/library/source_fuzzy_view.c
+    src/bots/library/source_fuzzy_standalone.c
+    src/bots/library/source_fuzzy_checkpoint.c
+    src/bots/library/source_fuzzy_standalone_save.c
     src/bots/library/structure.c
     src/bots/library/variables.c
     src/bots/library/variables_save.c
     src/bots/library/weapons.c
     src/bots/library/weights.c
     src/bots/library/weights_mutate.c
-    src/bots/library/weights_parse.c
     src/bots/movement/controller.c
     src/bots/memory/core.c
     src/bots/memory/checkpoint.c
@@ -979,6 +993,11 @@ add_library(qa_application STATIC
     src/app/application/equipment_presentation.c
     src/app/application/character_selection.c
     src/app/application/equipment_runtime.c
+    src/app/application/equipment_actions.c
+    src/app/application/equipment_content.c
+    src/app/application/equipment_gear_presentation.c
+    src/app/application/equipment_events.c
+    src/app/application/weapon_availability.c
     src/app/application/q3_asset_selection.c
     src/app/application/selected_q3_character.c
     src/app/application/selected_effects.c
@@ -986,6 +1005,7 @@ add_library(qa_application STATIC
     src/app/application/startup_flow.c
     src/app/application/startup_program.c
     src/app/application/startup_lifecycle.c
+    src/app/application/engine_shutdown.c
     src/app/application/save_policy.c
     src/app/application/native_q1_console.c
     src/app/application/native_q1_wire.c
@@ -1037,6 +1057,7 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_scene_world.c
     src/app/application/guest_q3_source_ui.c
     src/app/application/guest_q3_equipment.c
+    src/app/application/guest_q3_equipment_functions.c
     src/app/application/guest_q3_gear.c
     src/app/application/guest_q3_gear_hooks.c
     src/app/application/guest_q3_gear_memory.c
@@ -1083,10 +1104,19 @@ add_library(qa_application STATIC
     src/app/application/native_q2_console.c
     src/app/application/native_q2_checkpoint.c
     src/app/application/native_q2_combat_policy.c
+    src/app/application/native_q2_feedback_wire.c
     src/app/application/native_q3_chat.c
     src/app/application/native_q3_clients.c
     src/app/application/native_q3_client.c
     src/app/application/native_q3_remote_role.c
+    src/app/application/native_q3_remote_role_save.c
+    src/app/application/native_q3_remote_content.c
+    src/app/application/native_q3_remote_client.c
+    src/app/application/native_q3_remote_client_cvars.c
+    src/app/application/native_q3_remote_client_save.c
+    src/app/application/native_q3_remote_client_settings.c
+    src/app/application/native_q3_client_modules.c
+    src/app/application/native_q3_client_modules_save.c
     src/app/application/native_q3_client_cvars.c
     src/app/application/native_q3_client_settings.c
     src/app/application/native_q3_client_time.c
@@ -1145,6 +1175,9 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/loading_save.c
     src/presentation/q3_native/selected_media.c
     src/presentation/q3_native/selected_media_save.c
+    src/presentation/q3_native/selected_authored_media.c
+    src/presentation/q3_native/selected_authored_media_save.c
+    src/presentation/q3_native/remote_frame.c
     src/presentation/q3_native/weapon.c
     src/presentation/q3_native/client_info.c
     src/presentation/q3_native/client_info_save.c
@@ -1180,6 +1213,7 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/authored_menu_shared.c
     src/presentation/q3_native/authored_menu_save.c
     src/presentation/q3_native/native.c
+    src/presentation/q3_native/entity_save.c
     src/presentation/q3_native/native_save.c)
 target_link_libraries(qa_q3_native_presentation PUBLIC qa_application qa_q3_presentation qa_ui)
 
@@ -1276,11 +1310,18 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_q3.c
     src/app/frontend/equipment_q3_save.c
     src/app/frontend/equipment_native.c
+    src/app/frontend/equipment_events.c
+    src/app/frontend/equipment_gear.c
+    src/app/frontend/equipment_gear_save.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c
     src/app/frontend/q1_text.c
     src/app/frontend/input_profile.c
     src/app/frontend/input_settings.c
+    src/app/frontend/input_shutdown.c
+    src/app/frontend/shared_register.c
+    src/app/frontend/shared_ui.c
+    src/app/frontend/shared_values.c
     src/app/frontend/menu_fonts.c
     src/app/frontend/original_frontend.c
     src/app/frontend/qc_rerelease_events.c
@@ -1297,7 +1338,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/content_refs.c
     src/app/frontend/frame.c
     src/app/frontend/font_inventory.c
-    src/app/frontend/frame_time.c
     src/app/frontend/image_inventory.c
     src/app/frontend/travel.c
     src/app/frontend/launch.c
@@ -1317,6 +1357,8 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_input.c
     src/app/frontend/remote_config.c
     src/app/frontend/remote_prediction.c
+    src/app/frontend/remote_snapshots.c
+    src/app/frontend/remote_q3_client.c
     src/app/frontend/native_q3_client.c
     src/app/frontend/native_q3_client_save.c
     src/app/frontend/native_q3_topology.c
