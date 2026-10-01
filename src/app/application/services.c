@@ -672,9 +672,16 @@ static bool combat_effect(void *opaque, qa_combat *combat,
                                   effect, error);
 }
 
+static bool combat_inflictor_center(void *opaque, const qa_damage_request *request,
+                                    double center[3], bool *found, qa_error *error)
+{
+    return application_native_q1_wire_inflictor_center(opaque, request, center, found, error);
+}
+
 qa_combat_hooks application_combat_hooks(qa_application *application)
 {
     return (qa_combat_hooks){.context = application,
+                             .inflictor_center = combat_inflictor_center,
                              .team = combat_team,
                              .damage_allowed = q3_damage_allowed,
                              .impulse = combat_impulse,

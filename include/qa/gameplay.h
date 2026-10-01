@@ -119,10 +119,16 @@ typedef struct qa_damage_result {
     bool has_q2_damage;
     float q2_damage;
 } qa_damage_result;
+typedef struct qa_damage_inflictor_center {
+    qa_actor_id inflictor;
+    double center[3];
+    bool present;
+} qa_damage_inflictor_center;
 typedef struct qa_damage_outcome {
     bool stale, survived;
     qa_damage_request request;
     qa_damage_result result;
+    qa_damage_inflictor_center inflictor_center;
     qa_damage_mutation *mutations;
     size_t mutation_count;
 } qa_damage_outcome;
@@ -170,6 +176,10 @@ typedef struct qa_source_reaction_observer qa_source_reaction_observer;
 typedef bool (*qa_source_reaction_executor)(void *, qa_source_reaction_observer *, qa_error *);
 typedef struct qa_combat_hooks {
     void *context;
+    /* Read the actual inflictor body before damage callbacks can retire it.
+     * Absent bodies leave found=false; impact points are not body centers. */
+    bool (*inflictor_center)(void *, const qa_damage_request *, double center[3],
+                              bool *found, qa_error *);
     qa_team_id (*team)(void *, qa_actor_id, qa_team_id);
     bool (*damage_allowed)(void *, const qa_damage_request *);
     bool (*impulse)(void *, qa_actor_id, qa_vec3, qa_actor_owner, qa_error *);

@@ -817,6 +817,23 @@ typedef struct damage_dispatch {
     void *source_context;
 } damage_dispatch;
 
+static bool capture_inflictor_center(qa_combat *combat, qa_damage_outcome *outcome,
+                                     qa_error *error) {
+    qa_damage_inflictor_center receipt = {.inflictor = outcome->request.attack.inflictor};
+    if (combat->hooks.inflictor_center && receipt.inflictor.registry) {
+        ++combat->active_calls;
+        bool ok = combat->hooks.inflictor_center(combat->hooks.context,
+            &outcome->request, receipt.center, &receipt.present, error);
+        --combat->active_calls;
+        if (!ok) return false;
+        if (receipt.present && (!isfinite(receipt.center[0]) ||
+            !isfinite(receipt.center[1]) || !isfinite(receipt.center[2])))
+            return qa_combat_argument(error, "inflictor body returned an invalid center");
+    }
+    outcome->inflictor_center = receipt;
+    return true;
+}
+
 static bool damage_canonical(void *context, const void *input, void *output, qa_error *error) {
     damage_dispatch *dispatch = context;
     qa_combat *combat = dispatch->combat;
@@ -829,6 +846,10 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
     if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
     if (!entry) return qa_combat_argument(error, "damage target has no combat authority");
     uint64_t serial = entry->serial;
+    if (!capture_inflictor_center(combat, outcome, error)) return false;
+    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+    if (record(combat, request->target) != entry || entry->serial != serial)
+        return qa_combat_argument(error, "inflictor observation changed the damage owner");
     qa_source_damage_fn source = dispatch->source ? dispatch->source : entry->external ? entry->binding.source_damage : NULL;
     void *source_context = dispatch->source ? dispatch->source_context : entry->binding.context;
     qa_combat_policy policy = {0};
@@ -879,6 +900,12 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
     }
     if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
     if (record(combat, request->target) != entry || entry->serial != serial) return qa_combat_argument(error, "damage source changed its owner");
+    if (!qa_actor_id_equal(outcome->inflictor_center.inflictor, request->attack.inflictor)) {
+        if (!capture_inflictor_center(combat, outcome, error)) return false;
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+        if (record(combat, request->target) != entry || entry->serial != serial)
+            return qa_combat_argument(error, "inflictor observation changed the damage owner");
+    }
     if (!observe_public(combat, request->target, false, error) || !observe_public(combat, request->target, true, error)) return false;
     qa_combat_state initial; if (!read_state(combat, entry, &initial, error)) return false;
     qa_combat_cursor cursor = {.previous = combat->current, .outcome = outcome, .observed = initial, .binding_serial = serial, .active = true};
