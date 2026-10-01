@@ -807,6 +807,15 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *value,
     if (!mutation_begin(registry,error)) return false;
     return mutation_end(registry,register_variable(registry,name,value,flags,owner,description,error),error);
 }
+bool qa_cvars_add_flags(qa_cvars *registry,const char *name,uint32_t flags,qa_error *error)
+{
+    if (!mutation_begin(registry,error)) return false;
+    bool ok=qac_cvars_touch(registry,error);
+    cvar *entry=ok && name?find_variable(registry,source_name(registry,name)):NULL;
+    if (ok && !entry) ok=qac_fail(error,QA_ERROR_NOT_FOUND,"Flag declaration requires its registered cvar");
+    if (ok) entry->view.flags|=flags;
+    return mutation_end(registry,ok,error);
+}
 bool qa_cvars_set(qa_cvars *registry, const char *name, const char *value, bool force, qa_error *error)
 {
     if (!mutation_begin(registry,error)) return false;

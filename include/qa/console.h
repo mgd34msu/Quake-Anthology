@@ -132,6 +132,9 @@ size_t qa_cvars_handle_count(const qa_cvars *registry);
 bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default_value,
                         uint32_t flags, uint64_t owner, const char *description,
                         qa_error *error);
+/* Adds declaration flags to the existing physical record, preserving its
+ * value, reset, latch, owner, handle and value modification count. */
+bool qa_cvars_add_flags(qa_cvars *,const char *name,uint32_t flags,qa_error *);
 bool qa_cvars_document(qa_cvars *, const char *name, uint64_t owner,
                        const qa_console_documentation *, qa_error *);
 /* Bindings validate before publication and observe committed values. They use
