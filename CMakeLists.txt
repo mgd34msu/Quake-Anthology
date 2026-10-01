@@ -324,6 +324,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/species.c
     src/gameplay/q1/source_travel.c
     src/gameplay/q1/source_travel_state.c
+    src/gameplay/q1/source_birth.c
     src/gameplay/q1/sphere_points.c
     src/gameplay/q1/teleport.c
     src/gameplay/q1/weapons.c
@@ -1333,6 +1334,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/shared_register.c
     src/app/frontend/shared_ui.c
     src/app/frontend/shared_values.c
+    src/app/frontend/shared_video.c
     src/app/frontend/menu_fonts.c
     src/app/frontend/original_frontend.c
     src/app/frontend/qc_rerelease_events.c
@@ -1371,6 +1373,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_snapshots.c
     src/app/frontend/remote_q3_client.c
     src/app/frontend/remote_q3_services.c
+    src/app/frontend/remote_q3_initial.c
     src/app/frontend/native_q3_client.c
     src/app/frontend/native_q3_client_save.c
     src/app/frontend/native_q3_topology.c

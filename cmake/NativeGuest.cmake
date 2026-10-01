@@ -80,6 +80,8 @@ function(qa_native_guest_dependency)
         "${guest_root}/unicorn_map_exec.inc.c" "${extension_root}/unicorn-exec.c")
     qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/softmmu/memory.c"
         "${guest_root}/unicorn_map_memory.inc.c" "${extension_root}/unicorn-memory.c")
+    qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/fpu_helper.c"
+        "${guest_root}/unicorn_abi_fp.inc.c" "${extension_root}/unicorn-fpu.c")
 
     set(store_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/cputlb.c")
     set(store_extension "${extension_root}/unicorn-cputlb.c")
@@ -131,6 +133,7 @@ function(qa_native_guest_dependency)
     target_sources(qa_native PRIVATE
         "${guest_root}/memory.c"
         "${guest_root}/cpu.c"
+        "${guest_root}/abi.c"
         "${guest_root}/checkpoint.c"
         "${guest_root}/pe.c"
         "${guest_root}/pe_memory.c")
