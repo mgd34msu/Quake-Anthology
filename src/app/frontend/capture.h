@@ -5,6 +5,10 @@
 /* Pure admission for the source, scene and immutable-content child owners.
  * The persistent local UI can remain in its map-selection action during travel. */
 bool frontend_owners_idle(const qa_frontend *);
+/* ENGINE shutdown separately qualifies its installed native settings ticket
+ * and every physical release scope. This checks every other actual owner;
+ * it supplies no ticket, release-history or detach authority by itself. */
+bool frontend_owners_returned(const qa_frontend *);
 /* The whole frontend cannot be captured, stepped or destroyed until its real
  * seat callbacks have returned, including HUD codecs and wheel callbacks. */
 bool frontend_seat_callbacks_idle(const qa_frontend *);

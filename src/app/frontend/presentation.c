@@ -4,6 +4,7 @@
 #include "menu_fonts.h"
 #include "qc_rerelease_events.h"
 #include "native_q3_client.h"
+#include "native_composition.h"
 #include <stdio.h>
 
 static qa_scene_family scene_family(qa_game_family family)
@@ -99,6 +100,12 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         frontend->width = display.drawable_width; frontend->height = display.drawable_height;
     }
     if (!frontend_ui_features_sync(frontend, error) || !frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
+    frontend_native_q3_factory native_factory = {.context = frontend,
+        .compose = frontend_native_composition_create};
+    qa_application_map_view native_map;
+    bool native_ready = qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING &&
+        qa_application_map_read(frontend->application, &native_map);
+    if (native_ready && !frontend_native_q3_sync(frontend, &native_factory, error)) return false;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if (!qa_scene_frame_material_order(&frontend->frame, frontend->order, error)) return false;
     qa_audio_listener listeners[4]; size_t listener_count = 0;
@@ -141,7 +148,9 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         if (!frontend_source_frame(frontend, i, rect, error) ||
             !frontend_native_q2_frame(frontend, i, rect, error)) return false;
-        if (live && !ui.fullscreen && !source.source_world && frontend->scene_world) {
+        bool native_rendered = false;
+        if (native_ready && !frontend_native_q3_frame(frontend, i, rect, &native_rendered, error)) return false;
+        if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
             qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4};
             if (!frontend_event_world(frontend, i, &world, error) ||
@@ -151,7 +160,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             world.fog.sky_drawn = qa_scene_world_sky_drawn(frontend->scene_world);
             if (!qa_scene_frame_finish(&frontend->frame, &view, &world.fog, error)) return false;
         }
-        if (!source.source_world && (!frontend_event_debug(frontend, &view, error) ||
+        if (!source.source_world && !native_rendered && (!frontend_event_debug(frontend, &view, error) ||
             !frontend_tools_debug(frontend, &view, error))) return false;
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
         if (published && !qa_application_present(frontend->application, launch_seat, real_milliseconds,
@@ -159,21 +168,26 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
                     real_milliseconds, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
             !frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
-        if (live && frontend->audio) {
+        if ((live || native_rendered) && frontend->audio) {
             qa_audio_listener *listener = &listeners[listener_count++];
-            *listener = (qa_audio_listener){.seat = i, .actor = frontend_audio_actor(frontend, actor, error),
-                .origin = view.origin, .gain = 1.0f / (float)frontend->options.seats};
-            if (listener->actor == QA_AUDIO_NO_ACTOR) return false;
-            memcpy(listener->axis, view.axis, sizeof(view.axis));
-            frontend_source_listener(frontend, i, listener);
+            if (native_rendered) {
+                if (!frontend_native_q3_listener(frontend, i, listener))
+                    return frontend_fail(error, QA_ERROR_ARGUMENT, "Native draw did not publish its actual listener");
+            } else {
+                *listener = (qa_audio_listener){.seat = i, .actor = frontend_audio_actor(frontend, actor, error),
+                    .origin = view.origin, .gain = 1.0f / (float)frontend->options.seats};
+                if (listener->actor == QA_AUDIO_NO_ACTOR) return false;
+                memcpy(listener->axis, view.axis, sizeof(view.axis));
+                frontend_source_listener(frontend, i, listener);
+            }
         }
-        if (live && !ui.fullscreen && !source.source_world && seat->q2_view_ready &&
+        if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q2_view_ready &&
                 qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0 && !preferences.reduced_flashes) {
             qa_q2_blend blend = seat->q2_view.blend;
             if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
                     (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
         }
-        if (live && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
+        if (live && !native_rendered && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen}, &frontend->frame, error)) return false;

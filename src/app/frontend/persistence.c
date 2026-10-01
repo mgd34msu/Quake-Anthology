@@ -47,7 +47,7 @@
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
 #include "native_q3_topology.h"
-#include "equipment_native.h"
+#include "native_composition.h"
 #include "config_store.h"
 #include "keys.h"
 #include "client_registry.h"
@@ -958,7 +958,7 @@ static bool native_clients_restore(frontend_persistence *operation,qa_error *err
         q3n_client_refs resources;
         if (!frontend_native_q3_topology_read(operation->native_topology,i,&row,&saved,&resources,error) ||
             !row || !frontend_native_q3_prepare_services(row,error)) return false;
-        frontend_native_q3_factory factory={.context=f,.compose=frontend_equipment_native_compose};
+        frontend_native_q3_factory factory={.context=f,.compose=frontend_native_composition_create};
         if (!frontend_native_q3_prepare_composition(row,&factory,error)) return false;
         if (!frontend_native_q3_read(f,i,&saved->owners,error)) return false;
         bool found=false;

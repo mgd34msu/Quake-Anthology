@@ -156,10 +156,10 @@ int main(int argc, char **argv)
         if (ok) ok = qa_frontend_run(&frontend, &error);
         if (frontend) {
             qa_error cleanup = {0};
-            if (!qa_frontend_destroy(frontend, &cleanup)) {
+            if (!qa_frontend_shutdown(&frontend, &cleanup)) {
                 if (ok) error = cleanup;
                 else fprintf(stderr, "shutdown: %s\n", cleanup.message);
-                owners_released = false;
+                owners_released = frontend == NULL;
                 ok = false;
             }
         }

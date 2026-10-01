@@ -64,9 +64,9 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
         if (!qa_input_release_idle(f->seats[i].input)) return false;
     return true;
 }
-bool frontend_owners_idle(const qa_frontend *f)
+bool frontend_owners_returned(const qa_frontend *f)
 {
-    if (!f || f->capture || (f->input && !qa_input_platform_settings_idle(f->input)) ||
+    if (!f || f->capture ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         !frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f) || !frontend_ui_features_idle(f) ||
         !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
@@ -83,6 +83,10 @@ bool frontend_owners_idle(const qa_frontend *f)
         if (!qa_scene_resources_idle(images)) return false;
     }
     return true;
+}
+bool frontend_owners_idle(const qa_frontend *f)
+{
+    return frontend_owners_returned(f) && (!f->input || qa_input_platform_settings_idle(f->input));
 }
 static bool add(frontend_capture *capture, capture_kind kind, const void *owner, qa_error *error)
 {
@@ -190,7 +194,7 @@ static bool registry_children(frontend_capture *capture, qa_error *error)
 }
 bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *error)
 {
-    if (!f || !out || *out || f->stepping || f->preparing || f->round || f->source_restoring ||
+    if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
         !f->application || !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");

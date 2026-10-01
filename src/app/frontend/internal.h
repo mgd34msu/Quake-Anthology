@@ -45,6 +45,7 @@ typedef struct frontend_campaign frontend_campaign;
 typedef struct frontend_ui_features frontend_ui_features;
 typedef struct frontend_keys frontend_keys;
 typedef struct frontend_restart frontend_restart;
+typedef struct frontend_shutdown frontend_shutdown;
 typedef struct frontend_equipment frontend_equipment;
 typedef struct frontend_equipment_q3 frontend_equipment_q3;
 typedef struct frontend_selected_character frontend_selected_character;
@@ -129,6 +130,7 @@ struct qa_frontend {
     frontend_ui_features *ui_features;
     frontend_keys *keys;
     frontend_restart *restart;
+    frontend_shutdown *shutdown;
     frontend_equipment *equipment;
     frontend_equipment_q3 *equipment_q3;
     frontend_selected_character *selected_characters;

@@ -48,6 +48,10 @@ bool qa_frontend_step(qa_frontend *, uint64_t elapsed_ns, qa_error *);
  * boundary. Serialized restore requests publish through that same slot. */
 bool qa_frontend_run(qa_frontend **slot, qa_error *);
 bool qa_frontend_destroy(qa_frontend *, qa_error *);
+/* Drives genuine final input waits at returned boundaries. A consumed owner
+ * clears slot even when terminal cleanup reports an earlier source failure;
+ * rejected cleanup retains the actual slot and its borrowed options. */
+bool qa_frontend_shutdown(qa_frontend **slot, qa_error *);
 qa_application *qa_frontend_application(qa_frontend *);
 /* A rejected construction/cleanup returns its actual application in retained.
  * Keep the borrowed options alive until qa_application_destroy succeeds. */
