@@ -49,6 +49,8 @@ bool qa_frontend_step(qa_frontend *, uint64_t elapsed_ns, qa_error *);
 bool qa_frontend_run(qa_frontend **slot, qa_error *);
 bool qa_frontend_destroy(qa_frontend *, qa_error *);
 qa_application *qa_frontend_application(qa_frontend *);
-bool qa_frontend_list_content(const qa_frontend_options *, FILE *, qa_error *);
+/* A rejected construction/cleanup returns its actual application in retained.
+ * Keep the borrowed options alive until qa_application_destroy succeeds. */
+bool qa_frontend_list_content(const qa_frontend_options *, FILE *, qa_application **retained, qa_error *);
 
 #endif

@@ -192,6 +192,13 @@ bool qa_q3_presentation_selected_view_model(qa_q3_presentation *, qa_scene_model
 bool qa_q3_presentation_selected_registered(qa_q3_presentation *,
     const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+/* The supplied model/skin and authored parent flags retain the selected
+ * namespace. A captured held pass supplies shader/time/color from the actual
+ * primary registry; no shader means the selected pass's white base color. */
+bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
+    const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);

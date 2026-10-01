@@ -345,7 +345,7 @@ bool qa_q1_save_singleplayer(const qa_q1_save_data *save,qa_error *error)
                 return fail(error,0,"Invalid source map component");
             if (!c) return true;
             start=p+1;
-        } else if (!((c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' || c=='-'))
+        } else if (!((c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' || c=='-' || c=='.'))
             return fail(error,0,"Invalid source map name");
     }
 }

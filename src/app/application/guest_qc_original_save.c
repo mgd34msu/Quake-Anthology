@@ -7,9 +7,10 @@
 #include <float.h>
 
 struct application_q1_original_save {
-    const qa_q1_save_data *save;
+    qa_q1_save_data *save;
     qa_product_id product;
     uint64_t initial_ns;
+    bool applying;
 };
 static const uint8_t original_constructor[8]={'Q','1','O','I',1,0,0,0};
 bool application_q1_original_clock(const application_provider *provider,uint64_t *out)
@@ -32,6 +33,7 @@ bool application_q1_original_clock(const application_provider *provider,uint64_t
 void application_q1_original_dispose(qa_application *app)
 {
     if (!app) return;
+    if (app->q1_original_save) qa_q1_save_destroy(app->q1_original_save->save);
     free(app->q1_original_save); app->q1_original_save=NULL;
 }
 
@@ -126,6 +128,53 @@ static char *duplicate(const char *text,qa_error *error)
     size_t size=strlen(text); char *out=malloc(size+1);
     if (!out) { application_fail(error,QA_ERROR_MEMORY,"Retaining original save header text"); return NULL; }
     memcpy(out,text,size+1); return out;
+}
+static bool copy_record(const qa_q1_save_record *source,qa_q1_save_record *out,qa_error *error)
+{
+    if ((source->count && !source->pairs) || source->count>SIZE_MAX/sizeof(*out->pairs))
+        return application_fail(error,QA_ERROR_FORMAT,"Original source record exceeds its real pair storage");
+    out->pairs=source->count?calloc(source->count,sizeof(*out->pairs)):NULL;
+    if (source->count && !out->pairs)
+        return application_fail(error,QA_ERROR_MEMORY,"Retaining pending original source pairs");
+    for (size_t i=0;i<source->count;++i) {
+        qa_q1_save_pair *pair=out->pairs+out->count++;
+        if (!source->pairs[i].key || !source->pairs[i].value)
+            return application_fail(error,QA_ERROR_FORMAT,"Original source pair lacks its actual byte strings");
+        pair->key=duplicate(source->pairs[i].key,error);
+        pair->value=duplicate(source->pairs[i].value,error);
+        if (!pair->key || !pair->value) return false;
+    }
+    return true;
+}
+static qa_q1_save_data *copy_save(const qa_q1_save_data *source,qa_error *error)
+{
+    qa_q1_save_data *out=calloc(1,sizeof(*out));
+    if (!out) { application_fail(error,QA_ERROR_MEMORY,"Retaining pending original source save"); return NULL; }
+    out->version=source->version; out->skill=source->skill; out->time=source->time;
+    memcpy(out->spawn_parameters,source->spawn_parameters,sizeof(out->spawn_parameters));
+    out->map=duplicate(source->map,error);
+    if (source->comment) out->comment=duplicate(source->comment,error);
+    if (source->game_directories) out->game_directories=duplicate(source->game_directories,error);
+    bool ok=out->map && (!source->comment || out->comment) && (!source->game_directories || out->game_directories);
+    for (size_t i=0;ok && i<64;++i) { out->lightstyles[i]=duplicate(source->lightstyles[i],error); ok=out->lightstyles[i]!=NULL; }
+    if (ok) ok=copy_record(&source->globals,&out->globals,error);
+    if (ok && source->entity_count>SIZE_MAX/sizeof(*out->entities))
+        ok=application_fail(error,QA_ERROR_MEMORY,"Pending original edict extent exceeds its owner");
+    if (ok) {
+        out->entities=calloc(source->entity_count,sizeof(*out->entities));
+        if (!out->entities) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining pending original edicts");
+    }
+    for (size_t i=0;ok && i<source->entity_count;++i) {
+        ++out->entity_count;
+        ok=copy_record(source->entities+i,out->entities+i,error);
+    }
+    if (ok && source->extension.size) {
+        out->extension.data=malloc(source->extension.size);
+        if (!out->extension.data) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining pending original extension");
+        else { memcpy(out->extension.data,source->extension.data,source->extension.size); out->extension.size=source->extension.size; }
+    }
+    if (!ok) { qa_q1_save_destroy(out); return NULL; }
+    return out;
 }
 bool qa_application_q1_save_capture(qa_application *app,uint32_t version,const char *comment,
     qa_q1_save_data **out,qa_error *error)
@@ -338,7 +387,9 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
     const qa_product *product=admission.product;
     struct application_q1_original_save *stage=calloc(1,sizeof(*stage));
     if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original source construction stage");
-    *stage=(struct application_q1_original_save){save,product->id,admission.initial_ns};
+    stage->save=copy_save(save,error); stage->product=product->id; stage->initial_ns=admission.initial_ns;
+    if (!stage->save) { free(stage); return false; }
+    save=stage->save;
     qa_launch_draft *draft=NULL;
     size_t length=strlen(save->map); char *map=length<=SIZE_MAX-10?malloc(length+10):NULL;
     bool ok=map!=NULL;
@@ -363,9 +414,27 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
     if (ok) {
         app->q1_original_save=stage; stage=NULL;
         ok=qa_application_apply(app,draft,error);
-        struct application_qc_state *engine=ok?source(app,error):NULL;
-        ok=engine && restore_raw(engine,save,error);
     }
-    qa_launch_draft_destroy(draft); free(stage); application_q1_original_dispose(app);
+    qa_launch_draft_destroy(draft);
+    if (stage) { qa_q1_save_destroy(stage->save); free(stage); }
+    if (!ok && app->q1_original_save) app->q1_original_save->applying=true;
     return ok;
+}
+bool qa_application_q1_save_import_advance(qa_application *app,bool *complete,qa_error *error)
+{
+    struct application_q1_original_save *stage=app?app->q1_original_save:NULL;
+    if (!app || !complete || !stage || stage->applying || app->operation!=APPLICATION_IDLE)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original import advance requires its retained idle source stage");
+    *complete=false;
+    if (qa_application_startup_pending(app)) {
+        bool started=false;
+        if (!qa_application_startup_advance(app,&started,error)) { stage->applying=true; return false; }
+        if (!started) return true;
+    }
+    stage->applying=true;
+    struct application_qc_state *engine=source(app,error);
+    if (!engine || !restore_raw(engine,stage->save,error)) return false;
+    application_q1_original_dispose(app);
+    *complete=true;
+    return true;
 }

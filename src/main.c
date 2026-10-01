@@ -139,7 +139,17 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i) list |= strcmp(argv[i], "--list-content") == 0;
     bool ok, owners_released = true;
     if (list) {
-        ok = qa_frontend_list_content(&options, stdout, &error);
+        qa_application *retained = NULL;
+        ok = qa_frontend_list_content(&options, stdout, &retained, &error);
+        if (retained) {
+            qa_error cleanup = {0};
+            if (!qa_application_destroy(retained, &cleanup)) {
+                if (ok) error = cleanup;
+                else fprintf(stderr, "shutdown: %s\n", cleanup.message);
+                owners_released = false;
+                ok = false;
+            }
+        }
     } else {
         qa_frontend *frontend = NULL;
         ok = qa_frontend_create(&options, &frontend, &error);

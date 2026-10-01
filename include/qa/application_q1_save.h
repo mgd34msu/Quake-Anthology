@@ -13,9 +13,14 @@ bool qa_application_q1_save_import_ready(const qa_application *,const qa_q1_save
     const char *product,qa_error *);
 /* Construct only in a fresh isolated application. Product names an installed
  * actual catalog owner selected by qa_q1_save_select_product. This stages the
- * saved source epoch before normal progs/map/player construction, then applies
- * raw globals/edict slots and real body/header owners without source spawning
- * from saved records. A failure leaves the candidate for ordinary destruction. */
+ * saved source epoch and an exact owned save copy before normal progs/map/player
+ * preparation. Success can leave genuine preInit script waits pending. The
+ * isolated driver must advance below before any gameplay frame or capture.
+ * A failure leaves the candidate for ordinary destruction. */
 bool qa_application_q1_save_import(qa_application *,const qa_q1_save_data *,
     const char *product,qa_error *);
+/* Advance once at a real driver boundary. After actual startup completes,
+ * applies raw globals/edict slots and body/header owners exactly once, without
+ * spawning from saved records. No loop, file reread or input save borrow. */
+bool qa_application_q1_save_import_advance(qa_application *,bool *complete,qa_error *);
 #endif

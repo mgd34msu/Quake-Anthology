@@ -172,15 +172,16 @@ void qa_frontend_options_destroy(qa_frontend_options *options)
     options->startup = NULL; options->startup_count = 0;
     options->mods = NULL; options->mod_count = 0;
 }
-bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, qa_error *error)
+bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, qa_application **retained, qa_error *error)
 {
-    if (!options || !stream) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid content listing");
+    if (!options || !stream || !retained || *retained)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid content listing");
     qa_application *application = NULL;
     qa_application_options construction=options->application;
     construction.startup_commands=options->startup;
     construction.startup_command_count=options->startup_count;
     construction.initial_product_key=options->game;
-    if (!qa_application_create(&construction, &application, error)) return false;
+    if (!qa_application_create(&construction, &application, error)) { *retained=application; return false; }
     qa_catalog *catalog = qa_application_catalog(application);
     for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
         const qa_product *product = qa_catalog_at(catalog, i);
@@ -188,6 +189,8 @@ bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, 
     }
     bool written = !ferror(stream);
     if (!written) frontend_fail(error, QA_ERROR_IO, "writing content listing");
-    bool closed = qa_application_destroy(application, error);
+    qa_error cleanup={0};
+    bool closed = qa_application_destroy(application, &cleanup);
+    if (!closed) { *retained=application; if (written && error) *error=cleanup; }
     return written && closed;
 }

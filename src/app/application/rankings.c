@@ -533,7 +533,7 @@ bool application_rankings_frame_ordinary(qa_application *app, qa_error *error)
 }
 bool qa_application_rankings_start(qa_application *app, qa_error *error)
 {
-    if (!app || app->operation!=APPLICATION_IDLE || app->q3_round_active || app->frame_preparing ||
+    if (!app || app->operation!=APPLICATION_IDLE || app->q3_round_active || app->frame_preparing || app->q1_original_save ||
         app->publication_started || app->destroy_requested || app->finalizing || app->pending_close ||
         (app->state!=QA_APPLICATION_READY && app->state!=QA_APPLICATION_RUNNING) ||
         !application_guests_idle(app) || !qa_session_safe(app->session) ||

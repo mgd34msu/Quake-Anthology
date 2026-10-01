@@ -137,12 +137,13 @@ static void model_frames(const qa_model *source, const qa_q3_ref_entity *entity,
 }
 
 static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_presentation_assets *shader_assets,
     const qa_q3_scene_options *options,
     const qa_q3_ref_entity *entity, uint32_t order, qa_model_transform transform,
     qa_scene_model_input *out, qa_error *error)
 {
     const qa_material *material; const qa_model_skin_map *skin;
-    if (!q3p_shader_get(assets, entity->custom_shader, &material, error) ||
+    if (!q3p_shader_get(shader_assets, entity->custom_shader, &material, error) ||
         !q3p_skin_get(assets, entity->custom_skin, &skin, error)) return false;
     *out = (qa_scene_model_input){
         .view = weapon_view(&options->world.view,
@@ -186,6 +187,7 @@ static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
     qa_scene_family, const qa_q3_ref_entity *, qa_scene_model_input *);
 
 static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_presentation_assets *shader_assets,
     const qa_q3_scene_options *options,
                           const qa_q3_ref_entity *entity, uint32_t order, qa_error *error)
 {
@@ -217,7 +219,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
             &world, order, q3p_color(entity->color), p->frame, error);
     }
     qa_scene_model_input input;
-    if (!model_input(p, assets, options, entity, order, transform, &input, error)) return false;
+    if (!model_input(p, assets, shader_assets, options, entity, order, transform, &input, error)) return false;
     input.source_path = qa_resource_path(model->resource);
     float radius;
     const qa_model *base = q3p_model_source(model, 0);
@@ -293,7 +295,7 @@ static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
             (images->family == QA_SCENE_Q2 && (view_lighting->flags & ~(1u | 4u | 16u))))))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected model requires its actual content and active Q3 view submission");
     qa_scene_model_input input;
-    if (!model_input(p, p->options.assets, options, entity, order, *transform, &input, error)) return false;
+    if (!model_input(p, p->options.assets, p->options.assets, options, entity, order, *transform, &input, error)) return false;
     input.source_path = source_path;
     float radius;
     model_frames(source, entity, &input, &radius);
@@ -343,7 +345,31 @@ bool qa_q3_presentation_selected_registered(qa_q3_presentation *p,
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     if (!model || model->world)
         return q3p_fail(error, QA_ERROR_FORMAT, "Selected equipment registry has no actual non-world model holder");
-    return submit_model(p, assets, options, entity, order, error);
+    return submit_model(p, assets, assets, options, entity, order, error);
+}
+
+bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entity,
+    const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
+    const qa_q3_scene_options *options, uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!p || !assets || !entity || !source_pass || source_assets != p->options.assets ||
+        !options || !frame || !p->busy || p->submission != options || p->frame != frame ||
+        !qa_q3_assets_idle(assets) || source_assets->busy != 1 ||
+        source_assets->capturing || source_assets->codec_busy || !q3p_assets_children_idle(source_assets) ||
+        entity->kind != QA_Q3_REF_MODEL || entity->model <= 0 || order >= 1022 ||
+        !isfinite(source_pass->shader_time))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected held pass requires its real model and primary shader namespaces");
+    const q3p_model *model; const qa_material *material;
+    if (!q3p_model_get(assets, entity->model, &model, error) ||
+        !q3p_shader_get(source_assets, source_pass->custom_shader, &material, error)) return false;
+    if (!model || model->world)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Selected held pass has no actual non-world model holder");
+    qa_q3_ref_entity styled = *entity;
+    styled.custom_shader = source_pass->custom_shader; styled.shader_time = source_pass->shader_time;
+    memset(styled.color, 255, sizeof(styled.color));
+    if (material) memcpy(styled.color, source_pass->color, sizeof(styled.color));
+    return submit_model(p, assets, source_assets, options, &styled, order, error);
 }
 
 static bool submit_effect(qa_q3_presentation *p, const qa_q3_scene_options *options,
@@ -406,7 +432,7 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
         }
         uint32_t order = options->first_entity + (uint32_t)i;
         if (entity.kind == QA_Q3_REF_MODEL) {
-            if (!submit_model(p, p->options.assets, options, &entity, order, error)) return false;
+            if (!submit_model(p, p->options.assets, p->options.assets, options, &entity, order, error)) return false;
         } else if (!(entity.flags & 2) || options->world.view.clip_enabled) {
             if (!submit_effect(p, options, &entity, order, error)) return false;
         }

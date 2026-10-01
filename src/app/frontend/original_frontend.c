@@ -6,9 +6,17 @@
 #include "save_commands.h"
 #include "ui_features.h"
 #include "campaign_cinematic.h"
+#include "config_store.h"
+#include "keys.h"
 #include "qa/application_q1_save.h"
 #include <SDL.h>
 
+struct qa_frontend_q1_restore {
+    qa_frontend *active,*source;
+    const qa_application_persistence_ops *services;
+    frontend_persistence_native native;
+    bool begun,finished,final_cut;
+};
 static void native_guards_destroy(frontend_persistence_native *native)
 {
     qa_input_platform_restore_guard_destroy(native->input);
@@ -74,41 +82,90 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     }
     f->seats[0].frontend=f; f->seats[0].id=0;
     qa_scene_frame_init(&f->frame,QA_FRONTEND_COMMAND_OWNER);
+    f->keys=frontend_keys_create(error);
+    if (!f->keys) return false;
+    f->config_store=frontend_config_store_create(f,error);
+    if (!f->config_store) return false;
     qa_application_options options=f->options.application;
     frontend_application_options(f,&options);
-    if (!qa_application_create(&options,&f->application,error) || !frontend_commands(f,error) ||
-        !qa_application_q1_save_import(f->application,save,product,error) ||
-        !frontend_input_profile_bind(f,error)) return false;
+    if (!qa_application_create(&options,&f->application,error) || !frontend_commands(f,error)) return false;
     if (f->options.dedicated) {
         f->terminal=qa_dedicated_console_create(error);
         if (!f->terminal || !frontend_ui_features_prepare(f,error)) return false;
-    } else if (!graphics_create(f,active,native,error)) return false;
+    } else {
+        /* The selected source supplies the genuine new UI font view; it never
+         * becomes a constructor startup command or a retained option borrow. */
+        f->options.game=product;
+        bool ready=graphics_create(f,active,native,error);
+        f->options.game=NULL;
+        if (!ready) return false;
+    }
     if (!frontend_tools_create(f,error) || !frontend_save_commands_create(f,error) ||
-        !frontend_tools_sync(f,error) || !frontend_network_create(f,error)) return false;
+        !frontend_network_create(f,error)) return false;
     if (!f->options.dedicated) {
         if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
-            &f->seats[0].assistance,error) || !frontend_scene_sync(f,error)) return false;
+            &f->seats[0].assistance,error)) return false;
     }
-    return true;
+    return qa_application_q1_save_import(f->application,save,product,error);
 }
-bool qa_frontend_q1_save_restore(qa_frontend **slot,const qa_application_persistence_ops *services,
-    const qa_q1_save_data *save,const char *product,qa_frontend **displaced,
-    qa_frontend **retained_source,qa_frontend **retained_candidate,qa_error *error)
+bool qa_frontend_q1_restore_begin(qa_frontend *active,const qa_application_persistence_ops *services,
+    const qa_q1_save_data *save,const char *product,qa_frontend_q1_restore **out,qa_error *error)
 {
-    if (!slot || !*slot || !(*slot)->application || !save || !product || !*product ||
-        !displaced || *displaced || !retained_source || *retained_source || !retained_candidate || *retained_candidate ||
-        displaced==retained_source || displaced==retained_candidate || retained_source==retained_candidate ||
-        displaced==slot || retained_source==slot || retained_candidate==slot || (*slot)->stepping ||
-        (*slot)->preparing || (*slot)->round || !frontend_owners_idle(*slot) || !frontend_seat_callbacks_idle(*slot) ||
-        !frontend_cinematic_capture_ready(*slot))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs an idle driver and distinct empty owner outputs");
-    qa_frontend *source=NULL; frontend_persistence_native native={0}; qa_save_image *image=NULL;
-    bool ok=original_create(*slot,save,product,&source,&native,error) &&
-        frontend_persistence_capture_detached(source,services,&native,QA_SAVE_MANUAL,&image,error) &&
-        frontend_persistence_restore_original(slot,services,source,image,displaced,retained_candidate,error);
+    if (!active || !active->application || !save || !product || !*product || !out || *out ||
+        active->stepping || active->preparing || active->round || !frontend_owners_idle(active) ||
+        !frontend_seat_callbacks_idle(active) || !frontend_cinematic_capture_ready(active))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs its idle driver and empty operation output");
+    qa_frontend_q1_restore *operation=calloc(1,sizeof(*operation));
+    if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend preparation");
+    operation->active=active; operation->services=services;
+    *out=operation;
+    operation->begun=original_create(active,save,product,&operation->source,&operation->native,error);
+    return operation->begun;
+}
+bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *operation,qa_frontend **slot,
+    bool *complete,qa_frontend **displaced,qa_frontend **retained_candidate,qa_error *error)
+{
+    if (!operation || !operation->begun || operation->finished || !slot || *slot!=operation->active ||
+        !complete || !displaced || *displaced || !retained_candidate || *retained_candidate ||
+        slot==displaced || slot==retained_candidate || displaced==retained_candidate ||
+        operation->active->stepping || operation->active->preparing || operation->active->round ||
+        !frontend_owners_idle(operation->active) || !frontend_seat_callbacks_idle(operation->active) ||
+        !frontend_cinematic_capture_ready(operation->active))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation advance lost its actual idle driver and owner outputs");
+    *complete=false;
+    qa_frontend *source=operation->source;
+    bool imported=false;
+    if (!qa_application_q1_save_import_advance(source->application,&imported,error)) {
+        operation->finished=true; return false;
+    }
+    if (!imported) return true;
+    operation->finished=true;
+    qa_save_image *image=NULL;
+    bool ok=frontend_input_profile_bind(source,error) && frontend_tools_sync(source,error) &&
+        (source->options.dedicated || frontend_scene_sync(source,error)) &&
+        qa_application_rankings_start(source->application,error);
+    if (ok) {
+        operation->final_cut=true;
+        ok=frontend_persistence_capture_detached(source,operation->services,&operation->native,QA_SAVE_MANUAL,&image,error) &&
+            frontend_persistence_restore_original(slot,operation->services,source,image,displaced,retained_candidate,error);
+        operation->final_cut=false;
+    }
     qa_save_image_destroy(image);
-    native_guards_destroy(&native);
-    qa_error cleanup={0};
-    if (source && !qa_frontend_destroy(source,&cleanup)) *retained_source=source;
+    *complete=ok;
+    return ok;
+}
+bool qa_frontend_q1_restore_capture_ready(const qa_frontend_q1_restore *operation)
+{ return operation && operation->begun && operation->finished && operation->final_cut; }
+bool qa_frontend_q1_restore_dispose(qa_frontend_q1_restore *operation,qa_frontend **retained_source,qa_error *error)
+{
+    if (!retained_source || *retained_source)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation disposal needs an empty retained source output");
+    if (!operation) return true;
+    native_guards_destroy(&operation->native);
+    qa_frontend *source=operation->source;
+    bool ok=!source || ((!source->application || !qa_application_startup_pending(source->application) ||
+        qa_application_startup_abort(source->application,error)) && qa_frontend_destroy(source,error));
+    if (!ok) *retained_source=source;
+    free(operation);
     return ok;
 }
