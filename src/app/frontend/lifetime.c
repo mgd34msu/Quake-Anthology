@@ -4,6 +4,7 @@
 #include "round.h"
 #include "rankings.h"
 #include "capture.h"
+#include "save_commands.h"
 #include <signal.h>
 #include <stdio.h>
 
@@ -61,6 +62,9 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     if (!frontend->seats) {
         free(frontend); return frontend_fail(error, QA_ERROR_MEMORY, "allocating stable local seat contexts");
     }
+    for (unsigned i=0;i<options->seats;++i) {
+        frontend->seats[i].frontend=frontend; frontend->seats[i].id=i;
+    }
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     qa_application_options application = options->application;
     frontend_application_options(frontend, &application);
@@ -117,7 +121,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
             }
         }
     }
-    if (!frontend_tools_create(frontend, error) || !frontend_launch(frontend, error) ||
+    if (!frontend_tools_create(frontend, error) || !frontend_save_commands_create(frontend,error) || !frontend_launch(frontend, error) ||
         !frontend_tools_sync(frontend, error) || !frontend_network_create(frontend, error)) goto fail;
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
@@ -138,9 +142,10 @@ fail: {
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
-    if (frontend->stepping || frontend->preparing || frontend->round || !frontend_owners_idle(frontend) ||
+    if (frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) || !frontend_owners_idle(frontend) ||
         !frontend_seat_callbacks_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend frame, round or retained child owner is active");
+    if (!frontend_save_commands_destroy(frontend,error)) return false;
     /* Application guests borrow frontend services. Retire them before releasing
      * their seats, scene registry, device or SDL handles. */
     for (unsigned i = 0; i < frontend->options.seats; ++i)
@@ -184,16 +189,17 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend);
     return true;
 }
-bool qa_frontend_run(qa_frontend *frontend, qa_error *error)
+bool qa_frontend_run(qa_frontend **slot, qa_error *error)
 {
-    if (!frontend) return frontend_fail(error, QA_ERROR_ARGUMENT, "missing frontend");
+    if (!slot || !*slot) return frontend_fail(error, QA_ERROR_ARGUMENT, "missing frontend driver slot");
     interrupted = 0;
     void (*previous_int)(int) = signal(SIGINT, stop_signal);
     void (*previous_term)(int) = signal(SIGTERM, stop_signal);
     uint64_t frequency = SDL_GetPerformanceFrequency(), last = SDL_GetPerformanceCounter();
     bool ok = frequency != 0;
     if (!ok) frontend_fail(error, QA_ERROR_IO, "monotonic timer unavailable");
-    while (ok && !interrupted && !qa_application_should_stop(frontend->application)) {
+    while (ok && !interrupted && !qa_application_should_stop((*slot)->application)) {
+        qa_frontend *frontend=*slot;
         uint64_t now = SDL_GetPerformanceCounter(), ticks = now - last;
         last = now;
         uint64_t seconds = ticks / frequency;
@@ -201,6 +207,8 @@ bool qa_frontend_run(qa_frontend *frontend, qa_error *error)
         uint64_t elapsed = seconds * UINT64_C(1000000000) +
             (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
         ok = qa_frontend_step(frontend, elapsed, error);
+        if (ok) ok=frontend_save_commands_drain(slot,error);
+        frontend=*slot;
         if (frontend->options.frame_limit && frontend->frame_number >= frontend->options.frame_limit) break;
         SDL_Delay(1);
     }

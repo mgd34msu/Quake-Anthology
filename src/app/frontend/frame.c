@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "capture.h"
+#include "save_commands.h"
 #include <stdio.h>
 
 static qa_console_dialect dialect(qa_movement_kind kind)
@@ -150,7 +151,7 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
 }
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
-    if (!frontend || frontend->stepping || frontend->preparing || frontend->round ||
+    if (!frontend || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
         !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) || frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");

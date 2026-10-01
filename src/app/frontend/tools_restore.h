@@ -1,6 +1,8 @@
 #ifndef QA_FRONTEND_TOOLS_RESTORE_H
 #define QA_FRONTEND_TOOLS_RESTORE_H
 #include "internal.h"
+/* Borrowed actual writable directory selected by the installed tools owner. */
+const char *frontend_tools_output_root(const qa_frontend *);
 #include "qa/tools_save.h"
 #include "qa/llm_save.h"
 /* Complete wrapper payload includes the actual graph identities and nested

@@ -151,6 +151,8 @@ static bool path_report(qa_vfs *files, diagnostic_text *text, qa_error *error) {
     }
     return true;
 }
+const char *frontend_tools_output_root(const qa_frontend *frontend)
+{ return frontend && frontend->tools ? frontend->tools->output_root : NULL; }
 static bool resource_report(qa_vfs *files, diagnostic_text *text, qa_error *error) {
     if (!append(text, error, "identity bytes readers sha256 path\n")) return false;
     size_t count = qa_vfs_resource_count(files);

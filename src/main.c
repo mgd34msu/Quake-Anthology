@@ -142,7 +142,7 @@ int main(int argc, char **argv)
         qa_frontend *frontend = NULL;
         ok = qa_frontend_create(&options, &frontend, &error);
         if (ok) {
-            ok = qa_frontend_run(frontend, &error);
+            ok = qa_frontend_run(&frontend, &error);
             qa_error cleanup = {0};
             if (!qa_frontend_destroy(frontend, &cleanup)) {
                 if (ok) error = cleanup;
