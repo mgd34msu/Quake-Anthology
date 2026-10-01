@@ -26,14 +26,20 @@ static const qa_command_context *context_for(const qa_console *console,
     return console->frame == NULL ? &console->options.context : &console->frame->invocation->context;
 }
 
-static bool valid_context(const qa_console *console, const qa_command_context *context,
-                           qa_error *error)
+static bool valid_context_base(const qa_console *console, const qa_command_context *context,
+    qa_error *error)
 {
     if (context->session != console->options.context.session || !qac_dialect_valid(context->dialect) ||
         context->origin < QA_COMMAND_LOCAL || context->origin > QA_COMMAND_REMOTE)
         return qac_fail(error, QA_ERROR_ARGUMENT, "command context does not belong to this session");
     if (retired(console->owners, context->owner) || (context->client != 0 && retired(console->clients, context->client)))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command owner or client has retired");
+    return true;
+}
+static bool valid_context(const qa_console *console, const qa_command_context *context,
+                           qa_error *error)
+{
+    if (!valid_context_base(console,context,error)) return false;
     if (console->options.context_active != NULL &&
         !console->options.context_active(console->options.user, context))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command publication or actor has retired");
@@ -51,6 +57,35 @@ static bool same_context(const qa_command_context *a, const qa_command_context *
            a->console_text == b->console_text && (ignore_direct || a->direct == b->direct) &&
            ((a->script == NULL && b->script == NULL) ||
             (a->script != NULL && b->script != NULL && strcmp(a->script, b->script) == 0));
+}
+typedef struct qac_cvar_scope {
+    qa_command_context source,constructor;
+    qa_console_cvar_entered_fn qualifier;
+    void *user;
+    struct qac_cvar_scope *parent;
+} qac_cvar_scope;
+static bool cvar_scope_current(const qa_console *console,const qa_command_context *context,
+    qa_error *error)
+{
+    const qac_cvar_scope *scope=console->cvar_scope;
+    return scope && same_context(&scope->source,context,false) &&
+        (scope->qualifier?
+            valid_context_base(console,context,error) &&
+                scope->qualifier(scope->user,console,&scope->source,error):
+            valid_context(console,context,error));
+}
+bool qa_console_cvar_entered(const qa_console *console,const qa_command_context *context)
+{
+    qa_error error={0};
+    return console && context && console->cvar_scope && console->cvar_scope->qualifier &&
+        cvar_scope_current(console,context,&error);
+}
+static bool valid_cvar_context(const qa_console *console,const qa_command_context *context,
+    qa_error *error)
+{
+    if (console->cvar_scope && same_context(&console->cvar_scope->source,context,false))
+        return cvar_scope_current(console,context,error);
+    return valid_context(console,context,error);
 }
 
 static bool copy_context(qa_command_context *out, const qa_command_context *source,
@@ -114,7 +149,7 @@ void qa_console_emit(qa_console *console, const qa_command_context *context, con
 bool qa_console_idle(const qa_console *console)
 {
     return console == NULL || (console->frame == NULL && console->redirect == NULL &&
-        console->output_calls == 0 && !console->draining);
+        console->output_calls == 0 && !console->draining && !console->cvar_scope);
 }
 
 bool qa_console_output_redirected(const qa_console *console)
@@ -207,7 +242,7 @@ bool qa_console_cvar_read(qa_console *console,const qa_command_context *context,
     if (!console || !name || !out)
         return qac_fail(error,QA_ERROR_ARGUMENT,"routed cvar read requires its console, name and output");
     context=context_for(console,context);
-    if (!valid_context(console,context,error)) return false;
+    if (!valid_cvar_context(console,context,error)) return false;
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error)) return false;
     *out=cvar_find(access,name); return true;
@@ -217,11 +252,48 @@ bool qa_console_cvar_context(qa_console *console,const qa_command_context *sourc
 {
     if (!console || !source || !out)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar context requires its actual console and constructor context");
+    if (console->cvar_scope &&
+        (same_context(&console->cvar_scope->constructor,source,false) ||
+         same_context(&console->cvar_scope->source,source,false))) {
+        if (!cvar_scope_current(console,&console->cvar_scope->source,error)) return false;
+        *out=console->cvar_scope->source; return true;
+    }
     qa_command_context captured=*source;
     if (console->options.capture_context &&
         !console->options.capture_context(console->options.user,&captured,&captured,error)) return false;
     if (!valid_context(console,&captured,error)) return false;
     *out=captured; return true;
+}
+bool qa_console_cvar_enter(qa_console *console,const qa_command_context *source,
+    qa_console_cvar_entered_fn qualifier,void *qualifier_user,
+    qa_console_cvar_operation_fn operation,void *operation_user,qa_error *error)
+{
+    if (!console || !source || !operation)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar operation requires its physical console and constructor context");
+    qa_command_context captured; qa_error ordinary={0};
+    bool current=qa_console_cvar_context(console,source,&captured,&ordinary);
+    if (!current) {
+        if (!qualifier) { if (error) *error=ordinary; return false; }
+        if (!valid_context_base(console,source,error)) return false;
+        if (!qualifier(qualifier_user,console,source,error)) {
+            if (!error || error->code==QA_OK)
+                qac_fail(error,QA_ERROR_ARGUMENT,"cvar operation has no actual entered host tuple");
+            return false;
+        }
+        captured=*source;
+    }
+    /* An inherited entered loan keeps its real qualifier on nested use. */
+    if (current && console->cvar_scope && console->cvar_scope->qualifier &&
+        same_context(&console->cvar_scope->source,&captured,false)) {
+        qualifier=console->cvar_scope->qualifier; qualifier_user=console->cvar_scope->user;
+    } else if (current) qualifier=NULL;
+    qac_cvar_scope scope={.source=captured,.constructor=*source,.qualifier=qualifier,.user=qualifier_user,
+        .parent=console->cvar_scope};
+    console->cvar_scope=&scope;
+    bool ok=operation(operation_user,&scope.source,error);
+    if (ok) ok=cvar_scope_current(console,&scope.source,error);
+    console->cvar_scope=scope.parent;
+    return ok;
 }
 bool qa_console_cvar_access(qa_console *console,const qa_command_context *context,const char *name,
     qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
@@ -229,7 +301,7 @@ bool qa_console_cvar_access(qa_console *console,const qa_command_context *contex
     if (!console || !name || !registry || !edit)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar access requires its actual routed name and outputs");
     context=context_for(console,context);
-    if (!valid_context(console,context,error)) return false;
+    if (!valid_cvar_context(console,context,error)) return false;
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error)) return false;
     if (!access.registry) return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar access has no actual name owner");
@@ -241,7 +313,7 @@ static bool cvar_snapshot_access(qa_console *console,const qa_command_context *c
     if (!console || !registry || !out)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot requires its console and actual visible registry");
     context=context_for(console,context);
-    if (!valid_context(console,context,error)) return false;
+    if (!valid_cvar_context(console,context,error)) return false;
     bool visible=false;
     for (size_t i=0;;++i) {
         qa_cvars *actual=qa_console_visible_cvars(console,context,i);
@@ -274,7 +346,7 @@ bool qa_console_cvar_apply(qa_console *console,const qa_command_context *context
     if (!console || !command)
         return qac_fail(error,QA_ERROR_ARGUMENT,"routed cvar mutation requires its console and operation");
     context=context_for(console,context);
-    if (!valid_context(console,context,error)) return false;
+    if (!valid_cvar_context(console,context,error)) return false;
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,command->name?command->name:""),&access,error)) return false;
     return cvar_apply(access,command,error);
@@ -285,7 +357,7 @@ bool qa_console_cvar_startup_set(qa_console *console,const qa_command_context *c
     if (!console || !name || !value)
         return qac_fail(error,QA_ERROR_ARGUMENT,"startup cvar publication requires its console and scalar");
     context=context_for(console,context);
-    if (!valid_context(console,context,error)) return false;
+    if (!valid_cvar_context(console,context,error)) return false;
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error) ||
         !cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true},error)) return false;

@@ -313,6 +313,22 @@ bool qa_console_cvar_read(qa_console *, const qa_command_context *, const char *
 /* Captures the real constructor's current source context without dispatch.
  * Script text is borrowed from the supplied context. */
 bool qa_console_cvar_context(qa_console *,const qa_command_context *,qa_command_context *,qa_error *);
+typedef bool (*qa_console_cvar_entered_fn)(void *, const qa_console *,
+    const qa_command_context *, qa_error *);
+typedef bool (*qa_console_cvar_operation_fn)(void *, const qa_command_context *, qa_error *);
+/* Execute only a structured cvar operation. Ordinary current capture is used
+ * first. An exact entered host/physical tuple qualifier may instead admit its
+ * unchanged constructor context for this lexical operation. That context is
+ * not a captured command and grants no queue or handler dispatch authority.
+ * The pure qualifier is rechecked for each use and at return; borrowed parents remain alive
+ * until the operation returns. Nested loans restore the enclosing loan. */
+bool qa_console_cvar_enter(qa_console *, const qa_command_context *,
+    qa_console_cvar_entered_fn, void *qualifier_user,
+    qa_console_cvar_operation_fn, void *operation_user, qa_error *);
+/* True only for the exact context inside the retained entered cvar operation.
+ * Routing callbacks may use this proof separately from ordinary command
+ * admission. It never admits scripts, aliases or command handlers. */
+bool qa_console_cvar_entered(const qa_console *, const qa_command_context *);
 /* Resolves one name's actual owner and optional canonical prepared view.
  * Both pointers are borrowed; a rejected view never falls back to live state. */
 bool qa_console_cvar_access(qa_console *,const qa_command_context *,const char *,

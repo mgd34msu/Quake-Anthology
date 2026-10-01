@@ -51,6 +51,7 @@ typedef struct output_frame {
     struct output_frame *parent;
 } output_frame;
 struct qa_console_program;
+struct qac_cvar_scope;
 struct qa_console {
     qa_console_options options;
     char *startup;
@@ -83,6 +84,7 @@ struct qa_console {
     qa_console_release *release_owner;
     bool release_advancing;
     const qa_command_context *release_dispatch_context;
+    struct qac_cvar_scope *cvar_scope;
 };
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);
