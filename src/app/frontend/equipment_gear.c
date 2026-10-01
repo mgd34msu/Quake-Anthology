@@ -22,7 +22,7 @@ bool frontend_equipment_gear_source(qa_frontend *frontend, qa_actor_owner namesp
 
 bool frontend_equipment_gear_quiet(const equipment_gear_content *owner)
 {
-    if (!owner || owner->admitting || !q3n_selected_authored_idle(owner->view.media) ||
+    if (!owner || owner->admitting || owner->world_users || !q3n_selected_authored_idle(owner->view.media) ||
         !q3n_weapons_idle(owner->weapons)) return false;
     for (const frontend_equipment_gear_presenter *row = owner->presenters; row; row = row->next)
         if (row->users) return false;

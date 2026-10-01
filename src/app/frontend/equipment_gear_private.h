@@ -17,6 +17,7 @@ struct equipment_gear_content {
     frontend_equipment_gear_owner_view view;
     q3n_weapons *weapons;
     frontend_equipment_gear_presenter *presenters, *tail;
+    size_t world_users;
     bool admitting, restoring;
 };
 struct frontend_equipment_gear {
