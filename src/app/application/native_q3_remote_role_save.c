@@ -19,7 +19,7 @@ typedef struct saved_descriptor {
     qa_launch_instance_lease *restored;
 } saved_descriptor;
 typedef struct saved_role {
-    uint32_t seat;
+    uint32_t seat, lifecycle;
     qa_string_id service_owner;
     uint64_t argument_revision, module_sequence, epoch, generation;
     size_t descriptor;
@@ -112,9 +112,9 @@ static bool argument_fields(qa_source_save_io *io, qa_command_tokens *arguments)
 }
 static bool fields(qa_source_save_io *io, saved_roles *saved)
 {
-    uint8_t magic[4] = {'Q','N','R','S'}; uint32_t version = 4;
+    uint8_t magic[4] = {'Q','N','R','S'}; uint32_t version = 5;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRS", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_count(io, &saved->descriptor_count, 64) ||
         !qa_source_save_count(io, &saved->count, 64)) return false;
@@ -137,10 +137,12 @@ static bool fields(qa_source_save_io *io, saved_roles *saved)
     for (size_t i = 0; i < saved->count; ++i) {
         saved_role *row = saved->roles + i;
         if (!qa_source_save_u32(io, &row->seat) || !qa_source_save_string(io, &row->service_owner) || !row->service_owner ||
+            !qa_source_save_u32(io, &row->lifecycle) || row->lifecycle > NATIVE_Q3_REMOTE_CLEARED ||
             !qa_source_save_u64(io, &row->argument_revision) ||
             !qa_source_save_u64(io, &row->module_sequence) ||
             !qa_source_save_count(io, &row->descriptor, saved->descriptor_count) ||
             !qa_source_save_u64(io, &row->epoch) || !qa_source_save_u64(io, &row->generation) ||
+            (row->lifecycle != NATIVE_Q3_REMOTE_COLD && !row->epoch) ||
             (row->descriptor && (!row->epoch || !row->generation)) || (!row->descriptor && row->generation) ||
             !argument_fields(io, &row->arguments) || (!row->argument_revision &&
                 (row->arguments.count || row->arguments.args_text)) ||
@@ -162,7 +164,7 @@ static bool fields(qa_source_save_io *io, saved_roles *saved)
         }
         if (!qa_source_save_count(io, &row->modules.size, SIZE_MAX)) return false;
         if (row->modules.size) {
-            if (!row->epoch || !row->module_sequence || row->modules.size < 12) return false;
+            if (row->lifecycle != NATIVE_Q3_REMOTE_ATTACHED || !row->epoch || !row->module_sequence || row->modules.size < 12) return false;
             if (saved->reading) {
                 if (row->modules.size > io->input.size - io->offset) return false;
                 row->modules.data = malloc(row->modules.size);
@@ -202,9 +204,11 @@ bool application_native_q3_remote_roles_capture(application_provider *provider, 
     const qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
     size_t index = 0;
     for (struct application_native_q3_remote_role *row = provider->native_q3_remote_roles; ok && row; row = row->next) {
-        if (row->retiring) { ok = false; break; }
+        if (row->retiring || ((row->modules || row->service || row->initialized || row->modules_restore.size) &&
+            row->lifecycle != NATIVE_Q3_REMOTE_ATTACHED) ||
+            (row->lifecycle == NATIVE_Q3_REMOTE_CLEARED && !row->connection_epoch)) { ok = false; break; }
         saved_role *r = saved.roles + index++;
-        *r = (saved_role){.seat = row->seat, .service_owner = row->service_owner,
+        *r = (saved_role){.seat = row->seat, .service_owner = row->service_owner, .lifecycle = row->lifecycle,
             .argument_revision = row->argument_revision, .module_sequence = row->module_sequence, .arguments = row->arguments,
             .system_info = row->system_info, .epoch = row->connection_epoch, .generation = row->configuration_generation};
         if (row->descriptor) {
@@ -269,7 +273,8 @@ bool application_native_q3_remote_roles_restore_prepare(application_provider *pr
     if (ok) ok = saved.product == product;
     for (size_t i = 0; ok && i < saved.count; ++i) {
         saved_role *r = saved.roles + i;
-        ok = row && !row->retiring && !row->service && !row->modules && !row->descriptor && !row->initialized && row->owns_cvars &&
+        ok = row && !row->retiring && row->lifecycle == NATIVE_Q3_REMOTE_COLD &&
+            !row->service && !row->modules && !row->descriptor && !row->initialized && row->owns_cvars &&
             !row->argument_revision && !row->module_sequence && !row->modules_restore.data && !row->modules_restore.size &&
             !row->system_info && !qa_cvars_count(row->cvars) &&
             r->seat == row->seat && r->service_owner == row->service_owner;
@@ -309,6 +314,7 @@ bool application_native_q3_remote_roles_restore_prepare(application_provider *pr
         qa_command_tokens_free(&row->arguments); row->arguments = r->arguments; r->arguments = (qa_command_tokens){0};
         row->argument_revision = r->argument_revision; row->system_info = r->system_info; r->system_info = NULL;
         row->module_sequence = r->module_sequence;
+        row->lifecycle = (native_q3_remote_lifecycle)r->lifecycle;
         row->modules_restore = r->modules; r->modules = (qa_buffer){0};
         qa_application_startup_source source;
         ok = application_native_q3_remote_role_configuration(provider, row->seat, &source, error) &&

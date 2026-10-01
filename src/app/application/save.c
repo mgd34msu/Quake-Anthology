@@ -966,7 +966,7 @@ static bool native_q3_saved_record(application_provider *provider,
     const qa_save_record *saved=qa_save_image_find(image,QA_SAVE_PROVIDER,
         provider->launch->selection.instance);
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
-    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=5 ||
+    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=6 ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -984,7 +984,7 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         provider->application->operation!=APPLICATION_PERSISTING || !saved ||
         saved->owner.kind!=QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance,provider->launch->selection.instance) ||
-        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=5 ||
+        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=6 ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -1234,7 +1234,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->schema = schema;
             owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 6 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
-                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 5 :
+                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 6 :
                                     owner->kind == QA_SAVE_CONTROLS ? 7 :
                                     owner->kind == QA_SAVE_EQUIPMENT ? 3 :
                                     owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||

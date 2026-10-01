@@ -315,7 +315,7 @@ bool application_native_q3_remote_role_attach(application_provider *provider, ui
     if (!row || row->retiring || row->service || row->calls || !service ||
         !qa_console_idle(row->console) || !qa_cvars_observer_idle(row->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native remote service attachment requires its prepared physical CLIENT");
-    row->service = service; return true;
+    row->service = service; row->lifecycle = NATIVE_Q3_REMOTE_ATTACHED; return true;
 }
 bool application_native_q3_remote_role_service_read(application_provider *provider, uint32_t seat,
     qa_native_q3_remote_client_service **out, qa_error *error)
@@ -448,7 +448,8 @@ bool application_native_q3_remote_role_descriptor_bind(application_provider *pro
     const qa_launch_instance *descriptor, uint64_t epoch, uint64_t generation, qa_error *error)
 {
     struct application_native_q3_remote_role *row = find(provider, seat);
-    if (!replace_ready(row) || !native_receiver(provider) || !descriptor || !descriptor->storage || !descriptor->content ||
+    if (!replace_ready(row) || row->lifecycle == NATIVE_Q3_REMOTE_ATTACHED ||
+        !native_receiver(provider) || !descriptor || !descriptor->storage || !descriptor->content ||
         descriptor->artifact || descriptor->selection.runtime != QA_PROGRAM_BUILTIN || !epoch || !generation ||
         strcmp(descriptor->selection.instance, provider->launch->selection.instance) ||
         strcmp(descriptor->selection.implementation, provider->launch->selection.implementation))
@@ -456,7 +457,8 @@ bool application_native_q3_remote_role_descriptor_bind(application_provider *pro
     qa_launch_instance_lease *lease = NULL;
     if (!qa_launch_instance_retain_metadata(descriptor, &lease, error)) return false;
     qa_launch_instance_lease_release(row->descriptor); row->descriptor = lease;
-    row->connection_epoch = epoch; row->configuration_generation = generation; return true;
+    row->connection_epoch = epoch; row->configuration_generation = generation;
+    row->lifecycle = NATIVE_Q3_REMOTE_COLD; return true;
 }
 bool application_native_q3_remote_role_modules_attach(application_provider *provider,
     const qa_application_q3_remote_source *source, application_native_q3_client_modules *modules, qa_error *error)
@@ -467,7 +469,7 @@ bool application_native_q3_remote_role_modules_attach(application_provider *prov
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client modules require their current physical CLIENT slot");
     row->connection_epoch = source->connection_epoch;
     row->module_generation = source->configuration_generation;
-    row->modules = modules; return true;
+    row->modules = modules; row->lifecycle = NATIVE_Q3_REMOTE_ATTACHED; return true;
 }
 bool application_native_q3_remote_role_modules_pointer_read(application_provider *provider, uint32_t seat,
     application_native_q3_client_modules **out, qa_error *error)
