@@ -4,8 +4,9 @@
 
 typedef struct qa_input_checkpoint_refs {
     void *context;
-    /* Stable service descriptor qualifies console/cvars, command context and
-     * base/source UI callbacks. Decode returns borrowed candidate services. */
+    /* Stable service descriptor qualifies physical ordinal, authored command
+     * context and its actual owner qualifier, console/cvars and UI callbacks.
+     * Decode returns borrowed candidate services from the restored graph. */
     bool (*services_encode)(void *, const qa_input_seat_options *, uint64_t *, qa_error *);
     bool (*services_decode)(void *, uint64_t, qa_input_seat_options *, qa_error *);
     bool (*ui_encode)(void *, qa_input_ui_handler, void *, uint64_t *, qa_error *);
@@ -19,6 +20,7 @@ bool qa_input_seat_ui_binding_read(const qa_input_seat *, qa_input_ui_token,
     qa_input_ui_handler *, void **);
 /* Call outside input dispatch. Restore keeps the actual seat heap address,
  * reconstructs live/held binding aliases and private command-source IDs,
+ * qualifies distinct physical ordinal/authored launch ID (QINS schema 2),
  * and replaces continuation only after full validation. No input, release,
  * UI, command, calibration or device callbacks execute. Inactive UI records'
  * expired handler/user pointers and command formatting scratch are unused. */

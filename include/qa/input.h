@@ -325,6 +325,8 @@ typedef uint64_t qa_input_ui_token;
 typedef bool (*qa_input_ui_handler)(void *, qa_input_seat *, qa_input_focus,
                                     const qa_input_event *);
 typedef struct qa_input_seat_options {
+    /* Physical local route ordinal. context.seat is its authored launch ID. */
+    uint32_t seat;
     qa_command_context context;
     qa_console *console;
     qa_cvars *cvars;
@@ -335,6 +337,11 @@ typedef struct qa_input_seat_options {
      * update physical key state and retire releases; this is one dispatcher. */
     bool (*before_ui)(void *, qa_input_seat *, const qa_input_event *, bool *consumed, qa_error *);
     void *before_ui_user;
+    /* Pure owner qualification against the actual preparing/current choices.
+     * Required for authored IDs or captured source contexts; callbackless
+     * construction admits only an uncaptured ENGINE ordinal template. */
+    bool (*context_ready)(void *, uint32_t seat, const qa_command_context *, qa_error *);
+    void *context_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
 /* Release held input before retiring the console. Destruction only frees
@@ -342,6 +349,12 @@ qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
  * bindings, but the current seat must live until the callback returns. */
 void qa_input_seat_destroy(qa_input_seat *);
 qa_command_context qa_input_seat_context(const qa_input_seat *);
+uint32_t qa_input_seat_ordinal(const qa_input_seat *);
+/* Preflight at the returned dispatch boundary. The owner admits this exact
+ * upcoming command template; publication copies it without callbacks. An
+ * ENGINE template keeps actor/generation uncaptured until real dispatch. */
+bool qa_input_seat_context_ready(const qa_input_seat *, const qa_command_context *, qa_error *);
+void qa_input_seat_context_publish(qa_input_seat *, const qa_command_context *);
 qa_input_focus qa_input_seat_focus(const qa_input_seat *);
 bool qa_input_seat_focused(const qa_input_seat *);
 bool qa_input_seat_has_held(const qa_input_seat *);
@@ -369,7 +382,8 @@ bool qa_input_seat_replace_bindings(qa_input_seat *, const qa_input_binding *, s
  * keeps both seats alive and unchanged between readiness and publication and
  * holds their input/console dispatch boundary. Publication swaps only live
  * bindings and gamepad tuning; held presses retain their original bindings.
- * The candidate owns the displaced configuration for ordinary destruction. */
+ * The candidate owns the displaced configuration. Destroy it before capture
+ * so held binding references belong entirely to the stable physical seat. */
 bool qa_input_seat_configuration_ready(const qa_input_seat *active,
                                         const qa_input_seat *candidate, qa_error *);
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate);

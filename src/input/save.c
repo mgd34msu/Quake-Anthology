@@ -228,28 +228,35 @@ static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_in
 bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!seat || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=1; uint64_t services=0;
+    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=2; uint64_t services=0;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     qa_input_seat saved=*seat;
-    bool ok=refs->services_encode(refs->context,&seat->options,&services,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&schema) && qa_source_save_u64(&io,&services) && continuation(&io,&saved,refs) && qa_source_save_finish(&io,out);
+    bool ok=qa_input_seat_context_ready(seat,&seat->options.context,error) &&
+        refs->services_encode(refs->context,&seat->options,&services,error) && qa_source_save_bytes(&io,magic,4) &&
+        qa_source_save_u32(&io,&schema) && qa_source_save_u64(&io,&services) &&
+        qa_source_save_u32(&io,&saved.options.seat) && qa_source_save_u32(&io,&saved.options.context.seat) &&
+        continuation(&io,&saved,refs) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid retained input seat");
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_checkpoint_refs *refs, qa_error *error)
 {
     if (!seat || !refs_ready(refs)) return fail(error,"Input restore requires an installed candidate seat and owner resolvers");
-    qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0; uint64_t services=0;
+    qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0, ordinal=0, launch_seat=0; uint64_t services=0;
     qa_input_seat *saved=calloc(1,sizeof(*saved));
     if (!saved) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored input seat"); return false; }
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { free(saved); return false; }
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==1 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==2 &&
         qa_source_save_u64(&io,&services) && refs->services_decode(refs->context,services,&saved->options,error) &&
+        qa_source_save_u32(&io,&ordinal) && ordinal<4 && ordinal==seat->options.seat && ordinal==saved->options.seat &&
+        qa_source_save_u32(&io,&launch_seat) && launch_seat==saved->options.context.seat &&
         saved->options.console==seat->options.console && saved->options.cvars==seat->options.cvars &&
-        saved->options.context.origin==QA_COMMAND_SEAT && saved->options.context.seat==seat->options.context.seat &&
+        saved->options.context.origin==QA_COMMAND_SEAT &&
         saved->options.ui==seat->options.ui && saved->options.ui_user==seat->options.ui_user &&
         saved->options.before_ui==seat->options.before_ui && saved->options.before_ui_user==seat->options.before_ui_user &&
-        continuation(&io,saved,refs) && qa_source_save_finish(&io,NULL);
+        saved->options.context_ready==seat->options.context_ready && saved->options.context_user==seat->options.context_user &&
+        continuation(&io,saved,refs) && qa_source_save_finish(&io,NULL) &&
+        qa_input_seat_context_ready(saved,&saved->options.context,error);
     if (ok) { qa_input_seat old=*seat; *seat=*saved; *saved=old; }
     qa_input_seat_destroy(saved); qa_source_save_dispose(&io);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid or unqualified retained input seat");

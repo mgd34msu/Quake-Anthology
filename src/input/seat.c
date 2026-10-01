@@ -76,13 +76,30 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
         }
     return NULL;
 }
+static bool context_ready(const qa_input_seat_options *options,
+                          const qa_command_context *context, qa_error *error) {
+    if (!options || !context || options->seat >= 4 || context->origin != QA_COMMAND_SEAT ||
+        context->dialect < QA_CONSOLE_Q1 || context->dialect > QA_CONSOLE_Q3 ||
+        context->script || context->console_text) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input command context");
+        return false;
+    }
+    if (options->context_ready)
+        return options->context_ready(options->context_user, options->seat, context, error);
+    if (context->seat != options->seat || !context->direct || context->session ||
+        context->owner || context->client || context->registry || context->generation ||
+        context->actor.registry || context->actor.generation || context->actor.slot) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input command context lacks its actual owner qualifier");
+        return false;
+    }
+    return true;
+}
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *o, qa_error *error) {
-    if (!o || !o->console || o->context.origin != QA_COMMAND_SEAT || o->context.seat >= 4 ||
-        o->context.dialect < QA_CONSOLE_Q1 || o->context.dialect > QA_CONSOLE_Q3 ||
-        !qa_gamepad_tuning_valid(&o->gamepad)) {
+    if (!o || !o->console || !qa_gamepad_tuning_valid(&o->gamepad)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid local input seat");
         return NULL;
     }
+    if (!context_ready(o, &o->context, error)) return NULL;
     qa_input_seat *s = calloc(1, sizeof(*s));
     if (!s) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating input seat");
@@ -119,6 +136,18 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     free(s);
 }
 qa_command_context qa_input_seat_context(const qa_input_seat *s) { return s->options.context; }
+uint32_t qa_input_seat_ordinal(const qa_input_seat *s) { return s->options.seat; }
+bool qa_input_seat_context_ready(const qa_input_seat *s,
+                                 const qa_command_context *context, qa_error *error) {
+    if (!s || !qa_console_idle(s->options.console)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input context requires its returned physical owner");
+        return false;
+    }
+    return context_ready(&s->options, context, error);
+}
+void qa_input_seat_context_publish(qa_input_seat *s, const qa_command_context *context) {
+    s->options.context = *context;
+}
 qa_input_focus qa_input_seat_focus(const qa_input_seat *s) { return s->focus; }
 bool qa_input_seat_focused(const qa_input_seat *s) { return s->focused; }
 bool qa_input_seat_has_held(const qa_input_seat *s) {
@@ -271,7 +300,7 @@ bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bi
 bool qa_input_seat_configuration_ready(const qa_input_seat *active,
                                         const qa_input_seat *candidate, qa_error *error) {
     if (!active || !candidate || active == candidate ||
-        active->options.context.seat != candidate->options.context.seat ||
+        active->options.seat != candidate->options.seat ||
         !qa_console_idle(active->options.console) || !qa_console_idle(candidate->options.console) ||
         !qa_gamepad_tuning_valid(&candidate->options.gamepad)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
