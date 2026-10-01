@@ -217,6 +217,19 @@ bool qa_q3_presentation_selected_effect(qa_q3_presentation *,
 bool qa_q3_presentation_selected_poly(qa_q3_presentation *,
     const qa_q3_presentation_assets *, int32_t shader, const qa_scene_vertex *, size_t,
     int32_t source_time_ms, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+/* World supplements use compiled material order and insertion ordinals, outside
+ * the packed source refEntity domain. A cable may contain 65537 model segments.
+ * All model/skin/shader handles resolve in the supplied retained registry. */
+bool qa_q3_presentation_selected_world_models(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *, size_t count,
+    const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+/* The authored shader cable is a translucent sequence, with the donor's
+ * integer core width and endpoint convention (origin first, end second).
+ * Its material is the supplied library's retained DYNAMIC/-1 registration,
+ * including a named default material. Both world helpers use the input clock. */
+bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_material *, qa_vec3 origin, qa_vec3 end,
+    double width, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);

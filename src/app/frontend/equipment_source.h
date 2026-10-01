@@ -51,7 +51,8 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *,
     void **token, bool *selected, qa_error *);
 /* Own selected view output is prepared before the primary kernel. An actual
  * selected hidden request is consumed without constructing a source parent. */
-bool frontend_equipment_source_native_view(frontend_equipment_source *, bool *consumed, qa_error *);
+bool frontend_equipment_source_native_view(frontend_equipment_source *, float field_of_view,
+    bool *consumed, qa_error *);
 /* Called by the real source renderer owner at its current view boundaries. */
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *,
     const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/q3_presentation_save.h"
+#include "qa/material_library_save.h"
 
 static qa_model_transform entity_transform(const qa_q3_ref_entity *entity)
 {
@@ -133,8 +134,10 @@ static void model_frames(const qa_model *source, const qa_q3_ref_entity *entity,
     if ((entity->flags & 512) && count) { frame %= count; old_frame %= count; }
     if (frame < 0 || old_frame < 0 || (uint64_t)frame >= count || (uint64_t)old_frame >= count) frame = old_frame = 0;
     input->frame = (uint32_t)frame; input->old_frame = (uint32_t)old_frame;
-    *radius = bounds_radius(source->frames && source->frame_count ?
-        &source->frames[input->frame].bounds : &source->bounds);
+    const qa_model_frame *pose = source->frames && source->frame_count ?
+        &source->frames[input->frame] : NULL;
+    *radius = source->format == QA_MODEL_MD4 && pose ? pose->radius :
+        bounds_radius(pose ? &pose->bounds : &source->bounds);
 }
 
 static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
@@ -172,13 +175,15 @@ static void model_fog(qa_q3_presentation *p, const qa_q3_scene_options *options,
 {
     qa_scene_fog_volume fog = {0};
     qa_vec3 origin = entity->origin;
-    if (source->format == QA_MODEL_MD3 && source->frame_count) {
+    bool source_md4 = source->format == QA_MODEL_MD4 && input->source_order;
+    if ((source->format == QA_MODEL_MD3 || source->format == QA_MODEL_MD4) &&
+        source->frames && source->frame_count && !source_md4) {
         uint32_t frame = input->frame < source->frame_count ? input->frame : 0;
         const qa_model_frame *pose = &source->frames[frame];
         origin = qa_vec_add(origin, qa_v3(pose->origin[0], pose->origin[1], pose->origin[2]));
         radius = pose->radius;
     } else if (source->format != QA_MODEL_MD4) radius = bounds_radius(&source->bounds);
-    if (!options->world.no_world && source->format != QA_MODEL_MD4)
+    if (!options->world.no_world && !source_md4)
         qa_scene_world_fog_for_sphere(p->world, origin, radius, &fog);
     input->fog = fog.fog; input->fog_index = fog.index; input->fog_tc_scale = fog.tc_scale;
     input->fog_has_surface = fog.has_surface; input->fog_surface = fog.surface;
@@ -191,7 +196,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     const qa_q3_presentation_assets *skin_assets, const qa_q3_presentation_assets *shader_assets,
     const qa_q3_scene_options *options,
                           const qa_q3_ref_entity *entity, uint32_t order,
-                          const int32_t *source_time, qa_error *error)
+                          const int32_t *source_time, bool source_order, qa_error *error)
 {
     const q3p_model *model;
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
@@ -204,7 +209,9 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
         size_t first = p->frame->command_count;
         if (!qa_scene_default_model(p->frame, &view, qa_scene_model_matrix(&transform),
                 qa_scene_white(assets->options.provider.images), &options->state, error)) return false;
-        return qa_scene_frame_group(p->frame, first, QA_SCENE_GROUP_SOURCE, material, material->sort, order, 0, 0, error);
+        return qa_scene_frame_group(p->frame, first,
+            source_order ? QA_SCENE_GROUP_SOURCE : QA_SCENE_GROUP_COMPILED,
+            material, material->sort, order, 0, 0, error);
     }
     if (model->world) {
         if ((entity->flags & 2) && !view.clip_enabled) return true;
@@ -222,9 +229,12 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     }
     qa_scene_model_input input;
     if (!model_input(p, skin_assets, shader_assets, options, entity, order, transform, &input, error)) return false;
+    input.source_order = source_order;
     if (source_time) {
         input.seconds = (double)*source_time / 1000.0;
         input.milliseconds = *source_time; input.has_milliseconds = true;
+    } else if (!source_order) {
+        input.milliseconds = options->world.milliseconds; input.has_milliseconds = true;
     }
     input.source_path = qa_resource_path(model->resource);
     float radius;
@@ -355,7 +365,7 @@ bool qa_q3_presentation_selected_registered(qa_q3_presentation *p,
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     if (!model || model->world)
         return q3p_fail(error, QA_ERROR_FORMAT, "Selected equipment registry has no actual non-world model holder");
-    return submit_model(p, assets, assets, assets, options, entity, order, NULL, error);
+    return submit_model(p, assets, assets, assets, options, entity, order, NULL, true, error);
 }
 
 bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
@@ -379,7 +389,7 @@ bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
     styled.custom_shader = source_pass->custom_shader; styled.shader_time = source_pass->shader_time;
     memset(styled.color, 255, sizeof(styled.color));
     if (material) memcpy(styled.color, source_pass->color, sizeof(styled.color));
-    return submit_model(p, assets, assets, material ? source_assets : assets, options, &styled, order, NULL, error);
+    return submit_model(p, assets, assets, material ? source_assets : assets, options, &styled, order, NULL, true, error);
 }
 
 bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *p,
@@ -412,7 +422,7 @@ bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *p,
     styled.lighting_origin = source_pass->lighting_origin;
     styled.shadow_plane = source_pass->shadow_plane;
     styled.non_normalized_axes = source_pass->non_normalized_axes;
-    return submit_model(p, assets, source_assets, source_assets, options, &styled, order, NULL, error);
+    return submit_model(p, assets, source_assets, source_assets, options, &styled, order, NULL, true, error);
 }
 
 bool qa_q3_presentation_body_material_equal(qa_q3_presentation *p,
@@ -535,7 +545,7 @@ bool qa_q3_presentation_selected_effect(qa_q3_presentation *p,
         if (!q3p_model_get(assets, placed.model, &model, error)) return false;
         if (model && model->world)
             return q3p_fail(error, QA_ERROR_FORMAT, "Selected effect has an inline world model instead of its actual effect holder");
-        return submit_model(p, assets, assets, assets, options, &placed, order, &source_time_ms, error);
+        return submit_model(p, assets, assets, assets, options, &placed, order, &source_time_ms, true, error);
     }
     return submit_effect(p, assets, options, &placed, order, &source_time_ms, error);
 }
@@ -572,6 +582,65 @@ bool qa_q3_presentation_selected_poly(qa_q3_presentation *p,
         material->sort, 1022, fog.index, 0, error);
 }
 
+bool qa_q3_presentation_selected_world_models(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entities, size_t count,
+    const qa_q3_scene_options *options, qa_scene_frame *frame, qa_error *error)
+{
+    if (!selected_effect_ready(p, assets, options, frame, error)) return false;
+    if (options->world.no_world || (count && !entities) || count > 65537)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "World model supplement requires its actual world and bounded model span");
+    for (size_t i = 0; i < count; ++i) {
+        const q3p_model *model;
+        if (entities[i].kind != QA_Q3_REF_MODEL || entities[i].model <= 0 || (entities[i].flags & 4))
+            return q3p_fail(error, QA_ERROR_ARGUMENT, "World model supplement has no genuine world model ref");
+        if (!q3p_model_get(assets, entities[i].model, &model, error)) return false;
+        if (!model || model->world)
+            return q3p_fail(error, QA_ERROR_FORMAT, "World model supplement requires its retained non-brush model holder");
+    }
+    size_t commands = frame->command_count, groups = frame->group_count;
+    for (size_t i = 0; i < count; ++i) {
+        if (!submit_model(p, assets, assets, assets, options, &entities[i], (uint32_t)i,
+                NULL, false, error) ||
+            !selected_effect_ready(p, assets, options, frame, error)) {
+            frame->command_count = commands; frame->group_count = groups;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_material *material, qa_vec3 origin, qa_vec3 end,
+    double width, const qa_q3_scene_options *options,
+    qa_scene_frame *frame, qa_error *error)
+{
+    if (!selected_effect_ready(p, assets, options, frame, error)) return false;
+    if (options->world.no_world || !material || !qa_vec_finite(origin) || !qa_vec_finite(end) ||
+        !isfinite(width) || trunc(width) != width || width < INT32_MIN || width > INT32_MAX)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "World shader cable requires its retained material, endpoints and source int32 width");
+    const qa_material_library *library = assets->options.provider.materials;
+    bool retained = false;
+    for (size_t i = 0; i < qa_material_library_record_count(library); ++i) {
+        qa_material_library_record_view record;
+        if (qa_material_library_record_read(library, i, &record) && record.material == material) {
+            retained = record.kind == QA_MATERIAL_DYNAMIC && record.lightmap_index == -1;
+            break;
+        }
+    }
+    if (!retained) return q3p_fail(error, QA_ERROR_FORMAT, "World shader cable material is not its retained dynamic registration");
+    qa_scene_rail_options rail = {.core_width = (int32_t)width, .ring_width = 16, .segment_length = 32};
+    qa_scene_mesh mesh;
+    if (!qa_scene_rail_geometry(frame, &options->world.view, QA_RAIL_CORE, end, origin,
+            (qa_scene_vec4){1, 1, 1, 1}, &rail, &mesh, error)) return false;
+    qa_material_context context = effect_context(options);
+    size_t commands = frame->command_count, groups = frame->group_count;
+    if (qa_material_submit(material, &mesh, &context, frame, error) &&
+        selected_effect_ready(p, assets, options, frame, error) &&
+        qa_scene_frame_group(frame, commands, QA_SCENE_GROUP_SEQUENCE, NULL, 9, 0, 0, 0, error)) return true;
+    frame->command_count = commands; frame->group_count = groups;
+    return false;
+}
+
 static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
 {
     if (p->world) {
@@ -595,7 +664,7 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
         }
         uint32_t order = options->first_entity + (uint32_t)i;
         if (entity.kind == QA_Q3_REF_MODEL) {
-            if (!submit_model(p, p->options.assets, p->options.assets, p->options.assets, options, &entity, order, NULL, error)) return false;
+            if (!submit_model(p, p->options.assets, p->options.assets, p->options.assets, options, &entity, order, NULL, true, error)) return false;
         } else if (!(entity.flags & 2) || options->world.view.clip_enabled) {
             if (!submit_effect(p, p->options.assets, options, &entity, order, NULL, error)) return false;
         }

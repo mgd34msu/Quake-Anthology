@@ -47,6 +47,22 @@ bool qa_application_equipment_current(qa_application *app,
 {
     if (!app || !view || !app->session ||
         !qa_actors_get(qa_session_actors(app->session), view->actor)) return false;
+    qa_equipment_state slot;
+    if (!view->equipment_slot && app->equipment &&
+        qa_equipment_read(app->equipment, view->actor, &slot) && slot.slot_active &&
+        slot.selection.grapple == QA_GRAPPLE_Q3 && slot.selection.binding == QA_EQUIPMENT_WEAPON_SLOT) {
+        if (!application_equipment_runtime_owner_current(app->equipment_runtime, slot.sources.grapple)) return false;
+        bool found = false;
+        for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
+            application_equipment_runtime_source source;
+            if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
+            if (source.selected_owner == slot.sources.grapple) {
+                if (source.gear) return false;
+                found = true; break;
+            }
+        }
+        if (!found) return false;
+    }
     if (view->equipment_slot) {
         qa_equipment_state state;
         application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
@@ -66,6 +82,7 @@ bool qa_application_equipment_current(qa_application *app,
         }
         return false;
     }
+    if (view->gear_namespace || view->gear_service_owner) return false;
     application_provider *provider = application_provider_for(app, view->actor, QA_ROLE_ARSENAL, "");
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     return provider && provider->constructed && provider->attached && !provider->close_pending &&

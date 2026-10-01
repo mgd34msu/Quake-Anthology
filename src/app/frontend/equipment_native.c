@@ -77,7 +77,7 @@ static bool view_weapon(void *context, const q3n_frame *frame, const qa_q3_playe
         player != &frame->local_player)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native view replacement requires its finished source camera and raw PS");
     owner->view_requested = frame->weapon_settings->draw_gun && !frame->third_person;
-    return frontend_equipment_source_native_view(owner->source, consumed, error);
+    return frontend_equipment_source_native_view(owner->source, frame->refdef.fov_x, consumed, error);
 }
 static bool held_actor(equipment_native *owner, const q3n_frame *frame, qa_actor_id actor,
     const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent,
