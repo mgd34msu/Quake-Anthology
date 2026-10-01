@@ -3,6 +3,7 @@
 #include "ui_features.h"
 #include "qa/persistence_slots.h"
 typedef struct frontend_cinematic_captions frontend_cinematic_captions;
+typedef struct frontend_shared_ui frontend_shared_ui;
 typedef struct frontend_ui_seat_features {
     qa_sound_captions *captions;
     qa_localization *localization;
@@ -35,6 +36,7 @@ struct frontend_ui_features {
     qa_caption_library *tracks;
     qa_localization_pool *catalogs;
     frontend_cinematic_captions *cinematic_captions;
+    frontend_shared_ui *shared_ui;
     frontend_ui_seat_features seats[QA_INPUT_LOCAL_SEATS];
     const qa_font *bold;
     const qa_font *console;

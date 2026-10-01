@@ -166,8 +166,8 @@ static bool fields(qa_source_save_io *io, qa_frontend *f, const qa_audio_asset_i
 }
 static bool qualified(qa_frontend *f, const qa_audio_asset_inventory *assets, qa_error *error)
 {
-    if (!f || !f->application || !f->ui_features || f->ui_features->frontend != f || f->ui_features->handling ||
-        f->stepping || !frontend_ui_cinematic_idle(f) || !assets || !f->options.seats || f->options.seats > QA_INPUT_LOCAL_SEATS ||
+    if (!f || !f->application || !f->ui_features || !frontend_ui_features_idle(f) ||
+        f->stepping || !assets || !f->options.seats || f->options.seats > QA_INPUT_LOCAL_SEATS ||
         (f->audio && !qa_audio_engine_observer_is(f->audio, frontend_ui_audio_event, f)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI feature continuation requires its idle actual factory and inventory");
     return true;

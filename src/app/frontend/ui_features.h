@@ -6,6 +6,8 @@
 #include "qa/audio_bank_graph_save.h"
 bool frontend_ui_features_prepare(qa_frontend *, qa_error *);
 bool frontend_ui_features_destroy(qa_frontend *, qa_error *);
+/* Strict retained-child admission, distinct from returned draw callbacks. */
+bool frontend_ui_features_idle(const qa_frontend *);
 bool frontend_ui_features_sync(qa_frontend *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 bool frontend_ui_features_assets_read(const qa_frontend *, qa_audio_asset ***, size_t *, qa_error *);

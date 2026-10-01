@@ -18,7 +18,7 @@ typedef struct frontend_remote_snapshots_options {
     qa_frontend *frontend;
     qa_q3_product product;
     void *context;
-    bool (*command)(void *, const frontend_network_presentation_command *, qa_error *);
+    bool (*reached)(void *, const frontend_network_presentation_command *, qa_error *);
     bool (*respawn)(void *, const frontend_network_presentation_source *, qa_error *);
     bool (*reset_player)(void *, const frontend_network_presentation_source *,
         frontend_remote_centity *, qa_error *);
@@ -36,6 +36,7 @@ typedef struct frontend_remote_snapshots_view {
     int32_t time, processed_message, command_sequence;
     uint64_t revision;
     bool this_frame_teleport, next_frame_teleport;
+    uint64_t callback_scope;
 } frontend_remote_snapshots_view;
 
 /* The enclosing native remote row retains the receiver, map and callbacks.
@@ -51,11 +52,26 @@ bool frontend_remote_snapshots_process(frontend_remote_snapshots *,
     const frontend_remote_snapshot_settings *, qa_error *);
 bool frontend_remote_snapshots_read(const frontend_remote_snapshots *, frontend_remote_snapshots_view *);
 bool frontend_remote_snapshots_current(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *);
+/* The actual entered transition callback borrows the in-progress cut. This
+ * scope ends when that callback returns; it never admits a completed frame. */
+bool frontend_remote_snapshots_callback_read(const frontend_remote_snapshots *,
+    const frontend_network_presentation_source *, frontend_remote_snapshots_view *);
+bool frontend_remote_snapshots_callback_current(const frontend_remote_snapshots *,
+    const frontend_remote_snapshots_view *);
 bool frontend_remote_snapshots_entity(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
     uint32_t number, const frontend_remote_centity **, qa_error *);
+bool frontend_remote_snapshots_callback_entity(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
+    uint32_t number, const frontend_remote_centity **, qa_error *);
+/* Native PS transitions author only this CGAME-owned currentState event
+ * override. Network snapshot storage and the movement predictor are absent. */
+bool frontend_remote_snapshots_entity_write(frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
+    uint32_t number, frontend_remote_centity **, qa_error *);
 bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *,
     const frontend_network_prediction_source *, const qa_q3_prediction_scene_entity_view *, int32_t *, qa_error *);
 bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *, qa_error *);
+/* Apply a real returned PS-transition feedback request before the next
+ * prediction/view admission, after the child callback frame has ended. */
+bool frontend_remote_snapshots_mark_teleport(frontend_remote_snapshots *, qa_error *);
 bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *, qa_buffer *, qa_error *);
 bool frontend_remote_snapshots_restore(const frontend_remote_snapshots_options *,
     const frontend_network_presentation_source *, qa_bytes, frontend_remote_snapshots **, qa_error *);

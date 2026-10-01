@@ -7,6 +7,7 @@
 #include "q1_text.h"
 #include "cinematic_captions.h"
 #include "qa/text.h"
+#include "qa/ui_presentation_prepare.h"
 #include <limits.h>
 
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
@@ -47,16 +48,24 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     }
     return frontend_ui_cinematic_init(f,error);
 }
+bool frontend_ui_features_idle(const qa_frontend *f)
+{
+    if (!f) return false;
+    const frontend_ui_features *owner=f->ui_features;
+    if (!owner) return true;
+    if (owner->frontend!=f || owner->handling || owner->shared_ui || !frontend_ui_cinematic_idle(f)) return false;
+    for (unsigned i=0;i<QA_INPUT_LOCAL_SEATS;++i)
+        if (owner->seats[i].captions && !qa_sound_captions_idle(owner->seats[i].captions)) return false;
+    if (f->seats) for (unsigned i=0;i<f->options.seats;++i)
+        if (f->seats[i].ui && !qa_ui_presentation_idle(f->seats[i].ui)) return false;
+    return true;
+}
 bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
 {
     if (!f || !f->ui_features) return true;
     frontend_ui_features *owner = f->ui_features;
-    if (owner->handling) return frontend_fail(error, QA_ERROR_ARGUMENT, "UI feature callback is active");
-    if (!frontend_ui_cinematic_idle(f)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic subtitle owner is active");
-    for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
-        if (owner->seats[i].captions && !qa_sound_captions_idle(owner->seats[i].captions))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Sound caption owner is active");
-    }
+    if (!frontend_ui_features_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"UI features retain an active presentation or caption child");
     frontend_ui_cinematic_destroy(f);
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_captions_destroy(owner->seats[i].captions);
@@ -86,7 +95,7 @@ void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
 }
 bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)
 {
-    if (!f || !f->ui_features || f->ui_features->handling)
+    if (!f || !f->ui_features || !frontend_ui_features_idle(f))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI feature preparation requires its idle actual owner");
     frontend_ui_features *owner = f->ui_features;
     if (owner->audio_error.code != QA_OK) { if (error) *error = owner->audio_error; return false; }
@@ -177,7 +186,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
 }
 bool frontend_ui_features_assets_read(const qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_error *error)
 {
-    if (!f || !f->ui_features || f->ui_features->handling || !out || *out || !count || *count)
+    if (!f || !f->ui_features || !frontend_ui_features_idle(f) || !out || *out || !count || *count)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI audio inventory requires its idle actual owners and empty outputs");
     qa_audio_asset **assets = NULL; size_t size = 0;
     for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i) {
@@ -193,7 +202,7 @@ bool frontend_ui_features_assets_read(const qa_frontend *f, qa_audio_asset ***ou
 bool frontend_ui_features_content_visit(const qa_frontend *f,
     const qa_application_content_visitor *visitor, qa_error *error)
 {
-    if (!f || !f->ui_features || f->ui_features->handling || !visitor || !visitor->view)
+    if (!f || !f->ui_features || !frontend_ui_features_idle(f) || !visitor || !visitor->view)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI content inventory requires its idle actual owners");
     for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i)
         if (!qa_sound_captions_views_visit(f->ui_features->seats[i].captions, visitor->view, visitor->context, error)) return false;

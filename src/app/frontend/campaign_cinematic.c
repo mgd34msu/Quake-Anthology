@@ -3,6 +3,7 @@
 #include "qa/audio_save.h"
 #include "campaign.h"
 #include "cinematic_captions.h"
+#include "ui_features.h"
 #include <ctype.h>
 
 typedef struct cinematic_request {
@@ -70,8 +71,10 @@ static void request_free(cinematic_request *request)
 }
 static bool current(const frontend_cinematic *owner)
 {
+    uint32_t ordinal;
     return owner && owner->frontend && owner->frontend->application &&
-        qa_application_command_context_active(owner->frontend->application,&owner->request.command);
+        qa_application_command_context_active(owner->frontend->application,&owner->request.command) &&
+        frontend_command_seat_read(owner->frontend,&owner->request.command,&ordinal) && ordinal==owner->request.seat;
 }
 static void release_playback(frontend_cinematic *owner)
 {
@@ -92,7 +95,7 @@ static void completed(void *context,qa_cinematic_target target,qa_cinematic_end 
 static void diagnostic(void *context,const char *text)
 { frontend_print(((frontend_cinematic *)context)->frontend,text); }
 bool frontend_cinematic_idle(const qa_frontend *f)
-{ return f && (!f->cinematic || (!f->cinematic->busy && frontend_ui_cinematic_idle(f))); }
+{ return f && frontend_ui_features_idle(f) && (!f->cinematic || !f->cinematic->busy); }
 bool frontend_cinematic_running(const qa_frontend *f)
 { return f && f->cinematic && f->cinematic->movie && current(f->cinematic); }
 bool frontend_cinematic_capture_ready(const qa_frontend *f)
@@ -109,10 +112,11 @@ bool frontend_cinematic_destroy(qa_frontend *f,qa_error *error)
 bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *command,qa_error *error)
 {
     if (!f || !f->application || !command || !command->argc || !command->argv || f->capture ||
-        f->options.dedicated || !f->ui_images || !f->display || command->context.seat>=f->options.seats)
+        f->options.dedicated || !f->ui_images || !f->display)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic requires its current local presentation");
     frontend_cinematic *owner=f->cinematic;
-    if (owner && owner->busy) return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic callback is already active");
+    if ((owner && owner->busy) || !frontend_ui_features_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic callback or retained UI child is active");
     if (!strcmp(command->argv[0],"cinematicpause")) {
         if (!owner || !owner->movie || !current(owner)) return frontend_fail(error,QA_ERROR_ARGUMENT,"No cinematic is playing");
         return qa_cinematic_pause(owner->movie,qa_cinematic_status(owner->movie)!=QA_MEDIA_PAUSED,error);
@@ -123,8 +127,10 @@ bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *comm
     }
     if (strcmp(command->argv[0],"cinematic") || command->argc<2)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Usage: cinematic <name> [loop|hold]");
-    cinematic_request request={.seat=command->context.seat};
+    cinematic_request request={0};
     if (!qa_application_capture_command_context(f->application,&command->context,&request.command,error)) return false;
+    if (!frontend_command_seat_read(f,&request.command,&request.seat))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic request has no admitted physical local recipient");
     request.path=resource_path(command->argv[1],error);
     if (!request.path) return false;
     if (command->context.script) {
@@ -217,6 +223,10 @@ static bool finish(frontend_cinematic *owner,qa_error *error)
     qa_command_context command=owner->request.command;
     command.owner=source.source_owner; command.origin=QA_COMMAND_SEAT;
     command.dialect=QA_CONSOLE_Q3; command.direct=false; command.script="cinematic";
+    if (!frontend_seat_launch_id_read(f,owner->request.seat,&command.seat))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic completion lost its actual local launch seat");
+    command.actor=(qa_actor_id){0};
+    (void)qa_application_player_actor(f->application,command.seat,&command.actor);
     if (!qa_application_capture_command_context(f->application,&command,&command,error)) return false;
     const qa_cvar_view *next=qa_cvars_find(source.cvars,"nextmap");
     if (!next || !next->value || !*next->value) return true;
@@ -232,7 +242,7 @@ bool frontend_cinematic_drain(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->cinematic) return true;
     frontend_cinematic *owner=f->cinematic;
-    if (owner->busy || f->capture || f->preparing || f->round ||
+    if (owner->busy || f->capture || f->preparing || f->round || !frontend_ui_features_idle(f) ||
         (f->audio && !qa_audio_engine_round_ready(f->audio,error)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic drain requires completed callbacks");
     owner->busy=true; bool ok=true;
@@ -256,6 +266,8 @@ bool frontend_cinematic_input(qa_frontend *f,uint32_t seat,qa_input_focus focus,
     if (!f || !event || !handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid cinematic input event");
     *handled=false; frontend_cinematic *owner=f->cinematic;
     if (!owner || !owner->movie || owner->request.seat!=seat || !current(owner) || focus!=QA_INPUT_GAME) return true;
+    if (!frontend_ui_features_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic input retains its actual UI child");
     *handled=true;
     bool press=event->down && ((event->kind==QA_INPUT_EVENT_KEY && !event->repeat) || event->kind==QA_INPUT_EVENT_BUTTON);
     if (!press) return true;
@@ -280,6 +292,8 @@ bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,
     if (!f || !rendered) return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid cinematic frame");
     *rendered=false; frontend_cinematic *owner=f->cinematic;
     if (!owner || !owner->movie || !current(owner)) return true;
+    if (!frontend_ui_features_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic frame retains its actual UI child");
     double duration=(double)elapsed_ns/1000000.0;
     if (!isfinite(owner->clock_ms+duration)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic clock overflow");
     owner->clock_ms+=duration;

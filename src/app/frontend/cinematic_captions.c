@@ -9,10 +9,18 @@ typedef struct cinematic_caption_seat {
     qa_vfs *view;
     const qa_vfs *origin;
     char *path,*language,*failed_language;
+    frontend_cinematic_language *language_ticket;
 } cinematic_caption_seat;
 struct frontend_cinematic_captions {
     qa_frontend *frontend;
     cinematic_caption_seat seats[QA_INPUT_LOCAL_SEATS];
+};
+struct frontend_cinematic_language {
+    frontend_cinematic_captions *owner;
+    uint32_t seat;
+    cinematic_caption_seat original,candidate;
+    const qa_vfs *movie_files;
+    bool published;
 };
 bool frontend_ui_cinematic_idle(const qa_frontend *f)
 {
@@ -20,13 +28,15 @@ bool frontend_ui_cinematic_idle(const qa_frontend *f)
     if (!owner) return true;
     if (owner->frontend!=f) return false;
     for (unsigned i=0;i<f->options.seats;++i)
-        if (owner->seats[i].captions && !qa_media_captions_idle(owner->seats[i].captions)) return false;
+        if (owner->seats[i].language_ticket ||
+            (owner->seats[i].captions && !qa_media_captions_idle(owner->seats[i].captions))) return false;
     return true;
 }
 void frontend_ui_cinematic_clear(qa_frontend *f,uint32_t seat)
 {
     frontend_cinematic_captions *owner=f && f->ui_features?f->ui_features->cinematic_captions:NULL;
-    if (!owner || seat>=f->options.seats || (owner->seats[seat].captions && !qa_media_captions_idle(owner->seats[seat].captions))) return;
+    if (!owner || seat>=f->options.seats || owner->seats[seat].language_ticket ||
+        (owner->seats[seat].captions && !qa_media_captions_idle(owner->seats[seat].captions))) return;
     cinematic_caption_seat *state=owner->seats+seat;
     qa_media_captions_clear(state->captions); qa_vfs_destroy(state->view);
     free(state->path); free(state->language); free(state->failed_language);
@@ -37,6 +47,7 @@ void frontend_ui_cinematic_destroy(qa_frontend *f)
 {
     frontend_cinematic_captions *owner=f && f->ui_features?f->ui_features->cinematic_captions:NULL;
     if (!owner) return;
+    if (!frontend_ui_cinematic_idle(f)) return;
     for (unsigned i=0;i<f->options.seats;++i) {
         frontend_ui_cinematic_clear(f,i); qa_media_captions_destroy(owner->seats[i].captions);
     }
@@ -65,7 +76,7 @@ static bool current(qa_frontend *f,qa_vfs *files,const char *path,uint32_t seat,
 {
     bool found=false;
     if (!f || !f->ui_features || !f->ui_features->cinematic_captions || f->ui_features->handling ||
-        f->source_restoring || seat>=f->options.seats || !files || !path || !*path)
+        f->source_restoring || !frontend_ui_cinematic_idle(f) || seat>=f->options.seats || !files || !path || !*path)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Subtitles require their idle actual cinematic owner");
     if (!frontend_cinematic_view_read(f,out,&found,error)) return false;
     return (found && out->seat==seat && out->files==files && !strcmp(out->path,path)) ||
@@ -77,6 +88,91 @@ static char *copy_text(const char *text,qa_error *error)
     if (!out) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual subtitle identity"); return NULL; }
     memcpy(out,text,size); return out;
 }
+static void language_candidate_free(cinematic_caption_seat *state)
+{
+    qa_media_captions_destroy(state->captions); qa_vfs_destroy(state->view);
+    free(state->path); free(state->language); free(state->failed_language);
+}
+bool frontend_ui_cinematic_language_prepare(qa_frontend *f,uint32_t seat,const char *language,
+    frontend_cinematic_language **out,qa_error *error)
+{
+    if (!f || !f->ui_features || !out || *out || !language || seat>=f->options.seats ||
+        f->ui_features->handling || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic language requires its returned actual caption owner");
+    frontend_cinematic_captions *owner=f->ui_features->cinematic_captions;
+    if (!owner) return true;
+    if (owner->frontend!=f || owner->seats[seat].language_ticket ||
+        !qa_media_captions_idle(owner->seats[seat].captions))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic language retains an active actual seat child");
+    if (!owner->seats[seat].view) return true;
+    cinematic_caption_seat *state=owner->seats+seat;
+    frontend_cinematic_view movie; bool found=false;
+    if (!frontend_cinematic_view_read(f,&movie,&found,error)) return false;
+    if (!found || movie.seat!=seat || !state->path || strcmp(movie.path,state->path) ||
+        !qa_vfs_lookup_equal(movie.files,state->view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic language lost its actual movie resource and recipient");
+    frontend_cinematic_language *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining prepared cinematic language");
+    ticket->owner=owner; ticket->seat=seat; ticket->original=*state; ticket->movie_files=movie.files;
+    state->language_ticket=ticket;
+    cinematic_caption_seat *candidate=&ticket->candidate;
+    candidate->view=qa_vfs_clone(state->view,error); candidate->origin=movie.files;
+    candidate->path=copy_text(state->path,error); candidate->language=copy_text(language,error);
+    qa_media_caption_options options=caption_options(f,seat);
+    candidate->captions=qa_media_captions_create(&options,error);
+    bool ok=candidate->view && candidate->path && candidate->language && candidate->captions &&
+        qa_media_captions_prepare(candidate->captions,candidate->view,candidate->path,language,error);
+    if (!ok) {
+        language_candidate_free(candidate); state->language_ticket=NULL; free(ticket); return false;
+    }
+    *out=ticket; return true;
+}
+static bool language_parent(const frontend_cinematic_language *ticket,qa_error *error)
+{
+    const frontend_cinematic_captions *owner=ticket?ticket->owner:NULL;
+    const qa_frontend *f=owner?owner->frontend:NULL;
+    return (f && f->ui_features && f->ui_features->cinematic_captions==owner &&
+        !f->ui_features->handling && ticket->seat<f->options.seats &&
+        owner->seats[ticket->seat].language_ticket==ticket &&
+        qa_media_captions_idle(owner->seats[ticket->seat].captions) &&
+        qa_media_captions_idle(ticket->candidate.captions)) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic language lost its retained returned caption parents");
+}
+bool frontend_ui_cinematic_language_ready(const frontend_cinematic_language *ticket,qa_error *error)
+{
+    if (!language_parent(ticket,error) || ticket->published) return false;
+    const cinematic_caption_seat *state=ticket->owner->seats+ticket->seat;
+    const cinematic_caption_seat *original=&ticket->original;
+    if (state->captions!=original->captions || state->view!=original->view || state->origin!=original->origin ||
+        state->path!=original->path || state->language!=original->language || state->failed_language!=original->failed_language)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Active cinematic captions changed during preparation");
+    frontend_cinematic_view movie; bool found=false;
+    if (!frontend_cinematic_view_read(ticket->owner->frontend,&movie,&found,error)) return false;
+    return (found && movie.seat==ticket->seat && movie.files==ticket->movie_files &&
+        !strcmp(movie.path,ticket->candidate.path) &&
+        qa_media_captions_prepared_is(ticket->candidate.captions,ticket->candidate.view,
+            ticket->candidate.path,ticket->candidate.language)) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Prepared cinematic language lost its exact current movie");
+}
+void frontend_ui_cinematic_language_publish(frontend_cinematic_language *ticket)
+{
+    cinematic_caption_seat *state=ticket->owner->seats+ticket->seat;
+    *state=ticket->candidate; state->language_ticket=ticket;
+    ticket->candidate=ticket->original; ticket->published=true;
+}
+static bool language_dispose(frontend_cinematic_language **in,bool published,qa_error *error)
+{
+    if (!in || !*in) return true;
+    frontend_cinematic_language *ticket=*in;
+    if (!language_parent(ticket,error) || ticket->published!=published) return false;
+    language_candidate_free(&ticket->candidate);
+    ticket->owner->seats[ticket->seat].language_ticket=NULL;
+    free(ticket); *in=NULL; return true;
+}
+bool frontend_ui_cinematic_language_finish(frontend_cinematic_language **in,qa_error *error)
+{ return language_dispose(in,true,error); }
+bool frontend_ui_cinematic_language_abort(frontend_cinematic_language **in,qa_error *error)
+{ return language_dispose(in,false,error); }
 bool frontend_ui_cinematic_prepare(qa_frontend *f,qa_vfs *files,const char *path,uint32_t seat,qa_error *error)
 {
     frontend_cinematic_view movie;

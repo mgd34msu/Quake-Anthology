@@ -20,8 +20,8 @@ struct frontend_remote_snapshots {
     frontend_remote_centity entities[QA_Q3_ENTITIES];
     q3n_entity presentations[QA_Q3_ENTITIES];
     int32_t processed, latest, time, command_sequence;
-    uint64_t revision;
-    bool has_snap, has_next, this_teleport, next_teleport, busy, faulted;
+    uint64_t revision, callback_scope;
+    bool has_snap, has_next, this_teleport, next_teleport, busy, in_callback, faulted;
 };
 static bool fail(qa_error *e, qa_status code, const char *s)
 { qa_error_set(e, code, 0, "%s", s); return false; }
@@ -52,7 +52,7 @@ static bool retained_source(const frontend_remote_snapshots *s,frontend_network_
 bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *o,
     const frontend_network_presentation_source *source, frontend_remote_snapshots **out, qa_error *e)
 {
-    if(!o || !o->frontend || !o->command || !o->respawn || !o->reset_player || !o->event ||
+    if(!o || !o->frontend || !o->reached || !o->respawn || !o->reset_player || !o->event ||
         !o->transition_player || !o->lagometer || !o->warning || !source || !out || *out ||
         (o->product!=QA_Q3_ARENA && o->product!=QA_Q3_TEAM_ARENA) ||
         !frontend_network_presentation_source_current(o->frontend,source))
@@ -107,13 +107,26 @@ static void player_entity(qa_q3_player *p,qa_q3_entity *s)
     s->loopSound=p->loopSound; s->generic1=p->generic1;
 }
 static void published(frontend_remote_centity *row,const qa_q3_snapshot *snap)
-{ row->published=true; row->publication_message=snap->message_number; row->presentation->physical=(uint32_t)row->current.number; }
+{
+    row->published=true; row->publication_message=snap->message_number;
+    row->presentation->physical=(uint32_t)row->current.number;
+    row->presentation->loop_stopped=false;
+}
+static bool callback_begin(frontend_remote_snapshots *s,qa_error *e)
+{
+    if(s->callback_scope==UINT64_MAX)
+        return fail(e,QA_ERROR_ARGUMENT,"Remote snapshot callback scope is exhausted");
+    ++s->callback_scope; s->in_callback=true; return true;
+}
 static bool reset(frontend_remote_snapshots *s,frontend_remote_centity *row,const qa_q3_snapshot *snap,qa_error *e)
 {
     if(row->presentation->snapshot_time<word((uint32_t)s->time-300u)) row->presentation->previous_event=0;
     row->presentation->trail_time=snap->server_time;
     row->presentation->lerp_origin=vector(row->current.origin); row->presentation->lerp_angles=vector(row->current.angles);
-    return row->current.eType!=1 || (s->options.reset_player(s->options.context,&s->source,row,e) && source_current(s));
+    if(row->current.eType!=1) return true;
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.reset_player(s->options.context,&s->source,row,e);
+    s->in_callback=false; return ok && source_current(s);
 }
 static bool events(frontend_remote_snapshots *s,frontend_remote_centity *row,qa_error *e)
 {
@@ -129,7 +142,9 @@ static bool events(frontend_remote_snapshots *s,frontend_remote_centity *row,qa_
         if(!(event.event&~0x300)) return true;
     }
     if(!q3n_trajectory(&event.pos,s->snap.value.server_time,&row->presentation->lerp_origin,e)) return false;
-    return s->options.event(s->options.context,&s->source,row,&event,row->presentation->lerp_origin,s->time,e) && source_current(s);
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.event(s->options.context,&s->source,row,&event,row->presentation->lerp_origin,s->time,e);
+    s->in_callback=false; return ok && source_current(s);
 }
 static bool commands(frontend_remote_snapshots *s,int32_t sequence,qa_error *e)
 {
@@ -142,7 +157,10 @@ static bool commands(frontend_remote_snapshots *s,int32_t sequence,qa_error *e)
             return fail(e,QA_ERROR_ARGUMENT,"Remote reliable execution retired its native receiver");
         if(reached.source.prediction.restart_generation!=s->source.prediction.restart_generation) s->this_teleport=true;
         s->source=reached.source;
-        if(reached.present && (!s->options.command(s->options.context,&reached,e) || !source_current(s))) return false;
+        if(!callback_begin(s,e)) return false;
+        bool adopted=s->options.reached(s->options.context,&reached,e);
+        s->in_callback=false;
+        if(!adopted || !source_current(s)) return false;
     }
     return true;
 }
@@ -151,8 +169,11 @@ static bool initial(frontend_remote_snapshots *s,qa_error *e)
     s->has_snap=true;
     frontend_remote_centity *local=&s->entities[s->snap.value.player.clientNum];
     player_entity(&s->snap.value.player,&local->current); published(local,&s->snap.value);
-    if(!commands(s,s->snap.value.server_command_number,e) ||
-        !s->options.respawn(s->options.context,&s->source,e) || !source_current(s)) return false;
+    if(!commands(s,s->snap.value.server_command_number,e)) return false;
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.respawn(s->options.context,&s->source,e);
+    s->in_callback=false;
+    if(!ok || !source_current(s)) return false;
     for(size_t i=0;i<s->snap.value.entity_count;++i) {
         const qa_q3_entity *entry=&s->snap.value.entities[i]; frontend_remote_centity *row=&s->entities[entry->number];
         row->current=*entry; published(row,&s->snap.value); row->presentation->valid=true; row->interpolate=false;
@@ -190,8 +211,16 @@ static bool transition(frontend_remote_snapshots *s,const frontend_remote_snapsh
     }
     s->has_next=false;
     if((s->snap.value.player.eFlags^previous.eFlags)&4) s->this_teleport=true;
-    return !(settings->demo_playback || (s->snap.value.player.pmFlags&4096) || settings->no_predict || settings->synchronous_clients) ||
-        (s->options.transition_player(s->options.context,&s->source,&s->snap.value.player,&previous,e) && source_current(s));
+    if(!(settings->demo_playback || (s->snap.value.player.pmFlags&4096) || settings->no_predict || settings->synchronous_clients)) return true;
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.transition_player(s->options.context,&s->source,&s->snap.value.player,&previous,e);
+    s->in_callback=false; return ok && source_current(s);
+}
+static bool warning(frontend_remote_snapshots *s,const char *message,qa_error *e)
+{
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.warning(s->options.context,message,e);
+    s->in_callback=false; return ok && source_current(s);
 }
 static bool read_next(frontend_remote_snapshots *s,remote_snapshot *out,bool *present,qa_error *e)
 {
@@ -199,18 +228,21 @@ static bool read_next(frontend_remote_snapshots *s,remote_snapshot *out,bool *pr
     if((int64_t)s->latest>(int64_t)s->processed+1000) {
         char message[128];
         snprintf(message,sizeof(message),"WARNING: CG_ReadNextSnapshot: way out of range, %d > %d",s->latest,s->processed);
-        if(!s->options.warning(s->options.context,message,e) || !source_current(s)) return false;
+        if(!warning(s,message,e)) return false;
     }
     while(s->processed<s->latest) {
         if(s->processed==INT32_MAX) return fail(e,QA_ERROR_FORMAT,"Remote snapshot sequence is exhausted");
         ++s->processed; const qa_q3_snapshot *snapshot=NULL; int32_t ping=0;
-        if(!frontend_network_presentation_snapshot(s->options.frontend,&s->source,s->processed,&snapshot,&ping,e) ||
-            !s->options.lagometer(s->options.context,snapshot,ping,e) || !source_current(s)) return false;
+        if(!frontend_network_presentation_snapshot(s->options.frontend,&s->source,s->processed,&snapshot,&ping,e)) return false;
+        if(!callback_begin(s,e)) return false;
+        bool ok=s->options.lagometer(s->options.context,snapshot,ping,e);
+        s->in_callback=false;
+        if(!ok || !source_current(s)) return false;
         if(snapshot) {
             if(snapshot->entity_count>256) {
                 char message[128];
                 snprintf(message,sizeof(message),"CL_GetSnapshot: truncated %zu entities to 256\n",snapshot->entity_count);
-                if(!s->options.warning(s->options.context,message,e) || !source_current(s)) return false;
+                if(!warning(s,message,e)) return false;
             }
             if(!store(out,snapshot,s->options.product,e)) return false;
             *present=true; return true;
@@ -256,11 +288,11 @@ bool frontend_remote_snapshots_read(const frontend_remote_snapshots *s,frontend_
     frontend_network_presentation_source source;
     if(!s || !out || s->busy || s->faulted || !retained_source(s,&source)) return false;
     *out=(frontend_remote_snapshots_view){s,source,s->has_snap?&s->snap.value:NULL,s->has_next?&s->next.value:NULL,
-        s->time,s->processed,s->command_sequence,s->revision,s->this_teleport,s->next_teleport}; return true;
+        s->time,s->processed,s->command_sequence,s->revision,s->this_teleport,s->next_teleport,0}; return true;
 }
-bool frontend_remote_snapshots_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
+static bool view_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
 {
-    return s && v && v->owner==s && !s->busy && !s->faulted && v->revision==s->revision &&
+    return s && v && v->owner==s && !s->faulted && v->revision==s->revision &&
         frontend_network_presentation_source_current(s->options.frontend,&v->source) &&
         v->snapshot==(s->has_snap?&s->snap.value:NULL) && v->next_snapshot==(s->has_next?&s->next.value:NULL) &&
         v->time==s->time && v->processed_message==s->processed && v->command_sequence==s->command_sequence &&
@@ -270,11 +302,42 @@ bool frontend_remote_snapshots_current(const frontend_remote_snapshots *s,const 
         v->source.initial_message==s->source.initial_message && v->source.initial_command==s->source.initial_command &&
         v->source.executed_command==s->source.executed_command && v->source.latest_message>=s->latest;
 }
+bool frontend_remote_snapshots_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
+{ return s && !s->busy && v && !v->callback_scope && view_current(s,v); }
+bool frontend_remote_snapshots_callback_read(const frontend_remote_snapshots *s,
+    const frontend_network_presentation_source *source,frontend_remote_snapshots_view *out)
+{
+    if(!s || !source || !out || !s->busy || !s->in_callback || s->faulted) return false;
+    frontend_remote_snapshots_view view={s,*source,s->has_snap?&s->snap.value:NULL,s->has_next?&s->next.value:NULL,
+        s->time,s->processed,s->command_sequence,s->revision,s->this_teleport,s->next_teleport,s->callback_scope};
+    if(!view_current(s,&view)) return false;
+    *out=view; return true;
+}
+bool frontend_remote_snapshots_callback_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
+{
+    return s && s->busy && s->in_callback && v && v->callback_scope &&
+        v->callback_scope==s->callback_scope && view_current(s,v);
+}
 bool frontend_remote_snapshots_entity(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v,
     uint32_t number,const frontend_remote_centity **out,qa_error *e)
 {
     if(!out || number>=QA_Q3_ENTITY_NONE || !frontend_remote_snapshots_current(s,v))
         return fail(e,QA_ERROR_ARGUMENT,"Remote centity read lost its exact native frame");
+    *out=&s->entities[number]; return true;
+}
+bool frontend_remote_snapshots_callback_entity(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v,
+    uint32_t number,const frontend_remote_centity **out,qa_error *e)
+{
+    if(!out || number>=QA_Q3_ENTITY_NONE || !frontend_remote_snapshots_callback_current(s,v))
+        return fail(e,QA_ERROR_ARGUMENT,"Remote centity read lost its entered snapshot callback");
+    *out=&s->entities[number]; return true;
+}
+bool frontend_remote_snapshots_entity_write(frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v,
+    uint32_t number,frontend_remote_centity **out,qa_error *e)
+{
+    if(!out || number>=QA_Q3_ENTITY_NONE ||
+        !(frontend_remote_snapshots_current(s,v) || frontend_remote_snapshots_callback_current(s,v)))
+        return fail(e,QA_ERROR_ARGUMENT,"Remote centity authoring lost its genuine CGAME frame scope");
     *out=&s->entities[number]; return true;
 }
 bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *s,
@@ -298,6 +361,14 @@ bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *s,qa_
     if(!s || s->busy || s->faulted || !retained_source(s,&source) || s->revision==UINT64_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"Remote teleport consumption requires its completed native frame");
     s->this_teleport=false; ++s->revision; return true;
+}
+bool frontend_remote_snapshots_mark_teleport(frontend_remote_snapshots *s,qa_error *e)
+{
+    frontend_network_presentation_source source;
+    if(!s || s->busy || s->faulted || !retained_source(s,&source) || s->revision==UINT64_MAX)
+        return fail(e,QA_ERROR_ARGUMENT,"Remote teleport feedback requires its returned PS-transition frame");
+    if(!s->this_teleport) { s->this_teleport=true; ++s->revision; }
+    return true;
 }
 static bool entity_fields(qa_source_save_io *io,qa_q3_entity *entity)
 {
