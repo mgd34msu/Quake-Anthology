@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=10;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=11;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==10?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==11?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -24,17 +24,6 @@ static bool goal_fields(qa_source_save_io *io, qa_bot_goal *goal)
 {
     V(goal->origin); I(goal->area); V(goal->mins); V(goal->maxs);
     I(goal->entity); I(goal->number); I(goal->flags); I(goal->item_info); return true;
-}
-static bool command_fields(qa_source_save_io *io, qa_movement_command *command)
-{
-    uint32_t kind = command->kind;
-    U(kind); if (kind > QA_MOVEMENT_Q3) return false;
-    command->kind = (qa_movement_kind)kind;
-    L(command->sequence); U(command->milliseconds); I(command->server_time_ms); I(command->server_frame);
-    FIELD(f64, command->acknowledged_server_seconds); V(command->angles);
-    for (size_t i = 0; i < 3; ++i) I(command->angle_words[i]);
-    F(command->forward_move); F(command->side_move); F(command->up_move); U(command->buttons);
-    FIELD(u8, command->impulse); FIELD(u8, command->light_level); FIELD(u8, command->weapon); return true;
 }
 static bool view_fields(qa_source_save_io *io, qa_bot_view *view)
 {
@@ -145,7 +134,6 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     }
     if (!view_fields(io, &state->view) || !player_fields(io, &state->player)) return false;
     V(state->angles.angles); V(state->angles.ideal); V(state->angles.velocity);
-    if (!command_fields(io, &state->last_command)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
     U(state->area); U(state->travel_flags); I(state->setup_count); I(state->residual_ms); I(state->last_health);
     F(state->local_time); F(state->walker); F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_report.h"
+#include "source_command.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -46,11 +47,12 @@ static bool connected(qa_bots *b, bot_ai_state *s) {
     return b->services.shared.player_info(b->services.shared.context, s->view.actor, &info) &&
         bot_ai_live(b, s->view.actor) && info.connected;
 }
-static bool submit(qa_bots *b, bot_ai_state *s, const qa_bot_input *input, qa_error *e) {
+static bool submit(qa_bots *b, bot_ai_state *s, const qa_bot_input *input,
+                     qa_movement_command *command, qa_error *e) {
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
     if (s->command_sequence == UINT64_MAX) return bot_ai_fail(e, "bot command sequence exhausted");
-    s->last_command.sequence = ++s->command_sequence;
-    return b->services.submit(b->services.context, s->view.actor, input, &s->last_command, e);
+    command->sequence = ++s->command_sequence;
+    return b->services.submit(b->services.context, s->view.actor, input, command, e);
 }
 bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa_error *e) {
     float factor = .05f, maximum = 360;
@@ -61,13 +63,16 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     qa_bot_change_view(&s->angles, factor, maximum, (float)elapsed / 1000, b->controls.challenge);
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     qa_bot_input input;
+    qa_movement_command command;
     bool ok = qa_bot_actions_view(actions, s->view.client, s->angles.angles, e) &&
         qa_bot_actions_input(actions, s->view.client, (float)time / 1000, &input, e);
-    if (ok && (input.action_flags & QA_BOT_RESPAWN) && (s->last_command.buttons & 1))
+    if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
+    if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
         input.action_flags &= ~(QA_BOT_RESPAWN | QA_BOT_ATTACK);
-    if (ok) ok = qa_bot_input_q3_command(&input, s->player.delta_angles, time, &s->last_command, e);
+    if (ok) ok = qa_bot_input_q3_command(&input, s->player.delta_angles, time, &command, e) &&
+        bot_ai_source_command_write(b, s, &command, e);
     qa_bot_view_delta(&s->angles, s->player.delta_angles, false);
-    return ok && submit(b, s, &input, e);
+    return ok && submit(b, s, &input, &command, e);
 }
 bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *area, qa_error *e) {
     qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
@@ -191,11 +196,12 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         for (uint32_t i = 0; i < 64; ++i) {
             bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
             if (!s || !connected(b, s)) continue;
-            s->last_command.forward_move = s->last_command.side_move = s->last_command.up_move = 0;
-            s->last_command.buttons = 0;
-            s->last_command.server_time_ms = time;
-            qa_bot_input input = {.view_angles = s->angles.angles, .weapon = s->view.weapon};
-            if (!submit(b, s, &input, e)) return false;
+            qa_movement_command command;
+            if (!bot_ai_source_command_pause(b, s, time, e) ||
+                !bot_ai_source_command_read(b, s, &command, e)) return false;
+            qa_bot_input input = {.view_angles = s->angles.angles, .weapon = command.weapon};
+            command.angles = input.view_angles;
+            if (!submit(b, s, &input, &command, e)) return false;
         }
         return true;
     }

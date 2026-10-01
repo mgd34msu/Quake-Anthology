@@ -179,7 +179,6 @@ bool qa_bot_source_record_command(const qa_bot_source_memory *memory,qa_bot_sour
         return qa_bot_source_record_write(memory,(qa_bot_source_record){record.offset+20,4},bytes,error);
     }
     if(!qa_bot_source_record_read(memory,(qa_bot_source_record){record.offset+20,4},bytes,error)) return false;
-    if(bytes[0]>13) {qa_error_set(error,QA_ERROR_FORMAT,0,"bot command source record contains an unsupported weapon");return false;}
     command->weapon=bytes[0];
     memcpy(&command->forwardmove,bytes+1,1);memcpy(&command->rightmove,bytes+2,1);memcpy(&command->upmove,bytes+3,1);
     return true;
