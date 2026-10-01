@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "native_maps.h"
 #include "match_intents.h"
+#include "native_q3_clients.h"
+#include "native_q3_objectives.h"
+#include "map_travel_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -126,6 +129,21 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .event = mode_event,
                             .emit = application_native_mode_emit,
                             .q3_clock = application_native_mode_q3_clock,
+                            .q3_client_slot = application_native_q3_mode_client_slot,
+                            .q3_native_source = application_native_q3_mode_source,
+                            .q3_source_score_bound = application_native_q3_source_score_bound,
+                            .q3_source_match_exit = application_native_mode_q3_source_match_exit,
+                            .q3_team_status_bound = application_native_mode_q3_team_status_bound,
+                            .q3_source_object = application_native_q3_objective_bound,
+                            .q3_source_object_view = application_native_q3_objective_view,
+                            .q3_rank_client = application_native_q3_mode_rank_client,
+                            .q3_rank_counts = application_native_q3_mode_rank_counts,
+                            .q3_choose_team = application_native_q3_mode_choose_team,
+                            .q3_vote_calls = application_native_q3_mode_vote_calls,
+                            .q3_team_request = application_native_q3_mode_team_request,
+                            .q3_stop_following = application_native_q3_mode_stop_following,
+                            .q3_intermission_client = application_native_q3_mode_intermission_client,
+                            .q3_intermission_ready_publish = application_native_q3_mode_ready_publish,
                             .q3_warmup_restart = application_native_mode_q3_warmup_restart,
                             .map_allowed = application_native_mode_map_allowed,
                             .next_map_allowed = application_native_mode_next_map_allowed,
@@ -299,7 +317,7 @@ bool application_match_prepare_modes(qa_application *application,
         .mode_capacity = (uint32_t)(choices->mode_count == 0
                                         ? 1
                                         : choices->mode_count),
-        .objective_capacity = 256,
+        .objective_capacity = qa_actors_capacity(qa_session_actors(application->session)),
         .random_seed = application->catalog_generation ^
                        UINT64_C(0x9e3779b97f4a7c15),
     };
@@ -438,7 +456,7 @@ bool qa_application_prepare_match_travel(qa_application *application,
                                                 &plan, &request))
         return true;
     qa_application_travel_view travel;
-    return qa_application_queue_map_travel(application, &request, error) &&
+    return application_source_queue_map_travel(application, &request, error) &&
            qa_application_travel_read(application, &travel) &&
            application_match_intents_queued(application->match_intents,
                                               application, travel.revision, error);

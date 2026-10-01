@@ -145,8 +145,8 @@ typedef struct qa_mode_player_state {
     bool spectator, scoreboard, ready, leader;
     uint64_t spectator_since_ns;
     int8_t automatic_follow;
-    /* Actual Q3 session values. Numeric spectatorClient persists even when
-     * its former canonical actor retires or the source stops following. */
+    /* Chosen Q3 rule member state. Native GAME sessions remain on their
+     * physical client rows independently of this member projection. */
     int32_t q3_spectator_time_ms, q3_spectator_state, q3_spectator_client;
     int32_t ctf_last_team;
     float ctf_status, ctf_access;
@@ -175,6 +175,7 @@ typedef struct qa_mode_statistics {
     int32_t score, kills, deaths, captures, defenses, carrier_defenses, recoveries, assists,
         assist_awards;
     int32_t rank, tokens, streak;
+    int32_t q3_defend_count, q3_assist_count, q3_capture_count;
     uint64_t flag_since_ns, returned_ns, carrier_killed_ns, hurt_carrier_ns;
     uint64_t defended_ns, last_kill_ns;
     bool returned, carrier_killed, hurt_carrier, defended;
@@ -187,6 +188,9 @@ typedef struct qa_mode_view {
     size_t playing, voting, sorted_count;
     bool ready_exit, ctf_pregame_over;
 } qa_mode_view;
+typedef struct qa_mode_q3_rank_counts {
+    int32_t connected, non_spectator, playing, voting, team_voting[2];
+} qa_mode_q3_rank_counts;
 typedef struct qa_mode_q3_settings {
     int32_t do_warmup, warmup_seconds, time_limit_minutes, frag_limit, capture_limit;
     uint64_t warmup_modification_count;
@@ -328,6 +332,29 @@ typedef struct qa_modes_hooks {
     bool (*rogue_runes_claim)(void *, qa_mode_id, bool *newly_claimed, qa_error *);
     bool (*rogue_runes_read)(void *, qa_mode_id, qa_actor_id *world, bool *started);
     bool (*q3_clock)(void *, qa_mode_id, int32_t *source_time_ms, qa_error *);
+    bool (*q3_client_slot)(void *, qa_mode_id, qa_actor_id,
+                          qa_actor_owner *, uint32_t *, qa_error *);
+    bool (*q3_native_source)(void *, qa_mode_id, qa_actor_owner *);
+    /* Actual native GAME score storage is independent of the selected rule.
+     * Only its primary mode and fully bound physical client qualify. */
+    bool (*q3_source_score_bound)(void *, qa_mode_id, qa_actor_id, qa_actor_owner *);
+    bool (*q3_source_match_exit)(void *, qa_mode_id, qa_string_id, qa_error *);
+    bool (*q3_team_status_bound)(void *, qa_mode_id);
+    bool (*q3_source_object)(void *, qa_mode_id, qa_actor_id, bool *native_source, qa_error *);
+    bool (*q3_source_object_view)(void *, qa_mode_id, qa_actor_id, qa_mode_object_view *, qa_error *);
+    bool (*q3_rank_client)(void *, qa_mode_id, qa_actor_id, bool *connected,
+                          bool *connecting, bool *bot, int32_t *source_team, qa_error *);
+    bool (*q3_rank_counts)(void *, qa_mode_id, qa_mode_q3_rank_counts *, qa_error *);
+    bool (*q3_choose_team)(void *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
+    bool (*q3_vote_calls)(void *, qa_mode_id, qa_actor_id, bool team_vote,
+                          int32_t *, qa_error *);
+    bool (*q3_team_request)(void *, qa_mode_id, qa_actor_id, qa_team_id,
+                           bool spectator, bool automatic, int32_t spectator_state,
+                           int32_t spectator_client, bool *accepted, bool *changed, qa_error *);
+    bool (*q3_stop_following)(void *, qa_mode_id, qa_actor_id, qa_error *);
+    bool (*q3_intermission_client)(void *, qa_mode_id, qa_actor_id, bool *eligible,
+                                  bool *ready, qa_error *);
+    bool (*q3_intermission_ready_publish)(void *, qa_mode_id, int32_t mask, qa_error *);
     bool (*q3_warmup_restart)(void *, qa_mode_id, qa_error *);
     bool (*team_equipment)(void *, qa_actor_id, qa_item_id *weapon, uint64_t *powerups, qa_error *);
     bool (*select_grapple)(void *, qa_actor_id, qa_error *);
@@ -364,6 +391,11 @@ bool qa_modes_q3_settings_read(const qa_modes *, qa_mode_id, qa_mode_q3_settings
 bool qa_modes_q3_settings_admit(qa_modes *, qa_mode_id, const qa_mode_q3_settings *,
                                 int32_t source_time_ms, int32_t restarted, qa_error *);
 bool qa_modes_q3_settings_update(qa_modes *, qa_mode_id, const qa_mode_q3_settings *, qa_error *);
+bool qa_modes_q3_source_phase(qa_modes *, qa_mode_id, qa_mode_phase,
+    uint64_t source_time_ns, uint64_t deadline_ns, qa_error *);
+bool qa_modes_q3_source_reset_teams(qa_modes *, qa_mode_id, qa_error *);
+bool qa_modes_q3_source_frame(qa_modes *, qa_mode_id, uint64_t now_ns,
+    uint64_t elapsed_ns, qa_error *);
 bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_error *);
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
 bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);
@@ -431,6 +463,8 @@ typedef struct qa_mode_frag {
     qa_mode_id evaluated_mode;
 } qa_mode_frag;
 bool qa_modes_player_death(qa_modes *, qa_mode_id, const qa_damage_outcome *, qa_error *);
+bool qa_modes_q3_source_death_score(qa_modes *, qa_mode_id, qa_actor_id recipient,
+    int32_t amount, qa_error *);
 /* apply_ordinary_score is local to this mode: false means its score owner
  * already applied the ordinary obituary delta, never that another mode scored. */
 bool qa_modes_player_death_component(qa_modes *, qa_mode_id, const qa_damage_outcome *,

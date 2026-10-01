@@ -1,5 +1,17 @@
 #include "internal.h"
 
+bool qa_modes_q3_source_death_score(qa_modes *m, qa_mode_id id, qa_actor_id recipient,
+    int32_t amount, qa_error *error)
+{
+    mode_instance *value = mode_get(m, id);
+    qa_actor_owner owner;
+    if (!value || !mode_member_get(m, value, recipient) ||
+        !m->options.hooks.q3_source_score_bound ||
+        !m->options.hooks.q3_source_score_bound(m->options.hooks.context, id, recipient, &owner))
+        return mode_fail(error, "native source death score lost its selected score owner");
+    return qa_modes_add_score(m, id, recipient, amount, error);
+}
+
 bool qa_modes_player_hurt(qa_modes *m, qa_mode_id id, const qa_damage_request *request,
                           qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -39,7 +51,14 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
         return mode_fail(e, "source obituary belongs to another mode or participant");
     if (!v->value.rules.enabled)
         return true;
+    qa_actor_owner native_owner;
+    bool native_team = v->value.rules.source >= QA_MODE_Q3 &&
+        m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner);
     qa_actor_id victim = outcome->request.target, attacker = outcome->request.attack.attacker;
+    if (primary_score && m->options.hooks.q3_source_score_bound &&
+        m->options.hooks.q3_source_score_bound(m->options.hooks.context, id, victim, &native_owner))
+        primary_score = false;
     mode_member *dead = mode_member_get(m, v, victim), *killer = mode_member_get(m, v, attacker);
     if (!dead)
         return true;
@@ -79,7 +98,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
             if (mode_team_index(v, team) >= 0 && !qa_modes_team_score(m, id, team, change, e))
                 return false;
         }
-        if ((change > 0 || v->value.rules.source == QA_MODE_ROGUE) &&
+        if (!native_team && (change > 0 || v->value.rules.source == QA_MODE_ROGUE) &&
             v->value.rules.kind >= QA_MODE_CTF && v->value.rules.kind <= QA_MODE_HARVESTER &&
             !mode_flag_bonus(m, v, attacker, victim, e))
             return false;
@@ -101,7 +120,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
                 return false;
         }
     }
-    if (v->value.rules.kind == QA_MODE_HARVESTER) {
+    if (v->value.rules.kind == QA_MODE_HARVESTER && !native_team) {
         mode_object *neutral = mode_object_get(m, v->bases[2]);
         qa_team_id team;
         if (neutral && qa_modes_team(m, v->id, victim, &team, e)) {
@@ -125,8 +144,9 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
                     return false;
             }
         }
-        dead->stats.tokens = 0;
     }
+    if (v->value.rules.kind == QA_MODE_HARVESTER)
+        dead->stats.tokens = 0;
     if (v->value.rules.source == QA_MODE_ROGUE) {
         mode_object *flag = mode_object_get(m, dead->flag);
         if (flag)
