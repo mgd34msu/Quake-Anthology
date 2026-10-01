@@ -140,7 +140,7 @@ typedef enum qa_q3_snapshot_validity {
     QA_Q3_SNAPSHOT_STALE_ENTITIES
 } qa_q3_snapshot_validity;
 typedef struct qa_q3_download {
-    uint16_t block;
+    int16_t block;
     int32_t file_size;
     size_t size;
     uint8_t data[QA_Q3_MESSAGE_BYTES];
@@ -176,6 +176,24 @@ typedef struct qa_q3_server_event {
 } qa_q3_server_event;
 /* Events borrow decoder scratch storage, valid only during the callback. */
 typedef bool (*qa_q3_server_event_fn)(void *, const qa_q3_server_event *, qa_error *);
+typedef enum qa_q3_server_cursor_phase {
+    QA_Q3_SERVER_CURSOR_ACK, QA_Q3_SERVER_CURSOR_OPCODE,
+    QA_Q3_SERVER_CURSOR_GAMESTATE, QA_Q3_SERVER_CURSOR_DOWNLOAD,
+    QA_Q3_SERVER_CURSOR_DONE, QA_Q3_SERVER_CURSOR_FAILED
+} qa_q3_server_cursor_phase;
+typedef struct qa_q3_server_cursor {
+    qa_q3_reader reader;
+    qa_q3_server_cursor_phase phase;
+} qa_q3_server_cursor;
+bool qa_q3_server_cursor_init(qa_q3_server_cursor *, qa_bytes, qa_error *);
+/* When source_callbacks is false, stop before clearing/reading a gamestate
+ * or invoking download services. The reader retains the genuine bit cursor.
+ * Events still borrow scratch only during their actual callback. */
+bool qa_q3_server_cursor_continue(qa_q3_server_cursor *, qa_q3_server_decode *,
+    qa_q3_server_event_fn, void *, bool source_callbacks, bool *pending, qa_error *);
+/* Pure grammar qualification of a held first source boundary. No source
+ * callback, history mutation or command execution occurs. */
+bool qa_q3_server_cursor_pending_valid(const qa_q3_server_cursor *, qa_q3_product, qa_error *);
 bool qa_q3_decode_server(qa_bytes, qa_q3_server_decode *, qa_q3_server_event_fn, void *, qa_error *);
 bool qa_q3_server_begin(qa_q3_writer *, int32_t reliable_acknowledge);
 bool qa_q3_server_command(qa_q3_writer *, int32_t sequence, const char *);
@@ -419,6 +437,8 @@ typedef struct qa_q3_client_hooks {
     bool (*level_shot)(void *, qa_error *);
     bool (*local_server_running)(void *);
     qa_q3_send_fn send;
+    /* The actual runtime resumes source operations outside its pump. */
+    bool defer_source;
 } qa_q3_client_hooks;
 typedef struct qa_q3_client_send {
     int32_t real_time;
@@ -470,6 +490,8 @@ int32_t qa_q3_client_peer_server_command_sequence(const qa_q3_client_peer *);
 bool qa_q3_client_peer_receive(qa_q3_client_peer *, qa_bytes, int32_t real_time, qa_q3_receive_kind *, qa_error *);
 /* Demo records supply plaintext protocol messages without a netchannel. */
 bool qa_q3_client_peer_message(qa_q3_client_peer *, int32_t sequence, qa_bytes, int32_t real_time, qa_error *);
+bool qa_q3_client_peer_receive_pending(const qa_q3_client_peer *);
+bool qa_q3_client_peer_continue(qa_q3_client_peer *, qa_error *);
 bool qa_q3_client_peer_execute(qa_q3_client_peer *, int32_t server_command_sequence, bool demo, qa_error *);
 bool qa_q3_client_peer_send(qa_q3_client_peer *, const qa_q3_client_send *, qa_error *);
 bool qa_q3_client_peer_ready(const qa_q3_client_peer *, const qa_q3_client_readiness *);

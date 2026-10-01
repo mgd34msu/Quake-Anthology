@@ -14,8 +14,11 @@ uint16_t qa_q3_channel_qport(const qa_q3_channel *);
 bool qa_q3_channel_transmit_matches(const qa_q3_channel *, qa_bytes, qa_error *);
 
 /* Capture at a drained runtime boundary. The complete source command/player/
- * entity history and reliable/fragment state survive; parser output scratch
- * and borrowed datagram views do not. Restoring calls no source initialization,
+ * entity history and reliable/fragment state survive. Client schema 3 also
+ * retains owned plaintext and the unread Huffman bit cursor at the first
+ * gamestate/download source boundary; parser scratch and borrowed views do
+ * not survive. Restore qualifies the boundary grammar without invoking
+ * source services. Restoring calls no source initialization,
  * signon, send or snapshot hook. The caller admits a new canonical connection
  * identity and qualified candidate callbacks before publication. Continuation
  * against an external endpoint requires the matching remote session cut. */

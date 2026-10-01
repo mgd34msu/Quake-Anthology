@@ -15,6 +15,10 @@
     X(clientNum) X(weapon) X(weaponState) X(viewheight) X(damageEvent) X(damageYaw) X(damagePitch) \
     X(damageCount) X(generic1) X(loopSound) X(jumppadEnt) X(ping) X(pmoveFramecount) X(jumppadFrame) X(entityEventSequence)
 
+#define Q3_ENTITY_FIELD_BYTES(field) + 4U
+enum { Q3_SAVE_ENTITY_BYTES = 0 Q3_SAVE_ENTITY_I32(Q3_ENTITY_FIELD_BYTES) + 2U * 9U * 4U + 12U * 4U };
+#undef Q3_ENTITY_FIELD_BYTES
+
 static inline bool q3_save_bool(qa_net_reader *r)
 {
     uint8_t value = qa_net_read_u8(r);
@@ -175,7 +179,8 @@ static inline bool q3_restore_gamestate(qa_net_reader *r, qa_q3_gamestate *v)
     for (size_t i = 0; i < QA_Q3_ENTITIES; ++i) {
         v->baseline_present[i] = q3_save_bool(r);
         if (!q3_restore_entity(r, &v->baselines[i])) return false;
-        if (v->baseline_present[i] && (i >= QA_Q3_ENTITY_NONE || v->baselines[i].number != (int32_t)i))
+        if (v->baseline_present[i] && v->baselines[i].number != (int32_t)i &&
+            v->baselines[i].number != QA_Q3_ENTITY_NONE)
             return qa_net_reader_fail(r, "Invalid Q3 checkpoint baseline identity");
     }
     return !r->failed;
@@ -183,7 +188,7 @@ static inline bool q3_restore_gamestate(qa_net_reader *r, qa_q3_gamestate *v)
 static inline bool q3_save_snapshot(qa_net_writer *w, const qa_q3_snapshot_slot *slot)
 {
     const qa_q3_snapshot *v = &slot->value;
-    if (v->entity_count > QA_Q3_ENTITY_NONE || (v->entity_count && !v->entities) || v->area_bytes > 32)
+    if (v->entity_count > UINT32_MAX || (v->entity_count && !v->entities) || v->area_bytes > 32)
         return qa_net_writer_fail(w, "Invalid Q3 checkpoint snapshot extent");
     if (!qa_net_write_u8(w, v->valid) || !qa_net_write_i32(w, v->message_number) ||
         !qa_net_write_i32(w, v->server_time) || !qa_net_write_i32(w, v->delta_number) ||
@@ -204,7 +209,10 @@ static inline bool q3_restore_snapshot(qa_net_reader *r, qa_q3_snapshot_slot *sl
     if (v->area_bytes > 32) return qa_net_reader_fail(r, "Invalid Q3 checkpoint area mask extent");
     if (!qa_net_read_data(r, v->area_mask, 32) || !q3_restore_player(r, &v->player, product)) return false;
     v->entity_count = qa_net_read_u32(r);
-    if (v->entity_count > QA_Q3_ENTITY_NONE) return qa_net_reader_fail(r, "Invalid Q3 checkpoint entity count");
+    if (v->entity_count > SIZE_MAX / sizeof(*slot->entities) ||
+        r->bytes.size > SIZE_MAX / 8 || r->bit > r->bytes.size * 8 ||
+        v->entity_count > (r->bytes.size - r->bit / 8) / Q3_SAVE_ENTITY_BYTES)
+        return qa_net_reader_fail(r, "Invalid Q3 checkpoint entity count");
     if (v->entity_count) {
         slot->entities = calloc(v->entity_count, sizeof(*slot->entities));
         if (!slot->entities) {
@@ -213,13 +221,11 @@ static inline bool q3_restore_snapshot(qa_net_reader *r, qa_q3_snapshot_slot *sl
         slot->capacity = v->entity_count;
     }
     v->entities = slot->entities;
-    int32_t previous = -1;
     for (size_t i = 0; i < v->entity_count; ++i) {
         if (!q3_restore_entity(r, &slot->entities[i])) return false;
         int32_t number = slot->entities[i].number;
-        if (number <= previous || number >= QA_Q3_ENTITY_NONE)
-            return qa_net_reader_fail(r, "Invalid Q3 checkpoint snapshot entity ordering");
-        previous = number;
+        if (number < 0 || number >= QA_Q3_ENTITY_NONE)
+            return qa_net_reader_fail(r, "Invalid Q3 checkpoint snapshot entity number");
     }
     slot->sent_time = qa_net_read_i32(r); slot->ack_time = qa_net_read_i32(r);
     uint64_t size = qa_net_read_u64(r);

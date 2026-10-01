@@ -114,12 +114,20 @@ bool qa_network_phase(qa_network_runtime *runtime, qa_net_client_id id, qa_net_p
 uint64_t qa_network_epoch(const qa_network_runtime *runtime, qa_net_client_id id) {
     return runtime && qa_net_connections_get(runtime->connections, id) ? runtime->peers[id.slot].epoch : 0;
 }
+static bool receive_pending(const qa_network_runtime *runtime) {
+    for (uint32_t i = 0; i < runtime->options.clients; ++i) {
+        const qa_network_peer *peer = &runtime->peers[i];
+        if (peer->occupied && peer->ops.receive_pending && peer->ops.receive_pending(peer->state)) return true;
+    }
+    return false;
+}
 bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error) {
     if (!runtime || runtime->pumping || runtime->callback || now < runtime->now_ns)
         return qa_network_fail(error, "Invalid or recursive network pump");
     runtime->pumping = true; runtime->now_ns = now;
     bool ok = true;
     for (uint32_t n = 0; n < runtime->options.packets_per_pump; ++n) {
+        if (receive_pending(runtime)) break;
         qa_net_datagram packet;
         if (!qa_net_transport_receive(runtime->transport, now, &packet, error)) { ok = false; break; }
         if (packet.kind == QA_NET_POLL_EMPTY) break;
@@ -142,7 +150,8 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         runtime->callback = false;
         if (!ok) break;
     }
-    for (uint32_t i = 0; ok && i < runtime->options.clients; ++i) {
+    bool held = receive_pending(runtime);
+    for (uint32_t i = 0; ok && !held && i < runtime->options.clients; ++i) {
         qa_network_peer *peer = &runtime->peers[i];
         const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
         if (!client) continue;

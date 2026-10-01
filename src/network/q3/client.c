@@ -86,8 +86,6 @@ static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
     if (!current(p, e)) return false;
     switch (event->kind) {
     case QA_Q3_EVENT_ACK:
-        if (!p->demo && (event->value.acknowledge < 0 || event->value.acknowledge > p->reliable.sequence))
-            return fail(e, QA_ERROR_FORMAT, "Invalid Q3 server reliable acknowledgement");
         p->reliable.acknowledged = event->value.acknowledge;
         return true;
     case QA_Q3_EVENT_GAMESTATE_START:
@@ -136,25 +134,54 @@ static bool download_size(void *user, int32_t wire_size, int32_t *effective, qa_
     qa_q3_client_peer *p = user;
     return p->hooks.download_size(p->hooks.context, wire_size, effective, error) && current(p, error);
 }
-bool qa_q3_client_peer_message(qa_q3_client_peer *p, int32_t sequence, qa_bytes plaintext, int32_t now, qa_error *e) {
-    if (!p || p->disconnected || sequence < 0) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 client message");
-    if (!current(p, e)) return false;
-    if (!p->demo && (sequence < 1 || sequence <= p->server_message_sequence))
-        return fail(e, QA_ERROR_FORMAT, "Q3 server message sequence must advance");
-    p->server_message_sequence = sequence; p->receive_time = now;
+static bool receive_continue(qa_q3_client_peer *p, bool source_callbacks, qa_error *e) {
+    if (p->receive_running) return fail(e, QA_ERROR_ARGUMENT, "Recursive Q3 server packet continuation");
+    p->receive_running = true;
     qa_q3_server_decode decoder = {
-        .product = p->product, .message_number = sequence, .reliable_sequence = p->reliable.sequence,
+        .product = p->product, .message_number = p->server_message_sequence, .reliable_sequence = p->reliable.sequence,
         .server_command_sequence = p->server_command_sequence, .parse_entities_number = p->parse_entities_number,
         .gamestate = &p->gamestate, .history = history, .history_context = p,
         .entity_scratch = p->scratch, .entity_scratch_capacity = QA_Q3_ENTITY_NONE,
         .download_size = download_size, .download_context = p
     };
-    bool ok = qa_q3_decode_server(plaintext, &decoder, consume, p, e);
+    bool pending;
+    bool ok = qa_q3_server_cursor_continue(&p->receive_cursor, &decoder, consume, p, source_callbacks, &pending, e);
     p->parse_entities_number = decoder.parse_entities_number;
+    p->receive_running = false;
+    p->receive_cursor.reader.raw.error = NULL;
+    if (ok && !pending) {
+        p->receive_size = 0;
+        memset(&p->receive_cursor, 0, sizeof(p->receive_cursor));
+    }
     return ok;
 }
+bool qa_q3_client_peer_receive_pending(const qa_q3_client_peer *p) {
+    return p && p->receive_size &&
+        (p->receive_cursor.phase == QA_Q3_SERVER_CURSOR_GAMESTATE ||
+         p->receive_cursor.phase == QA_Q3_SERVER_CURSOR_DOWNLOAD);
+}
+bool qa_q3_client_peer_continue(qa_q3_client_peer *p, qa_error *e) {
+    if (!p || p->disconnected || p->disconnect_started || !qa_q3_client_peer_receive_pending(p))
+        return fail(e, QA_ERROR_ARGUMENT, "Q3 client has no live held source boundary");
+    return current(p, e) && receive_continue(p, true, e);
+}
+bool qa_q3_client_peer_message(qa_q3_client_peer *p, int32_t sequence, qa_bytes plaintext, int32_t now, qa_error *e) {
+    if (!p || p->disconnected || sequence < 0 || !plaintext.data || !plaintext.size ||
+        plaintext.size > sizeof(p->receive_packet) || p->receive_size || p->receive_running)
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid or overlapping Q3 client message");
+    if (!current(p, e)) return false;
+    if (!p->demo && (sequence < 1 || sequence <= p->server_message_sequence))
+        return fail(e, QA_ERROR_FORMAT, "Q3 server message sequence must advance");
+    memcpy(p->receive_packet, plaintext.data, plaintext.size);
+    p->receive_size = (uint16_t)plaintext.size;
+    if (!qa_q3_server_cursor_init(&p->receive_cursor,
+        (qa_bytes){p->receive_packet, p->receive_size}, e)) return false;
+    p->server_message_sequence = sequence; p->receive_time = now;
+    return receive_continue(p, !p->hooks.defer_source, e);
+}
 bool qa_q3_client_peer_receive(qa_q3_client_peer *p, qa_bytes datagram, int32_t now, qa_q3_receive_kind *kind, qa_error *e) {
-    if (!p || !kind || p->disconnected || p->demo) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 client datagram");
+    if (!p || !kind || p->disconnected || p->demo || p->receive_size || p->receive_running)
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid or overlapping Q3 client datagram");
     if (!current(p, e)) return false;
     qa_q3_packet packet;
     if (!qa_q3_channel_receive(p->channel, datagram, &packet, e)) return false;
@@ -249,7 +276,7 @@ bool qa_q3_client_peer_send(qa_q3_client_peer *p, const qa_q3_client_send *optio
     qa_q3_client_message message = {0};
     message.header = (qa_q3_client_header){p->server_id, p->server_message_sequence, p->server_command_sequence};
     int64_t pending = (int64_t)p->reliable.sequence - p->reliable.acknowledged;
-    if (pending < 0 || pending > QA_Q3_RELIABLE + 1) return fail(e, QA_ERROR_FORMAT, "Invalid Q3 client reliable range");
+    if (pending > QA_Q3_RELIABLE + 1) return fail(e, QA_ERROR_FORMAT, "Invalid Q3 client reliable range");
     for (int64_t n = (int64_t)p->reliable.acknowledged + 1; n <= p->reliable.sequence; ++n) {
         qa_q3_command *command = &message.commands[message.command_count++];
         command->sequence = (int32_t)n; memcpy(command->text, qa_q3_reliable_lookup(&p->reliable, (int32_t)n), sizeof(command->text));

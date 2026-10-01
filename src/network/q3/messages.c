@@ -56,10 +56,16 @@ bool qa_q3_server_gamestate(qa_q3_writer *w, const qa_q3_gamestate *g) {
         if (strlen(s) >= 8192) return write_fail(w, "Q3 configstring exceeds wire string limit");
         if (*s && (!write8(w, 3) || !qa_q3_write_bits(w, i, 16) || !qa_q3_write_string(w, s, true))) return false;
     }
-    for (unsigned i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
+    for (unsigned i = 0; i < QA_Q3_ENTITIES; ++i) {
         if (!g->baseline_present[i]) continue;
-        if (g->baselines[i].number != (int32_t)i) return write_fail(w, "Q3 baseline number does not match its slot");
-        if (!write8(w, 4) || !qa_q3_write_entity(w, NULL, &g->baselines[i], true)) return false;
+        if (!write8(w, 4)) return false;
+        if (g->baselines[i].number == QA_Q3_ENTITY_NONE && i != QA_Q3_ENTITY_NONE) {
+            qa_q3_entity removed = {.number = (int32_t)i};
+            if (!qa_q3_write_entity(w, &removed, NULL, true)) return false;
+        } else {
+            if (g->baselines[i].number != (int32_t)i) return write_fail(w, "Q3 baseline number does not match its slot");
+            if (!qa_q3_write_entity(w, NULL, &g->baselines[i], true)) return false;
+        }
     }
     return write8(w, 8) && write32(w, g->client_number) && write32(w, g->checksum_feed);
 }
@@ -112,7 +118,7 @@ bool qa_q3_server_download(qa_q3_writer *w, const qa_q3_download *d) {
     if (!d || d->size > QA_Q3_DOWNLOAD_BYTES) return write_fail(w, "Invalid Q3 download block size");
     if (!d->block && d->file_size < 0)
         return write8(w, 6) && qa_q3_write_bits(w, 0, 16) && write32(w, d->file_size) && qa_q3_write_string(w, d->error, false);
-    return qa_q3_server_download_block(w, d->block, d->block ? 0 : d->file_size, (qa_bytes){d->data, d->size});
+    return qa_q3_server_download_block(w, (uint16_t)d->block, d->block ? 0 : d->file_size, (qa_bytes){d->data, d->size});
 }
 bool qa_q3_server_end(qa_q3_writer *w) { return write8(w, 8); }
 
@@ -135,9 +141,8 @@ static bool read_gamestate(qa_q3_reader *r, qa_q3_gamestate *g) {
             g->string_bytes += size;
         } else if (opcode == 4) {
             unsigned number = qa_q3_read_bits(r, 10);
-            if (number >= QA_Q3_ENTITY_NONE) return read_fail(r, "Invalid Q3 baseline number");
+            if (number >= QA_Q3_ENTITIES) return read_fail(r, "Invalid Q3 baseline number");
             if (!qa_q3_read_entity(r, NULL, (int32_t)number, &g->baselines[number])) return false;
-            if (g->baselines[number].number == QA_Q3_ENTITY_NONE) return read_fail(r, "Q3 gamestate removes a baseline");
             g->baseline_present[number] = true;
         } else return read_fail(r, "Invalid Q3 gamestate opcode");
     }
@@ -145,16 +150,28 @@ static bool read_gamestate(qa_q3_reader *r, qa_q3_gamestate *g) {
     g->checksum_feed = (int32_t)qa_q3_read_bits(r, 32);
     return !r->raw.failed;
 }
-static bool append_entity(qa_q3_reader *r, qa_q3_snapshot *s, qa_q3_entity *storage, const qa_q3_entity *entity) {
+static bool append_entity(qa_q3_reader *r, qa_q3_snapshot *s, qa_q3_entity **storage,
+    size_t *capacity, bool *owned, const qa_q3_entity *entity) {
     if (entity->number == QA_Q3_ENTITY_NONE) return true;
-    if (s->entity_count >= QA_Q3_ENTITY_NONE) return read_fail(r, "Q3 snapshot entity storage exhausted");
-    storage[s->entity_count++] = *entity;
+    if (s->entity_count == *capacity) {
+        size_t maximum = SIZE_MAX / sizeof(**storage);
+        if (*capacity >= maximum) return read_fail(r, "Q3 snapshot entity storage exhausted");
+        size_t next = *capacity > maximum / 2 ? maximum : *capacity ? *capacity * 2 : QA_Q3_ENTITIES;
+        qa_q3_entity *fresh = *owned ? realloc(*storage, next * sizeof(*fresh)) : malloc(next * sizeof(*fresh));
+        if (!fresh) {
+            qa_error_set(r->raw.error, QA_ERROR_MEMORY, 0, "Growing original Q3 snapshot entity storage");
+            r->raw.failed = true; return false;
+        }
+        if (!*owned && s->entity_count) memcpy(fresh, *storage, s->entity_count * sizeof(*fresh));
+        *storage = fresh; *capacity = next; *owned = true;
+    }
+    (*storage)[s->entity_count++] = *entity; s->entities = *storage;
     return true;
 }
 static bool read_snapshot(qa_q3_reader *r, qa_q3_server_decode *context, qa_q3_snapshot *s,
-                          qa_q3_entity *storage, qa_q3_snapshot_validity *validity) {
+    qa_q3_entity **storage, size_t *capacity, bool *owned, qa_q3_snapshot_validity *validity) {
     memset(s, 0, sizeof(*s));
-    s->entities = storage;
+    s->entities = *storage;
     s->message_number = context->message_number;
     s->server_time = (int32_t)qa_q3_read_bits(r, 32);
     uint32_t distance = qa_q3_read_bits(r, 8);
@@ -179,61 +196,82 @@ static bool read_snapshot(qa_q3_reader *r, qa_q3_server_decode *context, qa_q3_s
     if (!qa_q3_read_data(r, s->area_mask, s->area_bytes)
         || !qa_q3_read_player(r, old ? &old->player : NULL, context->product, &s->player)) return false;
     size_t index = 0;
-    int32_t previous = -1;
     for (;;) {
         int32_t number = (int32_t)qa_q3_read_bits(r, 10);
         if (r->raw.failed) return false;
         if (number == QA_Q3_ENTITY_NONE) break;
         if (number < 0 || number >= QA_Q3_ENTITIES) return read_fail(r, "Invalid Q3 packet entity number");
-        if (number <= previous) return read_fail(r, "Unordered Q3 packet entity number");
-        previous = number;
         while (old && index < old->entity_count && old->entities[index].number < number) {
-            if (!append_entity(r, s, storage, &old->entities[index++])) return false;
+            if (!append_entity(r, s, storage, capacity, owned, &old->entities[index++])) return false;
         }
         const qa_q3_entity *baseline;
         if (old && index < old->entity_count && old->entities[index].number == number) baseline = &old->entities[index++];
         else baseline = context->gamestate->baseline_present[number] ? &context->gamestate->baselines[number] : NULL;
         qa_q3_entity entity;
-        if (!qa_q3_read_entity(r, baseline, number, &entity) || !append_entity(r, s, storage, &entity)) return false;
+        if (!qa_q3_read_entity(r, baseline, number, &entity) ||
+            !append_entity(r, s, storage, capacity, owned, &entity)) return false;
     }
     while (old && index < old->entity_count)
-        if (!append_entity(r, s, storage, &old->entities[index++])) return false;
+        if (!append_entity(r, s, storage, capacity, owned, &old->entities[index++])) return false;
     if (s->entity_count > UINT64_MAX - context->parse_entities_number)
         return read_fail(r, "Q3 parse entity sequence exhausted");
     context->parse_entities_number += s->entity_count;
     return !r->raw.failed;
 }
-bool qa_q3_decode_server(qa_bytes bytes, qa_q3_server_decode *context,
-                          qa_q3_server_event_fn consume, void *user, qa_error *error) {
-    if (!context || !context->gamestate || !consume) {
+bool qa_q3_server_cursor_init(qa_q3_server_cursor *cursor, qa_bytes bytes, qa_error *error) {
+    if (!cursor || !bytes.data || !bytes.size || bytes.size > QA_Q3_MESSAGE_BYTES) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 server cursor packet"); return false;
+    }
+    memset(cursor, 0, sizeof(*cursor));
+    qa_q3_reader_init(&cursor->reader, bytes, false, error);
+    cursor->phase = QA_Q3_SERVER_CURSOR_ACK;
+    return true;
+}
+bool qa_q3_server_cursor_continue(qa_q3_server_cursor *cursor, qa_q3_server_decode *context,
+    qa_q3_server_event_fn consume, void *user, bool source_callbacks, bool *pending, qa_error *error) {
+    if (!cursor || !context || !context->gamestate || !consume || !pending ||
+        cursor->phase == QA_Q3_SERVER_CURSOR_FAILED || cursor->reader.raw.failed ||
+        cursor->phase < QA_Q3_SERVER_CURSOR_ACK || cursor->phase > QA_Q3_SERVER_CURSOR_FAILED) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 server decoder context"); return false;
     }
-    qa_q3_reader reader;
-    qa_q3_reader_init(&reader, bytes, false, error);
+    *pending = false;
+    cursor->reader.raw.error = error;
+    qa_q3_reader *reader = &cursor->reader;
     qa_q3_snapshot snapshot;
     qa_q3_entity *storage = context->entity_scratch;
+    size_t capacity = storage ? context->entity_scratch_capacity : 0;
     bool owned_storage = false;
-    if (storage && context->entity_scratch_capacity < QA_Q3_ENTITY_NONE) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 decoder scratch capacity too small"); return false;
-    }
     qa_q3_command command;
     qa_q3_download download;
     qa_q3_server_event event = {.kind = QA_Q3_EVENT_ACK};
-    int32_t ack = (int32_t)qa_q3_read_bits(&reader, 32);
-    if ((int64_t)ack < (int64_t)context->reliable_sequence - QA_Q3_RELIABLE) ack = context->reliable_sequence;
-    event.value.acknowledge = ack;
-    bool ok = !reader.raw.failed && consume(user, &event, error);
-    while (ok) {
-        unsigned opcode = qa_q3_read_bits(&reader, 8);
-        if (reader.raw.failed) { ok = false; break; }
-        if (opcode == 8) break;
-        if (opcode == 1) continue;
+    bool ok = true;
+    if (cursor->phase == QA_Q3_SERVER_CURSOR_ACK) {
+        int32_t ack = (int32_t)qa_q3_read_bits(reader, 32);
+        if ((int64_t)ack < (int64_t)context->reliable_sequence - QA_Q3_RELIABLE) ack = context->reliable_sequence;
+        event.value.acknowledge = ack;
+        cursor->phase = QA_Q3_SERVER_CURSOR_OPCODE;
+        ok = !reader->raw.failed && consume(user, &event, error);
+    }
+    while (ok && cursor->phase != QA_Q3_SERVER_CURSOR_DONE) {
+        unsigned opcode;
+        if (cursor->phase == QA_Q3_SERVER_CURSOR_GAMESTATE) opcode = 2;
+        else if (cursor->phase == QA_Q3_SERVER_CURSOR_DOWNLOAD) opcode = 6;
+        else {
+            opcode = qa_q3_read_bits(reader, 8);
+            if (reader->raw.failed) { ok = false; break; }
+            if (opcode == 8) { cursor->phase = QA_Q3_SERVER_CURSOR_DONE; break; }
+            if (opcode == 1) continue;
+            if (opcode == 2) cursor->phase = QA_Q3_SERVER_CURSOR_GAMESTATE;
+            if (opcode == 6) cursor->phase = QA_Q3_SERVER_CURSOR_DOWNLOAD;
+        }
+        if (!source_callbacks && (opcode == 2 || opcode == 6)) { *pending = true; break; }
+        cursor->phase = QA_Q3_SERVER_CURSOR_OPCODE;
         switch (opcode) {
         case 2:
             event.kind = QA_Q3_EVENT_GAMESTATE_START;
             ok = consume(user, &event, error);
             if (!ok) break;
-            ok = read_gamestate(&reader, context->gamestate);
+            ok = read_gamestate(reader, context->gamestate);
             if (!ok) break;
             context->server_command_sequence = context->gamestate->command_sequence;
             context->parse_entities_number = 0;
@@ -242,8 +280,8 @@ bool qa_q3_decode_server(qa_bytes bytes, qa_q3_server_decode *context,
             ok = consume(user, &event, error);
             break;
         case 5:
-            command.sequence = (int32_t)qa_q3_read_bits(&reader, 32);
-            ok = qa_q3_read_string(&reader, command.text, sizeof(command.text), false);
+            command.sequence = (int32_t)qa_q3_read_bits(reader, 32);
+            ok = qa_q3_read_string(reader, command.text, sizeof(command.text), false);
             if (ok && command.sequence > context->server_command_sequence) {
                 context->server_command_sequence = command.sequence;
                 event.kind = QA_Q3_EVENT_COMMAND; event.value.command = &command;
@@ -252,35 +290,86 @@ bool qa_q3_decode_server(qa_bytes bytes, qa_q3_server_decode *context,
             break;
         case 6:
             memset(&download, 0, sizeof(download));
-            download.block = (uint16_t)qa_q3_read_bits(&reader, 16);
+            download.block = (int16_t)(uint16_t)qa_q3_read_bits(reader, 16);
             if (!download.block) {
-                download.file_size = (int32_t)qa_q3_read_bits(&reader, 32);
-                if (reader.raw.failed) { ok = false; break; }
+                download.file_size = (int32_t)qa_q3_read_bits(reader, 32);
+                if (reader->raw.failed) { ok = false; break; }
                 if (context->download_size && !context->download_size(context->download_context,
                     download.file_size, &download.file_size, error)) { ok = false; break; }
             }
             if (!download.block && download.file_size < 0) {
-                ok = qa_q3_read_string(&reader, download.error, sizeof(download.error), false);
+                ok = qa_q3_read_string(reader, download.error, sizeof(download.error), false);
             } else {
-                download.size = qa_q3_read_bits(&reader, 16);
-                if (download.size > sizeof(download.data)) ok = read_fail(&reader, "Q3 download block exceeds message limit");
-                else ok = qa_q3_read_data(&reader, download.data, download.size);
+                download.size = qa_q3_read_bits(reader, 16);
+                if (download.size > sizeof(download.data)) ok = read_fail(reader, "Q3 download block exceeds message limit");
+                else ok = qa_q3_read_data(reader, download.data, download.size);
             }
             if (ok) { event.kind = QA_Q3_EVENT_DOWNLOAD; event.value.download = &download; ok = consume(user, &event, error); }
-            if (download.file_size < 0) { if (owned_storage) free(storage); return ok; }
+            if (download.file_size < 0) cursor->phase = QA_Q3_SERVER_CURSOR_DONE;
             break;
         case 7:
-            if (!storage) { storage = malloc(sizeof(*storage) * QA_Q3_ENTITY_NONE); owned_storage = true; }
-            if (!storage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q3 snapshot decoder"); ok = false; break; }
             event.kind = QA_Q3_EVENT_SNAPSHOT; event.value.snapshot.value = &snapshot;
-            ok = read_snapshot(&reader, context, &snapshot, storage, &event.value.snapshot.validity);
+            ok = read_snapshot(reader, context, &snapshot, &storage, &capacity, &owned_storage, &event.value.snapshot.validity);
             if (ok) ok = consume(user, &event, error);
             break;
-        default: ok = read_fail(&reader, "Invalid Q3 server opcode"); break;
+        default: ok = read_fail(reader, "Invalid Q3 server opcode"); break;
         }
     }
     if (owned_storage) free(storage);
+    if (!ok) cursor->phase = QA_Q3_SERVER_CURSOR_FAILED;
+    cursor->reader.raw.error = NULL;
     return ok;
+}
+
+bool qa_q3_decode_server(qa_bytes bytes, qa_q3_server_decode *context,
+    qa_q3_server_event_fn consume, void *user, qa_error *error) {
+    qa_q3_server_cursor cursor; bool pending;
+    return qa_q3_server_cursor_init(&cursor, bytes, error) &&
+        qa_q3_server_cursor_continue(&cursor, context, consume, user, true, &pending, error);
+}
+
+bool qa_q3_server_cursor_pending_valid(const qa_q3_server_cursor *cursor, qa_q3_product product,
+    qa_error *error) {
+    if (!cursor || (product != QA_Q3_ARENA && product != QA_Q3_TEAM_ARENA) ||
+        cursor->reader.raw.failed || cursor->reader.oob ||
+        (cursor->phase != QA_Q3_SERVER_CURSOR_GAMESTATE && cursor->phase != QA_Q3_SERVER_CURSOR_DOWNLOAD) ||
+        !cursor->reader.raw.bytes.data || !cursor->reader.raw.bytes.size ||
+        cursor->reader.raw.bytes.size > QA_Q3_MESSAGE_BYTES) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid held Q3 source boundary"); return false;
+    }
+    qa_q3_gamestate *gamestate = calloc(1, sizeof(*gamestate));
+    qa_q3_entity *storage = NULL; size_t capacity = 0; bool owned_storage = false;
+    if (!gamestate) {
+        free(gamestate);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Qualifying held Q3 packet cursor"); return false;
+    }
+    qa_q3_reader reader;
+    qa_q3_reader_init(&reader, cursor->reader.raw.bytes, false, error);
+    (void)qa_q3_read_bits(&reader, 32);
+    qa_q3_server_decode context = {.product = product, .gamestate = gamestate};
+    bool valid = false;
+    while (!reader.raw.failed) {
+        unsigned opcode = qa_q3_read_bits(&reader, 8);
+        if (reader.raw.failed) break;
+        if (opcode == 2 || opcode == 6) {
+            valid = reader.raw.bit == cursor->reader.raw.bit &&
+                cursor->phase == (opcode == 2 ? QA_Q3_SERVER_CURSOR_GAMESTATE : QA_Q3_SERVER_CURSOR_DOWNLOAD);
+            break;
+        }
+        if (opcode == 1) continue;
+        if (opcode == 5) {
+            char text[QA_Q3_COMMAND_CHARS];
+            (void)qa_q3_read_bits(&reader, 32);
+            if (!qa_q3_read_string(&reader, text, sizeof(text), false)) break;
+        } else if (opcode == 7) {
+            qa_q3_snapshot snapshot; qa_q3_snapshot_validity validity;
+            if (!read_snapshot(&reader, &context, &snapshot, &storage, &capacity, &owned_storage, &validity)) break;
+        } else break;
+    }
+    free(storage); free(gamestate);
+    if (!valid && !reader.raw.failed)
+        qa_error_set(error, QA_ERROR_FORMAT, cursor->reader.raw.bit, "Held Q3 cursor is not its first source boundary");
+    return valid;
 }
 
 bool qa_q3_client_cursor_init(qa_q3_client_cursor *c, qa_bytes data, qa_error *error) {

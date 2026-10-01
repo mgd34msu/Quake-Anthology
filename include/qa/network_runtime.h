@@ -78,6 +78,9 @@ typedef struct qa_network_peer_ops {
     bool (*restart)(void *, uint64_t epoch, const qa_sha256_digest *, qa_error *);
     bool (*rebind)(void *, const qa_net_address *, qa_error *);
     void (*close)(void *);
+    /* Pure held-decoder predicate. The sole receiver stops polling and
+     * flushing until its owner resumes the source at an idle safe point. */
+    bool (*receive_pending)(const void *);
 } qa_network_peer_ops;
 typedef struct qa_network_options {
     uint64_t owner, timeout_ns;

@@ -12,7 +12,7 @@ typedef struct qa_q3_snapshot_slot {
     size_t message_size;
 } qa_q3_snapshot_slot;
 static inline bool qa_q3_slot_store(qa_q3_snapshot_slot *slot, const qa_q3_snapshot *value, qa_error *error) {
-    if (value->entity_count > QA_Q3_ENTITY_NONE || (value->entity_count && !value->entities)) {
+    if (value->entity_count > SIZE_MAX / sizeof(*slot->entities) || (value->entity_count && !value->entities)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid retained Q3 snapshot entities"); return false;
     }
     if (slot->capacity < value->entity_count) {

@@ -20,6 +20,10 @@ struct qa_q3_client_peer {
     uint8_t disconnect_packets;
     uint16_t transmit_size;
     uint8_t transmit_packet[QA_Q3_FRAGMENT_BYTES + 10];
+    uint16_t receive_size;
+    bool receive_running;
+    uint8_t receive_packet[QA_Q3_MESSAGE_BYTES];
+    qa_q3_server_cursor receive_cursor;
     qa_q3_gamestate gamestate;
     qa_q3_snapshot_slot history[QA_Q3_PACKET_BACKUP];
     int32_t latest_snapshot;

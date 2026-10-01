@@ -18,6 +18,12 @@ bool qa_network_attach_q3_client(qa_network_runtime *, const qa_net_connect *,
     qa_q3_product, int32_t challenge, uint16_t qport, const qa_q3_client_hooks *,
     const qa_network_q3_client_policy *, uint64_t now_ns, qa_net_client_id *, qa_error *);
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *, qa_net_client_id);
+/* Pure observation of the generation-qualified native connection lifetime. */
+bool qa_network_q3_client_live(qa_network_runtime *, qa_net_client_id);
+bool qa_network_q3_client_receive_pending(qa_network_runtime *, qa_net_client_id);
+/* Runs the actual unread server-message cursor outside pump/callback entry.
+ * Source clear, private construction and download services occur here. */
+bool qa_network_q3_client_continue(qa_network_runtime *, qa_net_client_id, qa_error *);
 /* Genuine decoded connection counters for external CGAME Init. The executed
  * reliable cursor is independent of the gamestate's received-command cursor. */
 typedef struct qa_network_q3_client_init {

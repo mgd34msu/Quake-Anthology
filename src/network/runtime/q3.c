@@ -31,6 +31,9 @@ static bool client_receive(void *context, qa_network_runtime *runtime, qa_net_cl
         (int32_t)((packet->received_ns / UINT64_C(1000000)) & INT32_MAX), &kind, error)) return false;
     if (kind == QA_Q3_PACKET_STALE) return true;
     if (!qa_network_received(runtime, id, packet->received_ns, error)) return false;
+    /* Deferred source construction owns media readiness, independently of
+     * having parsed bytes into the native gamestate/snapshot storage. */
+    if (p->source->hooks.defer_source) return true;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
     if (client->phase == QA_NET_CONNECTED && qa_q3_client_peer_gamestate(p->source)->string_bytes > 1 &&
         !qa_network_phase(runtime, id, QA_NET_PRIMED, error)) return false;
@@ -75,8 +78,10 @@ static bool client_rebind(void *context, const qa_net_address *address, qa_error
 }
 static void client_close(void *context)
 { q3_runtime_client *p = context; qa_q3_client_peer_destroy(p->source); free(p); }
+static bool client_receive_pending(const void *context)
+{ const q3_runtime_client *p = context; return qa_q3_client_peer_receive_pending(p->source); }
 static const qa_network_peer_ops client_ops = {
-    client_receive, client_flush, client_command, client_restart, client_rebind, client_close
+    client_receive, client_flush, client_command, client_restart, client_rebind, client_close, client_receive_pending
 };
 static q3_runtime_client *client_get(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
@@ -104,12 +109,38 @@ bool qa_network_attach_q3_client(qa_network_runtime *runtime, const qa_net_conne
 }
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *runtime, qa_net_client_id id)
 { q3_runtime_client *p = client_get(runtime, id, NULL); return p ? p->source : NULL; }
+bool qa_network_q3_client_live(qa_network_runtime *runtime, qa_net_client_id id)
+{
+    q3_runtime_client *p = client_get(runtime, id, NULL);
+    return p && !p->source->disconnected && !p->source->disconnect_started;
+}
+bool qa_network_q3_client_receive_pending(qa_network_runtime *runtime, qa_net_client_id id)
+{ q3_runtime_client *p = client_get(runtime, id, NULL); return p && qa_q3_client_peer_receive_pending(p->source); }
+bool qa_network_q3_client_continue(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error, "Q3 held source continuation requires an idle runtime");
+    q3_runtime_client *p = client_get(runtime, id, error);
+    if (!p) return false;
+    if (qa_q3_client_peer_receive_pending(p->source) &&
+        p->source->receive_cursor.phase == QA_Q3_SERVER_CURSOR_GAMESTATE) {
+        const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
+        qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+        if (!client || !peer ||
+            !qa_net_connections_restart(runtime->connections, id, &client->composition, error)) return false;
+        /* Server-selected loading resets prediction admission without changing
+         * the actual transport epoch, channel or reliable command ownership. */
+        qa_network_history_clear(peer);
+    }
+    return qa_q3_client_peer_continue(p->source, error);
+}
 bool qa_network_q3_client_init_read(qa_network_runtime *runtime, qa_net_client_id id,
     qa_network_q3_client_init *out, qa_error *error)
 {
     q3_runtime_client *p = client_get(runtime, id, error);
     if (!p) return false;
     if (!out || p->source->disconnected || p->source->disconnect_started ||
+        qa_q3_client_peer_receive_pending(p->source) ||
         p->source->gamestate.string_bytes <= 1)
         return qa_network_fail(error, "Q3 Init requires the actual live decoded gamestate");
     *out = (qa_network_q3_client_init){p->source->server_message_sequence,
