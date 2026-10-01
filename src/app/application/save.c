@@ -1409,9 +1409,9 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         operation->ops->content_files, &graph, error) &&
         application_create_restored(&construction, image, &graph, &candidate, error);
     application_save_content_destroy(graph);
+    *out = candidate;
     if (!created) return false;
     candidate->operation = APPLICATION_PERSISTING;
-    *out = candidate;
     if (operation->ops->prepare_services &&
         !operation->ops->prepare_services(operation->ops->context, candidate, image, error))
         return false;

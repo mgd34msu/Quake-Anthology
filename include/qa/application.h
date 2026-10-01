@@ -174,6 +174,8 @@ typedef bool (*qa_application_q3_services_fn)(void *, qa_application *,
 
 typedef struct qa_application_q3_client_preparation {
     const qa_launch_instance *receiver_descriptor, *game_descriptor;
+    qa_catalog *receiver_catalog;
+    const qa_product *receiver_product;
     qa_actor_owner receiver, source_owner;
     qa_qvm_role role;
     uint32_t seat, source_client;
@@ -185,6 +187,10 @@ typedef struct qa_application_q3_client_preparation {
     /* The actual private client imports, before the host copies them. */
     qa_q3_host_options *services;
     qa_application_q3_equipment_services *equipment_services;
+    bool restoring;
+    qa_bytes restored_cvars;
+    qa_qvm_role cvars_role;
+    uint32_t cvars_seat;
 } qa_application_q3_client_preparation;
 typedef bool (*qa_application_q3_client_prepare_fn)(void *, qa_application *,
     const qa_application_q3_client_preparation *, qa_error *);
@@ -246,6 +252,9 @@ typedef struct qa_application_options {
 } qa_application_options;
 
 void qa_application_options_default(qa_application_options *);
+/* Failure normally leaves *out NULL. If checked cleanup rejects retirement,
+ * *out retains the genuine partial owner: keep its borrowed option services
+ * alive and retry qa_application_destroy before releasing them. */
 bool qa_application_create(const qa_application_options *, qa_application **,
                            qa_error *);
 /* Original startup ordinal, consumed by its actual published early source. */
@@ -445,6 +454,9 @@ bool qa_application_prepare_match_travel(qa_application *, qa_error *);
 bool qa_application_finish_match_travel(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_travel_read(const qa_application *, qa_application_travel_view *);
 bool qa_application_commit_travel(qa_application *, uint64_t revision, qa_error *);
+/* The retained MAP request completes only when its actual world publishes. */
+bool qa_application_travel_publication_read(const qa_application *, uint64_t *revision);
+bool qa_application_finish_travel_publication(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_complete_travel(qa_application *, uint64_t revision, qa_error *);
 qa_string_id qa_application_nextserver(const qa_application *);
 bool qa_application_player_actor(const qa_application *, uint32_t seat, qa_actor_id *);

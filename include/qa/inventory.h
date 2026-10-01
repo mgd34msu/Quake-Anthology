@@ -49,6 +49,8 @@ bool qa_inventory_admission_commit(qa_inventory_admission *, qa_error *);
 void qa_inventory_admission_abort(qa_inventory_admission *);
 
 bool qa_inventory_create(qa_actor_registry *, qa_inventory **, qa_error *);
+/* Pure callback/admission lifetime read; an absent owner is idle. */
+bool qa_inventory_idle(const qa_inventory *);
 bool qa_inventory_destroy(qa_inventory *, qa_error *);
 void qa_inventory_actor_released(qa_inventory *, qa_actor_record);
 bool qa_inventory_create_actor(qa_inventory *, qa_actor_id, const qa_inventory_entry *, size_t, qa_error *);

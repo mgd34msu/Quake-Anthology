@@ -6,6 +6,7 @@
 
 void qa_inventory_hold(qa_inventory *table) { ++table->calls; }
 void qa_inventory_unhold(qa_inventory *table) { --table->calls; }
+bool qa_inventory_idle(const qa_inventory *table) { return !table || !table->calls; }
 
 static bool fail(qa_error *e, qa_status status, const char *message)
 { qa_error_set(e, status, 0, "%s", message); return false; }

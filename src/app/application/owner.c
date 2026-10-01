@@ -12,6 +12,7 @@
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
+#include "qa/console_cvar_observer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -253,46 +254,14 @@ static bool create_application(const qa_application_options *options,
     return true;
 
 fail:
-    /* Restored actors can be live before the first provider is admitted. Their
-     * release observers still borrow every shared service and control array. */
-    if (application->session != NULL)
-        (void)qa_session_retire_world(application->session, NULL);
-    application_map_dispose(application);
-    qa_console_destroy(application->console);
-    qa_cvars_destroy(application->cvars);
-    (void)application_composition_destroy(application, NULL);
-    qa_targets_destroy(application->targets);
-    application->targets = NULL;
-    free(application->physics);
-    free(application->motion);
-    application_control_frames_free(application->control_frames);
-    application->control_frames = NULL;
-    free(application->controls);
-    free(application->q2_visuals);
-    qa_arena_destroy(&application->event_arena);
-    free(application->events);
-    free(application->q2_map_events);
-    free(application->q3_map_events);
-    free(application->q2_player_events);
-    free(application->protocol_events);
-    free(application->shader_remaps);
-    (void)qa_session_destroy(application->session, NULL);
-    application->session = NULL;
-    (void)qa_pickups_destroy(application->pickups, NULL);
-    (void)qa_combat_destroy(application->combat, NULL);
-    (void)qa_inventory_destroy(application->inventory, NULL);
-    qa_catalog_release(application->catalog);
-    qa_player_progress_close(application->progress);
-    (void)qa_rankings_close(application->rankings, NULL);
-    application_rankings_dispose(application);
-    qa_fs_root_close(application->user_files);
-    qa_resource_pool_destroy(application->resources);
-    application_save_content_destroy(application->content_graph);
-    free(application->content_root);
-    free(application->user_root);
-    free(application->ranking_game_key);
-    application_startup_dispose(application);
-    free(application);
+    application_fault(application, error);
+    qa_error cleanup = {0};
+    if (!qa_application_destroy(application, &cleanup)) {
+        /* Its actual services and source descendants remain the caller's
+         * retryable owner; a failed constructor cannot free their context. */
+        *out = application;
+        if (error && cleanup.code != QA_OK) *error = cleanup;
+    }
     return false;
 }
 
@@ -739,7 +708,11 @@ bool application_q1_pause_set(qa_application *application, application_provider 
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                             qa_error *error)
 {
+    qa_application_travel_view travel;
+    bool pending_map = qa_application_travel_read(application, &travel) &&
+        travel.target.kind == QA_TRAVEL_MAP;
     if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        qa_application_startup_pending(application) || pending_map ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         application->state != QA_APPLICATION_RUNNING)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -804,6 +777,11 @@ bool qa_application_retire_sources(qa_application *application, qa_error *error)
     if (application == NULL)
         return true;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing || application->destroy_requested ||
+        !qa_console_idle(application->console) ||
+        (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
+        (application->pickups && !qa_pickups_idle(application->pickups)) ||
+        (application->combat && !qa_combat_idle(application->combat)) ||
+        !qa_inventory_idle(application->inventory) ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         (application->world != NULL && !qa_world_idle(application->world)) ||
@@ -832,10 +810,12 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
-    if (application->operation == APPLICATION_IDLE && !application->q3_round_active && !application->frame_preparing &&
-        !application_native_q2_baselines_destroy(application, error))
-        return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !qa_console_idle(application->console) ||
+        (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
+        (application->pickups && !qa_pickups_idle(application->pickups)) ||
+        (application->combat && !qa_combat_idle(application->combat)) ||
+        !qa_inventory_idle(application->inventory) ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         !qa_rankings_close_ready(application->rankings) ||
@@ -844,10 +824,13 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
          !qa_session_destroy_ready(application->session)))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application destruction requires a safe point");
+    if (!application_native_q2_baselines_destroy(application, error)) return false;
     application->operation = APPLICATION_DESTROYING;
     if (!application_rankings_close(application, error) ||
         !shutdown_admitted_bots(application, error) ||
         !application_composition_destroy(application, error) ||
+        (application->session != NULL &&
+         !qa_session_retire_world(application->session, error)) ||
         (application->session != NULL &&
          !application_drain_provider_closes(application, error))) {
         application->operation = APPLICATION_IDLE;

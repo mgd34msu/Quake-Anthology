@@ -17,6 +17,7 @@
 #include "control_frame.h"
 #include "rankings.h"
 #include "q3_product.h"
+#include "qa/console_cvar_observer.h"
 
 #include <stdlib.h>
 
@@ -202,12 +203,18 @@ bool application_finalize(qa_application *application, qa_error *error)
         return true;
     if (!application->destroy_requested || application->finalizing ||
         application->startup_flow ||
+        application->failed_publications ||
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||
         application->pending_close != NULL || application->live_providers != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application services still have retained owners");
     if (!qa_session_destroy_ready(application->session) ||
+        !qa_console_idle(application->console) ||
+        (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
+        (application->pickups && !qa_pickups_idle(application->pickups)) ||
+        (application->combat && !qa_combat_idle(application->combat)) ||
+        !qa_inventory_idle(application->inventory) ||
         !qa_rankings_close_ready(application->rankings) ||
         (application->world != NULL && !qa_world_idle(application->world)))
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -229,6 +236,11 @@ bool application_finalize(qa_application *application, qa_error *error)
     bool rankings_closed = qa_rankings_close(application->rankings, &current);
     application->rankings = NULL;
     remember(rankings_closed, &current, "ranking cleanup failed", &ok, &first);
+    if (!ok) {
+        application->finalizing = false;
+        if (error) *error = first;
+        return false;
+    }
     current = (qa_error){0};
 
     qa_equipment_destroy(application->equipment);
@@ -246,11 +258,21 @@ bool application_finalize(qa_application *application, qa_error *error)
     remember(destroyed, &current, "pickup destruction failed", &ok, &first);
     if (destroyed)
         application->pickups = NULL;
+    if (!ok) {
+        application->finalizing = false;
+        if (error) *error = first;
+        return false;
+    }
     current = (qa_error){0};
     destroyed = qa_combat_destroy(application->combat, &current);
     remember(destroyed, &current, "combat destruction failed", &ok, &first);
     if (destroyed)
         application->combat = NULL;
+    if (!ok) {
+        application->finalizing = false;
+        if (error) *error = first;
+        return false;
+    }
     current = (qa_error){0};
     destroyed = qa_inventory_destroy(application->inventory, &current);
     remember(destroyed, &current, "inventory destruction failed", &ok, &first);
