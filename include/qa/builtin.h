@@ -25,7 +25,8 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_CENTERPRINT,
     QA_BUILTIN_ACHIEVEMENT,
     QA_BUILTIN_PARTICLES,
-    QA_BUILTIN_EFFECT
+    QA_BUILTIN_EFFECT,
+    QA_BUILTIN_LOG
 } qa_builtin_event_kind;
 
 typedef enum qa_builtin_message_arg_kind {
@@ -44,7 +45,8 @@ typedef struct qa_builtin_message_arg {
  * synchronous borrows; a queue copies arguments and resolves or retains string
  * storage before returning. PARTICLES uses origin, direction, code (palette
  * color) and count. EFFECT uses family, resource and code for authored effects
- * without a more specific shared event kind. */
+ * without a more specific shared event kind. LOG retains source-wide text,
+ * provider and source time; it has no actor, message arguments or HUD effect. */
 typedef struct qa_builtin_event {
     qa_builtin_event_kind kind;
     qa_game_family family;
@@ -133,6 +135,7 @@ typedef struct qa_builtin_services {
     qa_pickups *pickups;
     qa_physics *physics;
     void *context;
+    void *cvar_context;
     bool (*emit)(void *, const qa_builtin_event *, qa_error *);
     bool (*use_targets)(void *, qa_actor_id source, qa_actor_id activator, qa_string_id target,
                         qa_string_id killtarget, float delay, qa_error *);

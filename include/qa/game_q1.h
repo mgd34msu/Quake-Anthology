@@ -158,6 +158,8 @@ typedef enum qa_q1_path_result {
 } qa_q1_path_result;
 typedef struct qa_q1_host {
     void *context;
+    /* Read the admitted source client's current selected attack input. */
+    bool (*client_attack)(void *, qa_actor_id, bool *);
     bool (*target)(void *, qa_actor_id, qa_q1_target *);
     bool (*check_client)(void *, qa_actor_id observer, qa_actor_id *);
     bool (*find_target)(void *, qa_string_id targetname, qa_actor_id *);
@@ -308,6 +310,8 @@ bool qa_q1_game_operation_begin(qa_q1_game *, qa_q1_game_operation *, qa_error *
  * callers must supply source frame elapsed time separately from command time. */
 bool qa_q1_game_command_begin(qa_q1_game *, uint64_t time_ns, uint64_t source_elapsed_ns,
                               qa_q1_game_operation *, qa_error *);
+/* Read the retained source clock without admitting a command or world frame. */
+bool qa_q1_game_clock_read(const qa_q1_game *, uint64_t *time_ns, double *elapsed_seconds);
 /* Retain callback-owner storage without marking an operation active. Retire
  * all borrowed world/session/target contexts before ending this owner lease. */
 bool qa_q1_game_retain(qa_q1_game *, qa_q1_game_operation *, qa_error *);
@@ -339,8 +343,23 @@ bool qa_q1_player_attach(qa_q1_game *, qa_actor_id, bool initial_inventory, qa_e
 /* Reset this source arsenal's inventory entries, preserving foreign namespaces. */
 bool qa_q1_player_inventory_reset(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
+/* Publish genuine source controls without requiring a selected native arsenal
+ * or running weapon effects. The existing source clock remains unchanged. */
+bool qa_q1_player_source_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
 bool qa_q1_player_select(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_error *);
 bool qa_q1_player_read(const qa_q1_game *, qa_actor_id, qa_q1_player_view *);
+/* Source client membership uses the admitted client slot and full shared actor.
+ * It creates source player state independently of selected character/arsenal. */
+bool qa_q1_source_bind_client(qa_q1_game *, uint32_t client_slot, qa_actor_id, qa_error *);
+bool qa_q1_native_client_slot(const qa_q1_game *, qa_actor_id, uint32_t *, qa_error *);
+/* Read actual imported membership before source restoration finishes. This
+ * pure codec observation does not admit a source command or run callbacks. */
+bool qa_q1_native_client_slot_prepared(const qa_q1_game *, qa_actor_id, uint32_t *, qa_error *);
+bool qa_q1_source_client_actor(const qa_q1_game *, uint32_t client_slot, qa_actor_id *);
+/* Source player presence is independent of selected arsenal ownership. */
+bool qa_q1_player_source_present(const qa_q1_game *, qa_actor_id);
+void qa_q1_game_finale_reset(qa_q1_game *);
+bool qa_q1_game_finale_finished(qa_q1_game *);
 float qa_q1_game_random(qa_q1_game *);
 bool qa_q1_game_console_command(qa_q1_game *, qa_actor_id, const qa_command_invocation *,
                                  bool *handled, qa_error *);
@@ -398,6 +417,7 @@ bool qa_q1_grapple_weapon_resume(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_grapple_weapon_holster(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_grapple_weapon_tick(qa_q1_game *, qa_actor_id, const qa_q1_input *, bool available,
                                qa_error *);
+bool qa_q1_grapple_weapon_frame(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_grapple_weapon_read(const qa_q1_game *, qa_actor_id, qa_q1_grapple_weapon_view *);
 bool qa_q1_horde_spawn(qa_q1_game *, const char *classname, qa_vec3 origin, qa_vec3 angles,
                        qa_actor_id manager, qa_actor_id enemy, qa_actor_id *, qa_error *);
@@ -409,6 +429,8 @@ bool qa_q1_game_invulnerable(const qa_q1_game *, qa_actor_id);
 double qa_q1_game_power_expires(const qa_q1_game *, qa_actor_id, qa_q1_power);
 bool qa_q1_game_actor_traits(const qa_q1_game *, qa_actor_id, qa_builtin_actor_traits *);
 bool qa_q1_player_prethink(qa_q1_game *, qa_actor_id, qa_error *);
+/* Selected arsenal frame: weapon animation only, without player services. */
+bool qa_q1_player_weapon_frame(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_postthink(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_environment(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_attach(qa_q1_game *, qa_actor_id, qa_error *);

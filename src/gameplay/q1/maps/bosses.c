@@ -249,8 +249,11 @@ bool qa_q1_game_map_finale(qa_q1_game *g, qa_actor_id actor, bool finish, qa_err
     return finish ? finale_finish(g, oldone, error) : finale_begin(g, oldone, error);
 }
 void qa_q1_game_map_dismiss_finale(qa_q1_game *g) {
-    if (g && g->maps)
+    if (g && !g->destroy_pending && g->maps) {
         g->maps->finale_dismissed = true;
+        g->finale_polled = g->finale_acknowledged = true;
+        g->finale_last_poll = g->time;
+    }
 }
 bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa_error *error) {
     if (action == Q1_MAP_LIGHTNING_FIRE)

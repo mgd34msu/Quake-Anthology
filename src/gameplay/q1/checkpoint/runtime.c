@@ -6,6 +6,7 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     qa_q1_program program = o->program;
     qa_q1_edition edition = o->edition;
     bool quakeworld = o->quakeworld;
+    uint32_t max_clients = o->max_clients;
     Q1_SAVE(io, string, o->provider);
     Q1_SAVE(io, string, o->combat_provider);
     Q1_SAVE(io, string, o->movement_provider);
@@ -26,6 +27,8 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     Q1_SAVE(io, float, o->gravity);
     Q1_SAVE(io, float, o->aim_threshold);
     Q1_SAVE(io, u32, o->max_clients);
+    if (io->reading && o->max_clients != max_clients)
+        return q1_save_fail(io, "Q1 checkpoint changes prepared source client capacity");
     Q1_SAVE(io, u32, o->random_seed);
     Q1_SAVE(io, u32, o->gamecfg);
     return o->skill <= 3 || q1_save_fail(io, "Invalid Q1 checkpoint skill");
@@ -56,6 +59,11 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, double, g->time);
     Q1_SAVE(io, double, g->elapsed);
     Q1_SAVE(io, double, g->sight_time);
+    Q1_SAVE(io, double, g->finale_last_poll);
+    Q1_SAVE(io, bool, g->finale_polled);
+    Q1_SAVE(io, bool, g->finale_acknowledged);
+    if (!g->finale_polled && (g->finale_last_poll != 0 || g->finale_acknowledged))
+        return q1_save_fail(io, "Q1 finale acknowledgement has no source poll");
     Q1_SAVE(io, u64, g->time_ns);
     Q1_SAVE(io, u64, g->attack_sequence);
     Q1_SAVE(io, vector, g->forward);

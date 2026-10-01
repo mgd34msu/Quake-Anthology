@@ -61,7 +61,7 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
             qa_string_id name;
             float enabled = 0;
             if (!qa_builtin_resource(&g->services, "sv_cheats", &name, error) ||
-                (g->services.cvar && !g->services.cvar(g->services.context, name, &enabled, error)))
+                (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &enabled, error)))
                 return false;
             if (!enabled)
                 return true;

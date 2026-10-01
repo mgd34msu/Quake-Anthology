@@ -164,7 +164,7 @@ bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
     if (mg3 && g->services.cvar) {
         qa_string_id name;
         if (!qa_builtin_resource(&g->services, "skill", &name, error) ||
-            !g->services.cvar(g->services.context, name, &skill, error))
+            !g->services.cvar(q1_cvar_context(g), name, &skill, error))
             return false;
     }
     float health = 1250 + 250 * skill;

@@ -52,7 +52,7 @@ bool q1_map_horde_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_string_id name;
         float enabled = 0;
         if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-            (g->services.cvar && !g->services.cvar(g->services.context, name, &enabled, error)))
+            (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &enabled, error)))
             return false;
         if (!authored(g, id) || enabled != 0 || g->options.deathmatch != 0)
             return true;

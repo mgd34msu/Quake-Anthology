@@ -136,6 +136,12 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, i32, player->source_impulse);
     Q1_SAVE(io, bool, player->source_use);
     Q1_SAVE(io, bool, player->source_death_recorded);
+    Q1_SAVE(io, bool, player->finale_held_present);
+    Q1_SAVE(io, bool, player->finale_held);
+    if ((!player->source_client || !io->game->finale_polled) && player->finale_held_present)
+        return q1_save_fail(io, "Q1 finale button history has no genuine source client poll");
+    if (!player->finale_held_present && player->finale_held)
+        return q1_save_fail(io, "Q1 finale button history has no retained actor");
     Q1_SAVE(io, double, player->source_respawn_requested_at);
     uint32_t info_count=io->reading?0:(uint32_t)player->source_info_count;
     if((!io->reading && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;

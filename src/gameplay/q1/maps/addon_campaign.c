@@ -95,7 +95,7 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         float horde = 0;
         qa_string_id name;
         if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-            (g->services.cvar && !g->services.cvar(g->services.context, name, &horde, error)))
+            (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &horde, error)))
             return false;
         if (!campaign_actor(g, id))
             return true;
@@ -323,6 +323,7 @@ bool q1_map_addon_changelevel_begin(qa_q1_game *g, q1_actor *e, qa_error *error)
     }
     if (result.kind != QA_Q1_INTERMISSION_FINALE)
         return true;
+    qa_q1_game_finale_reset(g);
     event.code = result.track;
     event.count = 3;
     if (!qa_builtin_resource(&g->services, "music", &event.resource, error) ||

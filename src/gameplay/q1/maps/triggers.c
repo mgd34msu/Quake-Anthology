@@ -344,7 +344,7 @@ static bool cvar(qa_q1_game *g, const char *name, float *value, qa_error *error)
         return true;
     qa_string_id key;
     if (!qa_builtin_resource(&g->services, name, &key, error) ||
-        !g->services.cvar(g->services.context, key, value, error))
+        !g->services.cvar(q1_cvar_context(g), key, value, error))
         return false;
     return isfinite(*value) || q1_map_fail(error, "nonfinite Q1 map cvar");
 }

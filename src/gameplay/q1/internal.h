@@ -365,6 +365,7 @@ typedef struct q1_player {
     bool source_observer,source_no_target,source_god_mode;
     int32_t source_impulse;
     bool source_use,source_death_recorded;
+    bool finale_held_present, finale_held;
     double source_respawn_requested_at;
     q1_character character_state;
 } q1_player;
@@ -390,6 +391,8 @@ struct qa_q1_game {
     qa_builtin_random random;
     qa_actor_id sight_actor, horn_charmer, rogue_runes_world;
     double time, elapsed, sight_time;
+    double finale_last_poll;
+    bool finale_polled, finale_acknowledged;
     uint64_t time_ns, attack_sequence;
     qa_vec3 forward, right, up;
     qa_item_id weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
@@ -410,6 +413,9 @@ struct qa_q1_game {
     bool enemy_visible;
 };
 void q1_source_client_clear(q1_player *);
+static inline void *q1_cvar_context(const qa_q1_game *game) {
+    return game->services.cvar_context ? game->services.cvar_context : game->services.context;
+}
 
 extern const q1_frame q1_frames[];
 bool q1_map_spawn(qa_q1_game *, q1_actor *, const qa_q1_spawn *, bool *, qa_error *);

@@ -209,7 +209,7 @@ static bool allowed(qa_q1_game *g, qa_actor_id actor, bool *out, qa_error *error
     float cheats = 0;
     qa_string_id name;
     if (!qa_builtin_resource(&g->services, "sv_cheats", &name, error) ||
-        (g->services.cvar && !g->services.cvar(g->services.context, name, &cheats, error)))
+        (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &cheats, error)))
         return false;
     *out = g->options.edition == QA_Q1_RERELEASE && cheats != 0;
     return *out || !q1_alive(g, actor) ||
@@ -528,7 +528,7 @@ static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocati
     qa_string_id teamplay;
     float flags = (float)g->options.teamplay;
     if (!qa_builtin_resource(&g->services, "teamplay", &teamplay, error) ||
-        (g->services.cvar && !g->services.cvar(g->services.context, teamplay, &flags, error)))
+        (g->services.cvar && !g->services.cvar(q1_cvar_context(g), teamplay, &flags, error)))
         return false;
     if (!q1_alive(g, actor) || traits.spectator || !isfinite(flags) ||
         flags < 0 || flags >= (double)UINT32_MAX || !((uint32_t)flags & 128u))
@@ -575,7 +575,7 @@ static bool cheats_cvar(qa_q1_game *g, bool *enabled, qa_error *error) {
     qa_string_id name;
     float value = 0;
     if (!qa_builtin_resource(&g->services, "sv_cheats", &name, error) ||
-        (g->services.cvar && !g->services.cvar(g->services.context, name, &value, error)))
+        (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &value, error)))
         return false;
     *enabled = value != 0;
     return true;
@@ -735,7 +735,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
         qa_string_id skill_name;
         float skill = (float)g->options.skill;
         if (!qa_builtin_resource(&g->services, "skill", &skill_name, error) ||
-            (g->services.cvar && !g->services.cvar(g->services.context, skill_name, &skill, error)))
+            (g->services.cvar && !g->services.cvar(q1_cvar_context(g), skill_name, &skill, error)))
             return false;
         if (g->destroy_pending || skill == 3)
             return true;

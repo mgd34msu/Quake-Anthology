@@ -987,7 +987,7 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
                 qa_string_id name;
                 float horde = 0;
                 if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-                    !g->services.cvar(g->services.context, name, &horde, error))
+                    !g->services.cvar(q1_cvar_context(g), name, &horde, error))
                     return false;
                 if (horde != 0)
                     --g->total_monsters;
