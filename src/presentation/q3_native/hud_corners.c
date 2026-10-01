@@ -86,7 +86,7 @@ static bool upper(q3n_hud_draw *d)
             else {
                 if(!q3nh_head(d,580,y,60,60,client,qa_v3(0,180,0)))return false;
                 const char *info; uint64_t revision; char name[64];
-                if(!qa_application_native_q3_presentation_configstring(d->frame->application,&d->frame->source,544u+(uint32_t)client,
+                if(!qa_native_q3_wire_reader_configstring(d->frame->reader,544u+(uint32_t)client,
                     &info,&revision,d->error) || !qa_q3_info_value(info,"n",name,sizeof(name),d->error) ||
                    !q3nh_right(d,640,y+60,name,0.5f))return false;
             }

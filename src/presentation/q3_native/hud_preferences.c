@@ -1,5 +1,6 @@
 #include "hud_internal.h"
 #include "qa/q3_presentation_save.h"
+#include "qa/text.h"
 
 bool q3nh_preferences(q3n_hud_draw *d)
 {
@@ -48,7 +49,8 @@ void q3nh_palette(const q3n_hud_draw *d,const float input[4],float output[4])
 static bool alternate(const q3n_hud_draw *d,const char *text)
 {
     if(d->frame->preferences.typeface==QA_UI_TYPEFACE_BOLD)return true;
-    for(const unsigned char *p=(const unsigned char *)text;*p;++p)if(*p>=128)return true;
+    for(const unsigned char *p=(const unsigned char *)text;*p;++p)if(*p>=128)
+        return qa_utf8_valid((qa_bytes){(const uint8_t *)text,strlen(text)});
     return false;
 }
 static bool layout(q3n_hud_draw *d,const char *text,float height,const float color[4],bool force,int32_t limit,

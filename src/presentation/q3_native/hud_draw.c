@@ -170,6 +170,6 @@ bool q3nh_sound(q3n_hud_draw *d,q3n_sound sound,int32_t channel)
 bool q3nh_location(q3n_hud_draw *d,int32_t index,const char **out)
 {
     if(index<0 || index>=64)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD source location index is invalid");
-    uint64_t revision; return qa_application_native_q3_presentation_configstring(d->frame->application,&d->frame->source,
+    uint64_t revision; return qa_native_q3_wire_reader_configstring(d->frame->reader,
         608u+(uint32_t)index,out,&revision,d->error);
 }

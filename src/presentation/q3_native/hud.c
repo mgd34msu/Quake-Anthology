@@ -6,7 +6,7 @@ bool q3n_hud_create(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
     if(!options || !out || *out || !options->assets || !options->source || !options->application ||
        !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command ||
        !qa_application_native_q3_presentation_current(options->application,options->source) ||
-       (options->source->product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_timed ||
+       (options->source->product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order || !options->mission_timed ||
         !options->mission_text || !options->mission_center_line)))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 HUD requires actual source, registered assets and authored drawing owners");
     q3n_hud *o=calloc(1,sizeof(*o)); if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating native Q3 HUD");
@@ -19,7 +19,7 @@ bool q3n_hud_create_restored(const q3n_hud_options *options,q3n_hud **out,qa_err
     if(!options || !out || *out || !options->assets || !options->ui || !options->milliseconds || !options->load_deferred ||
        !options->client_command || !options->client || !qa_native_q3_client_basis_read(options->client,&basis,e) ||
        basis.application!=options->application || basis.seat!=options->seat ||
-       (basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_timed || !options->mission_text || !options->mission_center_line)))
+       (basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order || !options->mission_timed || !options->mission_text || !options->mission_center_line)))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Restored Q3 HUD requires its actual installed source, client and drawing owners");
     q3n_hud *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating restored native Q3 HUD");
@@ -364,6 +364,8 @@ bool q3n_hud_frame(q3n_hud *o,const q3n_frame *f,const q3n_hud_settings *setting
     const q3n_command_state *c=q3n_server_commands_state(commands); const qa_q3_player *p=&f->local_player;
     bool ok=true;
     if(p->persistant[3]==3 && (p->pmFlags&8192)) { ok=q3nh_tourney(&d); goto end; }
+    if(o->product==QA_Q3_TEAM_ARENA && (!o->options.mission_order(o->options.context,f,e) ||
+       !q3nh_current(o,f,e))) { ok=false; goto end; }
     if(c->level_shot || !settings->draw_2d)goto end;
     if(p->pmType==5) {
         if(o->product==QA_Q3_ARENA && c->game_type==2)ok=center_string(&d);

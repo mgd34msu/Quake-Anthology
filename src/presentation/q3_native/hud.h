@@ -29,6 +29,7 @@ typedef struct q3n_hud_options {
     /* Team Arena paints its real parsed cgame menus and fonts through their
      * native owner. The base HUD never substitutes an approximate layout. */
     bool (*mission_paint)(void *, const q3n_frame *, bool scoreboard, bool first_time, qa_error *);
+    bool (*mission_order)(void *, const q3n_frame *, qa_error *);
     bool (*mission_timed)(void *, const q3n_frame *, qa_error *);
     bool (*mission_text)(void *, const q3n_frame *, const char *, float y, float scale,
         const float color[4], int32_t style, bool integer_half_width, qa_error *);

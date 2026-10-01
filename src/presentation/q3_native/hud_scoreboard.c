@@ -45,14 +45,14 @@ static bool client_score(q3n_hud_draw *d,float y,const q3n_command_score *score,
     if((uint32_t)p->stats[ready]&(1u<<((uint32_t)score->client&31u)))return q3nh_text(d,80,y,"READY",16,16,color,true,true,0);
     return true;
 }
-static bool team_scores(q3n_hud_draw *d,int32_t y,int32_t team,float fade,int32_t maximum,int32_t line,bool *local,int32_t *count)
+static bool team_scores(q3n_hud_draw *d,int32_t y,int32_t team,float fade,int32_t maximum,int32_t line,bool large,bool *local,int32_t *count)
 {
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float color[4]={1,1,1,fade}; *count=0;
     for(int32_t i=0;i<c->num_scores && *count<maximum;++i) {
         const q3n_command_score *score=&c->scores[i]; if(score->client<0 || score->client>=64)return false;
         const q3n_client_info *ci=q3n_clients_get(d->frame->clients,(uint32_t)score->client); if(!ci)return false;
         if(ci->team!=team)continue;
-        if(!client_score(d,(float)(y+line * *count),score,color,fade,line==40,local))return false; ++*count;
+        if(!client_score(d,(float)(y+line * *count),score,color,fade,large,local))return false; ++*count;
     }
     return true;
 }
@@ -100,17 +100,17 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
             y+=line/2; int32_t first=c->team_scores[0]>=c->team_scores[1]?1:2;
             for(unsigned i=0;i<2;++i) {
                 int32_t team=i==0?first:first==1?2:1;
-                if(!team_scores(d,y,team,fade,maximum,line,&local,&count) ||
+                if(!team_scores(d,y,team,fade,maximum,line,!compact,&local,&count) ||
                    !q3nh_team_background(d,0,(float)(y-top),640,(float)(count*line+16),0.33f,team))return false;
                 y+=count*line+16; maximum-=count;
             }
-            if(!team_scores(d,y,3,fade,maximum,line,&local,&count))return false; y+=count*line+16;
+            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16;
         } else {
-            if(!team_scores(d,y,0,fade,maximum,line,&local,&count))return false; y+=count*line+16; maximum-=count;
-            if(!team_scores(d,y,3,fade,maximum,line,&local,&count))return false; y+=count*line+16;
+            if(!team_scores(d,y,0,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16; maximum-=count;
+            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16;
         }
         if(!local)for(int32_t i=0;i<c->num_scores;++i)if(c->scores[i].client==p->clientNum) {
-            if(!client_score(d,(float)y,&c->scores[i],color,fade,line==40,&local))return false; break;
+            if(!client_score(d,(float)y,&c->scores[i],color,fade,!compact,&local))return false; break;
         }
     }
     s->deferred_player_loading=q3ne_plus(s->deferred_player_loading,1);
@@ -136,8 +136,8 @@ bool q3nh_tourney(q3n_hud_draw *d)
         if(!o->options.client_command(o->options.context,d->frame,"score",d->error) || !q3nh_current(o,d->frame,d->error))return false;
     }
     const float black[4]={0,0,0,1}; const char *motd; uint64_t revision;
-    if(!q3nh_fill(d,0,0,640,480,black) || !qa_application_native_q3_presentation_configstring(d->frame->application,
-       &d->frame->source,4,&motd,&revision,d->error) || !giant(d,8,*motd?motd:"Scoreboard"))return false;
+    if(!q3nh_fill(d,0,0,640,480,black) || !qa_native_q3_wire_reader_configstring(d->frame->reader,
+       4,&motd,&revision,d->error) || !giant(d,8,*motd?motd:"Scoreboard"))return false;
     int32_t seconds=d->frame->time/1000,minutes=seconds/60; seconds%=60; char text[64];
     snprintf(text,sizeof(text),"%i:%i%i",minutes,seconds/10,seconds%10); if(!giant(d,64,text))return false;
     if(c->game_type>=3)return tourney_line(d,160,"Red Team",c->team_scores[0]) && tourney_line(d,224,"Blue Team",c->team_scores[1]);
