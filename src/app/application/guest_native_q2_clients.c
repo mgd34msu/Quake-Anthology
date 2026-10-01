@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
+#include "control_frame.h"
 #include <math.h>
 
 static void store_float(uint8_t *data, float value)
@@ -7,8 +8,9 @@ static void store_float(uint8_t *data, float value)
     uint32_t bits; memcpy(&bits, &value, sizeof(bits)); qa_store_u32le(data, bits);
 }
 
-bool application_native_q2_move(application_provider *provider, qa_actor_id actor,
-    const qa_movement_command *command, bool *handled, qa_error *error)
+static bool native_move(application_provider *provider, qa_actor_id actor,
+    const qa_movement_command *command, const application_control_external_stage *stage,
+    bool *handled, qa_error *error)
 {
     if (!handled || !command) return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement request is missing");
     *handled = false;
@@ -29,7 +31,8 @@ bool application_native_q2_move(application_provider *provider, qa_actor_id acto
         !isfinite(command->up_move) || !qa_vec_finite(command->angles))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement lacks its source client or encodable command");
     application_control_record *control = &app->controls[actor.slot];
-    if (!control->active || !qa_actor_id_equal(control->actor, actor) || control->moving)
+    if (!control->active || !qa_actor_id_equal(control->actor, actor) ||
+        (stage ? !control->moving || !stage->current(stage) : control->moving))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement control is unavailable");
     uint8_t bytes[28] = {0}; bytes[0] = (uint8_t)command->milliseconds; bytes[1] = (uint8_t)command->buttons;
     if (classic) {
@@ -47,9 +50,10 @@ bool application_native_q2_move(application_provider *provider, qa_actor_id acto
         store_float(bytes + 20, command->side_move); qa_store_u32le(bytes + 24, (uint32_t)command->server_frame);
     }
     control->moving = true; engine->current_command_sequence = command->sequence;
+    engine->movement_stage = stage;
     bool ok = application_native_q2_client_think(provider, slot,
         (qa_bytes){bytes, classic ? 16u : 28u}, error);
-    engine->current_command_sequence = 0;
+    engine->movement_stage = NULL; engine->current_command_sequence = 0;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
         qa_buffer player = {0};
         ok = qa_native_host_q2_player_state(provider->state.native.host, slot, &player, error);
@@ -92,14 +96,40 @@ bool application_native_q2_move(application_provider *provider, qa_actor_id acto
                             (float)command->angle_words[2] * (360.f / 65536.f))
                     : command->angles;
                 control->view_height = classic ? offset.z : state.data.q2r.view_height;
-                control->previous_buttons = control->buttons; control->buttons = command->buttons;
-                control->command_sequence = command->sequence; control->command_seen = true;
+                if (!stage) {
+                    control->previous_buttons = control->buttons; control->buttons = command->buttons;
+                    control->command_sequence = command->sequence; control->command_seen = true;
+                } else {
+                    qa_movement_result *result = &control->result;
+                    result->status = QA_MOVEMENT_ACTIVE; result->actor = actor;
+                    result->command_sequence = command->sequence; result->state = control->state;
+                    result->bounds = control->bounds; result->ground = control->ground;
+                    result->view_angles = control->view_angles; result->view_offset = control->view_offset;
+                    result->view_height = control->view_height; result->water_level = control->water_level;
+                    result->water_type = control->water_type; result->contact_count = 0;
+                }
             }
         }
         qa_buffer_free(&player);
     }
-    control->moving = false;
+    if (stage && ok && qa_actors_get(qa_session_actors(app->session), actor) && !stage->current(stage))
+        ok = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 movement lost its actual retained NQ turn");
+    if (!stage) control->moving = false;
     return ok;
+}
+
+bool application_native_q2_move(application_provider *provider, qa_actor_id actor,
+    const qa_movement_command *command, bool *handled, qa_error *error)
+{ return native_move(provider, actor, command, NULL, handled, error); }
+
+bool application_native_q2_stage_move(application_provider *provider, qa_actor_id actor,
+    const qa_movement_command *command, const application_control_external_stage *stage,
+    bool *handled, qa_error *error)
+{
+    if (!provider || !stage || stage->application != provider->application ||
+        !qa_actor_id_equal(stage->actor, actor) || !stage->current || !stage->current(stage))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement requires its true retained source stage");
+    return native_move(provider, actor, command, stage, handled, error);
 }
 
 static struct application_native_q2 *client_owner(application_provider *provider,

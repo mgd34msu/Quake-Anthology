@@ -52,6 +52,9 @@ void application_guest_input_adopt_restore(q3g_role *, const application_guest_i
 bool application_arsenal_guest_move(qa_application *, qa_actor_id,
                                      const qa_movement_command *, bool *handled,
                                      qa_error *);
+struct application_control_external_stage;
+bool application_arsenal_guest_stage_move(qa_application *, qa_actor_id,
+    const qa_movement_command *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_guest_input_applying(const qa_application *, qa_actor_id);
 bool application_guest_input_actor_idle(const qa_application *, qa_actor_id);
 bool application_control_guest_complete(qa_application *, qa_actor_id,

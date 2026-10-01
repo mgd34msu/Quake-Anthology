@@ -27,6 +27,7 @@
 #include "events_save.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
+#include "native_q2_checkpoint.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_team_status.h"
@@ -89,7 +90,7 @@ static bool commands_scope(qa_source_save_io *io, qa_application_console_scope *
 {
     uint32_t kind = scope->kind;
     if (!qa_source_save_string(io, &scope->provider) || !qa_source_save_u32(io, &kind) ||
-        kind > QA_APPLICATION_CONSOLE_Q1_GAME || !qa_source_save_u32(io, &scope->seat)) return false;
+        kind > QA_APPLICATION_CONSOLE_Q2_GAME || !qa_source_save_u32(io, &scope->seat)) return false;
     scope->kind = (qa_application_console_kind)kind;
     return scope->kind == QA_APPLICATION_CONSOLE_ENGINE ? !scope->provider && !scope->seat :
         scope->provider && ((scope->kind >= QA_APPLICATION_CONSOLE_Q3_CGAME &&
@@ -203,9 +204,9 @@ static bool controls_signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','T','R','L','S',0};
     static const unsigned char expected[8] = {'Q','A','C','T','R','L','S',0};
-    uint32_t version = 6;
+    uint32_t version = 7;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 6;
+        qa_source_save_u32(io, &version) && version == 7;
 }
 
 static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -1105,7 +1106,7 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         ok = native_q1_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
-        ok = qa_q2_game_capture(provider->state.q2, &state, error);
+        ok = application_native_q2_checkpoint_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
@@ -1147,7 +1148,7 @@ static bool provider_restore(application_persistence *operation,
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
         ok = native_q1_restore(provider, state, error);
     } else if (provider->kind == APPLICATION_PROVIDER_Q2)
-        ok = qa_q2_game_restore(provider->state.q2, state, error);
+        ok = application_native_q2_checkpoint_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
@@ -1196,7 +1197,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 6 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_Q3) ? 3 :
-                                    owner->kind == QA_SAVE_CONTROLS ? 6 :
+                                    owner->kind == QA_SAVE_CONTROLS ? 7 :
                                     owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||
                                     owner->kind == QA_SAVE_EVENTS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
@@ -1436,8 +1437,18 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
                 provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
                 ok = application_native_q2_prepare_restore(provider, error);
         }
-        if (ok && operation->ops->prepare_content)
+        if (ok && operation->ops->prepare_content) {
+            const qa_launch_snapshot *routing_snapshot = candidate->routing_snapshot;
+            application_provider **routing_providers = candidate->routing_providers;
+            size_t routing_count = candidate->routing_provider_count;
+            candidate->routing_snapshot = snapshot;
+            candidate->routing_providers = candidate->providers;
+            candidate->routing_provider_count = candidate->provider_count;
             ok = operation->ops->prepare_content(operation->ops->context, candidate, snapshot, image, error);
+            candidate->routing_snapshot = routing_snapshot;
+            candidate->routing_providers = routing_providers;
+            candidate->routing_provider_count = routing_count;
+        }
     }
     if (ok) ok = qa_configuration_commit_restored(transaction, error);
     if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);

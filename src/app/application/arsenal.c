@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "control_frame.h"
+#include "native_q2_console.h"
+#include "qa/game_q2_bots.h"
 #include "qa/game_q3_source.h"
 #include <string.h>
 
@@ -23,10 +25,9 @@ bool qa_application_weapon_read(qa_application *application, qa_actor_id actor,
         if (!qa_q2_weapon_read(provider->state.q2, actor, &state, error))
             return false;
         const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(provider->state.q2, state.weapon);
-        const qa_q2_item_definition *item = definition == NULL ? NULL
-            : qa_q2_item_lookup(provider->state.q2, definition->item);
-        if (item != NULL)
-            weapon = item->item;
+        if (definition != NULL && definition->item != NULL)
+            weapon = qa_strings_find(qa_session_strings(application->session),
+                (qa_bytes){(const uint8_t *)definition->item, strlen(definition->item)});
     } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state state;
         if (!qa_q3_player_read(provider->state.q3, actor, &state))
@@ -81,7 +82,9 @@ bool application_q2_weapon_input(void *context, qa_actor_id actor,
     qa_application_control_view control;
     if (!qa_application_control_read(application, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 arsenal actor has no controls");
-    if (!qa_q2_weapon_controls_read(provider->state.q2, actor, out, error))
+    if (!qa_q2_weapon_controls_read(provider->state.q2, actor, out, error) ||
+        !qa_q2_bot_arsenal_rules_read(provider->state.q2, &out->source_rules, error) ||
+        !application_native_q2_source_weapon_input(provider, out, error))
         return false;
     qa_builtin_services services = application_builtin_services(application, application->world,
                                                                   application->physics);
@@ -123,8 +126,7 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
             source->component.command_actor &&
             source->component.command_actor(source->component.state, session, actor) &&
             actor.slot < application->control_capacity && application->controls[actor.slot].active &&
-            qa_actor_id_equal(application->controls[actor.slot].actor, actor) &&
-            application->controls[actor.slot].state.kind == QA_MOVEMENT_NETQUAKE) {
+            qa_actor_id_equal(application->controls[actor.slot].actor, actor)) {
             bool handled;
             if (!application_control_frames_actor(application, session, actor, frame, &handled, error)) return false;
         }

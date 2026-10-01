@@ -33,6 +33,7 @@ typedef struct application_guest_input {
     qa_actor_id applying;
     qa_actor_id command_actor;
     const qa_movement_command *command;
+    const application_control_external_stage *stage;
     qa_movement_command applied_command;
     qa_q3_usercmd projected_command;
     bool command_projected;
@@ -264,7 +265,9 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     }
     qa_actor_id previous = input->applying; input->applying = scope->actor;
     qa_movement_command applied = command;
-    bool ok = application_control_frames_apply_nested(app, scope->actor, &command, &applied, error);
+    bool ok = input->stage ? input->stage->current(input->stage) &&
+        input->stage->locomotion(input->stage, &command, &applied, error) :
+        application_control_frames_apply_nested(app, scope->actor, &command, &applied, error);
     input->applying = previous;
     if (!ok) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
@@ -395,8 +398,12 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
                  : input->command ? input->command->impulse : 0};
     memcpy(command.angle_words, source.angles, sizeof(command.angle_words));
     qa_vec3 absolute_aim = source_view_angles(input, &source, &player);
-    if (!application_control_source_input(app, scope->actor, &state, &command, &absolute_aim, input_scope, before, slice,
-                                           (uint64_t)milliseconds * UINT64_C(1000000), error)) return false;
+    bool applied = input->stage ? input->stage->current(input->stage) &&
+        input->stage->input(input->stage, &state, &command, &absolute_aim, input_scope,
+            before, slice, (uint64_t)milliseconds * UINT64_C(1000000), error) :
+        application_control_source_input(app, scope->actor, &state, &command, &absolute_aim, input_scope,
+            before, slice, (uint64_t)milliseconds * UINT64_C(1000000), error);
+    if (!applied) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     qa_q3_usercmd updated = source;
     memcpy(updated.angles, command.angle_words, sizeof(updated.angles));
@@ -851,7 +858,8 @@ bool application_arsenal_guest_crouched(application_provider *provider, qa_actor
 }
 
 static bool guest_command(application_guest_input *input, qa_actor_id actor, uint32_t slot,
-    const qa_q3_usercmd *source, const qa_movement_command *command, qa_error *error)
+    const qa_q3_usercmd *source, const qa_movement_command *command,
+    const application_control_external_stage *stage, qa_error *error)
 {
     application_provider *guest = input->role->engine->provider;
     qa_application *app = guest->application;
@@ -862,7 +870,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     int32_t before_time = player.commandTime;
     if (!qa_q3_host_player_motion(input->role->host, slot, true, error)) return false;
     input->in_command = true; input->command_actor = actor;
-    input->command = command; input->input_applied = false;
+    input->command = command; input->stage = stage; input->input_applied = false;
     input->command_projected = false;
     bool ok = application_q3_guest_client_think(guest, slot, source, error);
     if (ok && qa_actors_get(qa_session_actors(app->session), actor) && movement == guest &&
@@ -875,7 +883,8 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
             uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
             if (elapsed > INT32_MAX) elapsed = 0;
             applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
-            ok = application_control_guest_complete(app, actor, &applied, &player, error);
+            ok = stage ? stage->current(stage) && stage->complete(stage, &applied, &player, error) :
+                application_control_guest_complete(app, actor, &applied, &player, error);
         }
     }
     qa_error unwind = {0};
@@ -883,7 +892,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         if (ok && error) *error = unwind;
         ok = false;
     }
-    input->command = NULL; input->in_command = false;
+    input->command = NULL; input->stage = NULL; input->in_command = false;
     input->command_actor = (qa_actor_id){0};
     qa_error drain = {0};
     if (!application_guest_clients_drain(guest, &drain)) {
@@ -920,12 +929,12 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
         .forwardmove = (int8_t)command->forward_move, .rightmove = (int8_t)command->side_move,
         .upmove = (int8_t)command->up_move};
     memcpy(raw.angles, command->angle_words, sizeof(raw.angles));
-    return guest_command(input, actor, slot, &raw, command, error);
+    return guest_command(input, actor, slot, &raw, command, NULL, error);
 }
 
-bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
+static bool guest_move(qa_application *app, qa_actor_id actor,
                                      const qa_movement_command *command, bool *handled,
-                                     qa_error *error)
+                                     const application_control_external_stage *stage, qa_error *error)
 {
     *handled = false;
     if (!app || !command || !qa_vec_finite(command->angles) ||
@@ -984,5 +993,37 @@ bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
         if (command->buttons & 16u) source.upmove = -127;
     } else if ((command->buttons & 2u) && source.upmove == 0) source.upmove = 127;
     *handled = true;
-    return guest_command(input, actor, slot, &source, command, error);
+    return guest_command(input, actor, slot, &source, command, stage, error);
+}
+
+bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
+    const qa_movement_command *command, bool *handled, qa_error *error)
+{ return guest_move(app, actor, command, handled, NULL, error); }
+
+bool application_arsenal_guest_stage_move(qa_application *app, qa_actor_id actor,
+    const qa_movement_command *command, const application_control_external_stage *stage,
+    bool *handled, qa_error *error)
+{
+    if (!stage || stage->application != app || !qa_actor_id_equal(stage->actor, actor) ||
+        !stage->current || !stage->input || !stage->locomotion || !stage->complete || !stage->current(stage))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original movement lost its retained NQ stage owner");
+    return guest_move(app, actor, command, handled, stage, error);
+}
+
+bool application_arsenal_guest_stage_ready(qa_application *app, qa_actor_id actor)
+{
+    application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
+    if (!guest) return true;
+    struct application_q3_guest *engine = q3g_engine(guest);
+    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+    uint32_t slot;
+    return guest->constructed && guest->attached && !guest->close_pending && input && !input->in_command &&
+        !(is_guest(movement) && movement != guest) &&
+        (movement == guest || input->profile.has_locomotion) &&
+        (arsenal == guest || (input->profile.has_weapons && input->profile.weapon_branch_count)) &&
+        qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) && slot < 64 &&
+        engine->clients[slot].connected && engine->clients[slot].begun &&
+        !engine->clients[slot].pending_retirement && qa_actor_id_equal(engine->clients[slot].actor, actor);
 }

@@ -871,7 +871,8 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
     if (phase == QA_MOVE_PRETHINK) {
         int32_t before_flags = 0; qa_vec3 before_velocity = {0};
         bool mixed = path == APPLICATION_CONTROL_MIXED ||
-            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD);
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD) ||
+            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_MOVEMENT_NETQUAKE);
         if (mixed && !control_transition(engine, reference, actor, &before_flags, &before_velocity, error)) return false;
         if (path == APPLICATION_CONTROL_QW_GROUP) {
             const qa_movement_command *source_command = context->source_qwcmd &&
@@ -887,7 +888,7 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
         }
         if (!spectator && !application_qc_named(engine, "PlayerPreThink", actor, error)) return false;
         if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
-        if (mixed && path == APPLICATION_CONTROL_MIXED) {
+        if (mixed && (path == APPLICATION_CONTROL_MIXED || path == APPLICATION_CONTROL_NQ_TURN)) {
             int32_t after_flags; qa_vec3 after_velocity;
             if (!control_transition(engine, reference, actor, &after_flags, &after_velocity, error)) return false;
             bool requested = control_jump(call->command);
@@ -922,7 +923,8 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
         }
     } else if (phase == QA_MOVE_POSTTHINK) {
         if ((path == APPLICATION_CONTROL_MIXED ||
-            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD)) &&
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD) ||
+            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_MOVEMENT_NETQUAKE)) &&
             !control_mixed_water(engine, reference, actor, call, error)) return false;
         if (!context->defer_postthink && !(spectator ?
             application_qc_spectator_callback(engine, "SpectatorThink", actor, error) :

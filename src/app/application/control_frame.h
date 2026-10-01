@@ -31,7 +31,7 @@ typedef struct application_control_context {
     bool source_usercmd;
     bool source_holdable;
     bool source_guestcmd;
-    bool source_qwcmd, source_input_applied;
+    bool source_qwcmd, source_nqcmd, source_input_applied;
     qa_movement_command source_command;
 } application_control_context;
 static inline qa_actor_owner application_control_provider(const application_control_context *context)
@@ -48,6 +48,24 @@ static inline uint64_t application_control_elapsed(const application_control_con
 struct application_control_turn;
 struct application_control_frames;
 struct application_qc_parked_input;
+struct application_source_input_scope;
+/* Borrowed only during an actual retained NQ PHYSICS turn. External GAME
+ * hooks use this owner instead of synthesizing a nested command admission. */
+typedef struct application_control_external_stage {
+    qa_application *application;
+    qa_actor_id actor;
+    application_control_context source;
+    void *state;
+    bool (*current)(const struct application_control_external_stage *);
+    bool (*input)(const struct application_control_external_stage *, qa_movement_state *,
+        qa_movement_command *, const qa_vec3 *, struct application_source_input_scope *,
+        bool before, bool slice, uint64_t elapsed_ns, qa_error *);
+    bool (*locomotion)(const struct application_control_external_stage *,
+        const qa_movement_command *, qa_movement_command *, qa_error *);
+    bool (*complete)(const struct application_control_external_stage *,
+        const qa_movement_command *, const qa_q3_player *, qa_error *);
+} application_control_external_stage;
+bool application_arsenal_guest_stage_ready(qa_application *, qa_actor_id);
 bool application_qc_input_park(application_provider *, qa_actor_id, struct application_qc_parked_input **, qa_error *);
 bool application_qc_input_resume(application_provider *, struct application_qc_parked_input *, qa_error *);
 bool application_qc_input_parked_abort(application_provider *, struct application_qc_parked_input *, qa_error *);

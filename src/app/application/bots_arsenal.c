@@ -10,14 +10,6 @@ static double count(application_bots *bots,qa_actor_id actor,qa_item_id item) {
     qa_inventory_entry entry;
     return item && qa_inventory_entry_read(bots->application->inventory,actor,item,&entry,NULL)?entry.count:0;
 }
-static const qa_q2_item_definition *q2_item_identity(const qa_q2_game *game,qa_item_id item) {
-    size_t count=qa_q2_item_count(game);
-    for(size_t index=0;index<count;++index) {
-        const qa_q2_item_definition *candidate=qa_q2_item_at(game,index);
-        if(candidate->item==item) return candidate;
-    }
-    return NULL;
-}
 static int32_t integer(double value) {
     if(!isfinite(value) || value==0) return 0;
     double reduced=fmod(trunc(value),4294967296.0);
@@ -125,7 +117,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(source==QA_Q2_IONRIPPER) fact.horizontal=tanf(3.14159265358979323846f/180)*8192;
             if(source==QA_Q2_PHALANX) fact.horizontal=tanf(1.5f*3.14159265358979323846f/180)*8192;
             if(source==QA_Q2_ETF_RIFLE) fact.speed=rerelease?1150:750;
-            const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
+            const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
             if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 registered weapon lost its actual item declaration");
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             describe(value,(int)ordinal+1,(int)ordinal+1,item->item,item->ammo,fact,count(bots,observed,item->item)>0);
@@ -190,7 +182,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             const qa_q2_weapon_definition *definition;
             if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,ordinal,&definition,error)) return false;
             if(!q2_base[definition->weapon].pellets) continue;
-            const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
+            const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
             if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 inventory lost its registered weapon declaration");
             if(!qa_bot_inventory_write(inventory,(int32_t)(65+ordinal),count(bots,actor,item->item)>0,error) ||
                !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),integer(count(bots,actor,item->ammo)),error)) return false;
@@ -253,7 +245,7 @@ bool application_bot_weapon_resolve(application_bots *bots,qa_actor_id actor,int
         const qa_q2_weapon_definition *definition;
         if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,(uint32_t)slot-1,&definition,error)) return false;
         if(!q2_base[definition->weapon].pellets) return true;
-        const qa_q2_item_definition *item=q2_item_identity(provider->state.q2,definition->item);
+        const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
         if(!item) return application_fail(error,QA_ERROR_FORMAT,"Q2 weapon resolution lost its registered item");
         if(count(bots,actor,item->item)>0 && (!item->ammo || count(bots,actor,item->ammo)>=definition->quantity)) *out=item->item;
     } else if(provider->kind==APPLICATION_PROVIDER_Q3 && slot<=QA_Q3_W_GRAPPLE) {

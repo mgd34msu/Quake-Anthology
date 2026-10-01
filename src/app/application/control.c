@@ -40,6 +40,7 @@ typedef struct application_move_call {
     bool q1_map_frame;
     bool mixed_source_outer;
     bool in_source_outer;
+    bool external_nq_physics;
     uint64_t application_elapsed_ns;
 } application_move_call;
 
@@ -50,6 +51,8 @@ struct application_control_turn {
     struct application_qc_parked_input *parked[14];
     size_t parked_count;
 };
+static bool guest_complete(qa_application *, qa_actor_id, const qa_movement_command *,
+    const qa_q3_player *, const application_control_external_stage *, qa_error *);
 
 static application_provider *control_execution(qa_application *app, qa_actor_id actor)
 {
@@ -116,6 +119,14 @@ static bool source_think(application_move_call *move, qa_actor_id actor,
                            const qa_movement_call *call, qa_think_result *result, qa_error *error)
 {
     qa_scheduler *scheduler = qa_session_scheduler(move->application->session);
+    if (move->context.source_nqcmd) {
+        const qa_think *pending = qa_scheduler_pending(scheduler, actor);
+        if (pending && pending->execution_provider != move->context.frame.provider) {
+            *result = (qa_think_result){.alive =
+                qa_actors_get(qa_session_actors(move->application->session), actor) != NULL};
+            return true;
+        }
+    }
     if (move->context.command_only) {
         uint64_t source_time; double source_elapsed;
         if (!move->execution || move->execution->kind != APPLICATION_PROVIDER_Q1 ||
@@ -567,12 +578,15 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
                                               const qa_movement_command *command, qa_error *error)
 {
     application_provider *map = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    const application_control_context *context = application_control_frame_current(app, actor);
+    bool raw_nq = context && context->source_nqcmd;
     qa_source_frame actual;
     if (!map || map->kind != APPLICATION_PROVIDER_Q1 ||
         !qa_q1_player_source_present(map->state.q1, actor) ||
         !qa_session_active_frame(app->session, map->owner, &actual) ||
-        application_control_frames_q1_prepared(app, actor, map->owner) ||
-        !application_control_frames_q1_command_ready(app, actor, map->owner, command)) return true;
+        (!raw_nq && (application_control_frames_q1_prepared(app, actor, map->owner) ||
+         !application_control_frames_q1_command_ready(app, actor, map->owner, command)))) return true;
+    if (raw_nq) command = &context->source_command;
     application_control_record *record = &app->controls[actor.slot];
     qa_vec3 angles = command ? command->angles : record->view_angles;
     if (command && (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC)) {
@@ -640,6 +654,8 @@ static bool qc_input(application_move_call *move, qa_movement_state *state,
     for (size_t i = 0; i < sizeof(owners) / sizeof(owners[0]); ++i) {
         application_provider *owner = owners[i];
         if (!owner || owner->kind != APPLICATION_PROVIDER_QC) continue;
+        if (!owner->state.qc.qualified && move->context.source_nqcmd && owner == move->execution)
+            continue;
         if (!owner->state.qc.qualified && move->context.path == APPLICATION_CONTROL_QW_GROUP && owner == move->execution)
             continue;
         if (!owner->state.qc.qualified && move->context.path == APPLICATION_CONTROL_NQ_TURN &&
@@ -743,7 +759,13 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
             (void)application_control_source_abort(&move->qc_slice, error);
         return QA_MOVEMENT_REMOVED;
     }
-    bool source_phase = phase == QA_MOVE_PRETHINK || phase == QA_MOVE_THINK || phase == QA_MOVE_POSTTHINK;
+    bool foreign_nq = move->context.source_nqcmd && call->state->kind != QA_MOVEMENT_NETQUAKE;
+    if (foreign_nq && move->context.stage == APPLICATION_CONTROL_PHYSICS &&
+        (phase == QA_MOVE_INPUT_BEGIN || phase == QA_MOVE_INPUT_END))
+        return QA_MOVEMENT_CONTINUE;
+    bool source_phase = (phase == QA_MOVE_PRETHINK || phase == QA_MOVE_THINK || phase == QA_MOVE_POSTTHINK) &&
+        (!foreign_nq || move->in_source_outer) &&
+        !(move->external_nq_physics && phase == QA_MOVE_POSTTHINK && !move->in_source_outer);
     if (source_phase) {
         qa_body_state source_body;
         if (!qa_world_body_read(move->application->world, actor, &source_body, error)) return QA_MOVEMENT_ERROR;
@@ -797,7 +819,7 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
         }
         move->q1_input = true;
     }
-    if (phase == QA_MOVE_PRETHINK && !qw_spectator && !move->q1_prethink &&
+    if (source_phase && phase == QA_MOVE_PRETHINK && !qw_spectator && !move->q1_prethink &&
         move->world && move->world->kind == APPLICATION_PROVIDER_Q1 &&
         qa_q1_player_source_present(move->world->state.q1, actor)) {
         move->committed = true;
@@ -806,7 +828,7 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
         move->q1_prethink = true;
         move->q1_map_frame = true;
     }
-    if (phase == QA_MOVE_PRETHINK && !qw_spectator && !move->q1_map_frame) {
+    if (source_phase && phase == QA_MOVE_PRETHINK && !qw_spectator && !move->q1_map_frame) {
         if (!live(move->application, actor))
             return QA_MOVEMENT_REMOVED;
         application_provider *map = application_world_provider(move->application,
@@ -820,7 +842,7 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
                 return QA_MOVEMENT_ERROR;
         }
     }
-    if (phase == QA_MOVE_PRETHINK && !qw_spectator && move->execution && move->execution->kind == APPLICATION_PROVIDER_Q1 &&
+    if (source_phase && phase == QA_MOVE_PRETHINK && !qw_spectator && move->execution && move->execution->kind == APPLICATION_PROVIDER_Q1 &&
         move->context.path != APPLICATION_CONTROL_NQ_TURN && call->state->kind != QA_MOVEMENT_NETQUAKE &&
         (move->context.path != APPLICATION_CONTROL_MIXED || move->in_source_outer)) {
         qa_think_result result; move->committed = true;
@@ -1188,6 +1210,11 @@ static bool prepare_input(application_move_call *move,
     }
     move->application_elapsed_ns = record->state.kind == QA_MOVEMENT_NETQUAKE
         ? input->elapsed_ns : (uint64_t)application_ms * UINT64_C(1000000);
+    if (move->context.source_nqcmd && move->execution && move->execution->kind == APPLICATION_PROVIDER_QC) {
+        move->committed = true;
+        if (!application_qc_player_command(move->execution, record->actor,
+            &move->context.source_command, error)) return false;
+    }
     if (!move->context.source_input_applied && !qc_input(move, &input->state, &input->command, NULL, &move->qc_command, true, false,
                     move->application_elapsed_ns, error)) return false;
     if (!live(application, record->actor)) return true;
@@ -1422,6 +1449,91 @@ static qa_movement_call input_call(application_move_call *move)
         .environment = &input->environment};
 }
 
+static bool external_stage_current(const application_control_external_stage *stage)
+{
+    application_move_call *move = stage ? stage->state : NULL;
+    if (!move || move->application != stage->application ||
+        !qa_actor_id_equal(move->control->actor, stage->actor) ||
+        !live(move->application, stage->actor) || !move->control->moving || move->control->retired)
+        return false;
+    const application_control_context *actual = application_control_frame_current(move->application, stage->actor);
+    qa_source_frame active;
+    return actual && actual->source_nqcmd && !actual->command_only && actual->retained &&
+        actual->stage == APPLICATION_CONTROL_PHYSICS && actual->path == APPLICATION_CONTROL_NQ_TURN &&
+        stage->source.source_nqcmd && stage->source.stage == actual->stage &&
+        qa_actor_id_equal(actual->actor, stage->actor) &&
+        actual->frame.provider == stage->source.frame.provider && actual->frame.kind == QA_CLOCK_NETQUAKE &&
+        actual->frame.number == stage->source.frame.number && actual->frame.time_ns == stage->source.frame.time_ns &&
+        actual->frame.start_ns == stage->source.frame.start_ns && actual->frame.elapsed_ns == stage->source.frame.elapsed_ns &&
+        actual->source_command.sequence == stage->source.source_command.sequence &&
+        qa_session_active_frame(move->application->session, actual->frame.provider, &active) &&
+        active.number == actual->frame.number && active.time_ns == actual->frame.time_ns &&
+        active.start_ns == actual->frame.start_ns && active.elapsed_ns == actual->frame.elapsed_ns;
+}
+static bool external_stage_input(const application_control_external_stage *stage,
+    qa_movement_state *state, qa_movement_command *command, const qa_vec3 *aim,
+    application_source_input_scope *scope, bool before, bool slice, uint64_t elapsed, qa_error *error)
+{
+    if (!external_stage_current(stage) || !state || !command || !scope)
+        return application_fail(error, QA_ERROR_ARGUMENT, "External source input lost its retained physics turn");
+    /* PREPARE already applied the whole selected command. Only the genuine
+     * external PmoveSingle slice opens its own qualified source slice scope. */
+    if (!slice) return true;
+    application_move_call *move = stage->state;
+    if (move->external_nq_physics) return true;
+    return qc_input(move, state, command, aim, scope, before, true, elapsed, error) &&
+        (!live(move->application, stage->actor) || external_stage_current(stage));
+}
+static bool external_stage_locomotion(const application_control_external_stage *stage,
+    const qa_movement_command *command, qa_movement_command *applied, qa_error *error)
+{
+    if (!external_stage_current(stage) || !command || !applied)
+        return application_fail(error, QA_ERROR_ARGUMENT, "External locomotion lost its retained physics turn");
+    application_move_call *move = stage->state;
+    if (move->external_nq_physics) {
+        /* NQ physics consumes the retained source interval once. The genuine
+         * external weapon Pmove slices read that already-published motion. */
+        *applied = *command;
+        return true;
+    }
+    qa_movement_input input = *move->input;
+    input.state = move->control->state; input.command = *command;
+    input.elapsed_ns = (uint64_t)command->milliseconds * UINT64_C(1000000);
+    input.current_bounds = move->input->shape.bounds; input.has_current_bounds = true;
+    qa_movement_input *previous = move->input; move->input = &input;
+    qa_movement_services services = movement_services(move);
+    bool ok = qa_movement_move(&input, &services, &move->control->result, error);
+    if (ok && live(move->application, stage->actor)) {
+        const qa_movement_result *result = &move->control->result;
+        ok = publish_result_body(move, &result->state, result->bounds, result->ground,
+            result->view_angles, false, false, error);
+        if (ok) {
+            move->control->state = result->state; move->control->bounds = result->bounds;
+            move->control->ground = result->ground; move->control->view_angles = result->view_angles;
+            move->control->view_offset = result->view_offset; move->control->view_height = result->view_height;
+            move->control->water_level = result->water_level; move->control->water_type = result->water_type;
+            *applied = move->command_applied ? move->applied_command : input.command;
+        }
+    }
+    move->input = previous;
+    previous->state = move->control->state;
+    previous->shape.bounds = move->control->bounds;
+    previous->current_bounds = move->control->bounds;
+    previous->has_current_bounds = true;
+    /* Kernel phase callbacks borrowed the nested state. Restore the retained
+     * turn's state before the external client resumes reading its player. */
+    application_control_frames_state(move->application, stage->actor,
+                                     &previous->state);
+    return ok && (!live(move->application, stage->actor) || external_stage_current(stage));
+}
+static bool external_stage_complete(const application_control_external_stage *stage,
+    const qa_movement_command *command, const qa_q3_player *player, qa_error *error)
+{
+    if (!external_stage_current(stage))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original completion lost its retained physics owner");
+    return guest_complete(stage->application, stage->actor, command, player, stage, error);
+}
+
 static bool control_move(qa_application *application,
                                  qa_actor_id actor,
                                  const qa_movement_command *command,
@@ -1468,7 +1580,7 @@ static bool control_move(qa_application *application,
         if (applied) { *applied = *command; applied->buttons = 0; }
         record->previous_buttons = record->buttons;
         record->buttons = 0;
-        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd) {
+        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd) {
             record->command_sequence = command->sequence;
             record->command_seen = true;
         }
@@ -1481,6 +1593,14 @@ static bool control_move(qa_application *application,
         return false;
     bool preparing = context->stage == APPLICATION_CONTROL_PREPARE;
     bool physics = context->stage == APPLICATION_CONTROL_PHYSICS;
+    application_provider *selected_arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
+    bool original_stage = context->source_nqcmd &&
+        ((movement->kind == APPLICATION_PROVIDER_QVM ||
+          (movement->kind == APPLICATION_PROVIDER_NATIVE && movement->component.clock.kind == QA_CLOCK_Q3)) ||
+         (selected_arsenal && (selected_arsenal->kind == APPLICATION_PROVIDER_QVM ||
+          (selected_arsenal->kind == APPLICATION_PROVIDER_NATIVE && selected_arsenal->component.clock.kind == QA_CLOCK_Q3))));
+    bool native_q2_stage = context->source_nqcmd && movement->kind == APPLICATION_PROVIDER_NATIVE &&
+        movement->state.native.q2_engine;
     if ((preparing || physics) && !turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Split source movement needs its retained turn");
     if (physics && !*turn)
@@ -1501,7 +1621,7 @@ static bool control_move(qa_application *application,
     qa_movement_profile profile = selected_profile(application, movement);
     application_provider *execution = control_execution(application, actor);
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    if (context->source_qwcmd || context->source_usercmd || context->source_guestcmd) {
+    if (context->source_qwcmd || context->source_nqcmd || context->source_usercmd || context->source_guestcmd) {
         if (!source || source->owner != application_control_provider(context))
             return application_fail(error, QA_ERROR_ARGUMENT, "Raw source command lost its physical source owner");
         execution = source;
@@ -1572,27 +1692,75 @@ static bool control_move(qa_application *application,
         ok = refresh_source_call(&move, &call, error);
         input.current_bounds = input.shape.bounds;
     }
-    if (ok && preparing && live(application, actor)) {
+    if (ok && preparing && (!original_stage || record->state.kind == QA_MOVEMENT_NETQUAKE) && live(application, actor)) {
         qa_movement_call call = input_call(&move);
         ok = move_phase(&move, QA_MOVE_INPUT_BEGIN, &call, error) != QA_MOVEMENT_ERROR;
     }
     if (ok && preparing && live(application, actor)) ok = record_nq_equipment(&move, error);
-    bool mixed_outer = context->path == APPLICATION_CONTROL_MIXED;
-    move.mixed_source_outer = mixed_outer && execution && execution->kind == APPLICATION_PROVIDER_QC &&
+    bool foreign_nq = context->source_nqcmd && record->state.kind != QA_MOVEMENT_NETQUAKE;
+    bool mixed_outer = context->path == APPLICATION_CONTROL_MIXED ||
+        (context->source_nqcmd && physics && (foreign_nq || original_stage));
+    move.mixed_source_outer = mixed_outer && !(original_stage && !foreign_nq) &&
+        execution && execution->kind == APPLICATION_PROVIDER_QC &&
         !execution->state.qc.qualified;
-    if (ok && mixed_outer && live(application, actor)) {
+    if (ok && mixed_outer && !(original_stage && !foreign_nq) && live(application, actor)) {
         qa_movement_call call = input_call(&move);
         move.in_source_outer = true;
         ok = move_phase(&move, QA_MOVE_PRETHINK, &call, error) != QA_MOVEMENT_ERROR;
+        if (ok && foreign_nq && live(application, actor))
+            ok = move_phase(&move, QA_MOVE_THINK, &call, error) != QA_MOVEMENT_ERROR;
         move.in_source_outer = false;
         input.current_bounds = input.shape.bounds;
     }
     if (ok && live(application, actor)) effective_command = input.command;
     qa_movement_services services = movement_services(&move);
-    if (ok && live(application, actor))
-        ok = preparing ? qa_movement_prepare_netquake(&input, &services, &record->result, error)
-            : physics ? qa_movement_physics_netquake(&input, &services, &record->result, error)
+    bool external_handled = false;
+    if (ok && context->source_nqcmd && physics && original_stage && !foreign_nq && live(application, actor)) {
+        move.external_nq_physics = true;
+        ok = qa_movement_physics_netquake(&input, &services, &record->result, error);
+        if (ok && live(application, actor)) {
+            const qa_movement_result *result = &record->result;
+            ok = publish_result_body(&move, &result->state, result->bounds, result->ground,
+                result->view_angles, false, false, error);
+            if (ok) {
+                record->state = result->state; record->bounds = result->bounds;
+                record->ground = result->ground; record->view_angles = result->view_angles;
+                record->view_offset = result->view_offset; record->view_height = result->view_height;
+                record->water_level = result->water_level; record->water_type = result->water_type;
+                input.state = record->state; input.shape.bounds = record->bounds;
+                application_control_frames_state(application, actor, &input.state);
+            }
+        }
+    }
+    if (ok && context->source_nqcmd && physics && (original_stage || native_q2_stage) && live(application, actor)) {
+        application_control_external_stage stage = {.application = application, .actor = actor,
+            .source = *context, .state = &move, .current = external_stage_current,
+            .input = external_stage_input, .locomotion = external_stage_locomotion,
+            .complete = external_stage_complete};
+        move.committed = true;
+        ok = native_q2_stage ? application_native_q2_stage_move(movement, actor, &input.command,
+                &stage, &external_handled, error) :
+            application_arsenal_guest_stage_move(application, actor, &input.command, &stage, &external_handled, error);
+        if (ok && !external_handled)
+            ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Selected external movement has no admitted stage adapter");
+        if (ok && live(application, actor)) {
+            move.touched_triggers = true;
+            input.state = record->result.state; input.shape.bounds = record->result.bounds;
+        }
+    }
+    if (ok && live(application, actor)) {
+        if (foreign_nq && preparing) {
+            qa_movement_result *result = &record->result;
+            *result = (qa_movement_result){.contacts = result->contacts, .contact_capacity = result->contact_capacity,
+                .status = QA_MOVEMENT_ACTIVE, .actor = actor, .command_sequence = input.command.sequence,
+                .state = input.state, .bounds = input.shape.bounds, .ground = record->ground,
+                .view_angles = record->view_angles, .view_offset = record->view_offset,
+                .view_height = record->view_height, .water_level = record->water_level,
+                .water_type = record->water_type};
+        } else if (!external_handled) ok = preparing ? qa_movement_prepare_netquake(&input, &services, &record->result, error)
+            : physics && !foreign_nq ? qa_movement_physics_netquake(&input, &services, &record->result, error)
             : qa_movement_move(&input, &services, &record->result, error);
+    }
     if (ok && preparing && live(application, actor))
         ok = publish_result_body(&move, &record->result.state, record->result.bounds,
             record->result.ground, record->result.view_angles, false, false, error);
@@ -1640,12 +1808,12 @@ static bool control_move(qa_application *application,
                 move.touched_triggers = true;
         }
     }
-    if (ok && !context->source_usercmd && live(application, actor) &&
+    if (ok && !native_q2_stage && !context->source_usercmd && live(application, actor) &&
         (record->state.kind == QA_MOVEMENT_Q2_CLASSIC ||
          record->state.kind == QA_MOVEMENT_Q2_RERELEASE))
         ok = qa_movement_apply_q2_contacts(&input, &services, &record->result,
                                            error);
-    if (ok && live(application, actor) &&
+    if (ok && !native_q2_stage && live(application, actor) &&
         (record->state.kind == QA_MOVEMENT_Q2_CLASSIC || record->state.kind == QA_MOVEMENT_Q2_RERELEASE)) {
         qa_movement_call call = input_call(&move);
         call.state = &record->result.state; call.bounds = &record->result.bounds;
@@ -1688,7 +1856,8 @@ static bool control_move(qa_application *application,
         record->command_angles = command->angles;
         bool received; uint64_t sequence;
         (void)application_control_frames_sequence(application, actor, &received, &sequence);
-        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && (!context->retained || received)) {
+        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd &&
+            (!context->retained || received)) {
             record->command_sequence = command->sequence;
             record->command_seen = true;
         }
@@ -1991,9 +2160,10 @@ bool qa_application_control_commands(qa_application *application, qa_actor_id ac
     return application_control_frames_receive(application, actor, commands, count, error);
 }
 
-bool application_control_guest_complete(qa_application *application, qa_actor_id actor,
+static bool guest_complete(qa_application *application, qa_actor_id actor,
                                          const qa_movement_command *command,
-                                         const qa_q3_player *player, qa_error *error)
+                                         const qa_q3_player *player,
+                                         const application_control_external_stage *stage, qa_error *error)
 {
     const application_control_context *context = application_control_frame_current(application, actor);
     if (!application || !command || !player || !context || actor.slot >= application->control_capacity)
@@ -2001,7 +2171,8 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
     if (!live(application, actor)) return true;
     application_control_record *record = &application->controls[actor.slot];
     if (!record->active || !qa_actor_id_equal(record->actor, actor) ||
-        record->moving || record->state.kind != QA_MOVEMENT_Q3)
+        (stage ? !record->moving || !external_stage_current(stage) : record->moving) ||
+        record->state.kind != QA_MOVEMENT_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest movement has no Q3 continuation");
     record->moving = true;
     qa_movement_input input = qa_movement_input_default(QA_MOVEMENT_Q3, actor);
@@ -2016,7 +2187,7 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
         .world = application_world_provider(application, QA_ROLE_ENTITIES, ""),
         .execution = control_execution(application, actor), .context = *context};
     qa_body_state body;
-    bool ok = begin_q1_operations(&move, error) &&
+    bool ok = (stage || begin_q1_operations(&move, error)) &&
               qa_world_body_read(application->world, actor, &body, error);
     if (ok && live(application, actor)) {
         body.origin = qa_v3(player->origin[0], player->origin[1], player->origin[2]);
@@ -2059,9 +2230,11 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
         record->bounds = body.bounds; record->ground = state->ground;
         record->view_angles = state->view_angles; record->view_height = state->view_height;
         record->view_offset = qa_v3(0, 0, state->view_height);
-        record->previous_buttons = record->buttons; record->buttons = command->buttons;
-        record->command_angles = command->angles;
-        if (!context->source_guestcmd) {
+        if (!stage) {
+            record->previous_buttons = record->buttons; record->buttons = command->buttons;
+            record->command_angles = command->angles;
+        }
+        if (!stage && !context->source_guestcmd) {
             record->command_sequence = command->sequence; record->command_seen = true;
         }
         record->result.status = QA_MOVEMENT_ACTIVE; record->result.actor = actor;
@@ -2072,6 +2245,7 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
         record->result.water_level = record->water_level; record->result.water_type = record->water_type;
         record->result.impact_delta = 0;
         input.state = record->state;
+        if (stage) return external_stage_current(stage);
         if (move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q2) {
             qa_q2_weapon_input controls;
             ok = application_q2_weapon_input(move.arsenal, actor, &controls, error);
@@ -2105,6 +2279,7 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
         }
         if (ok && live(application, actor)) ok = finish_native_players(&move, &record->result, error);
     }
+    if (stage) return ok && (!live(application, actor) || external_stage_current(stage));
     if (record->retired && qa_actor_id_equal(record->actor, actor)) {
         qa_movement_result_free(&record->result); *record = (application_control_record){0};
     } else if (record->active && qa_actor_id_equal(record->actor, actor)) record->moving = false;
@@ -2112,6 +2287,10 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
     end_q1_operations(&move);
     return ok;
 }
+
+bool application_control_guest_complete(qa_application *application, qa_actor_id actor,
+    const qa_movement_command *command, const qa_q3_player *player, qa_error *error)
+{ return guest_complete(application, actor, command, player, NULL, error); }
 
 bool application_control_velocity(qa_application *application, qa_actor_id actor,
                                    qa_vec3 velocity, qa_error *error)

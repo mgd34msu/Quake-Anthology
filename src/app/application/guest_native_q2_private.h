@@ -19,6 +19,7 @@ typedef struct application_native_q2_client {
 } application_native_q2_client;
 
 struct application_native_q2 {
+    const struct application_control_external_stage *movement_stage;
     struct application_native_q2_baseline *baseline;
     application_provider *provider;
     qa_world *world;
@@ -75,6 +76,9 @@ qa_native_host_engine_services application_native_q2_services(struct application
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
 bool application_native_q2_move(application_provider *, qa_actor_id,
     const qa_movement_command *, bool *, qa_error *);
+struct application_control_external_stage;
+bool application_native_q2_stage_move(application_provider *, qa_actor_id,
+    const qa_movement_command *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_native_q2_draw_hud(application_provider *, uint32_t, uint32_t, qa_error *);
 struct application_native_q2 *application_native_q2_hud_source(struct application_native_q2 *,
     uint32_t *, qa_error *);
