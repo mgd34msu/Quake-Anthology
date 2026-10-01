@@ -114,19 +114,19 @@ bool qa_cvars_save_capture(const qa_cvars *registry, qa_buffer *out, qa_error *e
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar capture requires a complete publication drain and output");
     *out = (qa_buffer){0};
     uint64_t revision = registry->mutation_revision;
-    qa_cvars_restore state = {.count = registry->count, .next_handle = registry->next_handle,
-        .changed_flags = registry->changed_flags, .userinfo_modified = registry->userinfo_modified,
-        .server_active = registry->server_active, .high_characters = registry->high_characters, .cheats = registry->cheats};
+    qa_cvars_restore state = {.count = registry->values.count, .next_handle = registry->values.next_handle,
+        .changed_flags = registry->values.changed_flags, .userinfo_modified = registry->values.userinfo_modified,
+        .server_active = registry->values.server_active, .high_characters = registry->values.high_characters, .cheats = registry->values.cheats};
     uint32_t dialect = (uint32_t)registry->options.dialect;
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, NULL, error)) return false;
     bool ok = header(&io, &dialect, &state);
     size_t count = 0;
-    for (const cvar *entry = registry->first; ok && entry; entry = entry->next) {
+    for (const cvar *entry = registry->values.first; ok && entry; entry = entry->next) {
         cvar copy = *entry;
         ok = field_entry(&io, &copy); ++count;
     }
-    if (ok && (count != registry->count || revision != registry->mutation_revision))
+    if (ok && (count != registry->values.count || revision != registry->mutation_revision))
         ok = qac_fail(error, QA_ERROR_ARGUMENT, "cvar registry changed during capture");
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -172,7 +172,7 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         *tail = entry; tail = &entry->next;
         ok = field_entry(&io, entry) && valid_entry(state, entry, error);
         if (!ok) break;
-        cvar *existing = registry->first;
+        cvar *existing = registry->values.first;
         while (existing && !same_name(registry->options.dialect, existing->view.name, entry->view.name)) existing = existing->next;
         if ((existing && existing->bound) != entry->bound || (entry->bound &&
             (existing->view.owner != entry->view.owner || existing->binding.owner != entry->binding.owner))) {
@@ -180,6 +180,7 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         }
         if (entry->bound) {
             entry->binding = existing->binding;
+            entry->binding_order=existing->binding_order;
             if (entry->binding.validate) {
                 ++registry->notifying;
                 ok = entry->binding.validate(entry->binding.user, entry->view.value, error) &&
@@ -189,7 +190,7 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
             }
         }
     }
-    for (cvar *existing = registry->first; ok && existing; existing = existing->next) {
+    for (cvar *existing = registry->values.first; ok && existing; existing = existing->next) {
         if (!existing->bound) continue;
         cvar *saved = state->first;
         while (saved && !same_name(registry->options.dialect, existing->view.name, saved->view.name)) saved = saved->next;
@@ -212,12 +213,12 @@ bool qa_cvars_save_commit(qa_cvars_restore *state, qa_error *error)
 {
     if (!qa_cvars_save_validate(state, error)) return false;
     qa_cvars *registry = state->registry;
-    cvar *previous = registry->first;
-    registry->first = state->first; state->first = NULL;
-    registry->count = state->count; registry->next_handle = state->next_handle;
-    registry->changed_flags = state->changed_flags; registry->userinfo_modified = state->userinfo_modified;
-    registry->server_active = state->server_active; registry->high_characters = state->high_characters;
-    registry->cheats = state->cheats; ++registry->mutation_revision;
+    cvar *previous = registry->values.first;
+    registry->values.first = state->first; state->first = NULL;
+    registry->values.count = state->count; registry->values.next_handle = state->next_handle;
+    registry->values.changed_flags = state->changed_flags; registry->values.userinfo_modified = state->userinfo_modified;
+    registry->values.server_active = state->server_active; registry->values.high_characters = state->high_characters;
+    registry->values.cheats = state->cheats; ++registry->mutation_revision;
     list_free(previous); free(state); return true;
 }
 void qa_cvars_save_abort(qa_cvars_restore *state)

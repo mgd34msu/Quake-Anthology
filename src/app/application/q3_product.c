@@ -1,6 +1,7 @@
 #include "q3_product.h"
 #include "internal.h"
 #include "qa/catalog_save.h"
+#include "qa/application_startup_prepare.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -10,12 +11,13 @@ typedef struct application_startup_row {
     char *queued_instance;
     uint32_t queued_kind, queued_seat;
     uint64_t queued_generation;
-    bool consumed, completed, pending, shared_seeded;
+    bool consumed, completed, pending, shared_seeded, safe_command;
 } application_startup_row;
 struct application_startup {
     application_startup_row *rows;
     size_t count;
 };
+static bool ascii_equal(const char *,const char *);
 
 static char *startup_copy(const char *value, qa_error *error)
 {
@@ -60,6 +62,8 @@ bool application_startup_create(qa_application *app, const char *const *commands
         bool okay = qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error);
         app->startup->rows[i].command = startup_copy(text, error);
         okay = okay && app->startup->rows[i].command;
+        if (okay && tokens.count) app->startup->rows[i].safe_command=
+            ascii_equal(tokens.values[0],"safe") || ascii_equal(tokens.values[0],"cvar_restart");
         if (okay && tokens.count && !strcmp(tokens.values[0], "set")) {
             application_startup_row *row = &app->startup->rows[i];
             row->name = startup_copy(tokens.count > 1 ? tokens.values[1] : "", error);
@@ -104,10 +108,14 @@ static bool ascii_equal(const char *a, const char *b)
 static bool startup_set(qa_cvars *actual, const char *name, const char *value, qa_error *error)
 {
     if (!qa_cvars_set(actual, name, value, true, error)) return false;
-    /* Com_StartupVariable marks the forced value USER_CREATED, so later real
-     * Cvar_Get registration promotes it and installs the source reset value. */
-    return qa_cvars_dialect(actual) != QA_CONSOLE_Q3 ||
-        qa_cvars_register(actual, name, value, QA_CVAR_USER_CREATED, 0, NULL, error);
+    if (qa_cvars_dialect(actual) != QA_CONSOLE_Q3) return true;
+    const qa_cvar_view *current=qa_cvars_find(actual,name);
+    if (!current) return application_fail(error,QA_ERROR_NOT_FOUND,"Startup has no admitted physical cvar");
+    uint64_t owner=current->owner;
+    /* Com_StartupVariable obtains the actual row with an empty default and
+     * marks USER_CREATED without changing its declaration owner. */
+    return qa_cvars_register(actual,name,"",0,owner,NULL,error) &&
+        qa_cvars_add_flags(actual,name,QA_CVAR_USER_CREATED,error);
 }
 
 bool application_startup_seed_engine(qa_application *app, qa_product_id selected, qa_error *error)
@@ -125,17 +133,9 @@ bool application_startup_seed_engine(qa_application *app, qa_product_id selected
     return true;
 }
 
-bool application_startup_seed_source(application_provider *provider, qa_cvars *actual, qa_error *error)
+static bool startup_primary(const application_provider *provider)
 {
-    qa_application *app = provider ? provider->application : NULL;
-    if (!app || !provider->product || !actual)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup requires the actual fresh source registry");
-    if (!app->startup || app->operation == APPLICATION_PERSISTING || provider->product->family == QA_GAME_Q1) return true;
-    if (provider->product->family == QA_GAME_Q3 && qa_cvars_dialect(actual) != QA_CONSOLE_Q3)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 startup registry has another source dialect");
-    if (provider->product->family == QA_GAME_Q2 && qa_cvars_dialect(actual) != QA_CONSOLE_Q2 &&
-        qa_cvars_dialect(actual) != QA_CONSOLE_Q2_RERELEASE)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 startup registry has another source dialect");
+    qa_application *app=provider->application;
     /* Fresh constructors run before the candidate roster attaches. Resolve
      * its actual selected identity and owner pointer without the live-service
      * lookup's attached requirement. Consumption still waits for publication. */
@@ -148,14 +148,30 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
         ? app->routing_providers : app->providers;
     size_t provider_count = app->routing_providers
         ? app->routing_provider_count : app->provider_count;
-    bool primary = false;
     if (binding && provider->launch && !strcmp(binding->instance, provider->launch->selection.instance))
         for (size_t i = 0; i < provider_count; ++i)
-            if (providers[i] == provider) { primary = true; break; }
+            if (providers[i] == provider) return true;
+    return false;
+}
+bool application_startup_seed_source(application_provider *provider, qa_cvars *actual, qa_error *error)
+{
+    qa_application *app = provider ? provider->application : NULL;
+    if (!app || !provider->product || !actual)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup requires the actual fresh source registry");
+    if (!app->startup || app->operation == APPLICATION_PERSISTING || provider->product->family == QA_GAME_Q1) return true;
+    if (provider->product->family == QA_GAME_Q3 && qa_cvars_dialect(actual) != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 startup registry has another source dialect");
+    if (provider->product->family == QA_GAME_Q2 && qa_cvars_dialect(actual) != QA_CONSOLE_Q2 &&
+        qa_cvars_dialect(actual) != QA_CONSOLE_Q2_RERELEASE)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 startup registry has another source dialect");
+    bool primary=startup_primary(provider);
     for (size_t i = 0; i < app->startup->count; ++i) {
         application_startup_row *row = &app->startup->rows[i];
         if (!row->name) continue;
         bool shared = provider->product->family == QA_GAME_Q3 && ascii_equal(row->name, "sv_cheats");
+        /* The prepared console will route still-unknown names after its real
+         * client/input registries exist. Do not create a shadow in GAME. */
+        if (!shared && app->startup_hooks && !qa_cvars_find(actual,row->name)) continue;
         if (!shared && !startup_set(actual, row->name, row->value, error)) return false;
         if (primary && (!shared || row->shared_seeded)) {
             if (app->q3_product_preparing) row->pending = true;
@@ -164,10 +180,60 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
     }
     return true;
 }
+bool application_startup_seed_console(application_provider *provider,qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    qa_application *app=provider?provider->application:NULL;
+    if (!app || !provider->product || !console || !command || command->owner!=provider->owner ||
+        !qa_application_command_context_active(app,command))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Startup replay requires its actual routed source console");
+    if (!app->startup || app->operation==APPLICATION_PERSISTING || provider->product->family==QA_GAME_Q1) return true;
+    bool primary=startup_primary(provider);
+    for (size_t i=0;i<app->startup->count;++i) {
+        application_startup_row *row=app->startup->rows+i;
+        if (!row->name) continue;
+        bool shared=provider->product->family==QA_GAME_Q3 && ascii_equal(row->name,"sv_cheats");
+        if (!shared && !qa_console_cvar_startup_set(console,command,row->name,row->value,error)) return false;
+        if (primary && (!shared || row->shared_seeded)) {
+            if (app->q3_product_preparing) row->pending=true; else row->consumed=true;
+        }
+    }
+    return true;
+}
 
 bool qa_application_startup_command_seeded(const qa_application *app, size_t ordinal)
 {
     return app && app->startup && ordinal < app->startup->count && app->startup->rows[ordinal].consumed;
+}
+bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_instance *selected,
+    qa_console *console,bool *safe,qa_error *error)
+{
+    const qa_launch_snapshot *snapshot=app?app->routing_snapshot:NULL;
+    if (!snapshot && app) snapshot=qa_application_startup_candidate(app);
+    if (!snapshot && app) snapshot=qa_application_launch(app);
+    const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_product *product=selected?qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product):NULL;
+    qa_console *actual_console=NULL; qa_cvars *actual_cvars=NULL; qa_command_context command;
+    if (!app || !selected || !console || !safe || !entities ||
+        strcmp(entities->instance,selected->selection.instance) || !product || product->family!=QA_GAME_Q3 ||
+        !qa_application_startup_source_read(app,snapshot,selected,&actual_console,&actual_cvars,&command,error) ||
+        actual_console!=console || qa_cvars_dialect(actual_cvars)!=QA_CONSOLE_Q3)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Safe mode requires its actual selected Q3 source console");
+    *safe=false;
+    for (size_t i=0;app->startup && i<app->startup->count;++i) {
+        application_startup_row *row=app->startup->rows+i;
+        if (!row->safe_command) continue;
+        if (row->queued_instance)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Safe mode cannot consume an already admitted source buffer");
+        *safe=true;
+        if (!row->completed && !row->consumed) {
+            if (app->q3_product_preparing) row->pending=true;
+            else row->consumed=true;
+        }
+        break;
+    }
+    return true;
 }
 size_t qa_application_startup_command_count(const qa_application *app)
 { return app && app->startup ? app->startup->count : 0; }
@@ -297,7 +363,7 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
             size_t extent = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(row->queued_instance) : 0;
             size_t remaining = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX - 1;
             if (!qa_source_save_u64(io, &row->queued_generation) || !row->queued_generation ||
-                !qa_source_save_u32(io, &row->queued_kind) || row->queued_kind > QA_APPLICATION_CONSOLE_Q1_GAME ||
+                !qa_source_save_u32(io, &row->queued_kind) || row->queued_kind > QA_APPLICATION_CONSOLE_Q2_GAME ||
                 !qa_source_save_u32(io, &row->queued_seat) || !qa_source_save_count(io, &extent, remaining) || extent == SIZE_MAX) return false;
             if (io->direction == QA_SOURCE_SAVE_READ) {
                 row->queued_instance = malloc(extent + 1);
@@ -323,15 +389,20 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
                 return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup command leaves its source text domain");
             qa_command_tokens tokens = {0};
             bool okay = qa_command_tokenize(row->command, QA_CONSOLE_Q3, false, &tokens, io->error);
+            if (okay && tokens.count) row->safe_command=ascii_equal(tokens.values[0],"safe") ||
+                ascii_equal(tokens.values[0],"cvar_restart");
             if (okay && tokens.count && !strcmp(tokens.values[0], "set")) {
                 row->name = startup_copy(tokens.count > 1 ? tokens.values[1] : "", io->error);
                 row->value = startup_copy(tokens.count > 2 ? tokens.values[2] : "", io->error);
                 okay = row->name && row->value;
             }
             qa_command_tokens_free(&tokens);
-            if (!okay || (row->consumed && !row->name) ||
+            if (!okay || (row->consumed && !row->name && !row->safe_command) ||
                 (row->shared_seeded && (!row->name || !ascii_equal(row->name, "sv_cheats"))))
                 return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup consumption differs from its original command");
+            if (row->consumed && row->safe_command)
+                for (size_t j=0;j<i;++j) if (app->startup->rows[j].safe_command)
+                    return application_fail(io->error,QA_ERROR_FORMAT,"Safe mode consumed another original startup ordinal");
         } else if (row->pending) {
             return application_fail(io->error, QA_ERROR_ARGUMENT, "Startup capture cannot expose a preparing source row");
         }
@@ -381,16 +452,31 @@ bool application_q3_product_initial(qa_cvars *cvars, const char *const *commands
     return true;
 }
 
-bool application_q3_product_register_source(const qa_q3_product_policy *policy,
-    qa_cvars *cvars, uint64_t owner, qa_error *error)
+static bool register_policy_values(const qa_q3_product_policy *policy,
+    qa_cvars *cvars, uint64_t owner, bool restricted, qa_error *error)
 {
     if (!valid_policy(policy) || !cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source registry requires retained initial policy");
-    bool flags[] = {policy->prerelease_demo, policy->prerelease_team_arena_demo, policy->fs_restrict};
+    bool flags[] = {policy->prerelease_demo, policy->prerelease_team_arena_demo, restricted};
     for (size_t i = 0; i < sizeof(variables) / sizeof(*variables); ++i)
-        if (!qa_cvars_register(cvars, variables[i], flags[i] ? "1" : "0", QA_CVAR_INIT, owner, NULL, error))
+        if (!qa_cvars_set(cvars, variables[i], flags[i] ? "1" : "0", true, error) ||
+            !qa_cvars_register(cvars, variables[i], "0", QA_CVAR_INIT, owner, NULL, error))
             return false;
     return true;
+}
+
+bool qa_q3_product_policy_register_source(const qa_q3_product_policy *policy,
+    qa_cvars *cvars, uint64_t owner, qa_error *error)
+{
+    if (!valid_policy(policy) || !policy->restriction_resolved)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source requires resolved retained media policy");
+    return register_policy_values(policy, cvars, owner, policy->filesystem_restricted, error);
+}
+
+bool application_q3_product_register_source(const qa_q3_product_policy *policy,
+    qa_cvars *cvars, uint64_t owner, qa_error *error)
+{
+    return qa_q3_product_policy_register_source(policy, cvars, owner, error);
 }
 
 const qa_q3_product_policy *application_q3_product_source_policy(const qa_application *app)
@@ -403,7 +489,7 @@ bool application_q3_product_import(qa_cvars *cvars, const qa_q3_product_policy *
 {
     if (!out || !valid_policy(saved))
         return application_fail(error, QA_ERROR_FORMAT, "Saved Q3 product policy has inconsistent retained fields");
-    if (!application_q3_product_register_source(saved, cvars, 0, error)) return false;
+    if (!register_policy_values(saved, cvars, 0, saved->fs_restrict, error)) return false;
     *out = *saved;
     return true;
 }

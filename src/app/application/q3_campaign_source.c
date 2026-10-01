@@ -3,6 +3,7 @@
 #include "native_q3_console.h"
 #include "native_q3_settings.h"
 #include "guest_q3_private.h"
+#include "startup_flow.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 
@@ -55,18 +56,6 @@ static bool source_context(application_provider *provider, qa_application_q3_cam
     view->source_time = engine->milliseconds;
     return view->console && view->cvars && command.owner == provider->owner && command.dialect == QA_CONSOLE_Q3;
 }
-static qa_fs_root *write_root(qa_vfs *content, qa_mount_id *id)
-{
-    *id = 0;
-    for (size_t i = 0; i < qa_vfs_mount_count(content); ++i) {
-        qa_vfs_mount_info mount;
-        if (qa_vfs_mount_at(content, i, &mount) && mount.writable) {
-            *id = mount.id;
-            return qa_vfs_mount_root(content, mount.id);
-        }
-    }
-    return NULL;
-}
 bool qa_application_q3_campaign_read(qa_application *app, qa_actor_owner owner,
     qa_application_q3_campaign *out, qa_error *error)
 {
@@ -84,7 +73,15 @@ bool qa_application_q3_campaign_read(qa_application *app, qa_actor_owner owner,
     if (!view.publication || !qa_application_map_read(app, &map) || !source_context(provider, &view, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign has no genuine GAME content, registry or round context");
     view.map = map.name; view.map_resource = map.resource;
-    view.config_root = write_root(view.content, &view.write_mount);
+    if (app->startup_hooks && app->startup_hooks->configuration_store) {
+        qa_settings_store store = {0};
+        if (!application_startup_source_configuration(provider, view.console, view.cvars, &store, error))
+            return false;
+        view.configuration = store.vfs;
+        view.write_mount = store.mount;
+        if (view.write_mount)
+            view.config_root = qa_vfs_mount_root(view.configuration, view.write_mount);
+    }
     if (view.write_mount && !view.config_root)
         return application_fail(error, QA_ERROR_ARGUMENT, "Campaign writable source mount has no retained directory authority");
     *out = view;
@@ -99,6 +96,7 @@ bool qa_application_q3_campaign_current(qa_application *app, const qa_applicatio
         actual.original_host == saved->original_host && actual.native_source == saved->native_source &&
         actual.content_product == saved->content_product && actual.product == saved->product &&
         actual.console == saved->console && actual.cvars == saved->cvars && actual.content == saved->content &&
+        actual.configuration == saved->configuration &&
         actual.write_mount == saved->write_mount && actual.config_root == saved->config_root &&
         actual.profile_root == saved->profile_root && actual.profile == saved->profile &&
         actual.map == saved->map && actual.map_resource == saved->map_resource &&

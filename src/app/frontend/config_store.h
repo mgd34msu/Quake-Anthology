@@ -31,10 +31,10 @@ qa_cvars *frontend_config_source_mouse_cvars(const frontend_config_source *,uint
 qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *,uint32_t,qa_movement_kind *);
 /* The actual source factory calls before destination options/capacity/Init.
  * A different physical program/profile returns carried=false. The supplied
- * cvar owner is that fresh factory's real GAME/module declaration owner. */
+ * tuple identifies that fresh factory's real console, registry, GAME scope
+ * and module declaration owner. Completed script phases are preserved. */
 bool frontend_config_store_carry_variables(frontend_config_store *,qa_application *,
-    const qa_launch_snapshot *,const qa_launch_instance *,qa_cvars *,uint64_t cvar_owner,
-    bool *carried,qa_error *);
+    const qa_launch_snapshot *,const qa_application_startup_source *,bool *carried,qa_error *);
 /* The manager owns one canonical wrapper reference; each actual client lease
  * acquires another. The first acquisition adopts the prepared heap once.
  * Pure import creates an empty physical heap for the canonical QFCR prefix
