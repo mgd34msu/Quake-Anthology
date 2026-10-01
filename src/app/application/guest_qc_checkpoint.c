@@ -1,7 +1,7 @@
-#include "guest_qc_internal.h"
+#include "guest_qc_profile.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 4u
+#define QC_ENGINE_VERSION 8u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -64,22 +64,38 @@ static bool client_binding_matches(struct application_qc_state *engine, uint32_t
                                     const application_qc_client *client, qa_error *error)
 {
     qa_qc_slot_binding binding;
+    bool qw = engine->profile == QA_QC_QUAKEWORLD && !engine->provider->state.qc.qualified && engine->max_clients == 32;
     if ((client->colors >> 4) > 13 || (client->colors & 15u) > 13 ||
-        !qa_qc_slot(engine->provider->state.qc.instance, slot, &binding) ||
-        (client->connected ? binding.kind != QA_QC_SLOT_BORROWED ||
-            !qa_actor_id_equal(binding.actor, client->actor) : binding.kind != QA_QC_SLOT_FREE || client->actor.registry != 0))
+        (client->prepared && (!qw || !client->connected || !client->has_parms)) ||
+        (qw && client->spawned && !client->prepared) ||
+        !qa_qc_slot(engine->provider->state.qc.instance, slot, &binding))
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC client metadata differs from its reserved guest binding");
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), binding.actor);
+    bool owned = qw && binding.kind == QA_QC_SLOT_OWNED && record && record->owner == engine->provider->owner &&
+        record->has_source && record->source_slot == slot && binding.owner == record->owner && binding.source_slot == slot;
+    bool borrowed = binding.kind == QA_QC_SLOT_BORROWED && record && binding.owner == record->owner &&
+        binding.source_slot == (record->has_source ? record->source_slot : 0);
+    if (client->connected ? (!owned && !borrowed) || !qa_actor_id_equal(binding.actor, client->actor) :
+        client->actor.registry != 0 || (qw ? !owned : binding.kind != QA_QC_SLOT_FREE))
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC client differs from its full reserved source ownership");
     return true;
 }
 bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    if (out == NULL || engine->has_frame || engine->input_scope || engine->client_think_time)
+    if (out == NULL || engine->has_frame || application_qc_has_source_admission(engine) ||
+        engine->input_scope || engine->parked_inputs || engine->client_think_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine checkpoint requires an idle frame");
     if (!engine_console_safe(engine, error)) return false;
+    if (!application_qc_capture_client_outputs(engine, error)) return false;
     for (uint32_t i = 1; i <= engine->max_clients; ++i)
         if (!client_binding_matches(engine, i, &engine->clients[i], error)) return false;
     size_t capacity = 256;
+    if (engine->original_extension.size>UINT32_MAX ||
+        (engine->original_extension.size && (!engine->original_extension.data ||
+         memchr(engine->original_extension.data,0,engine->original_extension.size))) ||
+        !add_size(&capacity,engine->original_extension.size+4,error))
+        return application_fail(error,QA_ERROR_FORMAT,"Invalid original source extension owner");
     if (!add_size(&capacity, ((size_t)engine->max_clients + 1) * 96, error)) return false;
     for (size_t i = 0; i < engine->resource_count; ++i)
         if (!add_size(&capacity, strlen(engine->resources[i].name) + 80, error)) return false;
@@ -115,6 +131,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         qa_net_write_u64(&writer, engine->source_time_ns) &&
         qa_net_write_f32(&writer, engine->serverflags) && qa_net_write_u8(&writer, engine->loading) &&
         qa_net_write_u8(&writer, engine->initialized) &&
+        qa_net_write_u8(&writer, engine->output_channels) &&
         qa_net_write_u32(&writer, engine->check_slot) && qa_net_write_f32(&writer, engine->check_time) &&
         qa_net_write_i32(&writer, engine->check_cluster) &&
         qa_net_write_u8(&writer, engine->random.front) && qa_net_write_u8(&writer, engine->random.rear) &&
@@ -124,8 +141,10 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         application_qc_client *client = &engine->clients[i];
         ok = qa_net_write_u32(&writer, client->seat) && qa_net_write_u8(&writer, client->connected) &&
              qa_net_write_u8(&writer, client->spawned) && qa_net_write_u8(&writer, client->spectator) &&
+             qa_net_write_u8(&writer, client->prepared) &&
              qa_net_write_u8(&writer, client->has_parms) && qa_net_write_u8(&writer, client->primary_character) &&
              qa_net_write_u8(&writer, client->colors) &&
+             qa_net_write_u8(&writer, client->output_published) &&
              write_actor(&writer, actors, client->actor);
         for (unsigned p = 0; ok && p < 16; ++p) ok = qa_net_write_f32(&writer, client->parms[p]);
     }
@@ -151,6 +170,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
              qa_net_write_u8(&writer, metadata[i].modified) && qa_net_write_u8(&writer, metadata[i].console_created);
     }
     for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
+    if (ok) ok=qa_net_write_u32(&writer,(uint32_t)engine->original_extension.size) &&
+        qa_net_write_data(&writer,engine->original_extension.data,engine->original_extension.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->message_count);
     for (size_t i = 0; ok && i < engine->message_count; ++i) {
         application_qc_message *message = &engine->messages[i];
@@ -177,13 +198,15 @@ static void dispose_candidate(struct application_qc_state *candidate)
         free(candidate->messages[i].data); free(candidate->messages[i].references);
     }
     for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
+    qa_buffer_free(&candidate->original_extension);
     qa_console_destroy(candidate->console); qa_cvars_destroy(candidate->cvars);
     free(candidate->resources); free(candidate->messages); free(candidate->clients);
 }
 bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    if (bytes.size > QC_ENGINE_LIMIT || engine->has_frame || engine->input_scope || engine->client_think_time)
+    if (bytes.size > QC_ENGINE_LIMIT || engine->has_frame || application_qc_has_source_admission(engine) ||
+        engine->input_scope || engine->parked_inputs || engine->client_think_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine restore requires an idle frame");
     if (!engine_console_safe(engine, error)) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
@@ -201,6 +224,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     candidate.source_time_ns = qa_net_read_u64(&reader); candidate.serverflags = qa_net_read_f32(&reader);
     uint8_t loading = qa_net_read_u8(&reader);
     uint8_t initialized = qa_net_read_u8(&reader); candidate.initialized = initialized != 0;
+    candidate.output_channels = qa_net_read_u8(&reader);
     candidate.check_slot = qa_net_read_u32(&reader); candidate.check_time = qa_net_read_f32(&reader);
     candidate.check_cluster = qa_net_read_i32(&reader);
     candidate.random.front = qa_net_read_u8(&reader); candidate.random.rear = qa_net_read_u8(&reader);
@@ -217,14 +241,19 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         application_qc_client *client = &candidate.clients[i];
         client->seat = qa_net_read_u32(&reader);
         uint8_t connected = qa_net_read_u8(&reader), spawned = qa_net_read_u8(&reader), spectator = qa_net_read_u8(&reader);
+        uint8_t prepared = qa_net_read_u8(&reader);
         uint8_t has_parms = qa_net_read_u8(&reader);
         uint8_t primary = qa_net_read_u8(&reader);
         client->colors = qa_net_read_u8(&reader);
-        ok = connected <= 1 && spawned <= connected && spectator <= 1 && has_parms <= 1 && primary <= 1 &&
+        uint8_t output_published = qa_net_read_u8(&reader);
+        ok = connected <= 1 && spawned <= connected && spectator <= 1 && prepared <= connected &&
+             has_parms <= 1 && primary <= 1 && output_published <= spawned &&
              read_actor(&reader, actors, connected != 0, &client->actor);
         client->connected = connected != 0; client->spawned = spawned != 0; client->spectator = spectator != 0;
+        client->prepared = prepared != 0;
         client->has_parms = has_parms != 0;
         client->primary_character = primary != 0;
+        client->output_published = output_published != 0;
         if (ok && client->connected && !client->actor.registry) ok = qa_net_reader_fail(&reader, "QuakeC connected client lacks an actor");
         for (unsigned p = 0; ok && p < 16; ++p) client->parms[p] = qa_net_read_f32(&reader);
         if (reader.failed) ok = false;
@@ -234,6 +263,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 (candidate.clients[earlier].seat == client->seat || qa_actor_id_equal(candidate.clients[earlier].actor, client->actor)))
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC connected client seat or actor");
     }
+    if (ok) ok = application_qc_restore_client_outputs(&candidate, error);
     uint32_t resources = ok ? qa_net_read_u32(&reader) : 0;
     if (resources > 131070u) ok = qa_net_reader_fail(&reader, "QuakeC saved precache count exceeds profile limit");
     for (uint32_t i = 0; ok && i < resources; ++i) {
@@ -299,6 +329,19 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     if (ok) ok = qa_cvars_restore_metadata(candidate.cvars, &registry, metadata, cvars, error);
     free(metadata);
     for (size_t i = 0; ok && i < 64; ++i) { candidate.lightstyles[i] = read_text(&reader); ok = candidate.lightstyles[i] != NULL; }
+    uint32_t extension=ok?qa_net_read_u32(&reader):0;
+    if (ok && (reader.failed || extension>qa_net_reader_remaining(&reader)))
+        ok=qa_net_reader_fail(&reader,"Original source extension exceeds its checkpoint");
+    if (ok && extension) {
+        candidate.original_extension.data=malloc(extension);
+        if (!candidate.original_extension.data)
+            ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original source extension");
+        else {
+            candidate.original_extension.size=extension;
+            ok=qa_net_read_data(&reader,candidate.original_extension.data,extension) &&
+                !memchr(candidate.original_extension.data,0,extension);
+        }
+    }
     uint32_t messages = ok ? qa_net_read_u32(&reader) : 0;
     if ((uint64_t)messages > (uint64_t)candidate.max_clients + 4) ok = qa_net_reader_fail(&reader, "QuakeC message route count exceeds source destinations");
     if (ok && messages) {
@@ -364,10 +407,14 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         candidate.messages = NULL; candidate.message_count = 0;
         engine->clients = candidate.clients; candidate.clients = NULL;
         engine->source_time_ns = candidate.source_time_ns; engine->serverflags = candidate.serverflags;
+        qa_buffer_free(&engine->original_extension);
+        engine->original_extension=candidate.original_extension;
+        candidate.original_extension=(qa_buffer){0};
         engine->random = candidate.random;
         engine->check_slot = candidate.check_slot; engine->check_time = candidate.check_time; engine->check_cluster = candidate.check_cluster;
         engine->loading = loading != 0;
         engine->initialized = candidate.initialized;
+        engine->output_channels = candidate.output_channels;
     }
     dispose_candidate(&candidate);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC engine checkpoint");

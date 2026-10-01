@@ -1,4 +1,5 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_original_save.h"
 #include "control_frame.h"
 #include <float.h>
 #include <stdio.h>
@@ -1124,7 +1125,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     qa_actor_definition definition;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "quakec:authored", &definition, error)) return false;
     qa_qc_game_options options = {
-        .vm = {.profile = engine->profile, .entity_capacity = app->options.actor_capacity,
+        .vm = {.profile = engine->profile, .entity_capacity = engine->actor_capacity,
             .observers = {.context = engine, .stored = stored, .entered = application_qc_entered},
             .host = {.owner = provider->owner, .default_definition = definition, .vfs = provider->launch->content,
                      .context = engine, .random_u32 = source_random, .may_move = application_qc_may_move,
@@ -1141,7 +1142,9 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
         .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
         .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
-    if (provider->component.clock.initial_time_ns == 0)
+    if (application_q1_original_clock(provider,&provider->component.clock.initial_time_ns))
+        engine->source_time_ns=provider->component.clock.initial_time_ns;
+    else if (provider->component.clock.initial_time_ns == 0)
         provider->component.clock.initial_time_ns = UINT64_C(1000000000);
     return true;
 }
@@ -1174,12 +1177,14 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (engine == NULL || entities == NULL || map == NULL || entities->count == 0 || !engine->loading)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC map is missing its world entity");
     qa_qc_instance *vm = provider->state.qc.instance;
-    engine->source_time_ns = UINT64_C(1000000000);
+    uint64_t initial_ns=UINT64_C(1000000000);
+    (void)application_q1_original_clock(provider,&initial_ns);
+    engine->source_time_ns = initial_ns;
     if (!application_qc_source_clients_initialize(engine, error)) return false;
     /* Geometry may come from a different product than this guest's assets. */
     qa_bsp_model world_model;
     if (bsp == NULL || !qa_bsp_read_model(bsp, 0, &world_model, error) ||
-        !qa_qc_game_set_time(provider->state.qc.game, 1, 0, error)) return false;
+        !qa_qc_game_set_time(provider->state.qc.game, (double)initial_ns/1e9, 0, error)) return false;
     if (engine->resource_count != 0)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC world model must precede source precaches");
     if (engine->resource_capacity == 0) {
@@ -1225,7 +1230,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             entities->properties + record.first_property, record.property_count, &reference, error)) return false;
     }
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
-    engine->loading = false; engine->initialized = true; engine->source_time_ns = UINT64_C(1000000000);
+    engine->loading = false; engine->initialized = true; engine->source_time_ns = initial_ns;
     qa_cvars_set_server_active(engine->cvars, true);
     return true;
 }
@@ -1268,6 +1273,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         free(engine->messages[i].data); free(engine->messages[i].references);
     }
     for (size_t i = 0; i < 64; ++i) free(engine->lightstyles[i]);
+    qa_buffer_free(&engine->original_extension);
     qa_builtin_snapshot_free(&engine->observations);
     free(engine->resources); free(engine->messages); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;

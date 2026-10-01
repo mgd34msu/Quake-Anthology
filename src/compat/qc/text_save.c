@@ -21,6 +21,57 @@ static bool add_pair(qa_q1_save_record *record,const char *key,const char *value
     if (!next) { free(pair.key); free(pair.value); return qc_fail(error,QA_ERROR_MEMORY,0,"Allocating source fields"); }
     record->pairs=next; next[record->count++]=pair; return true;
 }
+static bool raw_vector(const qa_qc_instance *vm,uint32_t slot,const char *name,
+    qa_vec3 *out,qa_error *error)
+{
+    const qa_qc_definition *field=qa_qc_program_find_field(vm->program,name);
+    *out=qa_v3(0,0,0);
+    if (!field) return true;
+    if (field->type!=QA_QC_VECTOR || (uint32_t)field->offset+3>vm->layout.field_words)
+        return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body field has an invalid source definition");
+    const uint8_t *words=qc_entity_words_const(vm,slot);
+    *out=qa_v3(qc_load_float(words,field->offset),qc_load_float(words,field->offset+1),
+        qc_load_float(words,field->offset+2));
+    return qa_vec_finite(*out) || qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body vector is nonfinite");
+}
+bool qa_qc_text_body_read(const qa_qc_instance *vm,uint32_t slot,qa_body_state *out,qa_error *error)
+{
+    if (!text_idle(vm,error)) return false;
+    if (!out || !slot || slot>=vm->entity_count ||
+        (vm->slots[slot].kind!=QA_QC_SLOT_OWNED && vm->slots[slot].kind!=QA_QC_SLOT_BORROWED))
+        return qc_fail(error,QA_ERROR_ARGUMENT,slot,"Saved body requires its actual imported actor row");
+    qa_body_state body={0};
+    if (!raw_vector(vm,slot,"origin",&body.origin,error) ||
+        !raw_vector(vm,slot,"angles",&body.angles,error) ||
+        !raw_vector(vm,slot,"velocity",&body.velocity,error) ||
+        !raw_vector(vm,slot,"mins",&body.bounds.mins,error) ||
+        !raw_vector(vm,slot,"maxs",&body.bounds.maxs,error)) return false;
+    const qa_qc_definition *ground=qa_qc_program_find_field(vm->program,"groundentity");
+    if (ground) {
+        if (ground->type!=QA_QC_ENTITY || ground->offset>=vm->layout.field_words)
+            return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved ground field has an invalid source definition");
+        int32_t reference=qc_load_int(qc_entity_words_const(vm,slot),ground->offset);
+        uint32_t target;
+        if (!qc_entity_slot(vm,reference,&target,error)) return false;
+        const qa_qc_definition *flags=qa_qc_program_find_field(vm->program,"flags");
+        uint32_t bits=0;
+        if (flags) {
+            if (flags->type!=QA_QC_FLOAT || flags->offset>=vm->layout.field_words)
+                return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved flags field has an invalid source definition");
+            float value=qc_load_float(qc_entity_words_const(vm,slot),flags->offset);
+            if (!isfinite(value)) return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body flags are nonfinite");
+            double wrapped=fmod(trunc((double)value),4294967296.0);
+            if (wrapped<0) wrapped+=4294967296.0;
+            bits=(uint32_t)wrapped;
+        }
+        if ((bits&512u)!=0 && target && vm->slots[target].kind!=QA_QC_SLOT_FREE)
+            body.ground=vm->slots[target].actor;
+    }
+    if (body.bounds.mins.x>body.bounds.maxs.x || body.bounds.mins.y>body.bounds.maxs.y ||
+        body.bounds.mins.z>body.bounds.maxs.z)
+        return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body bounds are inverted");
+    *out=body; return true;
+}
 static bool saved_value(const qa_qc_instance *vm,const uint8_t *words,
     const qa_qc_definition *definition,qa_q1_save_record *out,qa_error *error)
 {

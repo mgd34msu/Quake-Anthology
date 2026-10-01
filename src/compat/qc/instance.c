@@ -15,6 +15,24 @@ static int32_t reference_of(const qa_qc_instance *instance, uint32_t slot)
 {
     return (int32_t)((uint64_t)slot * instance->layout.stride_bytes);
 }
+static int32_t source_float_int(float);
+static bool original_body(const qa_qc_instance *instance)
+{
+    return instance->program->info.api==QA_QC_API_NETQUAKE &&
+        !instance->options.host.declared_projection;
+}
+static bool body_ground_flags(const qa_qc_instance *instance,uint32_t slot,
+    uint32_t *out,qa_error *error)
+{
+    const qa_qc_definition *flags=qa_qc_program_find_field(instance->program,"flags");
+    *out=0;
+    if (!flags) return true;
+    if (flags->type!=QA_QC_FLOAT || flags->offset>=instance->layout.field_words)
+        return qc_fail(error,QA_ERROR_FORMAT,slot,"QuakeC flags field has the wrong type");
+    float value=qc_load_float(qc_entity_words_const(instance,slot),flags->offset);
+    if (!isfinite(value)) return qc_fail(error,QA_ERROR_FORMAT,slot,"QuakeC body flags are nonfinite");
+    *out=(uint32_t)source_float_int(value); return true;
+}
 
 static uint8_t *edict_bytes(qa_qc_instance *instance, uint32_t slot)
 {
@@ -460,8 +478,10 @@ static bool raw_body_vector(qa_qc_instance *instance, uint32_t slot,
     return raw_entity_vector(instance, slot, field->offset, value, error);
 }
 
-static float source_time(const qa_qc_instance *instance)
+static double source_time(const qa_qc_instance *instance)
 {
+    if (instance->options.host.source_time_seconds)
+        return instance->options.host.source_time_seconds(instance->options.host.context);
     const qa_qc_definition *time = qa_qc_program_find_global(
         instance->program, "time");
     if (time == NULL || time->type != QA_QC_FLOAT
@@ -514,12 +534,12 @@ static void mark_slot_freed(qa_qc_instance *instance, uint32_t slot)
 {
     if (slot == 0 || slot >= instance->entity_count) return;
     clear_freed_fields(instance, slot);
-    set_free_metadata(instance, slot, true, source_time(instance));
+    set_free_metadata(instance, slot, true, (float)source_time(instance));
     instance->slots[slot] = (qc_slot){0};
 }
 
 static bool slot_reusable(const qa_qc_instance *instance, uint32_t slot,
-                          float now)
+                          double now)
 {
     if (instance->slots[slot].kind != QA_QC_SLOT_FREE) return false;
     const uint8_t *edict = instance->entities
@@ -532,7 +552,7 @@ static bool slot_reusable(const qa_qc_instance *instance, uint32_t slot,
 static bool available_slot(qa_qc_instance *instance, bool qw_overwrite,
                            uint32_t *out, qa_error *error)
 {
-    float now = source_time(instance);
+    double now = source_time(instance);
     for (uint32_t slot = instance->options.first_dynamic_slot;
          slot < instance->entity_count; ++slot) {
         if (slot_reusable(instance, slot, now)) {
@@ -623,7 +643,8 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
             ok = qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                          "Borrowed QuakeC actor changed during body refresh");
         }
-        if (ok && !raw_entity_int(instance, slot, field->offset,
+        if (ok && (!original_body(instance) || body.ground.registry!=0) &&
+            !raw_entity_int(instance, slot, field->offset,
                                   ground, error)) ok = false;
     }
     context->refreshing = false;
@@ -734,6 +755,42 @@ bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "QuakeC actor changed while it was being bound");
     return true;
+}
+
+bool qa_qc_reserved_actor_rebind_ready(const qa_qc_instance *instance)
+{
+    return instance && !instance->destroying && !instance->checkpointing;
+}
+bool qa_qc_rebind_reserved_actor(qa_qc_instance *instance, uint32_t slot,
+                                  qa_actor_id previous, qa_actor_id actor,
+                                  qa_qc_slot_kind kind, qa_error *error)
+{
+    if (!qa_qc_reserved_actor_rebind_ready(instance) || !slot ||
+        slot >= instance->options.first_dynamic_slot || slot >= instance->entity_count ||
+        (kind != QA_QC_SLOT_OWNED && kind != QA_QC_SLOT_BORROWED))
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Invalid reserved QuakeC source handoff");
+    qc_slot before = instance->slots[slot];
+    if ((before.kind != QA_QC_SLOT_OWNED && before.kind != QA_QC_SLOT_BORROWED) ||
+        !qa_actor_id_equal(before.actor, previous))
+        return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Reserved QuakeC handoff changed its source generation");
+    const qa_actor_record *record;
+    if (!actor_live(instance, actor, &record))
+        return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Reserved QuakeC handoff actor is not live");
+    if (kind == QA_QC_SLOT_OWNED && (record->owner != instance->options.host.owner ||
+        !record->has_source || record->source_slot != slot))
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC handoff differs from its source owner");
+    for (uint32_t i = 1; i < instance->entity_count; ++i)
+        if (i != slot && instance->slots[i].kind != QA_QC_SLOT_FREE &&
+            qa_actor_id_equal(instance->slots[i].actor, actor))
+            return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC actor already owns another source row");
+    instance->slots[slot] = (qc_slot){kind, actor, record->owner,
+        record->has_source ? record->source_slot : 0};
+    set_free_metadata(instance, slot, false, 0.0f);
+    bool ok = kind == QA_QC_SLOT_OWNED ? qc_sync_body_from_fields(instance, slot, error) :
+        qc_refresh_borrowed(instance, slot, error);
+    if (!ok && slot_matches(instance, slot, kind, actor)) instance->slots[slot] = before;
+    return ok && (slot_matches(instance, slot, kind, actor) ||
+        qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Reserved QuakeC actor changed during source handoff"));
 }
 
 bool qa_qc_unbind_actor(qa_qc_instance *instance, uint32_t slot,
@@ -869,7 +926,9 @@ static bool body_read_impl(void *context, qa_body_state *out, qa_error *error)
                            "QuakeC groundentity field has the wrong type");
         if (!qa_qc_entity_int(instance, reference_of(instance, body->slot),
                               ground->offset, &reference, error)) return false;
-        if (reference != 0)
+        uint32_t flags=512;
+        if (original_body(instance) && !body_ground_flags(instance,body->slot,&flags,error)) return false;
+        if (reference != 0 && (flags&512u)!=0)
             (void)qa_qc_reference_actor(instance, reference, &state.ground, &ignored);
     }
     if (!slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor))
@@ -901,6 +960,15 @@ static bool body_write_impl(void *context, const qa_body_state *state,
         || instance->slots[body->slot].kind != QA_QC_SLOT_OWNED)
         return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot, "QuakeC body binding is retired");
     qa_actor_id actor = instance->slots[body->slot].actor;
+    if (original_body(instance)) {
+        uint32_t value;
+        if (!body_ground_flags(instance,body->slot,&value,error)) return false;
+        const qa_qc_definition *flags=qa_qc_program_find_field(instance->program,"flags");
+        /* A zero canonical actor also represents world ground. Only the
+         * actual physics/control flags owner can clear that distinction. */
+        if (flags && state->ground.registry) qc_store_float(qc_entity_words(instance,body->slot),flags->offset,
+            (float)(int32_t)(value|512u));
+    }
 #define WRITE_VECTOR(name_, value_) do { \
     if (!raw_body_vector(instance, body->slot, name_, value_, error)) return false; \
 } while (0)
@@ -921,7 +989,8 @@ static bool body_write_impl(void *context, const qa_body_state *state,
         if (!slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor))
             return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot,
                            "QuakeC body changed during source write");
-        if (!raw_entity_int(instance, body->slot, field->offset, ground, error)) return false;
+        if ((!original_body(instance) || state->ground.registry!=0) &&
+            !raw_entity_int(instance, body->slot, field->offset, ground, error)) return false;
     }
     return slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor)
         || qc_fail(error, QA_ERROR_NOT_FOUND, body->slot,
@@ -1011,15 +1080,20 @@ bool qc_host_remove(qa_qc_instance *instance, int32_t reference,
                     qa_error *error)
 {
     uint32_t slot;
-    if (!qc_entity_slot(instance, reference, &slot, error) || slot == 0
-        || instance->slots[slot].kind != QA_QC_SLOT_OWNED)
+    if (!qc_entity_slot(instance, reference, &slot, error) || slot == 0)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "remove requires an owned QuakeC actor");
-    qa_actor_id removed = instance->slots[slot].actor;
-    if (!qa_session_release(instance->options.host.session,
-                            removed, error)) return false;
-    if (slot_matches(instance, slot, QA_QC_SLOT_OWNED, removed))
+    if (instance->slots[slot].kind == QA_QC_SLOT_FREE) {
         mark_slot_freed(instance, slot);
-    return true;
+        return true;
+    }
+    qa_actor_id removed = instance->slots[slot].actor;
+    if (instance->slots[slot].kind != QA_QC_SLOT_OWNED)
+        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "remove requires an owned QuakeC actor");
+    if (instance->options.host.world && !qa_world_unlink(instance->options.host.world, removed, error)) return false;
+    if (!slot_matches(instance, slot, QA_QC_SLOT_OWNED, removed))
+        return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "QuakeC actor changed during source unlink");
+    mark_slot_freed(instance, slot);
+    return qa_session_release(instance->options.host.session, removed, error);
 }
 
 static bool may_move(qa_qc_instance *instance, uint32_t slot)

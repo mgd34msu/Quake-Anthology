@@ -17,4 +17,7 @@ bool qa_qc_text_capture(const qa_qc_instance *,qa_q1_save_record *,
  * isolated candidate may be imported: failure can leave partial guest state.
  * Host body linking and header publication follow this operation. */
 bool qa_qc_text_import(qa_qc_instance *,const qa_q1_save_data *,qa_error *);
+/* Read imported raw body fields before any borrowed-field projection can
+ * replace them. This is pure; the host publishes the body and links it. */
+bool qa_qc_text_body_read(const qa_qc_instance *,uint32_t slot,qa_body_state *,qa_error *);
 #endif

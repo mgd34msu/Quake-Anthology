@@ -1,6 +1,7 @@
 #ifndef APPLICATION_GUEST_QC_INTERNAL_H
 #define APPLICATION_GUEST_QC_INTERNAL_H
 #include "internal.h"
+#include "client_outputs.h"
 #include "qa/qc_host.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_qw.h"
@@ -22,9 +23,11 @@ typedef struct application_qc_client {
     uint32_t seat;
     float parms[16];
     uint8_t colors;
-    bool connected, spawned, has_parms;
+    bool connected, spawned, prepared, has_parms;
     bool spectator;
     bool primary_character;
+    bool output_published;
+    application_client_outputs outputs;
 } application_qc_client;
 typedef struct application_qc_message {
     uint32_t destination;
@@ -62,9 +65,12 @@ struct application_qc_state {
     bool has_frame;
     bool loading, projecting;
     bool initialized;
+    uint8_t output_channels;
     struct application_qc_input_scope *input_scope;
+    struct application_qc_parked_input *parked_inputs;
     const float *client_think_time;
     float serverflags;
+    qa_buffer original_extension;
     char *lightstyles[64];
     application_qc_message *messages;
     size_t message_count, message_capacity;
@@ -72,6 +78,13 @@ struct application_qc_state {
     application_qc_actor *actors;
     uint32_t actor_capacity;
 };
+static inline bool application_qc_has_source_admission(const struct application_qc_state *engine)
+{
+    qa_source_frame frame;
+    qa_source_command command;
+    return qa_session_active_frame(engine->services.session, engine->provider->owner, &frame) ||
+        qa_session_active_command(engine->services.session, engine->provider->owner, &command);
+}
 bool application_qc_import(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);
 bool application_qc_capture_engine(void *, qa_buffer *, qa_error *);
 bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
@@ -99,6 +112,11 @@ bool application_qc_input_abort(application_provider *, qa_actor_id, bool, qa_er
 bool application_qc_reserve_player(application_provider *, uint32_t slot, uint32_t seat,
     qa_actor_id, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *);
 bool application_qc_begin_player(application_provider *, qa_actor_id, qa_error *);
+bool application_qc_prepare_player(application_provider *, qa_actor_id, qa_error *);
+bool application_qc_source_clients_initialize(struct application_qc_state *, qa_error *);
+bool application_qc_source_client_released(struct application_qc_state *, qa_actor_record, qa_error *);
+bool application_qc_control_source_client(const application_provider *, qa_actor_id, bool *, qa_error *);
+bool application_qc_player_source_actor(application_provider *, uint32_t, qa_actor_id *, qa_error *);
 bool application_qc_client_colors(application_provider *, qa_actor_id, int32_t top, int32_t bottom, qa_error *);
 bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 #endif
