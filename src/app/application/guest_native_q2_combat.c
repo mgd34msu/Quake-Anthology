@@ -543,7 +543,7 @@ static bool absorb_stage(struct application_native_q2_combat *p, combat_frame *f
         .energy = (source_flags & 4) != 0, .regular_scale = 1};
     float saved;
     if (!qa_combat_absorb(shared(p), frame->request, channel, &geometry,
-        (float)amount, flags, &context, &saved, error) ||
+        (float)amount, flags, &context, &saved, NULL, error) ||
         !application_q2_combat_actor_valid(&frame->record->source, error) ||
         !isfinite(saved) || (double)saved < INT32_MIN || (double)saved > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native armor replacement did not retain its live original target or int32 result");

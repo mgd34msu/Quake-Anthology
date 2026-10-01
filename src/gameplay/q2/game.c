@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "player/feedback.h"
 
 bool q2_actor_live(qa_q2_game *g, qa_actor_id id) {
     return qa_actors_get(qa_session_actors(g->services.session), id) != NULL;
@@ -188,18 +189,22 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     }
     g->now_ns = frame->time_ns;
     g->frame_ns = frame->elapsed_ns;
-    return true;
+    q2_player_feedback_begin(g);
+    return q2_player_frame_begin(g, e);
 }
 static bool actor_frame(void *context, qa_session *session, qa_actor_id id,
                         const qa_source_frame *frame, qa_error *e) {
     (void)session;
+    if (((qa_q2_game *)context)->frame_stopped) return true;
     return qa_q2_actor_tick(context, id, frame->time_ns, frame->elapsed_ns, e);
 }
 static bool end_frame(void *context, qa_session *session, const qa_source_frame *frame,
                        qa_error *e) {
     (void)session;
     (void)frame;
-    return qa_q2_monsters_end_frame(context, e);
+    qa_q2_game *game = context;
+    if (game->frame_stopped) { game->frame_stopped = false; return true; }
+    return q2_player_end_server_frames(game, e) && qa_q2_monsters_end_frame(game, e);
 }
 bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_id id = a->id;

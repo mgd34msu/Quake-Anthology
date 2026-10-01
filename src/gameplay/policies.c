@@ -59,6 +59,20 @@ static bool effect(qa_combat *combat, const qa_combat_policy *policy, qa_damage_
         return qa_combat_argument(error, "source damage effect returned an invalid result");
     return true;
 }
+static bool feedback(qa_combat *combat, const qa_combat_policy *policy,
+                     const qa_damage_request *request, const qa_damage_feedback *value,
+                     qa_error *error) {
+    if (!policy->feedback || !qa_combat_live(combat, request->target)) return true;
+    uint64_t serial = qa_combat_storage_serial(combat, request->target);
+    ++combat->active_calls;
+    bool ok = policy->feedback(policy->context, combat, request, value, error);
+    --combat->active_calls;
+    if (!ok) return false;
+    if (qa_combat_live(combat, request->target) &&
+        qa_combat_storage_serial(combat, request->target) != serial)
+        return qa_combat_argument(error, "damage feedback changed its primary storage owner");
+    return true;
+}
 static bool lethal_health(qa_combat *combat, const qa_combat_policy *policy,
                           const qa_damage_request *request, float *health,
                           qa_reaction *reaction, bool *changed, qa_error *error) {
@@ -119,8 +133,19 @@ static bool absorb(qa_combat *combat, const qa_combat_policy *policy,
         *saved = 0;
         return true;
     }
-    return qa_combat_absorb(combat, request, channel, NULL, amount, flags, &context.armor, saved,
-                            error);
+    qa_powered_armor power_effect = {0};
+    if (!qa_combat_absorb(combat, request, channel, NULL, amount, flags, &context.armor,
+                          saved, &power_effect, error)) return false;
+    if (policy->family == QA_GAME_Q2 &&
+        (channel == QA_PROTECTION_POWERED ? power_effect.kind != QA_POWER_NONE : *saved != 0)) {
+        qa_damage_feedback value = {.stage = channel == QA_PROTECTION_POWERED ?
+            QA_DAMAGE_FEEDBACK_POWER : QA_DAMAGE_FEEDBACK_ARMOR,
+            .power_saved = channel == QA_PROTECTION_POWERED ? *saved : 0,
+            .armor_saved = channel == QA_PROTECTION_REGULAR ? *saved : 0,
+            .powered = power_effect};
+        return feedback(combat, policy, request, &value, error);
+    }
+    return true;
 }
 
 static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
@@ -317,6 +342,10 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         protection_bypassed = !value.allowed;
     }
     float protection_saved = protected_health ? (float)damage : 0;
+    if (protected_health && !feedback(combat, policy, request,
+        &(qa_damage_feedback){.stage = QA_DAMAGE_FEEDBACK_PROTECTION,
+            .armor_saved = protection_saved}, error)) return false;
+    if (!qa_combat_live(combat, request->target)) return true;
     float amount = (float)damage - protection_saved, power = 0, regular = 0;
     value = (qa_damage_effect){.amount = amount, .allowed = true};
     if (!effect(combat, policy, QA_DAMAGE_POWER_ALLOWED, request, &value, error))
@@ -382,6 +411,15 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         if (!current(combat, request, &target, &attacker, &has_attacker, error))
             return false;
     }
+    if (!feedback(combat, policy, request,
+        &(qa_damage_feedback){.stage = QA_DAMAGE_FEEDBACK_HEALTH,
+            .blood = (float)take, .power_saved = power,
+            .armor_saved = regular + protection_saved}, error)) return false;
+    if (!qa_combat_live(combat, request->target)) {
+        *result = (qa_damage_result){0};
+        return true;
+    }
+    if (!current(combat, request, &target, &attacker, &has_attacker, error)) return false;
     if (!take) {
         value = (qa_damage_effect){.amount = 0, .allowed = true, .reaction = QA_REACTION_NONE};
         if (!effect(combat, policy, QA_DAMAGE_AFTER_HEALTH, request, &value, error)) return false;

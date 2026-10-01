@@ -32,6 +32,7 @@ typedef struct qa_q2_player_view {
     qa_q2_blend blend;
     float fov, health, armor, ammo;
     int score, flashes, layouts;
+    int32_t hit_marker_damage;
     qa_item_id selected_item, timer_item;
     int timer_seconds;
     bool underwater, spectator;
@@ -194,6 +195,8 @@ typedef struct qa_q2_player_state {
     qa_q2_hand hand;
     int gender, old_water, drown_damage, breather_sound, animation_priority, animation_end;
     int auto_switch, auto_shield, flashes;
+    /* Exact signed I16 STAT_HIT_MARKER value, represented without host casts. */
+    int32_t hit_marker_damage;
     uint32_t buttons, latched_buttons, event;
     uint64_t entered_ns, respawn_ns, air_ns, drown_ns, pain_ns, damage_ns, power_armor_ns;
     uint64_t fall_ns, landmark_noise_ns, flood_until_ns, flood_times[10];

@@ -25,7 +25,12 @@ bool qa_q2_combat_actor_read(const qa_q2_game *game, qa_actor_id actor,
             state->character_immortal,
         .no_damage_effects = game->options.edition == QA_Q2_RERELEASE &&
             state->character_no_damage_effects};
+    view.mechanical = state->projectile.kind == Q2_PROX ||
+        state->projectile.kind == Q2_TESLA ||
+        (state->projectile.kind == Q2_TRAP && game->options.edition == QA_Q2_RERELEASE);
     if (state->monster) {
+        view.mechanical |= state->monster->definition->species == Q2M_TURRET;
+        view.gekk = state->monster->definition->species == Q2M_GEKK;
         view.has_enemy = state->monster->enemy.registry != 0;
         view.suppress_pain = state->monster->ducked;
         view.birth_preserves_death_knockback = game->options.edition == QA_Q2_CLASSIC;

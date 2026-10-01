@@ -161,13 +161,15 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
         return false;
     if (a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
-    if (qa_q2_player_controlled(g, id))
-        return !q2_actor_live(g, id) || qa_q2_clear_input(g, id, e);
+    bool controlled = qa_q2_player_controlled(g, id);
+    if (!q2_actor_live(g, id)) return true;
+    if (controlled && !qa_q2_clear_input(g, id, e)) return false;
     qa_q2_player_movement m;
     if (!q2_player_observe(g, a, &m, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
+    if (controlled) return q2_player_build_view(g, a, &m, e);
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     if (rr && !qa_q2_entities_player_begin(g, id, e))
         return false;

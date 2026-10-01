@@ -133,6 +133,7 @@ struct qa_q2_game {
     qa_error release_error;
     bool release_failed;
     bool restoring_continuation, continuation_pending, continuation_failed;
+    bool frame_stopped; /* Current source-frame early ExitLevel/fade, never continuation state. */
     unsigned hand_steps;
     bool lmctf_plasma_quad;
     uint8_t widow_damage_multiplier;

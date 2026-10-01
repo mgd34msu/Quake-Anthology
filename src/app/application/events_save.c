@@ -41,10 +41,10 @@ static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[sizeof(event_magic)];
     memcpy(magic, event_magic, sizeof(magic));
-    uint32_t version = 2;
+    uint32_t version = 3;
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
         qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, event_magic, sizeof(magic)) && version == 2) ||
+        ((!memcmp(magic, event_magic, sizeof(magic)) && version == 3) ||
          event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema"));
 }
 
@@ -266,6 +266,8 @@ static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
         qa_source_save_f32(io, &view->health) && qa_source_save_f32(io, &view->armor) &&
         qa_source_save_f32(io, &view->ammo) && int_field(io, &view->score) &&
         int_field(io, &view->flashes) && int_field(io, &view->layouts) &&
+        qa_source_save_i32(io, &view->hit_marker_damage) &&
+        view->hit_marker_damage >= INT16_MIN && view->hit_marker_damage <= INT16_MAX &&
         qa_source_save_string(io, &view->selected_item) && qa_source_save_string(io, &view->timer_item) &&
         int_field(io, &view->timer_seconds) && qa_source_save_bool(io, &view->underwater) &&
         qa_source_save_bool(io, &view->spectator);

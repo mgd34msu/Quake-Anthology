@@ -287,6 +287,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                               .fov = intermission ? 90 : s->fov,
                               .health = combat.health,
                               .score = score,
+                              .hit_marker_damage = rr ? s->hit_marker_damage : 0,
                               .selected_item = s->info.selected_item,
                               .spectator = s->info.spectator,
                               .flashes = flashes};

@@ -53,6 +53,8 @@ static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
         float_field(io, &view->health) && float_field(io, &view->armor) &&
         float_field(io, &view->ammo) && int_field(io, &view->score) &&
         int_field(io, &view->flashes) && int_field(io, &view->layouts) &&
+        qa_source_save_i32(io, &view->hit_marker_damage) &&
+        view->hit_marker_damage >= INT16_MIN && view->hit_marker_damage <= INT16_MAX &&
         qa_source_save_string(io, &view->selected_item) && qa_source_save_string(io, &view->timer_item) &&
         int_field(io, &view->timer_seconds) && qa_source_save_bool(io, &view->underwater) &&
         qa_source_save_bool(io, &view->spectator);
@@ -145,10 +147,10 @@ static bool fields(qa_source_save_io *io, player_record *row)
 static bool header(qa_source_save_io *io, const qa_frontend *f)
 {
     uint8_t magic[] = {'Q','F','P','L'};
-    uint32_t version = 1, seats = f->options.seats;
+    uint32_t version = 2, seats = f->options.seats;
     bool dedicated = f->options.dedicated;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QFPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u32(io, &seats) &&
+        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &seats) &&
         seats == f->options.seats && qa_source_save_bool(io, &dedicated) && dedicated == f->options.dedicated;
 }
 static bool capture(const frontend_seat *seat, player_record *row, qa_error *error)

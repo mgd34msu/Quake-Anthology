@@ -86,9 +86,12 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
         float available = powered->cells * damage_per_cell;
         if (doubled) available = truncf(available / 2);
         if (context->rerelease) { protected_damage = fmaxf(1, protected_damage); available = fmaxf(1, available); }
-        result.power_saved = fminf(available, protected_damage);
-        float used = truncf(result.power_saved / damage_per_cell) * (doubled ? 2 : 1);
-        powered->cells = context->rerelease ? fmaxf(0, powered->cells - fmaxf(damage_per_cell, used)) : powered->cells - used;
+        if (available != 0) {
+            result.power_activated = true;
+            result.power_saved = fminf(available, protected_damage);
+            float used = truncf(result.power_saved / damage_per_cell) * (doubled ? 2 : 1);
+            powered->cells = context->rerelease ? fmaxf(0, powered->cells - fmaxf(damage_per_cell, used)) : powered->cells - used;
+        }
     }
     qa_regular_armor *item = &result.armor.regular;
     if (regular && !flags.no_regular_armor && item->kind != QA_ARMOR_NONE) {

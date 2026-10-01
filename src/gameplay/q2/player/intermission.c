@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "feedback.h"
 
 bool qa_q2_players_in_intermission(const qa_q2_game *g) {
     return g && g->player_runtime && g->player_runtime->intermission;
@@ -222,8 +223,10 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
         return false;
     }
     q2_players *p = g->player_runtime;
-    if (p->restart_ns && g->now_ns >= p->restart_ns) {
+    if (p->restart_ns && g->now_ns >= p->restart_ns &&
+        !(p->intermission && p->next_map && p->exit)) {
         p->restart_ns = 0;
+        if (!q2_player_end_server_frames(g, e)) return false;
         return q2_player_emit(
             g, &(qa_q2_player_event){.kind = QA_Q2_PLAYER_RESTART, .text = p->rules.map_name}, e);
     }
@@ -254,15 +257,13 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
     qa_string_id map = p->next_map;
     qa_q2_landmark landmark = p->landmark;
     bool has_landmark = p->has_landmark;
-    p->intermission = false;
-    p->exit = false;
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    if (!rr) { p->intermission = false; p->exit = false; }
+    if (!q2_player_end_server_frames(g, e)) return false;
+    if (rr) { p->intermission = false; p->exit = false; }
     for (size_t i = 0; i < g->capacity; i++) {
         q2_actor *a = g->actors[i];
         if (!a || !a->client || !a->client->info.connected)
-            continue;
-        if (!qa_q2_player_end_frame(g, a->id, e))
-            return false;
-        if (!q2_actor_live(g, a->id))
             continue;
         if (p->intermission_flags & 8) {
             if (!q2_player_inventory_set(g, a->id, NULL, 0, e) ||

@@ -81,7 +81,12 @@ typedef struct qa_damage_flags {
 } qa_damage_flags;
 typedef struct qa_armor_context { float screen_facing_dot; bool q2_profile, rerelease, ctf, alive; } qa_armor_context;
 typedef struct qa_damage_geometry { qa_vec3 direction, point, normal; } qa_damage_geometry;
-typedef struct qa_armor_result { qa_armor armor; float power_saved, regular_saved; } qa_armor_result;
+typedef struct qa_armor_result {
+    qa_armor armor;
+    float power_saved, regular_saved;
+    /* Actual source power-armor effect boundary, including Classic zero saves. */
+    bool power_activated;
+} qa_armor_result;
 qa_damage_flags qa_attack_flags(const qa_attack *);
 bool qa_armor_validate(const qa_armor *, qa_error *);
 bool qa_regular_armor_equal(qa_regular_armor, qa_regular_armor);
@@ -171,6 +176,15 @@ typedef enum qa_damage_effect_stage {
  * changing its amount does not repeat absorption. AFTER_POWER/AFTER_ARMOR
  * transform the remaining amount. Each family retains its source ordering. */
 typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
+typedef enum qa_damage_feedback_stage {
+    QA_DAMAGE_FEEDBACK_PROTECTION, QA_DAMAGE_FEEDBACK_POWER,
+    QA_DAMAGE_FEEDBACK_ARMOR, QA_DAMAGE_FEEDBACK_HEALTH
+} qa_damage_feedback_stage;
+typedef struct qa_damage_feedback {
+    qa_damage_feedback_stage stage;
+    float blood, power_saved, armor_saved;
+    qa_powered_armor powered;
+} qa_damage_feedback;
 typedef bool (*qa_source_reaction_body)(void *, qa_error *);
 typedef struct qa_source_reaction_observer qa_source_reaction_observer;
 typedef bool (*qa_source_reaction_executor)(void *, qa_source_reaction_observer *, qa_error *);
@@ -251,6 +265,11 @@ typedef struct qa_combat_policy {
     /* Effects can reenter combat. Each subsequent stage rereads authority.
      * LETHAL_HEALTH uses amount as proposed health, not damage. */
     bool (*effect)(void *, qa_combat *, qa_damage_effect_stage, const qa_damage_request *, qa_damage_effect *, qa_error *);
+    /* Synchronous source presentation at the policy's actual protection,
+     * armor and pre-health sites. Original source executors emit their own
+     * events. The callback may reenter; its target is reread before continuing. */
+    bool (*feedback)(void *, qa_combat *, const qa_damage_request *,
+                     const qa_damage_feedback *, qa_error *);
 } qa_combat_policy;
 
 /* One thread owns these services; actors are borrowed. The session forwards
@@ -321,7 +340,10 @@ bool qa_combat_protection_owner(qa_combat *, qa_actor_id, qa_protection_channel,
 /* Run an original guest's armor site through the same selected owner. A null
  * geometry selects request geometry; source-local geometry leaves provenance
  * unchanged. The victim context is calculated from the selected geometry. */
-bool qa_combat_absorb(qa_combat *, const qa_damage_request *, qa_protection_channel, const qa_damage_geometry *, float, qa_damage_flags, const qa_armor_context *, float *, qa_error *);
+/* power_effect optionally receives the actual compiled power-armor recipe at
+ * its reached effect boundary; NONE means no boundary was reached. Source-owned
+ * absorbers emit their own source effects and return NONE here. */
+bool qa_combat_absorb(qa_combat *, const qa_damage_request *, qa_protection_channel, const qa_damage_geometry *, float, qa_damage_flags, const qa_armor_context *, float *, qa_powered_armor *power_effect, qa_error *);
 bool qa_combat_apply(qa_combat *, const qa_damage_request *, qa_damage_outcome *, qa_error *);
 bool qa_combat_run_source(qa_combat *, const qa_damage_request *, qa_source_damage_fn, void *, qa_damage_outcome *, qa_error *);
 bool qa_damage_dispatch_source_reaction(qa_damage_observer *, const qa_damage_result *,

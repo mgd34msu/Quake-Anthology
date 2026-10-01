@@ -1,6 +1,8 @@
 #include "native_q2_combat_policy.h"
 #include "native_q2_console.h"
+#include "native_q2_feedback_wire.h"
 #include "qa/game_q2_combat.h"
+#include "qa/game_q2_feedback.h"
 
 static bool live_provider(const application_provider *provider) {
     return provider && provider->constructed && provider->attached && !provider->close_pending;
@@ -329,12 +331,137 @@ static bool source_effect(void *opaque, qa_combat *combat, qa_damage_effect_stag
     return true;
 }
 
+static bool hit_marker_client(application_provider *provider, qa_actor_id actor,
+                              int64_t damage, bool *found, qa_error *error) {
+    *found = false;
+    if (!live_provider(provider) || provider->kind != APPLICATION_PROVIDER_Q2) return true;
+    qa_q2_combat_rules rules;
+    if (!source_rules(provider, &rules, error)) return false;
+    if (rules.edition != QA_Q2_RERELEASE) return true;
+    return qa_q2_player_hit_marker_add(provider->state.q2, actor, damage, found, error);
+}
+
+static bool power_armor_client(application_provider *provider, qa_actor_id actor,
+                               bool *found, qa_error *error) {
+    *found = false;
+    if (!live_provider(provider) || provider->kind != APPLICATION_PROVIDER_Q2) return true;
+    return qa_q2_player_power_armor_activate(provider->state.q2, actor, found, error);
+}
+
+static bool source_feedback(void *opaque, qa_combat *combat,
+    const qa_damage_request *request, const qa_damage_feedback *feedback, qa_error *error) {
+    application_provider *provider = opaque;
+    qa_q2_combat_rules rules;
+    if (!live_provider(provider) || !source_rules(provider, &rules, error) ||
+        combat != provider->application->combat ||
+        request->attack.combat_provider != provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 feedback lost its selected policy owner");
+    qa_application *app = provider->application;
+    if (!qa_actors_get(qa_session_actors(app->session), request->target)) return true;
+    application_provider *selected = application_provider_for(app, request->target, QA_ROLE_COMBAT, "");
+    if (selected && selected != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 feedback names another selected combat policy");
+    int effect = request->attack.cause.kind == QA_CAUSE_Q2 &&
+        (request->attack.cause.source.q2.flags & 16u) ?
+        QA_Q2_DAMAGE_BULLET_SPARKS : QA_Q2_DAMAGE_SPARKS;
+    switch (feedback->stage) {
+    case QA_DAMAGE_FEEDBACK_PROTECTION: {
+        qa_combat_state primary;
+        if (!qa_combat_read_traits(combat, request->target, &primary, error)) return false;
+        if (!primary.invulnerable) return true;
+        break;
+    }
+    case QA_DAMAGE_FEEDBACK_POWER: {
+        if (feedback->powered.kind == QA_POWER_NONE)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Q2 power sparks have no actual powered armor recipe");
+        effect = feedback->powered.source_edition == QA_Q2_POWER_ARMOR_RERELEASE ||
+            feedback->powered.kind == QA_POWER_SCREEN ?
+            QA_Q2_DAMAGE_SCREEN_SPARKS : QA_Q2_DAMAGE_SHIELD_SPARKS;
+        application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
+        bool found;
+        if (!power_armor_client(physical, request->target, &found, error)) return false;
+        application_provider *character = application_provider_for(app, request->target,
+            QA_ROLE_CHARACTER, "");
+        if (!found && character != physical &&
+            !power_armor_client(character, request->target, &found, error)) return false;
+        break;
+    }
+    case QA_DAMAGE_FEEDBACK_ARMOR:
+        if (!feedback->armor_saved) return true;
+        break;
+    case QA_DAMAGE_FEEDBACK_HEALTH: {
+        qa_builtin_actor_traits victim;
+        qa_q2_combat_actor victim_q2;
+        if (!character_traits(app, request->target, &victim, &victim_q2, error)) return false;
+        if (rules.edition == QA_Q2_RERELEASE && victim_q2.no_damage_effects) return true;
+        qa_combat_state target;
+        if (!qa_combat_read(combat, request->target, &target, error)) return false;
+        if (!qa_actors_get(qa_session_actors(app->session), request->target)) return true;
+        uint32_t mod = request->attack.cause.kind == QA_CAUSE_Q2 ?
+            (uint32_t)request->attack.cause.source.q2.means_of_death & ~UINT32_C(0x08000000) : UINT32_MAX;
+        if (rules.edition == QA_Q2_RERELEASE && target.health > 0 && mod != 30 &&
+            !qa_actor_id_equal(request->target, request->attack.attacker)) {
+            qa_actor_collision collision;
+            qa_error read_error = {0};
+            bool colliding = qa_world_get_collision(app->world, request->target, &collision, &read_error);
+            if (!colliding && read_error.code != QA_OK) {
+                if (error) *error = read_error;
+                return false;
+            }
+            if (!qa_actors_get(qa_session_actors(app->session), request->target)) return true;
+            if (!qa_combat_read(combat, request->target, &target, error) ||
+                !character_traits(app, request->target, &victim, &victim_q2, error)) return false;
+            if (!qa_actors_get(qa_session_actors(app->session), request->target) ||
+                victim_q2.no_damage_effects) return true;
+            if (target.health > 0 && (!colliding || !collision.dead_monster)) {
+                double components[] = {feedback->blood, feedback->power_saved, feedback->armor_saved};
+                int64_t damage = 0;
+                for (size_t i = 0; i < 3; ++i) {
+                    double value = trunc(components[i]);
+                    if (!isfinite(value) || value < INT32_MIN || value > INT32_MAX)
+                        return application_fail(error, QA_ERROR_FORMAT,
+                            "Q2 hit-marker contribution exceeds its actual damage word");
+                    damage += (int64_t)value;
+                }
+                application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
+                bool found;
+                if (!hit_marker_client(physical, request->attack.attacker, damage, &found, error)) return false;
+                application_provider *character = application_provider_for(app,
+                    request->attack.attacker, QA_ROLE_CHARACTER, "");
+                if (!found && character != physical &&
+                    !hit_marker_client(character, request->attack.attacker, damage, &found, error)) return false;
+            }
+        }
+        if (!feedback->blood) return true;
+        bool mission_effects = rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_ROGUE;
+        if (mission_effects && victim_q2.mechanical) effect = QA_Q2_DAMAGE_ELECTRIC_SPARKS;
+        else if (victim.player || victim.monster) {
+            if ((rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_XATRIX) && victim_q2.gekk)
+                effect = QA_Q2_DAMAGE_GREEN_BLOOD;
+            else if (mission_effects && mod == 40) effect = QA_Q2_DAMAGE_MORE_BLOOD;
+            else effect = QA_Q2_DAMAGE_BLOOD;
+        }
+        break;
+    }
+    }
+    qa_vec3 point, normal;
+    if (!application_native_q2_feedback_geometry(rules.edition == QA_Q2_RERELEASE,
+            (uint8_t)effect, request->point, request->normal, &point, &normal, error)) return false;
+    return application_emit(app, &(qa_builtin_event){.kind = QA_BUILTIN_PARTICLES,
+        .family = QA_GAME_Q2, .provider = provider->owner, .actor = request->target,
+        .other = request->attack.attacker, .origin = point,
+        .direction = normal, .code = effect,
+        .time_ns = qa_session_elapsed(app->session)}, error);
+}
+
 bool application_native_q2_combat_policy(application_provider *provider,
                                          qa_combat_policy *out, qa_error *error) {
     qa_q2_combat_rules rules;
     if (!out || !source_rules(provider, &rules, error)) return false;
     *out = (qa_combat_policy){.provider = provider->owner, .family = QA_GAME_Q2,
-        .context = provider, .prepare = prepare, .describe = describe, .effect = source_effect};
+        .context = provider, .prepare = prepare, .describe = describe, .effect = source_effect,
+        .feedback = source_feedback};
     return true;
 }
 

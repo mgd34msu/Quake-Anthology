@@ -92,8 +92,9 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 player event queue changed during presentation");
         const qa_q2_player_event *event = &observed.event;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
-            frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor;
-            if (!qa_application_player_actor(frontend->application, j, &actor) ||
+            frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor; uint32_t launch_seat;
+            if (!frontend_seat_launch_id_read(frontend,j,&launch_seat) ||
+                !qa_application_player_actor(frontend->application,launch_seat,&actor) ||
                 (event->actor.registry && !qa_actor_id_equal(actor, event->actor))) continue;
             if (seat->q2_actor.registry && !qa_actor_id_equal(actor, seat->q2_actor)) frontend_player_retire(seat);
             seat->q2_actor = actor;
@@ -103,6 +104,13 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 seat->q2_vitals[0] = (qa_hud_value){.label = "Health", .value = event->view.health, .warning = event->view.health <= 25};
                 seat->q2_vitals[1] = (qa_hud_value){.label = "Armor", .value = event->view.armor, .warning = (event->view.flashes & 2) != 0};
                 seat->q2_vitals[2] = (qa_hud_value){.label = "Ammo", .value = event->view.ammo};
+                if (event->view.hit_marker_damage > 0) {
+                    const uint64_t duration = UINT64_C(150000000);
+                    if (observed.time_ns > UINT64_MAX - duration)
+                        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 hit-marker deadline overflow");
+                    qa_hud_hit_marker(seat->hud, event->view.hit_marker_damage,
+                        observed.time_ns + duration);
+                }
                 if (!timer(seat, frontend->time_ns, error)) return false;
                 break;
             case QA_Q2_PLAYER_SCOREBOARD: if (!scores(seat, event, error)) return false; break;
@@ -114,7 +122,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 break;
             case QA_Q2_PLAYER_STUFFTEXT: {
                 if (!event->text) break;
-                qa_command_context command = {.owner = observed.provider, .seat = j, .actor = actor,
+                qa_command_context command = {.owner = observed.provider, .seat = launch_seat, .actor = actor,
                     .dialect = QA_CONSOLE_Q2, .origin = QA_COMMAND_SERVER, .script = "q2:stufftext"};
                 if (!qa_application_capture_command_context(frontend->application, &command, &command, error) ||
                     !qa_console_append(qa_application_console(frontend->application), &command, event->text, error)) return false;
@@ -133,7 +141,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
         if (event->kind != QA_Q2_MAP_HELP && event->kind != QA_Q2_MAP_HELP_COMPUTER && event->kind != QA_Q2_MAP_STORY) continue;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
             frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor;
-            if (!qa_application_player_actor(frontend->application, j, &actor) ||
+            if (!frontend_seat_actor_read(frontend,j,&actor) ||
                 (event->recipient.registry && !qa_actor_id_equal(actor, event->recipient))) continue;
             const char *text = qa_strings_cstr(strings, event->text);
             if (event->kind == QA_Q2_MAP_HELP && event->slot >= 1 && event->slot <= 2) {

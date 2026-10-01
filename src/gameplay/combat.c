@@ -741,7 +741,7 @@ bool qa_protection_observe(qa_protection_observer *observer, const qa_protection
 }
 bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_protection_channel channel,
                       const qa_damage_geometry *geometry, float amount, qa_damage_flags flags, const qa_armor_context *context,
-                      float *saved, qa_error *error) {
+                      float *saved, qa_powered_armor *power_effect, qa_error *error) {
     if (!request || !context || !saved || !isfinite(amount) || (channel != QA_PROTECTION_REGULAR && channel != QA_PROTECTION_POWERED))
         return qa_combat_argument(error, "invalid combat armor stage");
     qa_damage_geometry captured = geometry ? *geometry : (qa_damage_geometry){request->direction, request->point, request->normal};
@@ -754,7 +754,11 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
         return qa_combat_argument(error, "armor stage requires its active damage request");
     qa_combat_protection *slot = &entry->protection[channel];
     if (slot->reserved) {
-        if (amount <= 0 || flags.no_armor || (channel == QA_PROTECTION_REGULAR ? flags.no_regular_armor : flags.no_power_armor)) { *saved = 0; return true; }
+        if (amount <= 0 || flags.no_armor || (channel == QA_PROTECTION_REGULAR ? flags.no_regular_armor : flags.no_power_armor)) {
+            *saved = 0;
+            if (power_effect) *power_effect = (qa_powered_armor){0};
+            return true;
+        }
         if (!slot->bound) return qa_combat_argument(error, "armor stage has an unbound protection owner");
         qa_protection_binding binding = slot->binding;
         qa_protection_observer observer = {.combat = combat, .cursor = cursor,
@@ -767,7 +771,9 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
         if (!ok) return false;
         if (!isfinite(result) || result < 0 || result > amount) return qa_combat_argument(error, "source armor savings exceed the incoming damage");
         if (!cursor_reconciled(combat, cursor, error)) return false;
-        *saved = result; return true;
+        *saved = result;
+        if (power_effect) *power_effect = (qa_powered_armor){0};
+        return true;
     }
     qa_combat_state current; qa_armor_result result;
     if (!read_state(combat, entry, &current, error)) return false;
@@ -778,7 +784,11 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
                                                &captured, &victim, error);
         --combat->active_calls;
         if (!ok || !cursor_reconciled(combat, cursor, error)) return false;
-        if (!qa_combat_live(combat, request->target)) { *saved = 0; return true; }
+        if (!qa_combat_live(combat, request->target)) {
+            *saved = 0;
+            if (power_effect) *power_effect = (qa_powered_armor){0};
+            return true;
+        }
         entry = record(combat, request->target);
         if (!entry || entry->serial != cursor->binding_serial)
             return qa_combat_argument(error, "victim armor context changed its storage owner");
@@ -787,6 +797,7 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
     if (!qa_armor_absorb(&current.armor, amount, flags, &victim, &channel, &result, error)) return false;
     if (!qa_armor_equal(current.armor, result.armor) && !qa_combat_set_armor(combat, request->target, &result.armor, error)) return false;
     *saved = channel == QA_PROTECTION_REGULAR ? result.regular_saved : result.power_saved;
+    if (power_effect) *power_effect = result.power_activated ? current.armor.powered : (qa_powered_armor){0};
     return true;
 }
 bool qa_combat_impulse(qa_combat *combat, const qa_damage_request *request, qa_vec3 direction, float amount, qa_error *error) {

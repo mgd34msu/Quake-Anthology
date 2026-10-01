@@ -31,6 +31,7 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
         !q2_save_text(io, s->dogtag, sizeof(s->dogtag))) return false;
     Q2U(hand); Q2I(gender); Q2I(old_water); Q2I(drown_damage); Q2I(breather_sound);
     Q2I(animation_priority); Q2I(animation_end); Q2I(auto_switch); Q2I(auto_shield); Q2I(flashes);
+    Q2S(i32, hit_marker_damage);
     Q2U(buttons); Q2U(latched_buttons); Q2U(event);
     Q2T(entered_ns); Q2T(respawn_ns); Q2T(air_ns); Q2T(drown_ns); Q2T(pain_ns);
     Q2T(damage_ns); Q2T(power_armor_ns); Q2T(fall_ns); Q2T(landmark_noise_ns); Q2T(flood_until_ns);
