@@ -148,6 +148,8 @@ bool qa_launch_validate(const qa_launch_draft *d, qa_error *error)
     for (size_t i = 0; i < v->seat_count; ++i) {
         const qa_launch_seat *s = &v->seats[i];
         if (!isfinite(s->bot_skill) || s->bot_skill < 0) return fail(error, "invalid seat bot skill");
+        if (s->bot_delay_ms < 0 || (s->bot_definition && !*s->bot_definition))
+            return fail(error, "invalid seat bot definition or spawn delay");
         if (s->bot && s->local) return fail(error, "a bot is not a local input seat");
         for (size_t j = 0; j < i; ++j) {
             const qa_launch_seat *other = &v->seats[j];

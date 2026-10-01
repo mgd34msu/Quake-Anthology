@@ -226,7 +226,8 @@ bool qa_launch_set_seat(qa_launch_draft *d, const qa_launch_seat *input, qa_erro
     if (!valid_draft(d, input, error)) return false;
     qa_launch_seat v = *input;
     v.name = launch_text(d, input->name, error); v.team = launch_text(d, input->team, error);
-    if (!v.name || !v.team) return false;
+    v.bot_definition = input->bot_definition ? launch_text(d, input->bot_definition, error) : NULL;
+    if (!v.name || !v.team || (input->bot_definition && !v.bot_definition)) return false;
     size_t n = d->choices.seat_count, i = 0;
     while (i < n && d->choices.seats[i].id != v.id) ++i;
     if (!launch_grow((void **)&d->choices.seats, &d->seat_capacity, i + 1, sizeof(v), error)) return false;

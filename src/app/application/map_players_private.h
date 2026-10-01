@@ -19,11 +19,14 @@ typedef struct application_player_carry {
     qa_q2_player_carry q2;
     qa_q2_weapon weapon2;
     qa_q3_weapon weapon3;
+    qa_q3_usercmd q3_command;
+    qa_actor_id q3_previous_actor;
     qa_actor_owner character_owner, arsenal_owner;
     application_guest_carry guests[7];
     size_t guest_count;
     bool addon_reset, arsenal_addon_reset;
     bool present, has_q1, has_mg3, has_q2, has_weapon2, has_weapon3;
+    bool q3_client;
 } application_player_carry;
 typedef struct application_player_guest_binding {
     qa_actor_owner owner;
@@ -38,6 +41,9 @@ typedef struct application_player_record {
     qa_net_client_id remote_client;
     qa_net_seat_id remote_seat;
     char *name, *team, *skin, *userinfo;
+    char *bot_definition;
+    float bot_skill;
+    int32_t bot_delay_ms;
     application_player_guest_binding *guests;
     size_t guest_count;
     bool deferred, spectator, bot, remote, dynamic, retiring, source_begin_pending;
@@ -69,6 +75,15 @@ struct application_player_travel {
     bool carry_players, new_unit, has_landmark;
 };
 
+typedef struct application_q3_round_player_admission {
+    const qa_q3_usercmd *command;
+} application_q3_round_player_admission;
+
+bool application_q3_player_spawn_pose(qa_application *, qa_actor_id, bool spectator,
+                                      qa_body_state *, bool *found, qa_error *);
+bool application_q3_find_intermission_pose(application_provider *, qa_vec3 *origin,
+    qa_vec3 *angles, qa_error *);
+
 bool application_players_guest_attach(qa_application *, application_provider *, uint32_t,
                                        qa_actor_id, const qa_builtin_player_info *, qa_error *);
 bool application_players_guest_detach(qa_application *, application_provider *, uint32_t,
@@ -76,5 +91,10 @@ bool application_players_guest_detach(qa_application *, application_provider *, 
 
 bool application_players_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
+bool application_players_native_q3_retire(qa_application *, application_provider *,
+    qa_actor_id, qa_error *);
+bool application_players_bot_detach(qa_application *,qa_actor_id,qa_error *);
+bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
+bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
 
 #endif

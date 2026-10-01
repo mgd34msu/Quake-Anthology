@@ -74,6 +74,9 @@ typedef struct qa_launch_seat {
     uint32_t input_device;
     bool local, spectator, bot;
     float bot_skill;
+    /* Definition alias is separate from the public name; NULL uses name. */
+    const char *bot_definition;
+    int32_t bot_delay_ms;
 } qa_launch_seat;
 typedef struct qa_launch_loadout {
     qa_launch_scope scope;
@@ -246,6 +249,12 @@ uint64_t qa_configuration_generation(const qa_configuration *);
 const qa_launch_snapshot *qa_configuration_current(const qa_configuration *);
 bool qa_configuration_prepare(qa_configuration *, const qa_launch_draft *,
                                qa_configuration_transaction **, qa_error *);
+/* A full world replacement constructs fresh instance owners even when their
+ * immutable identities equal the current selections. Abort retains the old
+ * owners; publication retires them through the ordinary checked lifecycle.
+ * The resulting identities still permit ordinary later configuration reuse. */
+bool qa_configuration_prepare_replacing(qa_configuration *, const qa_launch_draft *,
+                                         qa_configuration_transaction **, qa_error *);
 bool qa_configuration_validate(qa_configuration_transaction *, qa_error *);
 /* On success consumes the transaction. Failure leaves it available to abort.
  * An intervening commit invalidates its expected generation, never the live state. */

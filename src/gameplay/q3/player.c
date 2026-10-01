@@ -64,7 +64,8 @@ bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable
 bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
                              int32_t handicap, qa_q3_player_binding *binding, qa_error *error) {
     if (!game || game->source_restored || actor.slot >= game->capacity ||
-        !qa_actors_get(qa_session_actors(game->options.services.session), actor) || !selections ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
+        (!selections && !qa_q3_native_client_slot(game, actor, &(uint32_t){0}, NULL)) ||
         (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS) || !binding || binding->token ||
         game->player_binding_tokens[actor.slot])
         return q3_fail(error, "invalid Q3 player admission");
@@ -86,7 +87,8 @@ bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selec
                                       .handicap = handicap,
                                       .created = !entry->kind ||
                                           (entry->kind == Q3_ACTOR_PLAYER &&
-                                           !entry->state.player.selections)};
+                                           !entry->state.player.selections &&
+                                           !entry->state.player.handicap)};
     return true;
 }
 static bool binding_matches(qa_q3_game *game, const qa_q3_player_binding *binding,
