@@ -9,7 +9,7 @@ typedef struct frontend_equipment_source frontend_equipment_source;
 typedef struct frontend_equipment_source_options {
     qa_frontend *frontend;
     qa_actor_owner receiver;
-    uint32_t seat;
+    uint32_t seat, physical_seat;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     void *lease;
@@ -19,6 +19,10 @@ typedef struct frontend_equipment_source_options {
     bool (*borrow)(void *, qa_application_q3_client_context *, qa_error *);
     bool (*current)(void *, const qa_application_q3_client_context *);
     void (*release)(void *);
+    /* Native CGAME supplies its genuine frame/cvar request producer. Original
+     * CGAME uses the retained source hook requests when this is NULL. */
+    bool (*requests)(void *, bool *hud, bool *view, qa_error *);
+    void *requests_context;
 } frontend_equipment_source_options;
 
 bool frontend_equipment_source_create(const frontend_equipment_source_options *,
@@ -33,6 +37,14 @@ bool frontend_equipment_source_rebind_ready(const frontend_equipment_source *,
 void frontend_equipment_source_rebind(frontend_equipment_source *, qa_frontend *destination);
 bool frontend_equipment_source_weapon(const frontend_equipment_source *,
     qa_application_equipment_view *, bool *requested, qa_error *);
+/* Native CGAME supplies the real physical actor, authored torso and source
+ * powerups. Suppression requires an admitted selected Q3 output. */
+bool frontend_equipment_source_native_held(frontend_equipment_source *,
+    qa_actor_id, const qa_q3_ref_entity *, int32_t powerups, bool personal_model,
+    bool *submitted, qa_error *);
+/* Own selected view output is prepared before the primary kernel. An actual
+ * selected hidden request is consumed without constructing a source parent. */
+bool frontend_equipment_source_native_view(frontend_equipment_source *, bool *consumed, qa_error *);
 /* Called by the real source renderer owner at its current view boundaries. */
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *,
     const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);

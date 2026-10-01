@@ -33,8 +33,18 @@ bool frontend_equipment_q3_held(frontend_equipment_q3_presenter *,
     void *context, bool (*current)(void *), frontend_equipment_q3_output **,
     bool *submitted, qa_error *);
 size_t frontend_equipment_q3_output_count(const frontend_equipment_q3_output *);
+/* Original source captures only its base gun group's shader passes. Gun and
+ * barrel repeat together; later flash output stays in the selected registry. */
+bool frontend_equipment_q3_output_source_style(frontend_equipment_q3_output *,
+    qa_q3_presentation_assets *primary_assets, const qa_q3_ref_entity *authored_parent, qa_error *);
+bool frontend_equipment_q3_output_source_pass(frontend_equipment_q3_output *,
+    const qa_q3_ref_entity *captured_pass, qa_error *);
 bool frontend_equipment_q3_output_submit(frontend_equipment_q3_output *, qa_q3_presentation *,
     const qa_q3_scene_options *, uint32_t first_order, qa_scene_frame *, qa_error *);
+/* A real RenderScene tools-camera delta translates queued view refs without
+ * replaying their retained torso, barrel or RNG producers. */
+bool frontend_equipment_q3_output_submit_offset(frontend_equipment_q3_output *, qa_q3_presentation *,
+    qa_vec3 offset, const qa_q3_scene_options *, uint32_t first_order, qa_scene_frame *, qa_error *);
 void frontend_equipment_q3_output_destroy(frontend_equipment_q3_output *);
 bool frontend_equipment_q3_idle(const qa_frontend *);
 bool frontend_equipment_q3_retire(qa_frontend *, qa_error *);

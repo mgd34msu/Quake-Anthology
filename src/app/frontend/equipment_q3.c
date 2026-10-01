@@ -1,11 +1,15 @@
 #include "equipment_q3_private.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_asset_shader.h"
 
 struct frontend_equipment_q3_output {
     frontend_equipment_q3_presenter *presenter;
     qa_application_equipment_view source;
     qa_q3_ref_entity refs[7];
-    size_t count;
+    qa_q3_presentation_assets *source_assets;
+    qa_q3_ref_entity *source_passes;
+    size_t count, base_count, pass_count, pass_capacity;
+    bool view, source_style;
 };
 typedef struct equipment_q3_call {
     frontend_equipment_q3_output *output;
@@ -173,7 +177,7 @@ static bool draw(frontend_equipment_q3_presenter *presenter, const qa_applicatio
     frontend_equipment_q3_output *output = calloc(1, sizeof(*output));
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 numeric output");
     if (!frontend_equipment_q3_retain(presenter, error)) { free(output); return false; }
-    output->presenter = presenter; output->source = *source;
+    output->presenter = presenter; output->source = *source; output->view = view != NULL;
     equipment_q3_call call = {output, context, current};
     q3n_selected_weapon_media media;
     bool ok = q3n_selected_media_read(presenter->owner->view.media, source->q3_source.weapon, view != NULL, &media, error);
@@ -202,20 +206,113 @@ bool frontend_equipment_q3_held(frontend_equipment_q3_presenter *presenter,
     void *context, bool (*current)(void *), frontend_equipment_q3_output **out, bool *submitted, qa_error *error)
 { return draw(presenter, source, NULL, held, reduced_flashes, context, current, out, submitted, error); }
 size_t frontend_equipment_q3_output_count(const frontend_equipment_q3_output *output)
-{ return output ? output->count : 0; }
+{
+    return !output ? 0 : !output->source_style ? output->count :
+        output->base_count * output->pass_count + output->count - output->base_count;
+}
 void frontend_equipment_q3_output_destroy(frontend_equipment_q3_output *output)
-{ if (output) { frontend_equipment_q3_release(output->presenter); free(output); } }
+{ if (output) { frontend_equipment_q3_release(output->presenter); free(output->source_passes); free(output); } }
 
-bool frontend_equipment_q3_output_submit(frontend_equipment_q3_output *output, qa_q3_presentation *presentation,
+bool frontend_equipment_q3_output_source_style(frontend_equipment_q3_output *output,
+    qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent, qa_error *error)
+{
+    q3n_selected_weapon_media media;
+    if (!output || output->view || output->source_style || !assets || !parent ||
+        !source_current(output->presenter->owner, &output->source) || !qa_q3_assets_idle(assets) ||
+        parent->kind != QA_Q3_REF_MODEL || !qa_vec_finite(parent->lighting_origin) ||
+        !isfinite(parent->shadow_plane) ||
+        !q3n_selected_media_read(output->presenter->owner->view.media,
+            output->source.q3_source.weapon, false, &media, error))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 source style requires its real retained torso and registries");
+    if (!output->count || output->refs[0].model != media.gun || output->refs[0].custom_shader)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 source style has no genuine base gun group");
+    size_t base = 1;
+    if (output->count > base && media.barrel && output->refs[base].model == media.barrel &&
+        !output->refs[base].custom_shader) ++base;
+    if (output->count > base && (output->count != base + 1 ||
+        output->refs[base].model != media.flash || output->refs[base].custom_shader))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 source style contains unrelated native powerup passes");
+    for (size_t i = 0; i < output->count; ++i) {
+        output->refs[i].flags = parent->flags;
+        output->refs[i].lighting_origin = parent->lighting_origin;
+        output->refs[i].shadow_plane = parent->shadow_plane;
+    }
+    output->source_assets = assets; output->base_count = base; output->source_style = true;
+    return true;
+}
+
+bool frontend_equipment_q3_output_source_pass(frontend_equipment_q3_output *output,
+    const qa_q3_ref_entity *pass, qa_error *error)
+{
+    const qa_material *material;
+    if (!output || !output->source_style || !pass || !isfinite(pass->shader_time) ||
+        !source_current(output->presenter->owner, &output->source) ||
+        !qa_q3_assets_shader_read(output->source_assets, pass->custom_shader, &material, error))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 source pass lost its captured primary shader owner");
+    size_t remaining = output->count - output->base_count;
+    if (output->pass_count >= (1022 - remaining) / output->base_count)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 held groups exceed their actual scene extent");
+    if (output->pass_count == output->pass_capacity) {
+        size_t capacity = output->pass_capacity ? output->pass_capacity * 2 : 4;
+        if (capacity > 1022) capacity = 1022;
+        qa_q3_ref_entity *passes = realloc(output->source_passes, capacity * sizeof(*passes));
+        if (!passes) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining primary selected Q3 shader passes");
+        output->source_passes = passes; output->pass_capacity = capacity;
+    }
+    output->source_passes[output->pass_count++] = *pass;
+    return true;
+}
+
+static qa_q3_ref_entity shifted(const qa_q3_ref_entity *ref, qa_vec3 offset)
+{
+    qa_q3_ref_entity result = *ref;
+    result.origin = qa_vec_add(result.origin, offset); result.old_origin = qa_vec_add(result.old_origin, offset);
+    result.lighting_origin = qa_vec_add(result.lighting_origin, offset); result.shadow_plane += offset.z;
+    return result;
+}
+
+static bool output_submit(frontend_equipment_q3_output *output, qa_q3_presentation *presentation,
+    qa_vec3 offset,
     const qa_q3_scene_options *options, uint32_t first_order, qa_scene_frame *frame, qa_error *error)
 {
     if (!output || !source_current(output->presenter->owner, &output->source) ||
-        !presentation || !options || !frame || first_order > 1022 || output->count > 1022 - first_order)
+        !presentation || !options || !frame || !qa_vec_finite(offset) || first_order > 1022 ||
+        frontend_equipment_q3_output_count(output) > 1022 - first_order)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 submission lost its real reserved scene interval");
-    for (size_t i = 0; i < output->count; ++i)
+    for (size_t i = 0; i < output->count; ++i) {
+        qa_q3_ref_entity ref = shifted(output->refs + i, offset);
+        if (!qa_vec_finite(ref.origin) || !qa_vec_finite(ref.old_origin) ||
+            !qa_vec_finite(ref.lighting_origin) || !isfinite(ref.shadow_plane))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 view offset exceeds finite scene coordinates");
+    }
+    size_t first = 0;
+    if (output->source_style) {
+        for (size_t pass = 0; pass < output->pass_count; ++pass)
+            for (size_t part = 0; part < output->base_count; ++part) {
+                qa_q3_ref_entity ref = shifted(output->refs + part, offset);
+                if (!qa_q3_presentation_selected_registered_pass(presentation, output->presenter->owner->view.assets,
+                    &ref, output->source_assets, output->source_passes + pass, options, first_order++, frame, error)) return false;
+            }
+        first = output->base_count;
+    }
+    for (size_t i = first; i < output->count; ++i) {
+        qa_q3_ref_entity ref = shifted(output->refs + i, offset);
         if (!qa_q3_presentation_selected_registered(presentation, output->presenter->owner->view.assets,
-            output->refs + i, options, first_order + (uint32_t)i, frame, error)) return false;
+            &ref, options, first_order++, frame, error)) return false;
+    }
     return true;
+}
+
+bool frontend_equipment_q3_output_submit(frontend_equipment_q3_output *output, qa_q3_presentation *presentation,
+    const qa_q3_scene_options *options, uint32_t first_order, qa_scene_frame *frame, qa_error *error)
+{ return output_submit(output, presentation, qa_v3(0, 0, 0), options, first_order, frame, error); }
+bool frontend_equipment_q3_output_submit_offset(frontend_equipment_q3_output *output,
+    qa_q3_presentation *presentation, qa_vec3 offset, const qa_q3_scene_options *options,
+    uint32_t first_order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!output || !output->view)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 view offset requires its actual queued view output");
+    return output_submit(output, presentation, offset, options, first_order, frame, error);
 }
 
 size_t frontend_equipment_q3_count(const qa_frontend *frontend)
