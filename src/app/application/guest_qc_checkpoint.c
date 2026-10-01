@@ -1,9 +1,10 @@
 #include "guest_qc_profile.h"
 #include "qa/vfs_view_save.h"
 #include "guest_qc_rerelease.h"
+#include "control_frame.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 10u
+#define QC_ENGINE_VERSION 11u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -178,6 +179,8 @@ static bool client_binding_matches(struct application_qc_state *engine, uint32_t
     qa_qc_slot_binding binding;
     bool qw = engine->profile == QA_QC_QUAKEWORLD && !engine->provider->state.qc.qualified && engine->max_clients == 32;
     if ((client->colors >> 4) > 13 || (client->colors & 15u) > 13 ||
+        (client->receipt_seen && (engine->profile != QA_QC_RERELEASE || !client->connected || !client->spawned)) ||
+        (!client->receipt_seen && (client->receipt_sequence || client->receipt_ordinal)) ||
         (client->prepared && (!qw || !client->connected || !client->has_parms)) ||
         (qw && client->spawned && !client->prepared) ||
         !qa_qc_slot(engine->provider->state.qc.instance, slot, &binding))
@@ -200,15 +203,21 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine checkpoint requires an idle frame");
     if (!engine_console_safe(engine, error)) return false;
     if (!application_qc_capture_client_outputs(engine, error)) return false;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (!client_binding_matches(engine, i, &engine->clients[i], error)) return false;
+    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
+        const application_qc_client *client = &engine->clients[i];
+        if (!client_binding_matches(engine, i, client, error)) return false;
+        bool seen = false; uint64_t sequence = 0;
+        if (client->receipt_seen && (!application_control_frames_sequence(engine->provider->application,
+            client->actor, &seen, &sequence) || !seen || client->receipt_sequence > sequence))
+            return application_fail(error, QA_ERROR_FORMAT, "QC receipt leaves its actual admitted control sequence");
+    }
     size_t capacity = 256;
     if (engine->original_extension.size>UINT32_MAX ||
         (engine->original_extension.size && (!engine->original_extension.data ||
          memchr(engine->original_extension.data,0,engine->original_extension.size))) ||
         !add_size(&capacity,engine->original_extension.size+4,error))
         return application_fail(error,QA_ERROR_FORMAT,"Invalid original source extension owner");
-    if (!add_size(&capacity, ((size_t)engine->max_clients + 1) * 96, error)) return false;
+    if (!add_size(&capacity, ((size_t)engine->max_clients + 1) * 128, error)) return false;
     uint32_t indices[2]={0};
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource *entry=engine->resources+i;
@@ -276,6 +285,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
              qa_net_write_u8(&writer, client->has_parms) && qa_net_write_u8(&writer, client->primary_character) &&
              qa_net_write_u8(&writer, client->colors) &&
              qa_net_write_u8(&writer, client->output_published) &&
+             qa_net_write_u8(&writer, client->receipt_seen) && qa_net_write_u64(&writer, client->receipt_sequence) &&
+             qa_net_write_u64(&writer, client->receipt_ordinal) &&
              write_actor(&writer, actors, client->actor);
         for (unsigned p = 0; ok && p < 16; ++p) ok = qa_net_write_f32(&writer, client->parms[p]);
     }
@@ -374,14 +385,17 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         uint8_t primary = qa_net_read_u8(&reader);
         client->colors = qa_net_read_u8(&reader);
         uint8_t output_published = qa_net_read_u8(&reader);
+        uint8_t receipt_seen = qa_net_read_u8(&reader); client->receipt_sequence = qa_net_read_u64(&reader);
+        client->receipt_ordinal = qa_net_read_u64(&reader);
         ok = connected <= 1 && spawned <= connected && spectator <= 1 && prepared <= connected &&
-             has_parms <= 1 && primary <= 1 && output_published <= spawned &&
+             has_parms <= 1 && primary <= 1 && output_published <= spawned && receipt_seen <= 1 &&
              read_actor(&reader, actors, connected != 0, &client->actor);
         client->connected = connected != 0; client->spawned = spawned != 0; client->spectator = spectator != 0;
         client->prepared = prepared != 0;
         client->has_parms = has_parms != 0;
         client->primary_character = primary != 0;
         client->output_published = output_published != 0;
+        client->receipt_seen = receipt_seen != 0;
         if (ok && client->connected && !client->actor.registry) ok = qa_net_reader_fail(&reader, "QuakeC connected client lacks an actor");
         for (unsigned p = 0; ok && p < 16; ++p) client->parms[p] = qa_net_read_f32(&reader);
         if (reader.failed) ok = false;

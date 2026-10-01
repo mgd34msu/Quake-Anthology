@@ -28,6 +28,9 @@ typedef struct application_qc_client {
     bool spectator;
     bool primary_character;
     bool output_published;
+    bool receipt_seen;
+    uint64_t receipt_sequence;
+    uint64_t receipt_ordinal;
     application_client_outputs outputs;
 } application_qc_client;
 typedef struct application_qc_message {
@@ -120,5 +123,6 @@ bool application_qc_source_client_released(struct application_qc_state *, qa_act
 bool application_qc_control_source_client(const application_provider *, qa_actor_id, bool *, qa_error *);
 bool application_qc_player_source_actor(application_provider *, uint32_t, qa_actor_id *, qa_error *);
 bool application_qc_client_colors(application_provider *, qa_actor_id, int32_t top, int32_t bottom, qa_error *);
+bool application_qc_player_receive(application_provider *, qa_actor_id, uint64_t ordinal, qa_movement_command *, qa_error *);
 bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 #endif

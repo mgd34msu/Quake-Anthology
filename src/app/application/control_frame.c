@@ -1,5 +1,6 @@
 #include "control_frame.h"
 #include "guest_input_private.h"
+#include "guest_qc_internal.h"
 #include "bots_round.h"
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
@@ -414,8 +415,36 @@ bool application_control_frames_q1_complete(qa_application *app, qa_actor_id act
     return true;
 }
 
-bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
-    uint64_t sequence, const qa_q3_usercmd *raw, qa_error *error)
+static bool qc_receipt(qa_application *app, qa_actor_id actor, uint64_t ordinal,
+    qa_movement_command *command, qa_error *error)
+{
+    static const qa_launch_role roles[] = {QA_ROLE_ENTITIES, QA_ROLE_MOVEMENT, QA_ROLE_CHARACTER,
+        QA_ROLE_ARSENAL, QA_ROLE_INVENTORY, QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT};
+    application_provider *owners[sizeof(roles) / sizeof(roles[0])] = {0};
+    const qa_movement_command raw = *command;
+    for (size_t i = 0; i < sizeof(roles) / sizeof(roles[0]); ++i) {
+        application_provider *owner = roles[i] == QA_ROLE_ENTITIES
+            ? application_world_provider(app, roles[i], "") : application_provider_for(app, actor, roles[i], "");
+        owners[i] = owner;
+        if (!owner || owner->kind != APPLICATION_PROVIDER_QC || !owner->constructed ||
+            !owner->attached || owner->close_pending || !owner->state.qc.engine ||
+            owner->state.qc.engine->profile != QA_QC_RERELEASE) continue;
+        bool duplicate = false;
+        for (size_t j = 0; j < i; ++j) duplicate |= owners[j] == owner;
+        if (duplicate) continue;
+        bool member = false;
+        if (!application_qc_control_source_client(owner, actor, &member, error)) return false;
+        if (!member) continue;
+        qa_movement_command received = raw;
+        if (!application_qc_player_receive(owner, actor, ordinal, &received, error)) return false;
+        if (received.forward_move == 0 && raw.forward_move != 0) command->forward_move = 0;
+        if (received.side_move == 0 && raw.side_move != 0) command->side_move = 0;
+    }
+    return true;
+}
+
+static bool receive_q3_command(qa_application *app, qa_actor_id actor,
+    uint64_t sequence, uint64_t ordinal, const qa_q3_usercmd *raw, qa_error *error)
 {
     if (!app || !raw || !app->control_frames || app->state != QA_APPLICATION_RUNNING ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
@@ -447,6 +476,10 @@ bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
     if (!deferred && !group)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
     qa_movement_command command = q3_command(raw, sequence);
+    if (!qc_receipt(app, actor, ordinal, &command, error)) {
+        free(group); application_fault(app, error); return false;
+    }
+    qa_q3_usercmd received = q3_source_command(&command, true);
     if (group) {
         *group = (control_group){.actor = actor, .provider = provider->owner, .count = 1,
             .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q3_SOURCE,
@@ -454,8 +487,8 @@ bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
         group->commands[0] = command;
     }
     if (provider->kind == APPLICATION_PROVIDER_Q3 &&
-        (!application_native_q3_wire_command(provider, slot, raw, error) ||
-         !qa_q3_client_received_command(provider->state.q3, actor, raw, error))) {
+        (!application_native_q3_wire_command(provider, slot, &received, error) ||
+         !qa_q3_client_received_command(provider->state.q3, actor, &received, error))) {
         free(group); application_fault(app, error); return false;
     }
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
@@ -474,6 +507,12 @@ bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
         frames->tail = group;
     }
     return true;
+}
+
+bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
+    uint64_t sequence, const qa_q3_usercmd *raw, qa_error *error)
+{
+    return receive_q3_command(app, actor, sequence, 0, raw, error);
 }
 
 bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
@@ -521,12 +560,17 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
         .quakeworld = true, .before_source = before_source(provider), .domain = CONTROL_COMMAND_QW_SOURCE,
         .source_time_ns = clock.frame.time_ns};
-    memcpy(group->commands, commands, count * sizeof(*commands));
+    for (size_t i = 0; i < count; ++i) {
+        group->commands[i] = commands[i];
+        if (!qc_receipt(app, actor, (uint64_t)i, &group->commands[i], error)) {
+            free(group); application_fault(app, error); return false;
+        }
+    }
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = commands[0].sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->source_time_ns = clock.frame.time_ns;
     input->qw_receipt_time_ns = receipt_time;
-    input->latest = commands[count - 1]; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    input->latest = group->commands[count - 1]; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (frames->tail) frames->tail->next = group; else frames->head = group;
     frames->tail = group;
     return true;
@@ -562,13 +606,16 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         return application_fail(error, QA_ERROR_NOT_FOUND, "Input group has no current execution owner");
     if ((provider->kind == APPLICATION_PROVIDER_Q3 || original_q3(provider)) &&
         record->state.kind == QA_MOVEMENT_Q3) {
+        bool seen; uint64_t previous;
+        (void)application_control_frames_sequence(app, actor, &seen, &previous);
         for (size_t i = 0; i < count; ++i)
             if (!command_valid(&commands[i]) || commands[i].kind != QA_MOVEMENT_Q3 ||
+                (seen && commands[i].sequence <= previous) ||
                 (i && commands[i].sequence <= commands[i - 1].sequence))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 input group has invalid commands");
         for (size_t i = 0; i < count; ++i) {
             qa_q3_usercmd raw = q3_source_command(&commands[i], false);
-            if (!qa_application_control_q3_command(app, actor, commands[i].sequence, &raw, error)) return false;
+            if (!receive_q3_command(app, actor, commands[i].sequence, (uint64_t)i, &raw, error)) return false;
         }
         return true;
     }
@@ -602,15 +649,22 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating pending input group");
         *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
             .quakeworld = quakeworld, .before_source = before_source(provider)};
-        memcpy(group->commands, commands, count * sizeof(*commands));
     }
     control_input *input = &frames->inputs[actor.slot];
     if (input->turn) { free(group); return application_fail(error, QA_ERROR_ARGUMENT, "Retained input preparation is open"); }
+    qa_movement_command latest = {0};
+    for (size_t i = 0; i < count; ++i) {
+        latest = commands[i];
+        if (!qc_receipt(app, actor, (uint64_t)i, &latest, error)) {
+            free(group); application_fault(app, error); return false;
+        }
+        if (group) group->commands[i] = latest;
+    }
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true; input->retained = retained;
     input->domain = CONTROL_COMMAND_SELECTED; input->source_time_ns = 0; input->qw_receipt_time_ns = 0;
     input->arsenal = 0; input->weapon = 0;
-    input->latest = commands[count - 1];
+    input->latest = latest;
     if (retained) {
         for (size_t i = 0; i < count; ++i) if (commands[i].impulse) input->impulse = commands[i].impulse;
         input->latest.impulse = 0;

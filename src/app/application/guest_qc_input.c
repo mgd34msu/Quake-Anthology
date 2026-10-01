@@ -17,6 +17,10 @@ struct saved_input {
     uint32_t words[3];
     bool valid;
 };
+struct application_qc_parked_input {
+    struct application_qc_parked_input *next;
+    struct application_qc_input_scope *head, *tail, *parent;
+};
 static float move_scale(qa_movement_kind kind)
 {
     return kind == QA_MOVEMENT_Q3 ? 127.0f :
@@ -114,31 +118,135 @@ static bool restore_input(qa_qc_instance *vm, int32_t reference, const saved_inp
 }
 bool application_qc_input_idle(const application_provider *provider)
 {
-    return !provider || !provider->state.qc.engine || !provider->state.qc.engine->input_scope;
+    const struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    return !engine || (!engine->input_scope && !engine->parked_inputs);
 }
-static bool close_scope(struct application_qc_state *engine, bool failed, qa_error *error)
+static bool dispose_scope(struct application_qc_state *engine, struct application_qc_input_scope *scope,
+                            bool failed, qa_error *error)
 {
-    struct application_qc_input_scope *scope = engine->input_scope;
     bool ok = true;
     if ((scope->nested || failed) && qa_actors_get(qa_session_actors(engine->services.session), scope->actor)) {
         qa_error restoration = {0};
-        for (size_t i = 0; i < scope->saved_count; ++i)
+        qa_actor_id current;
+        ok = qa_qc_reference_actor(engine->provider->state.qc.instance, scope->reference, &current, &restoration) &&
+            qa_actor_id_equal(current, scope->actor);
+        if (!ok) {
+            if (restoration.code == QA_OK) application_fail(&restoration, QA_ERROR_NOT_FOUND, "QC input actor changed generation");
+            if (error) *error = restoration;
+        }
+        bool current_actor = ok;
+        for (size_t i = 0; current_actor && i < scope->saved_count; ++i)
             if (!restore_input(engine->provider->state.qc.instance, scope->reference, &scope->saved[i], &restoration)) {
                 if (error) *error = restoration;
                 ok = false;
             }
     }
-    engine->input_scope = scope->previous;
     free(scope->saved); free(scope);
+    return ok;
+}
+static bool close_scope(struct application_qc_state *engine, bool failed, qa_error *error)
+{
+    struct application_qc_input_scope *scope = engine->input_scope;
+    for (struct application_qc_parked_input *parked = engine->parked_inputs; parked; parked = parked->next)
+        if (parked->parent == scope)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC input scope still owns a parked child");
+    engine->input_scope = scope->previous;
+    return dispose_scope(engine, scope, failed, error);
+}
+bool application_qc_input_park(application_provider *provider, qa_actor_id actor,
+                                 struct application_qc_parked_input **out, qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !out) return application_fail(error, QA_ERROR_ARGUMENT, "QC input parking owner is absent");
+    *out = NULL;
+    const struct application_qc_profile *profile = provider->state.qc.qualified;
+    bool command = false, slice = false;
+    for (size_t i = 0; profile && i < profile->input_count; ++i) {
+        if (profile->input[i].movement_slice) slice = true;
+        else command = true;
+    }
+    if (!command && !slice) return true;
+    struct application_qc_input_scope *head = engine->input_scope, *tail = head;
+    if (!head || !qa_actor_id_equal(head->actor, actor) || head->movement_slice != slice ||
+        head->binding || head->entered)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC input parking has no completed client scope");
+    if (command && slice) {
+        tail = head->previous;
+        if (!tail || !qa_actor_id_equal(tail->actor, actor) || tail->movement_slice || tail->binding || tail->entered)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC input parking has no completed command scope");
+    }
+    for (struct application_qc_input_scope *scope = head;; scope = scope->previous) {
+        for (struct application_qc_parked_input *child = engine->parked_inputs; child; child = child->next)
+            if (child->parent == scope)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC input scope still owns a parked child");
+        if (scope == tail) break;
+    }
+    struct application_qc_parked_input *parked = calloc(1, sizeof(*parked));
+    if (!parked) return application_fail(error, QA_ERROR_MEMORY, "Allocating parked QC input ownership");
+    parked->head = head; parked->tail = tail; parked->parent = tail->previous;
+    parked->next = engine->parked_inputs; engine->parked_inputs = parked;
+    tail->previous = NULL; engine->input_scope = parked->parent;
+    *out = parked;
+    return true;
+}
+static struct application_qc_parked_input **parked_owner(struct application_qc_state *engine,
+                                                         struct application_qc_parked_input *parked)
+{
+    struct application_qc_parked_input **owner = &engine->parked_inputs;
+    while (*owner && *owner != parked) owner = &(*owner)->next;
+    return owner;
+}
+bool application_qc_input_resume(application_provider *provider, struct application_qc_parked_input *parked,
+                                   qa_error *error)
+{
+    if (!parked) return true;
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "Parked QC input owner is absent");
+    struct application_qc_parked_input **owner = parked_owner(engine, parked);
+    if (!*owner || engine->input_scope != parked->parent)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Parked QC input parent is no longer current");
+    for (struct application_qc_input_scope *scope = parked->head; scope; scope = scope->previous) {
+        qa_actor_id current;
+        if (!qa_actors_get(qa_session_actors(engine->services.session), scope->actor) ||
+            !qa_qc_reference_actor(provider->state.qc.instance, scope->reference, &current, error) ||
+            !qa_actor_id_equal(current, scope->actor))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Parked QC input actor changed generation");
+    }
+    parked->tail->previous = parked->parent; engine->input_scope = parked->head;
+    *owner = parked->next; free(parked);
+    return true;
+}
+bool application_qc_input_parked_abort(application_provider *provider, struct application_qc_parked_input *parked,
+                                         qa_error *error)
+{
+    if (!parked) return true;
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "Parked QC input owner is absent");
+    struct application_qc_parked_input **owner = parked_owner(engine, parked);
+    if (!*owner) return application_fail(error, QA_ERROR_ARGUMENT, "Parked QC input handle is no longer owned");
+    *owner = parked->next;
+    bool ok = true;
+    struct application_qc_input_scope *scope = parked->head;
+    while (scope) {
+        struct application_qc_input_scope *previous = scope->previous;
+        if (!dispose_scope(engine, scope, true, error)) ok = false;
+        scope = previous;
+    }
+    free(parked);
     return ok;
 }
 static bool close_through(struct application_qc_state *engine, struct application_qc_input_scope *scope,
                             bool failed, qa_error *error)
 {
+    bool found = false;
     for (struct application_qc_input_scope *entry = engine->input_scope; entry; entry = entry->previous) {
         if (entry->binding) return application_fail(error, QA_ERROR_ARGUMENT, "QC input callback is still executing");
-        if (entry == scope) break;
+        for (struct application_qc_parked_input *parked = engine->parked_inputs; parked; parked = parked->next)
+            if (parked->parent == entry)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC input scope still owns a parked child");
+        if (entry == scope) { found = true; break; }
     }
+    if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "QC input scope is no longer active");
     bool ok = true;
     while (engine->input_scope != scope) if (!close_scope(engine, true, error)) ok = false;
     if (!close_scope(engine, failed, error)) ok = false;
@@ -159,7 +267,19 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
     struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
     const struct application_qc_profile *profile = provider ? provider->state.qc.qualified : NULL;
     if (!engine || !command) return application_fail(error, QA_ERROR_ARGUMENT, "QC input application is absent");
-    if (!profile) return before ? application_qc_player_command(provider, actor, command, error) : true;
+    if (!profile) {
+        if (!before) return true;
+        qa_movement_command source = *command;
+        bool jump = application_qc_input_scalar(command, QC_INPUT_JUMP) != 0;
+        source.buttons = (command->buttons & 1u) | (jump ? 2u : 0u);
+        if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC) {
+            source.angles = qa_v3((float)((double)command->angle_words[0] * 360 / 65536),
+                (float)((double)command->angle_words[1] * 360 / 65536),
+                (float)((double)command->angle_words[2] * 360 / 65536));
+        }
+        if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_RERELEASE) source.impulse = 0;
+        return application_qc_player_command(provider, actor, &source, error);
+    }
     bool subscribed = false;
     for (size_t i = 0; i < profile->input_count; ++i) subscribed |= profile->input[i].movement_slice == movement_slice;
     if (!subscribed) return true;
@@ -188,16 +308,30 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
         scope->movement_slice = movement_slice; scope->previous = engine->input_scope;
         for (struct application_qc_input_scope *outer = scope->previous; outer; outer = outer->previous)
             scope->nested |= qa_actor_id_equal(outer->actor, actor);
+        for (struct application_qc_parked_input *parked = engine->parked_inputs; parked; parked = parked->next)
+            for (struct application_qc_input_scope *outer = parked->head; outer; outer = outer->previous)
+                scope->nested |= qa_actor_id_equal(outer->actor, actor);
         engine->input_scope = scope;
     }
     saved_input *saved = scope->saved;
     qa_qc_instance *vm = provider->state.qc.instance; bool ok = true;
+    bool received = false;
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+        const application_qc_client *client = &engine->clients[slot];
+        received |= engine->profile == QA_QC_RERELEASE && client->connected && client->spawned &&
+            qa_actor_id_equal(client->actor, actor) && client->receipt_seen &&
+            command->sequence <= client->receipt_sequence;
+    }
+    const qa_qc_definition *source_impulse = received ?
+        qa_qc_program_find_field(provider->state.qc.program, "impulse") : NULL;
     for (size_t i = 0; before && ok && i < profile->field_count; ++i) {
         const application_qc_bound_field *field = &profile->fields[i]; if (field->kind != QC_FIELD_INPUT) continue;
         saved[i].field = field;
         ok = read_words(vm, reference, field->definition, saved[i].words, error);
         saved[i].valid = ok;
         if (!ok) break;
+        if (source_impulse && source_impulse->type == QA_QC_FLOAT &&
+            field->input == QC_INPUT_IMPULSE && field->definition == source_impulse) continue;
         if (field->input == QC_INPUT_ANGLES) ok = qa_vec_finite(command->angles) &&
             qa_qc_project_entity_vector(vm, reference, field->definition->offset, command->angles, error);
         else {

@@ -642,6 +642,9 @@ static bool qc_input(application_move_call *move, qa_movement_state *state,
         if (!owner || owner->kind != APPLICATION_PROVIDER_QC) continue;
         if (!owner->state.qc.qualified && move->context.path == APPLICATION_CONTROL_QW_GROUP && owner == move->execution)
             continue;
+        if (!owner->state.qc.qualified && move->context.path == APPLICATION_CONTROL_NQ_TURN &&
+            owner == move->execution && (!before || slice || move->context.stage != APPLICATION_CONTROL_PREPARE))
+            continue;
         bool duplicate = false;
         for (size_t j = 0; j < i; ++j) duplicate |= owners[j] == owner;
         if (duplicate) continue;

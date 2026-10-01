@@ -991,7 +991,9 @@ static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *
     }
     size_t commands;
     bool ok = application_qc_rerelease_frame(engine,error) &&
-        application_qc_flush(engine, error) && qa_console_drain(engine->console, 0, &commands, error);
+        application_qc_flush(engine, error) &&
+        (qa_application_startup_console_queued(engine->provider->application, engine->console) ||
+         qa_console_drain(engine->console, 0, &commands, error));
     engine->has_frame = false;
     return ok;
 }
@@ -1190,6 +1192,10 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (engine != NULL && !engine->loading) {
         if (!qa_qc_game_reset_level(provider->state.qc.game, error)) return false;
         application_qc_rerelease_reset(engine);
+        for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+            engine->clients[slot].receipt_seen = false;
+            engine->clients[slot].receipt_sequence = engine->clients[slot].receipt_ordinal = 0;
+        }
         provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
         engine->loading = true; engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
         qa_cvars_set_server_active(engine->cvars, false);
@@ -1326,6 +1332,8 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
             engine->clients[i].prepared = false;
             engine->clients[i].output_published = false;
             engine->clients[i].outputs = (application_client_outputs){0};
+            engine->clients[i].receipt_seen = false;
+            engine->clients[i].receipt_sequence = engine->clients[i].receipt_ordinal = 0;
         }
     return true;
 }
