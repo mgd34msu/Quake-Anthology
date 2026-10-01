@@ -905,6 +905,9 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
             v->tag_owner = (qa_actor_id){0};
         if (qa_actor_id_equal(v->rogue_spawn_spot, released.id))
             v->rogue_spawn_spot = (qa_actor_id){0};
+        for (size_t j = 0; j < 4; ++j)
+            if (qa_actor_id_equal(v->last_spawns[j], released.id))
+                v->last_spawns[j] = (qa_actor_id){0};
     }
     mode_player *p = &m->players[released.id.slot];
     if (!p->active || !qa_actor_id_equal(p->value.actor, released.id))

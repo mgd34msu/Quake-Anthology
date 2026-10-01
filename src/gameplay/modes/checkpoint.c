@@ -89,7 +89,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 13, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 14, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -273,6 +273,27 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
     for (size_t i = 0; i < v->spawn_count; ++i)
         if (!qa_vec_finite(v->spawns[i].origin) || !qa_vec_finite(v->spawns[i].angles))
             return mode_fail(e, "invalid saved player spawn");
+    for (size_t i = 0; i < 4; ++i) {
+        qa_actor_id cursor = v->last_spawns[i];
+        if (!cursor.registry) {
+            if (cursor.slot || cursor.generation)
+                return mode_fail(e, "invalid absent source spawn cursor");
+            continue;
+        }
+        if (!reference(m, cursor) ||
+            (v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_ROGUE) ||
+            (i == 3 && v->value.rules.source != QA_MODE_THREEWAVE))
+            return mode_fail(e, "saved source spawn cursor has no actual owner");
+        const char *expected = i == 0 ? "info_player_team1" : i == 1 ? "info_player_team2" :
+            i == 2 ? "info_player_deathmatch" : "info_vote_destination";
+        bool found = false;
+        for (size_t j = 0; j < v->spawn_count; ++j) {
+            const char *name = qa_strings_cstr(strings, v->spawns[j].classname);
+            if (qa_actor_id_equal(v->spawns[j].actor, cursor) && name && !strcmp(name, expected))
+                found = true;
+        }
+        if (!found) return mode_fail(e, "saved source cursor is not its authored spawn class");
+    }
     if (v->rogue_spawn_spot.registry) {
         bool found = false;
         for (size_t i = 0; i < v->spawn_count; ++i) {
@@ -386,7 +407,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 13 ||
+    if (!m || m->callback_depth || !saved || saved->version != 14 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

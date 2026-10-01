@@ -75,7 +75,7 @@ typedef struct qa_mode_checkpoint {
     qa_mode_item_binding *items;
     size_t item_count;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
-    qa_actor_id last_spawns[3];
+    qa_actor_id last_spawns[4];
     qa_actor_id rogue_spawn_spot;
     qa_mode_vote votes[4];
     uint64_t vote_started[4], ready_since_ns, next_second_ns;

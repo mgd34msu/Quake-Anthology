@@ -410,6 +410,11 @@ bool qa_modes_ctf_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_ctf_view *, 
 bool qa_modes_ctf_restore_player(qa_modes *, qa_mode_id, qa_actor_id,
                                   int32_t last_team, float status, float access, qa_error *);
 bool qa_modes_ctf_pregame_end(qa_modes *, qa_mode_id, qa_error *);
+/* Physical Q1 source expansion selection. False selected means Rogue
+ * delegates to its real base selector; coop/nondeathmatch policy is owned by
+ * that source caller. Points and cursors retain actual authored actors. */
+bool qa_modes_q1_spawnpoint(qa_modes *, qa_mode_id, qa_actor_id,
+    qa_mode_spawnpoint *, bool *selected, qa_error *);
 bool qa_modes_join(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id, bool observer, qa_error *);
 /* Command admission follows source death/reset/respawn rules. join is the
  * lower-level connection/restore admission and does not synthesize a death. */

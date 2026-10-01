@@ -178,6 +178,95 @@ static bool q3_choose(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_
         return q3_choose(m, v, actor, 0, false, selected, e);
     return true;
 }
+static bool q1_spawn_pose(qa_modes *m, const qa_mode_spawnpoint *point, bool physical,
+    qa_mode_spawnpoint *out, qa_error *e) {
+    *out = *point;
+    if (!physical) return true;
+    qa_body_state body;
+    if (!qa_world_body_read(m->options.services.world, point->actor, &body, e)) return false;
+    out->origin = body.origin;
+    out->angles = body.angles;
+    return true;
+}
+static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
+    qa_actor_id actor, bool physical, qa_mode_spawnpoint *out, bool *selected, qa_error *e) {
+    *selected = false;
+    for (size_t i = 0; i < v->spawn_count; ++i)
+        if ((!physical || mode_live(m, v->spawns[i].actor)) &&
+            classname(m, &v->spawns[i], "testplayerstart")) {
+            if (!q1_spawn_pose(m, &v->spawns[i], physical, out, e)) return false;
+            *selected = true;
+            return true;
+        }
+    qa_team_id team = 0;
+    if (member) {
+        if (!qa_modes_team(m, v->id, actor, &team, e)) return false;
+        if (mode_get(m, v->id) != v || mode_member_get(m, v, actor) != member || !mode_live(m, actor))
+            return mode_fail(e, "Q1 source spawn participant retired during team read");
+    }
+    int side = !member || member->spawn_state == 0 ? mode_team_index(v, team) : -1;
+    size_t cursor = side == 0 ? 0 : side == 1 ? 1 : 2;
+    if (v->value.rules.source == QA_MODE_THREEWAVE && v->value.rules.start_map &&
+        member && member->spawn_state != 0) cursor = 3;
+    const char *wanted = cursor == 0 ? "info_player_team1" : cursor == 1 ? "info_player_team2" :
+        cursor == 2 ? "info_player_deathmatch" : "info_vote_destination";
+    size_t last = SIZE_MAX;
+    for (size_t i = 0; i < v->spawn_count; ++i)
+        if (qa_actor_id_equal(v->spawns[i].actor, v->last_spawns[cursor]) &&
+            classname(m, &v->spawns[i], wanted)) last = i;
+    for (size_t step = 1; step <= v->spawn_count; ++step) {
+        size_t index = last == SIZE_MAX ? step - 1 :
+            step < v->spawn_count - last ? last + step : step - (v->spawn_count - last);
+        const qa_mode_spawnpoint *point = &v->spawns[index];
+        if ((physical && !mode_live(m, point->actor)) || !classname(m, point, wanted)) continue;
+        qa_mode_spawnpoint pose;
+        if (!q1_spawn_pose(m, point, physical, &pose, e)) return false;
+        bool occupied = false;
+        if (v->value.rules.source == QA_MODE_ROGUE && index != last)
+            for (size_t j = 0; j < m->players_order.count; ++j) {
+                qa_body_state body;
+                qa_error read_error = {0};
+                if (!qa_world_body_read(m->options.services.world, m->players_order.ids[j],
+                    &body, &read_error)) {
+                    if (read_error.code == QA_ERROR_NOT_FOUND) continue;
+                    if (e) *e = read_error;
+                    return false;
+                }
+                qa_vec3 center = qa_vec_add(body.origin,
+                    qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
+                if (qa_vec_length(qa_vec_sub(center, pose.origin)) <= 32) {
+                    occupied = true;
+                    break;
+                }
+            }
+        if (occupied) continue;
+        v->last_spawns[cursor] = point->actor;
+        *out = pose;
+        *selected = true;
+        return true;
+    }
+    if (v->value.rules.source == QA_MODE_THREEWAVE)
+        for (unsigned pass = 0; pass < 2; ++pass)
+            for (size_t i = 0; i < v->spawn_count; ++i)
+                if ((!physical || mode_live(m, v->spawns[i].actor)) && classname(m, &v->spawns[i],
+                    pass == 0 ? "info_player_deathmatch" : "info_player_start")) {
+                    if (!q1_spawn_pose(m, &v->spawns[i], physical, out, e)) return false;
+                    *selected = true;
+                    return true;
+                }
+    return true;
+}
+
+bool qa_modes_q1_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_mode_spawnpoint *out, bool *selected, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!v || !member || !out || !selected || !mode_live(m, actor) ||
+        (v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_ROGUE))
+        return mode_fail(e, "Q1 source spawn has no actual expansion participant");
+    return q1_spawnpoint(m, v, member, actor, true, out, selected, e);
+}
+
 bool qa_modes_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool farthest,
                          qa_mode_spawnpoint *out, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -194,51 +283,9 @@ bool qa_modes_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool far
         if (!q3_choose(m, v, actor, team, initial, &selected, e))
             return false;
     } else if (source == QA_MODE_THREEWAVE || source == QA_MODE_ROGUE) {
-        for (size_t i = 0; i < v->spawn_count; ++i)
-            if (classname(m, &v->spawns[i], "testplayerstart")) {
-                selected = i;
-                break;
-            }
-        if (selected == SIZE_MAX && source == QA_MODE_THREEWAVE && v->value.rules.start_map &&
-            !initial)
-            for (size_t i = 0; i < v->spawn_count; ++i)
-                if (classname(m, &v->spawns[i], "info_vote_destination")) {
-                    selected = i;
-                    break;
-                }
-        qa_team_id desired = initial ? team : 0;
-        int index = mode_team_index(v, desired);
-        if (index < 0)
-            index = 2;
-        size_t last = SIZE_MAX;
-        for (size_t i = 0; i < v->spawn_count; ++i)
-            if (qa_actor_id_equal(v->spawns[i].actor, v->last_spawns[index]))
-                last = i;
-        for (size_t step = 1; selected == SIZE_MAX && step <= v->spawn_count; ++step) {
-            size_t i = (last + step) % v->spawn_count;
-            qa_mode_spawnpoint *p = &v->spawns[i];
-            if (p->team != desired || (!desired && !classname(m, p, "info_player_deathmatch")))
-                continue;
-            bool occupied = false;
-            if (source == QA_MODE_ROGUE && i != last)
-                for (size_t j = 0; j < m->players_order.count; ++j) {
-                    qa_body_state body;
-                    if (!qa_world_body_read(m->options.services.world, m->players_order.ids[j],
-                                            &body, NULL))
-                        continue;
-                    qa_vec3 center = qa_vec_add(
-                        body.origin,
-                        qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
-                    if (qa_vec_length(qa_vec_sub(center, p->origin)) <= 32) {
-                        occupied = true;
-                        break;
-                    }
-                }
-            if (!occupied) {
-                selected = i;
-                v->last_spawns[index] = p->actor;
-            }
-        }
+        bool found;
+        if (!q1_spawnpoint(m, v, member, actor, false, out, &found, e)) return false;
+        if (found) return true;
     } else if (source == QA_MODE_LMCTF) {
         size_t best_team = q2_choose(m, v, team, true, true);
         if (initial)
