@@ -23,7 +23,7 @@ static bool shader_handle(const q3n_selected_media *o, const char *path, int32_t
     return name && name->handle == handle ? true :
         q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 powerup shader lost its exact authored registration");
 }
-static bool animation_valid(const q3n_selected_media *o, bool capture, qa_error *e)
+static bool animation_valid(const q3n_selected_media *o, qa_error *e)
 {
     if (!o->animation_resource) return !o->animation_content && !o->character ? true :
         q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation has no retained resource");
@@ -39,8 +39,7 @@ static bool animation_valid(const q3n_selected_media *o, bool capture, qa_error 
     for (unsigned i = 0; i < QA_PLAYER_ANIMATION_COUNT; ++i)
         if (i != 31 && !config->animations[i].present)
             return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation has an absent required source cell");
-    return capture ? qa_vfs_acquisition_valid(o->animation_content, &o->animation_receipt, e) :
-        qa_vfs_acquisition_retained(o->animation_content, &o->animation_receipt, e);
+    return qa_vfs_acquisition_retained(o->animation_content, &o->animation_receipt, e);
 }
 bool q3n_selected_media_valid(const q3n_selected_media *o, bool capture, qa_error *e)
 {
@@ -76,7 +75,7 @@ bool q3n_selected_media_valid(const q3n_selected_media *o, bool capture, qa_erro
         } else if (row->hands || row->hands_fallback)
             return q3p_fail(e, QA_ERROR_FORMAT, "World-only selected Q3 row contains unadmitted hands");
     }
-    return animation_valid(o, capture, e);
+    return animation_valid(o, e);
 }
 static bool animation_fields(qa_source_save_io *io, qa_player_animation_config *c)
 {

@@ -106,6 +106,11 @@ uint64_t qa_catalog_generation(const qa_catalog *);
 size_t qa_catalog_count(const qa_catalog *);
 const qa_product *qa_catalog_at(const qa_catalog *, size_t);
 const qa_product *qa_catalog_product(const qa_catalog *, qa_product_id);
+/* Original discovered configuration ancestry and writable authority survive
+ * Q3 media restriction. These borrows never reopen or derive a native root. */
+qa_product_id qa_catalog_configuration_base(const qa_catalog *, qa_product_id);
+const qa_catalog_mount *qa_catalog_product_write_mount(const qa_catalog *, qa_product_id);
+qa_fs_root *qa_catalog_product_write_root(const qa_catalog *, qa_product_id);
 /* Accepts the product key or its persistent family:edition:package identity. */
 const qa_product *qa_catalog_find(const qa_catalog *, const char *);
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);

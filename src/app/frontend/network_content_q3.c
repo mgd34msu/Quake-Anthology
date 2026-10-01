@@ -1,5 +1,8 @@
 #include "network_content_q3.h"
 #include "qa/network_q3_pak_role.h"
+#include "qa/network_q3_pak_save.h"
+#include "qa/network_q3_fields_save.h"
+#include "qa/source_save.h"
 #include "qa/vfs_view_save.h"
 #include <limits.h>
 #include <math.h>
@@ -124,13 +127,28 @@ static bool game_type(const char *text, int32_t *out)
 }
 static double loose_random(void *context) { (void)context; return 1; }
 static bool matching_view(frontend_q3_content *, const qa_vfs *, qa_error *);
+static bool policy_current(const frontend_q3_content *, const qa_vfs *, qa_error *);
+static bool binding_current(const frontend_q3_content_request *binding, qa_error *error)
+{
+    if (!binding || !binding->application || !binding->descriptor || !binding->connection_epoch ||
+        !binding->connection_current || !binding->receiver.receiver || binding->receiver.source_owner ||
+        binding->receiver.source_actor.registry || !binding->receiver.service_owner || !binding->receiver.frontend_lifetime)
+        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content requires its actual source receiver and connection binding");
+    qa_application_q3_remote_source source = {.descriptor = binding->descriptor,
+        .receiver = binding->receiver, .configuration_generation = binding->configuration_generation,
+        .connection_epoch = binding->connection_epoch};
+    return (qa_application_q3_remote_source_current(binding->application, &source) &&
+        binding->connection_current(binding->connection, binding->connection_epoch, error)) ||
+        fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content lost its private source generation or connection epoch");
+}
 static bool current(const frontend_q3_content *content, qa_error *error)
 {
-    return (content && content->application && content->descriptor &&
-        content->configuration_generation == qa_application_configuration_generation(content->application) &&
-        qa_application_q3_remote_context_current(content->application, &content->receiver) &&
-        content->connection_current(content->connection, content->connection_epoch, error)) ||
-        fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content lost its actual receiver and configuration generation");
+    if (!content) return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content has no retained source owner");
+    frontend_q3_content_request binding = {.application = content->application,
+        .descriptor = qa_launch_instance_lease_view(content->descriptor), .receiver = content->receiver,
+        .configuration_generation = content->configuration_generation, .connection_epoch = content->connection_epoch,
+        .connection = content->connection, .connection_current = content->connection_current};
+    return binding_current(&binding, error);
 }
 static bool owns_mount(const qa_catalog *catalog, qa_product_id product,
     const qa_vfs *view, const qa_vfs_mount_info *info)
@@ -150,6 +168,14 @@ static bool identify_mount(frontend_q3_content *content, const qa_vfs_mount_info
     qa_product_id *out, qa_error *error)
 {
     *out = QA_PRODUCT_NONE;
+    if (qa_catalog_q3_restricted(content->catalog)) {
+        const qa_product *selected = qa_catalog_product(content->catalog, content->selected);
+        if (!selected || selected->family != QA_GAME_Q3 ||
+            !owns_mount(content->catalog, selected->id, content->mounts, info) || !info->q3_demo)
+            return fail(error, QA_ERROR_FORMAT, "Restricted remote Q3 mount lost its actual selected demo media scope");
+        *out = selected->id;
+        return true;
+    }
     for (size_t i = 0; i < qa_catalog_count(content->catalog); ++i) {
         const qa_product *product = qa_catalog_at(content->catalog, i);
         if (!owns_mount(content->catalog, product->id, content->mounts, info)) continue;
@@ -159,12 +185,17 @@ static bool identify_mount(frontend_q3_content *content, const qa_vfs_mount_info
     }
     return *out || fail(error, QA_ERROR_FORMAT, "Private remote Q3 mount lacks its real catalog owner");
 }
-static bool inventory(frontend_q3_content *content, qa_error *error)
+static bool inventory(frontend_q3_content *content, const qa_mount_id *saved_order,
+    size_t saved_count, qa_error *error)
 {
     content->mount_count = qa_vfs_mount_count(content->mounts);
-    if (content->mount_count > QA_Q3_SEARCH_PATHS)
+    if (content->mount_count > QA_Q3_SEARCH_PATHS || (saved_order && saved_count != content->mount_count))
         return fail(error, QA_ERROR_FORMAT, "Remote Q3 content exceeds the source search path capacity");
     size_t capacity = content->mount_count ? content->mount_count : 1;
+    const qa_mount_id *catalog_order; size_t catalog_count;
+    if (!qa_catalog_product_mounts(content->catalog, content->selected, &catalog_order, &catalog_count) ||
+        catalog_count != content->mount_count)
+        return fail(error, QA_ERROR_FORMAT, "Remote Q3 inventory differs from its actual selected catalog scope");
     content->inventory = calloc(capacity, sizeof(*content->inventory));
     content->packs = calloc(capacity, sizeof(*content->packs));
     content->loaded_checksums = calloc(capacity, sizeof(*content->loaded_checksums));
@@ -172,22 +203,28 @@ static bool inventory(frontend_q3_content *content, qa_error *error)
         return fail(error, QA_ERROR_MEMORY, "Retaining remote Q3 mounted packages");
     for (size_t i = 0; i < content->mount_count; ++i) {
         qa_vfs_mount_info info; content_mount *mount = content->inventory + i;
-        if (!qa_vfs_mount_at(content->mounts, i, &info) || !identify_mount(content, &info, &mount->product, error)) return false;
+        bool found = false;
+        for (size_t j = 0; j < content->mount_count; ++j) {
+            if (!qa_vfs_mount_at(content->mounts, j, &info)) return false;
+            if (saved_order ? info.id == saved_order[i] : j == i) { found = true; break; }
+        }
+        if (!found || !identify_mount(content, &info, &mount->product, error)) return false;
+        const qa_catalog_mount *original = NULL;
+        for (size_t j = 0; j < qa_catalog_mount_count(content->catalog); ++j) {
+            const qa_catalog_mount *candidate = qa_catalog_mount_at(content->catalog, j);
+            if (candidate->id == catalog_order[i]) { original = candidate; break; }
+        }
+        const char *retained_path = qa_vfs_mount_path(content->mounts, info.id);
+        if (!original || !retained_path || strcmp(original->path, retained_path) ||
+            original->format != info.format || original->writable != info.writable || info.user_overlay ||
+            info.q3_demo != qa_catalog_q3_restricted(content->catalog) ||
+            (info.is_archive && (!original->digest || !info.digest || !qa_sha256_equal(original->digest, info.digest))))
+            return fail(error, QA_ERROR_FORMAT, "Remote Q3 original inventory slot lost its genuine catalog mount identity");
+        for (size_t j = 0; j < i; ++j) if (content->inventory[j].id == info.id)
+            return fail(error, QA_ERROR_FORMAT, "Remote Q3 inventory repeats a retained mount identity");
         mount->id = info.id;
         const qa_product *product = qa_catalog_product(content->catalog, mount->product);
         const char *path = qa_vfs_mount_path(content->mounts, info.id);
-        if (!info.is_archive && info.writable) {
-            if (mount->product == content->selected && !content->selected_write_root) {
-                content->selected_write_root = qa_vfs_mount_root(content->mounts, info.id);
-                content->selected_write_path = copy(path, error);
-            }
-            if (mount->product == content->base && !content->base_write_root) {
-                content->base_write_root = qa_vfs_mount_root(content->mounts, info.id);
-                content->base_write_path = copy(path, error);
-            }
-            if ((mount->product == content->selected && !content->selected_write_path) ||
-                (mount->product == content->base && !content->base_write_path)) return false;
-        }
         if (!info.is_archive) continue;
         if (info.format != QA_ARCHIVE_PK3)
             return fail(error, QA_ERROR_FORMAT, "Private remote Q3 package is not a genuine PK3 archive");
@@ -223,28 +260,18 @@ void frontend_q3_content_destroy(frontend_q3_content *content)
     qa_vfs_destroy(content->mounts); qa_catalog_release(content->catalog);
     qa_launch_instance_lease_release(content->descriptor); free(content);
 }
-bool frontend_q3_content_create(const frontend_q3_content_request *request,
-    frontend_q3_content **out, qa_error *error)
+static bool create(const frontend_q3_content_request *request, qa_vfs **imported,
+    const qa_mount_id *saved_order, size_t saved_count, frontend_q3_content **out, qa_error *error)
 {
-    if (!request || !out || *out || !request->application || !request->descriptor || !request->catalog ||
-        !request->gamestate || !request->connection_epoch || !request->connection_current ||
-        !request->connection_current(request->connection, request->connection_epoch, error) ||
-        !request->receiver.receiver || request->receiver.seat ||
-        request->receiver.source_owner || request->receiver.source_actor.registry ||
-        !request->receiver.service_owner || !request->receiver.frontend_lifetime ||
-        request->configuration_generation != qa_application_configuration_generation(request->application) ||
-        !qa_application_q3_remote_context_current(request->application, &request->receiver))
-        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content requires its actual decoded seat-zero receiver");
-    const qa_launch_snapshot *snapshot = qa_application_launch(request->application);
-    if (!snapshot ||
-        qa_launch_snapshot_find(snapshot, request->descriptor->selection.instance) != request->descriptor)
-        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 descriptor differs from the current selected configuration");
-    const qa_product *selected = qa_catalog_product(qa_launch_snapshot_catalog(snapshot), request->descriptor->selection.product);
+    if (!out || *out || !binding_current(request, error) || !request->catalog || !request->gamestate)
+        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 content requires its actual decoded source receiver");
+    const qa_product *selected = qa_catalog_product(qa_launch_instance_catalog(request->descriptor), request->descriptor->selection.product);
     const qa_product *base = qa_catalog_find(request->catalog, "q3-baseq3");
     if (!selected || selected->family != QA_GAME_Q3 || !base || base->family != QA_GAME_Q3)
         return fail(error, QA_ERROR_FORMAT, "Remote Q3 receiver lacks its real selected Q3 catalog descriptor");
     frontend_q3_content *content = calloc(1, sizeof(*content));
     if (!content) return fail(error, QA_ERROR_MEMORY, "Retaining remote Q3 gamestate content");
+    if (imported) { content->mounts = *imported; *imported = NULL; }
     content->application = request->application; content->catalog = request->catalog; qa_catalog_retain(content->catalog);
     content->receiver = request->receiver; content->configuration_generation = request->configuration_generation;
     content->connection_epoch = request->connection_epoch; content->base = base->id;
@@ -284,9 +311,16 @@ bool frontend_q3_content_create(const frontend_q3_content_request *request,
     selected = qa_catalog_product(content->catalog, content->selected);
     content->selected_directory = copy(last_component(selected->directory), error);
     content->base_directory = copy(last_component(base->directory), error);
+    const qa_catalog_mount *selected_write = qa_catalog_product_write_mount(content->catalog, content->selected);
+    const qa_catalog_mount *base_write = qa_catalog_product_write_mount(content->catalog, content->base);
+    content->selected_write_root = qa_catalog_product_write_root(content->catalog, content->selected);
+    content->base_write_root = qa_catalog_product_write_root(content->catalog, content->base);
+    if (selected_write) content->selected_write_path = copy(selected_write->path, error);
+    if (base_write) content->base_write_path = copy(base_write->path, error);
+    if ((selected_write && !content->selected_write_path) || (base_write && !content->base_write_path)) goto failed;
     if (!content->selected_directory || !content->base_directory ||
-        !qa_catalog_open(content->catalog, content->selected, &content->mounts, error) ||
-        !inventory(content, error) || !qa_q3_server_pak_set_create(&content->loaded_server, error) ||
+        (!content->mounts && !qa_catalog_open(content->catalog, content->selected, &content->mounts, error)) ||
+        !inventory(content, saved_order, saved_count, error) || !qa_q3_server_pak_set_create(&content->loaded_server, error) ||
         !qa_q3_server_pak_set_create(&content->referenced_server, error) ||
         !qa_q3_info_value(qa_q3_configstring(content->gamestate, 1), "sv_paks", paks, sizeof(paks), error) ||
         !qa_q3_server_pak_set_checksums(content->loaded_server, paks, error) ||
@@ -305,6 +339,9 @@ bad_map:
 failed:
     frontend_q3_content_destroy(content); return false;
 }
+bool frontend_q3_content_create(const frontend_q3_content_request *request,
+    frontend_q3_content **out, qa_error *error)
+{ return create(request, NULL, NULL, 0, out, error); }
 frontend_q3_content_phase frontend_q3_content_state(const frontend_q3_content *content)
 { return content ? content->phase : FRONTEND_Q3_CONTENT_CATALOG; }
 bool frontend_q3_content_read(const frontend_q3_content *content, frontend_q3_content_view *out, qa_error *error)
@@ -368,8 +405,7 @@ bool frontend_q3_content_publish(frontend_q3_content *content,
         publication->descriptor->selection.product != content->selected ||
         publication->connection_epoch != content->connection_epoch ||
         publication->configuration_generation <= content->configuration_generation ||
-        publication->configuration_generation != qa_application_configuration_generation(content->application) ||
-        publication->receiver.seat || publication->receiver.source_owner || publication->receiver.source_actor.registry ||
+        publication->receiver.seat != content->receiver.seat || publication->receiver.source_owner || publication->receiver.source_actor.registry ||
         publication->receiver.receiver != content->receiver.receiver ||
         !publication->receiver.service_owner || publication->receiver.service_owner == content->receiver.service_owner ||
         !publication->receiver.frontend_lifetime ||
@@ -377,6 +413,11 @@ bool frontend_q3_content_publish(frontend_q3_content *content,
         !matching_view(content, publication->descriptor->content, error) ||
         !content->connection_current(content->connection, content->connection_epoch, error))
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication lacks its actual fresh private receiver at the retained connection epoch");
+    frontend_q3_content_request binding = {.application = content->application,
+        .descriptor = publication->descriptor, .receiver = publication->receiver,
+        .configuration_generation = publication->configuration_generation, .connection_epoch = publication->connection_epoch,
+        .connection = content->connection, .connection_current = content->connection_current};
+    if (!binding_current(&binding, error)) return false;
     qa_launch_instance_lease *descriptor = NULL;
     if (!qa_launch_instance_retain_metadata(publication->descriptor, &descriptor, error)) return false;
     qa_launch_instance_lease_release(content->descriptor); content->descriptor = descriptor;
@@ -414,7 +455,72 @@ static bool matching_view(frontend_q3_content *content, const qa_vfs *view, qa_e
         if (!mount || mount->id != expected.id)
             return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed the server pure search order");
     }
+    const qa_sha256_digest *actual, *expected; size_t actual_count, expected_count; bool actual_demo, expected_demo;
+    if (!qa_vfs_restrictions_read(view, &actual, &actual_count, &actual_demo) ||
+        !qa_vfs_restrictions_read(content->mounts, &expected, &expected_count, &expected_demo) ||
+        actual_count != expected_count || actual_demo != expected_demo)
+        return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed its actual pure restriction policy");
+    for (size_t i = 0; i < actual_count; ++i)
+        if (!qa_sha256_equal(actual + i, expected + i))
+            return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed its ordered pure package identities");
+    if (qa_vfs_prefix_count(view) != qa_vfs_prefix_count(content->mounts)) return false;
+    for (size_t i = 0; i < qa_vfs_prefix_count(view); ++i) {
+        const char *a, *b; const qa_mount_id *left, *right; size_t x, y;
+        if (!qa_vfs_prefix_at(view, i, &a, &left, &x) || !qa_vfs_prefix_at(content->mounts, i, &b, &right, &y) ||
+            strcmp(a, b) || x != y) return false;
+        for (size_t j = 0; j < x; ++j) {
+            content_mount *mount = matching_mount(content, view, left[j], error);
+            if (!mount || mount->id != right[j]) return false;
+        }
+    }
     return true;
+}
+static bool policy_current(const frontend_q3_content *content, const qa_vfs *view, qa_error *error)
+{
+    const qa_sha256_digest *actual; size_t actual_count; bool demo;
+    if (!qa_vfs_restrictions_read(view, &actual, &actual_count, &demo) || demo)
+        return fail(error, QA_ERROR_FORMAT, "Private Q3 continuation changed its per-source restriction contract");
+    size_t count; const uint32_t *sums = qa_q3_server_pak_set_sums(content->loaded_server, &count);
+    if (content->phase == FRONTEND_Q3_CONTENT_CATALOG) count = 0;
+    size_t capacity = content->mount_count ? content->mount_count : 1;
+    qa_q3_pure_path *paths = calloc(capacity, sizeof(*paths));
+    qa_mount_id *order = calloc(capacity, sizeof(*order));
+    if (!paths || !order) {
+        free(paths); free(order);
+        return fail(error, QA_ERROR_MEMORY, "Qualifying retained Q3 pure policy");
+    }
+    for (size_t i = 0; i < content->mount_count; ++i) {
+        const content_mount *mount = content->inventory + i;
+        paths[i] = (qa_q3_pure_path){.kind = mount->pack.archive_path ? QA_Q3_PURE_PACKAGE : QA_Q3_PURE_DIRECTORY,
+            .value = (void *)mount, .checksum = mount->pack.checksum};
+        order[i] = mount->id;
+    }
+    bool ok = qa_q3_reorder_pure_paths(paths, content->mount_count, sums, count, error); size_t accepted = 0;
+    for (size_t i = 0; ok && count && i < content->mount_count; ++i) {
+        if (paths[i].kind != QA_Q3_PURE_PACKAGE || !qa_q3_pak_is_pure(paths[i].checksum, sums, count)) continue;
+        const content_mount *mount = paths[i].value;
+        const qa_sha256_digest *digest = qa_vfs_archive_digest(content->mounts, mount->id);
+        if (!digest || accepted >= actual_count || !qa_sha256_equal(actual + accepted, digest)) ok = false;
+        ++accepted;
+    }
+    if (ok && accepted == actual_count) {
+        size_t first = 0;
+        for (size_t i = 0; i < actual_count; ++i) for (size_t j = first; j < content->mount_count; ++j) {
+            const qa_sha256_digest *digest = qa_vfs_archive_digest(view, order[j]);
+            if (!digest || !qa_sha256_equal(digest, actual + i)) continue;
+            qa_mount_id selected = order[j];
+            memmove(order + first + 1, order + first, (j - first) * sizeof(*order));
+            order[first++] = selected; break;
+        }
+        for (size_t i = 0; ok && i < content->mount_count; ++i) {
+            qa_vfs_mount_info mount;
+            ok = qa_vfs_mount_at(view, i, &mount) && mount.id == order[i];
+        }
+        ok = ok && !qa_vfs_prefix_count(view);
+    }
+    free(paths); free(order);
+    return (ok && accepted == actual_count && (!count || accepted)) ||
+        fail(error, QA_ERROR_FORMAT, "Saved Q3 pure policy differs from its actual admitted server package order");
 }
 static bool collect_view(frontend_q3_content *content, qa_vfs *view, qa_error *error)
 {
@@ -438,7 +544,7 @@ static bool role_receipt(frontend_q3_content *content,
     const frontend_q3_content_role_receipt *receipt, qa_qvm_role role, qa_error *error)
 {
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
-    if (!receipt || receipt->role != role || receipt->receiver != content->receiver.receiver || receipt->seat ||
+    if (!receipt || receipt->role != role || receipt->receiver != content->receiver.receiver || receipt->seat != content->receiver.seat ||
         !receipt->service_owner || receipt->configuration_generation != content->configuration_generation ||
         receipt->connection_epoch != content->connection_epoch || !receipt->descriptor ||
         receipt->descriptor->content != descriptor->content || receipt->descriptor->state != descriptor->state ||
@@ -467,7 +573,7 @@ bool frontend_q3_content_media_ready(frontend_q3_content *content,
 {
     qa_application_q3_client_context receiver;
     if (!current(content, error) || content->phase != FRONTEND_Q3_CONTENT_PUBLISHED ||
-        !qa_application_q3_remote_context_read(content->application, content->receiver.receiver, 0, &receiver, error) ||
+        !qa_application_q3_remote_context_read(content->application, content->receiver.receiver, content->receiver.seat, &receiver, error) ||
         !receiver.initialized)
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 media completion requires the actual published initialized receiver");
     if (!role_receipt(content, cgame, QA_QVM_CGAME, error) || !role_receipt(content, ui, QA_QVM_UI, error) ||
@@ -526,4 +632,302 @@ bool frontend_q3_content_download_destination(const frontend_q3_content *content
     snprintf(mapped, length, "%s%s", physical, slash);
     if (!qa_q3_download_name(mapped, error)) { free(mapped); return false; }
     *out = mapped; return true;
+}
+
+bool frontend_q3_content_visit(const frontend_q3_content *content,
+    const qa_application_content_visitor *visitor, qa_error *error)
+{
+    if (!visitor || !visitor->pool || !visitor->catalog || !visitor->view || !current(content, error)) return false;
+    const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
+    return visitor->pool(visitor->context, qa_catalog_resources(content->catalog), error) &&
+        visitor->catalog(visitor->context, content->catalog, error) &&
+        visitor->view(visitor->context, qa_catalog_files(content->catalog), error) &&
+        visitor->pool(visitor->context, qa_vfs_resources(content->mounts), error) &&
+        visitor->view(visitor->context, content->mounts, error) &&
+        visitor->pool(visitor->context, qa_vfs_resources(descriptor->content), error) &&
+        visitor->catalog(visitor->context, qa_launch_instance_catalog(descriptor), error) &&
+        visitor->view(visitor->context, descriptor->content, error);
+}
+
+typedef struct content_saved {
+    uint32_t phase, selected, base, seat;
+    uint64_t generation, epoch, receiver, service_owner, catalog, view, descriptor_view;
+    qa_sha256_digest descriptor_identity;
+    qa_buffer gamestate, references;
+    qa_mount_id *order;
+    size_t order_count;
+    bool has_map;
+    uint64_t map_pool, map_resource;
+    qa_vfs_acquisition map_acquisition;
+} content_saved;
+static bool saved_blob(qa_source_save_io *io, qa_buffer *buffer)
+{
+    size_t limit = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX;
+    if (!qa_source_save_count(io, &buffer->size, limit)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && buffer->size) {
+        buffer->data = malloc(buffer->size);
+        if (!buffer->data) return fail(io->error, QA_ERROR_MEMORY, "Retaining remote content field bytes");
+    }
+    return qa_source_save_bytes(io, buffer->data, buffer->size);
+}
+static bool saved_text(qa_source_save_io *io, char **text)
+{
+    bool present = *text != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return true;
+    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*text) : 0;
+    size_t limit = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX - 1;
+    if (!qa_source_save_count(io, &length, limit) || length == SIZE_MAX) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        *text = malloc(length + 1);
+        if (!*text) return fail(io->error, QA_ERROR_MEMORY, "Retaining remote map opening provenance");
+        (*text)[length] = 0;
+    }
+    return qa_source_save_bytes(io, *text, length) && !memchr(*text, 0, length);
+}
+#define CONTENT_FIELD(kind, name) do { if (!qa_source_save_##kind(io, &saved->name)) return false; } while (0)
+static bool saved_fields(qa_source_save_io *io, content_saved *saved)
+{
+    uint8_t magic[4] = {'Q','3','C','T'}; uint32_t schema = 1;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3CT", 4) ||
+        !qa_source_save_u32(io, &schema) || schema != 1) return false;
+    CONTENT_FIELD(u32, phase); CONTENT_FIELD(u32, selected); CONTENT_FIELD(u32, base); CONTENT_FIELD(u32, seat);
+    CONTENT_FIELD(u64, generation); CONTENT_FIELD(u64, epoch); CONTENT_FIELD(u64, receiver); CONTENT_FIELD(u64, service_owner);
+    CONTENT_FIELD(u64, catalog); CONTENT_FIELD(u64, view); CONTENT_FIELD(u64, descriptor_view);
+    if (saved->phase > FRONTEND_Q3_CONTENT_MEDIA_READY || !saved->selected || !saved->base ||
+        !saved->generation || !saved->epoch || !saved->receiver || !saved->service_owner ||
+        !saved->catalog || !saved->view || !saved->descriptor_view ||
+        !qa_source_save_bytes(io, &saved->descriptor_identity, sizeof(saved->descriptor_identity)) ||
+        !saved_blob(io, &saved->gamestate) || !saved->gamestate.size ||
+        !qa_source_save_count(io, &saved->order_count, QA_Q3_SEARCH_PATHS)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (saved->order_count > (io->input.size - io->offset) / sizeof(uint64_t)) return false;
+        saved->order = calloc(saved->order_count ? saved->order_count : 1, sizeof(*saved->order));
+        if (!saved->order) return fail(io->error, QA_ERROR_MEMORY, "Retaining original Q3 package inventory slots");
+    }
+    for (size_t i = 0; i < saved->order_count; ++i) {
+        if (!qa_source_save_u64(io, &saved->order[i]) || !saved->order[i]) return false;
+        for (size_t j = 0; j < i; ++j) if (saved->order[j] == saved->order[i]) return false;
+    }
+    CONTENT_FIELD(bool, has_map);
+    if (saved->has_map != (saved->phase >= FRONTEND_Q3_CONTENT_PREPARED)) return false;
+    if (saved->has_map) {
+        CONTENT_FIELD(u64, map_pool); CONTENT_FIELD(u64, map_resource);
+        if (!saved->map_pool || !saved->map_resource ||
+            !qa_source_save_u64(io, &saved->map_acquisition.mount) || !saved->map_acquisition.mount ||
+            !qa_source_save_u64(io, &saved->map_acquisition.resource_id) ||
+            saved->map_acquisition.resource_id != saved->map_resource ||
+            !saved_text(io, &saved->map_acquisition.path) || !saved->map_acquisition.path ||
+            !saved_text(io, &saved->map_acquisition.lookup_path) || !saved->map_acquisition.lookup_path ||
+            !saved_text(io, &saved->map_acquisition.link_source) ||
+            !saved_text(io, &saved->map_acquisition.link_target)) return false;
+    }
+    return saved_blob(io, &saved->references) && saved->references.size;
+}
+#undef CONTENT_FIELD
+static void saved_dispose(content_saved *saved)
+{
+    qa_buffer_free(&saved->gamestate); qa_buffer_free(&saved->references);
+    qa_vfs_acquisition_dispose(&saved->map_acquisition); free(saved->order);
+}
+static bool initialized_cut(frontend_q3_content *content, qa_error *error)
+{
+    if (content->phase != FRONTEND_Q3_CONTENT_MEDIA_READY) return true;
+    const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
+    const qa_qvm_role roles[] = {QA_QVM_CGAME, QA_QVM_UI};
+    for (size_t i = 0; i < 2; ++i) {
+        qa_application_q3_role_receipt receipt;
+        if (!qa_application_q3_role_receipt_read(content->application, content->receiver.receiver,
+            roles[i], content->receiver.seat, &receipt, error) ||
+            !qa_application_q3_role_receipt_current(content->application, &receipt) ||
+            receipt.configuration_generation != content->configuration_generation ||
+            receipt.connection_epoch != content->connection_epoch || !receipt.artifact || !receipt.acquisition ||
+            !receipt.descriptor || receipt.descriptor->content != descriptor->content ||
+            !qa_sha256_equal(&receipt.descriptor->identity, &descriptor->identity) ||
+            (roles[i] == QA_QVM_CGAME && receipt.service_owner != content->receiver.service_owner) ||
+            receipt.acquisition->resource_id != qa_resource_id(receipt.artifact) ||
+            !qa_vfs_acquisition_retained(receipt.artifact_view, receipt.acquisition, error) ||
+            !matching_view(content, receipt.artifact_view, error)) return false;
+        content_mount *mount = matching_mount(content, receipt.artifact_view, receipt.acquisition->mount, error);
+        if (!mount) return false;
+        if (!mount->pack.archive_path) {
+            if (content->pure) return fail(error, QA_ERROR_FORMAT, "Pure Q3 continuation lost its actual packed client module");
+            continue;
+        }
+        unsigned role_flag = roles[i] == QA_QVM_CGAME ? QA_Q3_PAK_CGAME : QA_Q3_PAK_UI;
+        bool marked = false;
+        for (size_t j = 0; j < qa_q3_pak_reference_count(content->references); ++j) {
+            qa_q3_pak_reference reference;
+            if (!qa_q3_pak_reference_at(content->references, j, &reference)) return false;
+            if (reference.pack == &mount->pack && (reference.flags & role_flag)) marked = true;
+        }
+        if (!marked) return fail(error, QA_ERROR_FORMAT, "Q3 continuation role flags differ from its genuine initialized artifact");
+    }
+    return true;
+}
+static bool reference_order_current(const frontend_q3_content *content, qa_error *error)
+{
+    size_t slot = 0;
+    for (size_t i = 0; i < content->mount_count; ++i) {
+        qa_vfs_mount_info info;
+        if (!qa_vfs_mount_at(content->mounts, i, &info)) return false;
+        if (!info.is_archive) continue;
+        const content_mount *mount = NULL;
+        for (size_t j = 0; j < content->mount_count; ++j)
+            if (content->inventory[j].id == info.id) mount = content->inventory + j;
+        qa_q3_pak_reference reference;
+        if (!mount || !qa_q3_pak_reference_at(content->references, slot++, &reference) || reference.pack != &mount->pack)
+            return fail(error, QA_ERROR_FORMAT, "Q3 reference order differs from its actual retained filesystem");
+    }
+    return slot == qa_q3_pak_reference_count(content->references) ||
+        fail(error, QA_ERROR_FORMAT, "Q3 reference catalog differs from its mounted archive inventory");
+}
+static bool map_cut(const frontend_q3_content *content, const qa_resource *map,
+    const qa_vfs_acquisition *receipt, qa_error *error)
+{
+    if (!map || !receipt->path || !receipt->lookup_path || !receipt->link_source || !receipt->link_target ||
+        strcmp(receipt->path, content->map_path) || receipt->resource_id != qa_resource_id(map) ||
+        qa_resource_pool_find(qa_vfs_resources(content->mounts), receipt->resource_id) != map)
+        return fail(error, QA_ERROR_FORMAT, "Q3 map continuation changed its actual held resource or request");
+    for (size_t i = 0; i < qa_vfs_read_count(content->mounts); ++i) {
+        qa_vfs_read_reference read;
+        if (!qa_vfs_read_at(content->mounts, i, &read)) return false;
+        if (read.mount == receipt->mount && read.resource == map &&
+            !strcmp(read.path, receipt->path) && !strcmp(read.lookup_path, receipt->lookup_path) &&
+            !strcmp(read.link_source, receipt->link_source) && !strcmp(read.link_target, receipt->link_target))
+            return qa_vfs_acquisition_retained(content->mounts, receipt, error);
+    }
+    return fail(error, QA_ERROR_FORMAT, "Q3 map continuation lacks its genuine retained journal opening");
+}
+bool frontend_q3_content_checkpoint(const frontend_q3_content *content,
+    const qa_application_content_graph *graph, qa_buffer *out, qa_error *error)
+{
+    if (!graph || !out || out->data || out->size || !current(content, error) ||
+        !initialized_cut((frontend_q3_content *)content, error) || !reference_order_current(content, error) ||
+        !policy_current(content, content->mounts, error)) return false;
+    const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
+    content_saved saved = {.phase = content->phase, .selected = content->selected, .base = content->base,
+        .seat = content->receiver.seat, .generation = content->configuration_generation,
+        .epoch = content->connection_epoch, .receiver = content->receiver.receiver,
+        .service_owner = content->receiver.service_owner,
+        .catalog = qa_application_content_catalog_id(graph, content->catalog),
+        .view = qa_application_content_view_id(graph, content->mounts),
+        .descriptor_view = qa_application_content_view_id(graph, descriptor->content),
+        .descriptor_identity = descriptor->identity, .order_count = content->mount_count, .has_map = content->map != NULL};
+    saved.order = calloc(saved.order_count ? saved.order_count : 1, sizeof(*saved.order));
+    size_t capacity = sizeof(qa_q3_gamestate) * 2 + 1024;
+    saved.gamestate.data = malloc(capacity);
+    bool ok = saved.order && saved.gamestate.data;
+    if (!ok) fail(error, QA_ERROR_MEMORY, "Retaining genuine remote content continuation");
+    qa_net_writer writer;
+    if (ok) {
+        qa_net_writer_init(&writer, saved.gamestate.data, capacity, error);
+        ok = qa_q3_save_gamestate_fields(&writer, content->gamestate);
+        saved.gamestate.size = qa_net_writer_size(&writer);
+        for (size_t i = 0; i < saved.order_count; ++i) saved.order[i] = content->inventory[i].id;
+    }
+    if (ok && saved.has_map) {
+        ok = qa_application_content_resource_id(graph, content->map, &saved.map_pool, &saved.map_resource) &&
+            map_cut(content, content->map, &content->map_acquisition, error);
+        if (ok) {
+            const qa_vfs_acquisition *source = &content->map_acquisition;
+            saved.map_acquisition = (qa_vfs_acquisition){.mount = source->mount, .resource_id = source->resource_id,
+                .path = copy(source->path, error), .lookup_path = copy(source->lookup_path, error),
+                .link_source = copy(source->link_source, error), .link_target = copy(source->link_target, error)};
+            ok = saved.map_acquisition.path && saved.map_acquisition.lookup_path &&
+                saved.map_acquisition.link_source && saved.map_acquisition.link_target;
+        }
+    }
+    if (ok) ok = qa_q3_pak_references_checkpoint(content->references, &saved.references, error);
+    qa_source_save_io io = {0};
+    if (ok) ok = qa_source_save_writer(&io, NULL, error) && saved_fields(&io, &saved) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); saved_dispose(&saved);
+    if (!ok && (!error || error->code == QA_OK))
+        fail(error, QA_ERROR_FORMAT, "Remote content continuation leaves its actual graph and source field domains");
+    return ok;
+}
+bool frontend_q3_content_restore(const frontend_q3_content_request *binding,
+    qa_application_content_graph *graph, qa_bytes bytes, frontend_q3_content **out, qa_error *error)
+{
+    if (!out || *out || !graph || !binding_current(binding, error)) return false;
+    content_saved saved = {0}; qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && saved_fields(&io, &saved) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    qa_q3_gamestate *state = NULL; qa_catalog *catalog = NULL; qa_vfs *mounts = NULL;
+    frontend_q3_content *content = NULL;
+    if (ok && (saved.generation != binding->configuration_generation || saved.epoch != binding->connection_epoch ||
+        saved.receiver != binding->receiver.receiver || saved.seat != binding->receiver.seat ||
+        saved.service_owner != binding->receiver.service_owner ||
+        !qa_sha256_equal(&saved.descriptor_identity, &binding->descriptor->identity) ||
+        qa_application_content_view(graph, saved.descriptor_view) != binding->descriptor->content ||
+        (binding->catalog && qa_application_content_catalog(graph, saved.catalog) != binding->catalog)))
+        ok = fail(error, QA_ERROR_FORMAT, "Saved remote content differs from its real restored private source");
+    if (ok) {
+        state = malloc(sizeof(*state));
+        if (!state) ok = fail(error, QA_ERROR_MEMORY, "Retaining restored decoded Q3 gamestate");
+    }
+    if (ok) {
+        qa_net_reader reader; qa_net_reader_init(&reader, (qa_bytes){saved.gamestate.data, saved.gamestate.size}, error);
+        ok = qa_q3_restore_gamestate_fields(&reader, state) && qa_net_reader_finish(&reader);
+    }
+    if (ok) ok = qa_application_content_retain_catalog(graph, saved.catalog, &catalog, error) &&
+        qa_application_content_claim_view(graph, saved.view, &mounts, error);
+    if (ok) {
+        frontend_q3_content_request request = *binding;
+        request.catalog = catalog; request.gamestate = state;
+        ok = create(&request, &mounts, saved.order, saved.order_count, &content, error);
+    }
+    if (ok && (content->selected != saved.selected || content->base != saved.base))
+        ok = fail(error, QA_ERROR_FORMAT, "Saved remote selected content differs from its genuine catalog");
+    if (ok && saved.has_map) {
+        const qa_resource *map = qa_application_content_resource(graph, saved.map_pool, saved.map_resource);
+        if (!map || qa_application_content_pool(graph, saved.map_pool) != qa_vfs_resources(content->mounts) ||
+            !map_cut(content, map, &saved.map_acquisition, error))
+            ok = fail(error, QA_ERROR_FORMAT, "Saved Q3 map lacks its actual retained opening and immutable resource");
+        else {
+            qa_resource_retain((qa_resource *)map); content->map = (qa_resource *)map;
+            content->map_acquisition = saved.map_acquisition; saved.map_acquisition = (qa_vfs_acquisition){0};
+        }
+    }
+    if (ok) {
+        qa_q3_pak_references *references = NULL;
+        ok = qa_q3_pak_references_restore((qa_bytes){saved.references.data, saved.references.size}, content->packs,
+            content->pack_count, (uint32_t)content->gamestate->checksum_feed, loose_random, NULL, &references, error);
+        if (ok) {
+            qa_q3_pak_references_destroy(content->references); content->references = references;
+            content->phase = saved.phase;
+            ok = policy_current(content, content->mounts, error) && reference_order_current(content, error) &&
+                (content->phase < FRONTEND_Q3_CONTENT_PUBLISHED || matching_view(content, binding->descriptor->content, error)) &&
+                initialized_cut(content, error) && current(content, error);
+        }
+    }
+    free(state); qa_catalog_release(catalog); qa_vfs_destroy(mounts); saved_dispose(&saved);
+    if (!ok) {
+        frontend_q3_content_destroy(content);
+        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Unqualified remote content continuation fields");
+        return false;
+    }
+    *out = content; return true;
+}
+bool frontend_q3_content_rebind(frontend_q3_content *content,
+    const frontend_q3_content_request *binding, qa_error *error)
+{
+    if (!content || !binding_current(binding, error) ||
+        content->configuration_generation != binding->configuration_generation ||
+        content->connection_epoch != binding->connection_epoch || content->receiver.receiver != binding->receiver.receiver ||
+        content->receiver.seat != binding->receiver.seat || content->receiver.service_owner != binding->receiver.service_owner ||
+        !qa_sha256_equal(&qa_launch_instance_lease_view(content->descriptor)->identity, &binding->descriptor->identity))
+        return fail(error, QA_ERROR_FORMAT, "Remote content rebind changes its genuine saved source cut");
+    qa_launch_instance_lease *descriptor = NULL;
+    if (!qa_launch_instance_retain_metadata(binding->descriptor, &descriptor, error)) return false;
+    frontend_q3_content candidate = *content;
+    candidate.descriptor = descriptor; candidate.application = binding->application; candidate.receiver = binding->receiver;
+    candidate.connection = binding->connection; candidate.connection_current = binding->connection_current;
+    if (!current(&candidate, error) || !initialized_cut(&candidate, error)) {
+        qa_launch_instance_lease_release(descriptor); return false;
+    }
+    qa_launch_instance_lease_release(content->descriptor); content->descriptor = descriptor;
+    content->application = binding->application; content->receiver = binding->receiver;
+    content->connection = binding->connection; content->connection_current = binding->connection_current;
+    return true;
 }

@@ -233,9 +233,7 @@ void qa_input_console_destroy(qa_input_console *c) {
         qa_console_unregister(c->options.console, c->names[i], 0);
     free(c);
 }
-static bool default_bindings(qa_input_seat *s, int32_t device, bool replace, qa_error *error) {
-    if (!s) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default bindings require an input seat"); return false; }
-    static const char *const defs[][2] = {{"w", "+forward"},
+static const char *const default_rows[][2] = {{"w", "+forward"},
                                           {"s", "+back"},
                                           {"a", "+moveleft"},
                                           {"d", "+moveright"},
@@ -254,12 +252,20 @@ static bool default_bindings(qa_input_seat *s, int32_t device, bool replace, qa_
                                           {"GAMEPAD_LEFT_SHOULDER", "weapprev"},
                                           {"GAMEPAD_RIGHT_SHOULDER", "weapnext"},
                                           {"GAMEPAD_BACK", "+scores"}};
-    qa_input_binding bindings[sizeof(defs) / sizeof(*defs)];
-    for (size_t i = 0; i < sizeof(defs) / sizeof(*defs); ++i) {
-        bindings[i] = (qa_input_binding){.kind = QA_BIND_COMMAND, .command = defs[i][1]};
-        if (s->options.context.dialect <= QA_CONSOLE_QW && (i == 4 || i == 13))
-            bindings[i].command = "+jump";
-        if (!qa_input_physical_parse(defs[i][0], device, &bindings[i].input)) {
+bool qa_input_default_binding_at(qa_console_dialect dialect, int32_t device, size_t index,
+                                  qa_input_binding *out) {
+    if (!out || (unsigned)dialect > QA_CONSOLE_Q3 || device < 0 ||
+        index >= sizeof(default_rows) / sizeof(*default_rows)) return false;
+    qa_input_binding binding = {.kind = QA_BIND_COMMAND, .command = default_rows[index][1]};
+    if (dialect <= QA_CONSOLE_QW && (index == 4 || index == 13)) binding.command = "+jump";
+    if (!qa_input_physical_parse(default_rows[index][0], device, &binding.input)) return false;
+    *out = binding; return true;
+}
+static bool default_bindings(qa_input_seat *s, int32_t device, bool replace, qa_error *error) {
+    if (!s) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default bindings require an input seat"); return false; }
+    qa_input_binding bindings[sizeof(default_rows) / sizeof(*default_rows)];
+    for (size_t i = 0; i < sizeof(default_rows) / sizeof(*default_rows); ++i) {
+        if (!qa_input_default_binding_at(s->options.context.dialect, device, i, bindings + i)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default key name is invalid"); return false;
         }
     }

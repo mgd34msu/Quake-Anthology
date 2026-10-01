@@ -24,6 +24,11 @@ typedef struct q3n_player_pose {
     bool pain_direction;
 } q3n_player_pose;
 typedef struct q3n_pose_axes { qa_vec3 legs[3], torso[3], head[3]; } q3n_pose_axes;
+typedef struct q3n_pose_entity {
+    uint32_t flags;
+    qa_vec3 velocity;
+    int32_t movement_direction, legs_animation, torso_animation;
+} q3n_pose_entity;
 
 bool q3n_lerp_clear(const qa_player_animation_config *, q3n_lerp_frame *,
     int32_t animation, int32_t time, qa_error *);
@@ -31,6 +36,9 @@ bool q3n_lerp_run(const qa_player_animation_config *, q3n_lerp_frame *,
     int32_t animation, int32_t time, float speed_scale, bool disabled, qa_error *);
 bool q3n_player_angles(q3n_player_pose *, const qa_player_animation_config *,
     const qa_q3_entity *, qa_vec3 lerp_angles, int32_t time,
+    int32_t frame_milliseconds, float swing_speed, q3n_pose_axes *, qa_error *);
+bool q3n_player_angles_pose(q3n_player_pose *, const qa_player_animation_config *,
+    const q3n_pose_entity *, qa_vec3 lerp_angles, int32_t time,
     int32_t frame_milliseconds, float swing_speed, q3n_pose_axes *, qa_error *);
 void q3n_angles_axis(qa_vec3, qa_vec3 axis[3]);
 

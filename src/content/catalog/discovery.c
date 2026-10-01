@@ -244,6 +244,11 @@ static bool scan_directory(qa_catalog *c, catalog_product *p, const char *root,
         }
     }
     ok = mount_file(c, p, path, QA_ARCHIVE_AUTO, writable, error);
+    if (ok && writable) for (size_t i = 0; i < p->own_count; ++i) {
+        const qa_catalog_mount *mount = catalog_mount(c, p->own_mounts[i]);
+        if (mount && mount->format == QA_ARCHIVE_AUTO && mount->writable && !strcmp(mount->path, path))
+            p->write_mount = mount->id;
+    }
 done:
     free(dir.entries); return ok;
 }

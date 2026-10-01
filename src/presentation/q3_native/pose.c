@@ -131,17 +131,17 @@ static float dot(qa_vec3 a, qa_vec3 b) {
     return add(add(mul(a.x, b.x), mul(a.y, b.y)), mul(a.z, b.z));
 }
 
-bool q3n_player_angles(q3n_player_pose *state, const qa_player_animation_config *config,
-    const qa_q3_entity *entity, qa_vec3 angles, int32_t time, int32_t milliseconds,
+bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_config *config,
+    const q3n_pose_entity *entity, qa_vec3 angles, int32_t time, int32_t milliseconds,
     float speed, q3n_pose_axes *out, qa_error *error) {
-    qa_vec3 source_velocity = qa_v3(entity->pos.delta[0], entity->pos.delta[1], entity->pos.delta[2]);
+    qa_vec3 source_velocity = entity->velocity;
     if (milliseconds < 0 || !isfinite(speed) || speed < 0 || !qa_vec_finite(angles) ||
         !qa_vec_finite(source_velocity)) return fail(error, "Invalid native Q3 player pose input");
     static const float offsets[8] = {0, 22, 45, -22, 0, 22, -45, -22};
-    int32_t direction = entity->eFlags & 1 ? 0 : integer(entity->angles2[1]);
+    int32_t direction = entity->flags & 1 ? 0 : entity->movement_direction;
     if (direction < 0 || direction >= 8) return fail(error, "Bad player movement angle");
     qa_vec3 head = qa_v3(angles.x, angle_mod(angles.y), angles.z), legs = {0}, torso = {0};
-    if ((entity->legsAnim & ~128) != 22 || (entity->torsoAnim & ~128) != 11) {
+    if ((entity->legs_animation & ~128) != 22 || (entity->torso_animation & ~128) != 11) {
         state->torso.yawing = state->torso.pitching = state->legs.yawing = true;
     }
     swing(add(head.y, mul(0.25f, offsets[direction])), 25, 90, speed,
@@ -171,4 +171,15 @@ bool q3n_player_angles(q3n_player_pose *state, const qa_player_animation_config 
     q3n_angles_axis(subtract_angles(torso, legs), out->torso);
     q3n_angles_axis(subtract_angles(head, torso), out->head);
     return true;
+}
+
+bool q3n_player_angles(q3n_player_pose *state, const qa_player_animation_config *config,
+    const qa_q3_entity *entity, qa_vec3 angles, int32_t time, int32_t milliseconds,
+    float speed, q3n_pose_axes *out, qa_error *error)
+{
+    q3n_pose_entity pose = {.flags = (uint32_t)entity->eFlags,
+        .velocity = qa_v3(entity->pos.delta[0], entity->pos.delta[1], entity->pos.delta[2]),
+        .movement_direction = integer(entity->angles2[1]),
+        .legs_animation = entity->legsAnim, .torso_animation = entity->torsoAnim};
+    return q3n_player_angles_pose(state, config, &pose, angles, time, milliseconds, speed, out, error);
 }

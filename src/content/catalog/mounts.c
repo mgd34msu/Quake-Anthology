@@ -120,7 +120,7 @@ bool qa_catalog_remote(const qa_catalog *c, qa_product_id base_id, const char *d
         const qa_product *ancestor = p;
         for (size_t j = 0; ancestor && j <= c->product_count; ++j) {
             if (ancestor->id == base_id) { *out = p->id; return true; }
-            ancestor = qa_catalog_product(c, ancestor->base);
+            ancestor = qa_catalog_product(c, qa_catalog_configuration_base(c, ancestor->id));
         }
     }
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "remote content directory %s is not in the installed catalog", directory);

@@ -9,6 +9,8 @@
 
 typedef struct catalog_product {
     qa_product view;
+    qa_product_id configuration_base;
+    qa_mount_id write_mount;
     qa_mount_id *own_mounts, *mounts;
     size_t own_count, mount_count;
     qa_catalog_map *maps;

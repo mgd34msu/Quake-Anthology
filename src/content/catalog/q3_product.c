@@ -215,6 +215,8 @@ bool qa_catalog_q3_restrict(qa_catalog *catalog, qa_error *error)
         catalog_product *product = &catalog->products[i];
         if (product->view.family != QA_GAME_Q3) continue;
         qa_product view = product->view;
+        replacement[i].configuration_base = product->configuration_base;
+        replacement[i].write_mount = product->write_mount;
         view.base = QA_PRODUCT_NONE;
         view.availability = QA_CONTENT_INSTALLED;
         view.requirements = NULL;

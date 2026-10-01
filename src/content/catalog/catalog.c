@@ -113,7 +113,7 @@ bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
         !catalog_grow((void **)&catalog->products, &catalog->product_capacity,
                       catalog->product_count + 1, sizeof(*catalog->products), error)) return false;
     catalog_product *product = &catalog->products[catalog->product_count];
-    *product = (catalog_product){ .view = *view };
+    *product = (catalog_product){ .view = *view, .configuration_base = view->base };
     product->view.id = (qa_product_id)++catalog->product_count;
     *out = product;
     return true;
@@ -237,6 +237,21 @@ const qa_product *qa_catalog_at(const qa_catalog *c, size_t i)
 { return c && i < c->product_count ? &c->products[i].view : NULL; }
 const qa_product *qa_catalog_product(const qa_catalog *c, qa_product_id id)
 { return id ? qa_catalog_at(c, (size_t)id - 1) : NULL; }
+qa_product_id qa_catalog_configuration_base(const qa_catalog *c, qa_product_id id)
+{ return qa_catalog_product(c, id) ? c->products[id - 1].configuration_base : QA_PRODUCT_NONE; }
+const qa_catalog_mount *qa_catalog_product_write_mount(const qa_catalog *c, qa_product_id id)
+{
+    if (!qa_catalog_product(c, id)) return NULL;
+    const qa_catalog_mount *mount = catalog_mount(c, c->products[id - 1].write_mount);
+    const char *path = mount ? qa_vfs_mount_path(c->mounts, mount->id) : NULL;
+    return mount && mount->format == QA_ARCHIVE_AUTO && mount->writable && path &&
+        !strcmp(path, mount->path) && qa_vfs_mount_root(c->mounts, mount->id) ? mount : NULL;
+}
+qa_fs_root *qa_catalog_product_write_root(const qa_catalog *c, qa_product_id id)
+{
+    const qa_catalog_mount *mount = qa_catalog_product_write_mount(c, id);
+    return mount ? qa_vfs_mount_root(c->mounts, mount->id) : NULL;
+}
 const qa_product *qa_catalog_find(const qa_catalog *c, const char *key)
 {
     if (c && key) for (size_t i = 0; i < c->product_count; ++i) {

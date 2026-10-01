@@ -826,6 +826,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         qa_scene_frame_restore(&f->frame,section(set,SECTION_FRAME),&frame,error) &&
         frontend_scene_namespace_qualify_frame(operation->space,1,&f->frame,error) &&
         frontend_q3_restore(operation->q3,(double)f->time_ns/1000000.0,error) &&
+        frontend_source_worlds_rebind_restored(f,error) &&
         frontend_world_inventory_ready(operation->roots,error) && frontend_scene_namespace_seal(operation->space,error) &&
         frontend_models_install(operation->models,error) &&
         frontend_ui_features_restore(f,operation->audio,section(set,SECTION_UI_FEATURES),error) &&

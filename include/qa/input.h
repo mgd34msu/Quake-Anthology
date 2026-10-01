@@ -413,6 +413,10 @@ bool qa_input_settings_read(const qa_cvars *, qa_movement_kind, qa_input_command
 bool qa_input_mouse_settings_write(qa_cvars *, const qa_mouse_tuning *, qa_error *);
 bool qa_input_device_settings_register(qa_cvars *, qa_error *);
 bool qa_input_bindings_config(const qa_input_seat *, bool controllers, qa_buffer *, qa_error *);
+/* Pure rows from the same general defaults used by apply and reset. Command
+ * text has static lifetime; false marks the end or an invalid profile/device. */
+bool qa_input_default_binding_at(qa_console_dialect, int32_t device, size_t index,
+                                  qa_input_binding *out);
 bool qa_input_default_bindings(qa_input_seat *, int32_t device, qa_error *);
 /* Copy and validate the default list before replacing current bindings. */
 bool qa_input_reset_default_bindings(qa_input_seat *, int32_t device, qa_error *);

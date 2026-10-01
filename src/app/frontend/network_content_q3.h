@@ -1,7 +1,7 @@
 #ifndef QA_FRONTEND_NETWORK_CONTENT_Q3_H
 #define QA_FRONTEND_NETWORK_CONTENT_Q3_H
 
-#include "qa/application_q3_client.h"
+#include "qa/application_q3_factory.h"
 #include "qa/network_q3.h"
 
 typedef struct frontend_q3_content frontend_q3_content;
@@ -94,5 +94,18 @@ bool frontend_q3_content_download_reference(const frontend_q3_content *,
 /* Returns an owned path relative to the actual family download root. */
 bool frontend_q3_content_download_destination(const frontend_q3_content *,
     const char *remote, char **empty, qa_error *);
+
+bool frontend_q3_content_visit(const frontend_q3_content *,
+    const qa_application_content_visitor *, qa_error *);
+bool frontend_q3_content_checkpoint(const frontend_q3_content *,
+    const qa_application_content_graph *, qa_buffer *empty, qa_error *);
+/* Imports actual graph-owned catalog/view/resource identities. Binding supplies
+ * the candidate's genuine source descriptor/private generation/launch seat and
+ * epoch callback; its catalog/gamestate may be NULL. No acquisition, discovery,
+ * source Init or media journal collection is replayed. */
+bool frontend_q3_content_restore(const frontend_q3_content_request *binding,
+    qa_application_content_graph *, qa_bytes, frontend_q3_content **empty, qa_error *);
+bool frontend_q3_content_rebind(frontend_q3_content *,
+    const frontend_q3_content_request *binding, qa_error *);
 
 #endif
