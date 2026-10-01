@@ -4,9 +4,7 @@
 #include "internal.h"
 
 typedef struct equipment_actor {
-    qa_equipment *equipment;
     qa_equipment_state state;
-    qa_inventory_lease q3_items;
     qa_equipment_source grapple, grenades, items;
     bool active, configuring;
 } equipment_actor;
@@ -164,10 +162,6 @@ bool qa_equipment_destroy_checked(qa_equipment *g, qa_error *e) {
         return true;
     if (!qa_equipment_idle(g)) return mode_fail(e, "equipment destruction retains a source operation");
     if (g->options.source_destroy && !g->options.source_destroy(g->options.source_context, e)) return false;
-    for (uint32_t i = 0; i < g->capacity; ++i)
-        if (g->actors[i].q3_items.serial)
-            (void)qa_inventory_close_items(g->options.services.inventory, g->actors[i].q3_items,
-                                           NULL);
     free(g->actors);
     free(g);
     return true;
@@ -216,7 +210,7 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
     sources = &selected_sources;
     equipment_actor *p = &g->actors[actor.slot];
     equipment_actor before = *p;
-    *p = (equipment_actor){.equipment = g, .configuring = true, .state.actor = actor};
+    *p = (equipment_actor){.configuring = true, .state.actor = actor};
     equipment_admission admission = {0};
     bool ok = admission_prepare(g, actor, selection, sources, &admission, e) &&
               admission_commit(g, actor, &admission, e);
@@ -227,7 +221,7 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
     }
     if (qa_actor_id_equal(p->state.actor, actor)) {
         if (ok)
-            *p = (equipment_actor){.equipment = g, .active = true,
+            *p = (equipment_actor){.active = true,
                 .grapple = admission.grapple, .grenades = admission.grenades, .items = admission.items,
                 .state = {.actor = actor, .selection = *selection, .sources = *sources}};
         else
@@ -271,10 +265,6 @@ static bool equipment_configure(qa_equipment *g, qa_actor_id actor,
     }
     if (!admission_commit(g, actor, &admission, e))
         goto finished;
-    if (p->q3_items.serial && p->state.sources.items != sources->items) {
-        if (!qa_inventory_close_items(g->options.services.inventory, p->q3_items, e)) goto finished;
-        p->q3_items = (qa_inventory_lease){0};
-    }
     p->state.configuration_pending = false;
     p->state.selection = *selection;
     p->state.sources = *sources;
@@ -707,98 +697,22 @@ float qa_equipment_gravity_scale(qa_equipment *g, qa_actor_id actor) {
                ? qa_q2_grapple_gravity_scale(p->grapple.q2, actor)
                : 1;
 }
-static bool q3_item_action(void *, qa_item_id, qa_item_action, qa_error *);
-static bool equipment_item_action(void *context, qa_item_id item, qa_item_action action, qa_error *e) {
-    equipment_actor *p = context;
-    qa_equipment *g = p->equipment;
-    if (!equipment_get(g, p->state.actor) || action != QA_ITEM_USE)
-        return mode_fail(e, "unsupported Q3 item action");
-    size_t count;
-    const qa_q3_item *items = qa_q3_items(p->items.q3_product, &count);
-    for (size_t i = 1; i < count; ++i)
-        if (items[i].kind == QA_Q3_ITEM_HOLDABLE &&
-            qa_q3_item_identity(p->items.q3, (uint32_t)i) == item)
-            return qa_q3_activate_holdable(p->items.q3, p->state.actor,
-                                           (qa_q3_holdable)items[i].tag, false, e);
-    if (item == qa_q3_weapon_item(p->items.q3, QA_Q3_W_GRAPPLE, false) &&
-        p->state.selection.grapple == QA_GRAPPLE_Q3 &&
-        p->state.selection.binding == QA_EQUIPMENT_WEAPON_SLOT)
-        return qa_equipment_select_grapple(g, p->state.actor, true, e);
-    if (!g->options.select_weapon)
-        return mode_fail(e, "Q3 item selection needs the selected arsenal coordinator");
-    return g->options.select_weapon(g->options.context, p->state.actor, item, e);
-}
-static bool q3_definitions(const qa_equipment_source *source, qa_item_definition *definitions, size_t *out,
-                            qa_error *e) {
-    size_t count;
-    const qa_q3_item *items = qa_q3_items(source->q3_product, &count);
-    size_t used = 0;
-    for (size_t i = 1; i < count; ++i) {
-        qa_item_id item = qa_q3_item_identity(source->q3, (uint32_t)i);
-        if (!item)
-            continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < used; ++j)
-            if (definitions[j].item == item)
-                duplicate = true;
-        if (duplicate)
-            continue;
-        if (used == 64)
-            return mode_fail(e, "Q3 item publication exceeds descriptor capacity");
-        bool weapon = items[i].kind == QA_Q3_ITEM_WEAPON;
-        definitions[used++] = (qa_item_definition){
-            .item = item,
-            .owner = source->owner,
-            .label = items[i].name,
-            .weapon = weapon,
-            .actions = weapon || items[i].kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0,
-            .ammo =
-                weapon ? qa_q3_weapon_item(source->q3, (qa_q3_weapon)items[i].tag, true) : 0};
-    }
-    *out = used;
-    return true;
-}
 static bool equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p || !p->items.q3 || !p->items.owner)
         return mode_fail(e, "Q3 inventory publication needs admitted equipment and provider");
-    if (p->q3_items.serial &&
-        qa_inventory_lease_current(g->options.services.inventory, p->q3_items))
-        return true;
-    qa_item_definition definitions[64];
-    size_t used;
-    return q3_definitions(&p->items, definitions, &used, e) &&
-        qa_inventory_bind_definitions(g->options.services.inventory, actor, p->items.owner,
-                                      definitions, used, q3_item_action, p, &p->q3_items, e);
-}
-bool qa_equipment_inventory_owner(qa_equipment *g, qa_actor_id actor, uint64_t serial) {
-    equipment_actor *p = equipment_get(g, actor);
-    return p && serial && p->q3_items.serial == serial &&
-        qa_actor_id_equal(p->q3_items.actor, actor);
-}
-bool qa_equipment_inventory_group(qa_equipment *g, qa_actor_id actor, uint64_t serial,
-    const qa_inventory_source_group *saved, qa_inventory_items *out, qa_error *e) {
-    equipment_actor *p = equipment_get(g, actor);
-    if (!p || !saved || !out || !serial || !p->items.q3 || !p->items.owner ||
-        saved->owner != p->items.owner || !saved->definitions_only ||
-        (saved->count && !saved->items) || saved->count > 64 || p->configuring)
-        return mode_fail(e, "invalid saved equipment inventory group");
-    qa_item_definition definitions[64];
-    size_t used;
-    if (!q3_definitions(&p->items, definitions, &used, e)) return false;
-    if (used != saved->count) return mode_fail(e, "saved equipment catalog count differs");
-    for (size_t i = 0; i < used; ++i) {
-        const qa_item_definition *a = &definitions[i], *b = &saved->items[i].definition;
-        if (saved->items[i].replace_primary || a->item != b->item || a->ammo != b->ammo ||
-            a->owner != b->owner || a->weapon != b->weapon || a->actions != b->actions ||
-            !a->label || !b->label || strcmp(a->label, b->label))
-            return mode_fail(e, "saved equipment catalog differs from source");
-    }
-    if (p->q3_items.serial != serial || !qa_actor_id_equal(p->q3_items.actor, actor))
-        return mode_fail(e, "saved equipment catalog differs from private continuation");
-    *out = (qa_inventory_items){.owner = p->items.owner, .items = saved->items,
-        .count = used, .action_context = p, .invoke = q3_item_action};
-    return true;
+    qa_equipment_source selected;
+    if (!source_resolve(g, p->state.sources.items, &selected, e) ||
+        selected.owner != p->items.owner || selected.q3 != p->items.q3)
+        return mode_fail(e, "Q3 equipment publication lost its actual source tuple");
+    qa_q3_game *game = p->items.q3;
+    qa_actor_owner owner = p->items.owner;
+    if (!qa_q3_bind_player(game, actor, QA_Q3_EQUIPMENT, 100, e) ||
+        !qa_q3_inventory_admit(game, actor, e)) return false;
+    p = equipment_get(g, actor);
+    return (p && p->items.q3 == game && p->items.owner == owner &&
+        qa_q3_inventory_equipment_current(game, actor, owner)) ||
+        mode_fail(e, "Q3 equipment publication lost its native inventory owner");
 }
 bool qa_equipment_read(qa_equipment *g, qa_actor_id actor, qa_equipment_state *out) {
     equipment_actor *p = equipment_get(g, actor);
@@ -892,11 +806,11 @@ static bool save_state(qa_source_save_io *io, qa_equipment_state *p) {
 static bool save_header(qa_source_save_io *io) {
     uint8_t signature[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
     static const uint8_t expected[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
-    uint32_t version = 2;
+    uint32_t version = 3;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return mode_fail(io->error, "invalid equipment save signature");
     EQUIP_FIELD(u32, version);
-    return version == 2 || mode_fail(io->error, "unsupported equipment save version");
+    return version == 3 || mode_fail(io->error, "unsupported equipment save version");
 }
 static bool save_boundary(qa_equipment *g, bool empty, qa_error *e) {
     if (!qa_equipment_idle(g) || !qa_session_safe(g->options.services.session) || !qa_world_idle(g->options.services.world))
@@ -907,9 +821,16 @@ static bool save_boundary(qa_equipment *g, bool empty, qa_error *e) {
     return true;
 }
 static bool save_native_state(qa_equipment *g, const qa_equipment_state *p, qa_error *e) {
-    qa_equipment_source grapple, grenades;
+    qa_equipment_source grapple, grenades, items;
     if (!source_resolve(g, p->sources.grapple, &grapple, e) ||
-        !source_resolve(g, p->sources.grenades, &grenades, e)) return false;
+        !source_resolve(g, p->sources.grenades, &grenades, e) ||
+        !source_resolve(g, p->sources.items, &items, e)) return false;
+    if (items.q3) {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(items.q3, p->actor, &player) ||
+            !(player.selections & QA_Q3_EQUIPMENT))
+            return mode_fail(e, "equipment save lost its actual native item source");
+    }
     if (p->selection.grapple == QA_GRAPPLE_Q3) {
         qa_q3_player_state player;
         if (grapple.saved_actor) {
@@ -940,11 +861,9 @@ bool qa_equipment_reconnect(qa_equipment *g, qa_error *e) {
         if (!equipment_get(g, actor->state.actor) || !state_valid(g, &actor->state, e) ||
             !save_native_state(g, &actor->state, e))
             return mode_fail(e, "saved equipment row lost its actual selected providers");
-        if (!actor->q3_items.serial) continue;
-        if (!equipment_get(g, actor->state.actor) || !actor->items.q3 || !actor->items.owner ||
-            !qa_actor_id_equal(actor->state.actor, actor->q3_items.actor) ||
-            !qa_inventory_lease_current(g->options.services.inventory, actor->q3_items))
-            return mode_fail(e, "saved equipment catalog is not connected");
+        if (actor->items.q3 && !qa_q3_inventory_equipment_current(actor->items.q3,
+                actor->state.actor, actor->items.owner))
+            return mode_fail(e, "saved equipment source inventory is not connected");
     }
     return true;
 }
@@ -970,7 +889,6 @@ bool qa_equipment_capture(qa_equipment *g, qa_buffer *out, qa_error *e) {
         if (!actor) continue;
         qa_equipment_state state = actor->state;
         okay = state_valid(g, &state, e) && save_native_state(g, &state, e) && save_state(io, &state);
-        if (okay) okay = qa_source_save_u64(io, &actor->q3_items.serial);
     }
     if (okay) okay = qa_source_save_finish(io, out);
     qa_source_save_dispose(io);
@@ -997,22 +915,17 @@ bool qa_equipment_restore_bytes(qa_equipment *g, qa_bytes input, qa_error *e) {
     if (okay) okay = qa_source_save_count(io, &count, g->capacity);
     for (size_t i = 0; okay && i < count; ++i) {
         qa_equipment_state state = {0};
-        uint64_t catalog = 0;
         okay = save_state(io, &state) && state_valid(g, &state, e) && save_native_state(g, &state, e);
-        if (okay) okay = qa_source_save_u64(io, &catalog);
         if (!okay) break;
         if (state.actor.slot >= g->capacity || candidate[state.actor.slot].active ||
             !qa_actors_get(qa_session_actors(g->options.services.session), state.actor)) {
             okay = mode_fail(e, "duplicate or stale equipment save actor"); break;
         }
-        candidate[state.actor.slot] = (equipment_actor){.equipment = g, .state = state, .active = true,
-            .q3_items = {.actor = state.actor, .serial = catalog}};
+        candidate[state.actor.slot] = (equipment_actor){.state = state, .active = true};
         equipment_actor *row = &candidate[state.actor.slot];
         okay = source_resolve(g, state.sources.grapple, &row->grapple, e) &&
             source_resolve(g, state.sources.grenades, &row->grenades, e) &&
             source_resolve(g, state.sources.items, &row->items, e);
-        if (okay && catalog && (!row->items.q3 || !row->items.owner))
-            okay = mode_fail(e, "saved equipment catalog has no selected Q3 owner");
     }
     if (okay) okay = qa_source_save_finish(io, NULL);
     qa_source_save_dispose(io);
@@ -1083,10 +996,5 @@ bool qa_equipment_q3_pull(qa_equipment *g, qa_actor_id actor, qa_vec3 *velocity,
 }
 bool qa_equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     EQUIPMENT_CALL(equipment_publish_q3_items(g, actor, e));
-}
-static bool q3_item_action(void *context, qa_item_id item, qa_item_action action, qa_error *e) {
-    equipment_actor *p = context;
-    qa_equipment *g = p->equipment;
-    EQUIPMENT_CALL(equipment_item_action(context, item, action, e));
 }
 #undef EQUIPMENT_CALL

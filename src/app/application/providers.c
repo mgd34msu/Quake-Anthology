@@ -10,6 +10,8 @@
 #include "native_q2_combat_policy.h"
 #include "bots_q1_rules.h"
 #include "startup_flow.h"
+#include "engine_shutdown.h"
+#include "equipment_actions.h"
 #include "guest_q3_save.h"
 #include "guest_q3_factory.h"
 #include "guest_qc_factory.h"
@@ -878,6 +880,7 @@ static bool construct_q3(qa_application *application,
                   .source_client_end = application_native_q3_source_client_end,
                   .source_movement_state = q3_source_movement_state,
                   .primary_attack_allowed = q3_primary_attack_allowed,
+                  .inventory_weapon_request = application_equipment_q3_weapon_request,
                   .postgame_cvar_integer = application_native_q3_postgame_cvar_integer,
                   .memory_debug_integer = q3_memory_debug_integer,
                   .foreign_mover_read = q3_native_client_mover_read,
@@ -1020,8 +1023,7 @@ bool application_provider_construct_qvm_restored(qa_application *application,
     return true;
 }
 
-bool application_provider_deconstruct(application_provider *provider,
-                                      qa_error *error)
+static bool deconstruct_provider(application_provider *provider, qa_error *error)
 {
     if (provider == NULL) return true;
     if (provider->attached || provider->component_attached ||
@@ -1147,6 +1149,16 @@ bool application_provider_deconstruct(application_provider *provider,
         provider->component = (qa_component){0};
         provider->policy = (qa_combat_policy){0};
     }
+    return ok;
+}
+
+bool application_provider_deconstruct(application_provider *provider, qa_error *error)
+{
+    qa_application *app = provider ? provider->application : NULL;
+    application_provider *previous = app ? app->engine_shutdown_provider : NULL;
+    if (app && app->engine_shutdown) app->engine_shutdown_provider = provider;
+    bool ok = deconstruct_provider(provider, error);
+    if (app) app->engine_shutdown_provider = previous;
     return ok;
 }
 

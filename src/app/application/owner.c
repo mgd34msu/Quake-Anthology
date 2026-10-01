@@ -7,6 +7,7 @@
 #include "rankings.h"
 #include "native_q3_clients.h"
 #include "native_q3_wire.h"
+#include "native_q1_wire.h"
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "qa/rankings_save.h"
@@ -746,6 +747,8 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     if (ok)
         ok = application_rankings_frame_ordinary(application, error);
     if (ok)
+        ok = application_native_q1_wire_observe(application, error);
+    if (ok)
         ok = application_native_q3_clients_drain(application, error);
     if (ok)
         ok = application_q3_publish_local_snapshots(application, error);
@@ -813,8 +816,10 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
+    if (application->engine_shutdown)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE shutdown still retains its application parents");
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
-        !qa_console_idle(application->console) ||
+        !qa_console_destroy_ready(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
         (application->pickups && !qa_pickups_idle(application->pickups)) ||
         (application->combat && !qa_combat_idle(application->combat)) ||

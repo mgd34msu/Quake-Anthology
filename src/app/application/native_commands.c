@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "native_q3_console.h"
+#include "engine_shutdown.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,7 @@ static application_provider *selected_arsenal(void *opaque, qa_actor_id actor)
 bool application_native_cheats_enabled(void *opaque)
 {
     application_provider *source = opaque;
-    const qa_cvar_view *cheats = qa_cvars_find(source->application->cvars, "sv_cheats");
+    const qa_cvar_view *cheats = qa_cvars_find(application_engine_shutdown_cvars(source), "sv_cheats");
     return cheats != NULL && cheats->integer != 0;
 }
 

@@ -11,6 +11,15 @@ static bool invoke_source(void *opaque, qa_item_id item, qa_item_action action, 
     if (player->selections & QA_Q3_ARSENAL)
         for (int weapon = 1; weapon < QA_Q3_WEAPON_COUNT; ++weapon)
             if (game->weapon_items[weapon] == item) {
+                if (game->options.hooks.inventory_weapon_request) {
+                    bool handled = false;
+                    if (!game->options.hooks.inventory_weapon_request(game->options.hooks.context,
+                            owner->actor, item, &handled, error)) return false;
+                    actor = q3_actor_get(game, owner->actor);
+                    if (handled || !actor || actor->kind != Q3_ACTOR_PLAYER) return true;
+                    if (!(actor->state.player.selections & QA_Q3_ARSENAL))
+                        return q3_fail(error, "Q3 weapon request lost its actual arsenal selection");
+                }
                 bool owned = q3_owns_weapon(game, owner->actor, (qa_q3_weapon)weapon);
                 actor = q3_actor_get(game, owner->actor);
                 if (owned && actor && actor->kind == Q3_ACTOR_PLAYER)
@@ -59,20 +68,23 @@ bool q3_inventory_holdable_changed(qa_q3_game *game, qa_actor_id actor,
     return qa_inventory_source_stored(game->options.services.inventory, owner->holdables,
                                        changes, used, error);
 }
-static size_t holdable_count(void *opaque) {
+static bool equipment_item(const qa_q3_item *item) {
+    return item->kind == QA_Q3_ITEM_HOLDABLE || item->kind == QA_Q3_ITEM_PERSISTENT;
+}
+static size_t equipment_count(void *opaque) {
     q3_inventory_owner *owner = opaque;
     size_t count, result = 0;
     const qa_q3_item *items = qa_q3_items(owner->game->options.product, &count);
     for (size_t i = 1; i < count; ++i)
-        if (items[i].kind == QA_Q3_ITEM_HOLDABLE)
+        if (equipment_item(&items[i]))
             ++result;
     return result;
 }
-static const qa_q3_item *holdable_at(q3_inventory_owner *owner, size_t ordinal, uint32_t *index) {
+static const qa_q3_item *equipment_at(q3_inventory_owner *owner, size_t ordinal, uint32_t *index) {
     size_t count;
     const qa_q3_item *items = qa_q3_items(owner->game->options.product, &count);
     for (size_t i = 1; i < count; ++i)
-        if (items[i].kind == QA_Q3_ITEM_HOLDABLE) {
+        if (equipment_item(&items[i])) {
             if (!ordinal) {
                 *index = (uint32_t)i;
                 return &items[i];
@@ -81,29 +93,34 @@ static const qa_q3_item *holdable_at(q3_inventory_owner *owner, size_t ordinal, 
         }
     return NULL;
 }
-static bool holdable_read(void *opaque, size_t ordinal, qa_inventory_entry *out, qa_error *error) {
+static bool equipment_read(void *opaque, size_t ordinal, qa_inventory_entry *out, qa_error *error) {
     q3_inventory_owner *owner = opaque;
     uint32_t index;
-    const qa_q3_item *item = holdable_at(owner, ordinal, &index);
+    const qa_q3_item *item = equipment_at(owner, ordinal, &index);
     q3_actor *actor = q3_actor_get(owner->game, owner->actor);
     if (!item || !actor || actor->kind != Q3_ACTOR_PLAYER)
-        return q3_fail(error, "missing Q3 holdable inventory owner");
+        return q3_fail(error, "missing Q3 equipment inventory owner");
+    int32_t selected = item->kind == QA_Q3_ITEM_HOLDABLE ? actor->state.player.holdable
+                                                       : actor->state.player.persistent;
     *out = (qa_inventory_entry){.item = owner->game->item_ids[index], .capacity = 1,
-                                .count = actor->state.player.holdable == item->tag ? 1 : 0,
+                                .count = selected == item->tag ? 1 : 0,
                                 .policy = QA_COUNT_SOURCE_INT32};
     return true;
 }
-static bool holdable_write(void *opaque, const qa_inventory_entry *entry, qa_error *error) {
+static bool equipment_write(void *opaque, const qa_inventory_entry *entry, qa_error *error) {
     q3_inventory_owner *owner = opaque;
     q3_actor *actor = q3_actor_get(owner->game, owner->actor);
     if (!actor || actor->kind != Q3_ACTOR_PLAYER || entry->count < 0 || entry->count > 1 ||
         entry->count != trunc(entry->count))
         return q3_fail(error, "invalid Q3 holdable inventory mutation");
-    for (size_t ordinal = 0; ordinal < holdable_count(owner); ++ordinal) {
+    for (size_t ordinal = 0; ordinal < equipment_count(owner); ++ordinal) {
         uint32_t index;
-        const qa_q3_item *item = holdable_at(owner, ordinal, &index);
+        const qa_q3_item *item = equipment_at(owner, ordinal, &index);
         if (item && owner->game->item_ids[index] == entry->item) {
             qa_q3_player_state *player = &actor->state.player;
+            if (item->kind == QA_Q3_ITEM_PERSISTENT)
+                return entry->count == (player->persistent == item->tag ? 1 : 0) ||
+                    q3_fail(error, "Q3 persistent item changes require their actual pickup owner");
             if (entry->count && player->holdable != QA_Q3_H_NONE && player->holdable != item->tag)
                 return q3_fail(error, "Q3 already holds another holdable");
             if (entry->count)
@@ -157,10 +174,10 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
         owner->weapons = lease;
     }
     if ((selections & QA_Q3_EQUIPMENT) && !qa_inventory_lease_current(inventory, owner->holdables)) {
-        qa_item_admission definitions[5];
+        qa_item_admission definitions[9];
         size_t used = 0;
         for (size_t i = 1; i < count; ++i)
-            if (items[i].kind == QA_Q3_ITEM_HOLDABLE) {
+            if (equipment_item(&items[i])) {
                 qa_inventory_entry previous;
                 qa_error observed = {0};
                 bool found = qa_inventory_entry_read(inventory, actor, game->item_ids[i],
@@ -176,11 +193,12 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
                     return q3_fail(error, "Q3 holdable admission owner changed during observation");
                 definitions[used++] = (qa_item_admission){.replace_primary = found, .definition = {
                     .item = game->item_ids[i], .owner = game->options.owner,
-                    .label = items[i].name, .actions = QA_ITEM_USE}};
+                    .label = items[i].name,
+                    .actions = items[i].kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0}};
             }
         qa_inventory_items group = {.owner = game->options.owner, .items = definitions,
-            .count = used, .state = {.context = owner, .count = holdable_count,
-                                    .at = holdable_read, .write = holdable_write},
+            .count = used, .state = {.context = owner, .count = equipment_count,
+                                    .at = equipment_read, .write = equipment_write},
             .action_context = owner, .invoke = invoke};
         qa_inventory_lease lease = {0};
         if (!qa_inventory_bind_items(inventory, actor, &group, &lease, error))
@@ -202,6 +220,16 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     bool result = inventory_admit(game, actor, error);
     --game->observation_depth;
     return result;
+}
+bool qa_q3_inventory_equipment_current(const qa_q3_game *game, qa_actor_id actor,
+    qa_actor_owner expected_owner) {
+    const q3_actor *entry = game ? q3_actor_const(game, actor) : NULL;
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || game->options.owner != expected_owner ||
+        !(entry->state.player.selections & QA_Q3_EQUIPMENT)) return false;
+    const q3_inventory_owner *owner = &game->inventory_owners[actor.slot];
+    return owner->game == game && qa_actor_id_equal(owner->actor, actor) &&
+        (owner->selections & QA_Q3_EQUIPMENT) &&
+        qa_inventory_lease_current(game->options.services.inventory, owner->holdables);
 }
 bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
     if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session))
@@ -238,21 +266,22 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
     const qa_q3_item *items = qa_q3_items(game->options.product, &count);
     for (size_t i = 1; i < count; ++i) {
         bool weapon = items[i].kind == QA_Q3_ITEM_WEAPON;
-        if (saved->definitions_only ? !weapon : items[i].kind != QA_Q3_ITEM_HOLDABLE)
+        if (saved->definitions_only ? !weapon : !equipment_item(&items[i]))
             continue;
         if (used == QA_Q3_WEAPON_COUNT || used >= saved->count)
             return q3_fail(error, "Q3 saved inventory definition count differs");
         qa_item_admission definition = {.definition = {
             .item = game->item_ids[i], .owner = game->options.owner,
             .ammo = weapon ? game->ammo_items[items[i].tag] : 0,
-            .label = items[i].name, .weapon = weapon, .actions = QA_ITEM_USE},
+            .label = items[i].name, .weapon = weapon,
+            .actions = weapon || items[i].kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0},
             .replace_primary = saved->items[used].replace_primary};
         if ((saved->definitions_only && definition.replace_primary) ||
             !saved_definition(&definition.definition, &saved->items[used].definition))
             return q3_fail(error, "Q3 saved inventory declarations differ from source");
         ++used;
     }
-    if (used != saved->count || (!saved->definitions_only && used > 5))
+    if (used != saved->count || (!saved->definitions_only && used > 9))
         return q3_fail(error, "Q3 saved inventory definition count differs");
     qa_inventory_lease prior = saved->definitions_only ? owner->weapons : owner->holdables;
     if (!qa_actor_id_equal(prior.actor, actor) || prior.serial != serial)
@@ -260,7 +289,7 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
     *out = (qa_inventory_items){.owner = game->options.owner, .items = saved->items,
         .count = used, .action_context = owner, .invoke = invoke};
     if (!saved->definitions_only)
-        out->state = (qa_inventory_binding){.context = owner, .count = holdable_count,
-                                            .at = holdable_read, .write = holdable_write};
+        out->state = (qa_inventory_binding){.context = owner, .count = equipment_count,
+                                            .at = equipment_read, .write = equipment_write};
     return true;
 }

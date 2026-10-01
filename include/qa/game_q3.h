@@ -211,6 +211,9 @@ typedef struct qa_q3_hooks {
     bool (*respawn)(void *, qa_actor_id, qa_error *);
     bool (*teleport_destination)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, qa_error *);
     bool (*primary_attack_allowed)(void *, qa_actor_id);
+    /* A selected equipment slot may consume a real source weapon request.
+     * Unhandled requests continue through this GAME's inventory action. */
+    bool (*inventory_weapon_request)(void *, qa_actor_id, qa_item_id, bool *handled, qa_error *);
     int32_t (*source_team)(void *, qa_actor_id);
     int32_t (*entity_number)(void *, qa_actor_id);
     bool (*objective_drop)(void *, qa_actor_id player, qa_error *);
@@ -277,6 +280,7 @@ bool qa_q3_destroy(qa_q3_game *, qa_error *);
 bool qa_q3_destroy_ready(const qa_q3_game *);
 bool qa_q3_pickups_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_inventory_admit(qa_q3_game *, qa_actor_id, qa_error *);
+bool qa_q3_inventory_equipment_current(const qa_q3_game *, qa_actor_id, qa_actor_owner);
 bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
 bool qa_q3_source_clock(const qa_q3_game *, int32_t *source_time_ms, qa_error *);

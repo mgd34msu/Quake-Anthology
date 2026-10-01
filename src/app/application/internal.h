@@ -193,6 +193,8 @@ struct qa_application {
     struct application_startup_flow *startup_flow;
     application_publication *startup_publication;
     application_provider *startup_preinit_provider;
+    struct qa_application_engine_shutdown *engine_shutdown;
+    application_provider *engine_shutdown_provider;
     const struct qa_application_startup_hooks *startup_hooks;
     struct application_startup *startup;
     qa_q3_product_policy q3_product;

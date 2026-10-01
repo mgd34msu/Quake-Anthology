@@ -1236,7 +1236,8 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                                     (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_Q3) ? 4 :
                                     owner->kind == QA_SAVE_CONTROLS ? 7 :
-                                    owner->kind == QA_SAVE_EQUIPMENT || owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||
+                                    owner->kind == QA_SAVE_EQUIPMENT ? 3 :
+                                    owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||
                                     owner->kind == QA_SAVE_EVENTS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {

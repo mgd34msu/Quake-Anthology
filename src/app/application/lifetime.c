@@ -5,7 +5,10 @@
 #include "guest_qc_original_save.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
+#include "native_q1_wire.h"
 #include "native_q2_console.h"
+#include "native_q3_remote_role.h"
+#include "supplies.h"
 #include "startup_flow.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
@@ -17,6 +20,7 @@
 #include "control_frame.h"
 #include "rankings.h"
 #include "q3_product.h"
+#include "equipment_runtime.h"
 #include "qa/console_cvar_observer.h"
 
 #include <stdlib.h>
@@ -25,12 +29,17 @@ bool application_guests_idle(const qa_application *application)
 {
     if (application == NULL)
         return false;
-    if (!application_control_frames_idle(application) || !application_rankings_idle(application)) return false;
+    if (!application_control_frames_idle(application) || !application_rankings_idle(application) ||
+        !application_supplies_idle(application->supplies) ||
+        !application_equipment_runtime_idle(application->equipment_runtime) ||
+        (application->equipment && !qa_equipment_idle(application->equipment))) return false;
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
         if (!application_native_q1_console_idle(provider) ||
+            !application_native_q1_wire_idle(provider) ||
             !application_native_q2_console_idle(provider) ||
             !application_native_q3_console_idle(provider) ||
+            !application_native_q3_remote_roles_idle(provider) ||
             !application_native_q3_ipfilters_idle(provider) ||
             !application_native_q3_settings_idle(provider) ||
             !application_native_q3_team_status_idle(provider) ||
@@ -202,15 +211,16 @@ bool application_finalize(qa_application *application, qa_error *error)
     if (application == NULL)
         return true;
     if (!application->destroy_requested || application->finalizing ||
-        application->startup_flow ||
+        application->startup_flow || application->engine_shutdown ||
         application->failed_publications ||
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||
-        application->pending_close != NULL || application->live_providers != NULL)
+        application->pending_close != NULL || application->live_providers != NULL ||
+        application->equipment_runtime != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application services still have retained owners");
     if (!qa_session_destroy_ready(application->session) ||
-        !qa_console_idle(application->console) ||
+        !qa_console_destroy_ready(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
         (application->pickups && !qa_pickups_idle(application->pickups)) ||
         (application->combat && !qa_combat_idle(application->combat)) ||
@@ -243,7 +253,10 @@ bool application_finalize(qa_application *application, qa_error *error)
     }
     current = (qa_error){0};
 
-    qa_equipment_destroy(application->equipment);
+    if (!qa_equipment_destroy_checked(application->equipment, error)) {
+        application->finalizing = false;
+        return false;
+    }
     application->equipment = NULL;
     qa_modes_destroy(application->modes);
     application->modes = NULL;

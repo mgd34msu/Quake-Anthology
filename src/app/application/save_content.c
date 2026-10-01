@@ -4,6 +4,7 @@
 #include "qa/source_save.h"
 #include "qa/vfs_save.h"
 #include "qa/application_q3_factory.h"
+#include "equipment_runtime.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -168,7 +169,7 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     if (source->artifact) {
         const qa_vfs_acquisition *receipt = source->artifact_acquisition;
         if (!receipt || receipt->resource_id != qa_resource_id(source->artifact) ||
-            !qa_vfs_acquisition_valid(source->content, receipt, error))
+            !qa_vfs_acquisition_retained(source->content, receipt, error))
             return fail(error, QA_ERROR_FORMAT, "Provider artifact lost its actual opening receipt");
         row->artifact_acquisition = (qa_vfs_acquisition){.mount = receipt->mount, .resource_id = receipt->resource_id};
         row->artifact_acquisition.path = copy_text(receipt->path, error);
@@ -241,6 +242,19 @@ bool application_save_content_collect(const qa_application *app, qa_application_
             qa_launch_snapshot_resource(launch, i), &g->resources[i], error);
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
+    for (size_t i = 0; ok && i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
+        application_equipment_runtime_source source;
+        ok = application_equipment_runtime_source_at(app->equipment_runtime, i, &source, error);
+        if (!ok || !source.gear) continue;
+        qa_resource_pool *pool = qa_vfs_resources(source.content);
+        ok = source.descriptor && source.artifact && source.acquisition &&
+            source.acquisition->resource_id == qa_resource_id(source.artifact) &&
+            qa_resource_pool_find(pool, qa_resource_id(source.artifact)) == source.artifact &&
+            qa_vfs_acquisition_retained(source.content, source.acquisition, error) &&
+            add_view(g, source.content, error);
+        if (!ok && (!error || error->code == QA_OK))
+            fail(error, QA_ERROR_FORMAT, "Gear artifact leaves its genuine retained content owner");
+    }
     if (ok && visit) ok = visit(context, app, &visitor, error);
     /* Preserve portable native admission only for the very same installed
      * view. Every encoding still checks its complete current native snapshot
@@ -594,7 +608,7 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
             return fail(error, QA_ERROR_FORMAT, "Saved provider artifact/declaration lacks immutable resource authority");
         if (v->artifact && (!v->artifact_acquisition ||
             v->artifact_acquisition->resource_id != qa_resource_id(v->artifact) ||
-            !qa_vfs_acquisition_valid(v->content, v->artifact_acquisition, error)))
+            !qa_vfs_acquisition_retained(v->content, v->artifact_acquisition, error)))
             return fail(error, QA_ERROR_FORMAT, "Saved provider artifact receipt leaves its actual restored view");
         if (v->artifact && !r->artifact_retained) { qa_resource_retain((qa_resource *)v->artifact); r->artifact_retained = true; }
         if (v->declaration && !r->declaration_retained) { qa_resource_retain((qa_resource *)v->declaration); r->declaration_retained = true; }

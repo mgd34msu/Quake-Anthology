@@ -50,6 +50,15 @@ static bool source_current(void *context)
         source->provider->launch &&
         qa_sha256_equal(&source->provider->launch->identity, &source->view.descriptor->identity);
 }
+bool application_equipment_runtime_owner_current(const application_equipment_runtime *runtime,
+    qa_actor_owner owner)
+{
+    if (!runtime || !owner || runtime->closing || runtime->restoring) return false;
+    for (size_t i = 0; i < runtime->count; ++i)
+        if (runtime->sources[i].view.selected_owner == owner)
+            return source_current(&runtime->sources[i]);
+    return false;
+}
 
 static bool target_record(equipment_source *source, const qa_actor_record *record)
 {
@@ -385,10 +394,13 @@ bool application_equipment_runtime_destroy(application_equipment_runtime *runtim
             source->view.gear = NULL;
         }
         if (source->attached) {
-            if (!qa_session_remove(runtime->options.services.session, source->view.gear_owner, error)) {
+            bool removed = qa_session_remove(runtime->options.services.session, source->view.gear_owner, error);
+            qa_clock_state retained;
+            if (removed || !qa_session_clock(runtime->options.services.session, source->view.gear_owner, &retained))
+                source->attached = false;
+            if (!removed) {
                 runtime->destroying = false; return false;
             }
-            source->attached = false;
         }
         qa_resource_release(source->artifact); source->artifact = NULL; source->view.artifact = NULL;
         qa_vfs_acquisition_dispose(&source->acquisition);
@@ -477,14 +489,14 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
     qa_bytes *out, qa_error *error)
 {
     const qa_save_record *record = image ? qa_save_image_find(image, QA_SAVE_EQUIPMENT, "") : NULL;
-    if (!session || !record || !out || record->owner.schema_version != 2 ||
+    if (!session || !record || !out || record->owner.schema_version != 3 ||
         !record->owner.schema || strcmp(record->owner.schema, "qa.equipment"))
         return application_fail(error, QA_ERROR_FORMAT, "Equipment topology requires its actual save record");
     uint8_t magic[8] = {0}; uint32_t version = 0; bool present = false; qa_bytes source = {0};
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, session, record->payload, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QAEQUIP", sizeof(magic)) &&
-        qa_source_save_u32(&io, &version) && version == 2 &&
+        qa_source_save_u32(&io, &version) && version == 3 &&
         qa_source_save_bool(&io, &present) && present && saved_blob(&io, &source) && source.size;
     qa_source_save_dispose(&io);
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Equipment save lacks its genuine runtime topology");

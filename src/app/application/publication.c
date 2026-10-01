@@ -13,8 +13,11 @@
 #include "guest_q3_restart.h"
 #include "q3_campaign_launch.h"
 #include "startup_flow.h"
+#include "startup_program.h"
 #include "native_q2_checkpoint.h"
 #include "native_q3_checkpoint.h"
+#include "supplies.h"
+#include "equipment_runtime.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +25,17 @@
 static void close_world(void *opaque)
 {
     (void)qa_world_destroy(opaque, NULL);
+}
+
+static bool close_equipment(qa_equipment **controller,
+    application_equipment_runtime **runtime, qa_error *error)
+{
+    bool closed = *controller ? qa_equipment_destroy_checked(*controller, error) :
+        application_equipment_runtime_destroy(*runtime, error);
+    if (!closed) return false;
+    *controller = NULL;
+    *runtime = NULL;
+    return true;
 }
 
 static const qa_launch_resource *map_resource(
@@ -63,6 +77,45 @@ static bool same_world_entities(const qa_launch_choices *left,
         qa_launch_binding_for(right, scope, QA_ROLE_ENTITIES, "");
     return a != NULL && b != NULL && same_text(a->instance, b->instance) &&
            same_text(a->definition, b->definition);
+}
+
+static bool player_admission_binding(const qa_launch_binding *binding)
+{
+    if (binding->scope.kind == QA_SCOPE_WORLD)
+        return false;
+    switch (binding->role) {
+    case QA_ROLE_CHARACTER: case QA_ROLE_MOVEMENT: case QA_ROLE_ARSENAL:
+    case QA_ROLE_INVENTORY: case QA_ROLE_COMBAT: case QA_ROLE_EFFECTS:
+    case QA_ROLE_EQUIPMENT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool same_player_admission_bindings(const qa_launch_choices *left,
+                                           const qa_launch_choices *right)
+{
+    size_t left_count = 0, right_count = 0;
+    for (size_t i = 0; i < right->binding_count; ++i)
+        right_count += player_admission_binding(right->bindings + i);
+    for (size_t i = 0; i < left->binding_count; ++i) {
+        const qa_launch_binding *a = left->bindings + i;
+        if (!player_admission_binding(a)) continue;
+        ++left_count;
+        bool found = false;
+        for (size_t j = 0; j < right->binding_count; ++j) {
+            const qa_launch_binding *b = right->bindings + j;
+            if (a->role == b->role && same_scope(a->scope, b->scope) &&
+                same_text(a->selector, b->selector) && same_text(a->instance, b->instance) &&
+                same_text(a->definition, b->definition)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return left_count == right_count;
 }
 
 static bool same_mode(const qa_launch_mode *left,
@@ -171,6 +224,7 @@ static bool same_map_configuration(const qa_launch_snapshot *previous,
         left->world.explicit_spawn_point != right->world.explicit_spawn_point ||
         !same_text(left->world.spawn_point, right->world.spawn_point) ||
         !same_world_entities(left, right) ||
+        !same_player_admission_bindings(left, right) ||
         left->mode_count != right->mode_count ||
         left->equipment_count != right->equipment_count ||
         left->monster_count != right->monster_count ||
@@ -483,6 +537,27 @@ bool application_publication_begin(qa_application *application,
     return prepare_world(application, publication, error);
 }
 
+static bool prepare_supplies(qa_application *application,
+    application_publication *publication, qa_error *error)
+{
+    if (publication->supplies || !publication->map_provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Supply publication lost its detached source owner");
+    if (!application_supplies_create(application, application->inventory, &publication->supplies, error) ||
+        !application_supplies_prepare(publication->supplies, publication->map_provider,
+            publication->map_provider, error)) return false;
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
+    for (size_t i = 0; i < choices->binding_count; ++i) {
+        const qa_launch_binding *binding = choices->bindings + i;
+        if (binding->role != QA_ROLE_ARSENAL || (binding->selector && binding->selector[0])) continue;
+        const qa_launch_instance *instance = qa_launch_snapshot_find(publication->candidate, binding->instance);
+        if (!instance || !instance->state)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Selected supply arsenal has no actual candidate instance");
+        if (!application_supplies_prepare(publication->supplies, publication->map_provider, instance->state, error))
+            return false;
+    }
+    return true;
+}
+
 bool application_publication_finish(qa_application *application,
                                     application_publication *publication, qa_error *error)
 {
@@ -490,7 +565,9 @@ bool application_publication_finish(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "Publication completion lost its detached ticket");
     if (!publication->travel) return true;
     if (!construct_and_reserve(application, publication, NULL, error) ||
+        !prepare_supplies(application, publication, error) ||
         !application_match_prepare(application, publication, error) ||
+        !application_equipment_runtime_prepare_components(publication->equipment_runtime, error) ||
         !application_q3_world_restart_prepared(application, publication, error))
         return false;
     return true;
@@ -523,47 +600,54 @@ static void abort_admissions(application_publication *publication)
     }
 }
 
-void application_publication_dispose(qa_application *application,
-                                     application_publication *publication)
+static bool publication_dispose_checked(qa_application *application,
+                                        application_publication *publication,
+                                        qa_error *error)
 {
     if (publication == NULL)
-        return;
-    if (!publication->published)
+        return true;
+    if (!publication->published) {
         application_startup_flow_discard_candidate(application, publication->candidate);
+        application_q3_world_restart_configuration_finish(application, publication->candidate, false);
+    }
+    if (!application_startup_program_publication_abort(&publication->programs, error)) return false;
+    if (!close_equipment(&publication->equipment, &publication->equipment_runtime, error)) return false;
     abort_admissions(publication);
     qa_world_geometry_admission_abort(publication->geometry_admission);
     publication->geometry_admission = NULL;
+    if (!application_supplies_destroy(publication->supplies, error)) return false;
+    publication->supplies = NULL;
     if (!publication->published && publication->admissions != NULL)
         for (size_t index = publication->admission_count; index-- > 0;) {
             application_provider_admission *admission =
                 &publication->admissions[index];
             if (admission->constructed) {
-                qa_error ignored = {0};
                 if (!application_provider_deconstruct(admission->provider,
-                                                      &ignored))
-                    application_fault(application, &ignored);
+                                                      error))
+                    return false;
+                admission->constructed = false;
             }
         }
     /* A startup continuation can own physical hosts before they reach GAME
      * admission. Release all detached candidate owners before their world. */
-    if (!publication->published)
-        for (size_t index = publication->next_count; index-- > 0;) {
-            application_provider *provider = publication->next[index];
-            if (!provider->attached) {
-                qa_error ignored = {0};
-                if (!application_provider_deconstruct(provider, &ignored))
-                    application_fault(application, &ignored);
-            }
-        }
-    qa_equipment_destroy(publication->equipment);
+    for (size_t index = publication->next_count; index-- > 0;) {
+        application_provider *provider = publication->next[index];
+        if (!provider->attached &&
+            !application_provider_deconstruct(provider, error))
+            return false;
+    }
+    bool discarded_initial_world = publication->initial_world != NULL;
+    if (discarded_initial_world &&
+        !qa_world_destroy(publication->initial_world, error))
+        return false;
+    publication->initial_world = NULL;
     qa_modes_destroy(publication->modes);
     free(publication->mode_ids);
     qa_entities_free(&publication->entities);
-    if (publication->initial_world != NULL)
-        (void)qa_world_destroy(publication->initial_world, NULL);
     qa_collision_destroy(publication->geometry);
     qa_resource_release(publication->map_resource);
-    if (!publication->published && publication->physics_initialized) {
+    if (publication->physics_initialized &&
+        (!publication->published || discarded_initial_world)) {
         *application->physics = (qa_physics){0};
         application->physics_ready = false;
     }
@@ -572,6 +656,42 @@ void application_publication_dispose(qa_application *application,
     free(publication->next);
     application_map_publication_dispose(publication);
     free(publication);
+    return true;
+}
+
+void application_publication_dispose(qa_application *application,
+                                     application_publication *publication)
+{
+    if (publication == NULL || publication->failed_retained)
+        return;
+    qa_error error = {0};
+    if (publication_dispose_checked(application, publication, &error))
+        return;
+    /* Rollback is a void callback. Keep both real snapshot rosters and every
+     * borrowed descendant until a checked cleanup retry can release them. */
+    qa_launch_snapshot_retain(publication->candidate);
+    qa_launch_snapshot_retain(publication->previous);
+    publication->failed_retained = true;
+    publication->failed_next = application->failed_publications;
+    application->failed_publications = publication;
+    application_fault(application, &error);
+}
+
+bool application_publication_retry_cleanup(qa_application *application,
+                                           qa_error *error)
+{
+    while (application->failed_publications != NULL) {
+        application_publication *publication = application->failed_publications;
+        application_publication *next = publication->failed_next;
+        const qa_launch_snapshot *candidate = publication->candidate;
+        const qa_launch_snapshot *previous = publication->previous;
+        if (!publication_dispose_checked(application, publication, error))
+            return false;
+        application->failed_publications = next;
+        qa_launch_snapshot_release(candidate);
+        qa_launch_snapshot_release(previous);
+    }
+    return true;
 }
 
 void application_publication_rollback(qa_application *application, void *ticket)
@@ -647,6 +767,8 @@ static bool deconstruct_removed(application_publication *publication, qa_error *
 static bool commit_admissions(application_publication *publication,
                               qa_error *error)
 {
+    if (!application_equipment_runtime_validate_components(publication->equipment_runtime, error))
+        return false;
     bool ok = true;
     qa_error first = {0};
     for (size_t index = 0; index < publication->admission_count; ++index) {
@@ -677,6 +799,8 @@ static bool commit_admissions(application_publication *publication,
             }
         }
     }
+    if (ok)
+        ok = application_equipment_runtime_commit_components(publication->equipment_runtime, &first);
     if (!ok && error != NULL)
         *error = first;
     return ok;
@@ -710,7 +834,8 @@ bool application_save_prepare_content(qa_application *candidate,
         candidate->operation != APPLICATION_PERSISTING ||
         candidate->world != NULL || candidate->provider_count != 0 ||
         candidate->providers != NULL || candidate->modes != NULL ||
-        candidate->equipment != NULL || !qa_session_safe(candidate->session))
+        candidate->equipment != NULL || candidate->equipment_runtime != NULL ||
+        !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "save content requires an isolated restored application");
     application_publication *publication = calloc(1, sizeof(*publication));
@@ -719,7 +844,9 @@ bool application_save_prepare_content(qa_application *candidate,
                                 "cannot allocate restored content preparation");
     publication->candidate = snapshot;
     publication->restoring = true;
-    bool ok = provider_roster(publication, error) &&
+    bool ok = application_equipment_runtime_saved(candidate->session, image,
+                  &publication->equipment_runtime_saved, error) &&
+              provider_roster(publication, error) &&
               prepare_world(candidate, publication, error);
     if (ok)
         ok = qa_session_adopt_restored_world(candidate->session,
@@ -760,14 +887,20 @@ bool application_save_prepare_content(qa_application *candidate,
         }
         if (ok)
             ok = construct_and_reserve(candidate, publication, image, error) &&
-                 application_match_prepare_equipment(candidate, publication, error);
+                 prepare_supplies(candidate, publication, error) &&
+                 application_match_prepare_equipment(candidate, publication, error) &&
+                 application_equipment_runtime_prepare_components(publication->equipment_runtime, error);
     }
     if (ok) {
         ok = commit_admissions(publication, error);
         publish_roster(candidate, publication);
+        candidate->supplies = publication->supplies;
+        publication->supplies = NULL;
         publication->published = true;
         candidate->equipment = publication->equipment;
         publication->equipment = NULL;
+        candidate->equipment_runtime = publication->equipment_runtime;
+        publication->equipment_runtime = NULL;
         if (ok)
             ok = application_map_restore_bind(candidate, snapshot, error);
     }
@@ -853,7 +986,9 @@ static bool publish_travel(qa_application *application,
     application->routing_provider_count = application->provider_count;
     application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
-    bool retired_services = application_q3_world_restart_begin(application, publication, error);
+    bool retired_services = close_equipment(&application->equipment,
+        &application->equipment_runtime, error) &&
+        application_q3_world_restart_begin(application, publication, error);
     for (size_t i = 0; retired_services && i < application->provider_count; ++i)
         retired_services = application_q3_guest_client_sources_retire(application->providers[i],
             old_source, publication->map_provider, choices, error);
@@ -887,6 +1022,15 @@ static bool publish_travel(qa_application *application,
         remember_failure(retired, &current, "world retirement failed", &ok,
                          &first);
     }
+
+    /* A rejected release retains both its real provider borrows and owner.
+     * Providers cannot be deconstructed until this publication has drained. */
+    if (!ok) {
+        if (error) *error = first;
+        return false;
+    }
+    if (!application_supplies_destroy(application->supplies, error)) return false;
+    application->supplies = NULL;
 
     current = (qa_error){0};
     bool detached = detach_removed(application, publication, &current);
@@ -930,13 +1074,16 @@ static bool publish_travel(qa_application *application,
     remember_failure(admitted, &current,
                      "provider admission publication failed", &ok, &first);
 
-    qa_equipment *old_equipment = application->equipment;
     qa_modes *old_modes = application->modes;
     qa_mode_id *old_mode_ids = application->mode_ids;
 
     publish_roster(application, publication);
+    application->supplies = publication->supplies;
+    publication->supplies = NULL;
     application->equipment = publication->equipment;
     publication->equipment = NULL;
+    application->equipment_runtime = publication->equipment_runtime;
+    publication->equipment_runtime = NULL;
     application->modes = publication->modes;
     publication->modes = NULL;
     application->mode_ids = publication->mode_ids;
@@ -945,7 +1092,6 @@ static bool publish_travel(qa_application *application,
     application->primary_mode = publication->primary_mode;
     application->primary_mode_ready = publication->mode_count != 0;
 
-    qa_equipment_destroy(old_equipment);
     qa_modes_destroy(old_modes);
     free(old_mode_ids);
 
@@ -997,6 +1143,8 @@ static bool publish_travel(qa_application *application,
 bool application_publication_retire(qa_application *application,
                                     qa_error *error)
 {
+    if (!close_equipment(&application->equipment, &application->equipment_runtime, error))
+        return false;
     application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     for (size_t i = 0; i < application->provider_count; ++i)
         if (!application_q3_guest_client_sources_retire(application->providers[i],
@@ -1011,6 +1159,8 @@ bool application_publication_retire(qa_application *application,
     if (!terminal_world && application->world != NULL &&
         !qa_session_retire_world(application->session, error))
         return false;
+    if (!application_supplies_destroy(application->supplies, error)) return false;
+    application->supplies = NULL;
     application_publication publication = {
         .removed = application->providers,
         .removed_count = application->provider_count,
@@ -1026,8 +1176,6 @@ bool application_publication_retire(qa_application *application,
     application->routing_snapshot = NULL;
     application->routing_providers = NULL;
     application->routing_provider_count = 0;
-    qa_equipment_destroy(application->equipment);
-    application->equipment = NULL;
     qa_modes_destroy(application->modes);
     application->modes = NULL;
     free(application->mode_ids);
@@ -1065,6 +1213,7 @@ void application_publication_publish(qa_application *application,
     }
     if (publication != NULL) {
         publication->published = publication->published || ok;
+        if (ok) ok = application_startup_program_publication_adopt(&publication->programs, &error);
         application_publication_dispose(application, publication);
     }
     application->publication_started = false;

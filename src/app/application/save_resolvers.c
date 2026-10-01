@@ -2,7 +2,6 @@
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
-#include "qa/equipment_save.h"
 #include "qa/application_network.h"
 #include "qa/frontend.h"
 #include "qa/game_q1_checkpoint.h"
@@ -69,8 +68,6 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
     qa_application *app = opaque;
     if (!saved)
         return application_fail(error, QA_ERROR_ARGUMENT, "Saved inventory group is absent");
-    if (app->equipment && qa_equipment_inventory_owner(app->equipment, actor, serial))
-        return qa_equipment_inventory_group(app->equipment, actor, serial, saved, out, error);
     qa_actor_owner modes_owner = qa_strings_find(qa_session_strings(app->session),
         (qa_bytes){(const uint8_t *)"application:modes", sizeof("application:modes") - 1});
     if (app->modes && modes_owner && saved->owner == modes_owner)

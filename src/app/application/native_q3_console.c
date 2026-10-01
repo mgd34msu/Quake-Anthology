@@ -1,6 +1,7 @@
 #include "native_q3_console.h"
 #include "q3_product.h"
 #include "startup_flow.h"
+#include "engine_shutdown.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -74,7 +75,7 @@ qa_cvars *application_native_q3_cvar_owner(const application_provider *provider,
         ++engine;
     }
     if (value && !*value && !*engine)
-        return provider && provider->application ? provider->application->cvars : NULL;
+        return application_engine_shutdown_cvars(provider);
     return application_native_q3_console_registry(provider);
 }
 
@@ -92,7 +93,7 @@ static qa_cvars *visible_cvars(void *context, const qa_command_context *command,
     qa_cvars *selected = NULL;
     if (application_startup_visible_cvars(owner->provider, owner->console, command, index, &selected))
         return selected;
-    return index == 0 ? owner->cvars : index == 1 ? owner->provider->application->cvars : NULL;
+    return index == 0 ? owner->cvars : index == 1 ? application_engine_shutdown_cvars(owner->provider) : NULL;
 }
 
 static bool cheats_allowed(void *context)

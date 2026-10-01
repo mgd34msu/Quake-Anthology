@@ -76,6 +76,7 @@ bool qa_application_command_context_active(const qa_application *application,
 {
     if (application == NULL || context == NULL || application->session == NULL ||
         application->destroy_requested || application->state == QA_APPLICATION_FAULTED ||
+        (!context->owner && application->engine_shutdown) ||
         context->registry != qa_actors_identity(qa_session_actors(application->session)) ||
         context->generation != application->command_generation)
         return false;
@@ -119,6 +120,8 @@ bool application_command_capture(void *opaque, const qa_command_context *source,
                                   qa_command_context *out, qa_error *error)
 {
     qa_application *application = opaque;
+    if (application != NULL && application->engine_shutdown && source && !source->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE command owner is physically detached");
     if (application != NULL && application->session == NULL) {
         *out = *source;
         return true;
@@ -128,7 +131,7 @@ bool application_command_capture(void *opaque, const qa_command_context *source,
 
 bool application_command_active(void *opaque, const qa_command_context *context)
 {
-    if (context == NULL)
+    if (context == NULL || (opaque && !context->owner && ((qa_application *)opaque)->engine_shutdown))
         return false;
     if (context->registry == 0 && context->generation == 0)
         return true;

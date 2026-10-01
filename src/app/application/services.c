@@ -3,6 +3,7 @@
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
 #include "supplies.h"
+#include "equipment_runtime.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -278,6 +279,10 @@ bool application_actor_released(void *opaque, qa_session *session,
         remember_failure(qa_world_actor_released(application->world, released,
                                                  &current),
                          &current, "world actor retirement failed", &ok, &first);
+    current = (qa_error){0};
+    remember_failure(application_equipment_runtime_actor_released(application->equipment_runtime,
+                         released, &current), &current,
+                     "gear source actor retirement failed", &ok, &first);
     qa_combat_actor_released(application->combat, released);
     qa_inventory_actor_released(application->inventory, released);
     qa_pickups_actor_released(application->pickups, released);
