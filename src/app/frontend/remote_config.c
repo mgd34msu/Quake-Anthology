@@ -83,6 +83,15 @@ static bool active(const frontend_remote_config *row,const qa_command_context *c
         command->owner==row->scope.provider && command->seat==row->scope.seat &&
         command->session==row->command.session && qa_application_command_context_active(row->application,command);
 }
+static bool cvar_context(const frontend_remote_config *row,const qa_command_context *command)
+{
+    if (active(row,command)) return true;
+    return row && command && !row->retargeting && !row->imported && row->configured && row->released &&
+        descriptor(row) && row->console && row->cvars && qa_console_cvars(row->console)==row->cvars &&
+        command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
+        command->owner==row->scope.provider && command->seat==row->scope.seat &&
+        command->session==row->command.session && qa_console_cvar_entered(row->console,command);
+}
 static void print(void *context,const char *text)
 {
     frontend_remote_config *row=context;
@@ -228,7 +237,7 @@ bool frontend_remote_config_reset_bindings(frontend_remote_config *row,int32_t c
 }
 qa_cvars *frontend_remote_config_cvar_owner(frontend_remote_config *row,const qa_command_context *command,const char *name)
 {
-    if (!active(row,command) || !name || !strcmp(name,"sv_cheats")) return NULL;
+    if (!cvar_context(row,command) || !name || !strcmp(name,"sv_cheats")) return NULL;
     frontend_config_source *game=row->hosted?frontend_config_store_source(row->owner->manager,row->hosted_console):NULL;
     qa_cvars *server=frontend_config_source_cvars(game);
     if (server && qa_cvars_find(server,name)) return server;
@@ -238,7 +247,7 @@ qa_cvars *frontend_remote_config_cvar_owner(frontend_remote_config *row,const qa
 }
 qa_cvars *frontend_remote_config_visible(frontend_remote_config *row,const qa_command_context *command,size_t index)
 {
-    if (!active(row,command)) return NULL;
+    if (!cvar_context(row,command)) return NULL;
     frontend_config_source *game=row->hosted?frontend_config_store_source(row->owner->manager,row->hosted_console):NULL;
     qa_cvars *server=frontend_config_source_cvars(game);
     if (server) { if (!index) return server; --index; }

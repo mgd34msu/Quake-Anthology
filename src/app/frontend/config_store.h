@@ -11,11 +11,15 @@ typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_config_source frontend_config_source;
 typedef struct frontend_remote_config frontend_remote_config;
 typedef struct frontend_authored_bindings frontend_authored_bindings;
+typedef bool (*frontend_config_host_entry_read)(void *,qa_application *,
+    const qa_application_startup_source *,const qa_q3_host **,qa_error *);
 typedef struct frontend_config_host_cvars {
     const frontend_config_store *manager;
     qa_application *application;
     qa_application_startup_source source,parent_game;
     bool has_parent;
+    void *entry_context;
+    frontend_config_host_entry_read entry_read;
 } frontend_config_host_cvars;
 
 /* The manager retains actual source ConfigStores and isolated logical input
@@ -94,6 +98,11 @@ bool frontend_config_store_registry_resolve(const frontend_config_store *,qa_app
 bool frontend_config_host_cvars_prepare(frontend_config_host_cvars *,const frontend_config_store *,qa_application *,
     const qa_application_startup_source *,const qa_application_startup_source *parent_game,
     qa_q3_host_cvar_services *,qa_error *);
+/* The actual acquired-module lease supplies its pure entered-host reader once,
+ * before native activation. No host pointer is cached by these callbacks. */
+bool frontend_config_host_cvars_set_entry(frontend_config_host_cvars *,void *,frontend_config_host_entry_read,qa_error *);
+bool frontend_config_host_cvar_entered(void *,const qa_q3_host *,const qa_console *,const qa_command_context *,qa_error *);
+bool frontend_config_source_cvar_entered(void *,const qa_q3_host *,const qa_console *,const qa_command_context *,qa_error *);
 /* Binding traps borrow the dictionary of this exact retained CLIENT while
  * physical key/catcher/release ownership stays with the stable seat root. */
 bool frontend_config_host_bindings(void *,const qa_input_seat *,qa_input_seat **,qa_error *);

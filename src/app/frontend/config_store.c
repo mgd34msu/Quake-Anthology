@@ -137,6 +137,15 @@ static bool source_context(const frontend_config_source *source,const qa_command
         command->dialect==source->command.dialect &&
         qa_application_command_context_active(source->application,command);
 }
+static bool source_cvar_context(const frontend_config_source *source,const qa_command_context *command)
+{
+    if (source_context(source,command)) return true;
+    return source && command && !source->imported && source->configured && source->released &&
+        instance(source) && source->console && source->cvars &&
+        qa_console_cvars(source->console)==source->cvars && command->origin!=QA_COMMAND_REMOTE &&
+        command->owner==source->command.owner && command->session==source->command.session &&
+        command->dialect==source->command.dialect && qa_console_cvar_entered(source->console,command);
+}
 static bool binding_context(void *context,const qa_command_context *command)
 { return source_context(context,command); }
 static bool current_command(const frontend_config_source *source,qa_command_context *command,qa_error *error)
@@ -391,7 +400,7 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
     frontend_config_source *source=frontend_config_store_source(manager,console);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
     if (client) return frontend_remote_config_cvar_owner(client,command,name);
-    if (!source_context(source,command) || !name) return NULL;
+    if (!source_cvar_context(source,command) || !name) return NULL;
     if (command->dialect==QA_CONSOLE_Q3 && equal(name,"sv_cheats")) return NULL;
     if (qa_cvars_find(source->cvars,name)) return source->cvars;
     size_t ordinal=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
@@ -411,7 +420,7 @@ qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manag
     frontend_config_source *source=frontend_config_store_source(manager,console);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
     if (client) return frontend_remote_config_visible(client,command,ordinal);
-    if (!source_context(source,command)) return NULL;
+    if (!source_cvar_context(source,command)) return NULL;
     qa_cvars *rows[5]={0}; size_t count=0;
     size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
     if (command->origin!=QA_COMMAND_SERVER && seat<source->seat_count) rows[count++]=source->seats[seat].mouse;
@@ -437,7 +446,7 @@ static frontend_config_source *namespace_game(const frontend_config_store *manag
 }
 static bool registry_inventory(const frontend_config_store *manager,qa_application *application,
     const qa_application_startup_source *authority,const qa_application_startup_source *parent_game,
-    qa_cvars *rows[8],qa_error *error)
+    const frontend_config_host_cvars *entry,qa_cvars *rows[8],qa_error *error)
 {
     if (!manager || !application || !authority || !authority->descriptor || !authority->descriptor->storage ||
         !authority->scope.provider || !authority->console || !authority->cvars ||
@@ -454,8 +463,13 @@ static bool registry_inventory(const frontend_config_store *manager,qa_applicati
         bool current=qa_application_q3_client_configuration_read(application,authority->scope.provider,authority->scope.seat,&actual,&ordinary) &&
             actual.descriptor && actual.descriptor->storage==authority->descriptor->storage &&
             same_scope(actual.scope,authority->scope) && actual.console==authority->console && actual.cvars==authority->cvars;
-        if (!current && !qa_application_q3_client_configuration_entered(application,authority))
-            return fail(error,QA_ERROR_ARGUMENT,"Host namespaces differ from the retained physical CLIENT slot");
+        if (!current && !qa_application_q3_client_configuration_entered(application,authority)) {
+            const qa_q3_host *host=NULL; qa_cvars *registry=NULL;
+            if (!entry || !entry->entry_read || entry->application!=application || authority!=&entry->source ||
+                !entry->entry_read(entry->entry_context,application,authority,&host,error) || !host ||
+                qa_q3_host_console(host,&registry,NULL)!=authority->console || registry!=authority->cvars)
+                return fail(error,QA_ERROR_ARGUMENT,"Host namespaces differ from the retained physical CLIENT slot");
+        }
         frontend_remote_config *client=frontend_config_store_client(manager,authority->console);
         if (client) {
             qa_console *hosted=NULL;
@@ -493,7 +507,7 @@ bool frontend_config_store_registry_reference(const frontend_config_store *manag
 {
     qa_cvars *rows[8]={0};
     if (!registry || !out) return fail(error,QA_ERROR_ARGUMENT,"Host namespace reference needs its actual registry and output");
-    if (!registry_inventory(manager,application,source,parent_game,rows,error)) return false;
+    if (!registry_inventory(manager,application,source,parent_game,NULL,rows,error)) return false;
     for (size_t i=0;i<8;++i) if (rows[i]==registry) { *out=(qa_q3_host_cvar_namespace)(i+1); return true; }
     return fail(error,QA_ERROR_ARGUMENT,"Registry is absent from this retained host namespace inventory");
 }
@@ -504,21 +518,28 @@ bool frontend_config_store_registry_resolve(const frontend_config_store *manager
     qa_cvars *rows[8]={0};
     if (!out || reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW)
         return fail(error,QA_ERROR_ARGUMENT,"Host namespace role leaves its retained inventory");
-    if (!registry_inventory(manager,application,source,parent_game,rows,error)) return false;
+    if (!registry_inventory(manager,application,source,parent_game,NULL,rows,error)) return false;
     if (!rows[reference-1]) return fail(error,QA_ERROR_ARGUMENT,"Host namespace role has no retained physical registry");
     *out=rows[reference-1]; return true;
 }
 static bool host_registry_reference(void *context,const qa_cvars *registry,qa_q3_host_cvar_namespace *out,qa_error *error)
 {
     frontend_config_host_cvars *owner=context;
-    return owner && frontend_config_store_registry_reference(owner->manager,owner->application,&owner->source,
-        owner->has_parent?&owner->parent_game:NULL,registry,out,error);
+    qa_cvars *rows[8]={0};
+    if (!owner || !registry || !out || !registry_inventory(owner->manager,owner->application,&owner->source,
+        owner->has_parent?&owner->parent_game:NULL,owner,rows,error)) return false;
+    for (size_t i=0;i<8;++i) if (rows[i]==registry) { *out=(qa_q3_host_cvar_namespace)(i+1); return true; }
+    return fail(error,QA_ERROR_ARGUMENT,"Registry is absent from this retained host namespace inventory");
 }
 static bool host_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
 {
     frontend_config_host_cvars *owner=context;
-    return owner && frontend_config_store_registry_resolve(owner->manager,owner->application,&owner->source,
-        owner->has_parent?&owner->parent_game:NULL,reference,out,error);
+    qa_cvars *rows[8]={0};
+    if (!owner || !out || reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW ||
+        !registry_inventory(owner->manager,owner->application,&owner->source,
+            owner->has_parent?&owner->parent_game:NULL,owner,rows,error)) return false;
+    if (!rows[reference-1]) return fail(error,QA_ERROR_ARGUMENT,"Host namespace role has no retained physical registry");
+    *out=rows[reference-1]; return true;
 }
 bool frontend_config_host_cvars_prepare(frontend_config_host_cvars *owner,const frontend_config_store *manager,
     qa_application *application,const qa_application_startup_source *source,const qa_application_startup_source *parent_game,
@@ -532,13 +553,45 @@ bool frontend_config_host_cvars_prepare(frontend_config_host_cvars *owner,const 
         .parent_game=parent_game?*parent_game:(qa_application_startup_source){0},.has_parent=parent_game!=NULL};
     *out=(qa_q3_host_cvar_services){owner,host_registry_reference,host_registry_resolve}; return true;
 }
+bool frontend_config_host_cvars_set_entry(frontend_config_host_cvars *owner,void *context,
+    frontend_config_host_entry_read read,qa_error *error)
+{
+    if (!owner || !owner->manager || !owner->application || !client_scope(owner->source.scope) ||
+        owner->entry_read || !context || !read)
+        return fail(error,QA_ERROR_ARGUMENT,"Acquired host entry needs its immutable retained CLIENT lease");
+    owner->entry_context=context; owner->entry_read=read; return true;
+}
+static bool same_command(const qa_command_context *a,const qa_command_context *b)
+{
+    return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
+        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct && a->console_text==b->console_text &&
+        a->script==b->script && a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor);
+}
+static bool host_constructor(const qa_application_startup_source *source,const qa_q3_host *host,
+    const qa_console *console,const qa_command_context *command)
+{
+    qa_cvars *registry=NULL; qa_command_context actual;
+    return source && host && console==source->console &&
+        qa_q3_host_console(host,&registry,&actual)==console && registry==source->cvars && same_command(command,&actual);
+}
+bool frontend_config_host_cvar_entered(void *context,const qa_q3_host *host,const qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    frontend_config_host_cvars *owner=context;
+    if (!owner || !host_constructor(&owner->source,host,console,command))
+        return fail(error,QA_ERROR_ARGUMENT,"Named cvar entry leaves its actual host constructor");
+    if (qa_application_q3_configuration_host_entered(owner->application,&owner->source,host)) return true;
+    const qa_q3_host *actual=NULL;
+    return owner->entry_read && owner->entry_read(owner->entry_context,owner->application,&owner->source,&actual,error) &&
+        actual==host;
+}
 bool frontend_config_host_bindings(void *context,const qa_input_seat *physical,qa_input_seat **out,qa_error *error)
 {
     frontend_config_host_cvars *owner=context;
     qa_cvars *rows[8]={0};
     if (!owner || !physical || !out || !client_scope(owner->source.scope) ||
         !registry_inventory(owner->manager,owner->application,&owner->source,
-            owner->has_parent?&owner->parent_game:NULL,rows,error))
+            owner->has_parent?&owner->parent_game:NULL,owner,rows,error))
         return fail(error,QA_ERROR_ARGUMENT,"Host bindings need their actual retained CLIENT namespace");
     frontend_remote_config *client=frontend_config_store_client(owner->manager,owner->source.console);
     if (client) return frontend_remote_config_bindings(client,owner->application,&owner->source,physical,out,error);
@@ -558,6 +611,16 @@ static bool game_registry_reference(void *context,const qa_cvars *registry,qa_q3
     frontend_config_source *source=context; qa_application_startup_source tuple;
     if (!frontend_config_source_tuple(source,&tuple)) return fail(error,QA_ERROR_ARGUMENT,"GAME namespace callback lost its retained owner");
     return frontend_config_store_registry_reference(source->manager,source->application,&tuple,NULL,registry,out,error);
+}
+bool frontend_config_source_cvar_entered(void *context,const qa_q3_host *host,const qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    frontend_config_source *source=context; qa_application_startup_source tuple;
+    if (!frontend_config_source_tuple(source,&tuple) || !host_constructor(&tuple,host,console,command))
+        return fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry lost its actual host constructor");
+    tuple.command=*command;
+    return qa_application_q3_configuration_host_entered(source->application,&tuple,host) ||
+        fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry lost its actual entered host");
 }
 static bool game_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
 {
@@ -1465,7 +1528,7 @@ static bool visible_cvars(void *context,qa_application *application,qa_console *
     frontend_remote_config *client=frontend_config_store_client(manager,console);
     if (client && out) { *out=frontend_remote_config_visible(client,command,index); return true; }
     frontend_config_source *source=frontend_config_store_source(context,console);
-    if (!out || !source || source->application!=application || !source_context(source,command)) return false;
+    if (!out || !source || source->application!=application || !source_cvar_context(source,command)) return false;
     *out=frontend_config_store_visible_cvars(context,console,command,index); return true;
 }
 static bool source_read(void *context,qa_application *application,qa_console *console,
