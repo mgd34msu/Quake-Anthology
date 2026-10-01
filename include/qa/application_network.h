@@ -36,17 +36,25 @@ typedef struct qa_application_network_player {
 bool qa_application_network_player_next(const qa_application *, size_t *cursor,
     qa_application_network_player *);
 
-/* Original Q1 source observations use an admitted classic QuakeC gameplay
- * owner and its real borrowed client/owned edict/precache namespace. These
- * normal source reads may refresh canonical client projections. Builtin and mixed gameplay
- * sources need a complete native wire producer and fail this admission. */
+typedef struct qa_application_network_q1_host {
+    qa_actor_owner owner;
+    qa_net_protocol_id protocol;
+    uint32_t client_slots, entity_slots;
+} qa_application_network_q1_host;
+/* Primary ENTITIES observations require its real classic source producer.
+ * Host admission does not require a local seat or selected CHARACTER. */
+bool qa_application_network_q1_host_source(qa_application *,
+    qa_application_network_q1_host *, qa_error *);
+/* The actor is proved against the primary source's connected physical row and
+ * full QC binding. Canonical character provenance may belong to another role.
+ * Normal entity reads may refresh the existing borrowed body projection. */
 bool qa_application_network_q1_source(qa_application *, qa_actor_id,
     qa_actor_owner *, uint32_t *source_slot, qa_net_protocol_id *, qa_error *);
 /* Real source high-water edict extent and reserved client extent. Readonly;
  * no edict refresh or source callback is performed. */
-bool qa_application_network_q1_extents(qa_application *, qa_actor_id,
+bool qa_application_network_q1_extents(qa_application *, qa_actor_owner source_owner,
     uint32_t *client_slots, uint32_t *entity_slots, qa_error *);
-qa_cvars *qa_application_network_q1_cvars(qa_application *, qa_actor_id, qa_error *);
+qa_cvars *qa_application_network_q1_cvars(qa_application *, qa_actor_owner source_owner, qa_error *);
 bool qa_application_network_q1_entity(qa_application *, qa_actor_id source_player,
     qa_actor_id entity, qa_q1_entity *, qa_error *);
 /* Iterate actual source edicts in source-slot order. Cursor starts at zero;
@@ -60,7 +68,7 @@ bool qa_application_network_q1_eye(qa_application *, qa_actor_id source_player,
 bool qa_application_network_q1_bounds(qa_application *, qa_actor_id source_player,
     qa_actor_id entity, qa_bounds *, bool *has_model, qa_error *);
 /* Names borrow the source until mutation; output arrays are caller-owned. */
-bool qa_application_network_q1_precache(qa_application *, qa_actor_id,
+bool qa_application_network_q1_precache(qa_application *, qa_actor_owner source_owner,
     bool models, const char *names[255], size_t *count, qa_error *);
 typedef struct qa_application_network_q1_world {
     qa_net_protocol_id protocol;
@@ -70,7 +78,7 @@ typedef struct qa_application_network_q1_world {
     const char *map, *level, *lightstyles[64];
     int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
 } qa_application_network_q1_world;
-bool qa_application_network_q1_world_read(qa_application *, qa_actor_id,
+bool qa_application_network_q1_world_read(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_world *, qa_error *);
 bool qa_application_network_q1_clientdata(qa_application *, qa_actor_id,
     qa_q1_clientdata *, qa_error *);
@@ -85,7 +93,7 @@ typedef struct qa_application_network_q1_status_player {
 } qa_application_network_q1_status_player;
 /* Connected source clients, including local clients, in physical slot order.
  * Names borrow actual QC strings until source mutation. */
-bool qa_application_network_q1_status(qa_application *, qa_actor_id source_player,
+bool qa_application_network_q1_status(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *);
 /* Actual connected source clients selected by the source teamplay/team values.
  * The sender name borrows its QC string until source mutation. */
@@ -118,9 +126,9 @@ bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,
  * source slot, including a physical row without a live canonical actor. */
 bool qa_application_network_q1_client_baseline(qa_application *, qa_actor_id source_player,
     uint32_t source_slot, qa_q1_entity *, qa_error *);
-bool qa_application_network_q1_signon_count(qa_application *, qa_actor_id,
+bool qa_application_network_q1_signon_count(qa_application *, qa_actor_owner source_owner,
     size_t *, qa_error *);
-bool qa_application_network_q1_signon_at(qa_application *, qa_actor_id, size_t,
+bool qa_application_network_q1_signon_at(qa_application *, qa_actor_owner source_owner, size_t,
     qa_application_protocol_event *, qa_error *);
 
 /* A caller owns this observation storage; snapshot.entities points into it.

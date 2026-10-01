@@ -47,8 +47,8 @@ static bool entity_fields(qa_source_save_io *io, qa_q1_entity *v)
 }
 static bool fields(qa_source_save_io *io, frontend_nq_host *host)
 {
-    uint32_t magic = UINT32_C(0x484e4151), version = 3;
-    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !qa_source_save_u32(io, &version) || version != 3 ||
+    uint32_t magic = UINT32_C(0x484e4151), version = 4;
+    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !qa_source_save_u32(io, &version) || version != 4 ||
         !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
         !qa_source_save_bytes(io, host->composition.bytes, sizeof(host->composition.bytes)) ||
         !qa_source_save_u64(io, &host->generation) || !qa_source_save_u64(io, &host->submillisecond_ns) ||
@@ -65,6 +65,8 @@ static bool fields(qa_source_save_io *io, frontend_nq_host *host)
             !qa_source_save_u64(io, &p->seat.owner) || !qa_source_save_u32(io, &p->seat.index) ||
             !qa_source_save_u32(io, &p->source_slot) || !qa_source_save_u64(io, &p->entered_ns) ||
             !qa_source_save_u64(io, &p->input_sequence) || !qa_source_save_u64(io, &p->tick_sequence) ||
+            !qa_source_save_u64(io, &p->protocol_generation) ||
+            !qa_source_save_count(io, &p->protocol_cursor, SIZE_MAX) ||
             !qa_source_save_u64(io, &p->admission_order) || !qa_source_save_u8(io, &p->ping_count) ||
             !qa_source_save_u8(io, &p->impulse) || !command_fields(io, &p->latest) ||
             !qa_source_save_bytes(io, p->reason, sizeof(p->reason)) || !memchr(p->reason, 0, sizeof(p->reason))) return false;
@@ -111,14 +113,14 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         host->generation != qa_application_configuration_generation(host->frontend->application) ||
         host->submillisecond_ns >= UINT64_C(1000000) || host->pending_count > NQ_PENDING || !host->next_admission_order)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host lacks its actual source generation and idle policy");
-    qa_actor_id actor; qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
-    if (!qa_application_player_actor(host->frontend->application, 0, &actor) ||
-        !qa_application_network_q1_source(host->frontend->application, actor, &owner, &slot, &protocol, error) ||
-        owner != host->owner || protocol.kind != QA_NET_NQ15 || protocol.flags || protocol.revision)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its selected classic source owner");
+    qa_application_network_q1_host source;
+    if (!qa_application_network_q1_host_source(host->frontend->application, &source, error) ||
+        source.owner != host->owner || source.protocol.kind != QA_NET_NQ15 ||
+        source.protocol.flags || source.protocol.revision)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its primary classic source owner");
     uint32_t client_slots, entity_slots; const char *models[255]; size_t model_count; uint32_t player_model = 0;
-    if (!qa_application_network_q1_extents(host->frontend->application, actor, &client_slots, &entity_slots, error) ||
-        !qa_application_network_q1_precache(host->frontend->application, actor, true, models, &model_count, error)) return false;
+    if (!qa_application_network_q1_extents(host->frontend->application, host->owner, &client_slots, &entity_slots, error) ||
+        !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error)) return false;
     for (size_t i = 0; i < model_count; ++i) if (!strcmp(models[i], "progs/player.mdl")) player_model = (uint32_t)i + 1;
     qa_buffer identity = {0}; qa_sha256_digest digest;
     if (!qa_launch_identity_encode(qa_application_launch(host->frontend->application),
@@ -132,7 +134,8 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             (p->seat.owner && p->seat.owner != QA_NETWORK_COMMAND_OWNER) || (p->baseline_count && !p->baselines) ||
             p->baseline_count > UINT16_MAX || !memchr(p->reason, 0, sizeof(p->reason)) ||
             p->ping_count > NQ_PINGS ||
-            (!p->occupied && (p->retiring || p->command_present || p->baseline_count || p->ping_count || p->admission_order)))
+            (!p->occupied && (p->retiring || p->command_present || p->baseline_count || p->ping_count || p->admission_order ||
+             p->protocol_generation || p->protocol_cursor)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake physical peer has invalid owned storage");
         double maximum_ping = ((double)UINT64_MAX / 1e9 + (double)FLT_MAX) * 1000;
         for (size_t j = 0; j < NQ_PINGS; ++j)
@@ -140,6 +143,11 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
                 (j >= p->ping_count && p->pings[j] != 0))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake ping history differs from its received timestamp domain");
         if (!p->occupied) continue;
+        uint64_t protocol_generation = qa_application_protocol_events_generation(host->frontend->application);
+        if (p->protocol_generation > protocol_generation ||
+            (p->protocol_generation == protocol_generation &&
+             p->protocol_cursor > qa_application_protocol_event_count(host->frontend->application)))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake cursor differs from its real protocol event owner");
         if (p->host != host || p->client.owner != QA_NETWORK_COMMAND_OWNER || !p->client.generation || p->client.slot >= NQ_CLIENTS ||
             p->seat.owner != QA_NETWORK_COMMAND_OWNER || !p->source_slot || p->source_slot > client_slots ||
             p->seat.index != 128u + p->source_slot || p->baseline_count < client_slots || !player_model ||
@@ -158,7 +166,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = *e};
             if (!e->number || e->number > UINT16_MAX || e->number >= entity_slots || e->model > model_count ||
                 (j && e->number <= p->baselines[j - 1].number) || e->effects || e->step ||
-                (j < client_slots && (e->number != j + 1 || e->model != player_model || e->colormap != e->number || e->frame || e->skin)) ||
+                (j < client_slots && (e->number != j + 1 || e->model != player_model || e->colormap != e->number)) ||
                 (j >= client_slots && (!e->model || e->colormap)) ||
                 !qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
                     (qa_nq_options){.standard_quake = true}, &message, NULL, 0))

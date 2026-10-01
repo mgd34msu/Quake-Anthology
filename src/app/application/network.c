@@ -4,6 +4,7 @@
 #include "map_players_private.h"
 #include "guest_qc_internal.h"
 #include "network_q1_signon.h"
+#include "network_q1_source.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
@@ -47,41 +48,16 @@ bool qa_application_network_player_next(const qa_application *application, size_
 static struct application_qc_state *q1_source(qa_application *app, qa_actor_id player,
     uint32_t *source_slot, qa_error *error)
 {
-    application_provider *provider = app ? application_provider_for(app, player, QA_ROLE_CHARACTER, "") : NULL;
-    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.engine : NULL;
-    const qa_actor_record *actor = app ? qa_actors_get(qa_session_actors(app->session), player) : NULL;
-    qa_qc_slot_binding binding;
-    if (!engine || !engine->initialized || engine->loading || engine->projecting ||
-        provider->state.qc.qualified || !qa_qc_idle(provider->state.qc.instance) || !actor ||
-        actor->owner != provider->owner || !actor->has_source || !actor->source_slot ||
-        !qa_qc_slot(provider->state.qc.instance, actor->source_slot, &binding) ||
-        binding.kind != QA_QC_SLOT_BORROWED || !qa_actor_id_equal(binding.actor, player) ||
-        !engine->max_clients || engine->max_clients > 255 ||
-        (engine->profile == QA_QC_QUAKEWORLD && engine->max_clients > 32) ||
-        actor->source_slot > engine->max_clients || !engine->clients ||
-        !engine->clients[actor->source_slot].connected ||
-        !qa_actor_id_equal(engine->clients[actor->source_slot].actor, player) ||
-        (engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) ||
-        engine->protocol.flags || engine->protocol.revision ||
-        engine->protocol.kind != (engine->profile == QA_QC_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15)) {
-        application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire requires its selected classic QuakeC source player"); return NULL;
+    struct application_qc_state *engine = application_network_q1_qc_source(app, 0, error);
+    return engine && application_network_q1_qc_client(engine, player, source_slot, error) ? engine : NULL;
+}
+static struct application_qc_state *q1_host(qa_application *app, qa_actor_owner owner, qa_error *error)
+{
+    if (!owner) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 host observation requires its installed source owner");
+        return NULL;
     }
-    for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
-        if (role == QA_ROLE_HUD || role == QA_ROLE_MENU || role == QA_ROLE_AUDIO || role == QA_ROLE_MUSIC) continue;
-        application_provider *selected = application_provider_for(app, player, (qa_launch_role)role, "");
-        if (selected && selected != provider) {
-            application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire cannot represent mixed selected gameplay owners"); return NULL;
-        }
-    }
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
-    for (size_t i = 0; choices && i < choices->binding_count; ++i) {
-        const qa_launch_binding *b = &choices->bindings[i];
-        if (b->role == QA_ROLE_HUD || b->role == QA_ROLE_MENU || b->role == QA_ROLE_AUDIO || b->role == QA_ROLE_MUSIC) continue;
-        if (strcmp(b->instance, provider->launch->selection.instance)) {
-            application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire cannot represent additional scoped gameplay providers"); return NULL;
-        }
-    }
-    *source_slot = actor->source_slot; return engine;
+    return application_network_q1_qc_source(app, owner, error);
 }
 bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
     qa_actor_owner *owner, uint32_t *slot, qa_net_protocol_id *protocol, qa_error *error)
@@ -91,11 +67,11 @@ bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
     if (!engine) return false;
     *owner = engine->provider->owner; *protocol = engine->protocol; return true;
 }
-bool qa_application_network_q1_extents(qa_application *app, qa_actor_id player,
+bool qa_application_network_q1_extents(qa_application *app, qa_actor_owner owner,
     uint32_t *clients, uint32_t *entities, qa_error *error)
 {
     if (!clients || !entities) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source extent outputs");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
     *clients = engine->max_clients; *entities = qa_qc_entity_count(engine->provider->state.qc.instance); return true;
 }
@@ -109,9 +85,9 @@ static bool q1_wire_scalar(struct application_qc_state *engine, int32_t referenc
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source field exceeds its admitted original wire range");
     *out = (uint32_t)value; return true;
 }
-qa_cvars *qa_application_network_q1_cvars(qa_application *app, qa_actor_id player, qa_error *error)
+qa_cvars *qa_application_network_q1_cvars(qa_application *app, qa_actor_owner owner, qa_error *error)
 {
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     return engine ? engine->cvars : NULL;
 }
 static bool q1_wire_vector(struct application_qc_state *engine, int32_t reference,
@@ -125,16 +101,7 @@ static bool q1_wire_vector(struct application_qc_state *engine, int32_t referenc
 static bool q1_entity_reference(struct application_qc_state *engine, qa_actor_id entity,
     int32_t *out, qa_error *error)
 {
-    qa_application *app = engine->provider->application;
-    const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), entity); qa_qc_slot_binding binding;
-    if (!actor || actor->owner != engine->provider->owner || !actor->has_source || !actor->source_slot ||
-        actor->source_slot > UINT16_MAX || !qa_qc_slot(engine->provider->state.qc.instance, actor->source_slot, &binding) ||
-        !qa_actor_id_equal(binding.actor, entity) ||
-        (binding.kind != QA_QC_SLOT_OWNED && (binding.kind != QA_QC_SLOT_BORROWED ||
-         actor->source_slot > engine->max_clients || !engine->clients[actor->source_slot].connected ||
-         !qa_actor_id_equal(engine->clients[actor->source_slot].actor, entity))))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 entity lacks the admitted source edict identity");
-    return qa_qc_actor_reference(engine->provider->state.qc.instance, entity, false, out, error);
+    return application_network_q1_qc_entity(engine, entity, NULL, out, error);
 }
 bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
     qa_q1_entity *out, qa_error *error)
@@ -142,10 +109,9 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 entity observation output");
     if (!engine) return false;
-    int32_t reference;
-    if (!q1_entity_reference(engine, entity, &reference, error)) return false;
-    const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), entity);
-    qa_q1_entity value; qa_q1_entity_init(&value); value.number = actor->source_slot;
+    int32_t reference; uint32_t physical;
+    if (!application_network_q1_qc_entity(engine, entity, &physical, &reference, error)) return false;
+    qa_q1_entity value; qa_q1_entity_init(&value); value.number = physical;
     float movetype;
     if (!q1_wire_scalar(engine, reference, "modelindex", 255, &value.model, error) ||
         !q1_wire_scalar(engine, reference, "frame", 255, &value.frame, error) ||
@@ -180,10 +146,10 @@ bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id play
     }
     return true;
 }
-bool qa_application_network_q1_precache(qa_application *app, qa_actor_id player,
+bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owner,
     bool models, const char *names[255], size_t *count, qa_error *error)
 {
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
     if (!engine) return false;
     const char *retained[255] = {0}; size_t extent = 0;
@@ -275,11 +241,11 @@ static bool q1_standard_quake(qa_application *app, struct application_qc_state *
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source product has no original weapon dialect");
     *out = strcmp(product->campaign, "hipnotic") && strcmp(product->campaign, "rogue"); return true;
 }
-bool qa_application_network_q1_world_read(qa_application *app, qa_actor_id player,
+bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_world *out, qa_error *error)
 {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 world observation output");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
     qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
     const qa_cvar_view *deathmatch = qa_cvars_find(engine->cvars, "deathmatch");
@@ -356,12 +322,12 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     if (!qa_nq_write_clientdata(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, &value, standard)) return false;
     *out = value; return true;
 }
-bool qa_application_network_q1_status(qa_application *app, qa_actor_id player,
+bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *error)
 {
     if (!players || !count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source client status output");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
     qa_application_network_q1_status_player values[255]; size_t extent = 0;
     for (uint32_t i = 1; i <= engine->max_clients; ++i) {
@@ -457,7 +423,7 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
             if (qa_actor_id_equal(app->players->records[i].actor, player)) {
                 record = app->players->records + i; break;
             }
-        if (!record || record->retiring || record->source_slot != slot || record->character != engine->provider)
+        if (!record || record->retiring)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause lacks its actual source roster admission");
         name = record->name ? record->name : "unconnected";
     }
@@ -491,7 +457,7 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     application_player_record *record = NULL;
     for (size_t i = 0; app->players && i < app->players->count; ++i)
         if (qa_actor_id_equal(app->players->records[i].actor, player)) { record = app->players->records + i; break; }
-    if (!record || record->retiring || record->source_slot != slot || record->character != engine->provider)
+    if (!record || record->retiring)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name lacks its actual source roster admission");
     size_t length = strlen(name); if (length > 15) length = 15;
     char *copy = malloc(length + 1);
@@ -604,18 +570,18 @@ bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id 
         !q1_wire_vector(engine, reference, "angles", value.angles, error)) return false;
     return qa_application_network_q1_baseline(app, player, &value, out, error);
 }
-bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_id player,
+bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_owner owner,
     size_t *out, qa_error *error)
 {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source signon count");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
     *out = application_q1_signon_count(app, engine->provider->owner); return true;
 }
-bool qa_application_network_q1_signon_at(qa_application *app, qa_actor_id player, size_t index,
+bool qa_application_network_q1_signon_at(qa_application *app, qa_actor_owner owner, size_t index,
     qa_application_protocol_event *out, qa_error *error)
 {
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    struct application_qc_state *engine = q1_host(app, owner, error);
     return engine && application_q1_signon_at(app, engine->provider->owner, index, out, error);
 }
 

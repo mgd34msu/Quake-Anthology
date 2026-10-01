@@ -12,6 +12,8 @@ typedef struct nq_frontend_peer {
     size_t baseline_count;
     qa_q1_command latest;
     uint64_t input_sequence, tick_sequence, entered_ns, admission_order;
+    uint64_t protocol_generation;
+    size_t protocol_cursor;
     double pings[NQ_PINGS];
     uint8_t ping_count;
     uint32_t source_slot;

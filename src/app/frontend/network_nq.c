@@ -26,14 +26,14 @@ static bool peer_actor(nq_frontend_peer *peer, qa_actor_id *out, qa_error *error
         ((owner == peer->host->owner && slot == peer->source_slot && protocol.kind == QA_NET_NQ15) ||
          frontend_fail(error, QA_ERROR_FORMAT, "NetQuake peer changes its admitted source slot or provider"));
 }
-static bool template_actor(frontend_nq_host *host, qa_actor_id *out, qa_error *error)
+static bool host_source(frontend_nq_host *host, qa_error *error)
 {
-    qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
-    if (!qa_application_player_actor(host->frontend->application, 0, out) ||
-        !qa_application_network_q1_source(host->frontend->application, *out, &owner, &slot, &protocol, error)) return false;
-    if (protocol.kind != QA_NET_NQ15 || protocol.flags || protocol.revision || (host->owner && owner != host->owner))
+    qa_application_network_q1_host source;
+    if (!qa_application_network_q1_host_source(host->frontend->application, &source, error)) return false;
+    if (source.protocol.kind != QA_NET_NQ15 || source.protocol.flags || source.protocol.revision ||
+        (host->owner && source.owner != host->owner))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake hosting requires its complete original classic source owner");
-    host->owner = owner; return true;
+    host->owner = source.owner; return true;
 }
 static bool batch_flush(nq_batch *batch, qa_error *error)
 {
@@ -128,14 +128,14 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
     nq_frontend_peer *peer = context; frontend_nq_host *host = peer->host;
     if (!qa_net_client_id_equal(id, peer->client)) return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake signon uses another peer identity");
     qa_actor_id actor; qa_application_network_q1_world world;
-    if (!peer_actor(peer, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error)) return false;
+    if (!peer_actor(peer, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
     nq_batch batch = {.emit = emit, .context = output, .host = host}; qa_nq_options options = {.standard_quake = world.standard_quake};
     qa_nq_message message;
     if (stage == 1) {
         const char *models[255], *sounds[255]; size_t model_count, sound_count;
         if (!capture_baselines(peer, actor, &world, error) ||
-            !qa_application_network_q1_precache(host->frontend->application, actor, true, models, &model_count, error) ||
-            !qa_application_network_q1_precache(host->frontend->application, actor, false, sounds, &sound_count, error)) return false;
+            !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error) ||
+            !qa_application_network_q1_precache(host->frontend->application, host->owner, false, sounds, &sound_count, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = world.protocol,
             .max_clients = (uint8_t)world.max_clients, .game_type = world.deathmatch ? 1 : 0, .level = world.level,
             .models = models, .sounds = sounds, .model_count = model_count, .sound_count = sound_count}};
@@ -144,10 +144,10 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
         if (!batch_message(&batch, &message, options, error)) return false;
     } else if (stage == 2) {
         size_t count;
-        if (!qa_application_network_q1_signon_count(host->frontend->application, actor, &count, error)) return false;
+        if (!qa_application_network_q1_signon_count(host->frontend->application, host->owner, &count, error)) return false;
         for (size_t i = 0; i < count; ++i) {
             qa_application_protocol_event event;
-            if (!qa_application_network_q1_signon_at(host->frontend->application, actor, i, &event, error) ||
+            if (!qa_application_network_q1_signon_at(host->frontend->application, host->owner, i, &event, error) ||
                 !batch_bytes(&batch, event.payload, error)) return false;
         }
         for (size_t i = 0; i < peer->baseline_count; ++i) {
@@ -156,7 +156,7 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
         }
     } else if (stage == 3) {
         if (!qa_application_remote_player_begin(host->frontend->application, peer->client, peer->seat, error) ||
-            !peer_actor(peer, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error)) return false;
+            !peer_actor(peer, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_PAUSE, .data.value = qa_application_q1_paused(host->frontend->application)};
         if (!batch_message(&batch, &message, options, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_TIME, .data.seconds = world.seconds};
@@ -166,7 +166,7 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
             if (!batch_message(&batch, &message, options, error)) return false;
         }
         qa_application_network_q1_status_player players[255]; size_t count;
-        if (!qa_application_network_q1_status(host->frontend->application, actor, players, &count, error) ||
+        if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error) ||
             !status_messages(&batch, players, count, options, error)) return false;
         const int32_t stats[] = {world.total_secrets, world.total_monsters, world.found_secrets, world.killed_monsters};
         for (unsigned i = 0; i < 4; ++i) {
@@ -298,10 +298,9 @@ static bool source_chat(nq_frontend_peer *sender, qa_actor_id actor, bool team_o
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error)) return false;
     return true;
 }
-static bool source_ping(nq_frontend_peer *sender, qa_error *error)
+static size_t ordered_peers(frontend_nq_host *host, nq_frontend_peer *ordered[NQ_CLIENTS])
 {
-    frontend_nq_host *host = sender->host;
-    nq_frontend_peer *ordered[NQ_CLIENTS]; size_t count = 0;
+    size_t count = 0;
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {
         nq_frontend_peer *peer = host->peers + i;
         if (!peer->occupied || peer->retiring) continue;
@@ -311,6 +310,12 @@ static bool source_ping(nq_frontend_peer *sender, qa_error *error)
         }
         ordered[at] = peer; ++count;
     }
+    return count;
+}
+static bool source_ping(nq_frontend_peer *sender, qa_error *error)
+{
+    frontend_nq_host *host = sender->host;
+    nq_frontend_peer *ordered[NQ_CLIENTS]; size_t count = ordered_peers(host, ordered);
     char text[NQ_MESSAGE] = "Client ping times:\n";
     size_t used = strlen(text);
     for (size_t i = 0; i < count; ++i) {
@@ -335,6 +340,36 @@ static bool source_ping(nq_frontend_peer *sender, qa_error *error)
         qa_network_nq_server_reliable(host->runtime, sender->client,
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
+static bool source_status(nq_frontend_peer *sender, qa_error *error)
+{
+    frontend_nq_host *host = sender->host; qa_application_network_q1_world world;
+    if (!qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
+    nq_frontend_peer *ordered[NQ_CLIENTS]; size_t count = ordered_peers(host, ordered);
+    char text[NQ_MESSAGE];
+    int length = snprintf(text, sizeof(text), "map: %s\nplayers: %zu active (%u max)\n",
+        world.map, count, world.max_clients);
+    if (length < 0 || (size_t)length >= sizeof(text))
+        return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake status header exceeds its actual reliable message extent");
+    size_t used = (size_t)length;
+    for (size_t i = 0; i < count; ++i) {
+        nq_frontend_peer *peer = ordered[i]; char address[128];
+        const qa_net_client *client = qa_net_connections_get(qa_network_connections(host->runtime), peer->client);
+        if (!client) return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake status peer has no actual connection");
+        if (!qa_net_address_format(&client->endpoint, address, sizeof(address), error)) return false;
+        const char *name = host->published_names[peer->source_slot - 1];
+        if (!name || !*name) name = "unconnected";
+        length = snprintf(text + used, sizeof(text) - used, "#%u %s %s\n", peer->source_slot, name, address);
+        if (length < 0 || (size_t)length >= sizeof(text) - used)
+            return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake status response exceeds its actual reliable message extent");
+        used += (size_t)length;
+    }
+    uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
+    return qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+        (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
+        qa_network_nq_server_reliable(host->runtime, sender->client,
+            (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+}
 static bool source_command(void *context, qa_net_client_id id, const char *text, qa_error *error)
 {
     nq_frontend_peer *peer = context; qa_actor_id actor;
@@ -343,6 +378,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!qa_q1_token(&cursor, true, command, sizeof(command), &present, error)) return false;
     if (!present) return true;
     if (!strcmp(command, "ping")) return source_ping(peer, error);
+    if (!strcmp(command, "status")) return source_status(peer, error);
     if (!strcmp(command, "say") || !strcmp(command, "say_team"))
         return source_chat(peer, actor, !strcmp(command, "say_team"), cursor, error);
     if (!strcmp(command, "kill"))
@@ -374,7 +410,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         int32_t bottom = present ? color_number(second) : top;
         return qa_application_network_q1_colors(peer->host->frontend->application, actor, top, bottom, error);
     }
-    static const char *const allowed[] = {"status", "god", "notarget", "fly", "noclip",
+    static const char *const allowed[] = {"god", "notarget", "fly", "noclip",
         "kick", "give", "ban"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(*allowed); ++i)
         if (!strcmp(command, allowed[i])) return qa_application_actor_command(peer->host->frontend->application, actor, text, error);
@@ -399,7 +435,7 @@ bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *clien
     size_t cursor = 0; qa_application_network_player row; bool found = false;
     while (qa_application_network_player_next(host->frontend->application, &cursor, &row)) {
         if (!qa_net_client_id_equal(row.client, client->id) || row.seat.owner != peer->seat.owner || row.seat.index != peer->seat.index) continue;
-        if (found || row.application_seat != peer->seat.index || row.source_slot != peer->source_slot ||
+        if (found || row.application_seat != peer->seat.index ||
             row.client_slot != peer->source_slot - 1 || (!peer->retiring && (row.retiring || row.deferred)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake peer differs from its actual application roster");
         if (!peer->retiring) {
@@ -416,12 +452,12 @@ bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *clien
 }
 static bool server_info(void *context, qa_nq_control *out, qa_error *error)
 {
-    frontend_nq_host *host = context; qa_actor_id actor; qa_application_network_q1_world world;
+    frontend_nq_host *host = context; qa_application_network_q1_world world;
     qa_application_network_q1_status_player players[255]; size_t count;
-    if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error) ||
-        !qa_application_network_q1_status(host->frontend->application, actor, players, &count, error) ||
+    if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error) ||
+        !qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error) ||
         !qa_net_address_format(qa_network_local_address(host->runtime), host->reply_address, sizeof(host->reply_address), error)) return false;
-    qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, actor, error);
+    qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, host->owner, error);
     if (!cvars) return false;
     const qa_cvar_view *name = qa_cvars_find(cvars, "hostname");
     *out = (qa_nq_control){.kind = QA_NQ_SERVER_INFO, .data.server = {.address = host->reply_address,
@@ -431,10 +467,10 @@ static bool server_info(void *context, qa_nq_control *out, qa_error *error)
 }
 static bool player_info(void *context, uint8_t ordinal, bool *present, qa_nq_control *out, qa_error *error)
 {
-    frontend_nq_host *host = context; qa_actor_id actor;
+    frontend_nq_host *host = context;
     qa_application_network_q1_status_player players[255]; size_t count;
-    if (!template_actor(host, &actor, error) || !qa_application_network_q1_status(host->frontend->application,
-        actor, players, &count, error)) return false;
+    if (!host_source(host, error) || !qa_application_network_q1_status(host->frontend->application,
+        host->owner, players, &count, error)) return false;
     *present = ordinal < count; if (!*present) return true;
     qa_application_network_q1_status_player *player = players + ordinal;
     const qa_net_address *address = qa_network_local_address(host->runtime); uint64_t entered = 0;
@@ -454,9 +490,9 @@ static bool player_info(void *context, uint8_t ordinal, bool *present, qa_nq_con
 }
 static bool next_rule(void *context, const char *previous, bool *present, qa_qw_rule *out, qa_error *error)
 {
-    frontend_nq_host *host = context; qa_actor_id actor;
-    if (!template_actor(host, &actor, error)) return false;
-    qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, actor, error);
+    frontend_nq_host *host = context;
+    if (!host_source(host, error)) return false;
+    qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, host->owner, error);
     if (!cvars) return false;
     size_t start = 0;
     if (*previous) {
@@ -488,8 +524,8 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
     }
     qa_actor_id actor; qa_application_network_q1_world world;
     qa_application_network_q1_status_player players[255]; size_t count;
-    if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error) ||
-        !qa_application_network_q1_status(host->frontend->application, actor, players, &count, error)) return false;
+    if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error) ||
+        !qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
     bool occupied[256] = {0};
     for (size_t i = 0; i < count; ++i) occupied[players[i].source_slot] = true;
     uint32_t slot = 1;
@@ -537,8 +573,8 @@ bool frontend_nq_create(qa_frontend *frontend, qa_network_runtime *runtime,
     host->next_admission_order = 1;
     host->generation = qa_application_configuration_generation(frontend->application);
     host->previous_pause = qa_application_q1_paused(frontend->application);
-    qa_actor_id actor; qa_application_network_q1_world world;
-    if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(frontend->application, actor, &world, error)) {
+    qa_application_network_q1_world world;
+    if (!host_source(host, error) || !qa_application_network_q1_world_read(frontend->application, host->owner, &world, error)) {
         free(host); return false;
     }
     *out = host; return true;
@@ -586,7 +622,7 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
     uint64_t generation = qa_application_configuration_generation(host->frontend->application);
     if (generation != host->generation) {
         qa_actor_id actor; qa_buffer identity = {0};
-        if (!template_actor(host, &actor, error) || !qa_launch_identity_encode(qa_application_launch(host->frontend->application),
+        if (!host_source(host, error) || !qa_launch_identity_encode(qa_application_launch(host->frontend->application),
             qa_session_actors(qa_application_session(host->frontend->application)), &identity, error)) return false;
         qa_sha256((qa_bytes){identity.data, identity.size}, &host->composition); qa_buffer_free(&identity);
         host->generation = generation; host->submillisecond_ns = 0;
@@ -677,11 +713,11 @@ static char *copy_text(const char *text, qa_error *error)
     if (!copy) { frontend_fail(error, QA_ERROR_MEMORY, "Retaining NetQuake source status"); return NULL; }
     memcpy(copy, text, length + 1); return copy;
 }
-static bool publish_status(frontend_nq_host *host, qa_actor_id actor,
+static bool publish_status(frontend_nq_host *host,
     const qa_application_network_q1_world *world, qa_error *error)
 {
     qa_application_network_q1_status_player players[255]; size_t count;
-    if (!qa_application_network_q1_status(host->frontend->application, actor, players, &count, error)) return false;
+    if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
     nq_status_cache next[256] = {0}; char *styles[64] = {0};
     bool owned[256] = {0}, style_owned[64] = {0}, ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
@@ -750,11 +786,21 @@ static const qa_q1_entity *baseline(const nq_frontend_peer *peer, uint32_t numbe
 static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writer *datagram, qa_error *error)
 {
     frontend_nq_host *host = peer->host; nq_batch reliable = {.emit = reliable_emit, .context = peer};
+    qa_application *app = host->frontend->application;
+    uint64_t generation = qa_application_protocol_events_generation(app);
+    size_t count = qa_application_protocol_event_count(app);
+    if (peer->protocol_generation != generation) {
+        peer->protocol_generation = generation;
+        peer->protocol_cursor = 0;
+    }
+    if (peer->protocol_cursor > count)
+        return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake protocol cursor exceeds its actual retained event generation");
     uint8_t source[NQ_DATAGRAM]; size_t source_size = 0; bool source_full = false;
-    for (size_t i = 0; i < qa_application_protocol_event_count(host->frontend->application); ++i) {
+    for (size_t i = peer->protocol_cursor; i < count; ++i) {
         qa_application_protocol_event event;
-        if (!qa_application_protocol_event_at(host->frontend->application, i, &event))
+        if (!qa_application_protocol_event_at(app, i, &event))
             return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source protocol event disappeared before publication");
+        peer->protocol_cursor = i + 1;
         if (event.provider != host->owner || event.signon) continue;
         if (event.dialect != QA_CLOCK_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
             return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
@@ -771,7 +817,9 @@ static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writ
     }
     if (source_size <= datagram->capacity - qa_net_writer_size(datagram) &&
         !qa_net_write_data(datagram, source, source_size)) return false;
-    return batch_flush(&reliable, error);
+    return batch_flush(&reliable, error) &&
+        ((generation == qa_application_protocol_events_generation(app)) ||
+         frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake protocol publication replaced its retained source events"));
 }
 static bool publish_peer(nq_frontend_peer *peer, const qa_application_network_q1_world *world, qa_error *error)
 {
@@ -833,8 +881,8 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
     if (host->busy || !qa_network_callbacks_idle(host->runtime))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake source publisher requires returned native callbacks");
     if (!frontend_nq_pump(host, error)) return false;
-    qa_actor_id actor; qa_application_network_q1_world world;
-    if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error)) return false;
+    qa_application_network_q1_world world;
+    if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
     qa_clock_state clock;
     if (!qa_session_clock(qa_application_session(host->frontend->application), host->owner, &clock) ||
         clock.frame.provider != host->owner || clock.frame.kind != QA_CLOCK_NETQUAKE ||
@@ -851,7 +899,7 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
             broadcast_emit(host, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
         if (ok) host->previous_pause = paused;
     }
-    if (ok) ok = publish_status(host, actor, &world, error);
+    if (ok) ok = publish_status(host, &world, error);
     for (size_t i = 0; ok && i < NQ_CLIENTS; ++i)
         if (host->peers[i].occupied && !host->peers[i].retiring) ok = publish_peer(host->peers + i, &world, error);
     --host->busy; return ok;
