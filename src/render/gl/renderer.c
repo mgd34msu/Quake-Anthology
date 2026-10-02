@@ -274,7 +274,7 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
         free(renderer);
         return NULL;
     }
-    renderer->gl.FrontFace(GL_CW);
+    renderer->gl.FrontFace(GL_CCW);
     renderer->gl.Disable(GL_BLEND);
     renderer->gl.Disable(GL_CULL_FACE);
     renderer->gl.Disable(GL_STENCIL_TEST);
