@@ -3,13 +3,8 @@
 
 #include "qa/bot_goals.h"
 
-typedef struct bot_source_goal_state {
-    float defend_away_range, camp_time, camp_range;
-} bot_source_goal_state;
-
 struct qa_bots;
 struct bot_ai_state;
-void bot_ai_source_goal_init(bot_source_goal_state *);
 bool bot_ai_source_long_term_goal(struct qa_bots *, struct bot_ai_state *, bool retreat,
                                    qa_bot_goal *, bool *found, qa_error *);
 bool bot_ai_source_wants_camp(struct qa_bots *, struct bot_ai_state *, bool *, qa_error *);

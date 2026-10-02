@@ -56,8 +56,6 @@ typedef struct bot_ai_state {
     char team_leader_name[32];
     bot_source_order_state source_order;
     bot_source_team_policy_state source_team_policy;
-    bot_source_goal_state source_goal;
-    bot_source_chat_state source_chat;
     bot_source_setup_state source_setup;
     bool inuse, counted;
     int32_t source_enemy;

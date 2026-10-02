@@ -7,6 +7,7 @@
 #include "source_orders.h"
 #include "source_player.h"
 #include "source_timers.h"
+#include "source_behavior_state.h"
 
 enum {
     SOURCE_CHAT_INSULT=24, SOURCE_CHAT_MISC=25, SOURCE_CHAT_START_END=26,
@@ -20,9 +21,6 @@ static bool live(qa_bots *b,bot_ai_state *s) {
 }
 #define CHAT_CALL(call) do { if(!(call)) return false; if(!live(b,s)) return true; } while(0)
 
-void bot_ai_source_chat_init(bot_source_chat_state *state) {
-    *state=(bot_source_chat_state){0};
-}
 void bot_ai_source_chat_globals_init(bot_source_chat_globals *state) {
     *state=(bot_source_chat_globals){0};
 }
@@ -226,7 +224,7 @@ static bool refused(qa_bots *b,bot_ai_state *s,float probability,bool *out,qa_er
     float random;CHAT_CALL(bot_ai_random(b,&random,e));*out=random>probability;return true;
 }
 static void all_chat(qa_bots *b,bot_ai_state *s,bool *out) {
-    bot_ai_last_chat_time_set(s,b->time);s->source_chat.chat_to=QA_BOT_CHAT_ALL;*out=true;
+    bot_ai_last_chat_time_set(s,b->time);bot_ai_chat_to_set(s,QA_BOT_CHAT_ALL);*out=true;
 }
 static bool taunt(qa_bots *b,bot_ai_state *s,qa_error *e) {
     return qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,
@@ -307,7 +305,7 @@ bool bot_ai_source_chat_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
         CHAT_CALL(bot_ai_source_client(b,s,&self,e));if(attacker==self) return true;
         const char *variables[8]={name,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
         CHAT_CALL(bot_ai_source_initial_chat(b,s,"death_teammate",variables,e));
-        s->source_chat.chat_to=QA_BOT_CHAT_TEAM;
+        bot_ai_chat_to_set(s,QA_BOT_CHAT_TEAM);
     } else {
         if(b->source_goals.game_type>=3) {CHAT_CALL(taunt(b,s,e));*out=true;return true;}
         int32_t method=bot_ai_bot_death_type(s);const char *type=NULL;
@@ -336,7 +334,7 @@ bool bot_ai_source_chat_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
             }
         }
         const char *variables[8]={first,second,NULL,NULL,NULL,NULL,NULL,NULL};
-        CHAT_CALL(bot_ai_source_initial_chat(b,s,type,variables,e));s->source_chat.chat_to=QA_BOT_CHAT_ALL;
+        CHAT_CALL(bot_ai_source_initial_chat(b,s,type,variables,e));bot_ai_chat_to_set(s,QA_BOT_CHAT_ALL);
     }
     bot_ai_last_chat_time_set(s,b->time);*out=true;return true;
 }
@@ -350,7 +348,7 @@ bool bot_ai_source_chat_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     bool valid;CHAT_CALL(bot_ai_source_valid_chat_position(b,s,&valid,e));if(!valid) return true;
     bool enemies;CHAT_CALL(bot_ai_source_visible_enemies(b,s,&enemies,e));if(enemies) return true;
     char name[32];CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_player(s),name,sizeof(name),e));
-    s->source_chat.chat_to=QA_BOT_CHAT_ALL;bool same=false;
+    bot_ai_chat_to_set(s,QA_BOT_CHAT_ALL);bool same=false;
     if(b->source_goals.game_type>=3) CHAT_CALL(bot_ai_source_same_team(b,s,bot_ai_last_killed_player(s),&same,e));
     const char *type;
     if(same) type="kill_teammate";
@@ -370,7 +368,7 @@ bool bot_ai_source_chat_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     }
     const char *variables[8]={name,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
     CHAT_CALL(bot_ai_source_initial_chat(b,s,type,variables,e));
-    if(same) s->source_chat.chat_to=QA_BOT_CHAT_TEAM;
+    if(same) bot_ai_chat_to_set(s,QA_BOT_CHAT_TEAM);
     bot_ai_last_chat_time_set(s,b->time);*out=true;return true;
 }
 bool bot_ai_source_chat_enemy_suicide(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {

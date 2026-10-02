@@ -170,7 +170,6 @@ void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
     if(s->counted) --b->count;
     *s=(bot_ai_state){.acquired_source_client=source,.source_record=record,.source_span=span};
     bot_ai_source_order_init(&s->source_order);
-    bot_ai_source_chat_init(&s->source_chat);
 }
 bool bot_ai_source_shutdown_client(qa_bots *b,bot_ai_state *s,bool restart,qa_error *e) {
     int32_t client;
@@ -366,7 +365,6 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         if(!allocated) {free(s);return false;}
         s->acquired_source_client=(uint32_t)source_client;
         bot_ai_source_order_init(&s->source_order);
-        bot_ai_source_chat_init(&s->source_chat);
         bot_ai_source_setup_init(&s->source_setup);
         b->source_cells[source_client]=s;
     }

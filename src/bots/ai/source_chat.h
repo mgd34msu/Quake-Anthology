@@ -3,10 +3,6 @@
 
 #include "qa/bot_chat.h"
 
-typedef struct bot_source_chat_state {
-    int32_t chat_to, last_frame_health, last_hit_count;
-    bool enter_game_chat;
-} bot_source_chat_state;
 typedef struct bot_source_chat_globals {
     int32_t active_maxclients, first_maxclients, last_maxclients;
     int32_t first_name_maxclients, last_name_maxclients, opponent_maxclients;
@@ -14,7 +10,6 @@ typedef struct bot_source_chat_globals {
 
 struct qa_bots;
 struct bot_ai_state;
-void bot_ai_source_chat_init(bot_source_chat_state *);
 void bot_ai_source_chat_globals_init(bot_source_chat_globals *);
 bool bot_ai_source_valid_chat_position(struct qa_bots *,struct bot_ai_state *,bool *,qa_error *);
 bool bot_ai_source_visible_enemies(struct qa_bots *,struct bot_ai_state *,bool *,qa_error *);

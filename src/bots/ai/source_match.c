@@ -168,8 +168,10 @@ static bool state_current(qa_bots *bots, uint32_t client, qa_actor_id actor,
     bot_ai_state **out, qa_error *error)
 {
     bot_ai_state *state = source_state(bots, client);
-    if (!state || !qa_actor_id_equal(state->view.actor, actor))
-        return bot_ai_fail(error, "source bot genetics lost its selected client generation");
+    if (!state || !qa_actor_id_equal(state->view.actor, actor)) {
+        bot_ai_fail(error, "source bot genetics lost its selected client generation");
+        return false;
+    }
     *out = state;
     return true;
 }

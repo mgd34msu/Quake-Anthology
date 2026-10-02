@@ -7,6 +7,7 @@
 #include "source_view.h"
 #include "source_storage.h"
 #include "source_timers.h"
+#include "source_behavior_state.h"
 #include "source_flags.h"
 
 static int32_t signed_word(uint32_t bits) {
@@ -168,7 +169,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
         if(ok && !intermission && !observer) ok=bot_ai_source_team_policy(b,s,e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
-        if(ok && !s->source_chat.enter_game_chat && s->view.enter_time>b->time-8) {
+        if(ok && !bot_ai_enter_game_chat(s) && s->view.enter_time>b->time-8) {
             bool chat;
             ok=bot_ai_source_chat_enter_game(b,s,&chat,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -180,12 +181,14 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
                     s->view.decision=QA_BOT_STANDING;s->state_time=b->time;
                 }
             }
-            if(ok) s->source_chat.enter_game_chat=true;
+            if(ok) bot_ai_enter_game_chat_set(s,true);
         }
         if (ok) ok = bot_ai_decide(b, s, e);
         if(ok && !s->retired && bot_ai_live(b,s->view.actor)) {
-            s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
-            ok=bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&s->source_chat.last_hit_count,e);
+            bot_ai_last_frame_health_set(s,bot_ai_inventory_value(s,QA_BOT_INV_HEALTH));
+            int32_t hit_count;
+            ok=bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&hit_count,e);
+            if(ok) bot_ai_last_hit_count_set(s,hit_count);
         }
     }
 finished:

@@ -8,6 +8,7 @@
 #include "source_view.h"
 #include "source_combat_vectors.h"
 #include "source_timers.h"
+#include "source_behavior_state.h"
 #include "source_flags.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
@@ -287,7 +288,7 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
             DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_RESPAWN,e));
             if(bot_ai_respawn_chat_time(s)!=0) {
                 DECISION_CALL(qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),0,
-                    (qa_bot_chat_destination)s->source_chat.chat_to,e));
+                    (qa_bot_chat_destination)bot_ai_chat_to(s),e));
                 s->source_enemy=-1;s->view.enemy=(qa_actor_id){0};
             }
         }
@@ -325,7 +326,7 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_end_level(b,s,&chat,e));
                 if(chat) {
                     DECISION_CALL(qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),0,
-                        (qa_bot_chat_destination)s->source_chat.chat_to,e));
+                        (qa_bot_chat_destination)bot_ai_chat_to(s),e));
                 }
             }
         }
@@ -345,7 +346,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         qa_bot_decision node=s->view.decision;
         if(node==QA_BOT_STANDING) {
-            if(s->source_chat.last_frame_health>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
+            if(bot_ai_last_frame_health(s)>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_hit_talking(b,s,&chat,e));
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
@@ -362,7 +363,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_TALK,e));
             if(bot_ai_stand_until(s)<b->time) {
                 DECISION_CALL(qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),0,
-                    (qa_bot_chat_destination)s->source_chat.chat_to,e));
+                    (qa_bot_chat_destination)bot_ai_chat_to(s),e));
                 ENTER(QA_BOT_SEEK_LONG_TERM);continue;
             }
             return true;
@@ -541,13 +542,13 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(random<.2f) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
                 }
                 bool chat=false;
-                if(s->source_chat.last_frame_health>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
+                if(bot_ai_last_frame_health(s)>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
                     DECISION_CALL(bot_ai_source_chat_hit_no_death(b,s,&chat,e));
                 }
                 if(!chat) {
                     int32_t hit_count;
                     DECISION_CALL(bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&hit_count,e));
-                    if(hit_count>s->source_chat.last_hit_count) {
+                    if(hit_count>bot_ai_last_hit_count(s)) {
                         DECISION_CALL(bot_ai_source_chat_hit_no_kill(b,s,&chat,e));
                     }
                 }

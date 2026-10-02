@@ -1,6 +1,7 @@
 /* ai-main.ts setupClient and ai-combat.ts BotDeathmatchAI setup continuation. */
 #include "internal.h"
 #include "source_inventory.h"
+#include "source_behavior_state.h"
 #include "source_setup.h"
 #include "source_storage.h"
 #include "source_player.h"
@@ -148,11 +149,11 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
     if(!bot_ai_source_client(b,s,&source_client,e) ||
        !bot_ai_client_name(b,source_client,name,sizeof(name),true,e)) return false;
     qa_bot_chat_set_name(chat,name,source_client);
-    s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
-    if(!bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&s->source_chat.last_hit_count,e)) return false;
+    bot_ai_last_frame_health_set(s,bot_ai_inventory_value(s,QA_BOT_INV_HEALTH));
+    int32_t hit_count;
+    if(!bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&hit_count,e)) return false;
+    bot_ai_last_hit_count_set(s,hit_count);
     setup_count=0;
-    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_FRAME_HEALTH,&s->source_chat.last_frame_health,true,e) ||
-       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HIT_COUNT,&s->source_chat.last_hit_count,true,e) ||
-       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e)) return false;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e)) return false;
     return bot_ai_source_routes_setup(b,b->services.team_arena,e);
 }

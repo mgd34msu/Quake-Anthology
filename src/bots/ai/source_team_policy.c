@@ -185,7 +185,9 @@ static bool follow_carrier(qa_bots *b, bot_ai_state *s, int32_t teammate,
 }
 static bool at(const int32_t teammates[64], int32_t count, int32_t index,
                 int32_t *client, qa_error *e) {
-    if(index<0 || index>=count) return bot_ai_fail(e,"Source team policy indexes outside its populated teammates");
+    if(index<0 || index>=count) {
+        bot_ai_fail(e,"Source team policy indexes outside its populated teammates");return false;
+    }
     *client=teammates[index];return true;
 }
 static int32_t role_count(int32_t count, double fraction, int32_t maximum_count) {

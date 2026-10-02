@@ -6,6 +6,7 @@
 #include "source_event_state.h"
 #include "source_team_state.h"
 #include "source_timers.h"
+#include "source_behavior_state.h"
 #include "source_inventory.h"
 #include "source_goal.h"
 #include "source_orders.h"
@@ -109,10 +110,6 @@ static bool contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_e
     qa_point_contents result;
     if(!qa_world_point_contents(b->services.shared.world,&query,&result,e)) return false;
     *out=result.contents;return true;
-}
-
-void bot_ai_source_goal_init(bot_source_goal_state *state) {
-    *state=(bot_source_goal_state){0};
 }
 
 bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
@@ -221,21 +218,6 @@ static bool persistent_equipment(bot_ai_state *s) {
            bot_ai_inventory_value(s,equipment[i].ammo)>equipment[i].minimum) return true;
     return false;
 }
-static bool weakness(qa_bots *b,bot_ai_state *s,float *out,qa_error *e) {
-    const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
-    if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-    if(!alive(b,s)) {b->services.arsenal_end(b->services.context,lease);return true;}
-    qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(NULL);
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==s->view.weapon) {
-        tactics=qa_bot_weapon_tactics_for(weapons+i);break;
-    }
-    b->services.arsenal_end(b->services.context,lease);
-    if(!alive(b,s)) return true;
-    *out=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
-        tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
-    return true;
-}
-
 bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error *e) {
     *accepted=false;if(!alive(b,s)) return true;
     float camper;
@@ -247,10 +229,10 @@ bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error
     case BOT_LTG_CAMP_ORDER:case BOT_LTG_PATROL:return true;
     default:break;
     }
-    if(s->source_goal.camp_time>(b->time-60.0f)+300.0f*(1.0f-camper)) return true;
+    if(bot_ai_camp_time(s)>(b->time-60.0f)+300.0f*(1.0f-camper)) return true;
     float random;
     SOURCE_CALL(bot_ai_random(b,&random,e));
-    if(random>camper) {s->source_goal.camp_time=b->time;return true;}
+    if(random>camper) {bot_ai_camp_time_set(s,b->time);return true;}
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
     float aggression=alive(b,s)?qa_bot_knowledge_aggression(weapons,count,s->view.weapon,bot_ai_inventory(s)):0;
@@ -285,7 +267,7 @@ bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error
         SOURCE_CALL(bot_ai_random(b,&random,e));
         bot_ai_team_goal_time_set(s,((b->time+120.0f)+180.0f*camper)+random*15.0f);
     }
-    s->source_goal.camp_time=b->time;bot_ai_teammate_set(s,0);bot_ai_arrive_time_set(s,1);
+    bot_ai_camp_time_set(s,b->time);bot_ai_teammate_set(s,0);bot_ai_arrive_time_set(s,1);
     bot_ai_ordered_set(s,false);*accepted=true;return true;
 }
 
@@ -530,8 +512,17 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
         SOURCE_CALL(team_base(b,s,out,true,mode!=5,found,e));
         if(!*found) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
         if(mode==6) {
-            float feeling;
-            SOURCE_CALL(weakness(b,s,&feeling,e));
+            const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
+            if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
+            if(!alive(b,s)) {b->services.arsenal_end(b->services.context,lease);return true;}
+            qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(NULL);
+            for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==s->view.weapon) {
+                tactics=qa_bot_weapon_tactics_for(weapons+i);break;
+            }
+            b->services.arsenal_end(b->services.context,lease);
+            if(!alive(b,s)) return true;
+            float feeling=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
+                tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
             if(feeling>50) return bot_ai_source_item_goal(b,s,out,found,e);
             if(qa_bot_goal_touching(s->player.origin,out)) {
                 float random;SOURCE_CALL(bot_ai_random(b,&random,e));
@@ -588,7 +579,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         uint32_t time;
         qa_bot_goal team_goal=bot_ai_team_goal(s);
         SOURCE_CALL(travel_time(b,s,&team_goal,SOURCE_DEFAULT_TRAVEL,&time,e));
-        if((float)time>s->source_goal.defend_away_range) bot_ai_defend_away_time_set(s,0);
+        if((float)time>bot_ai_defend_away_range(s)) bot_ai_defend_away_time_set(s,0);
         if(!retreat && bot_ai_defend_away_time(s)<b->time) {
             const char *name;
             SOURCE_CALL(qa_bot_goals_name_read(goals(b),bot_ai_team_goal(s).number,&name,e));
@@ -607,7 +598,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                 SOURCE_CALL(reset_avoid(b,s,e));float random;
                 SOURCE_CALL(bot_ai_random(b,&random,e));
                 bot_ai_defend_away_time_set(s,(b->time+3.0f)+3.0f*random);
-                s->source_goal.defend_away_range=persistent_equipment(s)?100:350;
+                bot_ai_defend_away_range_set(s,persistent_equipment(s)?100:350);
             }
             return true;
         }

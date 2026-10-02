@@ -32,7 +32,6 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
     fresh.player.origin=fresh.player.velocity=fresh.player.eye=(qa_vec3){0};
     fresh.player.carrying_objective=false;
     bot_ai_source_order_init(&fresh.source_order);
-    bot_ai_source_chat_init(&fresh.source_chat);
     *s = fresh;
     return (!s->movement || qa_bot_moves_reset(qa_bot_runtime_moves(b->runtime), s->movement, e)) &&
         qa_bot_goals_reset(qa_bot_runtime_goals(b->runtime), s->goals, e) &&

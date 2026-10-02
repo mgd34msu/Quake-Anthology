@@ -5,11 +5,13 @@
 #include "source_activation.h"
 
 static bool span(qa_bots *b,bot_ai_state *s,uint32_t offset,uint32_t size,uint8_t **bytes,qa_error *e) {
-    if(!s || offset>QA_BOT_STATE_SOURCE_BYTES || size>QA_BOT_STATE_SOURCE_BYTES-offset)
-        return bot_ai_fail(e,"BotState field exceeds its actual source allocation");
+    if(!s || offset>QA_BOT_STATE_SOURCE_BYTES || size>QA_BOT_STATE_SOURCE_BYTES-offset) {
+        bot_ai_fail(e,"BotState field exceeds its actual source allocation");return false;
+    }
     if(!s->source_span.data && !bot_ai_source_alias_bind(b,s,e)) return false;
-    if(s->source_span.length!=QA_BOT_STATE_SOURCE_BYTES)
-        return bot_ai_fail(e,"BotState field has no complete actual byte span");
+    if(s->source_span.length!=QA_BOT_STATE_SOURCE_BYTES) {
+        bot_ai_fail(e,"BotState field has no complete actual byte span");return false;
+    }
     *bytes=s->source_span.data+offset;return true;
 }
 
@@ -80,8 +82,9 @@ static uint32_t activation_address(const bot_ai_state *s,uint32_t index) {
 static bool activation_index(const bot_ai_state *s,uint32_t address,uint32_t *index,qa_error *e) {
     uint32_t first=activation_address(s,0);
     if(address<first || address-first>=QA_BOT_SOURCE_ACTIVATION_COUNT*QA_BOT_SOURCE_ACTIVATION_BYTES ||
-       (address-first)%QA_BOT_SOURCE_ACTIVATION_BYTES)
-        return bot_ai_fail(e,"BotState activation link does not name its actual GAME heap row");
+       (address-first)%QA_BOT_SOURCE_ACTIVATION_BYTES) {
+        bot_ai_fail(e,"BotState activation link does not name its actual GAME heap row");return false;
+    }
     *index=(address-first)/QA_BOT_SOURCE_ACTIVATION_BYTES;return true;
 }
 bool bot_ai_activation_validate(const bot_ai_state *s,qa_error *e) {

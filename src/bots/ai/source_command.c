@@ -4,8 +4,10 @@
 static bool bytes(qa_bots *bots, bot_ai_state *state, uint8_t **out, qa_error *error) {
     if (!state || (!state->source_span.data && !bot_ai_source_alias_bind(bots, state, error)))
         return false;
-    if (state->source_span.length != QA_BOT_STATE_SOURCE_BYTES)
-        return bot_ai_fail(error, "User command requires its complete actual BotState allocation");
+    if (state->source_span.length != QA_BOT_STATE_SOURCE_BYTES) {
+        bot_ai_fail(error, "User command requires its complete actual BotState allocation");
+        return false;
+    }
     *out = state->source_span.data + QA_BOT_SOURCE_COMMAND;
     return true;
 }
