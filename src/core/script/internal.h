@@ -278,7 +278,7 @@ void script_warn(qa_script *, qa_script_location, const char *);
 bool script_raw(qa_script *, script_queued_token *, bool *, qa_error *);
 bool script_push(qa_script *, script_queued_token, qa_error *);
 bool script_expand(qa_script *, script_queued_token, script_macro *, qa_error *);
-bool script_expression(qa_script *, const qa_script_token *, size_t, bool, script_eval_value *,
+bool script_expression(qa_script *, uint32_t, bool, script_eval_value *,
                        qa_error *);
 bool script_directive(qa_script *, script_queued_token, qa_error *);
 bool script_include(qa_script *, const qa_script_include *, qa_error *);

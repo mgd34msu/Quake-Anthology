@@ -1,8 +1,13 @@
 #include "internal.h"
 
+typedef struct expression_value {
+    script_eval_value value;
+    struct expression_value *previous,*next;
+} expression_value;
 typedef struct expression_operator {
-    qa_script_token token;
-    int depth, precedence;
+    const qa_script_token *token;
+    int depth,precedence;
+    struct expression_operator *previous,*next;
 } expression_operator;
 static int precedence(uint32_t op) {
     switch (op) {
@@ -148,11 +153,11 @@ static bool binary(qa_script *s, const qa_script_token *op, script_eval_value a,
     *out = v;
     return true;
 }
-bool script_expression(qa_script *s, const qa_script_token *tokens, size_t count, bool integer_mode,
+static bool evaluate(qa_script *s, const qa_script_token *tokens, size_t count, bool integer_mode,
                        script_eval_value *out, qa_error *e) {
-    script_eval_value values[64], question = {0};
-    expression_operator operators[64];
-    size_t value_count = 0, operator_count = 0;
+    expression_value values[64],*first_value=NULL,*last_value_cell=NULL;
+    expression_operator operators[64],*first_operator=NULL,*last_operator=NULL;
+    script_eval_value question={0};size_t value_count=0,operator_count=0;
     int depth = 0;
     bool last_value = false, negative = false, has_question = false;
     for (size_t i = 0; i < count; ++i) {
@@ -216,71 +221,77 @@ bool script_expression(qa_script *s, const qa_script_token *tokens, size_t count
                 return script_fail(s, t->location, "Invalid expression operator", e);
             if (operator_count == 64)
                 return script_fail(s, t->location, "Expression exceeds 64 source operators", e);
-            operators[operator_count++] = (expression_operator){*t, depth, precedence(op)};
+            expression_operator *entry=&operators[operator_count++];
+            *entry=(expression_operator){t,depth,precedence(op),last_operator,NULL};
+            if(last_operator) last_operator->next=entry;else first_operator=entry;
+            last_operator=entry;
             last_value = false;
         } else
             return script_fail(s, t->location, "Invalid expression token", e);
         if (add) {
             if (value_count == 64)
                 return script_fail(s, t->location, "Expression exceeds 64 source values", e);
-            values[value_count++] = value;
+            expression_value *entry=&values[value_count++];
+            *entry=(expression_value){value,last_value_cell,NULL};
+            if(last_value_cell) last_value_cell->next=entry;else first_value=entry;
+            last_value_cell=entry;
             last_value = true;
         }
     }
     if (!last_value || depth != 0)
         return script_fail(s, qa_script_position(s), "Incomplete expression", e);
-    while (operator_count != 0) {
-        size_t i = 0, v = 0;
-        while (i + 1 < operator_count) {
-            expression_operator *a = operators + i, *b = a + 1;
-            if (a->depth > b->depth || (a->depth == b->depth && a->precedence >= b->precedence))
-                break;
-            if (a->token.subtype != QA_SCRIPT_NOT && a->token.subtype != QA_SCRIPT_LOGICAL_NOT)
-                ++v;
-            ++i;
+    while(first_operator) {
+        expression_operator *operation=first_operator;expression_value *value=first_value;
+        while(operation->next) {
+            expression_operator *following=operation->next;
+            if(operation->depth>following->depth || (operation->depth==following->depth && operation->precedence>=following->precedence)) break;
+            if(operation->token->subtype!=QA_SCRIPT_NOT && operation->token->subtype!=QA_SCRIPT_LOGICAL_NOT) value=value?value->next:NULL;
+            if(!value) return script_fail(s,operation->token->location,"Missing expression operand",e);
+            operation=following;
         }
-        const qa_script_token *op = &operators[i].token;
-        if (v >= value_count)
-            return script_fail(s, op->location, "Missing expression operand", e);
-        if (op->subtype == QA_SCRIPT_LOGICAL_NOT)
-            values[v] = (script_eval_value){values[v].integer == 0, values[v].number == 0};
-        else if (op->subtype == QA_SCRIPT_NOT)
-            values[v].integer = ~values[v].integer;
+        const qa_script_token *op=operation->token;
+        if(!value) return script_fail(s,op->location,"Missing expression operand",e);
+        if(op->subtype==QA_SCRIPT_LOGICAL_NOT)
+            value->value=(script_eval_value){value->value.integer==0,value->value.number==0};
+        else if(op->subtype==QA_SCRIPT_NOT) value->value.integer=~value->value.integer;
         else {
-            size_t remove = v + 1;
-            if (op->subtype == QA_SCRIPT_QUESTION) {
-                if (has_question)
-                    return script_fail(s, op->location, "Nested source conditional operator", e);
-                question = values[v];
-                has_question = true;
-                remove = v;
+            expression_value *following=value->next,*removed=following;
+            if(op->subtype==QA_SCRIPT_QUESTION) {
+                if(has_question) return script_fail(s,op->location,"Nested source conditional operator",e);
+                question=value->value;has_question=true;removed=value;
             } else {
-                if (v + 1 >= value_count)
-                    return script_fail(s, op->location, "Missing binary expression operand", e);
-                if (op->subtype == QA_SCRIPT_COLON) {
-                    if (!has_question)
-                        return script_fail(s, op->location, "Conditional : without ?", e);
-                    if (integer_mode)
-                        values[v].integer =
-                            question.integer == 0 ? values[v + 1].integer : values[v].integer;
-                    else
-                        values[v].number =
-                            question.number == 0 ? values[v + 1].number : values[v].number;
-                    has_question = false;
-                } else if (op->subtype != QA_SCRIPT_INCREMENT &&
-                           op->subtype != QA_SCRIPT_DECREMENT &&
-                           !binary(s, op, values[v], values[v + 1], values + v, e))
-                    return false;
+                if(!following) return script_fail(s,op->location,"Missing binary expression operand",e);
+                if(op->subtype==QA_SCRIPT_COLON) {
+                    if(!has_question) return script_fail(s,op->location,"Conditional : without ?",e);
+                    if(integer_mode) value->value.integer=question.integer==0?following->value.integer:value->value.integer;
+                    else value->value.number=question.number==0?following->value.number:value->value.number;
+                    has_question=false;
+                } else if(op->subtype!=QA_SCRIPT_INCREMENT && op->subtype!=QA_SCRIPT_DECREMENT &&
+                    !binary(s,op,value->value,following->value,&value->value,e)) return false;
             }
-            memmove(values + remove, values + remove + 1,
-                    (value_count - remove - 1) * sizeof(*values));
-            --value_count;
+            if(removed->previous) removed->previous->next=removed->next;else first_value=removed->next;
+            if(removed->next) removed->next->previous=removed->previous;else last_value_cell=removed->previous;
         }
-        memmove(operators + i, operators + i + 1, (operator_count - i - 1) * sizeof(*operators));
-        --operator_count;
+        if(operation->previous) operation->previous->next=operation->next;else first_operator=operation->next;
+        if(operation->next) operation->next->previous=operation->previous;else last_operator=operation->previous;
     }
-    if (value_count == 0)
-        return script_fail(s, qa_script_position(s), "Expression has no result", e);
-    *out = values[0];
-    return true;
+    if(!first_value) return script_fail(s,qa_script_position(s),"Expression has no result",e);
+    *out=first_value->value;return true;
+}
+
+bool script_expression(qa_script *source,uint32_t head,bool integer_mode,script_eval_value *out,qa_error *error) {
+    qa_script_token *tokens=NULL;size_t count=0,capacity=0,remaining=source->macros.queue_count;
+    /* Snapshot the actual chain before reducing it, as the original evaluator
+     * does. The projection is local and leaves the real heap untouched. */
+    while(head) {
+        if(!remaining--) {qa_error_set(error,QA_ERROR_FORMAT,0,"Expression token chain contains a cycle");goto fail;}
+        script_token_record *token=script_heap_token(&source->macros,head);
+        if(!script_heap_token_bytes(&source->macros,token,error) ||
+            !script_grow((void **)&tokens,&capacity,count+1,sizeof(*tokens),error) ||
+            !script_token_load(token->record.bytes,token->extent,token->location,token->whitespace,&source->arena,tokens+count,error)) goto fail;
+        ++count;head=qa_load_u32le(token->record.bytes+1064);
+    }
+    bool ok=evaluate(source,tokens,count,integer_mode,out,error);free(tokens);return ok;
+fail:
+    free(tokens);return false;
 }

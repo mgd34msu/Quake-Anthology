@@ -16,8 +16,7 @@ static bool push_condition(qa_script *s, uint32_t type, bool skip, qa_error *e) 
 }
 bool script_evaluate_stream(qa_script *s, qa_script_location location, bool integer_mode,
                             bool dollar, script_eval_value *out, qa_error *e) {
-    qa_script_token *tokens = NULL;
-    size_t count = 0, capacity = 0;
+    uint32_t first=0,last=0;size_t count=0;
     unsigned depth = 1;
     bool defined = false;
     script_queued_token item;
@@ -30,7 +29,7 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
     }
     for (;;) {
         if (!(dollar ? script_raw(s, &item, &found, e) : script_line_token(s, &item, &found, e)))
-            goto fail;
+            return false;
         if (!found)
             break;
         qa_script_token *t = &item.token;
@@ -41,16 +40,16 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
                 defined = true;
             else {
                 script_macro *m=NULL;
-                if(!script_macro_lookup(&s->macros,t->text,&m,e)) goto fail;
+                if(!script_macro_lookup(&s->macros,t->text,&m,e)) return false;
                 if (m == NULL) {
                     script_fail(s, t->location, "Undefined name in expression", e);
-                    goto fail;
+                    return false;
                 }
                 if (!script_expand(s, item, m, e))
-                    goto fail;
+                    return false;
                 if (s->empty_expansion) {
                     script_fail(s, t->location, "Empty macro in expression", e);
-                    goto fail;
+                    return false;
                 }
                 continue;
             }
@@ -59,7 +58,7 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
                 if (qa_script_token_is(t, "(")) {
                     if (depth == UINT_MAX) {
                         script_fail(s, location, "Expression nesting overflow", e);
-                        goto fail;
+                        return false;
                     }
                     ++depth;
                 } else if (qa_script_token_is(t, ")") && --depth == 0)
@@ -67,26 +66,30 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
             }
         } else {
             script_fail(s, t->location, "Invalid token in expression", e);
-            goto fail;
+            return false;
         }
-        if (count >= s->options.maximum_expression_tokens) {
-            script_fail(s, t->location, "Expression token limit exceeded", e);
-            goto fail;
-        }
-        if (!script_grow((void **)&tokens, &capacity, count + 1, sizeof(*tokens), e))
-            goto fail;
-        tokens[count++] = *t;
+        script_token_record *copied;
+        if(!script_heap_copy_token(&s->macros,item,&copied,e)) return false;
+        /* The original append checks expansion capacity after CopyToken and
+         * checks expression capacity after the new raw link is published. */
+        if(count>=s->options.maximum_queued_tokens)
+            return script_fail(s,t->location,"Expression queue exceeds configured limit",e);
+        uint32_t pointer=copied->pointer;
+        if(last) {
+            script_token_record *previous=script_heap_token(&s->macros,last);
+            if(!script_heap_token_bytes(&s->macros,previous,e)) return false;
+            qa_store_u32le(previous->record.bytes+1064,pointer);
+        } else first=pointer;
+        last=pointer;
+        if(++count>s->options.maximum_expression_tokens)
+            return script_fail(s,t->location,"Expression token limit exceeded",e);
     }
     if (dollar && depth != 0) {
         script_fail(s, location, "Unterminated dollar expression", e);
-        goto fail;
+        return false;
     }
-    bool ok = script_expression(s, tokens, count, integer_mode, out, e);
-    free(tokens);
-    return ok;
-fail:
-    free(tokens);
-    return false;
+    if(!script_expression(s,first,integer_mode,out,e)) return false;
+    return script_heap_free_chain(&s->macros,first,e);
 }
 static size_t decimal_word(uint32_t value, char *out, unsigned width) {
     char digits[10];
