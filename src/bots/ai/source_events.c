@@ -161,7 +161,7 @@ static bool snapshot_avoid(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity
     if(live(b,s) && (entity->eFlags&0x200) && (entity->eFlags&1)) bot_ai_kamikaze_body_set(s,entity->number);
     return true;
 }
-static bool current_entity(qa_bots *b,int32_t number,qa_q3_entity *entity,qa_error *e) {
+bool bot_ai_source_current_entity(qa_bots *b,int32_t number,qa_q3_entity *entity,qa_error *e) {
     if(number<0 || number>=BOT_SOURCE_EVENT_ENTITIES)
         return bot_ai_fail(e,"Source bot snapshot number is outside its actual GAME allocation");
     if(!b->services.source_entity)
@@ -186,7 +186,7 @@ bool bot_ai_source_check_snapshot(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(!present) break;
         sequence=increment(sequence);
         qa_q3_entity entity;
-        if(!current_entity(b,number,&entity,e)) return false;
+        if(!bot_ai_source_current_entity(b,number,&entity,e)) return false;
         if(!live(b,s)) return true;
         if(!bot_ai_source_check_event(b,s,&entity,e)) return false;
         if(!live(b,s)) return true;
@@ -194,7 +194,7 @@ bool bot_ai_source_check_snapshot(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(!live(b,s)) return true;
     }
     int32_t self;if(!bot_ai_source_client(b,s,&self,e)) return false;
-    qa_q3_entity player;if(!current_entity(b,self,&player,e)) return false;
+    qa_q3_entity player;if(!bot_ai_source_current_entity(b,self,&player,e)) return false;
     if(!live(b,s)) return true;
     if(!bot_ai_source_player_word(b,s,BOT_PS_EXTERNAL_EVENT,&player.event,e) ||
        !bot_ai_source_player_word(b,s,BOT_PS_EXTERNAL_EVENT_PARAMETER,&player.eventParm,e)) return false;

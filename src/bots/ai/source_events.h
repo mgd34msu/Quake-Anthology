@@ -16,6 +16,7 @@ struct bot_ai_state;
  * The PS sample was retained before console intake by the ordinary AI caller. */
 bool bot_ai_source_check_snapshot(struct qa_bots *,struct bot_ai_state *,qa_error *);
 bool bot_ai_source_check_event(struct qa_bots *,struct bot_ai_state *,const qa_q3_entity *,qa_error *);
+bool bot_ai_source_current_entity(struct qa_bots *,int32_t,qa_q3_entity *,qa_error *);
 bool bot_ai_source_set_teleport_time(struct qa_bots *,struct bot_ai_state *,qa_error *);
 
 #endif

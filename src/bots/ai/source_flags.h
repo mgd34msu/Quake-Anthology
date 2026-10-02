@@ -2,7 +2,8 @@
 #define QA_BOT_AI_SOURCE_FLAGS_H
 #include "internal.h"
 #include "source_alias.h"
-enum { BOT_AI_STRAFE_RIGHT=1,BOT_AI_ATTACKED=2,BOT_AI_IDEAL_VIEW_SET=32,BOT_AI_FIGHT_SUICIDAL=64 };
+enum { BOT_AI_STRAFE_RIGHT=1,BOT_AI_ATTACKED=2,BOT_AI_AVOID_RIGHT=16,
+       BOT_AI_IDEAL_VIEW_SET=32,BOT_AI_FIGHT_SUICIDAL=64 };
 static inline bool bot_ai_flag(const bot_ai_state *state,uint32_t flag) {
     return (bot_source_word_read(state->source_span.data+QA_BOT_SOURCE_FLAGS)&flag)!=0;
 }

@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=32;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=33;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==32?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==33?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -122,7 +122,6 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state,const bot_so
     if (state->view.actor.registry && (!character || !name)) return false;
 
     F(state->state_time);
-    F(state->blocked_time);
     B(state->team_arena); B(state->retired);
     L(state->command_sequence);
 

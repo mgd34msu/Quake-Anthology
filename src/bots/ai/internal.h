@@ -65,7 +65,6 @@ typedef struct bot_ai_state {
     char *admitted_character;
     char *admitted_name;
     float state_time;
-    float blocked_time;
     bool team_arena, retired;
     uint64_t command_sequence;
     bot_source_order_state source_order;

@@ -172,63 +172,181 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     return true;
 }
-static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
-                        qa_bot_move_result *result, qa_error *e) {
-    memset(result,0,sizeof(*result));
-    if(!bot_ai_move_setup(b,s,e) || !qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e)) return false;
-    if(result->failure) {
-        if(!qa_bot_moves_reset_avoid(moves(b),s->movement,false,e)) return false;
-        bot_ai_long_term_until_set(s,0);
-        if(bot_ai_order_active(s)) s->view.order.status=QA_BOT_ORDER_ERROR;
+static bool activation_weapon(qa_bots *b,bot_ai_state *s,bool mine,int32_t *out,qa_error *e) {
+    *out=0;
+    const qa_bot_weapon_knowledge *weapons=NULL;size_t count=0;void *lease=NULL;
+    if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
+    if(count && !weapons) {
+        b->services.arsenal_end(b->services.context,lease);
+        return bot_ai_fail(e,"activation arsenal returned absent weapon storage");
     }
-    if(result->blocked) {
-        if(b->services.activation) {
-            if(!bot_ai_activation_validate(s,e)) return false;
-            bool available=false;
-            for(uint32_t i=0;i<QA_BOT_SOURCE_ACTIVATION_COUNT;++i)
-                if(!bot_ai_activation_read(s,i).inuse) {available=true;break;}
-            if(available) {
-                qa_bot_activation activation;bool found;
-                if(!b->services.activation(b->services.context,s->view.actor,result->block_entity,&activation,&found,e)) return false;
-                if(!live(b,s)) return true;
-                if(found && bot_ai_live(b,activation.target)) {
-                    qa_bot_entity target;
-                    if(!b->services.entity(b->services.context,activation.target,&target,e)) return false;
-                    if(!live(b,s)) return true;
-                    if(target.present && bot_ai_live(b,activation.target) &&
-                       qa_actor_id_equal(b->services.entity_actor(b->services.context,target.number),activation.target)) {
-                        bool duplicate;
-                        if(!bot_ai_activation_contains(s,target.number,b->time,&duplicate,e)) return false;
-                        if(!duplicate) {
-                            qa_bot_entity_info target_info;bool target_found;
-                            if(!qa_bot_runtime_entity(b->runtime,target.number,&target_info,&target_found,e)) return false;
-                            qa_bot_source_activation row={.goal=activation.goal,.time=b->time+10,.start_time=b->time,
-                                .shoot=activation.shoot,.target=activation.aim,.origin=target_info.state.origin};
-                            row.goal.entity=target.number;
-                            bool pushed;if(!bot_ai_activation_push(s,&row,b->time,&pushed,e)) return false;
-                            if(pushed) {ENTER(QA_BOT_ACTIVATING);return true;}
-                        }
-                    }
+    if(live(b,s)) {
+        if(!mine) *out=qa_bot_knowledge_activation(weapons,count,bot_ai_inventory(s),s->team_arena);
+        else {
+            static const int32_t roles[]={8,5,9};
+            for(size_t r=0;r<sizeof(roles)/sizeof(*roles) && !*out;++r) {
+                for(size_t i=0;i<count;++i) {
+                    if(qa_bot_weapon_role(weapons+i)!=roles[r]) continue;
+                    int32_t selected=qa_bot_knowledge_activation(weapons+i,1,bot_ai_inventory(s),s->team_arena);
+                    if(selected>0) {*out=selected;break;}
                 }
             }
         }
-        s->blocked_time+=bot_ai_think_time(s);
-        if(s->blocked_time>1) {
-            float x,y;
-            if(!bot_ai_random(b,&x,e) || !bot_ai_random(b,&y,e)) return false;
-            qa_vec3 escape=qa_vec_normalize(qa_v3(x*2-1,y*2-1,0));
-            bool moved;
-            if(!qa_bot_moves_direction(moves(b),s->movement,escape,400,QA_BOT_DIRECTION_JUMP,&moved,e)) return false;
-            if(s->blocked_time>3) bot_ai_long_term_until_set(s,0);
+    }
+    b->services.arsenal_end(b->services.context,lease);
+    if(*out<0) *out=0;
+    return true;
+}
+static bool clear_path_attack(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity,
+                               qa_vec3 target,qa_bot_move_result *result,qa_error *e) {
+    if(!result->weapon) return true;
+    result->flags|=QA_BOT_MOVE_VIEW|QA_BOT_MOVE_WEAPON;
+    int32_t held;DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_WEAPON,&held,e));
+    if(held!=result->weapon || !qa_bot_field_of_vision(bot_ai_view_angles(s),20,result->ideal_view_angles)) return true;
+    int32_t viewer=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
+    qa_trace_result shot;
+    DECISION_CALL(qa_bot_navigation_trace(navigation(b,s),bot_ai_eye(s),target,NULL,
+        b->services.entity_actor(b->services.context,viewer),0x6000001,&shot,e));
+    qa_actor_id hit=b->services.entity_actor(b->services.context,entity->number);
+    if(shot.fraction>=1 || (hit.registry && qa_actor_id_equal(shot.actor,hit)))
+        DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e));
+    return true;
+}
+static bool clear_path(qa_bots *b,bot_ai_state *s,qa_bot_move_result *result,qa_error *e) {
+    const uint32_t movement_aim=QA_BOT_MOVE_VIEW|QA_BOT_MOVE_WEAPON;
+    if(bot_ai_kamikaze_body(s)!=0 && !(result->flags&movement_aim)) {
+        qa_q3_entity body;DECISION_CALL(bot_ai_source_current_entity(b,bot_ai_kamikaze_body(s),&body,e));
+        qa_vec3 target=qa_v3(body.pos.base[0],body.pos.base[1],body.pos.base[2]+8);
+        result->ideal_view_angles=bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s)));
+        DECISION_CALL(activation_weapon(b,s,false,&result->weapon,e));
+        DECISION_CALL(clear_path_attack(b,s,&body,target,result,e));
+    }
+    if(result->flags&QA_BOT_MOVE_AVOID_SPOT) bot_ai_blocked_avoid_time_set(s,b->time+5);
+    if(bot_ai_blocked_avoid_time(s)>b->time && !(result->flags&movement_aim)) {
+        float best_distance=300;int32_t best=-1;
+        for(int32_t i=0;i<bot_ai_num_prox_mines(s);++i) {
+            if(i>=BOT_SOURCE_PROX_MINES)
+                return bot_ai_fail(e,"clear path proximity index exceeds its actual BotState array");
+            qa_q3_entity mine;DECISION_CALL(bot_ai_source_current_entity(b,bot_ai_prox_mine(s,(uint32_t)i),&mine,e));
+            qa_vec3 origin=qa_v3(mine.pos.base[0],mine.pos.base[1],mine.pos.base[2]);
+            float distance=qa_vec_length(qa_vec_sub(origin,bot_ai_origin(s)));
+            if(distance<best_distance) {best_distance=distance;best=i;}
         }
-    } else {s->blocked_time=0;bot_ai_not_blocked_time_set(s,b->time);}
+        if(best>=0) {
+            qa_q3_entity mine;DECISION_CALL(bot_ai_source_current_entity(b,bot_ai_prox_mine(s,(uint32_t)best),&mine,e));
+            qa_vec3 target=qa_v3(mine.pos.base[0],mine.pos.base[1],mine.pos.base[2]+2);
+            result->ideal_view_angles=bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s)));
+            DECISION_CALL(activation_weapon(b,s,true,&result->weapon,e));
+            DECISION_CALL(clear_path_attack(b,s,&mine,target,result,e));
+        }
+    }
+    return true;
+}
+static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool activate,
+                        qa_bot_move_result *result, qa_error *e) {
+    memset(result,0,sizeof(*result));
+    DECISION_CALL(bot_ai_move_setup(b,s,e));
+    DECISION_CALL(qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e));
+    if(result->failure) {
+        DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,false,e));
+        if(s->view.decision==QA_BOT_ACTIVATING) {
+            uint32_t index;bool have;
+            if(!bot_ai_activation_top(s,&index,&have,e)) return false;
+            if(have) bot_ai_activation_time_set(s,index,0);
+        } else if(s->view.decision==QA_BOT_SEEK_NEARBY || s->view.decision==QA_BOT_BATTLE_NEARBY)
+            bot_ai_nearby_until_set(s,0);
+        else bot_ai_long_term_until_set(s,0);
+        if(bot_ai_order_active(s)) s->view.order.status=QA_BOT_ORDER_ERROR;
+    }
+    if(result->blocked) {
+        if(result->type==8) {
+            float random;DECISION_CALL(bot_ai_random(b,&random,e));
+            qa_vec3 direction;qa_builtin_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL);
+            bool moved;DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,direction,400,
+                QA_BOT_DIRECTION_WALK,&moved,e));
+            result->failure=false;result->direction=direction;return true;
+        }
+        qa_bot_entity_info blocker;bool observed;
+        DECISION_CALL(qa_bot_runtime_entity(b->runtime,result->block_entity,&blocker,&observed,e));
+        if(activate && b->services.activation) {
+            qa_bot_activation activation;bool found;
+            DECISION_CALL(b->services.activation(b->services.context,s->view.actor,blocker.number,&activation,&found,e));
+            if(found && bot_ai_live(b,activation.target)) {
+                qa_bot_entity target;
+                if(!b->services.entity(b->services.context,activation.target,&target,e)) return false;
+                if(!live(b,s)) return true;
+                if(target.present && bot_ai_live(b,activation.target) &&
+                   qa_actor_id_equal(b->services.entity_actor(b->services.context,target.number),activation.target)) {
+                    bool duplicate;
+                    if(!bot_ai_activation_contains(s,target.number,b->time,&duplicate,e)) return false;
+                    if(!duplicate) {
+                        qa_bot_entity_info target_info;bool target_found;
+                        if(!qa_bot_runtime_entity(b->runtime,target.number,&target_info,&target_found,e)) return false;
+                        qa_bot_source_activation row={.goal=activation.goal,.time=b->time+10,.start_time=b->time,
+                            .shoot=activation.shoot,.target=activation.aim,.origin=target_info.state.origin};
+                        row.goal.entity=target.number;
+                        bool pushed;if(!bot_ai_activation_push(s,&row,b->time,&pushed,e)) return false;
+                        if(pushed) ENTER(QA_BOT_ACTIVATING);
+                    }
+                }
+                if(!(result->flags&QA_BOT_MOVE_ON_OBSTACLE) &&
+                   qa_bot_navigation_area(navigation(b,s),bot_ai_area(s)).reach_count) return true;
+            }
+        }
+        qa_vec3 direction=qa_v3(result->direction.x,result->direction.y,0);
+        float length=qa_vec_length(direction);
+        if(length!=0) direction=qa_vec_scale(direction,1.0f/length);
+        if(length<.1f) {
+            float random;DECISION_CALL(bot_ai_random(b,&random,e));
+            qa_builtin_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL);
+        }
+        qa_vec3 sideward=qa_vec_cross(direction,qa_v3(0,0,1));
+        if(bot_ai_flag(s,BOT_AI_AVOID_RIGHT)) sideward=qa_vec_scale(sideward,-1);
+        bool moved;DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,sideward,400,
+            QA_BOT_DIRECTION_WALK,&moved,e));
+        if(!moved) {
+            bot_ai_flag_toggle(s,BOT_AI_AVOID_RIGHT);sideward=qa_vec_sub(sideward,direction);
+            DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,sideward,400,
+                QA_BOT_DIRECTION_WALK,&moved,e));
+        }
+        if(bot_ai_not_blocked_time(s)<b->time-.4f) {
+            if(s->view.decision==QA_BOT_SEEK_NEARBY) bot_ai_nearby_until_set(s,0);
+            else if(s->view.decision==QA_BOT_SEEK_LONG_TERM) bot_ai_long_term_until_set(s,0);
+        }
+    } else bot_ai_not_blocked_time_set(s,b->time);
+    return true;
+}
+static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
+                            const qa_bot_move_result *result,qa_bot_decision node,qa_error *e) {
+    bool seeking=node==QA_BOT_SEEK_LONG_TERM || node==QA_BOT_SEEK_NEARBY || node==QA_BOT_ACTIVATING;
     if(result->flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET))
         bot_ai_view_ideal_set(s,result->ideal_view_angles);
-    else {
+    else if(seeking && (result->flags&QA_BOT_MOVE_WAITING)) {
+        float random;DECISION_CALL(bot_ai_random(b,&random,e));
+        if(random<bot_ai_think_time(s)*.8f) {
+            qa_vec3 target;DECISION_CALL(bot_ai_source_roam_goal(b,s,&target,e));
+            qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
+            bot_ai_view_ideal_set(s,ideal);
+        }
+    } else if(!seeking || !bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET)) {
         qa_vec3 target;bool found;
-        if(!qa_bot_moves_view_target(moves(b),s->movement,goal,bot_ai_travel_flags(s),300,&target,&found,e)) return false;
-        if(found) bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s))));
-        else if(qa_vec_length(result->direction)>0) bot_ai_view_ideal_set(s,bot_ai_angles(result->direction));
+        qa_bot_goal view_goal=*goal;
+        if(node==QA_BOT_SEEK_NEARBY) {
+            DECISION_CALL(qa_bot_goals_top(goals(b),s->goals,true,&view_goal,&found,e));
+            if(!found) {DECISION_CALL(qa_bot_goals_top(goals(b),s->goals,false,&view_goal,&found,e));}
+            if(!found) view_goal=*goal;
+        }
+        DECISION_CALL(qa_bot_moves_view_target(moves(b),s->movement,&view_goal,bot_ai_travel_flags(s),300,&target,&found,e));
+        if(found) bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,seeking?bot_ai_origin(s):bot_ai_eye(s))));
+        else if(node==QA_BOT_SEEK_LONG_TERM && qa_vec_dot(result->direction,result->direction)==0) {
+            float random;DECISION_CALL(bot_ai_random(b,&random,e));
+            if(random<bot_ai_think_time(s)*.8f) {
+                DECISION_CALL(bot_ai_source_roam_goal(b,s,&target,e));
+                qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
+                bot_ai_view_ideal_set(s,ideal);
+            }
+        } else if(seeking || qa_vec_length(result->direction)>0)
+            bot_ai_view_ideal_set(s,bot_ai_angles(result->direction));
         qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
     }
     if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
@@ -408,7 +526,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(activation.shoot) {
                     qa_trace_result shot;
                     DECISION_CALL(qa_bot_navigation_trace(navigation(b,s),bot_ai_eye(s),activation.target,
-                        NULL,s->view.actor,0x6000001,&shot,e));
+                        NULL,b->services.entity_actor(b->services.context,
+                            bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY)),0x6000001,&shot,e));
                     if(!bot_ai_activation_top(s,&index,&have,e)) return false;
                     if(!have) continue;
                     activation=bot_ai_activation_read(s,index);
@@ -439,31 +558,40 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 activation=bot_ai_activation_read(s,index);
                 if(activation.time<b->time) {
                     if(!bot_ai_activation_pop(b,s,e) || !bot_ai_activation_top(s,&index,&have,e)) return false;
-                    if(have) {bot_ai_activation_time_set(s,index,b->time+10);return true;}
+                    if(have) {bot_ai_activation_time_set(s,index,b->time+10);continue;}
                     ENTER(QA_BOT_SEEK_NEARBY);continue;
                 }
                 qa_bot_move_result result={0};
                 if(!visible) {
                     goal=activation.goal;
-                    DECISION_CALL(move_goal(b,s,&goal,&result,e));
-                    if(!bot_ai_activation_top(s,&index,&have,e)) return false;
-                    if(!have) return true;
-                    if(result.failure) bot_ai_activation_time_set(s,index,0);
+                    DECISION_CALL(move_goal(b,s,&goal,true,&result,e));
                 }
+                DECISION_CALL(clear_path(b,s,&result,e));
+                if(!bot_ai_activation_top(s,&index,&have,e)) return false;
+                if(!have) return bot_ai_fail(e,"activation movement cleared the actual source stack");
                 activation=bot_ai_activation_read(s,index);
                 if(activation.shoot) {
-                    if(!(result.flags&QA_BOT_MOVE_VIEW))
-                        bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(activation.target,bot_ai_eye(s))));
+                    if(!(result.flags&QA_BOT_MOVE_VIEW)) {
+                        result.ideal_view_angles=bot_ai_angles(qa_vec_sub(activation.target,bot_ai_eye(s)));
+                        result.flags|=QA_BOT_MOVE_VIEW;
+                    }
                     if(!(result.flags&QA_BOT_MOVE_WEAPON)) {
-                        const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
-                        if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-                        int32_t weapon=qa_bot_knowledge_activation(weapons,count,bot_ai_inventory(s),s->team_arena);
-                        b->services.arsenal_end(b->services.context,lease);
-                        if(!live(b,s)) return true;
+                        int32_t weapon;DECISION_CALL(activation_weapon(b,s,false,&weapon,e));
                         if(!bot_ai_activation_top(s,&index,&have,e)) return false;
                         if(!have) return true;
-                        if(weapon<0) weapon=0;
-                        bot_ai_activation_weapon_set(s,index,weapon);bot_ai_weapon_number_set(s,weapon);
+                        bot_ai_activation_weapon_set(s,index,weapon);
+                        result.flags|=QA_BOT_MOVE_WEAPON;result.weapon=weapon;
+                    }
+                }
+                DECISION_CALL(movement_view(b,s,&goal,&result,node,e));
+                bool enemy_found;DECISION_CALL(bot_ai_find_enemy(b,s,-1,&enemy_found,e));
+                if(enemy_found) {
+                    bool retreat;DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
+                    if(retreat) ENTER(QA_BOT_BATTLE_NEARBY);
+                    else {
+                        DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,true,e));
+                        DECISION_CALL(qa_bot_goals_empty(goals(b),s->goals,e));
+                        ENTER(QA_BOT_FIGHTING);
                     }
                 }
                 return true;
@@ -507,7 +635,9 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 }
             }
             qa_bot_move_result result;
-            if(!move_goal(b,s,&goal,&result,e)) return false;
+            DECISION_CALL(move_goal(b,s,&goal,true,&result,e));
+            DECISION_CALL(clear_path(b,s,&result,e));
+            DECISION_CALL(movement_view(b,s,&goal,&result,node,e));
             bool enemy_found;
             if(!bot_ai_find_enemy(b,s,-1,&enemy_found,e)) return false;
             if(ordered) {
@@ -665,7 +795,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
             }
             qa_bot_move_result result;
-            if(!move_goal(b,s,&goal,&result,e)) return false;
+            DECISION_CALL(move_goal(b,s,&goal,false,&result,e));
+            DECISION_CALL(movement_view(b,s,&goal,&result,node,e));
             if(node==QA_BOT_BATTLE_NEARBY) {
                 DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
             }
