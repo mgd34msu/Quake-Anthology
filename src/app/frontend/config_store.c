@@ -86,6 +86,8 @@ struct frontend_config_store {
     frontend_remote_configs *clients;
     frontend_neutral_configs *neutral;
     frontend_source_admin *admin;
+    char *admin_source;
+    qa_sha256_digest admin_identity;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     const qa_launch_snapshot *prepared;
@@ -2709,6 +2711,7 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
     }
     if (!frontend_source_admin_destroy(manager->admin,error)) return false;
     manager->admin=NULL;
+    free(manager->admin_source);
     variable_carries_discard(manager,NULL,NULL,NULL);
     frontend_shared_storage_destroy(manager->storage);
     qa_buffer_free(&manager->restored_storage);
@@ -3113,11 +3116,11 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
-static bool config_header(qa_source_save_io *io,size_t *count)
+static bool config_header(qa_source_save_io *io,size_t *count,uint32_t *version)
 {
-    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=11;
+    uint8_t magic[4]={'Q','F','C','S'};
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,&version) && version==11 && qa_source_save_count(io,count,
+        qa_source_save_u32(io,version) && (*version==11 || *version==12) && qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -3223,7 +3226,8 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
             return fail(error,QA_ERROR_ARGUMENT,"Configuration key alias leaves its genuine physical GAME registry");
         ++count;
     }
-    qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count);
+    qa_source_save_io io={0}; uint32_t version=12;
+    bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count,&version);
     for (frontend_config_source *source=manager->sources;ok && source;source=source->next)
         ok=config_row(source,&io,(qa_application_content_graph *)graph,NULL,refs);
     qa_buffer clients={0}; qa_bytes bytes={0};
@@ -3250,6 +3254,25 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
     if (ok) ok=(!touched || shared) && (!sticky || (shared && !count &&
         frontend_remote_configs_empty(manager->clients))) && qa_source_save_bool(&io,&touched) &&
         qa_source_save_bool(&io,&sticky);
+    bool early=manager->admin!=NULL;
+    if (ok) ok=qa_source_save_bool(&io,&early);
+    if (ok && early) {
+        const qa_console *console=frontend_source_admin_console(manager->admin);
+        frontend_config_source *source=console?frontend_config_store_source((frontend_config_store *)manager,console):NULL;
+        qa_buffer admin={0};
+        char *name=source?(char *)instance(source)->selection.instance:NULL;
+        qa_sha256_digest identity=source?instance(source)->identity:(qa_sha256_digest){0};
+        qa_settings_store user=frontend_global_settings_storage_user_store(manager->frontend->global_settings_storage);
+        ok=source && source==published_primary(manager,manager->frontend->application) &&
+            frontend_source_admin_checkpoint(manager->admin,source->application,source->console,source->cvars,
+                &source->command,user,&admin,error) && frontend_save_text(&io,&name) &&
+            qa_source_save_bytes(&io,&identity,sizeof(identity));
+        bytes=(qa_bytes){admin.data,admin.size};
+        if (ok) ok=config_blob(&io,&bytes);
+        qa_buffer_free(&admin);
+        if (!ok && error && error->code==QA_OK)
+            fail(error,QA_ERROR_ARGUMENT,"Early administration capture lacks its genuine published primary Source");
+    }
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -3262,8 +3285,8 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     frontend_config_store *manager=frontend_config_store_create(frontend,error);
     if (!manager) return false;
     manager->restoring=true; manager->restore_refs=*refs;
-    qa_source_save_io io={0}; size_t count=0;
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count);
+    qa_source_save_io io={0}; size_t count=0; uint32_t version=12;
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count,&version);
     frontend_config_source **tail=&manager->sources;
     for (size_t i=0;ok && i<count;++i) {
         frontend_config_source *source=calloc(1,sizeof(*source));
@@ -3301,8 +3324,19 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
         qa_source_save_bool(&io,&manager->sticky_seed_pending) &&
         (!manager->image_fov_touched || shared) &&
         (!manager->sticky_seed_pending || (shared && !count && frontend_remote_configs_empty(manager->clients)));
+    qa_bytes admin={0}; bool early=false;
+    if (ok && version>=12) ok=qa_source_save_bool(&io,&early);
+    if (ok && early) {
+        ok=frontend_save_text(&io,&manager->admin_source) && manager->admin_source && *manager->admin_source &&
+            qa_source_save_bytes(&io,&manager->admin_identity,sizeof(manager->admin_identity)) &&
+            config_blob(&io,&admin) && admin.size;
+        frontend_config_source *source=manager->sources;
+        while (ok && source && strcmp(source->saved_instance,manager->admin_source)) source=source->next;
+        if (ok) ok=source && source->primary && qa_sha256_equal(&source->saved_identity,&manager->admin_identity);
+    }
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
+    if (ok && early) ok=frontend_source_admin_restore(frontend,admin,&manager->admin,error);
     if (!ok) { frontend_config_store_destroy(manager,NULL); return false; }
     *out=manager; return true;
 }
@@ -3312,7 +3346,7 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
 {
     if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) || !frontend_neutral_configs_empty(manager->neutral) ||
         manager->variable_carries || manager->restoring || manager->running || manager->prepared || manager->shared ||
-        manager->storage || manager->restored_storage.data || manager->storage_graph)
+        manager->storage || manager->restored_storage.data || manager->storage_graph || manager->admin || manager->admin_source)
         return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
     frontend_config_store *decoded=NULL;
     if (!frontend_config_store_restore(manager->frontend,application,graph,keys,refs,bytes,&decoded,error)) return false;
@@ -3321,6 +3355,9 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     manager->storage_graph=decoded->storage_graph;
     manager->image_fov_touched=decoded->image_fov_touched;
     manager->sticky_seed_pending=decoded->sticky_seed_pending;
+    manager->admin=decoded->admin; decoded->admin=NULL;
+    manager->admin_source=decoded->admin_source; decoded->admin_source=NULL;
+    manager->admin_identity=decoded->admin_identity;
     frontend_remote_configs_destroy(manager->clients,NULL);
     manager->clients=decoded->clients; decoded->clients=NULL;
     frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
@@ -3479,6 +3516,14 @@ bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_erro
         return fail(error,QA_ERROR_FORMAT,"Saved sticky preference seed lacks its genuine admitted product store");
     if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
     if (!frontend_neutral_configs_finish_restore(manager->neutral,error)) return false;
+    if (manager->admin) {
+        frontend_config_source *source=manager->sources;
+        while (source && (!source->metadata || strcmp(instance(source)->selection.instance,manager->admin_source))) source=source->next;
+        if (!source || !source->primary || !qa_sha256_equal(&instance(source)->identity,&manager->admin_identity) ||
+            !frontend_source_admin_finish_restore(manager->admin,source->application,source->console,source->cvars,
+                &source->command,global_user,error)) return false;
+        free(manager->admin_source); manager->admin_source=NULL;
+    }
     qa_buffer_free(&manager->restored_storage); manager->storage_graph=NULL;
     manager->storage_seeded=manager->storage!=NULL;
     manager->restoring=false; return true;

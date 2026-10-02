@@ -1273,13 +1273,15 @@ bool frontend_network_admin_send(qa_frontend *f,const qa_net_address *address,qa
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Early Source packet requires its actual returned Network socket");
     return send_address(n,address,bytes,error);
 }
-bool frontend_network_admin_adopt(qa_frontend *f,qa_server_admin **source,qa_error *error)
+bool frontend_network_admin_adopt(qa_frontend *f,qa_server_admin **source,uint32_t source_rotation_random,qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
     if (!n || !source || !*source || !n->runtime || !n->admin || n->busy || n->detached_transport ||
         !qa_network_callbacks_idle(n->runtime))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration adoption requires its actual new Network transport");
-    return qa_server_admin_adopt(n->admin,source,error);
+    if(!qa_server_admin_adopt(n->admin,source,error)) return false;
+    n->rotation_random=source_rotation_random;
+    return true;
 }
 static bool q3_actor(frontend_q3_peer *peer, qa_actor_id *actor, qa_error *error)
 {
@@ -6481,8 +6483,29 @@ static bool q2_client_tick_returned(qa_frontend_network *n,qa_error *error)
     if(error) *error=retirement;
     return false;
 }
+bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
+{
+    if(!f) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration continuation requires its frontend");
+    if(!frontend_config_store_admin_pending(f->config_store)) return true;
+    if(!f->stepping || f->preparing || f->capture || f->resource_inventory || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration continuation requires the ordinary returned frame pump");
+    if(f->shutdown || qa_application_should_stop(f->application) ||
+        qa_application_startup_pending(f->application) || !qa_application_launch(f->application)) return true;
+    qa_application_startup_source source; bool present=false;
+    if(!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
+    if(!present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration continuation lost its published primary Source");
+    if(f->network) {
+        qa_frontend_network *n=f->network;
+        if(!n->runtime || !n->admin || n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration continuation requires its complete returned Network owner");
+        return network_runtime_valid(n,true,error) && frontend_config_store_admin_adopt(f->config_store,error);
+    }
+    return frontend_network_create(f,error);
+}
 bool frontend_network_pump(qa_frontend *f, qa_error *error)
 {
+    if(!frontend_network_admin_resume(f,error)) return false;
     qa_frontend_network *n = f->network; if (!n) return true;
     /* Console connection transitions retire their old wire owner before the
      * sole receiver can poll or flush another packet from that attempt. */

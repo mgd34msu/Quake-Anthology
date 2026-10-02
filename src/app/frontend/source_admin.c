@@ -3,6 +3,8 @@
 #include "network_admin.h"
 #include "qa/application_network_qw.h"
 #include "qa/filesystem.h"
+#include "qa/source_save.h"
+#include "qa/network_services_save.h"
 #include <SDL2/SDL.h>
 
 typedef struct admin_packet {
@@ -21,6 +23,9 @@ struct frontend_source_admin {
     admin_packet *first,*last;
     uint64_t nonce;
     uint32_t random;
+    qa_fs_object_reference saved_preferences;
+    qa_console_dialect saved_dialect;
+    bool restoring;
     bool busy;
 };
 static bool fail(qa_error *error,qa_status status,const char *message)
@@ -126,10 +131,17 @@ static bool policy(frontend_source_admin *owner,qa_error *error)
         owner->frontend->options.network_host && owner->frontend->options.dedicated &&
         (q2?published && published->number!=0:dialect!=QA_CONSOLE_Q3 || (dedicated && dedicated->integer==2)),error);
 }
+static qa_admin_options admin_options(frontend_source_admin *owner,qa_console_dialect dialect)
+{
+    return (qa_admin_options){.dialect=dialect,.filters=1024,.rate_entries=1024,.burst=10,
+        .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),
+        .hooks={.context=owner,.password=password,.execute=execute,.send=send_packet,.travel=travel,
+            .players=players,.random=random_rotation,.rate_registry=rate_registry,.print=print}};
+}
 bool frontend_source_admin_bind(frontend_source_admin *owner,qa_application *application,
     qa_console *console,qa_cvars *cvars,const qa_command_context *command,qa_error *error)
 {
-    if (!owner || owner->busy || !owner->admin || !application || !console || !cvars || !command ||
+    if (!owner || owner->busy || owner->restoring || !owner->admin || !application || !console || !cvars || !command ||
         !command->owner || qa_console_cvars(console)!=cvars || command->dialect!=qa_cvars_dialect(cvars))
         return fail(error,QA_ERROR_ARGUMENT,"Early administration requires its actual returned Source namespace");
     owner->application=application; owner->console=console; owner->cvars=cvars;
@@ -161,10 +173,7 @@ bool frontend_source_admin_create(qa_frontend *frontend,qa_application *applicat
     if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating early Source administration owner");
     owner->frontend=frontend; owner->nonce=SDL_GetPerformanceCounter();
     owner->random=(uint32_t)owner->nonce^(uint32_t)(owner->nonce>>32);
-    qa_admin_options options={.dialect=command->dialect,.filters=1024,.rate_entries=1024,.burst=10,
-        .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),
-        .hooks={.context=owner,.password=password,.execute=execute,.send=send_packet,.travel=travel,
-            .players=players,.random=random_rotation,.rate_registry=rate_registry,.print=print}};
+    qa_admin_options options=admin_options(owner,command->dialect);
     bool ok=qa_server_admin_create(&options,&owner->admin,error) &&
         frontend_source_admin_bind(owner,application,console,cvars,command,error) &&
         qa_fs_root_open(frontend->options.application.user_root,&owner->preferences,error);
@@ -204,7 +213,7 @@ bool frontend_source_admin_adopt(frontend_source_admin *owner,qa_error *error)
         if (!owner->first) owner->last=NULL;
         qa_buffer_free(&packet->bytes); free(packet);
     }
-    return !owner->admin || frontend_network_admin_adopt(owner->frontend,&owner->admin,error);
+    return !owner->admin || frontend_network_admin_adopt(owner->frontend,&owner->admin,owner->random,error);
 }
 bool frontend_source_admin_destroy(frontend_source_admin *owner,qa_error *error)
 {
@@ -215,4 +224,120 @@ bool frontend_source_admin_destroy(frontend_source_admin *owner,qa_error *error)
         qa_buffer_free(&packet->bytes); free(packet);
     }
     qa_server_admin_destroy(owner->admin); qa_fs_root_close(owner->preferences); free(owner); return true;
+}
+const qa_console *frontend_source_admin_console(const frontend_source_admin *owner)
+{ return owner && !owner->busy && !owner->restoring && owner->admin?owner->console:NULL; }
+static bool root_fields(qa_source_save_io *io,qa_fs_object_reference *root)
+{
+    if (!qa_source_save_u32(io,&root->platform) || (root->platform!=1 && root->platform!=2)) return false;
+    for (size_t i=0;i<3;++i) if (!qa_source_save_u64(io,root->words+i)) return false;
+    return true;
+}
+static bool root_matches(qa_settings_store store,const qa_fs_object_reference *reference)
+{
+    const qa_fs_object_reference *roots=NULL; size_t count=0;
+    if (!qa_vfs_mount_root_references(store.vfs,store.mount,&roots,&count)) return false;
+    for (size_t i=0;i<count;++i)
+        if (roots[i].platform==reference->platform && !memcmp(roots[i].words,reference->words,sizeof(reference->words))) return true;
+    return false;
+}
+static bool packet_address_fields(qa_source_save_io *io,qa_net_address *address)
+{
+    uint32_t kind=address->kind;
+    if (!qa_source_save_u32(io,&kind) || (kind!=QA_NET_IPV4 && kind!=QA_NET_IPV6) ||
+        !qa_source_save_u16(io,&address->port)) return false;
+    address->kind=(qa_net_address_kind)kind;
+    return kind==QA_NET_IPV4?qa_source_save_bytes(io,address->host.ipv4,4):
+        qa_source_save_bytes(io,address->host.ipv6.bytes,16) && qa_source_save_u32(io,&address->host.ipv6.scope);
+}
+static bool saved_blob(qa_source_save_io *io,qa_bytes *bytes)
+{
+    size_t size=bytes->size;
+    if (!qa_source_save_count(io,&size,SIZE_MAX)) return false;
+    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,size);
+    if (size>io->input.size-io->offset) return fail(io->error,QA_ERROR_FORMAT,"Source administration bytes exceed their actual envelope");
+    *bytes=(qa_bytes){io->input.data+io->offset,size}; io->offset+=size; return true;
+}
+static bool admin_fields(qa_source_save_io *io,frontend_source_admin *owner,qa_bytes *admin)
+{
+    uint8_t magic[4]={'Q','F','S','A'}; uint32_t version=1,dialect=owner->saved_dialect;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSA",4) ||
+        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u64(io,&owner->nonce) || !qa_source_save_u32(io,&owner->random) ||
+        !root_fields(io,&owner->saved_preferences) || !saved_blob(io,admin) || !admin->size) return false;
+    owner->saved_dialect=(qa_console_dialect)dialect;
+    size_t count=0;
+    if (io->direction==QA_SOURCE_SAVE_WRITE) for (admin_packet *p=owner->first;p;p=p->next) ++count;
+    if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/10:SIZE_MAX)) return false;
+    admin_packet *p=owner->first;
+    for (size_t i=0;i<count;++i) {
+        if (io->direction==QA_SOURCE_SAVE_READ) {
+            p=calloc(1,sizeof(*p));
+            if (!p) return fail(io->error,QA_ERROR_MEMORY,"Restoring unsent Source administration packet");
+            if (owner->last) owner->last->next=p; else owner->first=p;
+            owner->last=p;
+        }
+        qa_bytes bytes={p->bytes.data,p->bytes.size};
+        if (!packet_address_fields(io,&p->address) || !saved_blob(io,&bytes)) return false;
+        if (io->direction==QA_SOURCE_SAVE_READ && bytes.size) {
+            p->bytes.data=malloc(bytes.size);
+            if (!p->bytes.data) return fail(io->error,QA_ERROR_MEMORY,"Restoring unsent Source administration payload");
+            memcpy(p->bytes.data,bytes.data,bytes.size); p->bytes.size=bytes.size;
+        }
+        p=p->next;
+    }
+    return true;
+}
+bool frontend_source_admin_checkpoint(const frontend_source_admin *owner,qa_application *application,
+    qa_console *console,qa_cvars *cvars,const qa_command_context *command,qa_settings_store store,
+    qa_buffer *out,qa_error *error)
+{
+    qa_fs_root *root=qa_vfs_mount_root(store.vfs,store.mount);
+    if (!owner || owner->busy || owner->restoring || !owner->admin || !out || out->data || out->size ||
+        owner->application!=application || owner->console!=console || owner->cvars!=cvars || !command ||
+        owner->command.owner!=command->owner || owner->command.session!=command->session ||
+        owner->command.dialect!=command->dialect || qa_console_cvars(console)!=cvars ||
+        !root || !qa_fs_root_same_object(root,owner->preferences))
+        return fail(error,QA_ERROR_ARGUMENT,"Source administration capture lost its exact returned Source and preference owner");
+    frontend_source_admin copy=*owner; copy.saved_dialect=qa_cvars_dialect(cvars);
+    if (!qa_fs_root_reference_read(owner->preferences,&copy.saved_preferences))
+        return fail(error,QA_ERROR_ARGUMENT,"Source administration preference capability has no retained identity");
+    qa_buffer admin={0};
+    if (!qa_server_admin_checkpoint(owner->admin,&admin,error)) return false;
+    qa_bytes bytes={admin.data,admin.size}; qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && admin_fields(&io,&copy,&bytes) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&admin);
+    if (!ok && error && error->code==QA_OK) fail(error,QA_ERROR_FORMAT,"Source administration leaves its actual saved field domains");
+    return ok;
+}
+bool frontend_source_admin_restore(qa_frontend *frontend,qa_bytes bytes,
+    frontend_source_admin **out,qa_error *error)
+{
+    if (!frontend || !out || *out) return fail(error,QA_ERROR_ARGUMENT,"Source administration restore needs its actual empty parent child");
+    frontend_source_admin *owner=calloc(1,sizeof(*owner));
+    if (!owner) return fail(error,QA_ERROR_MEMORY,"Restoring Source administration owner");
+    owner->frontend=frontend; owner->restoring=true;
+    qa_source_save_io io={0}; qa_bytes admin={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && admin_fields(&io,owner,&admin) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    qa_admin_options options=admin_options(owner,owner->saved_dialect);
+    if (ok) ok=qa_server_admin_restore_checkpoint(admin,&options,&owner->admin,error);
+    if (!ok) {
+        if (error && error->code==QA_OK) fail(error,QA_ERROR_FORMAT,"Invalid Source administration continuation");
+        frontend_source_admin_destroy(owner,NULL); return false;
+    }
+    *out=owner; return true;
+}
+bool frontend_source_admin_finish_restore(frontend_source_admin *owner,qa_application *application,
+    qa_console *console,qa_cvars *cvars,const qa_command_context *command,qa_settings_store store,qa_error *error)
+{
+    qa_fs_root *root=qa_vfs_mount_root(store.vfs,store.mount);
+    if (!owner || !owner->restoring || owner->busy || !owner->admin || owner->preferences || !application ||
+        !console || !cvars || !command || !command->owner || qa_console_cvars(console)!=cvars ||
+        command->dialect!=owner->saved_dialect || qa_cvars_dialect(cvars)!=owner->saved_dialect ||
+        !root || !root_matches(store,&owner->saved_preferences))
+        return fail(error,QA_ERROR_FORMAT,"Saved Source administration differs from its actual reconstructed Source and directory lineage");
+    qa_fs_root_retain(root); owner->preferences=root;
+    owner->application=application; owner->console=console; owner->cvars=cvars; owner->command=*command;
+    owner->command.script=NULL; owner->restoring=false; return true;
 }

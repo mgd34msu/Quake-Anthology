@@ -205,6 +205,8 @@ bool frontend_config_store_primary_server_read(frontend_config_store *,qa_applic
 bool frontend_config_store_admin_dispatch(frontend_config_store *,const qa_command_invocation *,
     size_t skip,bool *handled,qa_error *);
 bool frontend_config_store_admin_adopt(frontend_config_store *,qa_error *);
+/* Includes a restored early child. Transport adoption belongs to the normal
+ * network pump after its actual Source and directory bindings finish. */
 bool frontend_config_store_admin_pending(const frontend_config_store *);
 void frontend_config_store_release(frontend_config_store *,const qa_console *,void *lease);
 bool frontend_config_store_save(frontend_config_store *,qa_error *);
