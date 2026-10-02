@@ -1168,7 +1168,9 @@ static bool print_client(application_provider *provider, uint32_t slot,
     const char *text, qa_error *error)
 {
     char output[1152];
-    snprintf(output, sizeof(output), "print \"%s\"", text);
+    int written = snprintf(output, sizeof(output), "print \"%s\"", text);
+    if (written < 0 || (size_t)written >= sizeof(output))
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 client print command exceeds its output buffer");
     return application_native_q3_send_command(provider, (int32_t)slot, output, error);
 }
 
