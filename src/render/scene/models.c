@@ -447,11 +447,13 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
         if (!indexed && !scene_model_external(&node->images, image->name, &prepared, error)) return false;
         node->bindings[at] = (model_policy_image){image, prepared};
     }
-    node->images.skins = owner->source->skin_count ? calloc(owner->source->skin_count, sizeof(*owner->skins)) : NULL;
-    node->images.sprites = owner->source->sprite_count ? calloc(owner->source->sprite_count, sizeof(*owner->sprites)) : NULL;
+    void *allocation;
+    if (!model_array(owner->source->skin_count, sizeof(*owner->skins), &allocation, error)) return false;
+    node->images.skins = allocation;
+    if (!model_array(owner->source->sprite_count, sizeof(*owner->sprites), &allocation, error)) return false;
+    node->images.sprites = allocation;
     node->shaders = owner->source->mesh_count ? calloc(owner->source->mesh_count, sizeof(*node->shaders)) : NULL;
-    if ((owner->source->skin_count && !node->images.skins) ||
-        (owner->source->sprite_count && !node->images.sprites) || (owner->source->mesh_count && !node->shaders)) goto memory;
+    if (owner->source->mesh_count && !node->shaders) goto memory;
     for (uint32_t i = 0; i < owner->source->skin_count; ++i)
         node->images.skins[i] = model_policy_binding(node, owner->skins[i]);
     for (uint32_t i = 0; i < owner->source->sprite_count; ++i)
@@ -459,21 +461,19 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
     for (uint32_t i = 0; i < owner->source->mesh_count; ++i) {
         size_t count = owner->source->meshes[i].shader_count;
         if (!owner->meshes[i].shaders) continue;
-        node->shaders[i] = count ? calloc(count, sizeof(*node->shaders[i])) : NULL;
-        if (count && !node->shaders[i]) goto memory;
+        if (!model_array(count, sizeof(*node->shaders[i]), &allocation, error)) return false;
+        node->shaders[i] = allocation;
         for (size_t j = 0; j < count; ++j)
             node->shaders[i][j] = model_policy_binding(node, owner->meshes[i].shaders[j]);
     }
     if (owner->replacement_skins) {
-        node->images.replacement_skins = owner->source->mesh_count
-            ? calloc(owner->source->mesh_count, sizeof(*owner->replacement_skins)) : NULL;
-        if (owner->source->mesh_count && !node->images.replacement_skins) goto memory;
+        if (!model_array(owner->source->mesh_count, sizeof(*owner->replacement_skins), &allocation, error)) return false;
+        node->images.replacement_skins = allocation;
         for (size_t i = 0; i < owner->source->mesh_count; ++i) {
             if (!owner->replacement_skins[i]) continue;
             size_t count = owner->replacement_skin_count;
-            if (count > SIZE_MAX / sizeof(*node->images.replacement_skins[i])) goto memory;
-            node->images.replacement_skins[i] = count ? calloc(count, sizeof(*node->images.replacement_skins[i])) : NULL;
-            if (count && !node->images.replacement_skins[i]) goto memory;
+            if (!model_array(count, sizeof(*node->images.replacement_skins[i]), &allocation, error)) return false;
+            node->images.replacement_skins[i] = allocation;
             for (size_t j = 0; j < count; ++j)
                 node->images.replacement_skins[i][j] = model_policy_binding(node, owner->replacement_skins[i][j]);
         }
