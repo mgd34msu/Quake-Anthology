@@ -228,6 +228,8 @@ static bool cvar_apply(cvar_access access,const qa_cvars_edit_command *command,q
     case QA_CVARS_EDIT_REGISTER: return qa_cvars_register(access.registry,command->name,command->value,
         command->flags,command->owner,command->description,error);
     case QA_CVARS_EDIT_SET: return qa_cvars_set(access.registry,command->name,command->value,command->force,error);
+    case QA_CVARS_EDIT_ASSIGN: return command->force ? qa_cvars_assign(access.registry,command->name,command->value,command->source_dialect,error) :
+        qac_fail(error,QA_ERROR_ARGUMENT,"direct cvar assignment requires explicit force");
     case QA_CVARS_EDIT_SET_CONSOLE: return qa_cvars_set_console(access.registry,command->name,command->value,error);
     case QA_CVARS_EDIT_SET_FLAGS: return qa_cvars_set_flags(access.registry,command->name,command->value,command->flags,error);
     case QA_CVARS_EDIT_ADD_FLAGS: return qa_cvars_add_flags(access.registry,command->name,command->flags,error);

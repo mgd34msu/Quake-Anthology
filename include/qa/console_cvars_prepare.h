@@ -16,8 +16,14 @@ typedef enum qa_cvars_edit_kind {
     QA_CVARS_EDIT_RESET,
     QA_CVARS_EDIT_RESTART,
     QA_CVARS_EDIT_SET_NUMBER,
-    QA_CVARS_EDIT_RETAIN_SHARED
+    QA_CVARS_EDIT_RETAIN_SHARED,
+    QA_CVARS_EDIT_ASSIGN
 } qa_cvars_edit_kind;
+/* Forced direct scalar assignment, as QW serverinfo assigns a registered
+ * cvar string/value without Cvar_Set notifications or protocol propagation.
+ * Keeps flags, latched values, bindings and previously queued edit effects. */
+bool qa_cvars_assign(qa_cvars *, const char *, const char *, qa_console_dialect, qa_error *);
+
 typedef struct qa_cvars_edit_command {
     qa_cvars_edit_kind kind;
     const char *name, *value, *description;
@@ -25,6 +31,7 @@ typedef struct qa_cvars_edit_command {
     uint64_t owner;
     bool force;
     float number;
+    qa_console_dialect source_dialect; /* Direct assignment numeric grammar. */
 } qa_cvars_edit_command;
 
 /* The ticket owns scalar records, while the registry retains its actual

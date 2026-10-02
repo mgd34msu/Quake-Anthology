@@ -84,6 +84,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
             return q1_map_fail(error, "Q1 map reset requires completed actor release callbacks");
 
     q1_wire_map_reset(g);
+    if (g->host.source_info_map_reset) g->host.source_info_map_reset(g->host.context);
     qa_q1_map_options replacement = *options;
     q1_map_state *states = g->maps->allocated;
     q1_rotate_target *rotated = g->maps->rotated_targets;
@@ -121,6 +122,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
+    g->qw_rj = g->options.quakeworld ? 1 : 0;
     g->sight_actor = g->horn_charmer = (qa_actor_id){0};
     g->rogue_runes_world = (qa_actor_id){0};
     g->rogue_runes_started = false;

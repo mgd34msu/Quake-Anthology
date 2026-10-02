@@ -244,7 +244,7 @@ typedef struct qa_protection_binding {
     bool (*absorb)(void *, const qa_damage_request *, const qa_damage_geometry *, float, qa_damage_flags, qa_protection_observer *, float *saved, qa_error *);
 } qa_protection_binding;
 
-typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, skip_base_team_health; int32_t teamplay; qa_vec3 momentum_direction; } qa_q1_combat_context;
+typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, skip_base_team_health, same_player_netname, quakeworld_rj; int32_t teamplay; float rj; qa_vec3 momentum_direction; } qa_q1_combat_context;
 typedef struct qa_q2_combat_context {
     bool player, monster, attacker_player, has_enemy, easy_skill, deathmatch, rerelease;
     bool defender_sphere, team_damage_enabled, friendly_fire, nuke, no_knockback;

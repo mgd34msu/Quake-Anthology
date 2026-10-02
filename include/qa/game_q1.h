@@ -213,6 +213,10 @@ typedef struct qa_q1_host {
     /* PF_logfrag writes and flushes its optional host file after SZ_Print.
      * Source ignores file I/O results; the physical log append stays reached. */
     void (*source_logfrag_write)(void *, const char *record);
+    /* Actual Source world infokey, including the engine localinfo fallback. */
+    bool (*world_info)(void *, const char *key, qa_string_id *, qa_error *);
+    /* SV_Spawn clears its reliable datagram, while svs.info/localinfo remain. */
+    void (*source_info_map_reset)(void *);
 } qa_q1_host;
 typedef struct qa_q1_boss_fields {
     const char *wave1, *wave2, *wave3, *teleport_target;

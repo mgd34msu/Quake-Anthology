@@ -1,6 +1,7 @@
 #include "boss_internal.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_maps.h"
+#include "qa/game_q1_bots.h"
 #include "wire_internal.h"
 #include <float.h>
 
@@ -427,6 +428,16 @@ static bool combat_context(void *context, const qa_damage_request *request,
                                               : qa_v3(0, 0, 0),
                     .teamplay = g->options.teamplay,
                     .skip_base_team_health = g->options.program == QA_Q1_ROGUE}};
+    if (g->options.quakeworld && g->options.program == QA_Q1_ID1 &&
+        g->options.edition == QA_Q1_CLASSIC) {
+        out->game.q1.quakeworld_rj = true;
+        qa_q1_source_client_view victim, killer;
+        if (qa_q1_source_client_read(g, request->target, &victim) &&
+            qa_q1_source_client_read(g, request->attack.attacker, &killer)) {
+            out->game.q1.rj = g->qw_rj;
+            out->game.q1.same_player_netname = !strcmp(victim.name, killer.name);
+        }
+    }
     if (g->host.base_team_health) {
         bool enabled;
         if (!g->host.base_team_health(g->host.context, &enabled, error)) return false;
@@ -573,6 +584,7 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     }
     g->services = *services;
     g->options = *options;
+    g->qw_rj = options->quakeworld ? 1 : 0;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)

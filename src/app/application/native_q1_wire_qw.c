@@ -47,9 +47,11 @@ static bool source_view(application_native_q1_wire_source *source,
     if (!cvars || !qa_q1_game_clock_read(source->provider->state.q1, &time_ns, &elapsed) ||
         !qa_session_clock(source->provider->application->session, source->provider->owner, &clock))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native QuakeWorld source lost its clock or cvar owner");
+    const char *serverinfo;
+    if (!application_native_q1_source_info(source->provider, false, &serverinfo, error)) return false;
     *out = (qa_application_network_qw_source){.owner=source->provider->owner,
         .entity_count=source->receipt.entity_slots, .source_time_ns=time_ns,
-        .completed_time_ns=clock.frame.time_ns, .cvars=cvars};
+        .completed_time_ns=clock.frame.time_ns, .cvars=cvars, .serverinfo=serverinfo};
     return true;
 }
 bool application_native_q1_qw_source(qa_application *app, qa_application_network_qw_source *out, qa_error *error) {
@@ -594,7 +596,8 @@ bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
     uint64_t time_ns;double elapsed;
     bool okay=app->operation==APPLICATION_IDLE && qa_q1_game_clock_read(source.provider->state.q1,&time_ns,&elapsed) &&
-        application_native_q1_wire_observe(app,error);
+        application_native_q1_wire_observe(app,error) &&
+        application_native_q1_source_info_flush(source.provider,error);
     for (uint32_t i=0;okay && i<32;++i) {
         qa_actor_id actor;qa_q1_wire_feedback feedback;
         if (!qa_q1_source_client_actor(source.provider->state.q1,i,&actor)) continue;

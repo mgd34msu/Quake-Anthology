@@ -13,6 +13,9 @@ bool qa_q1_source_select_base_weapon(qa_q1_game *, qa_actor_id, qa_q1_weapon,
  * later deathmatch grants. Inventory changes alone do not rewrite this field. */
 bool qa_q1_source_current_ammo_select(qa_q1_game *, qa_actor_id, qa_error *);
 
+/* QW PutClientInServer after teledeath: world infokey rj, then DM4/DM5. */
+bool qa_q1_source_qw_birth(qa_q1_game *, qa_actor_id, qa_error *);
+
 /* QW PutClientInServer's deathmatch 5 grants after the teledeath stage.
  * Retains the earlier selected currentammo and the physical source clock. */
 bool qa_q1_source_qw_dm5_birth(qa_q1_game *, qa_actor_id, qa_error *);

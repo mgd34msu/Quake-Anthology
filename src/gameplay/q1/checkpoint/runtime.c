@@ -77,6 +77,12 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, vector, g->right);
     Q1_SAVE(io, vector, g->up);
     if (g->options.quakeworld) {
+        /* Q_atof of an accepted 63-byte info value can overflow binary32. */
+        uint32_t rj;
+        memcpy(&rj, &g->qw_rj, sizeof(rj));
+        Q1_SAVE(io, u32, rj);
+        if (io->reading) memcpy(&g->qw_rj, &rj, sizeof(rj));
+        if (isnan(g->qw_rj)) return q1_save_fail(io, "Invalid QW rj Source global");
         Q1_SAVE(io, actor, g->qw_multi_entity);
         Q1_SAVE(io, float, g->qw_multi_damage);
         Q1_SAVE(io, float, g->qw_blood_count);

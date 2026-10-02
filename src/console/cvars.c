@@ -1227,6 +1227,44 @@ bool qa_cvars_edit_vm_bind(qa_cvars_edit *edit,const char *name,const char *defa
     }
     return ok;
 }
+static bool assign_variable(cvar_target target, const char *name, const char *value,
+    qa_console_dialect source_dialect, qa_error *error)
+{
+    if (!name || !value || !qac_dialect_valid(source_dialect))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "direct cvar assignment requires its declared scalar and grammar");
+    if (!target_touch(target, error)) return false;
+    qa_cvars *registry = target.registry;
+    name = source_name(registry, name);
+    cvar_alias *alias = find_alias(registry, target.values, name);
+    if (alias) {
+        char converted[32]; qa_error fault = {0};
+        const char *text = alias_write(target, alias, value, converted, &fault);
+        if (!text) { if (fault.code != QA_OK && error) *error = fault; return fault.code == QA_OK; }
+        return assign_variable(target, alias->target, text, source_dialect, error);
+    }
+    cvar *entry = find_values(registry, target.values, name);
+    if (!entry) return qac_fail(error, QA_ERROR_NOT_FOUND, "direct cvar assignment requires an existing registration");
+    if (!replace_text(&entry->view.value, value, error)) return false;
+    entry->view.number = qac_number(entry->view.value, source_dialect);
+    if (qac_q1(source_dialect)) {
+        const char *text = entry->view.value;
+        bool negative = *text == '-';
+        if (negative) ++text;
+        if (*text == '\'') entry->view.number = (float)(signed char)text[1] * (negative ? -1 : 1);
+    }
+    entry->view.integer = qac_integer(entry->view.value);
+    if (!qac_q1(registry->options.dialect)) {
+        entry->view.modified = true; ++entry->view.modification_count;
+        target.values->changed_flags |= entry->view.flags;
+    }
+    return true;
+}
+bool qa_cvars_assign(qa_cvars *registry, const char *name, const char *value,
+    qa_console_dialect source_dialect, qa_error *error)
+{
+    if (!mutation_begin(registry, error)) return false;
+    return mutation_end(registry, assign_variable(live_target(registry), name, value, source_dialect, error), error);
+}
 bool qa_cvars_set(qa_cvars *registry, const char *name, const char *value, bool force, qa_error *error)
 {
     if (!mutation_begin(registry,error)) return false;
@@ -1395,6 +1433,9 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
             command->owner,command->description,&fault); break;
     case QA_CVARS_EDIT_SET:
         ok=set_variable(target,command->name,command->value,command->force,&fault); break;
+    case QA_CVARS_EDIT_ASSIGN:
+        ok=command->force ? assign_variable(target,command->name,command->value,command->source_dialect,&fault) :
+            qac_fail(&fault,QA_ERROR_ARGUMENT,"direct cvar assignment requires explicit force"); break;
     case QA_CVARS_EDIT_SET_CONSOLE:
         ok=set_console_variable(target,command->name,command->value,&fault); break;
     case QA_CVARS_EDIT_SET_FLAGS:

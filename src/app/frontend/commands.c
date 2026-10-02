@@ -28,6 +28,29 @@ static bool client_name(const char *text,const char *name)
     }
     return !*text && !*name;
 }
+bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source *source,
+    const qa_command_invocation *call,bool *handled,qa_error *error)
+{
+    if (!f || !source || !call || !handled || !call->argc || call->console!=source->console ||
+        !qa_console_invocation_current(call->console,call))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Common command requires its entered Source invocation");
+    *handled=false;
+    const char *name=call->argv[0];
+    if (qa_console_find(source->console,&call->context,name) || qa_cvars_find(source->cvars,name)) return true;
+    for (size_t i=0;;++i) {
+        const qa_console_entry *alias=qa_console_alias_at(source->console,call->context.owner,i);
+        if (!alias) break;
+        if (client_name(name,alias->name)) return true;
+    }
+    qa_console *engine=qa_application_console(f->application);
+    qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=call->context.dialect,.direct=true};
+    const qa_console_entry *entry=qa_console_find(engine,&context,name);
+    uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
+    if (!entry || !entry->engine_command ||
+        !qa_console_registration_read(engine,entry->name,entry->owner,&lifetime,&handler,&user) || !handler) return true;
+    *handled=true;
+    return handler(user,call,error);
+}
 static bool client_menu_command(void *context,const qa_command_invocation *command,qa_error *error)
 {
     frontend_client_commands *owner=context;

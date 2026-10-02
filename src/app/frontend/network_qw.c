@@ -604,10 +604,13 @@ static uint32_t peer_ping(const qw_frontend_peer *peer)
 static bool source_status(void *context, const char **out, qa_error *error)
 {
     frontend_qw_host *host = context; qa_application_network_qw_world world; qa_buffer info = {0};
-    if (!source_world(host, &world, error) || !qa_cvars_info(world.source.cvars, QA_CVAR_SERVERINFO, 4096, &info, error)) return false;
+    if (!source_world(host, &world, error)) return false;
+    if (!world.source.serverinfo &&
+        !qa_cvars_info(world.source.cvars, QA_CVAR_SERVERINFO, 4096, &info, error)) return false;
     qa_buffer status = {malloc(65531), 0};
     if (!status.data) { qa_buffer_free(&info); return frontend_fail(error, QA_ERROR_MEMORY, "Capturing QuakeWorld source status response"); }
-    int length = snprintf((char *)status.data, 65531, "%s\\map\\%s\n", info.data ? (char *)info.data : "", world.map);
+    const char *serverinfo=world.source.serverinfo?world.source.serverinfo:info.data?(char *)info.data:"";
+    int length = snprintf((char *)status.data, 65531, "%s\\map\\%s\n", serverinfo, world.map);
     qa_buffer_free(&info);
     bool ok = length >= 0 && length < 65531; size_t used = ok ? (size_t)length : 0;
     for (size_t i = 0; ok && i < QW_CLIENTS; ++i) {

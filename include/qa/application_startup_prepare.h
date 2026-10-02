@@ -127,6 +127,10 @@ typedef struct qa_application_startup_hooks {
      * replaced map consoles. Buffers alone never certify enabled logging. */
     void (*qw_logfrag_write)(void *, qa_application *, const qa_application_startup_source *, const char *);
     bool (*qw_logfrag_enabled)(void *, qa_application *, const qa_application_startup_source *, bool *, qa_error *);
+    /* Exact registered common services may consume the unchanged Source
+     * invocation after its GAME declined it. No text forwarding or reparse. */
+    bool (*source_common_command)(void *, qa_application *, const qa_application_startup_source *,
+        const qa_command_invocation *, bool *, qa_error *);
 } qa_application_startup_hooks;
 
 /* READY remains READY across a source wait. No GAME Init or world publication

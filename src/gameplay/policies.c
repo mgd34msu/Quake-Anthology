@@ -214,9 +214,19 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
         .power_saved = power, .armor_saved = regular, .blood = take};
     if (!current(combat, request, &target, &attacker, &has_attacker, error))
         return false;
-    if (source.walk && !target.no_knockback && source.has_momentum_direction &&
-        !qa_combat_impulse(combat, request, source.momentum_direction, damage * 8, error))
-        return false;
+    if (source.walk && !target.no_knockback && source.has_momentum_direction) {
+        if (!qa_combat_impulse(combat, request, source.momentum_direction, damage * 8, error))
+            return false;
+        if (!qa_combat_live(combat, request->target)) return true;
+        if (source.quakeworld_rj) {
+            qa_combat_context reached;
+            if (!describe(combat, policy, request, &target, &attacker, &has_attacker, &reached, error))
+                return false;
+            if (reached.game.q1.rj > 1 && reached.game.q1.same_player_netname &&
+                !qa_combat_impulse(combat, request, source.momentum_direction,
+                    damage * reached.game.q1.rj, error)) return false;
+        }
+    }
     if (!qa_combat_live(combat, request->target))
         return true;
     if (!current(combat, request, &target, &attacker, &has_attacker, error))

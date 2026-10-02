@@ -478,6 +478,7 @@ struct qa_q1_game {
     qa_vec3 forward, right, up;
     qa_actor_id qw_multi_entity;
     float qw_multi_damage, qw_blood_count, qw_puff_count;
+    float qw_rj;
     qa_vec3 qw_blood_origin, qw_puff_origin;
     qa_item_id weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
     qa_string_id weapon_models[QA_Q1_WEAPON_COUNT];

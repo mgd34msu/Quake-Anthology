@@ -14,6 +14,11 @@ qa_cvars *application_native_q1_console_registry(const application_provider *);
 void application_native_q1_source_console_print(void *, const char *);
 void application_native_q1_source_logfrag_write(void *, const char *);
 bool application_native_q1_source_logfrag_enabled(application_provider *,bool *,qa_error *);
+/* Borrow the actual engine dictionary until the Source console retires. */
+bool application_native_q1_source_info(application_provider *,bool local,const char **,qa_error *);
+bool application_native_q1_world_info(void *,const char *,qa_string_id *,qa_error *);
+void application_native_q1_source_info_map_reset(void *);
+bool application_native_q1_source_info_flush(application_provider *,qa_error *);
 bool application_native_q1_cvar(void *, qa_string_id, float *, qa_error *);
 bool application_native_q1_client_attack(void *, qa_actor_id, bool *);
 #endif

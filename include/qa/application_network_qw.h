@@ -28,6 +28,7 @@ typedef struct qa_application_network_qw_source {
     uint32_t entity_count;
     uint64_t source_time_ns, completed_time_ns;
     qa_cvars *cvars;
+    const char *serverinfo;
 } qa_application_network_qw_source;
 /* The actual primary QW source retains 32 physical rows, ordered resources,
  * a completed QW frame and the matching player/stat/event producers. */

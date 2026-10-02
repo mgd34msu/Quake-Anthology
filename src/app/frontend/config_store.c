@@ -1,4 +1,5 @@
 #include "config_store.h"
+#include "commands.h"
 #include "input_profile.h"
 #include "config_userinfo.h"
 #include "config_bindings.h"
@@ -938,6 +939,28 @@ static bool qw_log_enabled(void *context,qa_application *app,
     if (!enabled || !qw_log_source(manager,app,source))
         return fail(error,QA_ERROR_ARGUMENT,"QuakeWorld frag logging lost its physical Source namespace");
     *enabled=frontend_qw_logfile_enabled(manager->qw_logfile); return true;
+}
+static bool source_common_command(void *context,qa_application *app,
+    const qa_application_startup_source *source,const qa_command_invocation *call,
+    bool *handled,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    qa_application_startup_source actual;
+    if (!manager || !source || !call || !handled || call->console!=source->console ||
+        !qa_console_invocation_current(call->console,call))
+        return fail(error,QA_ERROR_ARGUMENT,"Common command requires its actual Source invocation");
+    *handled=false;
+    frontend_config_source *invoked=frontend_config_store_source(manager,call->console);
+    if (!invoked || !invoked->primary || call->context.origin==QA_COMMAND_REMOTE) return true;
+    if (!frontend_config_store_server_invocation_read(manager,call,&actual,error)) return false;
+    frontend_config_source *physical=frontend_config_store_source(manager,actual.console);
+    if (!physical || physical->application!=app || source->console!=actual.console ||
+        source->cvars!=actual.cvars || source->scope.kind!=actual.scope.kind ||
+        source->scope.provider!=actual.scope.provider || source->declaration_owner!=actual.declaration_owner ||
+        !source->descriptor || source->descriptor->storage!=actual.descriptor->storage ||
+        source->descriptor->state!=actual.descriptor->state)
+        return fail(error,QA_ERROR_ARGUMENT,"Common command lost its actual primary Source");
+    return frontend_commands_source(manager->frontend,&actual,call,handled,error);
 }
 static bool fraglog_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
@@ -2746,7 +2769,8 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .candidate_languages=candidate_languages,.prepare_publication=prepare_publication,
         .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
         .consume_publication=consume_publication,.finish_publication=finish_publication,
-        .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled};
+        .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled,
+        .source_common_command=source_common_command};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)

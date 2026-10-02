@@ -102,12 +102,46 @@ static bool named_grant(qa_q1_game_operation *operation, qa_actor_id actor,
         grant(operation, actor, player, slot, item, count, 1, error);
 }
 
-bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
+/* PF_stof uses the engine Q_atof grammar, rather than entity parseFloat. */
+static float source_stof(const char *text)
+{
+    if (!text) return 0;
+    int sign = 1;
+    if (*text == '-') { sign = -1; ++text; }
+    double value = 0;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        text += 2;
+        for (;;) {
+            unsigned char c = (unsigned char)*text++;
+            unsigned digit;
+            if (c >= '0' && c <= '9') digit = c - '0';
+            else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+            else break;
+            value = value * 16 + digit;
+        }
+    } else if (*text == '\'') {
+        value = (signed char)text[1];
+    } else {
+        size_t total = 0, decimal = SIZE_MAX;
+        for (; *text; ++text) {
+            if (*text == '.') { decimal = total; continue; }
+            if (*text < '0' || *text > '9') break;
+            value = value * 10 + *text - '0';
+            ++total;
+        }
+        if (decimal != SIZE_MAX)
+            while (total > decimal) { value /= 10; --total; }
+    }
+    return (float)(value * sign);
+}
+
+static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_error *error)
 {
     if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
-        game->options.edition != QA_Q1_CLASSIC || game->options.deathmatch != 5) {
+        game->options.edition != QA_Q1_CLASSIC || game->options.deathmatch != (dm4 ? 4 : 5)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
-            "QuakeWorld deathmatch 5 birth requires its actual source program");
+            "QuakeWorld deathmatch birth requires its actual source program");
         return false;
     }
     qa_q1_game_operation operation = {0};
@@ -116,15 +150,26 @@ bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *er
     q1_player *player = q1_player_get(game, actor);
     bool okay = qa_q1_native_client_slot(game, actor, &slot, error) &&
         source_current(&operation, actor, player, slot, error);
+    bool arsenal = true;
+    if (okay && dm4) {
+        okay = grant(&operation, actor, player, slot, game->ammo[QA_Q1_SHELLS], 0, 100, error);
+        qa_string_id value;
+        if (okay) okay = game->host.world_info(game->host.context, "axe", &value, error) &&
+            source_current(&operation, actor, player, slot, error);
+        if (okay) arsenal = source_stof(qa_strings_cstr(
+            qa_session_strings(game->services.session), value)) == 0;
+    }
     static const qa_q1_ammo ammo[] = {QA_Q1_NAILS, QA_Q1_SHELLS, QA_Q1_ROCKETS, QA_Q1_CELLS};
     static const double count[] = {80, 30, 10, 30};
-    for (size_t i = 0; okay && i < sizeof(ammo) / sizeof(*ammo); ++i)
-        okay = grant(&operation, actor, player, slot, game->ammo[ammo[i]], count[i],
-            ammo[i] == QA_Q1_NAILS ? 200 : 100, error);
+    for (size_t i = 0; okay && arsenal && i < sizeof(ammo) / sizeof(*ammo); ++i)
+        okay = grant(&operation, actor, player, slot, game->ammo[ammo[i]], dm4 ? 255 : count[i],
+            dm4 ? 255 : ammo[i] == QA_Q1_NAILS ? 200 : 100, error);
     static const qa_q1_weapon weapons[] = {QA_Q1_NAILGUN, QA_Q1_SUPER_NAILGUN,
         QA_Q1_SUPER_SHOTGUN, QA_Q1_ROCKET, QA_Q1_GRENADE, QA_Q1_LIGHTNING};
-    for (size_t i = 0; okay && i < sizeof(weapons) / sizeof(*weapons); ++i)
+    for (size_t i = 0; okay && arsenal && i < sizeof(weapons) / sizeof(*weapons); ++i) {
+        if (dm4 && weapons[i] == QA_Q1_GRENADE) continue;
         okay = grant(&operation, actor, player, slot, game->weapons[weapons[i]], 1, 1, error);
+    }
     qa_item_id armor;
     if (okay) okay = qa_builtin_resource(&game->services, "q1:item_armorInv", &armor, error) &&
         source_current(&operation, actor, player, slot, error);
@@ -133,7 +178,7 @@ bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *er
             .points = 200, .protection.q1_absorption = .8f}};
         okay = qa_combat_set_armor(game->services.combat, actor, &protection, error) &&
             source_current(&operation, actor, player, slot, error) &&
-            qa_combat_set_health(game->services.combat, actor, 200, error) &&
+            qa_combat_set_health(game->services.combat, actor, dm4 ? 250 : 200, error) &&
             source_current(&operation, actor, player, slot, error);
     }
     if (okay) {
@@ -142,6 +187,41 @@ bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *er
             (double)(float)(game->time + 3), true, error) &&
             source_current(&operation, actor, player, slot, error);
     }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+
+bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
+{
+    return deathmatch_birth(game, actor, false, error);
+}
+
+bool qa_q1_source_qw_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
+{
+    if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
+        game->options.edition != QA_Q1_CLASSIC || !game->host.world_info) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, actor.slot,
+            "QuakeWorld birth requires its actual world infokey owner");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
+    uint32_t slot;
+    q1_player *player = q1_player_get(game, actor);
+    qa_string_id value;
+    bool okay = qa_q1_native_client_slot(game, actor, &slot, error) &&
+        source_current(&operation, actor, player, slot, error) &&
+        game->host.world_info(game->host.context, "rj", &value, error) &&
+        source_current(&operation, actor, player, slot, error);
+    qa_strings *strings = qa_session_strings(game->services.session);
+    if (okay && source_stof(qa_strings_cstr(strings, value)) != 0) {
+        okay = game->host.world_info(game->host.context, "rj", &value, error) &&
+            source_current(&operation, actor, player, slot, error);
+        if (okay) game->qw_rj = source_stof(qa_strings_cstr(strings, value));
+    }
+    if (okay && (game->options.deathmatch == 4 || game->options.deathmatch == 5))
+        okay = deathmatch_birth(game, actor, game->options.deathmatch == 4, error) &&
+            source_current(&operation, actor, player, slot, error);
     qa_q1_game_operation_end(&operation);
     return okay;
 }
