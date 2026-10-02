@@ -1053,9 +1053,12 @@ static bool physics_write(void *opaque, qa_actor_id actor,
     qa_application *application = opaque;
     application_provider *provider = application_provider_for(
         application, actor, QA_ROLE_MOVEMENT, "");
-    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_game_physics_write(provider->state.q1, actor, value,
-                                        error);
+    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_presentation entity;
+        if (qa_q1_game_presentation(provider->state.q1, actor, &entity))
+            return qa_q1_game_physics_write(provider->state.q1, actor, value,
+                                            error);
+    }
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_physics_write(provider->state.q2, actor, value, error);
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_QC)

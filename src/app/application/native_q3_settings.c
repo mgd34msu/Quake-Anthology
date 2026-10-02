@@ -400,16 +400,11 @@ bool application_native_q3_settings_string(const application_provider *provider,
     return true;
 }
 
-bool application_native_q3_settings_force_set(application_provider *provider, const char *name,
+static bool source_set(struct application_native_q3_settings *owner, const char *name,
     const char *value, qa_error *error)
 {
-    struct application_native_q3_settings *owner = owner_at(provider);
-    const application_native_q3_cvar_snapshot *snapshot;
-    if (!owner || !value)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 force-set requires its actual cached setting");
-    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error) ||
-        !application_native_q3_console_borrow(provider, error)) return false;
-    (void)snapshot;
+    application_provider *provider = owner->provider;
+    if (!application_native_q3_console_borrow(provider, error)) return false;
     bool own_operation = owner->operation == SETTINGS_IDLE;
     if (own_operation) owner->operation = SETTINGS_EFFECT;
     qa_cvars *registry = application_native_q3_cvar_owner(provider, name);
@@ -419,6 +414,27 @@ bool application_native_q3_settings_force_set(application_provider *provider, co
     if (own_operation) owner->operation = SETTINGS_IDLE;
     application_native_q3_console_release(provider);
     return okay;
+}
+
+bool application_native_q3_settings_source_set(application_provider *provider, const char *name,
+    const char *value, qa_error *error)
+{
+    struct application_native_q3_settings *owner = owner_at(provider);
+    if (!owner || !owner->initialized || !name || !value)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 source set requires its initialized GAME owner");
+    return source_set(owner, name, value, error);
+}
+
+bool application_native_q3_settings_force_set(application_provider *provider, const char *name,
+    const char *value, qa_error *error)
+{
+    struct application_native_q3_settings *owner = owner_at(provider);
+    const application_native_q3_cvar_snapshot *snapshot;
+    if (!owner || !value)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 force-set requires its actual cached setting");
+    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error)) return false;
+    (void)snapshot;
+    return source_set(owner, name, value, error);
 }
 
 static bool remap_teams(struct application_native_q3_settings *owner, qa_error *error)

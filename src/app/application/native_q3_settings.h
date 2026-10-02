@@ -39,6 +39,10 @@ bool application_native_q3_settings_reset_cache(application_provider *,
 bool application_native_q3_settings_update(application_provider *, qa_error *);
 bool application_native_q3_settings_force_set(application_provider *, const char *,
     const char *, qa_error *);
+/* Source Cvar_Set writes the actual registry, including names outside the
+ * product-qualified copied table. It does not refresh cached settings. */
+bool application_native_q3_settings_source_set(application_provider *, const char *,
+    const char *, qa_error *);
 /* The original SDK Init clamp follows registration and precedes map setup;
  * copied g_gametype stays unchanged until the source update. The TypeScript
  * registration producer does not call this separate SDK policy. */

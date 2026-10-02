@@ -1881,7 +1881,7 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
         qa_strings *strings = qa_session_strings(provider->application->session);
         const char *name = qa_strings_cstr(strings, event->name);
         const char *value = qa_strings_cstr(strings, event->text);
-        if (!name || !value || !application_native_q3_settings_force_set(provider, name, value, error))
+        if (!name || !value || !application_native_q3_settings_source_set(provider, name, value, error))
             return false;
     }
     if (!application_emit_q3_map(provider, event, error))
