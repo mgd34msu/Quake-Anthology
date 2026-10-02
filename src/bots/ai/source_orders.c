@@ -126,7 +126,7 @@ bool bot_ai_source_team(qa_bots *b,int32_t client,int32_t *out,qa_error *e) {
 }
 bool bot_ai_source_same_team(qa_bots *b,bot_ai_state *s,int32_t client,bool *out,qa_error *e) {
     int32_t self,own,other;*out=false;
-    if(!bot_ai_source_client(b,s,&self,e)) return false;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_CLIENT,&self,false,e)) return false;
     if(self<0 || self>=64 || client<0 || client>=64 || b->source_goals.game_type<3) return true;
     if(!bot_ai_source_team(b,self,&own,e) || !bot_ai_source_team(b,client,&other,e)) return false;
     *out=own==other;return true;

@@ -134,6 +134,8 @@ typedef struct qa_bot_services {
     bool (*console)(void *, qa_actor_id, char *text, size_t, bool *found, qa_error *);
     /* Source service identities differ from the shared library namespace. */
     bool (*source_client)(void *, qa_actor_id, int32_t *, qa_error *);
+    /* Resolve a physical GAME client through the installed EA input roster. */
+    bool (*source_action_client)(void *,int32_t,uint32_t *,qa_error *);
     qa_actor_id (*source_actor)(void *, int32_t);
     qa_cvars *(*configuration)(void *);
     bool (*register_cvar)(void *, const char *, const char *, uint32_t, qa_error *);

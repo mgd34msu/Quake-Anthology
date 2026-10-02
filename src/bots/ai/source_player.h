@@ -3,6 +3,8 @@
 #include "internal.h"
 #include "source_alias.h"
 
+enum { BOT_SOURCE_PW_INVIS=4 };
+
 static inline qa_vec3 bot_ai_origin(const bot_ai_state *state) {
     return bot_source_vec3_read(state->source_span.data+QA_BOT_SOURCE_ORIGIN);
 }

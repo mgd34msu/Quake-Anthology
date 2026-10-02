@@ -123,6 +123,7 @@ bool bot_ai_source_enemy(qa_bots *,const bot_ai_state *);
 bool bot_ai_source_enemy_dead(qa_bots *,bot_ai_state *,const qa_bot_entity_info *,bool *,qa_error *);
 bool bot_ai_source_aim(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_check_attack(qa_bots *,bot_ai_state *,qa_error *);
+bool bot_ai_source_battle_items(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_enemy_visible(qa_bots *, bot_ai_state *, qa_actor_id, float *, qa_error *);
 bool bot_ai_same_team(qa_bots *, bot_ai_state *, qa_actor_id, bool *, qa_error *);
 bool bot_ai_target(qa_bots *, bot_ai_state *, qa_actor_id, qa_bot_player *, bool *, qa_error *);

@@ -714,9 +714,8 @@ static bool carries(qa_bots *b, bot_ai_state *s, const qa_bot_entity_info *info,
 bool bot_ai_source_flag_carrier(qa_bots *b, bot_ai_state *s, bool teammate,
                                  bool visible, bool cubes, int32_t *out, qa_error *e) {
     *out=-1;if(!alive(b,s)) return true;
-    int32_t self;if(!bot_ai_source_client(b,s,&self,e)) return false;
-    if(!alive(b,s)) return true;
     for(int32_t i=0;i<b->source_goals.max_clients && i<64 && alive(b,s);++i) {
+        int32_t self;if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_CLIENT,&self,false,e)) return false;
         if(i==self) continue;
         qa_bot_entity_info info;bool found,carrying,same_team;
         if(!qa_bot_runtime_entity(b->runtime,i,&info,&found,e)) return false;

@@ -503,6 +503,45 @@ static qa_actor_id bot_source_actor(void *opaque,int32_t client) {
     }
     return (qa_actor_id){0};
 }
+static bool bot_source_action_client(void *opaque,int32_t client,uint32_t *out,qa_error *error) {
+    application_bots *bots=opaque;
+    application_provider *source=bot_source(bots);
+    if(!out || client<0 || !source || !source->constructed || !source->attached ||
+       source->close_pending || bots->restoring || !bots->runtime)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source action client requires its current installed input owner");
+    qa_actor_id actor=bot_source_actor(bots,client);
+    int32_t actual;
+    if(!actor.registry || !qa_actors_get(qa_session_actors(bots->application->session),actor))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Source action client has no current physical actor binding");
+    if(!bot_source_client(bots,actor,&actual,error)) return false;
+    if(actual!=client)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source action client changed its physical binding");
+    uint32_t input=UINT32_MAX;
+    for(uint32_t i=0;i<bots->capacity;++i) {
+        const application_bot_seat *seat=bots->seats+i;
+        if(!seat->retired && qa_actor_id_equal(seat->actor,actor)) {
+            input=seat->library_client;break;
+        }
+    }
+    if(input==UINT32_MAX) {
+        /* Native setup reserves the canonical actor namespace, including real
+         * human rows. Bot seats may instead retain their round input alias. */
+        const struct application_player_roster *roster=bots->application->players;
+        for(size_t i=0;roster && i<roster->count;++i) {
+            const application_player_record *record=roster->records+i;
+            if(!record->retiring && !record->bot && record->client_slot==(uint32_t)client &&
+               qa_actor_id_equal(record->actor,actor)) {input=record->actor.slot;break;}
+        }
+    }
+    qa_bot_actions *actions=qa_bot_runtime_actions(bots->runtime);
+    if(input==UINT32_MAX || input>=qa_bot_actions_capacity(actions) ||
+       !qa_actor_id_equal(application_bot_client_actor(bots,(int32_t)input),actor))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Source action client has no installed EA input relation");
+    if(bot_source(bots)!=source || !source->constructed || !source->attached ||
+       source->close_pending || !qa_actor_id_equal(bot_source_actor(bots,client),actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source action client lost its actual input owner");
+    *out=input;return true;
+}
 static qa_cvars *bot_configuration(void *opaque) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     if(source && source->kind==APPLICATION_PROVIDER_Q3)
@@ -834,7 +873,8 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .entity=application_bot_entity,.entity_actor=application_bot_actor,
         .entity_extent=bot_entity_extent,.entity_list=bot_entity_list,
         .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
-        .source_client=bot_source_client,.source_actor=bot_source_actor,.configuration=bot_configuration,.register_cvar=bot_register_cvar,
+        .source_client=bot_source_client,.source_action_client=bot_source_action_client,
+        .source_actor=bot_source_actor,.configuration=bot_configuration,.register_cvar=bot_register_cvar,
         .configstring=bot_configstring,.set_configstring=application_bots_configstring_set,
         .source_generic1=bot_source_generic1,
         .source_player=bot_source_player,.source_player_state=bot_source_player_state,.source_intermission=bot_source_intermission,
