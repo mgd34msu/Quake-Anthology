@@ -207,7 +207,9 @@ static bool info_text(const char *info,const char *key,char *out,size_t capacity
 {
     char value[8192];
     if(!qa_q3_info_value(info,key,value,sizeof(value),e))return false;
-    snprintf(out,capacity,"%s",value); return true;
+    size_t length=strlen(value);
+    if(length>=capacity)length=capacity-1;
+    memcpy(out,value,length); out[length]=0; return true;
 }
 static bool info_integer(const char *info,const char *key,int32_t *out,qa_error *e)
 {
