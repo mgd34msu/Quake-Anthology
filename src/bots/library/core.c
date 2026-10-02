@@ -243,6 +243,9 @@ bool qa_bot_library_log_bind(qa_bot_library *library, qa_bot_log *log, qa_error 
 qa_bot_log *qa_bot_library_log(const qa_bot_library *library) {
     return library ? library->log : NULL;
 }
+const qa_script_services *qa_bot_library_script_services(const qa_bot_library *library) {
+    return library?&library->options.scripts:NULL;
+}
 bool qa_bot_library_global_define(qa_bot_library *library, const char *definition, qa_error *e) {
     if (!library) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Bot global definition needs its actual library owner");

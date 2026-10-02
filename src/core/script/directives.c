@@ -89,7 +89,19 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
         return false;
     }
     if(!script_expression(s,first,integer_mode,out,e)) return false;
-    return script_heap_free_chain(&s->macros,first,e);
+    if(!s->services.debug_eval) return script_heap_free_chain(&s->macros,first,e);
+    if(!script_debug_line(s,dollar?"$eval:":"eval:",e)) return false;
+    size_t remaining=s->macros.queue_count;
+    while(first) {
+        if(!remaining--) {qa_error_set(e,QA_ERROR_FORMAT,0,"DEBUG_EVAL expression chain contains a cycle");return false;}
+        if(!script_debug_heap_token(s," ",first,e)) return false;
+        script_token_record *token=script_heap_token(&s->macros,first);
+        if(!script_heap_token_bytes(&s->macros,token,e)) return false;
+        uint32_t following=qa_load_u32le(token->record.bytes+1064);
+        if(!script_heap_free_token(&s->macros,token,e)) return false;
+        first=following;
+    }
+    return script_debug_value(s,dollar?"$eval result: ":"eval result: ",integer_mode,*out,e);
 }
 static size_t decimal_word(uint32_t value, char *out, unsigned width) {
     char digits[10];

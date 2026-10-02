@@ -207,9 +207,36 @@ static bool read_source(void *context, const qa_script_include *request,
     return read_source_view(host,host->options.mounts,request,out,found,error);
 }
 
+static const qa_script_services *debug_services(const qa_q3_host *host)
+{
+    return qa_bot_library_script_services(qa_bot_runtime_library(host->options.bots));
+}
+static bool debug_eval(void *context,const char *line,qa_error *error)
+{
+    qa_q3_host *host=context;
+    const qa_script_services *services=debug_services(host);
+    if(host->retired || !services || !services->debug_eval)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"DEBUG_EVAL lost its actual entered library owner");
+    bool ok=services->debug_eval(services->context,line,error);
+    if(!ok) return false;
+    return !host->retired || q3_fail(error,QA_ERROR_ARGUMENT,0,"DEBUG_EVAL entered host retired during its callback");
+}
+static bool handle_debug_eval(void *context,const char *line,qa_error *error)
+{
+    q3_script *script=context;
+    if(!script->entered || script->retired)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"DEBUG_EVAL has no live entered PC source owner");
+    bool ok=debug_eval(script->entered,line,error);
+    if(!ok) return false;
+    return (!script->retired && !script->entered->retired) ||
+        q3_fail(error,QA_ERROR_ARGUMENT,0,"DEBUG_EVAL PC source retired during its callback");
+}
+
 qa_script_services q3_script_services(qa_q3_host *host)
 {
+    const qa_script_services *scripts=debug_services(host);
     return (qa_script_services){.context=host,.diagnostic=diagnostic,
+        .debug_eval=scripts && scripts->debug_eval?debug_eval:NULL,
         .file_open=read_source,.file_read=file_read,.file_close=file_close,
         .date=host->options.script_date,.time=host->options.script_time,.memory=
         qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):
@@ -234,7 +261,9 @@ static void handle_diagnostic(void *context, const qa_script_diagnostic *value)
 qa_script_services q3_script_handle_services(q3_script *script, qa_q3_host *host)
 {
     script->member = host; script->entered = host;
+    const qa_script_services *scripts=debug_services(host);
     return (qa_script_services){.context=script,.diagnostic=handle_diagnostic,
+        .debug_eval=scripts && scripts->debug_eval?handle_debug_eval:NULL,
         .file_open=handle_read,.file_read=file_read,.file_close=file_close,
         .date=host->options.script_date,.time=host->options.script_time,.memory=
         qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):

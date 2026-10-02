@@ -199,6 +199,8 @@ typedef struct qa_script_services {
     bool (*file_open)(void *,const qa_script_include *,qa_script_file *,bool *found,qa_error *);
     bool (*file_read)(void *,const qa_script_file *,qa_script_memory_span,qa_error *);
     bool (*file_close)(void *,const qa_script_file *,qa_error *);
+    /* Optional Source DEBUG_EVAL Log_Write profile, one callback per line. */
+    bool (*debug_eval)(void *,const char *,qa_error *);
 } qa_script_services;
 static inline bool qa_script_services_valid(const qa_script_services *services) {
     if (!services) return false;

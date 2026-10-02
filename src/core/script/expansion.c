@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 typedef struct token_chain {uint32_t first,last;size_t count;} token_chain;
 static bool value(qa_script *source,uint32_t pointer,script_queued_token *out,qa_error *error) {
@@ -217,6 +218,18 @@ bool script_expand(qa_script *source,script_queued_token invocation,script_macro
         if(!builtin(source,macro,invocation,&expanded,error)) return false;
     } else {
         if(script_macro_word(macro,12) && !arguments(source,macro,invocation.token.location,heads,error)) return false;
+        if(source->services.debug_eval) {
+            for(uint32_t index=0;index<script_macro_word(macro,12);++index) {
+                if(index>=128) return script_fail(source,invocation.token.location,"Macro parameter exceeds argument table",error);
+                char line[40];snprintf(line,sizeof(line),"define parms %u:",index);
+                if(!script_debug_line(source,line,error)) return false;
+                uint32_t argument=heads[index];size_t available=source->macros.queue_count;
+                while(argument) {
+                    if(!available--) {qa_error_set(error,QA_ERROR_FORMAT,0,"DEBUG_EVAL argument chain contains a cycle");return false;}
+                    if(!script_debug_heap_token(source,"",argument,error) || !next(source,argument,&argument,error)) return false;
+                }
+            }
+        }
         uint32_t pointer=script_macro_word(macro,20);size_t remaining=source->macros.queue_count;
         while(pointer) {
             script_queued_token defined;

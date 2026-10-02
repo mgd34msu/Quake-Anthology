@@ -291,6 +291,9 @@ void script_warn(qa_script *, qa_script_location, const char *);
 bool script_raw(qa_script *, script_queued_token *, bool *, qa_error *);
 bool script_push(qa_script *, script_queued_token, qa_error *);
 bool script_expand(qa_script *, script_queued_token, script_macro *, qa_error *);
+bool script_debug_line(qa_script *,const char *,qa_error *);
+bool script_debug_value(qa_script *,const char *,bool,script_eval_value,qa_error *);
+bool script_debug_heap_token(qa_script *,const char *,uint32_t,qa_error *);
 bool script_expression(qa_script *, uint32_t, bool, script_eval_value *,
                        qa_error *);
 bool script_directive(qa_script *, script_queued_token, qa_error *);

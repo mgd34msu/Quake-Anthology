@@ -35,6 +35,8 @@ bool qa_bot_library_global_define(qa_bot_library *, const char *definition, qa_e
  * importing resource data perform no file operations. */
 bool qa_bot_library_log_bind(qa_bot_library *, qa_bot_log *, qa_error *);
 qa_bot_log *qa_bot_library_log(const qa_bot_library *);
+/* Borrowed original services; valid while the library owner is retained. */
+const qa_script_services *qa_bot_library_script_services(const qa_bot_library *);
 typedef struct qa_bot_variable {
     const char *name, *string;
     int32_t flags;

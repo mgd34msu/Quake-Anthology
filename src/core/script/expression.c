@@ -1,5 +1,41 @@
 #include "internal.h"
+#include <stdio.h>
 
+bool script_debug_line(qa_script *source,const char *line,qa_error *error) {
+    if(!source->services.debug_eval) return true;
+    bool ok=source->services.debug_eval(source->services.context,line,error);
+    if(!ok) source->source_failure=false;
+    return ok;
+}
+bool script_debug_value(qa_script *source,const char *prefix,bool integer_mode,script_eval_value value,qa_error *error) {
+    if(!source->services.debug_eval) return true;
+    char line[1536];
+    int length=integer_mode?snprintf(line,sizeof(line),"%s%d",prefix,value.integer):
+        snprintf(line,sizeof(line),"%s%f",prefix,value.number);
+    if(length<0 || (size_t)length>=sizeof(line)) {
+        source->source_failure=false;
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"DEBUG_EVAL value exceeds its source formatting profile");return false;
+    }
+    return script_debug_line(source,line,error);
+}
+bool script_debug_heap_token(qa_script *source,const char *prefix,uint32_t pointer,qa_error *error) {
+    if(!source->services.debug_eval) return true;
+    script_token_record *token=script_heap_token(&source->macros,pointer);
+    if(!script_heap_token_bytes(&source->macros,token,error)) {source->source_failure=false;return false;}
+    const uint8_t *zero=memchr(token->record.bytes,0,1024);
+    if(!zero) {
+        source->source_failure=false;
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"DEBUG_EVAL token has no source string terminator");return false;
+    }
+    size_t length=(size_t)(zero-token->record.bytes),before=strlen(prefix);
+    char line[1068];
+    if(before+length>=sizeof(line)) {
+        source->source_failure=false;
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"DEBUG_EVAL token exceeds its source formatting profile");return false;
+    }
+    memcpy(line,prefix,before);memcpy(line+before,token->record.bytes,length);line[before+length]=0;
+    return script_debug_line(source,line,error);
+}
 typedef struct expression_value {
     script_eval_value value;
     struct expression_value *previous,*next;
@@ -59,8 +95,10 @@ static bool integer_only(uint32_t op) {
 }
 static bool checked(qa_script *s, qa_script_location location, int64_t value, int32_t *out,
                     qa_error *e) {
-    if (value < INT32_MIN || value > INT32_MAX)
-        return script_fail(s, location, "Expression exceeds signed 32-bit range", e);
+    (void)s;
+    if (value < INT32_MIN || value > INT32_MAX) {
+        qa_error_set(e,QA_ERROR_UNSUPPORTED,location.offset,"Expression exceeds signed 32-bit range");return false;
+    }
     *out = (int32_t)value;
     return true;
 }
@@ -129,12 +167,12 @@ static bool binary(qa_script *s, const qa_script_token *op, script_eval_value a,
         break;
     case QA_SCRIPT_RSHIFT:
         if (y < 0 || y >= 32)
-            return script_fail(s, op->location, "Invalid signed shift count", e);
+            {qa_error_set(e,QA_ERROR_UNSUPPORTED,op->location.offset,"Invalid signed shift count");return false;}
         v.integer = (int32_t)(x >= 0 ? x / ((int64_t)1 << y) : -1 - ((-1 - x) / ((int64_t)1 << y)));
         break;
     case QA_SCRIPT_LSHIFT:
         if (y < 0 || y >= 32 || x < 0)
-            return script_fail(s, op->location, "Invalid signed left shift", e);
+            {qa_error_set(e,QA_ERROR_UNSUPPORTED,op->location.offset,"Invalid signed left shift");return false;}
         if (!checked(s, op->location, x * ((int64_t)1 << y), &v.integer, e))
             return false;
         break;
@@ -251,29 +289,46 @@ static bool evaluate(qa_script *s, const qa_script_token *tokens, size_t count, 
         }
         const qa_script_token *op=operation->token;
         if(!value) return script_fail(s,op->location,"Missing expression operand",e);
+        if(s->services.debug_eval) {
+            const uint8_t *zero=op->text.size?memchr(op->text.data,0,op->text.size):NULL;
+            size_t size=zero?(size_t)(zero-op->text.data):op->text.size;
+            if(size>1024) {qa_error_set(e,QA_ERROR_UNSUPPORTED,op->location.offset,"DEBUG_EVAL operator exceeds its source text profile");return false;}
+            char prefix[1068];memcpy(prefix,"operator ",9);if(size) memcpy(prefix+9,op->text.data,size);
+            memcpy(prefix+9+size,", value1 = ",12);
+            if(!script_debug_value(s,prefix,integer_mode,value->value,e) ||
+               (value->next && !script_debug_value(s,"value2 = ",integer_mode,value->next->value,e))) return false;
+        }
+        expression_value *removed=NULL;
         if(op->subtype==QA_SCRIPT_LOGICAL_NOT)
             value->value=(script_eval_value){value->value.integer==0,value->value.number==0};
         else if(op->subtype==QA_SCRIPT_NOT) value->value.integer=~value->value.integer;
         else {
-            expression_value *following=value->next,*removed=following;
+            expression_value *following=value->next;removed=following;
             if(op->subtype==QA_SCRIPT_QUESTION) {
-                if(has_question) return script_fail(s,op->location,"Nested source conditional operator",e);
+                if(has_question) {script_fail(s,op->location,"Nested source conditional operator",e);goto reduction_failed;}
                 question=value->value;has_question=true;removed=value;
             } else {
-                if(!following) return script_fail(s,op->location,"Missing binary expression operand",e);
+                if(!following) {script_fail(s,op->location,"Missing binary expression operand",e);goto reduction_failed;}
                 if(op->subtype==QA_SCRIPT_COLON) {
-                    if(!has_question) return script_fail(s,op->location,"Conditional : without ?",e);
+                    if(!has_question) {script_fail(s,op->location,"Conditional : without ?",e);goto reduction_failed;}
                     if(integer_mode) value->value.integer=question.integer==0?following->value.integer:value->value.integer;
                     else value->value.number=question.number==0?following->value.number:value->value.number;
                     has_question=false;
                 } else if(op->subtype!=QA_SCRIPT_INCREMENT && op->subtype!=QA_SCRIPT_DECREMENT &&
-                    !binary(s,op,value->value,following->value,&value->value,e)) return false;
+                    !binary(s,op,value->value,following->value,&value->value,e)) goto reduction_failed;
             }
+        }
+        if(!script_debug_value(s,"result value = ",integer_mode,value->value,e)) return false;
+        if(removed) {
             if(removed->previous) removed->previous->next=removed->next;else first_value=removed->next;
             if(removed->next) removed->next->previous=removed->previous;else last_value_cell=removed->previous;
         }
         if(operation->previous) operation->previous->next=operation->next;else first_operator=operation->next;
         if(operation->next) operation->next->previous=operation->previous;else last_operator=operation->previous;
+        continue;
+reduction_failed:
+        if(s->source_failure) (void)script_debug_value(s,"result value = ",integer_mode,value->value,e);
+        return false;
     }
     if(!first_value) return script_fail(s,qa_script_position(s),"Expression has no result",e);
     *out=first_value->value;return true;

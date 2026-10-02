@@ -89,6 +89,14 @@ static void source_release(void *context,qa_script_resource *source) {
     bot_weapon_resource *resource=context;
     resource->services.release(resource->services.context,source);
 }
+static bool source_debug_eval(void *context,const char *line,qa_error *error) {
+    bot_weapon_resource *resource=context;if(!bot_weapon_resource_current(resource,error)) return false;
+    bool ok=resource->services.debug_eval(resource->services.context,line,error);
+    qa_error reached=error?*error:(qa_error){0};
+    bool live=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
     bot_weapon_resource *resource=context;if(!bot_weapon_resource_current(resource,error)) return false;
     bool ok=resource->services.file_open(resource->services.context,request,out,found,error);
@@ -116,6 +124,7 @@ static bool staged_close(void *context,const qa_script_file *file,qa_error *erro
 }
 qa_script_services bot_weapon_resource_services(bot_weapon_resource *resource) {
     qa_script_services services=resource->services;
+    services.debug_eval=resource->services.debug_eval?source_debug_eval:NULL;
     services.file_open=resource->services.file_open?staged_open:NULL;
     services.file_read=resource->services.file_read?staged_read:NULL;
     services.file_close=resource->services.file_close?staged_close:NULL;

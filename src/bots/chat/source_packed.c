@@ -74,6 +74,15 @@ static void source_report(void *context,const qa_script_diagnostic *issue) {
     if(source->diagnostic) source->diagnostic(source->context,issue);
     (void)current(packed,&error);
 }
+static bool source_debug_eval(void *context,const char *line,qa_error *error) {
+    bot_chat_packed *packed=context;if(!current(packed,error)) return false;
+    bool ok=packed->services.debug_eval(packed->services.context,line,error);
+    if(!ok) packed->service_failed=true;
+    qa_error reached=error?*error:(qa_error){0};
+    bool live=current(packed,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
     bot_chat_packed *packed=context;if(!current(packed,error)) return false;
     bool ok=packed->services.file_open(packed->services.context,request,out,found,error);
@@ -98,6 +107,7 @@ static bool staged_close(void *context,const qa_script_file *file,qa_error *erro
 }
 static qa_script_services services(bot_chat_packed *packed) {
     qa_script_services result=packed->services;
+    result.debug_eval=packed->services.debug_eval?source_debug_eval:NULL;
     result.file_open=packed->services.file_open?staged_open:NULL;
     result.file_read=packed->services.file_read?staged_read:NULL;
     result.file_close=packed->services.file_close?staged_close:NULL;

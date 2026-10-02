@@ -35,6 +35,12 @@ bool bot_character_reader_create(const qa_script_services *services, bot_charact
     if (!reader) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining bot parser source callbacks"); return false; }
     reader->services = *services; *out = reader; return true;
 }
+static bool source_debug_eval(void *context,const char *line,qa_error *error) {
+    bot_character_reader *reader=context;
+    bool ok=reader->services.debug_eval(reader->services.context,line,error);
+    if(!ok) reader->callback_failed=true;
+    return ok;
+}
 static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
     bot_character_reader *reader=context;
     bool okay=reader->services.file_open(reader->services.context,request,out,found,error);
@@ -55,6 +61,7 @@ static bool staged_close(void *context,const qa_script_file *file,qa_error *erro
 }
 qa_script_services bot_character_reader_services(bot_character_reader *reader) {
     qa_script_services services = reader->services;
+    services.debug_eval=reader->services.debug_eval?source_debug_eval:NULL;
     services.file_open=reader->services.file_open?staged_open:NULL;
     services.file_read=reader->services.file_read?staged_read:NULL;
     services.file_close=reader->services.file_close?staged_close:NULL;
