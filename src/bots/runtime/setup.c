@@ -13,6 +13,20 @@ static bool command(void *context, int32_t client, const char *text, qa_error *e
     r->busy=prior;
     return ok;
 }
+static bool chat_command(void *context,int32_t client,const char *text,qa_error *e) {
+    qa_bot_runtime *r=context;
+    if(r->options.observations==QA_BOT_OBSERVATION_MODULE)
+        return command(r,client,text,e);
+    if(!r->services.movement.source_action_client)
+        return bot_runtime_fail(e,"Native Source chat requires its installed action-client relation");
+    bool previous=r->busy;r->busy=true;
+    uint32_t input;
+    bool ok=r->services.movement.source_action_client(r->services.movement.context,client,&input,e);
+    if(ok && input>INT32_MAX)
+        ok=bot_runtime_fail(e,"Source chat input client exceeds the command namespace");
+    if(ok) ok=command(r,(int32_t)input,text,e);
+    r->busy=previous;return ok;
+}
 static void diagnostic(void *context, qa_script_severity severity, const char *text) {
     qa_bot_runtime *r = context;
     bool prior=r->busy; r->busy=true;
@@ -187,7 +201,7 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     qa_bot_action_services actions = {.context = r, .command = command};
     if (!qa_bot_actions_create_source(r->memory, &actions, &r->actions, e)) return false;
     qa_bot_chat_options options = {.debug = r->options.debug, .console_unavailable = true};
-    qa_bot_chat_services chat = {.context = r, .command = command, .diagnostic = diagnostic,
+    qa_bot_chat_services chat = {.context = r, .command = chat_command, .diagnostic = diagnostic,
         .report=chat_print_source,.time=chat_time_source,.developer=chat_developer_source,
         .reload_characters=chat_reload_source,
         .test_initial = test_initial, .test_reply = test_reply, .random = r->services.random};

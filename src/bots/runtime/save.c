@@ -21,7 +21,7 @@ enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLE
 typedef struct runtime_state {
     uint32_t maximum, minimum, profile;
     bool debug, initialized, library_initialized, loaded, bsp_loaded, closed;
-    bool library, actions, bsp, goals, chat, moves, reload;
+    bool library, actions, bsp, goals, chat, moves, reload, source_action_client;
     float time;
     uint64_t weapon_generation,weapon_setup_revision;
     qa_bot_runtime_saved_map map;
@@ -34,9 +34,9 @@ static bool fail(qa_error *error, const char *message)
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 9;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 10;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 9 ? true :
+        qa_source_save_u32(io, &version) && version == 10 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 
@@ -86,6 +86,7 @@ static bool state_fields(qa_source_save_io *io, runtime_state *state)
         qa_source_save_bool(io, &state->library) && qa_source_save_bool(io, &state->actions) &&
         qa_source_save_bool(io, &state->bsp) && qa_source_save_bool(io, &state->goals) &&
         qa_source_save_bool(io, &state->chat) && qa_source_save_bool(io, &state->moves) &&
+        qa_source_save_bool(io, &state->source_action_client) &&
         qa_source_save_bool(io, &state->reload) && bot_save_text(io, &map->name) &&
         qa_source_save_bool(io, &map->entities) && qa_source_save_bool(io, &map->source) &&
         qa_source_save_bool(io, &map->navigation) && qa_source_save_count(io, &map->source_bytes, SIZE_MAX) &&
@@ -265,6 +266,7 @@ bool qa_bot_runtime_save_capture(qa_session *session, const qa_bot_runtime *runt
         .weapon_generation=runtime->weapon_generation,.weapon_setup_revision=runtime->weapon_setup_revision,
         .actions = runtime->actions != NULL, .bsp = runtime->bsp != NULL, .goals = runtime->goals != NULL,
         .chat = runtime->chat_system != NULL, .moves = runtime->moves != NULL,
+        .source_action_client = runtime->services.movement.source_action_client != NULL,
         .reload = runtime->library && runtime->library->options.reload_characters,
         .map = {.name = runtime->map_name, .entities = runtime->map.entities != NULL,
                 .source = runtime->map.source_entities.data != NULL, .navigation = runtime->map.navigation != NULL,
@@ -322,7 +324,9 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io) &&
         state_fields(&io, &state) && read_parts(&io, &state, parts) &&
         state.maximum == runtime->options.maximum_states && state.minimum == runtime->options.minimum_clients &&
-        state.profile == (uint32_t)runtime->options.observations && state.debug == runtime->options.debug && map_matches(&state, map, error);
+        state.profile == (uint32_t)runtime->options.observations && state.debug == runtime->options.debug &&
+        state.source_action_client == (runtime->services.movement.source_action_client != NULL) &&
+        map_matches(&state, map, error);
     qa_source_save_dispose(&io);
     qa_bot_saved_assets *assets = NULL; qa_bot_chat_restored_states chats = {0};
     if(ok && !state.closed) ok=qa_bot_memory_restore(runtime->memory,parts[MEMORY],error);
