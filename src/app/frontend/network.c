@@ -8021,6 +8021,20 @@ bool frontend_network_menu_download_stop(qa_frontend *f, const frontend_network_
     else qa_downloads_cancel(f->network->downloads,id);
     return menu_admitted(f,view,error);
 }
+bool frontend_network_menu_download_release(qa_frontend *f, const frontend_network_menu_view *view,
+    qa_download_id id, qa_error *error)
+{
+    qa_download_view actual;
+    if(!menu_mutable(f,view,error)) return false;
+    if(!qa_downloads_view(f->network->downloads,id,&actual) || actual.publication_pending ||
+        (actual.state!=QA_DOWNLOAD_COMPLETE && actual.state!=QA_DOWNLOAD_FAILED &&
+         actual.state!=QA_DOWNLOAD_CANCELED))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Download removal requires its actual terminal job");
+    qa_downloads_release(f->network->downloads,id);
+    if(qa_downloads_view(f->network->downloads,id,&actual))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Download removal awaits its actual callback boundary");
+    return menu_admitted(f,view,error);
+}
 bool frontend_network_initial_graph_read(const qa_frontend *f,
     frontend_network_initial_graph_view *out, qa_error *error)
 {

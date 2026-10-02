@@ -69,6 +69,8 @@ bool frontend_network_menu_download_begin(qa_frontend *, const frontend_network_
     const qa_download_request *, const char *http_url, qa_download_id *, qa_error *);
 bool frontend_network_menu_download_stop(qa_frontend *, const frontend_network_menu_view *,
     qa_download_id, bool suspend, qa_error *);
+bool frontend_network_menu_download_release(qa_frontend *, const frontend_network_menu_view *,
+    qa_download_id, qa_error *);
 typedef struct frontend_network_menu_download_policy {
     const void *owner;
     qa_cvars *registry;
