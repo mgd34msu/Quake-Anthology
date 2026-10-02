@@ -16,7 +16,9 @@ bool frontend_travel(qa_frontend *frontend, qa_error *error)
     uint64_t completed;
     if (qa_application_travel_publication_read(frontend->application,&completed))
         return qa_application_finish_travel_publication(frontend->application,completed,error);
-    if (!qa_application_prepare_match_travel(frontend->application, error)) return false;
+    qa_application_map_view map;
+    if (qa_application_map_read(frontend->application,&map) &&
+        !qa_application_prepare_match_travel(frontend->application, error)) return false;
     /* Source setters may publish fresh events after the earlier frame drain.
      * Their current world must stay alive until those projections finish. */
     if (qa_application_event_count(frontend->application) ||
