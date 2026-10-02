@@ -494,6 +494,7 @@ static bool construct_q1(qa_application *application,
         }
     if (!application_native_q1_wire_create(provider, error)) return false;
     qa_q1_host host = {.context = provider,
+                       .source_console_print = application_native_q1_source_console_print,
                        .client_attack = application_native_q1_client_attack,
                        .find_target = q1_find_target,
                        .find_targets = q1_find_targets,

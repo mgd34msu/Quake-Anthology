@@ -866,6 +866,44 @@ bool application_players_point(application_player_travel *travel, qa_mode_spawnp
     return true;
 }
 
+static int q1_point_order(const void *left, const void *right)
+{
+    const application_player_point *a = left, *b = right;
+    return a->ordinal < b->ordinal ? -1 : a->ordinal > b->ordinal ? 1 : 0;
+}
+
+bool application_players_q1_points(application_player_travel *travel,
+    uint32_t clients, const qa_q1_wire_binding *bindings, size_t count,
+    qa_error *error)
+{
+    struct application_player_roster *roster = travel->roster;
+    const qa_actor_registry *actors = qa_session_actors(roster->map_provider->application->session);
+    size_t retained = 0;
+    for (size_t i = 0; i < roster->point_count; ++i) {
+        application_player_point point = roster->points[i];
+        if (point.ordinal < clients || point.ordinal - clients >= count)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q1 spawn point lost its authored entity binding");
+        const qa_q1_wire_binding *binding = bindings + (point.ordinal - clients);
+        const qa_actor_record *actor = qa_actors_get(actors, binding->actor);
+        if (!actor) continue;
+        if (actor->owner != roster->map_provider->owner || !actor->has_source ||
+            actor->source_slot != binding->source_slot)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q1 spawn point changes its actual physical Source owner");
+        point.ordinal = binding->source_slot;
+        point.point.actor = binding->actor;
+        roster->points[retained++] = point;
+    }
+    roster->point_count = retained;
+    if (retained > 1) qsort(roster->points, retained, sizeof(*roster->points), q1_point_order);
+    for (size_t i = 1; i < retained; ++i)
+        if (roster->points[i - 1].ordinal == roster->points[i].ordinal)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q1 spawn points repeat an actual physical Source slot");
+    return true;
+}
+
 bool application_players_q2_points(application_player_travel *travel,
     uint32_t clients, const qa_q2_wire_binding *bindings, size_t count,
     qa_error *error)

@@ -43,13 +43,23 @@ typedef struct qa_q1_wire_board_change {
     uint8_t colors;
     bool present, name_changed, frags_changed, colors_changed;
 } qa_q1_wire_board_change;
+/* Actual result of one ordered authored spawn, retained through map finish.
+ * A zero actor records an inhibited, removed or otherwise empty result. */
+typedef struct qa_q1_wire_binding {
+    qa_actor_id actor;
+    uint32_t source_slot;
+} qa_q1_wire_binding;
 
 bool qa_q1_wire_begin_world(qa_q1_game *, const char *map_path, uint32_t inline_models,
                             uint32_t authored_entities, qa_error *);
 bool qa_q1_wire_declare_model(qa_q1_game *, const char *, qa_error *);
 bool qa_q1_wire_declare_sound(qa_q1_game *, const char *, qa_error *);
 bool qa_q1_wire_freeze(qa_q1_game *, qa_error *);
-bool qa_q1_wire_authored_slot(const qa_q1_game *, size_t ordinal, uint32_t *);
+/* ED_LoadFromFile allocates before invoking each authored spawn. Physical
+ * rows can be reused; the parsing ordinal is only the ordered caller cursor. */
+bool qa_q1_wire_authored_allocate(qa_q1_game *, size_t ordinal, uint32_t *, qa_error *);
+/* Free an allocated Source row whose spawn was inhibited or produced no actor. */
+bool qa_q1_wire_slot_free(qa_q1_game *, uint32_t, qa_error *);
 bool qa_q1_wire_emission_index(const qa_q1_game *, bool models, qa_string_id, uint32_t *);
 bool qa_q1_wire_emission_slot(const qa_q1_game *, qa_actor_id, uint32_t *);
 bool qa_q1_wire_enabled(const qa_q1_game *);

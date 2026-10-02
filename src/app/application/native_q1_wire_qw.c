@@ -98,13 +98,16 @@ static bool entity(application_native_q1_wire_source *source,qa_actor_id actor,
     qa_application_network_qw_entity *out,qa_error *error) {
     qa_application *app=source->provider->application; uint32_t slot,index;
     qa_application_visual_view visual;
-    if (!qa_q1_wire_actor_slot(&source->receipt,actor,&slot) || !slot || slot>=512 ||
+    if (!qa_q1_wire_actor_slot(&source->receipt,actor,&slot) || !slot ||
         !qa_application_visual_read(app,actor,&visual,error)) return false;
     const char *model=visual.models[0];
     qa_string_id resource=model?qa_strings_find(qa_session_strings(app->session),
         (qa_bytes){(const uint8_t *)model,strlen(model)}):0;
     if (!qa_q1_wire_index(&source->receipt,true,resource,&index))
         return application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld entity model leaves its ordered source precache");
+    if (index && slot>=512)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,
+            "Native QuakeWorld modeled Source edict exceeds the actual QW28 packet entity field");
     uint32_t client_slot;
     bool player=qa_q1_native_client_slot(source->provider->state.q1,actor,&client_slot,NULL);
     qa_application_network_qw_entity value={.number=slot,.model=index,.frame=trunc((double)visual.frame),

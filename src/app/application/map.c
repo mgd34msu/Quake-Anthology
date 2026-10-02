@@ -1046,12 +1046,12 @@ static bool q1_begin_map(application_provider *provider,
 
 static bool q1_spawn_entity(application_provider *provider,
                             const qa_entities *entities, size_t index,
-                            qa_arena *arena, qa_error *error)
+                            qa_arena *arena, qa_q1_wire_binding *binding, qa_error *error)
 {
-    size_t seats = qa_launch_snapshot_choices(provider->application->routing_snapshot)->seat_count;
-    if (index > UINT32_MAX - seats)
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "Q1 authored entity ordinal is exhausted");
+    uint32_t source_slot;
+    if (!qa_q1_wire_authored_allocate(provider->state.q1, index, &source_slot, error))
+        return false;
+    *binding = (qa_q1_wire_binding){.source_slot = source_slot};
     qa_bytes authored_classname;
     if (!qa_entity_value(entities, index, "classname", &authored_classname))
         return application_fail(error, QA_ERROR_FORMAT,
@@ -1114,10 +1114,6 @@ static bool q1_spawn_entity(application_provider *provider,
         !entity_optional_text(entities, index, "message", arena, &message,
                               error))
         return false;
-    uint32_t source_slot;
-    if (!qa_q1_wire_authored_slot(provider->state.q1, index, &source_slot))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Q1 authored spawn has no actual source namespace");
     qa_q1_spawn spawn = {
         .classname = classname,
         .target = target,
@@ -1219,30 +1215,54 @@ static bool q1_spawn_entity(application_provider *provider,
                     error))
         return false;
 
+    qa_q1_options source_options;
+    double source_seconds;
+    if (!qa_q1_source_respawn_options_read(provider->state.q1, &source_options, &source_seconds, error))
+        return false;
+    bool inhibited = source_options.quakeworld ? (spawn.spawnflags & 2048u) != 0 :
+        source_options.edition == QA_Q1_CLASSIC &&
+        (source_options.deathmatch ? (spawn.spawnflags & 2048u) != 0 :
+            (spawn.spawnflags & (source_options.skill == 0 ? 256u :
+                source_options.skill == 1 ? 512u : 1024u)) != 0);
+    if (inhibited) return qa_q1_wire_slot_free(provider->state.q1, source_slot, error);
     qa_actor_id actor;
     if (!qa_q1_game_spawn(provider->state.q1, &spawn, &actor, error))
         return false;
+    if (!actor.registry && !qa_q1_wire_slot_free(provider->state.q1, source_slot, error))
+        return false;
+    binding->actor = actor;
     if (strcmp(classname, "worldspawn") == 0 && actor.registry)
         provider->application->physics->world_actor = actor;
     return true;
 }
 
 static bool q1_spawn_map(application_provider *provider,
-                         const qa_entities *entities, qa_error *error)
+                         const qa_entities *entities, application_player_travel *travel, qa_error *error)
 {
+    if (!entities->count || sizeof(qa_q1_wire_binding) > SIZE_MAX / entities->count)
+        return application_fail(error, QA_ERROR_MEMORY, "Q1 authored binding extent is exhausted");
+    qa_q1_wire_binding *bindings = calloc(entities->count, sizeof(*bindings));
+    if (!bindings)
+        return application_fail(error, QA_ERROR_MEMORY, "cannot retain actual Q1 authored spawn results");
     qa_arena arena;
     qa_arena_init(&arena, 4096);
     bool ok = true;
     for (size_t index = 0; index < entities->count; ++index) {
         qa_arena_reset(&arena);
-        if (!q1_spawn_entity(provider, entities, index, &arena, error)) {
+        if (!q1_spawn_entity(provider, entities, index, &arena, &bindings[index], error)) {
             ok = false;
             break;
         }
     }
     qa_arena_destroy(&arena);
-    return ok && qa_q1_game_maps_finish(provider->state.q1, error) &&
+    qa_q1_options source;
+    double seconds;
+    ok = ok && qa_q1_game_maps_finish(provider->state.q1, error) &&
+        qa_q1_source_respawn_options_read(provider->state.q1, &source, &seconds, error) &&
+        application_players_q1_points(travel, source.max_clients, bindings, entities->count, error) &&
         application_native_q1_wire_resources_prepare(provider, error);
+    free(bindings);
+    return ok;
 }
 
 static bool q2_visual(void *opaque, qa_actor_id actor,
@@ -2261,7 +2281,7 @@ bool application_map_publish(qa_application *application,
                 (uint32_t)publication->entities.count, error))
             return false;
         spawned = q1_spawn_map(publication->map_provider,
-                            &publication->entities, error);
+                            &publication->entities, publication->players, error);
         break;
     }
     case APPLICATION_PROVIDER_Q2:

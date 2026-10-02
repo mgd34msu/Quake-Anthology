@@ -209,6 +209,7 @@ typedef struct qa_q1_host {
     bool (*source_damage)(void *, qa_damage_request *, qa_error *);
     bool (*sound_precache)(void *, const char *path, qa_error *);
     bool (*precache_reset)(void *, qa_error *);
+    void (*source_console_print)(void *, const char *);
 } qa_q1_host;
 typedef struct qa_q1_boss_fields {
     const char *wave1, *wave2, *wave3, *teleport_target;

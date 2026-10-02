@@ -36,8 +36,16 @@ void q1_wire_map_reset(qa_q1_game *g) {
         q1_wire_changed(g->wire);
     }
 }
-void q1_wire_actor_released(qa_q1_game *g, qa_actor_id actor) {
+void q1_wire_actor_released(qa_q1_game *g, qa_actor_record released) {
     q1_wire_state *wire = g->wire;
+    qa_actor_id actor = released.id;
+    if (wire && wire->edict_limit && released.owner == g->options.provider && released.has_source &&
+        released.source_slot < wire->next_dynamic &&
+        (!released.source_slot || released.source_slot > g->options.max_clients)) {
+        wire->edicts[released.source_slot].free = true;
+        wire->edicts[released.source_slot].freetime = (float)g->time;
+        q1_wire_changed(wire);
+    }
     for (size_t i = 0; wire && i < wire->damage_count;)
         if (qa_actor_id_equal(wire->damage[i].recipient, actor)) {
             wire->damage[i] = wire->damage[--wire->damage_count];
@@ -98,7 +106,7 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     if (!g || !path || !*path || !authored_entities || g->destroy_pending ||
         g->observation_depth || !qa_session_safe(g->services.session) ||
         qa_actors_count(qa_session_actors(g->services.session)) ||
-        authored_entities > UINT32_MAX - g->options.max_clients)
+        g->options.max_clients == UINT32_MAX)
         return fail(error, "Q1 wire world requires an idle actual native map load");
     uint64_t generation = g->wire ? g->wire->generation : 0;
     if (generation == UINT64_MAX) return fail(error, "Q1 wire map generation exhausted");
@@ -110,7 +118,13 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     wire->generation = generation + 1;
     wire->inline_models = inline_models;
     wire->authored_entities = authored_entities;
-    wire->next_dynamic = g->options.max_clients + authored_entities;
+    wire->edict_limit = g->options.quakeworld ? 768u :
+        g->options.edition == QA_Q1_CLASSIC ? 600u : 0u;
+    if (wire->edict_limit && g->options.max_clients >= wire->edict_limit) {
+        state_free(wire);
+        return fail(error, "Q1 physical Source clients exceed their engine edict capacity");
+    }
+    wire->next_dynamic = g->options.max_clients + 1;
     wire->loading = true;
     wire->id1 = id1(g);
     if (g->options.max_clients) {
@@ -166,16 +180,68 @@ bool qa_q1_wire_freeze(qa_q1_game *g, qa_error *error) {
 bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_error *error) {
     *has_source = g->wire != NULL;
     if (!g->wire) return true;
-    if (g->wire->next_dynamic == UINT32_MAX)
+    q1_wire_state *wire = g->wire;
+    uint32_t physical = wire->next_dynamic;
+    for (uint32_t i = g->options.max_clients + 1; wire->edict_limit && i < wire->next_dynamic; ++i)
+        if (wire->edicts[i].free &&
+            (wire->edicts[i].freetime < 2 || g->time - wire->edicts[i].freetime > 0.5)) {
+            physical = i;
+            break;
+        }
+    if (wire->edict_limit && physical == wire->edict_limit) {
+        if (!g->options.quakeworld) {
+            qa_error_set(error, QA_ERROR_MEMORY, physical, "ED_Alloc: no free edicts");
+            return false;
+        }
+        if (g->host.source_console_print)
+            g->host.source_console_print(g->host.context, "WARNING: ED_Alloc: no free edicts\n");
+        if (g->destroy_pending || g->wire != wire)
+            return fail(error, "QW source retired during its reached edict warning");
+        physical--;
+        const qa_actor_record *old = qa_actors_at_source(qa_session_actors(g->services.session),
+            g->options.provider, physical);
+        if (old && !qa_session_release(g->services.session, old->id, error)) return false;
+        if (g->destroy_pending || g->wire != wire)
+            return fail(error, "QW source retired while unlinking its last edict");
+    }
+    if (physical == UINT32_MAX)
         return fail(error, "Q1 physical source entity extent exhausted");
-    *slot = g->wire->next_dynamic++;
-    q1_wire_changed(g->wire);
+    if (physical == wire->next_dynamic) ++wire->next_dynamic;
+    if (wire->edict_limit) wire->edicts[physical].free = false;
+    *slot = physical;
+    q1_wire_changed(wire);
     return true;
 }
-bool qa_q1_wire_authored_slot(const qa_q1_game *g, size_t ordinal, uint32_t *out) {
+bool q1_wire_spawn_slot_valid(const qa_q1_game *g, uint32_t slot) {
+    return !g->wire || (slot < g->wire->next_dynamic &&
+        (!g->wire->edict_limit || !g->wire->edicts[slot].free));
+}
+bool qa_q1_wire_authored_allocate(qa_q1_game *g, size_t ordinal, uint32_t *out, qa_error *error) {
     if (!g || !g->wire || !g->wire->loading || !out ||
-        ordinal >= g->wire->authored_entities || g->destroy_pending) return false;
-    *out = ordinal ? g->options.max_clients + (uint32_t)ordinal : 0;
+        ordinal >= g->wire->authored_entities || ordinal != g->wire->authored_cursor || g->destroy_pending)
+        return fail(error, "Q1 authored allocation lost its actual ordered Source loader");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    bool has_source;
+    bool okay = !ordinal || q1_wire_allocate_slot(g, &has_source, out, error);
+    if (okay) {
+        if (!ordinal) *out = 0;
+        ++g->wire->authored_cursor;
+        q1_wire_changed(g->wire);
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+bool qa_q1_wire_slot_free(qa_q1_game *g, uint32_t slot, qa_error *error) {
+    if (!g || !g->wire || g->destroy_pending || slot >= g->wire->next_dynamic ||
+        (slot && slot <= g->options.max_clients) ||
+        qa_actors_at_source(qa_session_actors(g->services.session), g->options.provider, slot))
+        return fail(error, "Q1 unbound Source free requires its reached allocated physical row");
+    if (g->wire->edict_limit && !g->wire->edicts[slot].free) {
+        g->wire->edicts[slot].free = true;
+        g->wire->edicts[slot].freetime = (float)g->time;
+        q1_wire_changed(g->wire);
+    }
     return true;
 }
 bool qa_q1_wire_read_begin(qa_q1_game *g, qa_q1_wire_receipt *out, qa_error *error) {

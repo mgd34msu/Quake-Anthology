@@ -729,7 +729,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
         return;
     if (g->host.monster_path_release)
         g->host.monster_path_release(g->host.context, actor.id);
-    q1_wire_actor_released(g, actor.id);
+    q1_wire_actor_released(g, actor);
     q1_source_rogue_runes_release(g, actor.id);
     q1_grapple_released(g, actor.id);
     q1_map_rotation_released(g, actor.id);
@@ -1235,6 +1235,10 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     if (!request.has_source &&
         !q1_wire_allocate_slot(g, &request.has_source, &request.source_slot, error))
         return false;
+    if (request.has_source && !q1_wire_spawn_slot_valid(g, request.source_slot)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 spawn has no reached allocated Source edict");
+        return false;
+    }
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &request, &actor, error))
         return false;

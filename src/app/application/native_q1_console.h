@@ -11,6 +11,7 @@ bool application_native_q1_console_restore(application_provider *, qa_bytes, qa_
 bool application_native_q1_console_at(application_provider *, qa_console **, qa_cvars **,
                                       qa_command_context *);
 qa_cvars *application_native_q1_console_registry(const application_provider *);
+void application_native_q1_source_console_print(void *, const char *);
 bool application_native_q1_cvar(void *, qa_string_id, float *, qa_error *);
 bool application_native_q1_client_attack(void *, qa_actor_id, bool *);
 #endif

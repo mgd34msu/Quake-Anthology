@@ -63,6 +63,13 @@ static void cvar_print(void *opaque, const char *text)
     struct application_native_q1_console *owner = opaque;
     qa_console_emit(owner->console, NULL, text);
 }
+void application_native_q1_source_console_print(void *opaque, const char *text)
+{
+    application_provider *provider = opaque;
+    struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
+    if (owner && provider->kind == APPLICATION_PROVIDER_Q1 && text)
+        qa_console_emit(owner->console, NULL, text);
+}
 
 static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, const char *name)
 {
