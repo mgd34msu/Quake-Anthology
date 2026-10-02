@@ -870,7 +870,7 @@ bool frontend_config_store_primary_legacy_read(const frontend_config_store *mana
         !current_command(source,&command,error) || !frontend_legacy_source_owns(registry,"r_fullbright") ||
         !qa_cvars_observer_idle(registry))
         return fail(error,QA_ERROR_ARGUMENT,"Legacy policy lost its returned physical CLIENT declarations");
-    *out=(frontend_config_legacy_view){source,selected,product,registry,logical}; *present=true; return true;
+    *out=(frontend_config_legacy_view){source,selected,product,registry,logical,command.generation}; *present=true; return true;
 }
 bool frontend_config_store_primary_legacy_current(const frontend_config_store *manager,
     const frontend_config_legacy_view *view)
@@ -878,7 +878,7 @@ bool frontend_config_store_primary_legacy_current(const frontend_config_store *m
     frontend_config_legacy_view actual; bool present=false;
     return view && frontend_config_store_primary_legacy_read(manager,view->authored_seat,&actual,&present,NULL) &&
         present && actual.source==view->source && actual.descriptor==view->descriptor &&
-        actual.product==view->product && actual.registry==view->registry;
+        actual.product==view->product && actual.registry==view->registry && actual.command_generation==view->command_generation;
 }
 bool frontend_config_store_select_bindings(frontend_config_store *manager,uint32_t logical,
     qa_strings *strings,const qa_item_definition *items,size_t count,int32_t controller,qa_error *error)

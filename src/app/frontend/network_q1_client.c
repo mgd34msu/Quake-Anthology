@@ -103,6 +103,13 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
 static bool configure(void *context,const qa_application_client_source *source,bool *ready,qa_error *error)
 { frontend_network_q1_client *o=context; return parent(o) && o->options.configuration.configure(
     o->options.configuration.context,source,ready,error) && parent(o); }
+static bool configuration_advance(void *context,const qa_application_client_source *source,
+    qa_application_client_preparation *token,bool *ready,qa_error *error)
+{
+    frontend_network_q1_client *o=context;
+    return parent(o)&&o->options.configuration.configuration_advance(
+        o->options.configuration.context,source,token,ready,error)&&parent(o);
+}
 static qa_command_result forward(void *context,const qa_command_invocation *command,qa_error *error)
 {
     frontend_network_q1_client *o=context;
@@ -275,6 +282,7 @@ static frontend_client_source_options physical_options(frontend_network_q1_clien
     if(c.script_complete) c.script_complete=script_complete;
     if(c.retire) c.retire=programme_retire;
     if(c.released) c.released=programme_released;
+    if(c.configuration_advance) c.configuration_advance=configuration_advance;
     return c;
 }
 static bool skin_current(void *context,const frontend_remote_q1_domain *expected,qa_error *error)

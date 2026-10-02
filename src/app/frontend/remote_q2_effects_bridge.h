@@ -10,7 +10,7 @@ bool remote_q2_effect_sound(void *, const char *, qa_vec3, qa_actor_id, double,
     int32_t, float, float, double, qa_error *);
 bool remote_q2_effects_source_read(frontend_remote_q2 *, frontend_remote_q2_effects_source *, qa_error *);
 const qa_scene_image *frontend_remote_q2_effects_image(const frontend_remote_q2 *);
-bool remote_q2_effects_sample_prepare(frontend_remote_q2 *, const qa_scene_view *, qa_vec3 gun_offset,
+bool remote_q2_effects_sample_prepare(frontend_remote_q2 *, const qa_scene_view *, qa_vec3 viewer_origin, qa_vec3 gun_offset,
     int32_t viewer_number, frontend_remote_q2_effects_sample *, frontend_remote_q2_effects_pose **,
     const qa_scene_light **, size_t *, qa_error *);
 #endif

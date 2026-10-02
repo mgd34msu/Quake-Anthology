@@ -247,7 +247,7 @@ static bool q2_raw_protocol(qa_net_protocol_id protocol)
 }
 static bool q2_host_protocol(qa_net_protocol_id protocol)
 {
-    return q2_raw_protocol(protocol) || protocol.kind==QA_NET_Q2KEX_2023 || protocol.kind==QA_NET_Q2KEX_DEMO_2022;
+    return q2_raw_protocol(protocol) || protocol.kind==QA_NET_Q2KEX_2023;
 }
 static bool q2_host_current(void *context,const frontend_network_q2_host *host)
 {
@@ -596,13 +596,14 @@ bool frontend_network_q2_prepare_import(qa_frontend *f,qa_network_runtime *runti
 {
     qa_frontend_network *n=f?f->network:NULL;
     if(!n || !runtime || !recipe || !saved || !f->source_restoring || !n->detached_transport ||
-        n->q2_client_owner || !f->options.network_connect || !q2_raw_protocol(recipe->protocol) ||
+        n->q2_client_owner || !f->options.network_connect || !q2_host_protocol(recipe->protocol) ||
         recipe->protocol.kind!=f->options.network_protocol.kind || recipe->physical_seat>=f->options.seats ||
         saved->source.domain.runtime!=runtime)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 staging requires its real detached Network and saved connection recipe");
     frontend_network_q2_client_options options={.frontend=f,.runtime=runtime,.remote=recipe->remote,
         .protocol=recipe->protocol,.qport=recipe->qport,.physical_seat=recipe->physical_seat,
-        .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce};
+        .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce,
+        .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
     return frontend_network_q2_client_restore_prepare(&options,saved,&n->q2_client_owner,error);
 }
 bool frontend_network_q2_stage_recipe(qa_frontend *f,const frontend_network_q2_client_recipe *recipe,
@@ -611,7 +612,7 @@ bool frontend_network_q2_stage_recipe(qa_frontend *f,const frontend_network_q2_c
     qa_frontend_network *n=f?f->network:NULL;
     if(!n || !recipe || !saved || !saved->application || !f->source_restoring || !n->detached_transport ||
         n->q2_client_owner || n->q2_import_pending || !f->options.network_connect ||
-        !q2_raw_protocol(recipe->protocol) || recipe->protocol.kind!=f->options.network_protocol.kind ||
+        !q2_host_protocol(recipe->protocol) || recipe->protocol.kind!=f->options.network_protocol.kind ||
         recipe->physical_seat>=f->options.seats || saved->source.domain.application!=f->application ||
         saved->source.domain.physical_seat!=recipe->physical_seat)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 recipe staging requires its actual candidate Graph claims");
@@ -3451,7 +3452,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
 {
     if (f->network) return true;
     if ((f->options.network_connect && f->options.network_protocol.kind != QA_NET_Q3_68 &&
-         !q2_raw_protocol(f->options.network_protocol) && !q1_client_protocol(f->options.network_protocol) &&
+         !q2_host_protocol(f->options.network_protocol) && !q1_client_protocol(f->options.network_protocol) &&
          f->options.network_protocol.kind!=QA_NET_UNIFIED_1) ||
         (f->options.network_host && f->options.network_protocol.kind != QA_NET_Q3_68 &&
          !q2_host_protocol(f->options.network_protocol) && f->options.network_protocol.kind!=QA_NET_UNIFIED_1 &&
@@ -3465,7 +3466,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     n->q3_client_requested = frontend_network_remote(f); n->q3_sensitivity = 1;
     qa_net_udp_options udp = {.bind = {.kind = QA_NET_IPV4}, .limits = {65507, 256}, .broadcast = true};
     qa_net_address q2_remote={0};
-    if(f->options.network_connect && (q2_raw_protocol(f->options.network_protocol) || q1_client_protocol(f->options.network_protocol) ||
+    if(f->options.network_connect && (q2_host_protocol(f->options.network_protocol) || q1_client_protocol(f->options.network_protocol) ||
         f->options.network_protocol.kind==QA_NET_UNIFIED_1)) {
         if(f->options.dedicated || f->options.seats!=1 ||
             !qa_net_address_resolve(f->options.network_connect,f->options.network_port,0,&q2_remote,error)) goto failed;
@@ -3535,11 +3536,12 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         }
     }
     qa_net_transport *transport = NULL;
-    uint32_t clients=64;
+    uint32_t clients=64,source_clients=0;
     if(f->options.network_host && q2_host_protocol(f->options.network_protocol)) {
         qa_application_network_q2_host source;
         if(!qa_application_network_q2_host_source(f->application,f->options.network_protocol,&source,error)) goto failed;
-        clients=source.client_slots;
+        if(!source.client_slots || source.client_slots>256) goto failed;
+        source_clients=source.client_slots; clients=256;
     }
     if(f->options.network_host && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
         application_unified_source source;
@@ -3559,12 +3561,13 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     options.hooks.nq_source_command = remote_nq_command;
     options.hooks.unified_input=unified_source_input;
     if (!qa_net_udp_open(&udp, &transport, error)) goto failed;
-    if(f->options.network_host && !q2_raw_protocol(f->options.network_protocol) && q2_host_protocol(f->options.network_protocol)) {
-        if(clients>UINT8_MAX) {
+    if((f->options.network_host || f->options.network_connect) && f->options.network_protocol.kind==QA_NET_Q2KEX_2023) {
+        if(f->options.network_host && source_clients>UINT8_MAX) {
             qa_net_transport_close(transport);
             frontend_fail(error,QA_ERROR_ARGUMENT,"KEX lobby cannot represent actual Source maxClients"); goto failed;
         }
-        qa_kex_lan_options lobby={.host=true,.max_players=(uint8_t)clients,.local_players=0,.name="Quake II"};
+        qa_kex_lan_options lobby={.host=f->options.network_host!=NULL,.max_players=(uint8_t)source_clients,
+            .local_players=f->options.network_host?0:1,.name="Quake II",.server=q2_remote};
         qa_kex_transport_hooks hooks={n,kex_connectionless}; qa_net_transport *wrapped=NULL;
         if(!qa_kex_transport_open(transport,&lobby,&hooks,&wrapped,&n->kex_transport,error)) {
             qa_net_transport_close(transport); goto failed;
@@ -3607,7 +3610,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         frontend_network_q2_host_options host={.frontend=f,.runtime=n->runtime,.admin=n->admin,
             .protocol=f->options.network_protocol,.composition=n->composition,.context=n,
             .current=q2_host_current,.random=random_rotation,
-            .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
+            .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL,.transport=n->kex_transport};
         if(!frontend_network_q2_host_create(&host,&n->q2_host,error)) goto failed;
     }
     if(f->options.network_host && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
@@ -3615,10 +3618,11 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
             .seat_owner=QA_NETWORK_COMMAND_OWNER,.remote_seat_base=256,.context=n,.current=unified_current};
         if(!frontend_network_unified_create(&unified,&n->unified,error)) goto failed;
     }
-    if(f->options.network_connect && q2_raw_protocol(f->options.network_protocol)) {
+    if(f->options.network_connect && q2_host_protocol(f->options.network_protocol)) {
         frontend_network_q2_client_options client={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
             .protocol=f->options.network_protocol,.qport=(uint16_t)n->rotation_random,.physical_seat=0,
-            .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce};
+            .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce,
+            .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
         if(!frontend_network_q2_client_create(&client,&n->q2_client_owner,error)) goto failed;
     }
     if(f->options.network_connect && q1_client_protocol(f->options.network_protocol)) {
@@ -3666,7 +3670,7 @@ static qa_network_options saved_network_options(qa_frontend_network *n)
     if(n->frontend->options.network_host && q2_host_protocol(n->frontend->options.network_protocol)) {
         qa_application_network_q2_host source;
         if(qa_application_network_q2_host_source(n->frontend->application,n->frontend->options.network_protocol,&source,NULL))
-            clients=source.client_slots;
+            clients=256;
     }
     if(n->frontend->options.network_host && n->frontend->options.network_protocol.kind==QA_NET_UNIFIED_1) {
         application_unified_source source;
@@ -3712,9 +3716,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 21;
+    uint32_t magic = UINT32_C(0x464e4151), version = 22;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 21 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 22 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -3730,7 +3734,7 @@ bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error 
         !f->options.network_protocol.flags && !f->options.network_protocol.revision;
     if ((f->options.network_host && ((f->options.network_protocol.kind != QA_NET_Q3_68 && !nq_host && !qw_host &&
         f->options.network_protocol.kind!=QA_NET_UNIFIED_1) || f->options.network_connect)) ||
-        (f->options.network_connect && !frontend_network_remote(f) && !q2_raw_protocol(f->options.network_protocol) &&
+        (f->options.network_connect && !frontend_network_remote(f) && !q2_host_protocol(f->options.network_protocol) &&
         !q1_client_protocol(f->options.network_protocol)))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "restored frontend hosting or dialect needs its complete actual service consumer");
     qa_frontend_network *n = calloc(1, sizeof(*n));
@@ -4543,7 +4547,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         !network_capture_ready(f, error)) return false;
     qa_frontend_network *n = f->network; bool installed = n != NULL;
     if (n && !network_runtime_valid(n, true, error)) return false;
-    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, ui_browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0}, unified_state={0};
+    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, ui_browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0}, unified_state={0}, kex_state={0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && network_header(&io, &installed) &&
         qa_source_save_writer(&history, qa_application_session(f->application), error) && network_header(&history, &installed);
     if (ok && n) {
@@ -4586,6 +4590,13 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
             qa_bytes bytes={unified_state.data,unified_state.size};
             if(ok) ok=network_blob(&io,&bytes);
         }
+        bool kex=n->kex_transport!=NULL;
+        if(ok) ok=qa_source_save_bool(&io,&kex);
+        if(ok && kex) {
+            ok=qa_kex_transport_checkpoint(n->kex_transport,&kex_state,error);
+            qa_bytes bytes={kex_state.data,kex_state.size};
+            if(ok) ok=network_blob(&io,&bytes);
+        }
         qa_network_checkpoint_refs refs = network_saved_refs(n);
         ok = ok && qa_network_connections_checkpoint(n->runtime, &refs, &runtime, error) &&
             frontend_q3_browser_checkpoint(n->q3_browser, &ui_browser, error) &&
@@ -4609,6 +4620,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
     qa_source_save_dispose(&io); qa_source_save_dispose(&history);
     qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&ui_browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs); qa_buffer_free(&admission); qa_buffer_free(&authorization); qa_buffer_free(&nq_state); qa_buffer_free(&qw_state);
     qa_buffer_free(&unified_state);
+    qa_buffer_free(&kex_state);
     if (!ok) { qa_buffer_free(&complete); qa_buffer_free(&predicted); return false; }
     *connections = complete; *prediction = predicted; return true;
 }
@@ -4665,10 +4677,11 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     qa_frontend_network *state = calloc(1, sizeof(*state));
     if (!state) { qa_source_save_dispose(&io); return frontend_fail(error, QA_ERROR_MEMORY, "decoding network candidate fields"); }
     state->frontend = f; state->registered = n->registered; bool transferred = false;
-    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, ui_browser = {0}, admin = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0}, unified_state={0}, package_cut = {0};
+    qa_net_transport *kex_container=NULL;
+    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, ui_browser = {0}, admin = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0}, unified_state={0}, kex_state={0}, package_cut = {0};
     qa_bytes download_cuts[64] = {{0}};
     qa_bytes client_content = {0}, client_download = {0}, client_authorization = {0};
-    bool content = false, downloads = false, hosting = false, nq = false, qw = false, unified=false;
+    bool content = false, downloads = false, hosting = false, nq = false, qw = false, unified=false,kex=false;
     ok = ok && network_address_fields(&io, &local) && service_address_valid(&local) &&
         menu_preferences_fields(&io,state->menu_preferences) && network_blob(&io,&browser) &&
         network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting, &package_cut, download_cuts) &&
@@ -4676,12 +4689,20 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         qa_source_save_bool(&io, &nq) && (!nq || network_blob(&io, &nq_state)) &&
         qa_source_save_bool(&io, &qw) && (!qw || network_blob(&io, &qw_state)) &&
         qa_source_save_bool(&io,&unified) && (!unified || network_blob(&io,&unified_state)) &&
+        qa_source_save_bool(&io,&kex) && (!kex || network_blob(&io,&kex_state)) &&
         network_blob(&io, &runtime) && network_blob(&io, &ui_browser) && network_blob(&io, &admin) &&
         qa_source_save_bool(&io, &content) && qa_source_save_bool(&io, &downloads) && (!downloads || content) &&
         (!downloads || network_blob(&io, &jobs)) && network_client_cuts(&io, state, &client_content, &client_download, &client_authorization) &&
         qa_source_save_finish(&io, NULL);
     if (ok && (unsigned)hosting + (unsigned)nq + (unsigned)qw + (unsigned)unified > 1)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Network continuation declares two native host owners");
+    if(ok && kex) {
+        qa_kex_transport_hooks hooks={n,kex_connectionless};
+        ok=f->options.network_protocol.kind==QA_NET_Q2KEX_2023 &&
+            qa_kex_transport_restore(kex_state,&hooks,&kex_container,&state->kex_transport,error);
+        if(ok && !qa_net_address_equal(&local,qa_net_transport_address(kex_container),true))
+            ok=frontend_fail(error,QA_ERROR_FORMAT,"Restored KEX wrapper differs from the saved actual endpoint");
+    }
     if (ok && nq) ok = frontend_nq_restore(f, n->runtime, nq_state, &state->nq_host, error);
     if (ok && qw) ok = frontend_qw_restore(f, n->runtime, n->admin, qw_state, &state->qw_host, error);
     if(ok && unified) {
@@ -4745,9 +4766,10 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         }
         qa_net_transport *transport = NULL; qa_network_runtime *restored = NULL;
         qa_network_options options = saved_network_options(n); qa_network_checkpoint_refs refs = network_saved_refs(n);
-        if (ok) ok = detached_transport(&local, &transport, error);
+        if(ok && kex_container) { transport=kex_container; kex_container=NULL; }
+        else if (ok) ok = detached_transport(&local, &transport, error);
         if (ok) ok = qa_network_connections_restore(runtime, transport, &options, &refs, &restored, error);
-        if (!restored) qa_net_transport_close(transport);
+        if (!restored) { qa_net_transport_close(transport); if(kex) n->kex_transport=NULL; }
         else {
             n->runtime = restored; frontend_nq_rebind(n->nq_host, f, restored);
             frontend_qw_rebind(n->qw_host, f, restored, n->admin);
@@ -4821,6 +4843,7 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     if (!transferred) frontend_remote_input_destroy(state->q3_input);
     if (!transferred) frontend_network_predictor_destroy(state->q3_predictor);
     if (!transferred) qa_buffer_free(&state->q3_predictor_pending);
+    qa_net_transport_close(kex_container);
     free(state); qa_source_save_dispose(&io); return ok;
 }
 bool frontend_network_restore_prediction(qa_frontend *f, qa_bytes bytes, qa_error *error)
@@ -4888,6 +4911,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         (next->nq_host != NULL) != (active->nq_host != NULL) ||
         (next->qw_host != NULL) != (active->qw_host != NULL) ||
         (next->unified != NULL) != (active->unified != NULL) ||
+        (next->kex_transport != NULL) != (active->kex_transport != NULL) ||
         (next->q1_client_owner != NULL) != (active->q1_client_owner != NULL) ||
         next->q3_client_requested != active->q3_client_requested ||
         (next->q3_client_requested && !qa_net_address_equal(&next->q3_client_admission.address, &active->q3_client_admission.address, true)) ||
@@ -4912,6 +4936,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         (next->q3_client_downloads && !qa_q3_client_downloads_handoff_ready(
             active->q3_client_downloads, next->q3_client_downloads, error))) return false;
     if (!qa_server_browser_http_handoff_ready(active->browser, next->browser, error)) return false;
+    if(next->kex_transport && !qa_kex_transport_handoff_ready(active->kex_transport,next->kex_transport,error)) return false;
     if (active->q3_admission || active->nq_host || active->qw_host) {
         qa_buffer current_host = {0}, restored_host = {0};
         bool ok = network_host_cut(active, &current_host, error) && network_host_cut(next, &restored_host, error);
@@ -4962,7 +4987,10 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
     if (active->network->downloads) qa_downloads_handoff_publish(active->network->downloads, candidate->network->downloads);
     if (active->network->q3_client_downloads) qa_q3_client_downloads_handoff_publish(
         active->network->q3_client_downloads, candidate->network->q3_client_downloads);
-    qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
+    if(active->network->kex_transport) {
+        (void)qa_kex_transport_handoff(active->network->kex_transport,candidate->network->kex_transport,NULL);
+        qa_network_transport_publish_retained(active->network->runtime,candidate->network->runtime);
+    } else qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
     active->network->detached_transport = true; candidate->network->detached_transport = false;
     frontend_network_q2_client_publish(candidate->network->q2_client_owner);
     frontend_network_q1_client_publish(candidate->network->q1_client_owner);

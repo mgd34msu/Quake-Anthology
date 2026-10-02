@@ -1,4 +1,5 @@
 #include "world_inventory.h"
+#include "component_scene.h"
 #include "visual_restore.h"
 #include "native_q3_client.h"
 #include "equipment_media.h"
@@ -117,6 +118,10 @@ bool frontend_scene_heap_read(const qa_frontend *f, root_heap heap, const qa_vfs
             !frontend_unified_media_inventory_at(f,media_ordinal,&media,NULL) || !media ||
             !frontend_unified_media_bank_read(media,bank_ordinal,&bank)) return false;
         *files=bank.files; *images=bank.images; *materials=bank.materials;
+    } else if(heap.kind==11) {
+        frontend_component_scene_view row;
+        if(heap.ordinal>SIZE_MAX || !frontend_component_scene_metadata_read(f,(size_t)heap.ordinal,&row,NULL)) return false;
+        *files=row.files; *images=row.images; *materials=row.materials;
     } else return false;
     return *files && *images && *materials && qa_scene_resources_files(*images)==*files &&
         qa_material_library_resource_owner(*materials)==*images;
@@ -157,6 +162,16 @@ bool frontend_scene_heap_find(const qa_frontend *f,const qa_vfs *files,
                 if(graph && !view) return false;
                 *out=(root_heap){10,key,view}; *found=true; return true;
             }
+        }
+    }
+    for(size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(f,i,&row,error)) return false;
+        if(row.files==files && row.images==images && row.materials==materials) {
+            qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
+            uint64_t view=graph?qa_application_content_view_id(graph,files):0;
+            if(graph && !view) return false;
+            *out=(root_heap){11,i,view}; *found=true; return true;
         }
     }
     return true;
@@ -206,6 +221,7 @@ static bool owner_shape(frontend_scene_owner owner,bool world)
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MAP) return world && owner.owner && owner.row==1;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MODEL) return owner.owner && owner.row;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_Q3) return owner.owner && (owner.row>>32) && (uint32_t)owner.row;
+    if(owner.kind==FRONTEND_SCENE_OWNER_COMPONENT) return owner.owner && owner.row;
     if (owner.kind==FRONTEND_SCENE_OWNER_SOURCE) return world && owner.owner && owner.row==1;
     if (owner.kind==FRONTEND_SCENE_OWNER_REMOTE_MAP || owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2_MAP)
         return world && owner.owner && owner.row==1;
@@ -262,6 +278,7 @@ static bool registry_roots_claim(frontend_world_inventory *inventory,qa_q3_prese
             for(unsigned k=0;k<j;++k) if(model.scenes[k]==model.scenes[j]) alias=true;
             if(!alias && !model_claim(inventory,model.scenes[j],owner,NULL,error)) return false;
         }
+        if(model.source_md4_scene && !model_claim(inventory,model.source_md4_scene,owner,NULL,error)) return false;
     }
     return true;
 }
@@ -287,110 +304,32 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
             if (earlier.assets==group.assets) { prior=true; break; }
         }
         if (prior) continue;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(group.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(group.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_Q3,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,group.assets,FRONTEND_SCENE_OWNER_Q3,i+1,error)) return false;
     }
     for (size_t i=0;i<frontend_native_q3_count(f);++i) {
         frontend_native_q3_view native;
         if (!frontend_native_q3_read(f,i,&native,error) || !native.assets) return false;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(native.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(native.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_NATIVE_Q3,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,native.assets,FRONTEND_SCENE_OWNER_NATIVE_Q3,i+1,error)) return false;
     }
     for (size_t i=0;i<frontend_equipment_q3_count(f);++i) {
         frontend_equipment_q3_owner_view selected;
         if (!frontend_equipment_q3_at(f,i,&selected,error) || !selected.assets) return false;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(selected.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(selected.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_SELECTED_Q3,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,selected.assets,FRONTEND_SCENE_OWNER_SELECTED_Q3,i+1,error)) return false;
     }
     for (size_t i=0;i<frontend_selected_character_count(f);++i) {
         frontend_selected_character_view character;
         if (!frontend_selected_character_at(f,i,&character,error) || !character.assets) return false;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(character.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(character.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_CHARACTER,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,character.assets,FRONTEND_SCENE_OWNER_CHARACTER,i+1,error)) return false;
     }
     for (size_t i=0;i<frontend_selected_effects_count(f);++i) {
         frontend_selected_effects_view effects;
         if (!frontend_selected_effects_at(f,i,&effects,error) || !effects.assets) return false;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(effects.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(effects.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_EFFECTS,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,effects.assets,FRONTEND_SCENE_OWNER_EFFECTS,i+1,error)) return false;
     }
     for (size_t i=0;i<frontend_equipment_gear_count(f);++i) {
         frontend_equipment_gear_owner_view gear;
         if (!frontend_equipment_gear_at(f,i,&gear,error) || !gear.assets) return false;
-        size_t count=0;
-        if (!qa_q3_assets_model_count(gear.assets,&count,error)) return false;
-        for (size_t j=0;j<count;++j) {
-            qa_q3_asset_model_holder model;
-            if (!qa_q3_assets_model_holder(gear.assets,j,&model,error)) return false;
-            if (!model.present || model.shared_parent) continue;
-            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_GEAR,i+1,j+1};
-            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
-                bool alias=false;
-                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
-                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
-            }
-        }
+        if (!registry_roots_claim(inventory,gear.assets,FRONTEND_SCENE_OWNER_GEAR,i+1,error)) return false;
     }
     for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
         frontend_remote_q3_resources owner;
@@ -470,8 +409,14 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
                     for(unsigned prior=0;prior<lod;++prior) if(model.scenes[prior]==model.scenes[lod]) alias=true;
                     if(!alias && !model_claim(inventory,model.scenes[lod],owner,NULL,error)) return false;
                 }
+                if(model.source_md4_scene && !model_claim(inventory,model.source_md4_scene,owner,NULL,error)) return false;
             }
         }
+    }
+    for(size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(f,i,&row,error) ||
+            !registry_roots_claim(inventory,row.assets,FRONTEND_SCENE_OWNER_COMPONENT,i+1,error)) return false;
     }
     frontend_renderer_worlds_view retained; bool present=false;
     if(!frontend_renderer_worlds_read(f,&retained,&present,error)) return false;
@@ -618,7 +563,7 @@ bool frontend_world_inventory_capture(qa_frontend *f,const frontend_scene_invent
 static bool owner_fields(qa_source_save_io *io,frontend_scene_owner *owner,bool world)
 {
     uint32_t kind=owner->kind;
-    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_UNIFIED_Q3 ||
+    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_COMPONENT ||
         !qa_source_save_u64(io,&owner->owner) || !qa_source_save_u64(io,&owner->row)) return false;
     owner->kind=(frontend_scene_owner_kind)kind; return owner_shape(*owner,world);
 }

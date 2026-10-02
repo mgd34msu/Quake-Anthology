@@ -1,4 +1,4 @@
-#include "network_q2_host.h"
+#include "network_q2_host_private.h"
 #include "qa/application_network.h"
 #include "qa/network_q3.h"
 #include "qa/network_local.h"
@@ -7,51 +7,6 @@
 #include "qa/launch_identity.h"
 #include <stdio.h>
 
-typedef struct q2_host_peer {
-    frontend_network_q2_host *host;
-    qa_application_network_q2 *source;
-    qa_q2_server_admission admission;
-    qa_network_q2_server_hooks source_hooks;
-    qa_net_seat_binding bindings[QA_Q2_MAX_SEATS];
-    uint32_t slots[QA_Q2_MAX_SEATS];
-    qa_net_client_id client;
-    char userinfo[8193],reason[1024];
-    char **configs;
-    size_t config_count;
-    uint64_t event_generation;
-    size_t event_cursor;
-    qa_buffer event_packet;
-    bool event_pending,event_reliable;
-    bool reserved,committed,retiring;
-    bool material_scripts;
-    qa_application_network_q2 *travel_source;
-    bool travel_installed;
-} q2_host_peer;
-typedef struct q2_local_peer {
-    frontend_network_q2_host *host;
-    qa_network_local_player player;
-    qa_net_seat_binding binding;
-    qa_net_client_id client;
-    uint32_t physical,authored;
-    bool admitting,travel_restarted;
-} q2_local_peer;
-struct frontend_network_q2_host {
-    frontend_network_q2_host_options options;
-    qa_network_q2_bootstrap *bootstrap;
-    qa_application_network_q2 *discovery;
-    qa_application_network_q2_host source;
-    qa_q2_unicast_cache *unicast;
-    q2_host_peer *peers;
-    q2_local_peer *locals;
-    size_t local_count;
-    size_t capacity;
-    unsigned calls;
-    qa_application_network_q2 *travel_discovery;
-    qa_application_network_q2_host travel_target;
-    size_t travel_cursor,travel_local_cursor;
-    int32_t server_count;
-    bool traveling,travel_discovery_installed;
-};
 static bool local_player(void *context,qa_net_seat_id seat,qa_network_local_player *out,qa_error *error)
 {
     q2_local_peer *local=context; qa_actor_id actor;
@@ -337,7 +292,9 @@ bool frontend_network_q2_host_create(const frontend_network_q2_host_options *opt
     if(!qa_q2_unicast_cache_create(&host->unicast,error)) return false;
     if(!qa_application_network_q2_host_source(options->frontend->application,options->protocol,&host->source,error) ||
         !qa_application_network_q2_create(options->frontend->application,options->protocol,1,&host->discovery,error)) return false;
-    host->capacity=host->source.client_slots;
+    if(!host->source.client_slots || host->source.client_slots>256)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 Source exceeds its actual supported client namespace");
+    host->capacity=256;
     host->peers=calloc(host->capacity,sizeof(*host->peers));
     if(!host->peers) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 Source claims");
     for(size_t i=0;i<host->capacity;++i) host->peers[i].host=host;
@@ -421,8 +378,12 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
         !qa_application_network_q2_host_source(host->options.frontend->application,host->options.protocol,&actual,error)) return false;
     if(!host->traveling && source_identity_equal(&actual,&host->source)) return true;
     if(!host->traveling) {
-        if(actual.client_slots!=host->source.client_slots || host->server_count==INT32_MAX)
-            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q2 travel changed its retained connection capacity or exhausted servercount");
+        if(!actual.client_slots || actual.client_slots>host->capacity || host->server_count==INT32_MAX)
+            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q2 travel exceeds its retained client namespace or exhausted servercount");
+        if(host->options.transport && actual.client_slots>UINT8_MAX)
+            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"KEX travel cannot represent the actual Source capacity");
+        if(host->options.transport &&
+            !qa_kex_transport_set_maximum(host->options.transport,(uint8_t)actual.client_slots,error)) return false;
         for(size_t i=0;i<host->capacity;++i) if(host->peers[i].reserved && !host->peers[i].committed)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 travel retains an unfinished native admission");
         host->traveling=true; host->travel_discovery_installed=false;

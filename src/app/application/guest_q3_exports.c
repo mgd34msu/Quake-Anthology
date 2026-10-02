@@ -3,6 +3,7 @@
 #include "guest_q3_client_console.h"
 #include "guest_q3_console.h"
 #include "guest_q3_factory.h"
+#include "guest_q3_weapon_models.h"
 #include "guest_native_q2_private.h"
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
@@ -496,6 +497,8 @@ bool qa_application_q3_arsenal_client_read(qa_application *app, qa_actor_id acto
         !qa_actor_id_equal(value.client.source.source_actor, actor) ||
         value.client.source.source_owner != provider->owner || !value.client.context.frontend_lifetime)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw has no initialized matching GAME companion");
+    if (!application_q3_weapon_models_namespace(role->weapon_models, role->vm,
+        engine->game->vm, qa_q3_host_presentation_resources(role->host), error)) return false;
     *out = value; *present = true;
     return true;
 }

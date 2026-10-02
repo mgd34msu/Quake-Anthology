@@ -1,4 +1,5 @@
 #include "guest_q3_console.h"
+#include "qa/console_cvar_observer.h"
 #include "guest_q3_private.h"
 #include "q3_product.h"
 #include "startup_flow.h"

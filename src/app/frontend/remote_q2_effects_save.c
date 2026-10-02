@@ -35,6 +35,8 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
         (!o->event_received && o->event_sequence)) return false;
     if (reading) o->event_error.code=(qa_status)event_status;
     if (!frontend_save_random(io,&o->random) || !frontend_fx_particles_fields(io,&o->particles) || o->particles.family!=QA_GAME_Q2 ||
+        !qa_source_save_u32(io,&o->slow_bin) || !qa_source_save_u32(io,&o->slow_base) ||
+        !qa_source_save_u32(io,&o->slow_seed) || !qa_source_save_u64(io,&o->slow_frame) || !qa_source_save_u64(io,&o->render_frame) ||
         !qa_source_save_count(io,&o->sampled_particle_count,FRONTEND_FX_PARTICLE_CAPACITY) ||
         !number(io,&o->time) || !number(io,&o->server_time) || !qa_source_save_u64(io,&o->frame_sequence) ||
         !qa_source_save_bool(io,&o->sampled) || !qa_source_save_bool(io,&o->dirty) || o->sampled_particle_count>o->particles.count ||
@@ -67,7 +69,7 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
             if (!qa_source_save_bool(io,&b->active) || !qa_source_save_bool(io,&b->player) || !qa_source_save_bool(io,&b->monster) ||
                 !qa_source_save_bool(io,&b->unkeyed) ||
                 !qa_source_save_u8(io,&b->model) || !actor(io,&b->actor,refs) || !actor(io,&b->destination,refs) ||
-                !vector(io,&b->start) || !vector(io,&b->end) || !vector(io,&b->offset) || !number(io,&b->die) ||
+                !vector(io,&b->start) || !vector(io,&b->end) || !vector(io,&b->offset) || !number(io,&b->die) || !number(io,&b->sound_until) ||
                 (b->active && ((!b->actor.registry && !b->unkeyed) || b->player!=(pool!=0) || b->model>=Q2FX_MODEL_COUNT ||
                     (b->unkeyed && (b->actor.registry || b->destination.registry || b->player || b->monster || b->model!=Q2FX_LIGHTNING)) ||
                     (b->model!=Q2FX_PARASITE && b->model!=Q2FX_CABLE && b->model!=Q2FX_LIGHTNING && b->model!=Q2FX_HEAT)))) return false;
@@ -95,7 +97,7 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
             (l->spot && (qa_vec_length(l->direction)==0 || !l->shadow_resolution))) return false;
         l->scale=1; l->family=QA_SCENE_Q2; l->additive=true;
     }
-    maximum=reading?(io->input.size-io->offset)/53:SIZE_MAX/sizeof(*o->draws);
+    maximum=reading?(io->input.size-io->offset)/61:SIZE_MAX/sizeof(*o->draws);
     if (!qa_source_save_count(io,&o->draw_count,maximum) ||
         !qa_source_save_count(io,&o->draw_capacity,SIZE_MAX/sizeof(*o->draws)) || o->draw_count>o->draw_capacity) return false;
     if (reading && o->draw_capacity) { o->draws=calloc(o->draw_capacity,sizeof(*o->draws)); if (!o->draws) return false; }
@@ -103,8 +105,8 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
         q2fx_model_draw *d=&o->draws[i];
         if (!qa_source_save_u8(io,&d->model) || d->model>=Q2FX_MODEL_COUNT || !vector(io,&d->origin) || !vector(io,&d->angles) ||
             !qa_source_save_i32(io,&d->frame) || !qa_source_save_i32(io,&d->old_frame) || !qa_source_save_i32(io,&d->skin) ||
-            !o->models[d->model] || !qa_source_save_u32(io,&d->flags) || !scalar(io,&d->alpha) || !scalar(io,&d->back_lerp) || !scalar(io,&d->scale) ||
-            d->frame<0 || d->old_frame<0 || d->skin<0 || d->scale<=0 || d->back_lerp<0 || d->back_lerp>1) return false;
+            !o->models[d->model] || !qa_source_save_u32(io,&d->flags) || !scalar(io,&d->alpha) || !scalar(io,&d->back_lerp) || !vector(io,&d->scale) ||
+            d->frame<0 || d->old_frame<0 || d->skin<0 || d->scale.x<=0 || d->scale.y<=0 || d->scale.z<=0 || d->back_lerp<0 || d->back_lerp>1) return false;
     }
     q2fx_weapon_muzzle *m=&o->weapon_muzzle;
     if (!qa_source_save_u32(io,&o->sampled_dlight_hacks) || !qa_source_save_u32(io,&o->sampled_disable_particles) ||

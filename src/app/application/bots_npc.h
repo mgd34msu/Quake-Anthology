@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_BOTS_NPC_H
 #define QA_APPLICATION_BOTS_NPC_H
 #include "qa/game_q1.h"
+#include "qa/persistence_content.h"
 
 struct application_provider;
 struct application_bots_npc;
@@ -12,4 +13,6 @@ bool application_bots_npc_idle(const struct application_provider *);
 bool application_bots_npc_horde(void *);
 bool application_bots_npc_capture(struct application_provider *,qa_buffer *,qa_error *);
 bool application_bots_npc_restore(struct application_provider *,qa_bytes,qa_error *);
+bool application_bots_npc_content_visit(const struct application_provider *,
+    const qa_application_content_visitor *,qa_error *);
 #endif

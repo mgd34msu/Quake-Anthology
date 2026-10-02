@@ -92,8 +92,10 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
     if (!owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 emitted resource spelling");
     memcpy(owned, name, length + 1); row.name = owned;
     bool found = false;
-    if (*name && !application_unified_event_resource_lookup_kind(capture->engine->provider->application,
-        capture->engine->provider->owner, kind, name, row.resource_key, &found, error)) { free(owned); return false; }
+    if (*name && !application_unified_event_resource_lookup_receipt(capture->engine->provider->application,
+        capture->engine->provider->owner, kind, name, row.resource_key, &row.resource_custody, &found, error)) {
+        free(owned); return false;
+    }
     if (resources->count == resources->capacity) {
         size_t capacity = resources->capacity ? resources->capacity * 2 : 8;
         if (capacity <= resources->capacity || capacity > SIZE_MAX / sizeof(*resources->rows)) {

@@ -382,7 +382,8 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             &engine->application, &engine->application_context, error)) return false;
     qa_native_host_instance_options instance = {.declaration = engine->declaration,
         .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
-            engine->source_control != NULL || engine->primary_inventory != NULL,
+            engine->source_control != NULL || engine->primary_inventory != NULL ||
+            application_native_q2_callbacks_observation_required(engine->callbacks),
         .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,

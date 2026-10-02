@@ -24,6 +24,7 @@ typedef struct frontend_unified_q3_runtime_options {
     q3n_server_command_options commands;
     q3n_loading_options loading;
     q3n_mission_hud_options mission;
+    q3n_player_fx_compiled_backend player_fx;
     void *context;
     bool (*current)(void *, const frontend_unified_q3_runtime_options *);
     bool (*frame_settings)(void *, const q3n_compiled_frame *, bool loading,
@@ -35,6 +36,10 @@ typedef struct frontend_unified_q3_runtime_options {
     bool (*prediction_cursor)(void *, const q3n_compiled_frame *, int32_t before,
         int32_t after, qa_error *);
     bool (*timescale)(void *, int32_t frame_milliseconds, qa_error *);
+    bool (*preferences)(void *, qa_ui_preferences *, qa_error *);
+    bool (*backend_frame)(void *, qa_q3_presentation *, qa_error *);
+    bool (*backend_checkpoint)(void *, const qa_q3_presentation *, qa_buffer *, qa_error *);
+    bool (*backend_restore)(void *, qa_q3_presentation *, qa_bytes, qa_error *);
 } frontend_unified_q3_runtime_options;
 typedef struct frontend_unified_q3_runtime_owners {
     qa_q3_presentation *presentation;
@@ -63,6 +68,7 @@ bool frontend_unified_q3_runtime_destroy(frontend_unified_q3_runtime **, qa_erro
 bool frontend_unified_q3_runtime_owners_read(const frontend_unified_q3_runtime *,
     frontend_unified_q3_runtime_owners *, qa_error *);
 bool frontend_unified_q3_runtime_initialize(frontend_unified_q3_runtime *, qa_error *);
+bool frontend_unified_q3_runtime_initialize_video(frontend_unified_q3_runtime *, qa_error *);
 bool frontend_unified_q3_runtime_prepare(frontend_unified_q3_runtime *, uint32_t stereo, qa_error *);
 bool frontend_unified_q3_runtime_process(frontend_unified_q3_runtime *, int32_t presentation_time,
     bool *active, qa_error *);
@@ -80,5 +86,6 @@ void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *, con
  * continuation does not replay CG_Init, reached commands or movie opens. */
 bool frontend_unified_q3_runtime_checkpoint(const frontend_unified_q3_runtime *, qa_buffer *, qa_error *);
 bool frontend_unified_q3_runtime_restore(frontend_unified_q3_runtime *, qa_bytes, qa_error *);
+bool frontend_unified_q3_runtime_restore_bind(frontend_unified_q3_runtime *, qa_error *);
 
 #endif

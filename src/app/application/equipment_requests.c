@@ -2,6 +2,7 @@
 #include "equipment_runtime.h"
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
+#include "guest_q3_catalog.h"
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
 #include <stdlib.h>
@@ -21,16 +22,49 @@ bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_ac
         return application_fail(e,QA_ERROR_ARGUMENT,"Weapon request requires its genuine selected arsenal and full actor");
     *accepted=false;
     if(provider->owner!=owner) return true;
+    bool declared=false;
+    if(provider->kind==APPLICATION_PROVIDER_QVM) {
+        struct application_q3_guest *engine=q3g_engine(provider);
+        const application_q3_catalog_weapon *weapons=NULL; size_t n=0;
+        if(!engine||!engine->game||!engine->game->catalog)
+            return application_fail(e,QA_ERROR_NOT_FOUND,"Original weapon request lost its actual Source catalog");
+        if(!application_q3_catalog_weapons(engine->game->catalog,&weapons,&n,e)) return false;
+        for(size_t i=0;i<n;++i) if(weapons[i].item==item) declared=true;
+    } else if(provider->kind==APPLICATION_PROVIDER_QC) {
+        qa_application_qc_player_ui view;
+        if(!qa_application_qc_selected_player_ui_read(app,actor,QA_ROLE_ARSENAL,&view,e)) return false;
+        for(size_t i=0;i<view.binding_count;++i) {
+            qa_application_qc_weapon_ui_binding binding;
+            if(!qa_application_qc_message_player_ui_binding(app,&view,i,&binding,e)) return false;
+            if(binding.item==item) declared=true;
+        }
+        if(!qa_application_qc_message_player_ui_current(app,&view))
+            return application_fail(e,QA_ERROR_NOT_FOUND,"QC weapon request replaced its true declaration owner");
+    } else if(provider->kind==APPLICATION_PROVIDER_Q1) {
+        for(int i=0;i<QA_Q1_WEAPON_COUNT;++i) if(qa_q1_weapon_item(provider->state.q1,(qa_q1_weapon)i)==item) declared=true;
+    } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
+        const char *name=qa_strings_cstr(qa_session_strings(app->session),item);
+        for(int i=1;i<QA_Q2_WEAPON_COUNT;++i) {
+            const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(provider->state.q2,(qa_q2_weapon)i);
+            if(name&&definition&&definition->item&&!strcmp(definition->item,name)) declared=true;
+        }
+    } else if(provider->kind==APPLICATION_PROVIDER_Q3) {
+        for(int i=1;i<QA_Q3_WEAPON_COUNT;++i) if(qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)i,false)==item) declared=true;
+    } else {
     size_t count=0;
     if(!qa_inventory_item_definitions(app->inventory,actor,NULL,0,&count,e)) return false;
     if(count>SIZE_MAX/sizeof(qa_item_definition))
         return application_fail(e,QA_ERROR_MEMORY,"Weapon declaration inventory exceeds native extent");
     qa_item_definition *definitions=count?malloc(count*sizeof(*definitions)):NULL;
     if(count&&!definitions) return application_fail(e,QA_ERROR_MEMORY,"Reading genuine weapon request declarations");
-    bool ok=qa_inventory_item_definitions(app->inventory,actor,definitions,count,&count,e),declared=false;
-    for(size_t i=0;ok&&i<count;++i) if(definitions[i].item==item&&definitions[i].owner==owner&&definitions[i].weapon) declared=true;
+    size_t written=0;
+    bool ok=qa_inventory_item_definitions(app->inventory,actor,definitions,count,&written,e);
+    if(ok&&written>count) ok=application_fail(e,QA_ERROR_ARGUMENT,"Weapon declaration extent changed during request");
+    for(size_t i=0;ok&&i<written;++i) if(definitions[i].item==item&&definitions[i].owner==owner&&definitions[i].weapon) declared=true;
     free(definitions);
-    if(!ok||!declared) return ok;
+    if(!ok) return false;
+    }
+    if(!declared) return true;
     double quantity=0;
     if(!qa_inventory_count_read(app->inventory,actor,item,&quantity,e)) return false;
     if(!current(app,provider,actor)) return application_fail(e,QA_ERROR_NOT_FOUND,"Weapon request source changed during its quantity read");

@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_MOD_ITEMS_H
 #include "guest_q3_mod.h"
 #include "qa/inventory.h"
+#include "qa/qvm_save.h"
 
 typedef struct application_q3_mod_items_profile application_q3_mod_items_profile;
 typedef struct application_q3_mod_items application_q3_mod_items;
@@ -59,6 +60,18 @@ bool application_q3_mod_items_entry_instruction(const application_q3_mod_items *
 bool application_q3_mod_items_entry_begin(application_q3_mod_items *,const qa_qvm_call *,
     application_q3_mod_items_entry **,qa_error *);
 bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **,bool succeeded,qa_error *);
+typedef bool (*application_q3_mod_items_proceed)(void *,const qa_qvm_call *,int32_t *,qa_error *);
+bool application_q3_mod_items_hook_run(application_q3_mod_items *,const qa_qvm_call *,
+    application_q3_mod_items_proceed,void *,int32_t *,qa_error *);
+size_t application_q3_mod_items_definition_count(const application_q3_mod_items_profile *);
+bool application_q3_mod_items_definition(const application_q3_mod_items_profile *,size_t,
+    qa_item_admission *,qa_bytes *icon,qa_bytes *held,qa_error *);
 bool application_q3_mod_items_checkpoint(application_q3_mod_items *,qa_buffer *,qa_error *);
 bool application_q3_mod_items_restore(application_q3_mod_items *,qa_bytes,qa_error *);
+size_t application_q3_mod_items_watch_count(const application_q3_mod_items *);
+bool application_q3_mod_items_watch(const application_q3_mod_items *,size_t,
+    qa_qvm_saved_write_watch *,qa_qvm_binding *saved,qa_error *);
+bool application_q3_mod_items_watches_adopt(application_q3_mod_items *,qa_error *);
+bool application_q3_mod_items_inventory_group(application_q3_mod_items *,qa_actor_id,
+    uint64_t serial,const qa_inventory_source_group *,qa_inventory_items *,qa_error *);
 #endif

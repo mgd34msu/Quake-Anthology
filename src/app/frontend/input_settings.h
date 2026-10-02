@@ -20,6 +20,9 @@ typedef struct frontend_input_settings_view {
 bool frontend_input_settings_prepare(qa_frontend *,const qa_input_platform_settings *,
     qa_input_seat *const configuration[QA_INPUT_LOCAL_SEATS],double now_ms,
     frontend_input_settings **,qa_error *);
+bool frontend_input_settings_prepare_selected(qa_frontend *,const qa_input_platform_settings *,
+    qa_input_seat *const configuration[QA_INPUT_LOCAL_SEATS],const qa_controller_selection [QA_INPUT_LOCAL_SEATS],
+    double,frontend_input_settings **,qa_error *);
 bool frontend_input_settings_reconnect_prepare(qa_frontend *,double now_ms,
     frontend_input_settings **,qa_error *);
 bool frontend_input_settings_current(const frontend_input_settings *,const qa_frontend *,qa_error *);

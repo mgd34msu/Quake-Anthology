@@ -20,9 +20,14 @@ typedef struct frontend_unified_q3_snapshots_options {
     /* Actual retained collision owner supplies the full actor/physical number
      * witness. The cache never guesses an actor number from a registry slot. */
     bool (*trace_number)(void *, const q3n_compiled_frame *, const qa_trace_result *, int32_t *, qa_error *);
+    /* Pure actual runtime reason: loading text or the real awaiting-snapshot
+     * branch. A caller cannot relabel a completed frame into those stages. */
+    bool (*draw_reason)(void *, q3n_compiled_stage);
 } frontend_unified_q3_snapshots_options;
 bool frontend_unified_q3_snapshots_create(const frontend_unified_q3_snapshots_options *,
     frontend_unified_q3_snapshots **, qa_error *);
+bool frontend_unified_q3_snapshots_create_video(const frontend_unified_q3_snapshots_options *,
+    const frontend_unified_q3_client_video *, frontend_unified_q3_snapshots **, qa_error *);
 bool frontend_unified_q3_snapshots_destroy(frontend_unified_q3_snapshots **, qa_error *);
 bool frontend_unified_q3_snapshots_idle(const frontend_unified_q3_snapshots *);
 /* Runs real child Init in its lexical scope. CG's private PlayerStateRecord
@@ -32,6 +37,8 @@ bool frontend_unified_q3_snapshots_initialize(frontend_unified_q3_snapshots *,
 bool frontend_unified_q3_snapshots_process(frontend_unified_q3_snapshots *, int32_t presentation_time,
     bool no_predict, bool synchronous_clients, qa_error *);
 bool frontend_unified_q3_snapshots_read(const frontend_unified_q3_snapshots *, q3n_compiled_frame *, qa_error *);
+bool frontend_unified_q3_snapshots_entered_draw(frontend_unified_q3_snapshots *,q3n_compiled_stage,
+    bool (*)(void *,const q3n_compiled_frame *,qa_error *),void *,qa_error *);
 q3n_entity *frontend_unified_q3_snapshots_storage(frontend_unified_q3_snapshots *);
 /* Publishes the actual predictor's merged Q3 PS copy. A foreign movement owner
  * must supply its authentic Q3 adapter; this API performs no family cast. */

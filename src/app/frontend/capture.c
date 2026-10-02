@@ -363,7 +363,8 @@ static bool resource_scopes(frontend_resource_inventory *inventory,qa_error *err
     }
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view v;
-        if (!frontend_source_group_read(f,i,&v) || !scope_add(inventory,(resource_scope){
+        if (!(inventory->video?frontend_source_group_video_read(f,i,&v,inventory->video):
+            frontend_source_group_read(f,i,&v)) || !scope_add(inventory,(resource_scope){
             .kind=RESOURCE_SOURCE,.ordinal=i,.owner=v.presentation,.provider=v.owner,.identity=v.identity,
             .seat=v.seat,.launch_seat=v.launch_seat,.source_files=v.source_files,.mounts=v.mounts,
             .roles={v.roles[0],v.roles[1],v.roles[2]}},error)) return false;
@@ -506,7 +507,7 @@ static bool heaps(qa_frontend *f, bool video, owner_append append, void *context
         !append(context,CAPTURE_ORDER,f->order,error)) return false;
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
-        if (!frontend_source_group_read(f,i,&group))
+        if (!(video?frontend_source_group_video_read(f,i,&group,f->video_guests):frontend_source_group_read(f,i,&group)))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture source is not fully constructed");
         if (!append(context,CAPTURE_IMAGES,group.images,error) || !append(context,CAPTURE_LIBRARY,group.materials,error) ||
             !append(context,CAPTURE_FONTS,group.fonts,error) || !append(context,CAPTURE_WORLD,group.world,error)) return false;
@@ -576,6 +577,12 @@ static bool heaps(qa_frontend *f, bool video, owner_append append, void *context
         if (media.declaration->none) continue;
         if (!append(context,CAPTURE_MODEL,media.held_scene,error)) return false;
     }
+    for(size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(f,i,&row,error) ||
+            !append(context,CAPTURE_IMAGES,row.images,error) || !append(context,CAPTURE_LIBRARY,row.materials,error) ||
+            !append(context,CAPTURE_FONTS,row.fonts,error)) return false;
+    }
     return append(context,CAPTURE_WORLD,f->scene_world,error);
 }
 static bool registry_children(owner_append append, void *context, assets_read read, qa_error *error)
@@ -604,6 +611,7 @@ static bool registry_children(owner_append append, void *context, assets_read re
             if (!qa_q3_assets_model_holder(assets,j,&model,error)) return false;
             if (!model.present) continue;
             if (!append(context,CAPTURE_WORLD,model.world,error)) return false;
+            if (!append(context,CAPTURE_MODEL,model.source_md4_scene,error)) return false;
             for (unsigned k=0;k<3;++k)
                 if (!append(context,CAPTURE_MODEL,model.scenes[k],error)) return false;
         }
@@ -615,7 +623,8 @@ static bool registries(qa_frontend *f, bool video, owner_append append, void *co
     bool ok=true;
     for (size_t i=0;ok && i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
-        ok=frontend_source_group_read(f,i,&group) && append(context,CAPTURE_ASSETS,group.assets,error);
+        ok=(video?frontend_source_group_video_read(f,i,&group,f->video_guests):frontend_source_group_read(f,i,&group)) &&
+            append(context,CAPTURE_ASSETS,group.assets,error);
     }
     for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
         frontend_native_q3_view owner;
@@ -641,6 +650,10 @@ static bool registries(qa_frontend *f, bool video, owner_append append, void *co
         frontend_equipment_gear_owner_view owner;
         ok=frontend_equipment_gear_at(f,i,&owner,error) && owner.assets &&
             append(context,CAPTURE_ASSETS,owner.assets,error);
+    }
+    for(size_t i=0;ok && i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(f,i,&row,error) && append(context,CAPTURE_ASSETS,row.assets,error);
     }
     if(ok && f->cpu && f->gl)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture has two physical Source renderers");

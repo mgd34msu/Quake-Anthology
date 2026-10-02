@@ -57,6 +57,8 @@ bool qa_q3_source_scene_bank_entity_read(const qa_q3_source_scene_bank *, uint32
 bool qa_q3_source_scene_bank_entity_lighting(qa_q3_source_scene_bank *, uint32_t,
     qa_vec3 ambient, qa_vec3 directed, qa_vec3 direction, float ambient_alpha,
     float axis_length, bool need_lights);
+bool qa_q3_source_scene_bank_entity_frames(qa_q3_source_scene_bank *, uint32_t,
+    int32_t frame, int32_t old_frame);
 bool qa_q3_source_scene_bank_poly_read(const qa_q3_source_scene_bank *, uint32_t,
     qa_q3_source_polygon_cell *, const qa_q3_poly_vertex **);
 bool qa_q3_source_scene_bank_light_read(const qa_q3_source_scene_bank *, uint32_t,

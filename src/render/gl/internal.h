@@ -15,7 +15,7 @@
 
 #define GL_MAX_LIGHTS_QA 8
 #define GL_DRAW_BUFFER_COUNT_QA 4
-#define GL_SOURCE_IMAGES_QA 1024
+#define GL_SOURCE_IMAGES_QA 2048
 
 typedef struct gl_api {
     const GLubyte *(APIENTRY *GetString)(GLenum);

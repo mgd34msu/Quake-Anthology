@@ -3,6 +3,7 @@
 #include "view_settings.h"
 #include "legacy_render_policy.h"
 #include "remote_unified_render_save.h"
+#include "remote_unified_save.h"
 #include "save_private.h"
 
 #include <float.h>
@@ -342,7 +343,7 @@ static bool render_model_fields(frontend_unified_render *r,unified_render_model 
         for (size_t i=0;i<frontend_unified_media_bank_count(r->media);++i)
             if (frontend_unified_media_bank_read(r->media,i,&bank) && content && !strcmp(content,bank.content)) { found=true; break; }
         okay=found && m->path && *m->path &&
-            frontend_remote_unified_actor(r->replica,actor.slot,actor.generation,&m->actor,io->error);
+            frontend_remote_unified_actor_retained(r->replica,actor.slot,actor.generation,&m->actor,io->error);
         if (okay && is_inline) {
             okay=!binding && content && inline_model<qa_collision_model_count(frontend_remote_unified_geometry(r->replica)) &&
                 qa_executable_recipe_choices(frontend_unified_media_recipe(r->media))->world.geometry==bank.product->id;
@@ -416,10 +417,19 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
     }
     return okay && render_blob(io,hud);
 }
+static bool render_frame_current(const frontend_unified_render *r)
+{
+    const qa_unified_document *published=frontend_remote_unified_frame(r->replica);
+    if (!published || !r->frame) return false;
+    qa_bytes actual=qa_json_source(qa_unified_document_json(published),qa_unified_document_root(published));
+    qa_bytes saved=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
+    return actual.size==saved.size && (!actual.size || !memcmp(actual.data,saved.data,actual.size));
+}
 bool frontend_unified_render_checkpoint(frontend_unified_render *r,
     const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!r || !refs || !refs->scene || !out || out->data || out->size || !frontend_unified_render_idle(r))
+    if (!r || !refs || !refs->scene || !out || out->data || out->size || !frontend_unified_render_idle(r) ||
+        !frontend_remote_unified_checkpoint_current(r->replica,error) || !render_frame_current(r))
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Received render capture requires its returned owner and shared dictionaries");
     qa_buffer hud={0}; qa_source_save_io io={0};
     bool okay=qa_hud_checkpoint(r->hud,&refs->hud,&hud,error) && qa_source_save_writer(&io,NULL,error) &&
@@ -434,12 +444,14 @@ bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *rep
     frontend_unified_render **out,qa_error *error)
 {
     if (!f || !replica || !media || !refs || !refs->scene || !out || *out ||
-        frontend_unified_media_importing(media) || !frontend_unified_media_current(media)) return false;
+        frontend_unified_media_importing(media) || !frontend_unified_media_current(media) ||
+        !frontend_remote_unified_checkpoint_current(replica,error)) return false;
     frontend_unified_render *r=calloc(1,sizeof(*r));
     if (!r) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining detached received render owner");
     r->frontend=f; r->replica=replica; r->media=media;
     qa_source_save_io io={0}; qa_buffer hud={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,error) && render_fields(r,refs,&io,&hud) && qa_source_save_finish(&io,NULL);
+    bool okay=qa_source_save_reader(&io,NULL,bytes,error) && render_fields(r,refs,&io,&hud) &&
+        qa_source_save_finish(&io,NULL) && render_frame_current(r);
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
     if (okay) okay=d && d->physical_seat<f->options.seats &&
         qa_hud_restore((qa_bytes){hud.data,hud.size},&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,

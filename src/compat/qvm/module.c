@@ -230,6 +230,23 @@ bool qa_qvm_restore_candidate_callbacks(qa_qvm *vm, qa_bytes state,
     return qa_qvm_execution_restore_callbacks(vm, source.counters[0], constructed, saved,
         count, resolver, saved_resolver, error);
 }
+bool qa_qvm_restore_candidate_inventory(qa_qvm *vm, qa_bytes state,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved, size_t count,
+    const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
+    const qa_qvm_saved_write_watch *watches, const qa_qvm_binding *saved_watches,
+    size_t watch_count, qa_error *error)
+{
+    saved_execution source;
+    if (!safe_point(vm,error) || vm->candidate_inventory ||
+        !restore_envelope(vm,state,true,&source,error) ||
+        !qa_qvm_memory_restore_watches_ready(vm,source.watch,watches,saved_watches,watch_count,error) ||
+        !qa_qvm_execution_restore_inventory(vm,source.counters[0],constructed,saved,
+            count,resolver,saved_resolver,error)) return false;
+    qa_qvm_memory_restore_watches(vm,source.watch,watches,saved_watches,watch_count);
+    memcpy(vm->candidate_inventory_digest.bytes,state.data+80,32);
+    vm->candidate_inventory=true;
+    return true;
+}
 
 static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
 {
@@ -237,7 +254,11 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     if (!safe_point(vm, error) || !restore_envelope(vm, state, candidate, &source, error)) return false;
     /* Host restoration sees the restored guest RAM, as in the donor. A host
      * restore error leaves the committed RAM visible and must be reported. */
-    qa_qvm_memory_close(vm);
+    if (vm->candidate_inventory && (!candidate ||
+        memcmp(vm->candidate_inventory_digest.bytes,state.data+80,32)))
+        return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"Candidate inventory belongs to another saved executor");
+    if (!vm->candidate_inventory) qa_qvm_memory_close(vm);
+    vm->candidate_inventory=false;
     qa_qvm_execution_reset(vm);
     memmove(vm->data,state.data + CHECKPOINT_HEADER,vm->data_size);
     uint64_t saved_sequence = qa_load_u64le(state.data + 40);

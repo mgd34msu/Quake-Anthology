@@ -145,6 +145,14 @@ bool application_q3_mod_client_live(const application_q3_mod *o, qa_actor_id act
     return o && o->profile->clients && o->services.live_client &&
         o->services.live_client(o->services.context,actor);
 }
+bool application_q3_mod_application_current(application_q3_mod *o,
+    const application_q3_mod_application *a,qa_actor_id actor)
+{
+    return o&&a&&o->application==a&&a->owner==o&&qa_actor_id_equal(a->actor,actor)&&
+        a->inputs.values[Q3_MOD_SELF].kind==Q3_MOD_VALUE_ACTOR&&
+        qa_actor_id_equal(a->inputs.values[Q3_MOD_SELF].as.actor,actor)&&
+        q3mod_current(o,NULL)&&application_q3_mod_client_live(o,actor);
+}
 bool application_q3_mod_input_update(application_q3_mod_application *a,
     const application_q3_mod_inputs *inputs, qa_error *e)
 {

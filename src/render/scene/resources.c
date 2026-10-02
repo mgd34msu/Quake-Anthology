@@ -20,6 +20,7 @@ struct qa_scene_geometry {
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
 static bool image_from_rgba(qa_scene_resources *, const char *, const qa_image *,
                             const qa_scene_image_options *, qa_scene_image **, qa_error *);
+static bool policy_source_image_admitted(qa_scene_resources *, const qa_scene_image *, qa_error *);
 
 struct qa_scene_resources_capture {
     qa_scene_resources *owner;
@@ -54,7 +55,7 @@ bool qa_scene_image_source_admit(qa_scene_resources *resources, qa_scene_image *
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source image admission lost its actual bank or texture unit"); return false;
     }
     image->source_q3 = true; image->source_texture_unit = unit;
-    if (!resources->source_admit) return true;
+    if (!resources->source_admit) return policy_source_image_admitted(resources, image, error);
     qa_scene_source_image_admit_fn admit = resources->source_admit;
     void *context = resources->source_admit_context;
     if (!admit(context, image, unit, error)) return false;
@@ -62,7 +63,7 @@ bool qa_scene_image_source_admit(qa_scene_resources *resources, qa_scene_image *
         qa_scene_image_resource_owner(image) != resources) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source image admission changed its retained owner"); return false;
     }
-    return true;
+    return policy_source_image_admitted(resources, image, error);
 }
 bool qa_scene_resources_capture_begin(const qa_scene_resources *borrowed,
     qa_scene_resources_capture **out, qa_error *error)
@@ -418,6 +419,7 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene resource identities exhausted");
         return false;
     }
+    owned->creation_sequence = owned->image.identity;
     for (size_t i = 0; i < count; ++i) {
         void *pixels = malloc(levels[i].bytes);
         if (pixels == NULL) { qa_scene_image_release(&owned->image); goto allocation_failed; }
@@ -693,6 +695,8 @@ struct qa_scene_resource_policy {
     qa_string_id *names;
     size_t count;
     qa_q3_image_upload_options source_upload;
+    const qa_scene_image **source_images;
+    size_t source_image_count;
     bool source_restart, sealed, published;
 };
 
@@ -711,11 +715,50 @@ static bool policy_held(const qa_scene_resource_policy *ticket)
 static bool policy_current(const qa_scene_resource_policy *ticket)
 { return policy_held(ticket) && qa_vfs_lookup_equal(ticket->owner->vfs, ticket->lookup); }
 
+static bool policy_source_image_admitted(qa_scene_resources *resources,
+    const qa_scene_image *image, qa_error *error)
+{
+    qa_scene_resource_policy *ticket = resources->policy_source ? resources->policy_source->policy_pending : NULL;
+    if (!ticket || ticket->destination != resources) return true;
+    if (!policy_held(ticket) || ticket->sealed || ticket->published)
+        return policy_error(error, "Prepared Source image admission lost its actual mutable destination");
+    for (size_t i = 0; i < ticket->source_image_count; ++i)
+        if (ticket->source_images[i] == image) return true;
+    if (!((const owned_image *)image)->creation_sequence ||
+        ticket->source_image_count == SIZE_MAX / sizeof(*ticket->source_images))
+        return policy_error(error, "Prepared Source image creation inventory is exhausted");
+    const qa_scene_image **rows = realloc(ticket->source_images,
+        (ticket->source_image_count + 1) * sizeof(*rows));
+    if (!rows) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining completed Source image admissions"); return false; }
+    ticket->source_images = rows; rows[ticket->source_image_count++] = image;
+    qa_scene_image_retain(image); return true;
+}
+bool qa_scene_resource_policy_source_image_count(const qa_scene_resource_policy *ticket,
+    size_t *out, qa_error *error)
+{
+    if (!out || !policy_held(ticket) || ticket->published)
+        return policy_error(error, "Source image inventory requires its actual prepared bank");
+    *out = ticket->source_image_count; return true;
+}
+bool qa_scene_resource_policy_source_image_at(const qa_scene_resource_policy *ticket, size_t index,
+    const qa_scene_image **out, uint64_t *sequence, qa_error *error)
+{
+    if (!out || !sequence || !policy_held(ticket) || ticket->published || index >= ticket->source_image_count)
+        return policy_error(error, "Source image admission ordinal is absent from its actual prepared bank");
+    const qa_scene_image *image = ticket->source_images[index];
+    if (!image->source_q3 || qa_scene_image_resource_owner(image) != ticket->destination ||
+        !((const owned_image *)image)->creation_sequence)
+        return policy_error(error, "Source image admission lost its actual completed image");
+    *out = image; *sequence = ((const owned_image *)image)->creation_sequence; return true;
+}
+
 static void policy_dispose(qa_scene_resource_policy *ticket)
 {
     ticket->owner->policy_pending = NULL;
     ticket->destination->policy_pending = NULL;
     qa_scene_resources_destroy(ticket->destination);
+    for (size_t i = 0; i < ticket->source_image_count; ++i) qa_scene_image_release(ticket->source_images[i]);
+    free(ticket->source_images);
     for (size_t i = 0; i < ticket->count; ++i) {
         qa_scene_image_release(ticket->mapped[i]); qa_scene_image_release(ticket->images[i]);
     }

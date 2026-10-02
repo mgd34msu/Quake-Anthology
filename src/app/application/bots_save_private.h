@@ -3,6 +3,7 @@
 
 #include "bots_private.h"
 #include "qa/persistence_content.h"
+#include "qa/source_save.h"
 
 bool application_bots_content_visit(const qa_application *,const qa_application_content_visitor *,qa_error *);
 bool application_navigation_asset_field(qa_source_save_io *,qa_application *,qa_vfs *,

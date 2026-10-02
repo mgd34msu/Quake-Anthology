@@ -163,6 +163,7 @@ const q3n_media_view *q3n_media_read(const q3n_media *);
 qa_q3_presentation_assets *q3n_media_assets(const q3n_media *);
 bool q3n_media_remote_current(const q3n_media *, const q3n_remote_source_view *, qa_error *);
 bool q3n_media_compiled_current(const q3n_media *, const q3n_compiled_source_view *, qa_error *);
+bool q3n_media_compiled_reset(q3n_media *, const q3n_compiled_source_view *, qa_error *);
 bool q3n_media_compiled_configstring_changed(q3n_media *, const q3n_compiled_source_view *, uint32_t, qa_error *);
 /* Pure observation is valid inside an authored loading callback while the
  * media owner is busy. It performs no registration or renderer work. */

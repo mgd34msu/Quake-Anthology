@@ -35,7 +35,7 @@ static bool create(qa_bot_library *library, const char *path, float skill,
 }
 static bool copy_value(qa_bot_character *c, uint32_t index, qa_bot_character_value value,
                        qa_error *e) {
-    return bot_character_write(c, index, value, true, e) && bot_character_project(c, e);
+    return bot_character_write(c, index, value, true, e);
 }
 bool qa_bot_character_restore(const qa_bot_character_view *view, qa_bot_character **out,
                               qa_error *e) {
@@ -83,6 +83,7 @@ static bool parse(qa_bot_library *library, const char *path, int desired, qa_bot
     if (!qa_script_open(path, &scripts, &library->options.preprocessor, &s, e)) {
         *source_failure = !host->callback_failed && e &&
             (e->code == QA_ERROR_FORMAT || e->code == QA_ERROR_NOT_FOUND);
+        if (*source_failure) bot_character_reader_report(host, NULL, path, e);
         free(host); return false;
     }
     qa_bot_character *c = NULL;
@@ -162,8 +163,9 @@ static bool parse(qa_bot_library *library, const char *path, int desired, qa_bot
                 break;
             }
             uint32_t index = (uint32_t)token.integer;
-            if (!bot_character_project(c, e)) { native_failure = true; ok = false; break; }
-            if (c->view.values[index].kind != QA_BOT_CHARACTER_UNSET) {
+            qa_bot_character_value_kind kind;
+            if (!bot_character_kind(c, index, &kind, e)) { native_failure = true; ok = false; break; }
+            if (kind != QA_BOT_CHARACTER_UNSET) {
                 ok = bot_fail(s, "Duplicate character characteristic", e);
                 break;
             }
@@ -206,9 +208,10 @@ static bool parse(qa_bot_library *library, const char *path, int desired, qa_bot
     c->active = false;
     *source_failure = !ok && !native_failure && !host->callback_failed && e &&
         (e->code == QA_ERROR_FORMAT || e->code == QA_ERROR_NOT_FOUND);
+    if (*source_failure) bot_character_reader_report(host, s, path, e);
     if (ok || *source_failure) { qa_script_close(s); c->reader = NULL; }
     if (ok && *found) {
-        c->ready = true; ok = bot_character_project(c, e);
+        c->ready = true; ok = bot_character_header(c, e);
         if (ok && library->character_publish)
             ok = library->character_publish(library->character_context, c, e);
     }
@@ -224,7 +227,7 @@ static bool parse(qa_bot_library *library, const char *path, int desired, qa_bot
 }
 static qa_bot_character *cached(qa_bot_library *library, const char *path, float skill) {
     for (qa_bot_character *c = library->characters; c != NULL; c = c->next)
-        if (c->ready && bot_character_project(c, NULL) && strcmp(c->view.path, path) == 0 &&
+        if (c->ready && bot_character_header(c, NULL) && strcmp(c->view.path, path) == 0 &&
             (skill < 0 || fabsf(c->view.skill - skill) < 0.01f))
             return c;
     return NULL;
@@ -242,8 +245,10 @@ static void store(qa_bot_library *library, qa_bot_character *c) {
 static bool attempt(qa_bot_library *library, const char *path, int skill, bool use_cache,
                     qa_bot_character **out, bool *found, qa_error *e) {
     *found = false;
-    if (library->character_available && !library->character_available(library->character_context))
+    if (library->character_available && !library->character_available(library->character_context)) {
+        library->character_exhausted = true;
         return true;
+    }
     if (use_cache) {
         qa_bot_character *c = cached(library, path, (float)skill);
         if (c != NULL) {
@@ -258,14 +263,6 @@ static bool attempt(qa_bot_library *library, const char *path, int skill, bool u
     bool source_failure;
     if (!parse(library, path, skill, &c, found, &source_failure, &local)) {
         if (source_failure) {
-            const qa_script_services *services = &library->options.scripts;
-            if (services->diagnostic != NULL) {
-                qa_script_diagnostic diagnostic = {
-                    .severity = QA_SCRIPT_ERROR,
-                    .location = {.path = path, .offset = local.offset},
-                    .message = local.message};
-                services->diagnostic(services->context, &diagnostic);
-            }
             return true;
         }
         if (e != NULL)
@@ -303,11 +300,16 @@ static bool load_skill(qa_bot_library *library, const char *path, float skill,
     }
     if (*found && have_defaults && c != defaults) {
         for (uint32_t i = 0; i < 80; ++i) {
-            if (!bot_character_project(c, e) || !bot_character_project(defaults, e)) {
+            qa_bot_character_value_kind kind;
+            if (!bot_character_kind(c, i, &kind, e)) {
                 qa_bot_character_release(defaults); qa_bot_character_release(c); return false;
             }
-            if (c->view.values[i].kind == QA_BOT_CHARACTER_UNSET &&
-                !copy_value(c, i, defaults->view.values[i], e)) {
+            if (kind != QA_BOT_CHARACTER_UNSET) continue;
+            qa_bot_character_value value;
+            qa_bot_character_value_kind default_kind;
+            if (!bot_character_kind(defaults, i, &default_kind, e) ||
+                (default_kind != QA_BOT_CHARACTER_UNSET &&
+                 (!bot_character_value(defaults, i, &value, e) || !copy_value(c, i, value, e)))) {
                 qa_bot_character_release(defaults);
                 qa_bot_character_release(c);
                 return false;
@@ -363,7 +365,7 @@ static bool load_source(qa_bot_library *library, const char *path, float skill,
     if (library->character_available && !library->character_available(library->character_context)) {
         qa_bot_character_release(first); qa_bot_character_release(second); *out = NULL; return true;
     }
-    if (!bot_character_project(first, e) || !bot_character_project(second, e) ||
+    if (!bot_character_header(first, e) || !bot_character_header(second, e) ||
         !create(library, "", skill, &c, e)) {
         if (c) store(library, c);
         qa_bot_character_release(c);
@@ -372,7 +374,7 @@ static bool load_source(qa_bot_library *library, const char *path, float skill,
         return false;
     }
     store(library, c);
-    if (!bot_character_project(first, e) || !bot_character_project(second, e) ||
+    if (!bot_character_header(first, e) || !bot_character_header(second, e) ||
         !bot_character_filename(c, first->view.path, e)) {
         qa_bot_character_release(first); qa_bot_character_release(second);
         qa_bot_character_release(c); return false;
@@ -382,20 +384,26 @@ static bool load_source(qa_bot_library *library, const char *path, float skill,
         qa_bot_character_release(first); qa_bot_character_release(second);
         qa_bot_character_release(c); return false;
     }
+    c->ready = true;
     float scale = (skill - first->view.skill) / (second->view.skill - first->view.skill);
     bool ok = true;
     for (uint32_t i = 0; ok && i < 80; ++i) {
-        if (!bot_character_project(first, e) || !bot_character_project(second, e)) { ok = false; break; }
-        qa_bot_character_value lower = first->view.values[i], upper = second->view.values[i];
-        if (lower.kind == QA_BOT_CHARACTER_FLOAT && upper.kind == QA_BOT_CHARACTER_FLOAT) {
-            lower.data.number += (upper.data.number - lower.data.number) * scale;
+        qa_bot_character_value_kind lower_kind, upper_kind;
+        if (!bot_character_kind(first, i, &lower_kind, e) ||
+            !bot_character_kind(second, i, &upper_kind, e)) { ok = false; break; }
+        qa_bot_character_value lower, upper;
+        if (lower_kind == QA_BOT_CHARACTER_FLOAT && upper_kind == QA_BOT_CHARACTER_FLOAT) {
+            if (!bot_character_value(first, i, &lower, e) || !bot_character_value(second, i, &upper, e)) { ok = false; break; }
+            float delta = upper.data.number - lower.data.number;
+            volatile float product = delta * scale;
+            lower.data.number += product;
             ok = bot_character_write(c, i, lower, false, e);
-        } else if (lower.kind == QA_BOT_CHARACTER_INTEGER || lower.kind == QA_BOT_CHARACTER_STRING)
-            ok = copy_value(c, i, lower, e);
+        } else if (lower_kind == QA_BOT_CHARACTER_INTEGER || lower_kind == QA_BOT_CHARACTER_STRING)
+            ok = bot_character_value(first, i, &lower, e) && copy_value(c, i, lower, e);
     }
     if (ok) {
         c->ready = true;
-        ok = bot_character_project(c, e);
+        ok = bot_character_header(c, e);
     }
     if (ok) {
         store(library, c);
@@ -416,6 +424,7 @@ bool bot_character_load(qa_bot_library *library, const char *path, float skill,
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Character source owner is absent, disposed or loading"); return false;
     }
     library->character_loading = true;
+    library->character_exhausted = false;
     bool okay = load_source(library, path, skill, out, interpolated, e);
     library->character_loading = false; return okay;
 }
@@ -429,8 +438,12 @@ static const qa_bot_character_value *get(const qa_bot_character *c, uint32_t ind
         qa_error_set(e, QA_ERROR_ARGUMENT, index, "Character characteristic is outside 0..79");
         return NULL;
     }
-    if (!bot_character_project((qa_bot_character *)c, e)) return NULL;
-    const qa_bot_character_value *v = c->view.values + index;
+    qa_bot_character_value *v = ((qa_bot_character *)c)->view.values + index;
+    qa_bot_character_value_kind kind;
+    if (!bot_character_kind((qa_bot_character *)c, index, &kind, e)) return NULL;
+    *v = (qa_bot_character_value){.kind = kind};
+    if ((kind == QA_BOT_CHARACTER_INTEGER || kind == QA_BOT_CHARACTER_FLOAT) &&
+        !bot_character_value((qa_bot_character *)c, index, v, e)) return NULL;
     if (v->kind == QA_BOT_CHARACTER_UNSET) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, index, "Character characteristic is unset");
         return NULL;
@@ -495,7 +508,9 @@ bool qa_bot_character_string(const qa_bot_character *c, uint32_t index, const ch
         qa_error_set(e, QA_ERROR_FORMAT, index, "Character characteristic is not a string");
         return false;
     }
-    *out = v->data.string;
+    qa_bot_character_value value;
+    if (!bot_character_value((qa_bot_character *)c, index, &value, e)) return false;
+    *out = value.data.string;
     return true;
 }
 bool qa_bot_character_bounded_float(const qa_bot_character *c, uint32_t index, float minimum,

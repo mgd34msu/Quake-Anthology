@@ -121,6 +121,7 @@ static bool load_source(qa_bot_library *library, const char *path, size_t capaci
 fail:
     c->active = false;
     if (!host->callback_failed && e && (e->code == QA_ERROR_FORMAT || e->code == QA_ERROR_NOT_FOUND)) {
+        bot_character_reader_report(host, s, path, e);
         if (!qa_bot_items_free(c, e)) { qa_bot_items_release(c); return false; }
         if (classname_failure) c->reader_retired = true;
         else { qa_script_close(s); c->reader = NULL; }
@@ -156,8 +157,8 @@ bool qa_bot_items_restore(const qa_bot_items_view *view, qa_bot_items **out, qa_
     bool okay = bot_items_create(memory, view->path, view->capacity, &c, e);
     (void)qa_bot_memory_release(memory, NULL);
     if (!okay) return false;
-    for (size_t i = 0; i < view->capacity; ++i)
-        if (view->items && !bot_items_store(c, i, view->items + i, e)) { qa_bot_items_release(c); return false; }
+    for (size_t i = 0; i < view->count; ++i)
+        if (!bot_items_store(c, i, view->items + i, e)) { qa_bot_items_release(c); return false; }
     if (!bot_items_count(c, (uint32_t)view->count, e) || !bot_items_members_restore(c, e) || !bot_items_project(c, e)) {
         qa_bot_items_release(c); return false;
     }

@@ -474,7 +474,10 @@ typedef enum qa_native_restore_part {
  * spawning belongs between those source operations. The host part must cover
  * slot-to-actor bindings, source ownership and any shared service continuation
  * that the module cannot serialize itself. Q3/QL bindings must cover their
- * complete guest-visible continuation because those APIs expose no save ABI. */
+ * complete guest-visible continuation because those APIs expose no save ABI.
+ * An owned process also captures its original private CPU/RAM/runtime capsule.
+ * With game and level both false, no source exporter runs; declared callback
+ * owners restore that complete capsule through actual cold construction. */
 bool qa_native_checkpoint_capture(qa_native_instance *instance,
                                   qa_native_checkpoint_request request, qa_native_checkpoint *out,
                                   qa_error *error);

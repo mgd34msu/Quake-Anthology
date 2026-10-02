@@ -141,7 +141,7 @@ static void qualified_digest(const application_q2_held_resource *held, bool deri
     }
     if (held->kind == APPLICATION_Q2_HELD_EVENT) {
         hash_number(&hash, (uint64_t)held->event_kind);
-        hash_text(&hash, held->event_key);
+        hash_text(&hash, held->event_key); hash_number(&hash, held->event_custody);
     }
     if (held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL) {
         hash_image_options(&hash, &held->image_options);
@@ -605,7 +605,7 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     const qa_application_protocol_resource_reference *reference, uint32_t *out, qa_error *error)
 {
     application_unified_event_source source;
-    if (!owner || !reference || !reference->name || !out || reference->kind > QA_NATIVE_HOST_IMAGE ||
+    if (!owner || !reference || !reference->name || !out || (unsigned)reference->kind > QA_NATIVE_HOST_IMAGE ||
         !memchr(reference->resource_key, 0, sizeof(reference->resource_key)) ||
         !application_network_q2_current(owner, error) ||
         !application_unified_event_source_read(owner->app, emitter, &source, error) ||
@@ -615,16 +615,22 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     if (!*reference->name) { *out = 0; return true; }
     if (!*reference->resource_key && ((kind == QA_NATIVE_HOST_SOUND && reference->name[0] == '*') ||
         (kind == QA_NATIVE_HOST_MODEL && (reference->name[0] == '*' || reference->name[0] == '#')))) {
-        if (kind == QA_NATIVE_HOST_MODEL && reference->name[0] == '*' && emitter != owner->host.source.source_owner)
-            return application_fail(error, QA_ERROR_UNSUPPORTED, "Foreign Q2 inline model belongs to another actual map");
+        application_provider *actual = provider_at(owner, emitter);
+        if (kind == QA_NATIVE_HOST_MODEL && reference->name[0] == '*' &&
+            (!actual || actual->kind != APPLICATION_PROVIDER_NATIVE || !actual->state.native.q2_engine ||
+                actual->state.native.q2_engine->world != owner->app->world))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q2 inline model lost its actual shared WORLD map");
         return application_network_q2_resource(owner, kind, reference->name, out, error);
     }
     const application_unified_event_resource *receipt = *reference->resource_key ?
         event_receipt(owner->app, reference->resource_key) : NULL;
-    const qa_launch_instance *registered = receipt ? qa_launch_instance_lease_view(receipt->descriptor) : NULL;
+    const qa_resource *captured = NULL; const qa_vfs *captured_view = NULL;
+    const qa_vfs_acquisition *captured_opening = NULL;
+    if (receipt && !application_unified_event_resource_receipt_read(owner->app, reference->resource_key,
+        reference->resource_custody, &captured, &captured_view, &captured_opening, error)) return false;
     const char *content = receipt ? qa_strings_cstr(qa_session_strings(owner->app->session), receipt->content) : NULL;
-    const char *path = receipt ? qa_strings_cstr(qa_session_strings(owner->app->session), receipt->path) : reference->name;
-    if (*reference->resource_key && (!receipt || !registered || !registered->content || !receipt->resource ||
+    const char *path = receipt ? captured_opening->path : reference->name;
+    if (*reference->resource_key && (!receipt || !captured_view || !captured ||
         !content || strcmp(content, source.product->identity) || !path || !*path))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 event lost its immutable captured resource key");
     if (!receipt && kind == QA_NATIVE_HOST_SOUND && *path == '#') ++path;
@@ -640,15 +646,18 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     application_q2_held_resource held = {.provider = emitter, .identity = source.descriptor->identity,
         .kind = receipt && kind == QA_NATIVE_HOST_MODEL ? APPLICATION_Q2_HELD_MODEL : APPLICATION_Q2_HELD_EVENT,
         .missing = receipt == NULL, .event_kind = reference->kind};
-    if (held.kind == APPLICATION_Q2_HELD_EVENT) memcpy(held.event_key, reference->resource_key, sizeof(held.event_key));
+    if (held.kind == APPLICATION_Q2_HELD_EVENT) {
+        memcpy(held.event_key, reference->resource_key, sizeof(held.event_key)); held.event_custody = reference->resource_custody;
+    }
     held.instance = application_network_q2_copy(source.descriptor->selection.instance, error);
     held.path = qa_scene_model_image_path(path, error);
-    held.view = qa_vfs_clone(receipt ? registered->content : source.content, error);
+    held.view = qa_vfs_clone(receipt ? captured_view : source.content, error);
     free(requested);
     bool ok = held.instance && held.path && held.view;
     if (ok && receipt) {
-        ok = retained_opening(held.view, held.path, receipt->resource, NULL, &held.opening, error);
-        if (ok) { held.resource = receipt->resource; qa_resource_retain(held.resource); }
+        ok = qa_vfs_acquisition_retained(held.view, captured_opening, error) &&
+            acquisition_copy(captured_opening, &held.opening, error);
+        if (ok) { held.resource = (qa_resource *)captured; qa_resource_retain(held.resource); }
     }
     size_t dependency_start = owner->held_resource_count;
     if (ok && held.kind == APPLICATION_Q2_HELD_MODEL) ok = model_derivation(owner, &held, error);
@@ -829,7 +838,8 @@ static bool derivation_current(qa_application_network_q2 *owner, const applicati
         held->script_size || held->name_offset || held->name_size || held->catalog_bytes.size))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 non-material holder carries a foreign catalog span");
     if ((held->sky_face ? held->kind != APPLICATION_Q2_HELD_DEPENDENCY || !held->sky_base : held->sky_base != NULL) ||
-        (held->kind != APPLICATION_Q2_HELD_EVENT && (held->event_kind != QA_NATIVE_HOST_MODEL || held->event_key[0])))
+        (held->kind != APPLICATION_Q2_HELD_EVENT &&
+            (held->event_kind != QA_NATIVE_HOST_MODEL || held->event_key[0] || held->event_custody)))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 holder fields do not belong to its actual Source kind");
     if (held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL) {
         if (!image_source_current(owner, held, error)) return false;
@@ -843,13 +853,17 @@ static bool derivation_current(qa_application_network_q2 *owner, const applicati
         if (held->event_kind > QA_NATIVE_HOST_IMAGE || held->wire_bytes.size || held->dependency_count ||
             !memchr(held->event_key, 0, sizeof(held->event_key)) || (held->missing ? held->event_key[0] != 0 : !held->event_key[0]))
             return application_fail(error, QA_ERROR_FORMAT, "Q2 event holder lost its actual captured resource domain");
-        if (held->missing) return true;
+        if (held->missing) return !held->event_custody;
         const application_unified_event_resource *receipt = event_receipt(owner->app, held->event_key);
-        const char *path = receipt ? qa_strings_cstr(qa_session_strings(owner->app->session), receipt->path) : NULL;
         const char *content = receipt ? qa_strings_cstr(qa_session_strings(owner->app->session), receipt->content) : NULL;
         application_provider *provider = provider_at(owner, held->provider);
-        return (receipt && receipt->resource == held->resource && path && !strcmp(path, held->path) && content &&
-            provider && provider->product && !strcmp(content, provider->product->identity)) ||
+        const qa_resource *resource = NULL; const qa_vfs *view = NULL; const qa_vfs_acquisition *opening = NULL;
+        if (!receipt || !application_unified_event_resource_receipt_read(owner->app, held->event_key, held->event_custody,
+            &resource, &view, &opening, error)) return false;
+        application_q2_held_resource actual = *held; actual.resource = (qa_resource *)resource; actual.opening = *opening;
+        qa_sha256_digest source, saved; qualified_digest(&actual, false, &source); qualified_digest(held, false, &saved);
+        return (resource == held->resource && !strcmp(opening->path, held->path) && content && provider && provider->product &&
+            !strcmp(content, provider->product->identity) && qa_sha256_equal(&source, &saved)) ||
             application_fail(error, QA_ERROR_FORMAT, "Q2 event holder differs from its immutable captured resource key");
     }
     if (held->kind == APPLICATION_Q2_HELD_DEPENDENCY)
@@ -958,7 +972,8 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         !buffer_field(io, &held->catalog_bytes, memory ? INT32_MAX : 0)) return false;
     uint32_t event_kind = (uint32_t)held->event_kind;
     if (!qa_source_save_u32(io, &event_kind) || event_kind > QA_NATIVE_HOST_IMAGE ||
-        !qa_source_save_bytes(io, held->event_key, sizeof(held->event_key))) return false;
+        !qa_source_save_bytes(io, held->event_key, sizeof(held->event_key)) ||
+        !qa_source_save_u64(io, &held->event_custody)) return false;
     held->event_kind = (qa_native_host_resource_kind)event_kind;
     if ((held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL) &&
         !image_fields(io, held)) return false;
@@ -990,7 +1005,7 @@ bool application_network_q2_resources_capture(qa_application_network_q2 *owner, 
 {
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, owner->app->session, error)) return false;
-    uint32_t version = 5; size_t count = owner->held_resource_count;
+    uint32_t version = 6; size_t count = owner->held_resource_count;
     bool ok = qa_source_save_u32(&io, &version) && qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i) ok = derivation_current(owner, &owner->held_resources[i], error) &&
         holder_fields(owner, &io, &owner->held_resources[i]);
@@ -1004,7 +1019,7 @@ bool application_network_q2_resources_restore(qa_application_network_q2 *owner, 
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, owner->app->session, bytes, error)) return false;
     uint32_t version = 0; size_t count = 0;
-    bool ok = qa_source_save_u32(&io, &version) && version == 5 && qa_source_save_count(&io, &count, UINT32_MAX);
+    bool ok = qa_source_save_u32(&io, &version) && version == 6 && qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i) {
         application_q2_held_resource held = {0};
         ok = holder_fields(owner, &io, &held) && derivation_current(owner, &held, error);

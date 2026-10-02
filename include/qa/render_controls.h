@@ -7,6 +7,7 @@ typedef struct qa_cpu_renderer qa_cpu_renderer;
 typedef struct qa_gl_renderer qa_gl_renderer;
 typedef struct qa_render_controls qa_render_controls;
 typedef struct qa_render_controls_ticket qa_render_controls_ticket;
+typedef struct qa_render_source_images_ticket qa_render_source_images_ticket;
 typedef struct qa_render_controls_values {
     int32_t primitives;
     bool compiled_vertex_arrays;
@@ -28,6 +29,15 @@ bool qa_render_controls_source_image_admit(qa_render_controls *,const qa_scene_i
 bool qa_render_controls_source_images_metadata(const qa_render_controls *,size_t *count,qa_error *);
 bool qa_render_controls_source_image_metadata(const qa_render_controls *,size_t ordinal,
     const qa_scene_image **,qa_error *);
+/* Native image objects prepare separately from the current bindings. Publish
+ * after resource banks and the real renderer surface have transferred. */
+bool qa_render_controls_source_images_prepare(qa_render_controls *,qa_scene_resource_policy *const *,
+    size_t,qa_render_source_images_ticket **,qa_error *);
+bool qa_render_controls_source_images_ready(const qa_render_source_images_ticket *,qa_error *);
+bool qa_render_controls_source_images_ready_is(const qa_render_source_images_ticket *);
+void qa_render_controls_source_images_publish(qa_render_source_images_ticket *);
+bool qa_render_controls_source_images_finish(qa_render_source_images_ticket **,qa_error *);
+bool qa_render_controls_source_images_abort(qa_render_source_images_ticket **,qa_error *);
 
 /* Preserve the Source integer, including values which suppress stage draws.
  * A ticket holds the renderer until publish/finish or checked abort. */

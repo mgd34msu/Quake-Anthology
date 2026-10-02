@@ -3,23 +3,32 @@
 #include "qa/source_save.h"
 #include "internal.h"
 
+typedef struct equipment_slot_context {
+    qa_equipment *equipment;
+    qa_actor_owner owner;
+} equipment_slot_context;
 typedef struct equipment_actor {
     qa_equipment_state state;
     qa_equipment_source grapple, grenades, items;
     bool active, configuring;
+    equipment_slot_context primary_slot, grapple_slot;
 } equipment_actor;
 struct qa_equipment {
     qa_equipment_options options;
     equipment_actor *actors;
     uint32_t capacity;
     size_t operation_depth;
+    qa_weapon_slot **slots;
 };
+static bool equipment_slot_ensure(qa_equipment *,qa_actor_id,qa_error *);
 bool qa_equipment_idle(const qa_equipment *g) {
     if (!g || g->operation_depth)
         return false;
     for (uint32_t i = 0; i < g->capacity; ++i)
         if (g->actors[i].configuring)
             return false;
+    for (uint32_t i=0;i<g->capacity;++i)
+        if (g->slots[i]&&!qa_weapon_slot_idle(g->slots[i])) return false;
     return !g->options.source_idle || g->options.source_idle(g->options.source_context);
 }
 static equipment_actor *equipment_get(qa_equipment *g, qa_actor_id actor) {
@@ -64,7 +73,7 @@ static bool selection_valid(qa_equipment *g, const qa_equipment_selection *s,
     if (s->grapple == QA_GRAPPLE_Q3 && !grapple->q3 && !grapple->admit)
         return false;
     if (s->grapple != QA_GRAPPLE_DISABLED && s->binding == QA_EQUIPMENT_WEAPON_SLOT &&
-        (!g->options.primary_holster || !g->options.primary_holstered ||
+        (!g->options.primary_holster || (!g->options.primary_holstered&&!g->options.primary_holstered_read) ||
          !g->options.primary_resume))
         return false;
     return true;
@@ -190,7 +199,9 @@ bool qa_equipment_create(const qa_equipment_options *options, qa_equipment **out
     g->options = *options;
     g->capacity = qa_actors_capacity(qa_session_actors(options->services.session));
     g->actors = calloc(g->capacity, sizeof(*g->actors));
-    if (!g->actors) {
+    g->slots = calloc(g->capacity, sizeof(*g->slots));
+    if (!g->actors || !g->slots) {
+        free(g->actors); free(g->slots);
         free(g);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating equipment players");
         return false;
@@ -205,8 +216,11 @@ bool qa_equipment_destroy_checked(qa_equipment *g, qa_error *e) {
     if (!g)
         return true;
     if (!qa_equipment_idle(g)) return mode_fail(e, "equipment destruction retains a source operation");
+    for(uint32_t i=0;i<g->capacity;++i)
+        if(!qa_weapon_slot_destroy(&g->slots[i],e)) return false;
     if (g->options.source_destroy && !g->options.source_destroy(g->options.source_context, e)) return false;
     free(g->actors);
+    free(g->slots);
     free(g);
     return true;
 }
@@ -433,6 +447,11 @@ static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipme
     return true;
 }
 static bool equipment_select_grapple(qa_equipment *, qa_actor_id, bool, qa_error *);
+static bool primary_holstered_read(qa_equipment *g,qa_actor_id actor,bool *out,qa_error *e) {
+    if(g->options.primary_holstered_read)
+        return g->options.primary_holstered_read(g->options.context,actor,out,e);
+    *out=g->options.primary_holstered(g->options.context,actor); return true;
+}
 static bool resume_primary(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     equipment_actor *p=equipment_get(g,actor);
     if(!p) return true;
@@ -520,7 +539,10 @@ static bool equipment_reconcile(qa_equipment *g,qa_actor_id actor,qa_error *e) {
         if(!p->state.slot_requested) return resume_primary(g,actor,e);
         p->state.slot_holstering=true;
     }
-    if(!p->state.slot_holstering||!g->options.primary_holstered(g->options.context,actor)) return true;
+    bool holstered=false;
+    if(!p->state.slot_holstering) return true;
+    if(!primary_holstered_read(g,actor,&holstered,e)) return false;
+    if(!holstered) return true;
     p=equipment_get(g,actor); if(!p) return true;
     p->state.slot_holstering=false; p->state.slot_active=p->state.slot_requested;
     if(!p->state.slot_requested) return resume_primary(g,actor,e);
@@ -641,8 +663,8 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
             return resume_primary(g, actor, e);
         s->slot_holstering = true;
     }
-    bool holstered = s->slot_holstering &&
-        g->options.primary_holstered(g->options.context, actor);
+    bool holstered = false;
+    if(s->slot_holstering&&!primary_holstered_read(g,actor,&holstered,e)) return false;
     p = equipment_get(g, actor);
     if (!p) return true;
     s = &p->state; c = &s->controls;

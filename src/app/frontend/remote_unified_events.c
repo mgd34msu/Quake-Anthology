@@ -289,6 +289,13 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_document *d,b
         qa_json_id row=qa_json_at(j,root,i); double sequence;
         if (!scalar(d,field(j,row,"sequence"),&sequence,e)) return false;
         if (!simulation) {
+            qa_json_id recipient=field(j,row,"recipient");
+            if (recipient!=QA_JSON_NONE && qa_json_type(j,recipient)!=QA_JSON_NULL) {
+                qa_actor_id received,viewer; uint32_t number;
+                if (!actor(o,d,recipient,&received,e) ||
+                    !frontend_remote_unified_player(o->replica,&viewer,&number) || !qa_actor_id_equal(received,viewer))
+                    return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified presentation changed its admitted full actor recipient");
+            }
             qa_json_id token=field(j,row,"owner");
             if (token!=QA_JSON_NONE && qa_json_type(j,token)!=QA_JSON_NULL) {
                 qa_buffer provider={0}; uint64_t generation=0;

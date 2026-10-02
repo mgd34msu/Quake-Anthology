@@ -62,6 +62,19 @@ static bool event_fail(qa_source_save_io *io, qa_status status, const char *text
     return false;
 }
 
+static bool acquisition_text(qa_source_save_io *io, char **value)
+{
+    const char *text = *value;
+    if (!qa_source_save_text(io, &text)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && text) {
+        size_t size = strlen(text) + 1;
+        *value = malloc(size);
+        if (!*value) return event_fail(io, QA_ERROR_MEMORY, "Retaining Source dictionary opening text");
+        memcpy(*value, text, size);
+    }
+    return true;
+}
+
 static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[sizeof(event_magic)];
@@ -711,10 +724,12 @@ static bool protocol_field(qa_source_save_io *io, event_store *store,
         if (!qa_source_save_count(io, &resource.record_ordinal, SIZE_MAX) ||
             !enum_field(io, &kind, QA_NATIVE_HOST_IMAGE) || !qa_source_save_u32(io, &resource.source_index) ||
             !text_field(io, store, &resource.name) ||
-            !qa_source_save_bytes(io, resource.resource_key, sizeof(resource.resource_key))) return false;
+            !qa_source_save_bytes(io, resource.resource_key, sizeof(resource.resource_key)) ||
+            !qa_source_save_u64(io, &resource.resource_custody)) return false;
         resource.kind = (qa_native_host_resource_kind)kind;
         if (!resource.name || resource.record_ordinal >= size || resource.resource_key[80] ||
-            (resource.resource_key[0] && strncmp(resource.resource_key, "resource:unified:", 16)))
+            (resource.resource_key[0] && strncmp(resource.resource_key, "resource:unified:", 16)) ||
+            (!resource.resource_key[0] && resource.resource_custody))
             return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipt differs from its immutable registration");
         if (resources) resources[i] = resource;
     }
@@ -800,7 +815,16 @@ static void dispose_store(event_store *store)
     for (size_t i = 0; store->resources && i < store->resource_count; ++i) {
         qa_buffer_free(&store->resources[i].key);
         qa_resource_release(store->resources[i].resource);
+        qa_launch_instance_lease_release(store->resources[i].descriptor);
+        qa_vfs_acquisition_dispose(&store->resources[i].opening);
+        qa_vfs_destroy(store->resources[i].view);
         qa_resource_pool_destroy(store->resources[i].pool);
+        for (size_t j = 0; j < store->resources[i].custody_count; ++j) {
+            application_unified_event_resource_custody *held = store->resources[i].custodies + j;
+            qa_resource_release(held->resource); qa_vfs_acquisition_dispose(&held->opening);
+            qa_vfs_destroy(held->view); qa_resource_pool_destroy(held->pool);
+        }
+        free(store->resources[i].custodies);
     }
     free(store->resources);
     free(store->registrations);
@@ -1009,6 +1033,28 @@ static bool persistent_rows(qa_source_save_io *io, event_store *store)
     return true;
 }
 
+static bool custody_field(qa_source_save_io *io, const qa_application_content_graph *graph,
+    application_unified_event_resource_custody *held)
+{
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        held->saved_view = qa_application_content_view_id(graph, held->view);
+        if (!held->saved_view || !qa_application_content_resource_id(graph, held->resource,
+            &held->saved_pool, &held->saved_resource))
+            return event_fail(io, QA_ERROR_FORMAT, "Source custody is outside its captured CONTENT graph");
+    }
+    if (!qa_source_save_u64(io, &held->saved_pool) || !qa_source_save_u64(io, &held->saved_resource) ||
+        !qa_source_save_u64(io, &held->saved_view) || !held->saved_pool || !held->saved_resource || !held->saved_view)
+        return event_fail(io, QA_ERROR_FORMAT, "Source custody lost its actual graph owner");
+    const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
+        qa_application_content_view(graph, held->saved_view) : held->view;
+    qa_vfs_acquisition *opening = &held->opening;
+    return files && qa_source_save_u64(io, &opening->mount) && qa_source_save_u64(io, &opening->resource_id) &&
+        acquisition_text(io, &opening->path) && acquisition_text(io, &opening->lookup_path) &&
+        acquisition_text(io, &opening->link_source) && acquisition_text(io, &opening->link_target) &&
+        qa_vfs_acquisition_opening_codec(io, files, opening) && opening->opening_present &&
+        qa_vfs_acquisition_retained(files, opening, io->error);
+}
+
 static bool normalized_rows(qa_source_save_io *io, event_store *store)
 {
     uint64_t presentation_count = 0, simulation_count = 0;
@@ -1046,16 +1092,29 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         qa_application_content_graph_read(store->application) : NULL;
     for (size_t i = 0; i < store->resource_count; ++i) {
         application_unified_event_resource *row = store->resources + i;
-        uint64_t pool = row->saved_pool, resource = row->saved_resource;
-        if (io->direction == QA_SOURCE_SAVE_WRITE &&
-            !qa_application_content_resource_id(graph, row->resource, &pool, &resource))
-            return event_fail(io, QA_ERROR_FORMAT, "Source dictionary resource is outside its captured CONTENT graph");
+        uint64_t pool = row->saved_pool, resource = row->saved_resource, view = row->saved_view;
+        if (io->direction == QA_SOURCE_SAVE_WRITE) {
+            view = qa_application_content_view_id(graph, row->view);
+            if (!view || !qa_application_content_resource_id(graph, row->resource, &pool, &resource))
+                return event_fail(io, QA_ERROR_FORMAT, "Source dictionary resource is outside its captured CONTENT graph");
+        }
         if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
             !qa_source_save_string(io, &row->path) || !qa_source_save_u64(io, &pool) ||
-            !qa_source_save_u64(io, &resource) || !pool || !resource || !row->content || !row->path ||
+            !qa_source_save_u64(io, &resource) || !qa_source_save_u64(io, &view) ||
+            !pool || !resource || !view || !row->content || !row->path ||
             !qa_source_save_bytes(io, row->id, sizeof(row->id)) || row->id[80] ||
             strncmp(row->id, "resource:unified:", 16))
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
+        const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
+            qa_application_content_view(graph, view) : row->view;
+        qa_vfs_acquisition *opening = &row->opening;
+        if (!files || !qa_source_save_u64(io, &opening->mount) ||
+            !qa_source_save_u64(io, &opening->resource_id) ||
+            !acquisition_text(io, &opening->path) || !acquisition_text(io, &opening->lookup_path) ||
+            !acquisition_text(io, &opening->link_source) || !acquisition_text(io, &opening->link_target) ||
+            !qa_vfs_acquisition_opening_codec(io, files, opening) || !opening->opening_present ||
+            !qa_vfs_acquisition_retained(files, opening, io->error))
+            return event_fail(io, QA_ERROR_FORMAT, "Source dictionary lost its actual acquisition opening");
         size_t size = row->key.size;
         if (!qa_source_save_count(io, &size, 16u * 1024u * 1024u) || !size) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -1063,7 +1122,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
                 return event_fail(io, QA_ERROR_FORMAT, "Truncated Source resource key");
             row->key.data = malloc(size); row->key.size = size;
             if (!row->key.data) return event_fail(io, QA_ERROR_MEMORY, "Retaining restored Source dictionary key");
-            row->saved_pool = pool; row->saved_resource = resource;
+            row->saved_pool = pool; row->saved_resource = resource; row->saved_view = view;
         }
         if (!qa_source_save_bytes(io, row->key.data, size)) return false;
         qa_unified_document *key = NULL;
@@ -1074,6 +1133,21 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(row->id, store->resources[j].id))
                 return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary identity is duplicated");
+        if (!qa_source_save_count(io, &row->custody_capacity, SIZE_MAX / sizeof(*row->custodies)) ||
+            !qa_source_save_count(io, &row->custody_count, row->custody_capacity)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (row->custody_count > (io->input.size - io->offset) / 64 ||
+                (row->custody_capacity && (row->custody_capacity < 4 ||
+                    (row->custody_capacity & (row->custody_capacity - 1)) ||
+                    row->custody_capacity > (row->custody_count ? row->custody_count * 2 : 4))))
+                return event_fail(io, QA_ERROR_FORMAT, "Source custody allocation exceeds its actual growth or document");
+            row->custodies = row->custody_capacity ? calloc(row->custody_capacity, sizeof(*row->custodies)) : NULL;
+            if (row->custody_capacity && !row->custodies)
+                return event_fail(io, QA_ERROR_MEMORY, "Retaining restored Source opening receipts");
+        } else if ((row->custody_capacity != 0) != (row->custodies != NULL))
+            return event_fail(io, QA_ERROR_FORMAT, "Source custody allocation lost its backing");
+        for (size_t j = 0; j < row->custody_count; ++j)
+            if (!custody_field(io, graph, row->custodies + j)) return false;
     }
     for (size_t i = 0; i < store->world_text_count; ++i) {
         application_unified_world_text *row = store->world_text + i;
@@ -1090,15 +1164,45 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
     }
     for (size_t i = 0; i < store->registration_count; ++i) {
         application_unified_event_registration *row = store->registrations + i;
+        uint32_t kind = (uint32_t)row->kind;
         if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->path) ||
             !row->path || !store->resource_count ||
-            !qa_source_save_count(io, &row->resource, store->resource_count - 1))
+            !qa_source_save_count(io, &row->resource, store->resource_count - 1) ||
+            !qa_source_save_u32(io, &kind) || kind > QA_NATIVE_HOST_IMAGE ||
+            !qa_source_save_u64(io, &row->custody) || row->custody > store->resources[row->resource].custody_count)
             return event_fail(io, QA_ERROR_FORMAT, "Source registration lost its actual retained resource");
+        row->kind = (qa_native_host_resource_kind)kind;
         for (size_t j = 0; j < i; ++j)
-            if (row->provider == store->registrations[j].provider && row->path == store->registrations[j].path)
+            if (row->provider == store->registrations[j].provider && row->path == store->registrations[j].path &&
+                row->kind == store->registrations[j].kind)
                 return event_fail(io, QA_ERROR_FORMAT, "Source registration repeats a current path");
     }
     return true;
+}
+
+static bool custody_valid(const application_unified_event_resource *row, qa_application *app,
+    uint64_t pool, uint64_t resource, uint64_t view_id, const qa_vfs_acquisition *opening, qa_error *error)
+{
+    const qa_resource *actual = qa_application_content_resource(app->content_graph, pool, resource);
+    const qa_vfs *view = qa_application_content_view(app->content_graph, view_id);
+    const char *content = qa_strings_cstr(qa_session_strings(app->session), row->content);
+    const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
+    qa_bytes content_bytes = qa_strings_text(qa_session_strings(app->session), row->content);
+    qa_bytes path_bytes = qa_strings_text(qa_session_strings(app->session), row->path);
+    if (!actual || !view || !content || !path || strlen(content) != content_bytes.size ||
+        strlen(path) != path_bytes.size || !opening->path || strcmp(opening->path, path) ||
+        opening->resource_id != qa_resource_id(actual) ||
+        qa_resource_pool_find(qa_vfs_resources(view), qa_resource_id(actual)) != actual ||
+        !opening->opening_present || !qa_vfs_acquisition_retained(view, opening, error))
+        return application_fail(error, QA_ERROR_FORMAT, "Source dictionary cannot bind its decoded immutable CONTENT opening");
+    qa_product product = {.identity = content};
+    qa_unified_document *key = NULL;
+    char id[81];
+    if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
+    qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
+    bool same = !strcmp(id, row->id) && bytes.size == row->key.size && !memcmp(bytes.data, row->key.data, bytes.size);
+    qa_unified_document_destroy(key);
+    return same || application_fail(error, QA_ERROR_FORMAT, "Source dictionary key differs from its actual saved opening bytes");
 }
 
 static bool resource_bindings(event_store *store, qa_application *app, qa_error *error)
@@ -1115,22 +1219,11 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
     }
     for (size_t i = 0; i < store->resource_count; ++i) {
         application_unified_event_resource *row = store->resources + i;
-        const qa_resource *actual = qa_application_content_resource(app->content_graph,
-            row->saved_pool, row->saved_resource);
-        const char *content = qa_strings_cstr(qa_session_strings(app->session), row->content);
-        const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
-        qa_bytes content_bytes = qa_strings_text(qa_session_strings(app->session), row->content);
-        qa_bytes path_bytes = qa_strings_text(qa_session_strings(app->session), row->path);
-        if (!actual || !content || !path || strlen(content) != content_bytes.size || strlen(path) != path_bytes.size)
-            return application_fail(error, QA_ERROR_FORMAT, "Source dictionary cannot bind its decoded immutable CONTENT resource");
-        qa_product product = {.identity = content};
-        qa_unified_document *key = NULL;
-        char id[81];
-        if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
-        qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
-        bool same = !strcmp(id, row->id) && bytes.size == row->key.size && !memcmp(bytes.data, row->key.data, bytes.size);
-        qa_unified_document_destroy(key);
-        if (!same) return application_fail(error, QA_ERROR_FORMAT, "Source dictionary key differs from its actual saved resource bytes");
+        if (!custody_valid(row, app, row->saved_pool, row->saved_resource, row->saved_view, &row->opening, error)) return false;
+        for (size_t j = 0; j < row->custody_count; ++j) {
+            application_unified_event_resource_custody *held = row->custodies + j;
+            if (!custody_valid(row, app, held->saved_pool, held->saved_resource, held->saved_view, &held->opening, error)) return false;
+        }
     }
     for (size_t i = 0; i < store->registration_count; ++i) {
         const application_unified_event_registration *row = store->registrations + i;
@@ -1138,23 +1231,29 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
         application_unified_event_source source;
         if (!application_unified_event_source_read(app, row->provider, &source, error)) return false;
         const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
-        const char *registered = qa_strings_cstr(qa_session_strings(app->session), resource->path);
         const char *content = qa_strings_cstr(qa_session_strings(app->session), resource->content);
         qa_bytes path_bytes = qa_strings_text(qa_session_strings(app->session), row->path);
-        if (!source.product || !path || !registered || !content ||
+        if (!source.product || !path || !*path || !content ||
             strlen(path) != path_bytes.size || strcmp(source.product->identity, content) ||
-            (strcmp(registered, path) &&
-             (strncmp(registered, "sound/", 6) || strcmp(registered + 6, path)) &&
-             (path[0] != '#' || strcmp(registered, path + 1))))
+            (unsigned)row->kind > QA_NATIVE_HOST_IMAGE)
             return application_fail(error, QA_ERROR_FORMAT, "Source registration differs from its actual restored source and resource path");
     }
     /* Validate the entire dictionary before transferring any graph owner. */
     for (size_t i = 0; i < store->resource_count; ++i) {
         application_unified_event_resource *row = store->resources + i;
         if (!application_save_content_event_pool(app->content_graph, row->saved_pool, &row->pool, error)) return false;
+        if (!application_save_content_event_view(app->content_graph, row->saved_view, &row->view, error)) return false;
         row->resource = (qa_resource *)qa_application_content_resource(app->content_graph,
             row->saved_pool, row->saved_resource);
         qa_resource_retain(row->resource);
+        for (size_t j = 0; j < row->custody_count; ++j) {
+            application_unified_event_resource_custody *held = row->custodies + j;
+            if (!application_save_content_event_pool(app->content_graph, held->saved_pool, &held->pool, error) ||
+                !application_save_content_event_view(app->content_graph, held->saved_view, &held->view, error)) return false;
+            held->resource = (qa_resource *)qa_application_content_resource(app->content_graph,
+                held->saved_pool, held->saved_resource);
+            qa_resource_retain(held->resource);
+        }
     }
     return true;
 }
@@ -1200,7 +1299,8 @@ static bool rows(qa_source_save_io *io, event_store *store)
             if (!*key) continue;
             bool found = false;
             for (size_t r = 0; r < store->resource_count; ++r)
-                found = found || !strcmp(key, store->resources[r].id);
+                found = found || (!strcmp(key, store->resources[r].id) &&
+                    event->resources[j].resource_custody <= store->resources[r].custody_count);
             if (!found) return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipt is outside its retained dictionary");
         }
     }

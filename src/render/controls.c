@@ -10,6 +10,11 @@ struct qa_render_controls_ticket {
     qa_render_controls_values original, candidate;
     bool published;
 };
+struct qa_render_source_images_ticket {
+    qa_render_controls *controls;
+    qa_gl_source_images_ticket *gl;
+    bool prepared,published;
+};
 void material_source_release(qa_material_source_scratch *source)
 {
     material_source_order_detach(source->queued_order, source);
@@ -67,7 +72,7 @@ static bool fail(qa_error *error, const char *message)
 }
 static bool source_current(const qa_render_controls *controls)
 {
-    if (!controls) return false;
+    if (!controls || controls->image_ticket) return false;
     switch (controls->backend) {
     case QA_RENDER_CONTROLS_CPU: return qa_cpu_source_scratch_current(controls);
     case QA_RENDER_CONTROLS_GL: return qa_gl_source_scratch_current(controls);
@@ -180,9 +185,15 @@ bool qa_material_source_scene_bank_metadata(const qa_material_source_scratch *so
 }
 static bool source_rows_hold_library(const material_source_submission *row, const qa_material_library *library)
 {
-    for (; row; row = row->next)
+    for (; row; row = row->next) {
         if ((row->original && row->original->library == library) ||
             (row->held_light_world && qa_scene_world_material_owner(row->held_light_world) == library)) return true;
+        size_t count = qa_q3_assets_provider_count(row->context.source_model_assets);
+        for (size_t i = 0; i < count; ++i) {
+            qa_q3_presentation_provider provider;
+            if (qa_q3_assets_provider_at(row->context.source_model_assets, i, &provider) && provider.materials == library) return true;
+        }
+    }
     return false;
 }
 bool qa_material_source_holds_library(const qa_material_source_scratch *source, const qa_material_library *library)
@@ -229,11 +240,25 @@ static void source_owner_world(source_owners *out, const qa_scene_world *world)
         ++out->count;
     } else source_owner_library(out, qa_scene_world_material_owner(world));
 }
+static void source_owner_registry(source_owners *out, const qa_q3_presentation_assets *assets)
+{
+    size_t providers = qa_q3_assets_provider_count(assets);
+    for (size_t j = 0; j < providers; ++j) {
+        qa_q3_presentation_provider provider;
+        if (qa_q3_assets_provider_at(assets, j, &provider)) source_owner_library(out, provider.materials);
+    }
+    size_t maps = qa_q3_assets_map_count(assets);
+    for (size_t j = 0; j < maps; ++j) {
+        qa_q3_asset_map_custody map;
+        if (qa_q3_assets_map_at(assets, j, &map)) source_owner_world(out, map.world);
+    }
+}
 static void source_owner_rows(source_owners *out, const material_source_submission *row)
 {
     for (; row; row = row->next) {
         if (row->original) source_owner_library(out, row->original->library);
         source_owner_world(out, row->held_light_world);
+        source_owner_registry(out, row->context.source_model_assets);
     }
 }
 static source_owners source_owner_inventory(const qa_material_source_scratch *source, size_t wanted, bool worlds)
@@ -249,16 +274,7 @@ static source_owners source_owner_inventory(const qa_material_source_scratch *so
     size_t count = qa_q3_source_scene_bank_registry_count(source->scene_bank);
     for (size_t i = 0; i < count; ++i) {
         qa_q3_presentation_assets *assets = qa_q3_source_scene_bank_registry_at(source->scene_bank, i);
-        size_t providers = qa_q3_assets_provider_count(assets);
-        for (size_t j = 0; j < providers; ++j) {
-            qa_q3_presentation_provider provider;
-            if (qa_q3_assets_provider_at(assets, j, &provider)) source_owner_library(&out, provider.materials);
-        }
-        size_t maps = qa_q3_assets_map_count(assets);
-        for (size_t j = 0; j < maps; ++j) {
-            qa_q3_asset_map_custody map;
-            if (qa_q3_assets_map_at(assets, j, &map)) source_owner_world(&out, map.world);
-        }
+        source_owner_registry(&out, assets);
     }
     return out;
 }
@@ -346,6 +362,57 @@ bool qa_render_controls_source_image_admit(qa_render_controls *controls,const qa
         return fail(error,"Source image admission requires its actual completed image and physical renderer");
     if (controls->backend==QA_RENDER_CONTROLS_CPU) return true;
     return qa_gl_source_image_admit(controls,image,unit,error);
+}
+bool qa_render_controls_source_images_prepare(qa_render_controls *controls,qa_scene_resource_policy *const *banks,
+    size_t count,qa_render_source_images_ticket **out,qa_error *error)
+{
+    if (!out || *out || !current(controls) || controls->source.entered || controls->image_ticket || (count && !banks))
+        return fail(error,"Prepared Source image admission requires its actual renderer and resource children");
+    qa_render_source_images_ticket *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual Source image admission"); return false; }
+    ticket->controls=controls; controls->image_ticket=ticket; *out=ticket;
+    bool ok=controls->backend==QA_RENDER_CONTROLS_CPU || qa_gl_source_images_prepare(controls,banks,count,&ticket->gl,error);
+    ticket->prepared=ok;
+    return ok;
+}
+bool qa_render_controls_source_images_ready_is(const qa_render_source_images_ticket *ticket)
+{
+    const qa_render_controls *controls=ticket?ticket->controls:NULL;
+    return current(controls) && controls->image_ticket==ticket && !controls->source.entered && ticket->prepared &&
+        !ticket->published && (controls->backend==QA_RENDER_CONTROLS_CPU || qa_gl_source_images_ready_is(ticket->gl));
+}
+bool qa_render_controls_source_images_ready(const qa_render_source_images_ticket *ticket,qa_error *error)
+{ return qa_render_controls_source_images_ready_is(ticket) || fail(error,"Prepared Source image admission changed before publication"); }
+void qa_render_controls_source_images_publish(qa_render_source_images_ticket *ticket)
+{
+    if (!ticket || !ticket->prepared || ticket->published) return;
+    if (ticket->controls->backend==QA_RENDER_CONTROLS_GL) qa_gl_source_images_publish(ticket->gl);
+    ticket->published=true;
+}
+static void source_images_release(qa_render_source_images_ticket **out)
+{
+    qa_render_source_images_ticket *ticket=*out; qa_render_controls *controls=ticket->controls;
+    controls->image_ticket=NULL; free(ticket); *out=NULL;
+    if (controls->backend==QA_RENDER_CONTROLS_CPU) qa_cpu_render_controls_close(controls);
+    else qa_gl_render_controls_close(controls);
+}
+bool qa_render_controls_source_images_finish(qa_render_source_images_ticket **out,qa_error *error)
+{
+    if (!out || !*out) return true;
+    qa_render_source_images_ticket *ticket=*out;
+    if (ticket->controls->image_ticket!=ticket || !ticket->published)
+        return fail(error,"Source image finish requires its actual published recipient");
+    if (ticket->gl && !qa_gl_source_images_finish(&ticket->gl,error)) return false;
+    source_images_release(out); return true;
+}
+bool qa_render_controls_source_images_abort(qa_render_source_images_ticket **out,qa_error *error)
+{
+    if (!out || !*out) return true;
+    qa_render_source_images_ticket *ticket=*out;
+    if (ticket->controls->image_ticket!=ticket || ticket->published)
+        return fail(error,"Source image abort requires its actual unpublished recipient");
+    if (ticket->gl && !qa_gl_source_images_abort(&ticket->gl,error)) return false;
+    source_images_release(out); return true;
 }
 qa_scene_filter qa_render_controls_image_filter(const qa_render_controls *controls,const qa_scene_image *image)
 {

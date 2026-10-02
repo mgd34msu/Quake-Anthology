@@ -8,6 +8,7 @@
 #include "unified_media_inventory.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
+#include "qa/scene_world_save.h"
 #include "qa/material_source_scratch.h"
 #include "qa/render_controls.h"
 #include "qa/source_save.h"

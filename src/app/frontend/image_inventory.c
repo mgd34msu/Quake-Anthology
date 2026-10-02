@@ -1,4 +1,5 @@
 #include "image_inventory.h"
+#include "component_scene.h"
 #include "save_private.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
@@ -106,6 +107,11 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
             ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
                 add(inventory,graph,bank.images,14,key,0,error);
         }
+    }
+    for(size_t i=0;ok && i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(f,i,&row,error) &&
+            add(inventory,graph,row.images,15,i,row.identity,error);
     }
     return ok;
 }

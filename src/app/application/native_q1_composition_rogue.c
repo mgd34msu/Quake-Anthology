@@ -2,6 +2,7 @@
 #include "native_q1_composition.h"
 #include "native_q1_console.h"
 #include "native_q1_composition_birth.h"
+#include "native_q1_composition_player.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_composition.h"
 #include "qa/game_q1_rogue.h"
@@ -14,7 +15,7 @@
 #include "qa/game_q1_source_rogue_runes.h"
 #include "qa/source_number.h"
 #include "map_players_private.h"
-#include "guest_qc_visual.h"
+#include "qa/application_qc_presentation.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -358,7 +359,7 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
     case APPLICATION_PROVIDER_Q1: {
         qa_q1_character_view view;
         okay = qa_q1_character_read(character->state.q1, actor, &view);
-        if (okay) frame = view.frame;
+        if (okay) frame = view.animation_frame;
         break;
     }
     case APPLICATION_PROVIDER_Q2: {
@@ -368,9 +369,13 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
         break;
     }
     case APPLICATION_PROVIDER_QC: {
-        qa_application_visual_view view;
-        okay = application_qc_visual(character, actor, &view, error);
-        if (okay) frame = view.frame;
+        qa_application_qc_animation view;
+        okay = qa_application_qc_selected_character_frame_read(call.app, actor, &view, error);
+        if (okay) {
+            frame = view.frame;
+            okay = qa_application_qc_selected_character_frame_current(call.app, &view) ||
+                application_fail(error, QA_ERROR_ARGUMENT, "Rogue flag selected QC animation changed");
+        }
         break;
     }
     case APPLICATION_PROVIDER_Q3: {
@@ -385,7 +390,7 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
         break;
     }
     case APPLICATION_PROVIDER_NATIVE:
-        okay = application_fail(error, QA_ERROR_UNSUPPORTED, "Rogue flag native-module character frame is unavailable");
+        okay = application_native_q1_selected_q2_frame(call.app, actor, &frame, error);
         break;
     }
     if (!okay && (!error || error->code == QA_OK))

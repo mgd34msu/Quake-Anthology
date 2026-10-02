@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "native_q2_inventory_scanner.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include <math.h>
@@ -392,7 +393,8 @@ bool application_native_q2_attack_weapon_read(struct application_native_q2 *engi
         !slot || slot >= 257 || !engine->clients[slot].connected || !engine->clients[slot].begun ||
         engine->clients[slot].disconnect_started || !qa_actor_id_equal(engine->clients[slot].actor, actor) ||
         !qa_actors_get(qa_session_actors(engine->provider->application->session), actor) ||
-        !application_native_q2_idle(engine->provider))
+        (!application_native_q2_idle(engine->provider) &&
+            !application_native_q2_inventory_scanner_command_event(engine->inventory_scanner, actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native selected weapon requires its prepared physical client and item roster");
     qa_native_slot_binding binding;
     qa_native_address entity, client, descriptor;
@@ -415,6 +417,21 @@ bool application_native_q2_attack_weapon_read(struct application_native_q2 *engi
     if (!selected || !selected->item)
         return application_fail(error, QA_ERROR_FORMAT, "Native selected weapon is outside its qualified canonical roster");
     *out = selected->item;
+    return true;
+}
+bool application_native_q2_attack_weapon_contains(struct application_native_q2 *engine,
+    qa_item_id item, bool *out, qa_error *error)
+{
+    const struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p || !p->items_ready || !out || !item || !engine->provider->state.native.host ||
+        qa_native_get_module(instance((struct application_native_q2_attack *)p)) != engine->provider->state.native.module ||
+        qa_native_terminal(instance((struct application_native_q2_attack *)p)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native weapon membership requires its actual prepared source roster");
+    *out = false;
+    for (size_t i = 0; i < p->count; ++i) if (p->items[i].item == item) {
+        if (*out) return application_fail(error, QA_ERROR_FORMAT, "Native weapon roster repeats its actual item identity");
+        *out = true;
+    }
     return true;
 }
 bool application_native_q2_attack_item_read(struct application_native_q2 *engine, uint32_t slot,

@@ -41,6 +41,7 @@ typedef struct application_q2_held_resource {
     uint8_t sky_face;
     qa_native_host_resource_kind event_kind;
     char event_key[81];
+    uint64_t event_custody;
     qa_scene_image_options image_options;
     qa_buffer image_palette, image_translation;
     size_t image_palette_dependency;

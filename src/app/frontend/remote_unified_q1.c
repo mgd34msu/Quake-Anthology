@@ -890,13 +890,20 @@ bool frontend_unified_q1_world(frontend_unified_q1 *o,const qa_scene_view *view,
         qa_scene_light lights[Q1_LIGHTS];size_t count=0;
         for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=world->seconds)continue;float radius=fmaxf(0,l->radius-(float)(world->seconds-l->born)*l->decay);
             if(radius>0)lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
-        frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};if(ok && count)ok=frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
+        frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
+        if(ok && count){
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+            ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_SCENE_Q1?
+                frontend_legacy_render_policy_read_registry(domain->cvars,g->product,&policy,e):
+                frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
+            if(ok)ok=mutable(o,e);
+        }
         if(ok && count && policy.flashblend)ok=qa_scene_legacy_dlights(frame,view,QA_SCENE_Q1,policy.quakeworld,lights,count,&blend,e);
         if(ok && blend.w>0){float alpha=overlay.w+(1-overlay.w)*blend.w,weight=blend.w/alpha;
             overlay=(qa_scene_vec4){overlay.x*(1-weight)+blend.x*weight,overlay.y*(1-weight)+blend.y*weight,
                 overlay.z*(1-weight)+blend.z*weight,alpha};}
     }
-    if(ok && !view->mirror && o->groups){
+    if(ok && !view->mirror && o->groups && (!world->legacy_policy.present || world->legacy_policy.polyblend)){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_ui_preferences preferences;
         ok=qa_ui_preferences_read(domain->cvars,domain->physical_seat,&preferences,e);
         if(ok){if(preferences.reduced_flashes)overlay=(qa_scene_vec4){0};

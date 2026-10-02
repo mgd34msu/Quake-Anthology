@@ -149,7 +149,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             const qa_product *product=qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation);
             if (product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2)) {
                 frontend_legacy_render_policy policy;
-                if (!frontend_legacy_render_policy_read(frontend,product,&policy,error)) return false;
+                if (!frontend_legacy_local_policy_read(frontend,i,product,&policy,error)) return false;
                 view.clear_color=policy.lighting.clear;
             }
         }

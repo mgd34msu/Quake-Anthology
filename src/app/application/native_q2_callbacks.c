@@ -647,6 +647,94 @@ static bool call_native(application_native_q2_callbacks *o,qa_json_id call,
 bool application_native_q2_callbacks_call(application_native_q2_callbacks *o,qa_json_id call,
     const application_native_callback_inputs *in,double *returned,qa_error *e)
 { return call_native(o,call,in,returned,true,NULL,e); }
+bool application_native_q2_callbacks_call_scoped(application_native_q2_callbacks *o,qa_json_id call,
+    const application_native_callback_inputs *in,double *returned,qa_error *e)
+{
+    if(!o||!o->scopes||o->scopes->completed||!o->scopes->scope)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Native source stage requires its actual surrounding transfer");
+    return call_native(o,call,in,returned,false,NULL,e);
+}
+bool application_native_q2_callbacks_transfer(application_native_q2_callbacks *o,
+    bool (*execute)(void *,qa_error *),void *context,qa_error *e)
+{
+    if(!execute||!current(o,e)||o->pending||o->pending_globals||
+        (o->scopes&&o->scopes->completed)||!records_prepare(o,e)) return false;
+    native_projection_scope *scope=calloc(1,sizeof(*scope));
+    if(!scope) return application_fail(e,QA_ERROR_MEMORY,"Retaining native source stage transfer");
+    ++o->calls; ++o->engine->calls;
+    bool ok=application_native_q2_records_begin(o->records,&scope->scope,e);
+    if(ok) {
+        scope->outer=o->scopes; o->scopes=scope;
+        ok=execute(context,e);
+        scope->completed=true; scope->succeeded=ok;
+        qa_error close={0}; bool closed=projection_end(o,&close);
+        if(!closed&&ok) { ok=false; if(e) *e=close; }
+    } else free(scope);
+    --o->engine->calls; --o->calls;
+    return ok;
+}
+bool application_native_q2_callbacks_entry(application_native_q2_callbacks *o,qa_json_id entry,
+    qa_native_address *address,qa_error *e)
+{
+    if(!address||!current(o,e)) return false;
+    const qa_json_document *d=o->document; qa_json_id kind=qa_json_get(d,entry,"kind");
+    if(qa_json_string_equal(d,kind,"rva")) {
+        uint32_t rva; return word(d,entry,"rva",&rva,e)&&qa_native_rva(instance(o),rva,1,address,e);
+    }
+    qa_buffer name={0};
+    if(!text(d,qa_json_get(d,entry,"name"),&name,e)) return false;
+    bool ok=qa_json_string_equal(d,kind,"export")?qa_native_export(instance(o),(char *)name.data,address,e):
+        qa_json_string_equal(d,kind,"game-export")?qa_native_entry_address(instance(o),(char *)name.data,address,e):
+        fail(e,"Native stage has an unknown declared entry");
+    qa_buffer_free(&name); return ok;
+}
+bool application_native_q2_callbacks_entry_call(application_native_q2_callbacks *o,qa_json_id entry,
+    qa_json_id returns,const qa_native_value *arguments,size_t count,bool *entered,qa_error *e)
+{
+    if(!entered) return fail(e,"Native stage requires its actual dispatch receipt");
+    *entered=false;
+    if(count>64||!current(o,e)||o->pending||o->pending_globals||o->scopes) return false;
+    qa_native_value_type result_type=QA_NATIVE_VOID;
+    if(returns!=QA_JSON_NONE) scalar_type(o->document,returns,&result_type);
+    if(result_type==QA_NATIVE_BYTES) return fail(e,"Native stage has no scalar result ABI");
+    qa_native_address address;
+    if(!application_native_q2_callbacks_entry(o,entry,&address,e)||!records_prepare(o,e)||
+        !application_native_q2_records_commit(o->records,e)) return false;
+    native_projection_scope *scope=calloc(1,sizeof(*scope));
+    if(!scope) return application_fail(e,QA_ERROR_MEMORY,"Retaining native stage transfer");
+    scope->outer=o->scopes; o->scopes=scope;
+    ++o->calls; ++o->engine->calls;
+    bool ok=application_native_q2_records_begin(o->records,&scope->scope,e);
+    qa_native_type parameters[64]; qa_native_value result={0};
+    for(size_t i=0;i<count;++i) parameters[i]=(qa_native_type){.kind=arguments[i].type,.count=1};
+    qa_native_signature signature={.abi=o->target.abi,.parameters=parameters,.parameter_count=count,
+        .result={.kind=result_type,.count=1}};
+    if(ok) ok=qa_native_invoke_receipt(instance(o),address,&signature,arguments,count,
+        result_type==QA_NATIVE_VOID?NULL:&result,entered,e)&&current(o,e);
+    scope->completed=true; scope->succeeded=ok;
+    qa_error cleanup={0}; bool closed=projection_end(o,&cleanup);
+    --o->engine->calls; --o->calls;
+    if(ok&&!closed&&e) *e=cleanup;
+    return ok&&closed;
+}
+bool application_native_q2_callbacks_input_write(application_native_q2_callbacks *o,qa_json_id value,
+    const application_native_callback_inputs *inputs,qa_native_address address,qa_error *e)
+{
+    if(!current(o,e)||o->pending||o->pending_globals) return false;
+    qa_native_value lowered={0}; size_t size=0; native_temporary *allocations=NULL;
+    native_userinfo *corrections=NULL; native_global *globals=NULL;
+    bool ok=lower(o,value,inputs,&lowered,&size,&allocations,&corrections,e);
+    uint8_t bytes[12]={0};
+    if(ok&&size>sizeof(bytes)) ok=fail(e,"Native input field exceeds its declared scalar/vector storage");
+    if(ok&&qa_json_string_equal(o->document,qa_json_get(o->document,value,"kind"),"vector"))
+        ok=qa_native_read(instance(o),lowered.as.address,bytes,size,e);
+    else if(ok) encoded(lowered,bytes);
+    if(ok) ok=qa_native_write(instance(o),address,(qa_bytes){bytes,size},e);
+    while(corrections) { native_userinfo *next=corrections->next; free(corrections); corrections=next; }
+    qa_error cleanup_error={0}; bool cleaned=cleanup(o,&globals,&allocations,&cleanup_error);
+    if(!cleaned) { o->pending=allocations; if(ok&&e) *e=cleanup_error; }
+    return ok&&cleaned;
+}
 bool application_native_q2_callbacks_run(struct application_native_q2 *n,const char *section,
     const application_native_callback_inputs *in,bool *accepted,qa_error *e)
 {
@@ -862,6 +950,8 @@ bool application_native_q2_callbacks_current(const application_native_q2_callbac
         !o->pending_globals && !o->scopes && application_native_q2_records_idle(o->records) &&
         current((application_native_q2_callbacks *)o,NULL);
 }
+bool application_native_q2_callbacks_storage_current(application_native_q2_callbacks *o,qa_error *e)
+{ return current(o,e); }
 bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_error *e)
 {
     application_native_q2_callbacks *o=n?n->callbacks:NULL;
@@ -875,6 +965,60 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
 }
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *o)
 { return o?o->document:NULL; }
+application_native_q2_records *application_native_q2_callbacks_records(application_native_q2_callbacks *o)
+{ return o?o->records:NULL; }
+qa_native_instance *application_native_q2_callbacks_instance(application_native_q2_callbacks *o)
+{ return o?instance(o):NULL; }
+static size_t scalar_bytes(qa_native_value_type type)
+{
+    switch(type) {
+    case QA_NATIVE_I8: case QA_NATIVE_U8: return 1;
+    case QA_NATIVE_I16: case QA_NATIVE_U16: return 2;
+    case QA_NATIVE_I32: case QA_NATIVE_U32: case QA_NATIVE_F32: return 4;
+    case QA_NATIVE_I64: case QA_NATIVE_U64: case QA_NATIVE_F64: return 8;
+    default: return 0;
+    }
+}
+bool application_native_q2_callbacks_scalar_read(application_native_q2_callbacks *o,
+    qa_native_address address,qa_native_value_type type,double *out,qa_error *e)
+{
+    size_t bytes=scalar_bytes(type); uint8_t raw[8];
+    if(!out||!bytes||!current(o,e)||!qa_native_read(instance(o),address,raw,bytes,e)) return false;
+    qa_native_value value={.type=type};
+    switch(type) {
+    case QA_NATIVE_I8: value.as.i8=(int8_t)raw[0]; break;
+    case QA_NATIVE_U8: value.as.u8=raw[0]; break;
+    case QA_NATIVE_I16: value.as.i16=(int16_t)qa_load_u16le(raw); break;
+    case QA_NATIVE_U16: value.as.u16=qa_load_u16le(raw); break;
+    case QA_NATIVE_I32: value.as.i32=qa_load_i32le(raw); break;
+    case QA_NATIVE_U32: value.as.u32=qa_load_u32le(raw); break;
+    case QA_NATIVE_I64: { uint64_t bits=qa_load_u64le(raw); memcpy(&value.as.i64,&bits,8); break; }
+    case QA_NATIVE_U64: value.as.u64=qa_load_u64le(raw); break;
+    case QA_NATIVE_F32: { uint32_t bits=qa_load_u32le(raw); memcpy(&value.as.f32,&bits,4); break; }
+    case QA_NATIVE_F64: { uint64_t bits=qa_load_u64le(raw); memcpy(&value.as.f64,&bits,8); break; }
+    default: return false;
+    }
+    double result=result_number(value);
+    if(!isfinite(result)||((type==QA_NATIVE_I64||type==QA_NATIVE_U64)&&fabs(result)>9007199254740991.0))
+        return fail(e,"Native source scalar exceeds its finite safe-number representation");
+    *out=result; return true;
+}
+bool application_native_q2_callbacks_scalar_write(application_native_q2_callbacks *o,
+    qa_native_address address,qa_native_value_type type,double number,qa_error *e)
+{
+    size_t bytes=scalar_bytes(type); qa_native_value value; uint8_t raw[8]={0};
+    if(!bytes||!current(o,e)||!number_value(type,number,&value,e)) return false;
+    encoded(value,raw); return qa_native_write(instance(o),address,(qa_bytes){raw,bytes},e);
+}
+bool application_native_q2_callbacks_observation_required(const application_native_q2_callbacks *o)
+{
+    if(!o||!o->document) return false;
+    qa_json_id root=qa_json_root(o->document);
+    return qa_json_size(o->document,qa_json_get(o->document,root,"pickups"))!=0||
+        qa_json_size(o->document,qa_json_get(o->document,root,"protection"))!=0||
+        qa_json_size(o->document,qa_json_get(o->document,root,"sourceActors"))!=0||
+        qa_json_size(o->document,qa_json_get(o->document,qa_json_get(o->document,root,"items"),"storage"))!=0;
+}
 bool application_native_q2_callbacks_source_before(void *context,qa_error *e)
 {
     struct application_native_q2 *n=context;

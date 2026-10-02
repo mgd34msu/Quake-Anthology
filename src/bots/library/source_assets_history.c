@@ -156,7 +156,8 @@ bool bot_source_assets_capture(qa_bot_runtime *runtime, bot_source_assets_histor
         okay = character_capture(image, c, true, error);
     for (uint32_t i = 0; okay && i < image->count; ++i) {
         image->handles[i] = runtime->characters[i];
-        okay = character_capture(image, runtime->characters[i], false, error);
+        okay = (!runtime->characters[i] || bot_character_project(runtime->characters[i], error)) &&
+            character_capture(image, runtime->characters[i], false, error);
     }
     for (qa_bot_items *c = runtime->library->item_configs; okay && c; c = c->next)
         okay = item_capture(image, c, true, error);

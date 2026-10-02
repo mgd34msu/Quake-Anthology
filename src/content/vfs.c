@@ -1606,7 +1606,8 @@ bool qa_vfs_acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisitio
         !source->path || !source->lookup_path || out->mount || out->resource_id ||
         out->path || out->lookup_path || out->link_source || out->link_target ||
         out->opening_present || out->opening.order || out->opening.prefix ||
-        out->opening.order_count || source->opening.order_count > SIZE_MAX / sizeof(qa_mount_id) ||
+        out->opening.order_count || out->opening.rank || out->opening.user_overlay ||
+        source->opening.order_count > SIZE_MAX / sizeof(qa_mount_id) ||
         (source->opening.order_count && !source->opening.order)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Receipt copy requires an actual acquisition and empty destination"); return false;
     }
@@ -1614,13 +1615,15 @@ bool qa_vfs_acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisitio
         .opening_present = source->opening_present,
         .opening = {.rank = source->opening.rank, .order_count = source->opening.order_count,
             .user_overlay = source->opening.user_overlay}};
-    const char *values[] = {source->path, source->lookup_path, source->link_source, source->link_target, source->opening.prefix};
+    const char *values[] = {source->path, source->lookup_path, source->link_source, source->link_target};
     char **targets[] = {&copy.path, &copy.lookup_path, &copy.link_source, &copy.link_target};
-    for (size_t i = 0; i < 5; ++i) if (values[i]) {
-        char *value = copy_string(values[i]);
-        if (!value) goto fail;
-        if (i == 4) copy.opening.prefix = value;
-        else *targets[i] = value;
+    for (size_t i = 0; i < 4; ++i) if (values[i]) {
+        *targets[i] = copy_string(values[i]);
+        if (!*targets[i]) goto fail;
+    }
+    if (source->opening.prefix) {
+        copy.opening.prefix = copy_string(source->opening.prefix);
+        if (!copy.opening.prefix) goto fail;
     }
     if (copy.opening.order_count) {
         size_t size = copy.opening.order_count * sizeof(qa_mount_id);

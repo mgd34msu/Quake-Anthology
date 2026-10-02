@@ -1,6 +1,7 @@
 #include "legacy_render_policy.h"
 #include "particle_delivery.h"
 #include "q1_sky.h"
+#include "config_store.h"
 #include "qa/scene_effects.h"
 #include "qa/ui_preferences.h"
 #include <string.h>
@@ -56,7 +57,7 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
             !number(registry, value.family == QA_SCENE_Q1 ? "r_dynamic" : "gl_dynamic", &dynamic, error) ||
             !number(registry, "gl_polyblend", &polyblend, error) ||
             !number(registry, "gl_cull", &cull, error) || !number(registry, "gl_clear", &clear, error)) return false;
-        value.lighting = (qa_scene_legacy_policy){.present = true,
+        value.lighting = (qa_scene_legacy_policy){.source_family = value.family, .present = true,
             .fullbright = !value.quakeworld && fullbright != 0,
             .lightmap = !value.quakeworld && lightmap != 0, .dynamic = dynamic != 0,
             .polyblend = polyblend != 0, .cull = cull != 0, .clear = clear != 0,
@@ -159,9 +160,12 @@ bool frontend_legacy_model_input_product(const qa_frontend *frontend, const qa_p
     frontend_legacy_render_policy policy;
     if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
     if (world->legacy_policy.present) {
-        policy.lighting = world->legacy_policy;
-        policy.planar_shadows = world->legacy_policy.planar_shadows;
-        policy.double_eyes = world->legacy_policy.double_eyes;
+        if (policy.family == world->legacy_policy.source_family) {
+            policy.lighting = world->legacy_policy;
+            policy.planar_shadows = world->legacy_policy.planar_shadows;
+            policy.double_eyes = policy.quakeworld || world->legacy_policy.double_eyes;
+        }
+        policy.lighting.cull = world->legacy_policy.cull;
     }
     input->q1_double_eyes = policy.double_eyes;
     if (policy.lighting.present) {
@@ -241,12 +245,68 @@ typedef struct native_scene_context {
     qa_scene_world *world;
     uint32_t seat;
     qa_actor_owner exclude;
+    frontend_config_legacy_view source;
+    qa_application_map_view map;
+    bool has_source;
 } native_scene_context;
 
 static bool native_current(void *context)
 {
     native_scene_context *value = context;
-    return value->frontend->scene_world == value->world && value->seat < value->frontend->options.seats;
+    qa_application_map_view map;
+    return value->frontend->scene_world == value->world && value->seat < value->frontend->options.seats &&
+        qa_application_map_read(value->frontend->application, &map) && map.revision == value->map.revision &&
+        map.resource == value->map.resource && map.geometry == value->map.geometry && map.presentation == value->map.presentation &&
+        (!value->has_source || frontend_config_store_primary_legacy_current(value->frontend->config_store, &value->source));
+}
+
+static bool local_policy(const qa_frontend *frontend, const qa_product *product,
+    const frontend_config_legacy_view *actual_source, frontend_legacy_render_policy *out, qa_error *error)
+{
+    if (actual_source) {
+        frontend_legacy_render_policy source;
+        if (!frontend_config_store_primary_legacy_current(frontend->config_store, actual_source) ||
+            !frontend_legacy_render_policy_read(frontend, product, out, error) ||
+            !frontend_legacy_render_policy_read_registry(actual_source->registry, actual_source->product, &source, error)) return false;
+        /* The explicit WORLD presentation selects the sky/water traversal;
+         * the entered Source owns its scalar renderer settings. */
+        qa_scene_legacy_policy geometry = out->lighting;
+        out->lighting = source.lighting;
+        if (out->family == QA_SCENE_Q2 && source.family != QA_SCENE_Q2) {
+            out->lighting.modulate = geometry.modulate;
+            out->lighting.monolightmap = geometry.monolightmap;
+            out->lighting.saturate = geometry.saturate;
+            out->lighting.flares = geometry.flares;
+        }
+        if (out->family == source.family) {
+            out->flashblend = source.flashblend;
+            out->texture_sort = source.texture_sort;
+            out->mirror_alpha = out->quakeworld ? 1 : source.mirror_alpha;
+        }
+        if (out->quakeworld) out->lighting.fullbright = out->lighting.lightmap = false;
+        return frontend_config_store_primary_legacy_current(frontend->config_store, actual_source);
+    }
+    return frontend_legacy_render_policy_read(frontend, product, out, error);
+}
+
+bool frontend_legacy_local_policy_read(const qa_frontend *frontend, uint32_t seat,
+    const qa_product *product, frontend_legacy_render_policy *out, qa_error *error)
+{
+    if (!frontend || seat >= frontend->options.seats) return false;
+    uint32_t authored;
+    frontend_config_legacy_view source; bool present;
+    if (!frontend_seat_launch_id_read(frontend, seat, &authored) ||
+        !frontend_config_store_primary_legacy_read(frontend->config_store, authored, &source, &present, error)) return false;
+    return local_policy(frontend, product, present ? &source : NULL, out, error);
+}
+
+static bool native_policy(void *context, const qa_product *product,
+    frontend_legacy_render_policy *out, qa_error *error)
+{
+    native_scene_context *value = context;
+    if (!native_current(value)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy policy lost its physical Source and world");
+    if (!local_policy(value->frontend, product, value->has_source ? &value->source : NULL, out, error)) return false;
+    return native_current(value);
 }
 
 static bool native_visuals(void *context, const qa_scene_world_input *input,
@@ -275,8 +335,15 @@ bool frontend_legacy_scene_submit(qa_frontend *frontend, uint32_t seat, qa_actor
     if (!qa_application_map_read(frontend->application, &map))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy scene lost its installed map");
     const qa_product *product = qa_catalog_product(qa_application_catalog(frontend->application), map.presentation);
+    native_scene_context context = {.frontend = frontend, .world = frontend->scene_world,
+        .seat = seat, .exclude = exclude, .map = map};
+    uint32_t authored;
+    if (!frontend_seat_launch_id_read(frontend, seat, &authored))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy scene has no actual authored seat");
+    if (!frontend_config_store_primary_legacy_read(frontend->config_store, authored,
+        &context.source, &context.has_source, error)) return false;
     frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
+    if (!native_policy(&context, product, &policy, error)) return false;
     qa_scene_world_input input = *world;
     qa_scene_q1_sky_environment sky = {0};
     if (policy.family == QA_SCENE_Q1) {
@@ -296,9 +363,8 @@ bool frontend_legacy_scene_submit(qa_frontend *frontend, uint32_t seat, qa_actor
             input.q1_sky_environment = &sky;
         }
     }
-    native_scene_context context = {frontend, frontend->scene_world, seat, exclude};
     frontend_legacy_scene_services services = {.context = &context, .current = native_current,
-        .visuals = native_visuals, .particles = native_particles};
+        .visuals = native_visuals, .particles = native_particles, .policy = native_policy};
     return frontend_legacy_scene_submit_product(frontend, frontend->scene_world, product,
         &input, frame, &services, error);
 }

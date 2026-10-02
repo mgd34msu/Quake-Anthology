@@ -128,9 +128,20 @@ static bool view_field(qa_source_save_io *io,application_bots *bots,qa_vfs **val
     return true;
 }
 static bool files_field(qa_source_save_io *io,application_bots *bots) {
-    return qa_source_save_bool(io,&bots->files_launch) && qa_source_save_string(io,&bots->files_product) &&
+    bool ok=qa_source_save_bool(io,&bots->files_launch) && qa_source_save_string(io,&bots->files_product) &&
         !(bots->files_launch && bots->files_product) && (bots->files_launch || bots->files_product) &&
         view_field(io,bots,&bots->files,true,true);
+    if(!ok) return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid application bot file origin");
+    qa_application *app=bots->application;
+    if(bots->files_launch)
+        ok=qa_vfs_lookup_equal(bots->files,qa_launch_snapshot_mounts(launch(app)));
+    else {
+        const char *key=qa_strings_cstr(qa_session_strings(app->session),bots->files_product);
+        const qa_product *product=key?qa_catalog_find(app->catalog,key):NULL;
+        ok=product && product->family==QA_GAME_Q3 &&
+            qa_catalog_product_view_current(app->catalog,product->id,bots->files);
+    }
+    return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Bot file view differs from its genuine selected content");
 }
 static bool map_field(qa_source_save_io *io,application_bots *bots) {
     qa_application *app=bots->application;
@@ -336,6 +347,13 @@ static bool graph_policy(application_bot_graph *g,qa_error *error) {
 }
 static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool prepare,bool restore) {
     if(!view_field(io,bots,&bots->navigation_files,false,prepare)) return false;
+    if(bots->navigation_files) {
+        qa_launch_resource_origin origin;
+        if(!qa_application_map_origin_read(bots->application,&origin) || !origin.acquisition ||
+           origin.acquisition->resource_id!=qa_resource_id(bots->map_resource) ||
+           !qa_catalog_product_view_current(origin.catalog,origin.product,bots->navigation_files))
+            return bot_save_fail(io,QA_ERROR_FORMAT,"Bot navigation view differs from actual geometry content");
+    }
     size_t count=graph_count(bots);
     if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(application_bot_graph))) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && prepare && count>(io->input.size-io->offset)/50)

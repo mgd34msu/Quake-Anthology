@@ -2,6 +2,8 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <SDL_video.h>
+#include "qa/display_settings.h"
 
 static bool finite4(qa_scene_vec4 value)
 {
@@ -251,6 +253,190 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
         controls->attributes.texture_unit=0;
     }
     return gl_check(renderer,"Source completed image admission",error);
+}
+
+typedef struct gl_source_prepared_image {
+    const qa_scene_resource_policy *policy;
+    const qa_scene_image *image;
+    qa_scene_resources *source,*destination;
+    gl_texture_entry *entry;
+    uint64_t creation;
+    size_t policy_ordinal;
+    uint32_t unit;
+} gl_source_prepared_image;
+typedef struct gl_source_prepared_bank {
+    const qa_scene_resource_policy *policy;
+    size_t count;
+} gl_source_prepared_bank;
+struct qa_gl_source_images_ticket {
+    qa_gl_renderer *renderer;
+    gl_source_prepared_image *rows;
+    size_t count;
+    gl_source_prepared_bank *banks;
+    size_t bank_count;
+    gl_texture_entry *original_textures;
+    const qa_scene_image *original_bound[2];
+    qa_render_source_attributes original_attributes;
+    uint32_t original_count;
+    const void *context;
+    bool prepared,published;
+};
+static int source_prepared_order(const void *a,const void *b)
+{
+    const gl_source_prepared_image *first=a,*second=b;
+    return first->creation<second->creation?-1:first->creation>second->creation;
+}
+bool qa_gl_source_images_prepare(qa_render_controls *controls,qa_scene_resource_policy *const *banks,size_t count,
+    qa_gl_source_images_ticket **out,qa_error *error)
+{
+    qa_gl_renderer *renderer=controls->owner.gl;
+    qa_display_endpoint endpoint;
+    if (!out || *out || !qa_gl_render_controls_current(controls) || controls->source.entered ||
+        !qa_display_endpoint_read(renderer->options.display,&endpoint) || !endpoint.context ||
+        SDL_GL_GetCurrentContext()!=endpoint.context) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared Source uploads require their actual retained native context"); return false;
+    }
+    qa_gl_source_images_ticket *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining prepared native Source images"); return false; }
+    ticket->renderer=renderer; ticket->context=endpoint.context; ticket->original_textures=renderer->textures;
+    ticket->original_bound[0]=renderer->bound[0]; ticket->original_bound[1]=renderer->bound[1];
+    ticket->original_attributes=controls->attributes; ticket->original_count=renderer->source_image_count;
+    *out=ticket;
+    ticket->banks=count?calloc(count,sizeof(*ticket->banks)):NULL;
+    if (count && !ticket->banks) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual Source upload bank children"); return false; }
+    ticket->bank_count=count;
+    size_t total=0;
+    for (size_t i=0;i<count;++i) {
+        size_t images=0;
+        if (!qa_scene_resource_policy_source_image_count(banks[i],&images,error)) return false;
+        ticket->banks[i]=(gl_source_prepared_bank){banks[i],images};
+        if (images>GL_SOURCE_IMAGES_QA-total || total+images>GL_SOURCE_IMAGES_QA-ticket->original_count) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"MAX_DRAWIMAGES hit preparing actual Source uploads"); return false;
+        }
+        total+=images;
+    }
+    ticket->rows=total?calloc(total,sizeof(*ticket->rows)):NULL;
+    if (total && !ticket->rows) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining completed Source upload roster"); return false; }
+    for (size_t i=0;i<count;++i) {
+        size_t images=0;
+        if (!qa_scene_resource_policy_source_image_count(banks[i],&images,error)) return false;
+        for (size_t ordinal=0;ordinal<images;++ordinal) {
+            gl_source_prepared_image *row=ticket->rows+ticket->count;
+            row->policy=banks[i]; row->policy_ordinal=ordinal;
+            row->source=qa_scene_resource_policy_source(banks[i]);
+            row->destination=qa_scene_resource_policy_destination(banks[i]);
+            if (!qa_scene_resource_policy_source_image_at(banks[i],ordinal,&row->image,&row->creation,error) ||
+                !row->source || !row->destination || !row->image->source_q3 ||
+                row->image->source_texture_unit>1 || qa_scene_image_resource_owner(row->image)!=row->destination) return false;
+            row->unit=row->image->source_texture_unit;
+            ++ticket->count;
+        }
+    }
+    if (ticket->count>1) qsort(ticket->rows,ticket->count,sizeof(*ticket->rows),source_prepared_order);
+    for (size_t i=1;i<ticket->count;++i)
+        if (ticket->rows[i-1].creation==ticket->rows[i].creation) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,i,"Prepared Source upload roster duplicates an actual constructor"); return false;
+        }
+    GLint unpack_buffer=0,unpack[4]={0};
+    const GLenum unpack_names[4]={GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS};
+    renderer->gl.GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack_buffer);
+    for (size_t i=0;i<4;++i) renderer->gl.GetIntegerv(unpack_names[i],unpack+i);
+    bool ok=gl_check(renderer,"Reading actual Source upload preparation state",error);
+    for (size_t i=0;ok && i<ticket->count;++i) {
+        gl_source_prepared_image *row=ticket->rows+i;
+        row->entry=calloc(1,sizeof(*row->entry));
+        if (!row->entry) { qa_error_set(error,QA_ERROR_MEMORY,i,"Allocating prepared native Source image"); ok=false; break; }
+        if (!qa_scene_resources_retain(row->source,error)) { ok=false; break; }
+        row->entry->source_owner=row->source;
+        qa_scene_image_retain(row->image); row->entry->image=row->image;
+        row->entry->source_admitted=true;
+        row->entry->source_ordinal=ticket->original_count+(uint32_t)i;
+        ok=texture_upload(renderer,row->image,&row->entry->name,error);
+    }
+    renderer->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)unpack_buffer);
+    for (size_t i=0;i<4;++i) renderer->gl.PixelStorei(unpack_names[i],unpack[i]);
+    qa_error restored={0};
+    if (!gl_check(renderer,"Restoring native state after Source upload preparation",&restored)) {
+        if (error) *error=restored;
+        ok=false;
+    }
+    ticket->prepared=ok;
+    return ok;
+}
+bool qa_gl_source_images_ready_is(const qa_gl_source_images_ticket *ticket)
+{
+    qa_gl_renderer *renderer=ticket?ticket->renderer:NULL;
+    qa_display_endpoint endpoint;
+    if (!renderer || !ticket->prepared || ticket->published || !qa_gl_render_controls_current(&renderer->controls) ||
+        !qa_display_endpoint_read(renderer->options.display,&endpoint) || endpoint.context!=ticket->context ||
+        renderer->textures!=ticket->original_textures || renderer->source_image_count!=ticket->original_count ||
+        renderer->bound[0]!=ticket->original_bound[0] || renderer->bound[1]!=ticket->original_bound[1] ||
+        memcmp(&renderer->controls.attributes,&ticket->original_attributes,sizeof(ticket->original_attributes))) return false;
+    for (size_t i=0;i<ticket->bank_count;++i) {
+        size_t count=0;
+        if (!qa_scene_resource_policy_source_image_count(ticket->banks[i].policy,&count,NULL) || count!=ticket->banks[i].count)
+            return false;
+    }
+    for (size_t i=0;i<ticket->count;++i) {
+        const gl_source_prepared_image *row=ticket->rows+i;
+        const qa_scene_image *image=NULL; uint64_t sequence=0;
+        if (!row->entry || !row->entry->name ||
+            !qa_scene_resource_policy_source_image_at(row->policy,row->policy_ordinal,&image,&sequence,NULL) ||
+            image!=row->image || sequence!=row->creation || image->source_texture_unit!=row->unit ||
+            qa_scene_image_resource_owner(image)!=row->destination ||
+            qa_scene_resource_policy_source(row->policy)!=row->source) return false;
+    }
+    return true;
+}
+void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
+{
+    if (!ticket || !ticket->prepared || ticket->published) return;
+    qa_gl_renderer *renderer=ticket->renderer;
+    for (size_t i=0;i<ticket->count;++i) {
+        gl_source_prepared_image *row=ticket->rows+i;
+        gl_texture_entry *entry=row->entry;
+        entry->next=renderer->textures; renderer->textures=entry;
+        renderer->source_images[renderer->source_image_count++]=entry;
+        uint32_t unit=row->unit;
+        renderer->gl.ActiveTexture(GL_TEXTURE0+unit); renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
+        renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
+        qa_scene_image_retain(row->image); qa_scene_image_release(renderer->bound[unit]); renderer->bound[unit]=row->image;
+        renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+        renderer->controls.attributes.actual_empty[unit]=true;
+        renderer->controls.attributes.texture_unit=unit;
+        if (unit==1) {
+            renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.ClientActiveTexture(GL_TEXTURE0);
+            renderer->controls.attributes.texture_unit=0;
+        }
+        row->entry=NULL;
+    }
+    ticket->published=true;
+}
+bool qa_gl_source_images_finish(qa_gl_source_images_ticket **out,qa_error *error)
+{
+    if (!out || !*out) return true;
+    qa_gl_source_images_ticket *ticket=*out;
+    if (!ticket->published) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native Source image finish requires publication"); return false; }
+    free(ticket->banks); free(ticket->rows); free(ticket); *out=NULL; return true;
+}
+bool qa_gl_source_images_abort(qa_gl_source_images_ticket **out,qa_error *error)
+{
+    if (!out || !*out) return true;
+    qa_gl_source_images_ticket *ticket=*out; qa_gl_renderer *renderer=ticket->renderer;
+    if (ticket->published || !qa_display_make_current(renderer->options.display,error)) return false;
+    for (size_t i=ticket->count;i>0;--i) {
+        gl_texture_entry *entry=ticket->rows[i-1].entry;
+        if (!entry) continue;
+        if (entry->name) {
+            if (!gl_check(renderer,"Preparing native Source image abort",error)) return false;
+            renderer->gl.DeleteTextures(1,&entry->name);
+            if (!gl_check(renderer,"Retiring prepared native Source image",error)) return false;
+            entry->name=0;
+        }
+        qa_scene_image_release(entry->image); qa_scene_resources_destroy(entry->source_owner);
+        free(entry); ticket->rows[i-1].entry=NULL;
+    }
+    free(ticket->banks); free(ticket->rows); free(ticket); *out=NULL; return true;
 }
 
 bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,

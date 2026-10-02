@@ -226,7 +226,7 @@ static bool recipient_image(const qa_scene_model *model, const qa_scene_model_in
 
 bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
                        const qa_scene_mesh *mesh, const scene_model_image *image,
-                       bool unlit, bool world, qa_scene_frame *frame, qa_error *error) {
+                       bool unlit, bool world, scene_model_source_pose *pose, qa_scene_frame *frame, qa_error *error) {
     const qa_scene_model_input *original = input;
     qa_scene_model_input eyes;
     qa_model_format format = model->source->format;
@@ -254,6 +254,16 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     }
     if (material) {
         qa_material_context context = material_context(input, world);
+        if (pose) {
+            context.source_model_pose = scene_model_source_pose_read;
+            context.source_model_retain = scene_model_source_pose_retain;
+            context.source_model_release = scene_model_source_pose_release;
+            context.source_model_context = pose;
+            context.source_model_assets = input->source_model_owner;
+            context.source_model_frame = (int32_t)pose->input.frame;
+            context.source_model_old_frame = (int32_t)pose->input.old_frame;
+            context.source_model_back_lerp = pose->input.back_lerp;
+        }
         context.source_white = qa_scene_white(model->resources);
         if (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4)
             context.source_writer = source_md4 ? QA_SOURCE_WRITE_MODEL_MD4 : QA_SOURCE_WRITE_MODEL;

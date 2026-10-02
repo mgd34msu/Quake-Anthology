@@ -38,7 +38,9 @@ qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
 }
 bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
-    frontend_remote_q2 *row = context; const qa_q2_player *self = player(row);
+    frontend_remote_q2 *row = context; uint32_t self_index; int32_t self_number = -1;
+    if (row->frame.valid && (!frontend_remote_q2_wire_seat(row, &self_index, error) ||
+        !frontend_remote_q2_player_number(row, &row->frame, self_index, &self_number))) return false;
     uint32_t pass_number = 0;
     if (query->pass_actor.registry) {
         const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
@@ -55,7 +57,7 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
     if (!qa_collision_trace(row->geometry, &q, out, error)) return false;
     for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
-        if (!entity->solid || (self && entity->number == (uint32_t)self->clientnum + 1) || entity->number == pass_number) continue;
+        if (!entity->solid || (self_number >= 0 && entity->number == (uint32_t)self_number + 1) || entity->number == pass_number) continue;
         bool extended = row->layout.max_models == 8192 ||
             (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
                 row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
@@ -168,8 +170,11 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
     qa_movement_services services = {.context = row, .trace = remote_q2_trace, .point_contents = contents, .is_bsp = is_brush};
     qa_movement_result result = {0}; bool ok = true; qa_vec3 pml = row->prediction_pml;
     ++row->busy;
-    if (received->clientnum < 0 || !row->options.entity_actor(row->options.context, &row->options.domain,
-        (uint32_t)received->clientnum + 1, &actor, error) || !actor.registry || !remote_q2_live(row, error)) {
+    uint32_t player_index; int32_t player_number;
+    if (!frontend_remote_q2_wire_seat(row, &player_index, error) ||
+        !frontend_remote_q2_player_number(row, &row->frame, player_index, &player_number) ||
+        player_number < 0 || !row->options.entity_actor(row->options.context, &row->options.domain,
+        (uint32_t)player_number + 1, &actor, error) || !actor.registry || !remote_q2_live(row, error)) {
         --row->busy; return false;
     }
     for (uint64_t offset = 1; ok && offset <= pending; ++offset) {

@@ -43,5 +43,7 @@ bool application_save_content_launch_resource_origin(const qa_application_conten
  * adopted physical pool. Each event resource owns the returned reference. */
 bool application_save_content_event_pool(qa_application_content_graph *, uint64_t,
     qa_resource_pool **, qa_error *);
+bool application_save_content_event_view(qa_application_content_graph *, uint64_t,
+    qa_vfs **, qa_error *);
 
 #endif

@@ -77,6 +77,14 @@ bool application_unified_persistent_retire(qa_application *, qa_actor_owner,
 bool application_unified_event_owner_retire(qa_application *, qa_actor_owner,
     const qa_source_frame *actual_primary_clock, qa_error *);
 
+typedef struct application_unified_event_resource_custody {
+    qa_resource *resource;
+    qa_resource_pool *pool;
+    qa_vfs *view;
+    qa_vfs_acquisition opening;
+    uint64_t saved_pool, saved_resource, saved_view;
+} application_unified_event_resource_custody;
+
 typedef struct application_unified_event_resource {
     qa_actor_owner provider;
     qa_string_id content, path;
@@ -88,6 +96,8 @@ typedef struct application_unified_event_resource {
     qa_buffer key;
     char id[81];
     uint64_t saved_pool, saved_resource, saved_view;
+    application_unified_event_resource_custody *custodies;
+    size_t custody_count, custody_capacity;
 } application_unified_event_resource;
 
 typedef struct application_unified_event_registration {
@@ -95,6 +105,7 @@ typedef struct application_unified_event_registration {
     qa_string_id path;
     size_t resource;
     qa_native_host_resource_kind kind;
+    uint64_t custody;
 } application_unified_event_registration;
 
 /* Registration consumes no VFS read. It admits only an actual held opening in
@@ -109,6 +120,10 @@ bool application_unified_event_resource_lookup(qa_application *, qa_actor_owner,
     const char *requested_path, char id[81], bool *found, qa_error *);
 bool application_unified_event_resource_lookup_kind(qa_application *, qa_actor_owner,
     qa_native_host_resource_kind, const char *, char id[81], bool *found, qa_error *);
+bool application_unified_event_resource_lookup_receipt(qa_application *, qa_actor_owner,
+    qa_native_host_resource_kind, const char *, char id[81], uint64_t *custody, bool *found, qa_error *);
+bool application_unified_event_resource_receipt_read(const qa_application *, const char *id,
+    uint64_t custody, const qa_resource **, const qa_vfs **, const qa_vfs_acquisition **, qa_error *);
 bool application_unified_event_registration_clear(qa_application *, qa_actor_owner, qa_error *);
 void application_unified_events_resources_dispose(qa_application *);
 size_t application_unified_event_resource_count(const qa_application *);

@@ -63,9 +63,9 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
     const frontend_seat *seat=context;
     const qa_frontend *f=seat?seat->frontend:NULL;
     if (f && f->application && f->seats && ordinal<f->options.seats && seat==f->seats+ordinal &&
-        seat->id==ordinal && command && command->owner) {
+        seat->id==ordinal && command && command->owner && command->owner<=UINT32_MAX) {
         qa_application_client_source source;
-        if (qa_application_client_read(f->application,command->owner,command->seat,&source,NULL) &&
+        if (qa_application_client_read(f->application,(qa_actor_owner)command->owner,command->seat,&source,NULL) &&
             source.context.physical_seat==ordinal && qa_application_client_current(f->application,&source)) {
             const qa_command_context *actual=&source.context.command;
             if (command->origin==QA_COMMAND_SEAT && !command->script && !command->console_text &&

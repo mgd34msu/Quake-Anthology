@@ -3,6 +3,7 @@
 #include "remote_unified_events.h"
 #include "remote_unified_components.h"
 #include "remote_unified_save.h"
+#include "remote_unified_presentation.h"
 #include "q3_render_policy.h"
 #include "qa/q3_source_scene_bank.h"
 #include "../../presentation/q3_native/events.h"
@@ -98,7 +99,6 @@ struct frontend_unified_q3 {
     uint64_t sampled_frame_number;
     bool sampled;
     qa_ui_preferences preferences;
-    char *configstrings[1024];
     bool busy, prepared, has_frame;
 };
 static qa_json_id field(const qa_json_document *j, qa_json_id row, const char *name)
@@ -1053,6 +1053,41 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         if(!b->retired)okay=qa_q3_presentation_supplement(b->backend,o->scene_bank,&options,scene,e) && current(o,e);
     o->sampled=false; return leave(o,okay,e);
 }
+static bool source_command_event(frontend_unified_q3 *o,const qa_unified_document *d,
+    qa_json_id row,bool command,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d);
+    qa_json_id event=field(j,row,"event");
+    qa_buffer content={0},instance={0},value={0};uint64_t generation;
+    double sequence=0;int32_t recipient=-1,index=0;
+    bool okay=content_text(d,row,&content,e) && event_owner(d,row,&instance,&generation,e);
+    if(okay && (!generation || !instance.size))
+        okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 Source event lost its actual activation receipt");
+    if(okay && command) {
+        okay=number(d,field(j,row,"sequence"),&sequence,e) && sequence>=0 &&
+            sequence<=9007199254740991.0 && trunc(sequence)==sequence &&
+            integer(d,field(j,event,"client"),&recipient,e) && text(d,field(j,event,"text"),&value,e);
+    } else if(okay) {
+        okay=integer(d,field(j,event,"index"),&index,e) && index>=0 && index<1024 &&
+            text(d,field(j,event,"value"),&value,e);
+    }
+    bool matched=false;
+    size_t count=frontend_remote_unified_presentation_q3_client_count(o->replica);
+    for(size_t i=0;okay && i<count;++i) {
+        frontend_unified_q3_client *client=frontend_remote_unified_presentation_q3_client(o->replica,i);
+        if(!frontend_unified_q3_client_event_matches(client,(const char *)instance.data,
+            (const char *)content.data,generation))continue;
+        matched=true;
+        if(command)okay=frontend_unified_q3_client_server_command(client,(uint64_t)sequence,
+            recipient,(const char *)value.data,e);
+        /* Notification values may be intermediate writes. The real CLIENT
+         * compares the committed Source dictionary and reaches its own cs. */
+        if(okay)okay=current(o,e);
+    }
+    if(okay && !matched)okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,
+        "Q3 Source event has no matching retained CLIENT activation");
+    qa_buffer_free(&content);qa_buffer_free(&instance);qa_buffer_free(&value);return okay;
+}
 bool frontend_unified_q3_presentation(frontend_unified_q3 *o, const qa_unified_document *d,
     qa_json_id row, bool *mirrored, qa_error *e)
 {
@@ -1085,11 +1120,8 @@ bool frontend_unified_q3_presentation(frontend_unified_q3 *o, const qa_unified_d
         if (okay) qa_console_emit(domain->console,&domain->command_context,(const char *)b.data);
         qa_buffer_free(&b); return okay && current(o,e);
     }
-    if (qa_json_string_equal(j,kind,"configstring")) {
-        int32_t index; okay=integer(d,field(j,v,"index"),&index,e) && text(d,field(j,v,"value"),&b,e);
-        if (okay) { free(o->configstrings[index]); o->configstrings[index]=(char *)b.data; b=(qa_buffer){0}; }
-        qa_buffer_free(&b); return okay;
-    }
+    if (qa_json_string_equal(j,kind,"server-command")) return source_command_event(o,d,row,true,e);
+    if (qa_json_string_equal(j,kind,"configstring")) return source_command_event(o,d,row,false,e);
     return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 Source event requires the actual retained cgame command/snapshot owner");
 }
 bool frontend_unified_q3_simulation(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_id row, qa_error *e)
@@ -1119,7 +1151,6 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
     while (o->characters) { unified_q3_character *c=o->characters; o->characters=c->next;
         qa_resource_release(c->animation_holder); free(c); }
     while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
-    for (size_t i=0; i<1024; ++i) free(o->configstrings[i]);
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o->character_order); free(o->lights); free(o); *address=NULL; return true;
 }
@@ -1266,10 +1297,10 @@ static bool imported_bank(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e)
 }
 static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa_application_content_graph *content)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','2'};
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','3'};
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     uint32_t epoch=o->epoch,seat=domain->physical_seat;
-    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ32",sizeof(magic)) ||
+    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ33",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u32(io,&seat) || seat!=domain->physical_seat ||
         !qa_source_save_u64(io,&o->audio_owner) || !qa_source_save_bool(io,&o->has_frame) ||
         !qa_source_save_i32(io,&o->time) || !qa_source_save_i32(io,&o->previous_time))return false;
@@ -1278,7 +1309,6 @@ static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa
         if(okay && reading)okay=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->frame,io->error);
         qa_buffer_free(&bytes);int32_t time;if(!okay || !frame_read(o,o->frame,&time,io->error) || time!=o->time)return false;}
     else if(o->time || o->previous_time)return false;
-    for(size_t i=0;i<1024;++i)if(!saved_text(io,o->configstrings+i))return false;
     size_t banks=0;for(unified_q3_bank *b=o->banks;b;b=b->next)++banks;
     if(!qa_source_save_count(io,&banks,SIZE_MAX/sizeof(unified_q3_bank)))return false;
     unified_q3_bank **tail=&o->banks,*b=o->banks;

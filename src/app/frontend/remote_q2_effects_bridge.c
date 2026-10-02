@@ -15,6 +15,7 @@ static bool hit_marker(void *, int32_t, qa_error *);
 static bool controls(void *, frontend_remote_q2_effects_controls *, qa_error *);
 static bool viewer(void *, qa_actor_id *, qa_error *);
 static bool frame_milliseconds(void *, double *, qa_error *);
+static bool render_clock(void *, uint64_t *, uint64_t *, qa_error *);
 static bool source_current(void *context, const frontend_remote_q2_effects_source *source, qa_error *error)
 {
     frontend_remote_q2 *row = context; frontend_remote_q2_view view;
@@ -27,6 +28,7 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
         source->model != model || source->sound != remote_q2_effect_sound || source->hit_marker != hit_marker ||
         source->controls != controls ||
         source->frame_milliseconds != frame_milliseconds ||
+        source->render_clock != render_clock ||
         source->viewer != viewer ||
         source->footstep != remote_q2_footstep || source->trace != remote_q2_trace ||
         source->session != qa_application_session(row->options.domain.application) || source->identity != row->identity ||
@@ -82,7 +84,9 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
     }
     for (size_t i = 0; i < row->frame.player_count; ++i) {
         const qa_q2_player *player = &row->frame.players[i].player;
-        if (player->clientnum >= 0 && (uint32_t)player->clientnum + 1 == number) {
+        int32_t player_number;
+        if (frontend_remote_q2_player_number(row, &row->frame, i, &player_number) &&
+            player_number >= 0 && (uint32_t)player_number + 1 == number) {
             pose.origin = row->layout.max_models == 8192 ? vector(player->pmove.origin_f) :
                 qa_v3((float)player->pmove.origin[0] * .125f, (float)player->pmove.origin[1] * .125f,
                     (float)player->pmove.origin[2] * .125f);
@@ -96,8 +100,8 @@ static bool viewer(void *context, qa_actor_id *out, qa_error *error)
     frontend_remote_q2 *row = context; uint32_t index;
     if (!row || !out || !remote_q2_live(row, error) || !row->frame.valid ||
         !frontend_remote_q2_wire_seat(row, &index, error) || index >= row->frame.player_count) return false;
-    int32_t number = row->frame.players[index].player.clientnum;
-    if (number < 0) return false;
+    int32_t number;
+    if (!frontend_remote_q2_player_number(row, &row->frame, index, &number) || number < 0) return false;
     frontend_remote_q2_effects_pose pose;
     if (!actor(row, (uint32_t)number + 1, &pose, error)) return false;
     *out = pose.actor; return true;
@@ -196,6 +200,13 @@ static bool frame_milliseconds(void *context, double *out, qa_error *error)
     if (!out || !row || !remote_q2_live(row, error) || !isfinite(row->frame_ms) || row->frame_ms <= 0) return false;
     *out = row->frame_ms; return true;
 }
+static bool render_clock(void *context, uint64_t *wall, uint64_t *sequence, qa_error *error)
+{
+    frontend_remote_q2 *row = context;
+    if (!row || !wall || !sequence || !remote_q2_live(row, error)) return false;
+    *wall = row->frontend->wall_time_ns / UINT64_C(1000000);
+    *sequence = row->frontend->frame_number; return true;
+}
 bool remote_q2_hit_marker_sample(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !remote_q2_live(row, error)) return false;
@@ -219,6 +230,7 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
         .model = model, .sound = remote_q2_effect_sound, .hit_marker = hit_marker,
         .controls = controls,
         .frame_milliseconds = frame_milliseconds,
+        .render_clock = render_clock,
         .footstep = remote_q2_footstep, .trace = remote_q2_trace};
     return source_current(row, out, error);
 }
@@ -273,11 +285,11 @@ bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
     if (ok) ok = frontend_remote_q2_effects_frame(row->effects, &sample, error);
     free(poses); return ok;
 }
-bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_view *view, qa_vec3 gun_offset,
+bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_view *view, qa_vec3 viewer_origin, qa_vec3 gun_offset,
     int32_t viewer_number, frontend_remote_q2_effects_sample *sample, frontend_remote_q2_effects_pose **owned,
     const qa_scene_light **lights, size_t *count, qa_error *error)
 {
-    if (!row || !row->effects || !view || !sample || !owned || *owned || !lights || !count ||
+    if (!row || !row->effects || !view || !qa_vec_finite(viewer_origin) || !sample || !owned || *owned || !lights || !count ||
         row->frame.entity_count > SIZE_MAX / sizeof(**owned)) return false;
     frontend_remote_q2_effects_pose *poses = row->frame.entity_count ? calloc(row->frame.entity_count, sizeof(*poses)) : NULL;
     if (row->frame.entity_count && !poses) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 effects view poses");
@@ -303,6 +315,7 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
         .server_milliseconds = (double)row->frame.server_frame * row->frame_ms,
         .fraction = row->fraction, .frame_sequence = (uint64_t)(uint32_t)row->frame.server_frame,
         .entities = poses, .entity_count = row->frame.entity_count, .view = *view, .viewer = viewer.actor,
+        .viewer_origin = viewer_origin, .viewer_origin_present = true,
         .gun_offset = gun_offset, .hand = hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2 ?
             (int32_t)hand->number : 0, .hardware = row->frontend->gl != NULL,
         .frame_seconds = (float)row->sample_frame_seconds, .per_pixel_lighting = false};

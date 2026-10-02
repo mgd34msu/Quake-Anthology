@@ -197,7 +197,7 @@ bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *
         (controls->source_limits_initialized ? controls->source_max_polys<600 || controls->source_max_polyverts<3000 ||
             controls->source_max_polys>INT32_MAX || controls->source_max_polyverts>INT32_MAX :
             controls->source_max_polys!=0 || controls->source_max_polyverts!=0))) return false;
-    if (controls->ticket || !qa_source_save_i32(io, &controls->values.primitives) ||
+    if (controls->ticket || controls->image_ticket || !qa_source_save_i32(io, &controls->values.primitives) ||
         !qa_source_save_bool(io, &controls->values.compiled_vertex_arrays) ||
         !source_fields(io, &controls->source, version, refs)) return false;
     if (controls->source.scene_bank) {

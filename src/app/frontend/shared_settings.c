@@ -210,19 +210,24 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
                 &settings,&owner->projected_window,error)) return false;
         }
         qa_input_seat *configuration[QA_INPUT_LOCAL_SEATS]={0};
+        qa_controller_selection selections[QA_INPUT_LOCAL_SEATS]={0};
         for (unsigned slot=0;slot<f->options.seats;++slot) {
             if (!(owner->client?frontend_config_store_client_input_configuration(owner->manager,
                 owner->client,slot,configuration+slot,error):
                 frontend_config_store_input_configuration(owner->manager,owner->application,
                     owner->candidate,slot,configuration+slot,error))) return false;
+            if (owner->client && !frontend_config_store_client_controller_selection(owner->manager,
+                owner->client,slot,selections+slot,error)) return false;
         }
-        bool prepared=frontend_input_settings_prepare(f,&owner->projected,configuration,
-            (double)f->wall_time_ns/1000000.0,&owner->input,error);
+        bool prepared=owner->client?frontend_input_settings_prepare_selected(f,&owner->projected,configuration,
+            selections,(double)f->wall_time_ns/1000000.0,&owner->input,error):
+            frontend_input_settings_prepare(f,&owner->projected,configuration,
+                (double)f->wall_time_ns/1000000.0,&owner->input,error);
         if (owner->input) f->input_settings=owner->input;
         if (!prepared) return false;
     }
     if (!frontend_input_settings_reserve_all(owner->input,error)) return false;
-    if (owner->projected_window && !frontend_input_settings_release_all_prepare(owner->input,
+    if ((owner->client || owner->projected_window) && !frontend_input_settings_release_all_prepare(owner->input,
         (double)f->wall_time_ns/1000000.0,error)) return false;
     bool released=false;
     if (!frontend_input_settings_release_advance(owner->input,&released,error)) return false;

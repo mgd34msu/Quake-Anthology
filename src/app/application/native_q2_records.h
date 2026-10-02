@@ -65,8 +65,8 @@ bool application_native_q2_records_begin(application_native_q2_records *,applica
 bool application_native_q2_records_commit(application_native_q2_records *,qa_error *);
 bool application_native_q2_records_commit_inventory(application_native_q2_records *,
     const application_native_q2_inventory_commit *,qa_error *);
-/* The admitted resource execution remains borrowed until checked scope close.
- * Failed construction/removal retains *scope and its real write subscriptions. */
+/* Cleanup revokes the execution borrow before retiring write subscriptions.
+ * Failed construction/removal retains *scope and its disabled subscriptions. */
 bool application_native_q2_records_pickup_begin(application_native_q2_records *,qa_actor_id,
     qa_pickup_execution *,application_native_q2_protection_item_fn,void *,
     application_native_q2_pickup_scope **,qa_error *);

@@ -136,12 +136,19 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
         r->busy=false;
         if(!ok) return false;
     }
+    if (!qa_bot_moves_shutdown(r->moves,error)) return false;
     qa_bot_moves_destroy(r->moves); r->moves = NULL;
     if(source && !qa_bot_goals_shutdown(r->goals,error)) return false;
     qa_bot_goals_destroy(r->goals); r->goals = NULL;
     if(source) {
         r->busy=true;
         bool ok=bot_runtime_weapons_shutdown(r,error);
+        r->busy=false;
+        if(!ok) return false;
+    }
+    if(source) {
+        r->busy=true;
+        bool ok=qa_bot_library_weights_shutdown(r->library,error);
         r->busy=false;
         if(!ok) return false;
     }
@@ -156,7 +163,6 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;
     qa_bot_actions_shutdown(r->actions);
     if (!r->closed) {
-        if(source && !qa_bot_library_weights_shutdown(r->library,error)) return false;
         qa_bot_library_variables_clear(r->library);
         qa_script_defines_clear(r->globals);
         if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}

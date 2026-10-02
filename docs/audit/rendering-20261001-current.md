@@ -355,6 +355,8 @@ After BeginFrame, register a new single-image shader and immediately draw that s
 
 Controls, NativeView and Root received the real image-admission receiver, distinct cached/actual/current-unit ownership and cold continuation joins. Preserving sampler values and client attributes does not establish this registration producer or binding-cache behavior. Generic retained texture uploads keep their separate native contract.
 
+Fresh actual admission/helper reads now establish a real frontend recipient callback, eager Source GL image admission, retained creation order and the cached-image versus raw-object-zero distinction. Focused current QGLR reads also establish saved admission ordinals, strong resource-bank ownership, rebuilt order slots, complete slot validation, actual-empty bindings and retained clear depth. The final enclosing resource/renderer graph, native pipeline restoration and whole changing owners remain under review; this is a bounded correction of the missing producer and codec fields.
+
 ### R51. Source model writers receive welded geometry instead of physical source cells
 
 Verdict confirmed through native model topology/pose/submission and both actual Source model writers. Native topology builds its vertex array in first triangle-corner encounter order and drops unreferenced vertices. `mesh_geometry` samples that reduced retained array. Original `RB_SurfaceMesh` and family `SourceTessState.appendMd3` instead check, write and append every raw surface vertex in file order, preserving the original triangle indices.
@@ -393,7 +395,7 @@ A valid MD3 can have a tiny triangle, authored frame bounds from -2000 to 2000 a
 
 NativeView, Common and Root received the genuine selected-LOD whole-model admission and retained-writer joins. Source admission must not be followed by the unrelated generic per-surface cull. Cross-family model culling retains its supported native policy.
 
-Fresh current helper/caller reads now corroborate authored selected-frame spheres, merged oriented frame bounds, four side planes and bypass of generic per-surface reculling. One exact Source boundary remained different in that read: box corners used `>=` instead of the strict `>` in both donors. A box wholly on one side plane is out in the donors but admitted natively; this predicate correction was sent directly to NativeView. No complete moving model-owner acceptance is inferred.
+Fresh current helper/caller reads now corroborate authored selected-frame spheres, merged oriented frame bounds, four side planes and bypass of generic per-surface reculling. An intermediate helper used `>=` instead of the strict `>` in both donors, admitting a box wholly on one side plane. After that precise finding reached NativeView, a fresh current helper read establishes the strict `>` correction. No complete moving model-owner acceptance is inferred.
 
 ### R55. Source backend selection reconstructs lighting that the frontend never published
 
@@ -402,6 +404,8 @@ Verdict confirmed through the actual Q3 model lighting producer, retained bank a
 A first-ever valid visible MD4 in entity cell zero, with an authored white-image `rgbGen lightingDiffuse` stage, therefore consumes zero ambient/directed lighting in both donors. Native instead calculates the no-world 150-plus-32 illumination and publishes it when the backend selects the entity. No malformed input or measured image result is claimed.
 
 Common, Foundations, NativeView and Root received the actual producer/timing distinction. Genuine frontend MD3/inline lighting setup must own `lightingCalculated` and derived-cell publication; backend selection reads those real retained cells. The full primitive bank and its cold references alone cannot establish that production join.
+
+Current actual selection reads establish removal of the unconditional backend bank write. The real MD3 frontend now reads `lighting_calculated`, computes and publishes only when needed, while Source MD4 reads the actual retained derived cell. The inline-model branch still calculates into a local input and forwards `world.entity_material` without publishing/reusing the physical bank's lighting receipt; that exact remaining producer was sent to Common. Complete derived lighting and current/cold behavior remain open.
 
 ### R56. Source constant-RGB error prefix clears the retained constant alpha
 
@@ -418,6 +422,14 @@ Verdict confirmed through actual native pose/collection and both original Source
 The valid R47 insertion sequence supplies a concrete witness. Admit entity zero at frame zero and entity one at frame one using the same valid two-frame MD3. Queue entity one's high-sort surface, then insert a lower-sort shader before issue. The genuine queued packed-sort mutation selects entity zero at dispatch, so both donors' model writer samples frame zero. Native updates its selected entity context but appends the already copied frame-one geometry.
 
 Common, NativeView and Root received the authentic retained model/surface owner and late pose-writer join. Raw physical vertex order alone does not establish the reached model writer. The related Source MD3 frame repair also mutates the real entity cell in both donors; native currently repairs a local model input. These actual primitive and geometry producers require the genuine bank/registry lifetime, not a copied closure. No native image execution is claimed.
+
+### R58. Single-pass Source iterator publishes its coordinate pointer after stage evaluation
+
+Verdict confirmed through the original generic iterator, both family backends and current native Source execution. Original `RB_StageIteratorGeneric` sets its single-pass texture-coordinate pointer to `svars.texcoords[0]` before evaluating the stage. Family `begin-generic-iterator` publishes the same `svars0` pointer at iterator entry. Native `execute_material` enables the arrays but changes the actual retained coordinate kind/bank only inside `emit_stage`, after color and texture-coordinate computation.
+
+A reached optimized vertex-lit shader leaves the real coordinate pointer on the tess primary UV bank. Follow it with a one-pass generic shader whose `alphaGen wave noise` reaches the unsupported alpha table. Both donors first select the stage-zero UV pointer, then report the error; native reports the error while retaining the previous tess UV pointer. The real CPU/GL controls codec preserves this pointer kind and bank, so the difference is a concrete retained error-prefix and cold-continuation witness. Common, Controls and Root received the actual iterator-entry fix seam.
+
+The suspected array-enable timing difference was refuted by the full original branch: multipass arrays are reenabled after locking and before `ComputeColors`. Their pointer changes still occur after stage computation. No successful rendered-image difference or whole Source pipeline acceptance is claimed.
 
 ## Required source behavior gaps
 

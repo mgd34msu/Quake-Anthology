@@ -197,6 +197,10 @@ bool qa_q3_presentation_entity_token(qa_q3_presentation *, const char **token, b
 bool qa_q3_presentation_in_pvs(qa_q3_presentation *, qa_vec3, qa_vec3, bool *, qa_error *);
 bool qa_q3_presentation_clear(qa_q3_presentation *, qa_error *);
 bool qa_q3_presentation_entity(qa_q3_presentation *, const qa_q3_ref_entity *, qa_error *);
+/* The actual pending entity index in the current Source scene. This does not
+ * publish a ref; available=false retains the renderer's real capacity policy. */
+bool qa_q3_presentation_entity_cursor(const qa_q3_presentation *, size_t *index,
+    bool *available, qa_error *);
 bool qa_q3_presentation_poly(qa_q3_presentation *, int32_t shader, const qa_q3_poly_vertex *, size_t,
                              qa_error *);
 bool qa_q3_presentation_light(qa_q3_presentation *, qa_vec3, float radius, qa_vec3 color,

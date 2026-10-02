@@ -1,4 +1,5 @@
 #include "font_inventory.h"
+#include "component_scene.h"
 #include "qa/font_save.h"
 #include "qa/persistence_content.h"
 #include "qa/scene_resource_save.h"
@@ -65,6 +66,9 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
         if(banks>SIZE_MAX-capacity) return false;
         capacity+=banks;
     }
+    size_t components=frontend_component_scene_count(frontend);
+    if(components>SIZE_MAX-capacity) return false;
+    capacity+=components;
     if(capacity>SIZE_MAX/sizeof(font_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote font inventory exceeds address space");
     font_owner *owners=calloc(capacity,sizeof(*owners));
@@ -109,6 +113,11 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
             ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
                 append(owners,count,graph,bank.fonts,bank.images,bank.files,7,key,0,error);
         }
+    }
+    for(size_t i=0;ok && i<components;++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(frontend,i,&row,error) &&
+            append(owners,count,graph,row.fonts,row.images,row.files,8,i,row.identity,error);
     }
     if (!ok) {
         free(owners); *count=0;

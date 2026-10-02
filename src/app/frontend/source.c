@@ -1,6 +1,8 @@
 #include "renderer_materials.h"
 #include "source_acoustics.h"
 #include "source_client_registry.h"
+#include "video_guests.h"
+#include "source_companion.h"
 #include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
 #include "qa/application_q3_components.h"
@@ -67,6 +69,16 @@
 typedef struct frontend_source_lease frontend_source_lease;
 typedef struct source_render_scope source_render_scope;
 typedef struct source_body_draw source_body_draw;
+typedef struct source_companion_packet {
+    struct source_companion_packet *next;
+    frontend_source_companion_packet view;
+} source_companion_packet;
+typedef struct source_companion {
+    frontend_source_companion_view view;
+    qa_scene_frame frame;
+    source_companion_packet *first,*last;
+    bool entered,completed;
+} source_companion;
 struct frontend_source {
     frontend_source *next;
     qa_frontend *frontend;
@@ -80,6 +92,7 @@ struct frontend_source {
     frontend_source_lease *retired_leases;
     source_render_scope *render_scope;
     qa_q3_registry_retirement *world_retirement;
+    source_companion *companion;
     frontend_source_role_identity *restore_roles;
     size_t restore_role_count;
     bool constructed, construction_started;
@@ -152,6 +165,16 @@ static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options 
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
+static bool companion_capture(qa_frontend *,uint32_t,qa_scene_rect,qa_error *);
+static void companion_clear(source_companion *capture)
+{
+    while (capture && capture->first) {
+        source_companion_packet *packet=capture->first; capture->first=packet->next;
+        free((void *)packet->view.entities); free((void *)packet->view.entity_actors);
+        free((void *)packet->view.entity_views); free(packet);
+    }
+    if (capture) { capture->last=NULL; capture->view.packet_count=0; capture->completed=false; }
+}
 bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
     frontend_source_client_registry *out,bool *present,qa_error *error)
 {
@@ -858,6 +881,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     options->world.source_diagnostics_read=diagnostics_read; options->world.source_diagnostics_context=source;
     if (!body_scene_prepare(scope->lease,options,error)) return false;
     if (!options->world.source_scratch) return false;
+    if (source->companion && source->companion->entered) options->world.no_world=true;
     if (scope->lease->role==QA_QVM_CGAME &&
         !frontend_q3_shadow_mode_read(scope->lease->cvars,&options->shadow_mode,error)) return false;
     return render_current(source,scope) ||
@@ -869,6 +893,9 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
     source_render_scope *scope=source->render_scope;
     if (!render_current(source,scope))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission lost its entered renderer lease");
+    if (source->companion && source->companion->entered)
+        return frame==&source->companion->frame ||
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Companion scene left its genuine private output frame");
     if (!frontend_source_submit_scene(source->frontend,source->seat,source->owner,options,frame,error)) return false;
     if (!body_scene_submit(scope->lease,options,frame,error)) return false;
     if (scope->lease->equipment &&
@@ -894,6 +921,25 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
     (void)vertices; (void)vertex_count; (void)lights; (void)light_count;
     if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene completion lost its actual reached render scope");
+    if (source->companion && source->companion->entered) {
+        source_companion *capture=source->companion;
+        if (entity_count>SIZE_MAX/sizeof(*entities) || (entity_count && !entities) || capture->view.packet_count==SIZE_MAX)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Companion packet exceeds its genuine Source entity span");
+        source_companion_packet *packet=calloc(1,sizeof(*packet));
+        if (!packet) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion Draw packet");
+        qa_q3_ref_entity *refs=entity_count?malloc(entity_count*sizeof(*refs)):NULL;
+        qa_actor_id *actors=entity_count?calloc(entity_count,sizeof(*actors)):NULL;
+        bool *views=entity_count?calloc(entity_count,sizeof(*views)):NULL;
+        if (entity_count && (!refs || !actors || !views)) {
+            free(refs); free(actors); free(views); free(packet);
+            return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion entity poses");
+        }
+        if (entity_count) memcpy(refs,entities,entity_count*sizeof(*refs));
+        packet->view=(frontend_source_companion_packet){.definition=*definition,.entities=refs,
+            .entity_actors=actors,.entity_views=views,.entity_count=entity_count};
+        if (capture->last) capture->last->next=packet; else capture->first=packet;
+        capture->last=packet; ++capture->view.packet_count;
+    }
     body_scene_completed(scope->lease);
     scene_cleared(source); return true;
 }
@@ -1035,6 +1081,11 @@ static bool source_free(frontend_source *source)
     if (frontend->capture || frontend->resource_inventory || source->retired_leases || !source_idle(source) ||
         !frontend_selected_effects_idle(frontend)) return false;
     qa_error error = {0};
+    if (source->companion) {
+        if (source->companion->entered || source->companion->frame.source_pending) return false;
+        companion_clear(source->companion); qa_scene_frame_destroy(&source->companion->frame);
+        free(source->companion); source->companion=NULL;
+    }
     if (frontend->music_sources && !frontend_music_sources_explicit_retire(frontend->music_sources,source,&error)) return false;
     if (source->presentation &&
         !frontend_selected_effects_retire_parent(frontend,source->presentation,&error)) return false;
@@ -2152,7 +2203,7 @@ bool frontend_source_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rect r
             source->has_listener = false;
             if (!qa_q3_presentation_frame(source->presentation, &frontend->frame, rect, error)) return false;
         }
-    return true;
+    return companion_capture(frontend,seat,rect,error);
 }
 static bool present_without_cgame_lease(qa_frontend *f,uint32_t seat,uint32_t real_time,uint32_t client_time,qa_error *error)
 {
@@ -2317,9 +2368,10 @@ bool frontend_source_audio_view(const qa_frontend *frontend,const qa_audio_asset
         }
     return false;
 }
-bool frontend_source_group_read(const qa_frontend *frontend, size_t index, frontend_source_group_view *out)
+static bool source_group_read(const qa_frontend *frontend,size_t index,frontend_source_group_view *out,
+    const frontend_video_guests *video)
 {
-    if (!frontend || !out || frontend->stepping) return false;
+    if (!frontend || !out || (video?!frontend_video_guests_resources_associated(frontend,video):frontend->stepping)) return false;
     const frontend_source *source=frontend->sources;
     while (source && index--) source=source->next;
     if (!source || !source->constructed || source->frontend!=frontend || source->application!=frontend->application) return false;
@@ -2339,6 +2391,11 @@ bool frontend_source_group_read(const qa_frontend *frontend, size_t index, front
     view.music=source->music_attached?qa_audio_engine_bus_music(frontend->audio,source->identity):source->music;
     *out=view; return true;
 }
+bool frontend_source_group_read(const qa_frontend *frontend,size_t index,frontend_source_group_view *out)
+{ return source_group_read(frontend,index,out,NULL); }
+bool frontend_source_group_video_read(const qa_frontend *frontend,size_t index,frontend_source_group_view *out,
+    const frontend_video_guests *video)
+{ return video && source_group_read(frontend,index,out,video); }
 bool frontend_source_acoustics_shared(const qa_frontend *f,bool *out,qa_error *error)
 {
     if (!f || !out || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic source roster requires its actual frontend");

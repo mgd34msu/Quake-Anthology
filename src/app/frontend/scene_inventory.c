@@ -169,6 +169,8 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
             if (model.owns_world && !world_bind(inventory,model.world,model.resource,model.provider.mounts,error)) return false;
             for (unsigned k=0;k<3;++k) if (model.sources[k] &&
                 !model_add(rows,(frontend_model_source){.model=model.sources[k],.resource=lod_resource(&model,k),.files=model.provider.mounts},error)) return false;
+            if (model.source_md4 && !model_add(rows,(frontend_model_source){
+                .model=model.source_md4,.resource=model.source_md4_resource,.files=model.provider.mounts},error)) return false;
         }
     }
     for (size_t i=0;i<inventory->world_count;++i) {

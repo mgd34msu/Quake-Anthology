@@ -19,6 +19,7 @@ typedef struct qa_scene_source_world_view qa_scene_source_world_view;
 typedef struct qa_scene_model qa_scene_model;
 typedef struct qa_scene_geometry qa_scene_geometry;
 typedef struct qa_material_source_scratch qa_material_source_scratch;
+typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
 typedef struct qa_scene_source_diagnostics {
     int32_t debug_sort, stencil_bits, fast_sky;
     bool show_triangles, show_normals, show_sky, no_bind;
@@ -133,6 +134,11 @@ bool qa_scene_resource_policy_prepare_source_restart(qa_scene_resources *,
     const qa_q3_image_upload_options *, qa_scene_resource_policy **, qa_error *);
 bool qa_scene_resource_policy_source_restart_read(const qa_scene_resource_policy *,
     qa_q3_image_upload_options *);
+/* Completed new Source uploads. Constructor sequence merges true creation
+ * order across banks even when animation or sampling shares image identities. */
+bool qa_scene_resource_policy_source_image_count(const qa_scene_resource_policy *, size_t *, qa_error *);
+bool qa_scene_resource_policy_source_image_at(const qa_scene_resource_policy *, size_t,
+    const qa_scene_image **, uint64_t *creation_sequence, qa_error *);
 qa_scene_resources *qa_scene_resource_policy_destination(const qa_scene_resource_policy *);
 qa_scene_resources *qa_scene_resource_policy_source(const qa_scene_resource_policy *);
 bool qa_scene_resource_policy_dependencies(qa_scene_resource_policy *,
@@ -581,6 +587,7 @@ typedef enum qa_scene_legacy_world_phase {
     QA_LEGACY_WORLD_ALL, QA_LEGACY_WORLD_OPAQUE, QA_LEGACY_WORLD_WATER
 } qa_scene_legacy_world_phase;
 typedef struct qa_scene_legacy_policy {
+    qa_scene_family source_family;
     bool present, fullbright, lightmap, dynamic, saturate, polyblend, cull, clear, flares;
     bool planar_shadows, double_eyes;
     float modulate;
@@ -764,6 +771,10 @@ struct qa_scene_model_input {
     qa_material_library *material_library;
     qa_scene_fog fog;
     const char *source_path;
+    /* The actual registration namespace owns deferred Source model bytes. */
+    qa_q3_presentation_assets *source_model_owner;
+    bool (*source_model_retain)(void *, qa_error *);
+    void (*source_model_release)(void *);
     const qa_model_replacement *replacement;
     const qa_model_animation *animation;
     const qa_scene_model_attachment *attachments;

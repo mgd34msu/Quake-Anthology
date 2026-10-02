@@ -28,6 +28,7 @@ struct qa_render_controls {
     bool source_limits_initialized;
     qa_render_source_attributes attributes;
     qa_render_controls_ticket *ticket;
+    qa_render_source_images_ticket *image_ticket;
     qa_material_source_scratch source;
 };
 typedef enum qa_render_primitive_mode {
@@ -67,6 +68,13 @@ bool qa_gl_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_image_admit(qa_render_controls *,const qa_scene_image *,uint32_t,qa_error *);
 size_t qa_gl_source_images_metadata_count(const qa_render_controls *);
 const qa_scene_image *qa_gl_source_image_metadata_at(const qa_render_controls *,size_t);
+typedef struct qa_gl_source_images_ticket qa_gl_source_images_ticket;
+bool qa_gl_source_images_prepare(qa_render_controls *,qa_scene_resource_policy *const *,size_t,
+    qa_gl_source_images_ticket **,qa_error *);
+bool qa_gl_source_images_ready_is(const qa_gl_source_images_ticket *);
+void qa_gl_source_images_publish(qa_gl_source_images_ticket *);
+bool qa_gl_source_images_finish(qa_gl_source_images_ticket **,qa_error *);
+bool qa_gl_source_images_abort(qa_gl_source_images_ticket **,qa_error *);
 void qa_render_source_stage_state(qa_scene_state *, const qa_scene_state *);
 bool qa_gl_source_texture_filter_apply(qa_render_controls *, qa_error *);
 void qa_cpu_render_controls_close(qa_render_controls *);

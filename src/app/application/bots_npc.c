@@ -142,7 +142,8 @@ void application_npc_owner_free(application_bots_npc *owner)
     }
     while(owner->graphs) {
         npc_graph *graph=owner->graphs;owner->graphs=graph->next;
-        qa_nav_graph_release(graph->graph);qa_buffer_free(&graph->asset);free(graph);
+        qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
+        qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);
     }
     qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);free(owner);
 }
@@ -155,6 +156,24 @@ void application_bots_npc_destroy(application_provider *source)
 bool application_bots_npc_idle(const application_provider *source)
 {
     return !source || !source->bots_npc || !source->bots_npc->busy;
+}
+bool application_bots_npc_content_visit(const application_provider *source,
+    const qa_application_content_visitor *visitor,qa_error *error)
+{
+    const application_bots_npc *owner=source?source->bots_npc:NULL;
+    if(!owner) return true;
+    if(!visitor || !visitor->view || owner->busy || !application_npc_current(owner,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation content is borrowed or stale");
+    if(owner->files && !visitor->view(visitor->context,owner->files,error)) return false;
+    for(npc_graph *graph=owner->graphs;graph;graph=graph->next) {
+        if(!graph->asset) continue;
+        qa_resource_pool *pool=qa_vfs_resources(owner->files);
+        if(!pool || qa_resource_pool_find(pool,qa_resource_id(graph->asset))!=graph->asset ||
+           graph->acquisition.resource_id!=qa_resource_id(graph->asset) ||
+           !qa_vfs_acquisition_retained(owner->files,&graph->acquisition,error))
+            return application_fail(error,QA_ERROR_FORMAT,"Monster navigation asset lost its actual opening");
+    }
+    return true;
 }
 bool application_bots_npc_horde(void *opaque)
 {
@@ -240,20 +259,20 @@ static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profil
         size_t prefix_size=strlen(prefix);
         memcpy(name,prefix,prefix_size);memcpy(name+prefix_size,path,stem);
         strcpy(name+prefix_size+stem,aas?".aas":".nav");
-        qa_resource *resource=NULL;qa_error local={0};qa_mount_id mount;
-        if(!qa_vfs_acquire(owner->files,name,&resource,&mount,&local)) {
+        qa_resource *resource=NULL;qa_error local={0};qa_vfs_acquisition acquisition={0};
+        if(!qa_vfs_acquire_receipt(owner->files,name,&resource,&acquisition,&local)) {
             if(local.code==QA_ERROR_NOT_FOUND) continue;
             if(error) *error=local;
             okay=false;break;
         }
         if(!aas) {
             qa_product_id product;qa_mount_id physical;
-            if(!qa_catalog_product_mount_origin(origin.catalog,origin.product,owner->files,mount,&product,&physical)) {
-                qa_resource_release(resource);
+            if(!qa_catalog_product_mount_origin(origin.catalog,origin.product,owner->files,acquisition.mount,&product,&physical)) {
+                qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);
                 okay=application_fail(error,QA_ERROR_ARGUMENT,"Monster NAV lost its genuine mount content");
                 break;
             }
-            if(product!=origin.product) {qa_resource_release(resource);continue;}
+            if(product!=origin.product) {qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);continue;}
         }
         qa_bytes bytes=qa_resource_bytes(resource);qa_nav_asset *asset=NULL;
         uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
@@ -263,11 +282,10 @@ static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profil
         okay=qa_nav_asset_read(bytes,aas?&checksum:NULL,&asset,error) &&
             qa_nav_graph_from_asset(&owner->map,asset,profile,&services,&graph->graph,error);
         if(okay) {
-            graph->asset.data=malloc(bytes.size?bytes.size:1);
-            if(!graph->asset.data) okay=application_fail(error,QA_ERROR_MEMORY,"Retaining actual monster navigation asset");
-            else {memcpy(graph->asset.data,bytes.data,bytes.size);graph->asset.size=bytes.size;*found=true;}
+            graph->asset=resource;resource=NULL;
+            graph->acquisition=acquisition;acquisition=(qa_vfs_acquisition){0};*found=true;
         }
-        qa_nav_asset_release(asset);qa_resource_release(resource);break;
+        qa_nav_asset_release(asset);qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);break;
     }
     free(name);return okay;
 }
@@ -289,7 +307,8 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
         services.topology_geometry_only=true;
         okay=qa_nav_graph_construct(&construction,&services,&graph->graph,error);
     }
-    if(!okay) {qa_nav_graph_release(graph->graph);qa_buffer_free(&graph->asset);free(graph);return false;}
+    if(!okay) {qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
+        qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);return false;}
     graph->bounds=bounds;graph->flags=flags;graph->next=owner->graphs;owner->graphs=graph;
     *out=graph;return true;
 }

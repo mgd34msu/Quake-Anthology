@@ -172,6 +172,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     if (!qa_actors_get(qa_session_actors(provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 projected client generation is not live");
     application_native_q2_client *client = &engine->clients[slot];
+    if (client->denied && qa_actor_id_equal(client->actor, actor)) return true;
     if (client->connected || (client->actor.registry && !qa_actor_id_equal(client->actor, actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source client slot is occupied");
     client->actor = actor; client->bot = bot; client->disconnect_started = false;
@@ -191,6 +192,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
                 return application_fail(error,QA_ERROR_ARGUMENT,"Declared native admission retired its actual actor");
             client->connected=true; return true;
         }
+        if (ok) { client->denied = true; return true; }
         qa_error cleanup={0};
         bool detached=qa_native_host_client_retained_set(provider->state.native.host,slot,false,&cleanup)&&
             qa_native_host_detach_actor(provider->state.native.host,slot,actor,&cleanup);
@@ -310,6 +312,7 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     if (!qa_actor_id_equal(client->actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect replaced its entered Source generation");
     client->connected = client->begun = false;
+    client->denied = false;
     application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor);
     qa_error current = {0};
     if (!application_native_q2_callbacks_release_actor(engine,actor,&current) ||
@@ -349,6 +352,14 @@ bool application_native_q2_actor_disconnect(application_provider *provider,
 bool application_native_q2_client_think(application_provider *provider, uint32_t slot,
     qa_bytes command, qa_error *error)
 {
+    struct application_native_q2 *declared = provider ? provider->state.native.q2_engine : NULL;
+    if (declared && declared->callbacks) {
+        if (!slot || slot >= 257 || !declared->clients[slot].connected || !declared->clients[slot].begun ||
+            !qa_actors_get(qa_session_actors(provider->application->session), declared->clients[slot].actor))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Declared native input lost its admitted physical client");
+        /* Declared input executes at the shared command/slice boundaries. */
+        return true;
+    }
     struct application_native_q2 *engine = client_owner(provider, slot, true, error);
     if (!engine || !engine->clients[slot].begun) return false;
     if (application_provider_for(provider->application, engine->clients[slot].actor,

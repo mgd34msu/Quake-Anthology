@@ -1,6 +1,7 @@
 #include "native_q1_composition_flags.h"
 #include "native_q1_composition.h"
 #include "native_q1_composition_birth.h"
+#include "native_q1_composition_player.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_composition.h"
 #include "qa/game_q1_source_entities.h"
@@ -8,7 +9,7 @@
 #include "qa/game_q1_source_runes.h"
 #include "native_q1_console.h"
 #include "qa/modes_q1_source.h"
-#include "guest_qc_visual.h"
+#include "qa/application_qc_presentation.h"
 #include "qa/source_number.h"
 
 #include <stdlib.h>
@@ -235,7 +236,7 @@ static bool player_frame(void *context, qa_actor_id actor, double *out, qa_error
     case APPLICATION_PROVIDER_Q1: {
         qa_q1_character_view view;
         okay = qa_q1_character_read(character->state.q1, actor, &view);
-        if (okay) frame = view.frame;
+        if (okay) frame = view.animation_frame;
         else application_fail(error, QA_ERROR_NOT_FOUND, "Carried flag lost its selected Q1 animation");
         break;
     }
@@ -254,9 +255,13 @@ static bool player_frame(void *context, qa_actor_id actor, double *out, qa_error
         break;
     }
     case APPLICATION_PROVIDER_QC: {
-        qa_application_visual_view view = {0};
-        okay = application_qc_visual(character, actor, &view, error);
-        if (okay) frame = view.frame;
+        qa_application_qc_animation view;
+        okay = qa_application_qc_selected_character_frame_read(call.app, actor, &view, error);
+        if (okay) {
+            frame = view.frame;
+            okay = qa_application_qc_selected_character_frame_current(call.app, &view) ||
+                application_fail(error, QA_ERROR_ARGUMENT, "Carried flag selected QC animation changed");
+        }
         break;
     }
     case APPLICATION_PROVIDER_QVM: {
@@ -268,8 +273,7 @@ static bool player_frame(void *context, qa_actor_id actor, double *out, qa_error
         break;
     }
     case APPLICATION_PROVIDER_NATIVE:
-        okay = application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Carried flag selected native-module animation is not yet admitted");
+        okay = application_native_q1_selected_q2_frame(call.app, actor, &frame, error);
         break;
     }
     if (okay) okay = player_current(&call, actor, &observer, error);

@@ -195,6 +195,24 @@ static bool selection_fields(qa_source_save_io *io, qa_controller_selection *s)
 }
 static bool slot_valid(int slot, const qa_input_platform *p)
 { return slot >= -1 && slot < 4 && (slot < 0 || p->seats[slot].seat); }
+static bool route_instance_valid(const qa_input_platform *p, unsigned slot)
+{
+    const struct seat_route *r = &p->seats[slot];
+    if (r->instance < -1 || (!r->seat && r->instance >= 0)) return false;
+    if (r->instance < 0) return true;
+    if (r->selection.kind == QA_CONTROLLER_NONE) return false;
+    for (unsigned previous = 0; previous < slot; ++previous)
+        if (p->seats[previous].instance == r->instance) return false;
+    for (size_t row = 0; row < p->device_count; ++row) {
+        const qa_controller_info *d = &p->devices[row].info;
+        if (d->instance != r->instance) continue;
+        return r->selection.kind == QA_CONTROLLER_AUTO ||
+            (!strcmp(r->selection.guid, d->guid) &&
+             (r->selection.kind == QA_CONTROLLER_GUID ? r->selection.ordinal == d->ordinal :
+              d->serial && r->selection.serial && !strcmp(r->selection.serial, d->serial)));
+    }
+    return false;
+}
 static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_input_platform *native,
                           const qa_input_platform_checkpoint_refs *refs)
 {
@@ -234,6 +252,8 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
         if (!selection_fields(io, &r->selection) || !qa_source_save_i32(io, &r->instance) ||
             !qa_source_save_i32(io, &r->haptic_instance) || !qa_source_save_i32(io, &r->calibration_instance) ||
             !qa_source_save_bool(io, &r->calibration_sensor)) return false;
+        if (!route_instance_valid(p, i))
+            return fail(io->error, QA_ERROR_FORMAT, "platform route does not match its retained controller selector and native inventory");
         for (unsigned j = 0; j < i; ++j) if (r->seat && p->seats[j].seat) {
             qa_command_context a = qa_input_seat_context(r->seat), b = qa_input_seat_context(p->seats[j].seat);
             if (r->seat == p->seats[j].seat || (a.session == b.session && a.seat == b.seat)) return false;

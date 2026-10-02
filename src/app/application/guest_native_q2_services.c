@@ -78,12 +78,19 @@ static bool config_get(void *opaque, int32_t index, const char **out, qa_error *
     return true;
 }
 
+static bool register_file(struct application_native_q2 *, qa_native_host_resource_kind,
+    const char *, qa_error *);
+
 static bool config_set(void *opaque, int32_t index, const char *value, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
     const char *prior;
     if (!value || !config_get(engine, index, &prior, error)) return false;
     if (!strcmp(prior, value)) return true;
+    for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind)
+        if ((uint32_t)index > engine->resource_base[kind] &&
+            (uint32_t)index - engine->resource_base[kind] < engine->resource_limit[kind] &&
+            !register_file(engine, (qa_native_host_resource_kind)kind, value, error)) return false;
     size_t size = strlen(value);
     char *copy = malloc(size + 1);
     if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 configstring");
@@ -128,6 +135,7 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     bool ok = qa_vfs_acquire_receipt(engine->provider->launch->content, path, &held, &receipt, &acquisition);
     free(path);
     if (!ok) {
+        qa_resource_release(held); qa_vfs_acquisition_dispose(&receipt);
         if (acquisition.code == QA_ERROR_NOT_FOUND) return true;
         if (error) *error = acquisition;
         return false;

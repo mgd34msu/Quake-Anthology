@@ -132,6 +132,13 @@ bool qa_q3_source_scene_bank_entity_lighting(qa_q3_source_scene_bank *bank, uint
     cell->ambient_alpha = alpha; cell->axis_length = length;
     cell->need_lights = need_lights; cell->lighting_calculated = true; return true;
 }
+bool qa_q3_source_scene_bank_entity_frames(qa_q3_source_scene_bank *bank, uint32_t index,
+    int32_t frame, int32_t old_frame)
+{
+    if (!bank || index >= QA_Q3_SOURCE_ENTITY_CAPACITY) return false;
+    bank->entities[index].value.frame = frame;
+    bank->entities[index].value.old_frame = old_frame; return true;
+}
 bool qa_q3_source_scene_bank_poly_read(const qa_q3_source_scene_bank *bank, uint32_t index,
     qa_q3_source_polygon_cell *out, const qa_q3_poly_vertex **vertices)
 {

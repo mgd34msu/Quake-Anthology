@@ -1,4 +1,5 @@
 #include "bots_npc_private.h"
+#include "bots_save_private.h"
 #include "qa/navigation_graph_save.h"
 #include "qa/persistence_navigation.h"
 #include "qa/persistence_fields.h"
@@ -48,17 +49,19 @@ static bool graph_fields(qa_source_save_io *io,application_bots_npc *owner,npc_g
 {
     if(!qa_persistence_bounds(io,&graph->bounds) || !qa_source_save_u32(io,&graph->flags) ||
        (graph->flags&~(uint32_t)(QA_PHYSICS_FLYING|QA_PHYSICS_SWIMMING)) ||
-       !bytes(io,&graph->asset)) return fail(io,"Invalid monster graph profile");
+       !application_navigation_asset_field(io,owner->source->application,owner->files,
+            &graph->asset,&graph->acquisition,io->direction==QA_SOURCE_SAVE_READ))
+        return fail(io,"Invalid monster graph profile");
     qa_buffer encoded={0};qa_nav_asset *asset=NULL;
     bool okay=true;
     if(io->direction==QA_SOURCE_SAVE_WRITE)
         okay=qa_navigation_graph_save_capture(io->session,graph->graph,&encoded,io->error);
     if(okay) okay=bytes(io,&encoded);
     if(okay && io->direction==QA_SOURCE_SAVE_READ) {
-        if(graph->asset.size) {
+        if(graph->asset) {
             uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
             memcpy(&checksum,&word,sizeof(checksum));
-            qa_bytes raw={graph->asset.data,graph->asset.size};
+            qa_bytes raw=qa_resource_bytes(graph->asset);
             bool aas=raw.size>=4 && qa_load_u32le(raw.data)==UINT32_C(0x53414145);
             okay=qa_nav_asset_read(raw,aas?&checksum:NULL,&asset,io->error);
         }
@@ -158,9 +161,9 @@ static bool actor_fields(qa_source_save_io *io,application_bots_npc *owner,npc_a
 }
 static bool fields(qa_source_save_io *io,application_provider *source,application_bots_npc **value)
 {
-    uint8_t magic[8]={'Q','A','N','P','C',0,0,0};uint32_t version=1;
+    uint8_t magic[8]={'Q','A','N','P','C',0,0,0};uint32_t version=2;
     if(!qa_source_save_bytes(io,magic,8) || memcmp(magic,"QANPC\0\0\0",8) ||
-       !qa_source_save_u32(io,&version) || version!=1) return fail(io,"Invalid monster navigation owner");
+       !qa_source_save_u32(io,&version) || version!=2) return fail(io,"Invalid monster navigation owner");
     bool present=*value!=NULL;
     if(!qa_source_save_bool(io,&present)) return false;
     if(!present) return true;
@@ -170,6 +173,20 @@ static bool fields(qa_source_save_io *io,application_provider *source,applicatio
     uint8_t digest[32];memcpy(digest,owner->map.digest,32);
     if(!qa_source_save_bytes(io,digest,32) || memcmp(digest,owner->map.digest,32))
         return fail(io,"Saved monster navigation map differs");
+    qa_application_content_graph *content=qa_application_content_graph_read(source->application);
+    uint64_t view=io->direction==QA_SOURCE_SAVE_WRITE?qa_application_content_view_id(content,owner->files):0;
+    if(!qa_source_save_u64(io,&view) ||
+       (io->direction==QA_SOURCE_SAVE_WRITE && owner->files && !view))
+        return fail(io,"Monster navigation VFS is outside its actual content graph");
+    if(io->direction==QA_SOURCE_SAVE_READ && view &&
+       !qa_application_content_retain_view(content,view,&owner->files,io->error)) return false;
+    if(owner->files) {
+        qa_launch_resource_origin origin;
+        if(!qa_application_map_origin_read(source->application,&origin) || !origin.acquisition ||
+           origin.acquisition->resource_id!=qa_resource_id(owner->map_resource) ||
+           !qa_catalog_product_view_current(origin.catalog,origin.product,owner->files))
+            return fail(io,"Monster navigation view differs from actual geometry content");
+    }
     size_t graphs=graph_count(owner);
     if(!qa_source_save_count(io,&graphs,SIZE_MAX/sizeof(npc_graph))) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && graphs>io->input.size-io->offset)

@@ -25,6 +25,9 @@ typedef struct qa_application_q3_equipment_services {
     bool (*held_pass)(void *, void *token, const qa_q3_ref_entity *, qa_error *);
     bool (*held_submit)(void *, void *token, qa_error *);
     void (*held_release)(void *, void *token);
+    /* Observes refs emitted inside the real declared weapon function while
+     * Source proceeds unchanged. View is its actual player-state argument. */
+    bool (*held_source)(void *, qa_actor_id, bool view, const qa_q3_ref_entity *, qa_error *);
 } qa_application_q3_equipment_services;
 
 /* Pure requests from the current actual CGAME owner, during RenderScene or

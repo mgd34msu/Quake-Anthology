@@ -91,8 +91,16 @@ qa_vec3 scene_model_alias_light(const qa_scene_model_input *);
 float scene_model_shade(const qa_scene_model_input *, const float normal[3], uint8_t index);
 bool scene_model_sprite_submit(qa_scene_model *, const qa_scene_model_input *, uint32_t,
                                 qa_scene_frame *, qa_error *);
+typedef struct scene_model_source_pose {
+    qa_scene_model *model;
+    uint32_t surface;
+    qa_scene_model_input input;
+} scene_model_source_pose;
+bool scene_model_source_pose_read(void *, int32_t, int32_t, float, qa_scene_frame *, qa_scene_mesh *, qa_error *);
+bool scene_model_source_pose_retain(void *, qa_error *);
+void scene_model_source_pose_release(void *);
 bool scene_model_emit(qa_scene_model *, const qa_scene_model_input *, const qa_scene_mesh *,
                        const scene_model_image *, bool unlit, bool world,
-                       qa_scene_frame *, qa_error *);
+                       scene_model_source_pose *, qa_scene_frame *, qa_error *);
 
 #endif

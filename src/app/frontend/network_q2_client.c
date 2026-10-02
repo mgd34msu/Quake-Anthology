@@ -290,7 +290,16 @@ static bool identity(void *context,qa_q2_client_identity *out,qa_error *error)
     frontend_network_q2_client *owner=context; qa_buffer info={0};
     if(!out || !source_current(owner,&owner->domain,error) ||
         !qa_cvars_info(owner->domain.cvars,QA_CVAR_USERINFO,sizeof(out->userinfo),&info,error)) return false;
-    memset(out,0,sizeof(*out)); memcpy(out->userinfo,info.data,info.size); qa_buffer_free(&info); return true;
+    memset(out,0,sizeof(*out)); memcpy(out->userinfo,info.data,info.size); qa_buffer_free(&info);
+    if(owner->options.protocol.kind==QA_NET_Q2KEX_2023) out->social_count=1;
+    return true;
+}
+static bool transport_ready(void *context,bool *ready,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    if(!ready || !parent(owner) || !owner->options.lobby)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"KEX CLIENT has no actual retained LAN join");
+    *ready=qa_kex_lan_ready(owner->options.lobby); return true;
 }
 static bool abort_source(void *context,const qa_q2_client_admission *claim,qa_error *error)
 {
@@ -363,7 +372,8 @@ static qa_q2_client_bootstrap_options bootstrap_options(frontend_network_q2_clie
 {
     return (qa_q2_client_bootstrap_options){.remote=owner->options.remote,.protocols=&owner->options.protocol,.protocol_count=1,
         .payload_bytes=1390,.qport=owner->options.qport,.timeout_ns=UINT64_C(120000000000),
-        .hooks={.context=owner,.identity=identity,.prepare=prepare,.committed=committed,.abort=abort_source,
+        .hooks={.context=owner,.identity=identity,.transport_ready=owner->options.lobby?transport_ready:NULL,
+            .prepare=prepare,.committed=committed,.abort=abort_source,
             .cancel=cancel,.print=print_bootstrap,.failed=failed}};
 }
 bool frontend_network_q2_client_create(const frontend_network_q2_client_options *options,
@@ -373,7 +383,8 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     if(!options || !out || *out || !options->frontend || !options->runtime || !options->current ||
         !options->download_nonce ||
         options->physical_seat>=options->frontend->options.seats ||
-        !qa_q2_codec_init(&codec,options->protocol,error) || options->protocol.kind==QA_NET_Q2KEX_2023 ||
+        !qa_q2_codec_init(&codec,options->protocol,error) ||
+        (options->protocol.kind==QA_NET_Q2KEX_2023 && !options->lobby) ||
         options->protocol.kind==QA_NET_Q2KEX_DEMO_2022)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT factory requires its actual one-seat raw transport and Source consumers");
     frontend_network_q2_client *owner=calloc(1,sizeof(*owner));

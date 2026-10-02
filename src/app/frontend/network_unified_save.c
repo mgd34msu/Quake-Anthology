@@ -104,7 +104,7 @@ static bool peer_fields(qa_source_save_io *io, unified_peer *peer, size_t index,
     bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
     const qa_net_client *actual = writing ? qa_net_connections_get(
         qa_network_connections(owner->options.runtime), peer->client) : NULL;
-    if (writing && (!actual || peer->staging || peer->travel_prepared ||
+    if (writing && (!actual || peer->staging ||
         (owner->options.server ? (!peer->server || peer->remote) : (peer->server || !peer->remote || index)) ||
         !peer->session || actual->protocol.kind != QA_NET_UNIFIED_1 || actual->seat_count != 1 || !actual->seats)) return false;
     qa_net_client_id id = peer->client;
@@ -119,7 +119,8 @@ static bool peer_fields(qa_source_save_io *io, unified_peer *peer, size_t index,
             owner->options.client.domain.seat.index) ||
         !qa_source_save_u32(io, &binding.remote_index) || binding.remote_index || !address(io, &endpoint) ||
         !qa_source_save_bytes(io, composition.bytes, sizeof(composition.bytes)) ||
-        !qa_source_save_bool(io, &peer->frame_published)) return false;
+        !qa_source_save_bool(io, &peer->frame_published) || !qa_source_save_bool(io, &peer->travel_prepared) ||
+        (peer->travel_prepared && (!owner->options.server || !owner->traveling || index != owner->travel_cursor))) return false;
     if (!writing) {
         peer->client = id; peer->binding = binding;
         peer->request = (qa_net_connect){.attachment = QA_NET_REMOTE, .endpoint = endpoint,
@@ -142,9 +143,9 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
     bool server = owner->options.server;
     uint64_t seat_owner = owner->options.seat_owner;
     uint32_t seat_base = owner->options.remote_seat_base;
-    char magic[4] = {'Q','U','F','H'}; uint32_t version = 2;
+    char magic[4] = {'Q','U','F','H'}; uint32_t version = 3;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_bool(io, &server) || server != owner->options.server ||
         !qa_source_save_u64(io, &seat_owner) || seat_owner != owner->options.seat_owner ||
         !qa_source_save_u32(io, &seat_base) || seat_base > UINT32_MAX - (UNIFIED_PEERS - 1) ||
@@ -154,7 +155,14 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
         application_unified_source current = *actual;
         if (!sidecars(io, owner) ||
             !application_unified_save_source(io, owner->options.frontend->application, actual, &current, false) ||
-            !application_unified_save_source(io, owner->options.frontend->application, actual, &owner->source, true)) return false;
+            !application_unified_save_retained_source(io, owner->options.frontend->application, actual, &owner->source) ||
+            !qa_source_save_bool(io, &owner->traveling) ||
+            !qa_source_save_count(io, &owner->travel_cursor, UNIFIED_PEERS)) return false;
+        if (owner->traveling) {
+            if (!application_unified_save_retained_source(io, owner->options.frontend->application, actual,
+                &owner->travel_source) || application_unified_save_source_obsolete(actual, &owner->travel_source) ||
+                !application_unified_save_source_obsolete(actual, &owner->source)) return false;
+        } else if (owner->travel_cursor) return false;
     } else {
         qa_net_address remote = owner->options.remote;
         uint32_t physical = owner->options.client.domain.physical_seat;
@@ -170,8 +178,10 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
         }
     }
     if (!qa_source_save_u32(io, &owner->epoch) || !owner->epoch ||
-        !qa_source_save_u64(io, &owner->frame_before) || (server ? owner->frame_before > actual->frame.number : owner->frame_before != 0) ||
-        !qa_source_save_bool(io, &owner->frame_boundary) || (!server && owner->frame_boundary)) return false;
+        !qa_source_save_u64(io, &owner->frame_before) || (server ?
+            (!application_unified_save_source_obsolete(actual, &owner->source) && owner->frame_before > actual->frame.number) :
+            owner->frame_before != 0) ||
+        !qa_source_save_bool(io, &owner->frame_boundary) || ((!server || owner->traveling) && owner->frame_boundary)) return false;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (!qa_source_save_bool(io, &peer->occupied)) return false;
@@ -215,10 +225,33 @@ static bool inventory(const frontend_network_unified *owner, qa_network_runtime 
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) if (owner->peers[i].occupied) ++held;
     return held == count || bad(e, "Unified controller retains an absent real connection");
 }
+static bool server_children(const frontend_network_unified *owner, qa_network_runtime *runtime,
+    const application_unified_source *source, qa_error *e)
+{
+    for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+        const unified_peer *peer = owner->peers + i;
+        if (!peer->occupied) continue;
+        application_unified_server *child = peer->server;
+        if (!child || child->application != owner->options.frontend->application || child->runtime != runtime ||
+            child->session != peer->session || child->restore_pending || !child->bound || child->closed ||
+            !qa_net_client_id_equal(child->client, peer->client) ||
+            child->seat.owner != peer->binding.seat.owner || child->seat.index != peer->binding.seat.index ||
+            !qa_unified_session_source_ready(peer->session, e))
+            return bad(e, "Unified Source child differs from its real installed transport peer");
+        uint32_t wire_epoch = qa_unified_session_epoch(peer->session);
+        if (peer->travel_prepared ? (!owner->traveling || i != owner->travel_cursor || wire_epoch == UINT32_MAX ||
+            child->epoch != wire_epoch + 1) : child->epoch != wire_epoch)
+            return bad(e, "Unified travel differs from its actual prepared offer continuation");
+        if (owner->traveling && i < owner->travel_cursor &&
+            application_unified_save_source_obsolete(source, &child->offered))
+            return bad(e, "Unified completed travel peer retains an obsolete offer");
+    }
+    return true;
+}
 bool frontend_network_unified_checkpoint(const frontend_network_unified *owner, qa_buffer *out, qa_error *e)
 {
     application_unified_source source = {0};
-    if (!owner || owner->restore_pending || owner->closing || owner->traveling ||
+    if (!owner || owner->restore_pending || owner->closing ||
         !out || out->data || out->size || !frontend_network_unified_idle(owner) ||
         (owner->options.server && !application_unified_save_source_read(owner->options.frontend->application, &source, e)))
         return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified checkpoint requires returned actual Source owners and children");
@@ -367,7 +400,11 @@ bool frontend_network_unified_restore_lower(frontend_network_unified *owner, qa_
 bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa_network_runtime *runtime, qa_error *e)
 {
     if (!frontend_network_unified_restore_lower(owner, runtime, e)) return false;
-    if (!owner->options.server) {
+    if (owner->options.server) {
+        application_unified_source source;
+        if (!application_unified_save_source_read(owner->options.frontend->application, &source, e) ||
+            !server_children(owner, runtime, &source, e)) return false;
+    } else {
         for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
             unified_peer *peer = owner->peers + i;
             if (!peer->occupied) continue;
@@ -425,10 +462,17 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
     if (!owner || !runtime || owner->closing || owner->calls || !owner->options.server ||
         !qa_network_callbacks_idle(runtime) || !application_unified_save_source_read(
             owner->options.frontend->application, &source, e) ||
-        source.owner != owner->source.owner || source.launch != owner->source.launch ||
-        source.session != owner->source.session || source.world != owner->source.world ||
-        source.publication != owner->source.publication || source.map_revision != owner->source.map_revision ||
-        source.max_clients != owner->source.max_clients)
+        (!application_unified_save_source_obsolete(&source, &owner->source) &&
+            (source.owner != owner->source.owner || source.launch != owner->source.launch ||
+             source.session != owner->source.session || source.world != owner->source.world ||
+             source.publication != owner->source.publication || source.map_revision != owner->source.map_revision ||
+             source.max_clients != owner->source.max_clients)) ||
+        (owner->traveling && (!application_unified_save_source_obsolete(&source, &owner->source) ||
+            application_unified_save_source_obsolete(&source, &owner->travel_source) ||
+            source.owner != owner->travel_source.owner || source.launch != owner->travel_source.launch ||
+            source.session != owner->travel_source.session || source.world != owner->travel_source.world ||
+            source.publication != owner->travel_source.publication || source.map_revision != owner->travel_source.map_revision ||
+            source.max_clients != owner->travel_source.max_clients || owner->travel_cursor > UNIFIED_PEERS || owner->frame_boundary)))
         return bad(e, "Unified controller changed its actual Source graph or returned runtime");
     if (owner->restore_pending) {
         if (complete || (owner->options.runtime && owner->options.runtime != runtime) ||
@@ -444,22 +488,8 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
         !inventory(owner, runtime, true, e)) return false;
     bool server; uint32_t maximum; qa_net_address remote;
     if (!qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) ||
-        !server || maximum != source.max_clients) return bad(e, "Unified handshake lost its real Source domain");
-    for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
-        const unified_peer *peer = owner->peers + i;
-        if (!peer->occupied) continue;
-        application_unified_server *child = peer->server;
-        if (!child || child->application != owner->options.frontend->application || child->runtime != runtime ||
-            child->session != peer->session || child->restore_pending || !child->bound || child->closed ||
-            !qa_net_client_id_equal(child->client, peer->client) ||
-            child->seat.owner != peer->binding.seat.owner || child->seat.index != peer->binding.seat.index)
-            return bad(e, "Unified Source child differs from its real installed transport peer");
-        if (child->admitted) {
-            qa_unified_session_player player;
-            if (!application_unified_save_player_read(child->application, child->client, child->seat, &player, e)) return false;
-        }
-    }
-    return true;
+        !server || maximum != owner->source.max_clients) return bad(e, "Unified handshake lost its real Source domain");
+    return server_children(owner, runtime, &source, e);
 }
 bool frontend_network_unified_restore_dispose(frontend_network_unified **slot, qa_error *e)
 {

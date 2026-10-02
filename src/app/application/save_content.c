@@ -262,11 +262,23 @@ bool application_save_content_collect(const qa_application *app, qa_application_
     if (ok) ok = application_bots_content_visit(app,&visitor,error);
     for (size_t i = 0; ok && i < application_unified_event_resource_count(app); ++i) {
         const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
-        ok = row && row->pool && row->resource &&
+        ok = row && row->view && row->pool && row->resource &&
+            qa_vfs_resources(row->view) == row->pool && row->opening.opening_present &&
+            row->opening.resource_id == qa_resource_id(row->resource) &&
+            qa_vfs_acquisition_retained(row->view, &row->opening, error) &&
             qa_resource_pool_find(row->pool, qa_resource_id(row->resource)) == row->resource &&
-            add_pool(g, row->pool, error);
+            add_view(g, row->view, error);
         if (!ok && (!error || error->code == QA_OK))
             fail(error, QA_ERROR_FORMAT, "Source event resource lost its actual immutable pool");
+        for (size_t j = 0; ok && j < row->custody_count; ++j) {
+            const application_unified_event_resource_custody *held = row->custodies + j;
+            ok = held->view && held->pool && held->resource && qa_vfs_resources(held->view) == held->pool &&
+                held->opening.opening_present && held->opening.resource_id == qa_resource_id(held->resource) &&
+                qa_resource_pool_find(held->pool, qa_resource_id(held->resource)) == held->resource &&
+                qa_vfs_acquisition_retained(held->view, &held->opening, error) && add_view(g, held->view, error);
+            if (!ok && (!error || error->code == QA_OK))
+                fail(error, QA_ERROR_FORMAT, "Source event custody lost its actual immutable opening");
+        }
     }
     for (size_t i = 0; ok && i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
         application_equipment_runtime_source source;
@@ -421,6 +433,9 @@ bool qa_application_content_retain_pool(qa_application_content_graph *g, uint64_
 bool application_save_content_event_pool(qa_application_content_graph *g, uint64_t id,
     qa_resource_pool **out, qa_error *error)
 { return qa_application_content_retain_pool(g, id, out, error); }
+bool application_save_content_event_view(qa_application_content_graph *g, uint64_t id,
+    qa_vfs **out, qa_error *error)
+{ return qa_application_content_retain_view(g, id, out, error); }
 bool application_save_content_instance(const qa_application_content_graph *g, const char *name,
     application_saved_instance_content *out, qa_error *error)
 {
@@ -676,10 +691,17 @@ static bool structure(const qa_application_content_graph *g, qa_error *error)
         const content_resource *r = &g->resources[i];
         if (!r->value.product || !r->value.path || !*r->value.path || !r->resource ||
             r->pool != g->views[g->launch_view - 1].pool || !r->origin_view || r->origin_view > g->view_count ||
+            r->origin_view == g->launch_view ||
             g->views[r->origin_view - 1].catalog || g->views[r->origin_view - 1].pool != r->pool ||
             !r->origin_product || !r->catalog_mount || r->acquisition.resource_id != r->resource ||
             !r->acquisition.opening_present)
             return fail(error, QA_ERROR_FORMAT, "Saved launch resource has invalid actual root ownership");
+        for (size_t j = 0; j < g->instance_count; ++j)
+            if (r->origin_view == g->instances[j].value.view)
+                return fail(error, QA_ERROR_FORMAT, "Saved resource opening aliases a private provider view");
+        for (size_t j = 0; j < i; ++j)
+            if (r->origin_view == g->resources[j].origin_view)
+                return fail(error, QA_ERROR_FORMAT, "Saved launch openings alias separate acquisition owners");
         for (size_t j = 0; j < i; ++j) if (r->value.product == g->resources[j].value.product &&
             !strcmp(r->value.path, g->resources[j].value.path))
             return fail(error, QA_ERROR_FORMAT, "Saved launch resource identity is duplicated");

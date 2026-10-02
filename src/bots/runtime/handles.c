@@ -101,7 +101,7 @@ bool qa_bot_runtime_character_load(qa_bot_runtime *r, const char *path, float sk
     qa_error load_error = {0};
     bool ok = bot_character_load(r->library, path, skill, &character, &interpolated, &load_error);
     if (!ok) {
-        bool exhausted = !bot_runtime_character_available(r) && load_error.code == QA_ERROR_NOT_FOUND;
+        bool exhausted = r->library->character_exhausted && load_error.code == QA_ERROR_NOT_FOUND;
         r->busy = false;
         if (exhausted) return true;
         if (e) *e = load_error;

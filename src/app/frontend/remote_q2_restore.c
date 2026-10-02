@@ -164,14 +164,26 @@ static bool retained(frontend_remote_q2 *row, const frontend_remote_q2_restore_r
     }
     return true;
 }
+static bool fog_fields(qa_source_save_io *io, qa_scene_fog *fog)
+{
+    return qa_source_save_vec3(io, &fog->color) && qa_vec_finite(fog->color) &&
+        qa_source_save_vec3(io, &fog->height_color) && qa_vec_finite(fog->height_color) &&
+        qa_source_save_vec3(io, &fog->height_end_color) && qa_vec_finite(fog->height_end_color) &&
+        qa_source_save_f32(io, &fog->density) && isfinite(fog->density) &&
+        qa_source_save_f32(io, &fog->sky_factor) && isfinite(fog->sky_factor) &&
+        qa_source_save_f32(io, &fog->height_density) && isfinite(fog->height_density) &&
+        qa_source_save_f32(io, &fog->height_start) && isfinite(fog->height_start) &&
+        qa_source_save_f32(io, &fog->height_end) && isfinite(fog->height_end) &&
+        qa_source_save_f32(io, &fog->height_falloff) && isfinite(fog->height_falloff);
+}
 static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 8;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 9;
     bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 8 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 9 || !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
@@ -205,6 +217,9 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         !qa_source_save_bool(io, &row->hit_marker_set) || !qa_source_save_u32(io, &row->hit_marker_count) ||
         !qa_source_save_i32(io, &row->hit_marker_frame) || !qa_source_save_u64(io, &row->hit_marker_ns) ||
         (!row->hit_marker_set && (row->hit_marker_count || row->hit_marker_ns || row->hit_marker_frame)) ||
+        !qa_source_save_bool(io, &row->fog_received) || !qa_source_save_u16(io, &row->fog_duration_ms) ||
+        !qa_source_save_f64(io, &row->fog_started_ms) || !isfinite(row->fog_started_ms) ||
+        !fog_fields(io, &row->fog_start) || !fog_fields(io, &row->fog_end) ||
         !qa_q2_save_serverdata(io, &row->data) || !qa_q2_save_frame(io, &row->frame) || !qa_q2_save_frame(io, &row->previous) ||
         !qa_source_save_u64(io, &saved->map_pool) || !qa_source_save_u64(io, &saved->map_resource) ||
         !opening(io, &row->map_opening, refs, saved->mounts, row->content.mounts) || !qa_source_save_u64(io, &row->saved_world) ||

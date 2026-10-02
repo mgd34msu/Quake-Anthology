@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/scene_world_save.h"
+#include "qa/binary.h"
 
 void q3p_model_free(q3p_model *model)
 {
@@ -40,7 +41,11 @@ static bool model_opening(const q3p_model *m, uint32_t slot,
     const qa_vfs_acquisition *opening = resource ? &m->opening : NULL;
     int64_t rank = m->opening_rank;
     const q3p_opening_order *order = &m->opening_order;
-    if (slot != QA_Q3_MODEL_PRIMARY_OPENING) {
+    if (slot == QA_Q3_MODEL_MD4_OPENING) {
+        if (!m->source_md4_resource) return true;
+        resource = m->source_md4_resource; opening = &m->source_md4_opening;
+        rank = m->source_md4_rank; order = &m->source_md4_order;
+    } else if (slot != QA_Q3_MODEL_PRIMARY_OPENING) {
         if (!m->has_lods) { if (slot || m->world) return true; }
         else {
             unsigned target = slot;
@@ -66,7 +71,7 @@ bool qa_q3_assets_model_opening(const qa_q3_presentation_assets *a, size_t ordin
     uint32_t slot, qa_q3_model_opening *out, qa_error *error)
 {
     if (!a || !out || (a->busy && (!a->capturing || a->codec_busy)) ||
-        ordinal >= a->model_count || (slot != QA_Q3_MODEL_PRIMARY_OPENING && slot >= 3))
+        ordinal >= a->model_count || (slot != QA_Q3_MODEL_PRIMARY_OPENING && slot > QA_Q3_MODEL_MD4_OPENING))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 model opening requires an idle or captured holder");
     return model_opening(a->models[ordinal], slot, out, error);
 }
@@ -99,6 +104,11 @@ const qa_model *q3p_model_source(const q3p_model *model, uint32_t slot)
     if (!model->has_lods) return model->borrowed_models ? model->sources[0] : &model->model;
     if (slot >= 3) return NULL;
     return model->borrowed_models ? model->sources[slot] : qa_model_at_lod(&model->lods, slot);
+}
+const qa_model *q3p_model_md4_source(const q3p_model *model)
+{
+    if (!model || !model->source_registration || !model->source_md4_resource) return NULL;
+    return model->borrowed_models ? model->source_md4 : &model->source_md4_model;
 }
 
 bool q3p_model_get(const qa_q3_presentation_assets *a, int32_t handle,
@@ -281,10 +291,11 @@ static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *mode
         if (!qa_scene_model_create(retained, model->provider.images, model->provider.materials,
             &images, scene, error) || !source_primary(model, (unsigned)slot, error)) return false;
         model->source_kind = md3 ? QA_MODEL_MD3 : QA_MODEL_MD4;
-        ++model->source_num_lods;
-        if (retained->source.size > SIZE_MAX - model->lods.byte_length)
+        model->lods.lod_count = ++model->source_num_lods;
+        size_t allocation = qa_load_u32le(bytes.data + (md3 ? 104 : 96));
+        if (allocation > SIZE_MAX - model->lods.byte_length)
             return q3p_fail(error, QA_ERROR_MEMORY, "Source model allocation total overflows");
-        model->lods.byte_length += retained->source.size;
+        model->lods.byte_length += allocation;
     }
     if (!model->source_num_lods) return true;
     if (failed_slot > 0) for (int slot = failed_slot - 1; slot >= 0; --slot) {
@@ -363,7 +374,9 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         }
     } else if (ok) {
         qa_error local = {0};
-        bool source_lods = source_model && (extension(normalized, ".md3") || extension(normalized, ".md4"));
+        bool source_lods = source_model && !extension(normalized, ".bsp") &&
+            !extension(normalized, ".mdl") && !extension(normalized, ".md2") &&
+            !extension(normalized, ".spr") && !extension(normalized, ".sp2") && !extension(normalized, ".md5mesh");
         ok = q3p_select(a, normalized, QA_Q3_ASSET_MODEL, &model->provider, &local);
         if (ok && source_lods) ok = source_model_lods(a, model, normalized, &local);
         else if (ok) ok = qa_vfs_acquire_receipt(model->provider.mounts, normalized,
@@ -413,6 +426,12 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
             if (ok) ok = a->options.model_initialize(a->options.context, &opening,
                 q3p_model_source(model, slot), model->scene[slot], error);
         }
+        if (ok && model->source_md4_scene) {
+            qa_q3_model_opening opening;
+            ok = model_opening(model, QA_Q3_MODEL_MD4_OPENING, &opening, error);
+            if (ok) ok = a->options.model_initialize(a->options.context, &opening,
+                q3p_model_md4_source(model), model->source_md4_scene, error);
+        }
     }
     if (ok && model && !handle) {
         ok = a->model_count < INT32_MAX && q3p_reserve((void **)&a->models, &a->model_capacity,
@@ -434,6 +453,10 @@ bool qa_q3_presentation_model_bounds(const qa_q3_presentation_assets *a, int32_t
     const q3p_model *model;
     if (!out || !q3p_model_get(a, handle, &model, error)) return false;
     const qa_model *source = q3p_model_source(model, 0);
+    if (model && model->source_registration) {
+        *out = source ? bounds(source->frame_count ? &source->frames[0].bounds : &source->bounds) : (qa_bounds){0};
+        return true;
+    }
     if (source && source->format == QA_MODEL_MD4 &&
         qa_material_library_has_source_profile(a->options.provider.materials)) {
         *out = (qa_bounds){0}; return true;

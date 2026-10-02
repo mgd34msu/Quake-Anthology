@@ -2,6 +2,79 @@
 #include "../checkpoint_internal.h"
 #include <stdio.h>
 
+bool bot_move_record_span(const bot_move_record *record, qa_bot_memory_span *out, qa_error *e) {
+    if (!record || !record->owner ||
+        !qa_bot_memory_bytes(record->owner->memory, record->allocation, out, e)) return false;
+    return out->size == BOT_MOVE_STATE_BYTES ? true :
+        bot_move_fail(e, "MovementState source allocation must contain exactly 772 bytes");
+}
+static uint8_t *record_bytes(const bot_move_record *record, uint32_t offset, uint32_t bytes) {
+    bot_move_scope *scope = record->owner->scope;
+    qa_bot_memory_span span;
+    if (offset > BOT_MOVE_STATE_BYTES || bytes > BOT_MOVE_STATE_BYTES-offset ||
+        !bot_move_record_span(record, &span, scope->error)) {
+        if (offset > BOT_MOVE_STATE_BYTES || bytes > BOT_MOVE_STATE_BYTES-offset)
+            bot_move_fail(scope->error, "MovementState source field is outside its allocation");
+        longjmp(scope->jump, 1);
+    }
+    return span.data+offset;
+}
+static uint32_t read_word(const uint8_t *p) {
+    return (uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
+}
+static void write_word(uint8_t *p, uint32_t value) {
+    for (unsigned i=0;i<4;++i) p[i]=(uint8_t)(value>>(i*8));
+}
+uint32_t bot_move_word(const bot_move_record *r, bot_move_field field) {
+    return read_word(record_bytes(r,(uint32_t)field,4));
+}
+int32_t bot_move_integer(const bot_move_record *r, bot_move_field field) {
+    uint32_t value=bot_move_word(r,field);
+    return value<=INT32_MAX ? (int32_t)value : -1-(int32_t)(UINT32_MAX-value);
+}
+float bot_move_float(const bot_move_record *r, bot_move_field field) {
+    uint32_t bits=bot_move_word(r,field);float value;memcpy(&value,&bits,4);return value;
+}
+qa_vec3 bot_move_vector(const bot_move_record *r, bot_move_field field) {
+    return qa_v3(bot_move_float(r,field), bot_move_float(r,(bot_move_field)(field+4)),
+                 bot_move_float(r,(bot_move_field)(field+8)));
+}
+void bot_move_write_word(bot_move_record *r, bot_move_field field, uint32_t value) {
+    write_word(record_bytes(r,(uint32_t)field,4),value);
+}
+void bot_move_write_float(bot_move_record *r, bot_move_field field, float value) {
+    uint32_t bits;memcpy(&bits,&value,4);bot_move_write_word(r,field,bits);
+}
+void bot_move_write_vector(bot_move_record *r, bot_move_field field, qa_vec3 value) {
+    bot_move_write_float(r,field,value.x);
+    bot_move_write_float(r,(bot_move_field)(field+4),value.y);
+    bot_move_write_float(r,(bot_move_field)(field+8),value.z);
+}
+qa_bot_avoid_spot bot_move_spot(const bot_move_record *r,int32_t index) {
+    if(index<0 || index>=QA_BOT_AVOID_SPOTS) {
+        bot_move_fail(r->owner->scope->error,"MovementState avoid spot index is outside its source array");
+        longjmp(r->owner->scope->jump,1);
+    }
+    bot_move_field at=(bot_move_field)(BM_AVOID_SPOTS+index*20);
+    return (qa_bot_avoid_spot){bot_move_vector(r,at),bot_move_float(r,(bot_move_field)(at+12)),
+                             bot_move_integer(r,(bot_move_field)(at+16))};
+}
+void bot_move_write_spot(bot_move_record *r,int32_t index,qa_bot_avoid_spot spot) {
+    (void)bot_move_spot(r,index);
+    bot_move_field at=(bot_move_field)(BM_AVOID_SPOTS+index*20);
+    bot_move_write_vector(r,at,spot.origin);
+    bot_move_write_float(r,(bot_move_field)(at+12),spot.radius);
+    bot_move_write_word(r,(bot_move_field)(at+16),(uint32_t)spot.type);
+}
+static bool origin_component(void *context,unsigned component,float *out,qa_error *e) {
+    (void)e;
+    if(component>2) return false;
+    *out=bot_move_float(context,(bot_move_field)(BM_ORIGIN+component*4));return true;
+}
+qa_bot_vector_source bot_move_origin_source(bot_move_record *r) {
+    return (qa_bot_vector_source){.context=r,.read=origin_component};
+}
+
 bool bot_move_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
@@ -13,14 +86,14 @@ bool qa_bot_moves_active(const qa_bot_moves *m) { return m && m->busy; }
 bool qa_bot_moves_has_handle(const qa_bot_moves *m, uint32_t id) {
     return m && id && id <= m->maximum && m->slots[id - 1].used;
 }
-qa_bot_move_state *bot_move_state(const qa_bot_moves *m, uint32_t id, qa_error *e) {
+bot_move_record *bot_move_state(const qa_bot_moves *m, uint32_t id, qa_error *e) {
     if (!m || !id || id > m->maximum || !m->slots[id - 1].used) {
         bot_move_fail(e, "invalid bot movement state handle");
         return NULL;
     }
     return &m->slots[id - 1].state;
 }
-qa_bot_move_state *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
+bot_move_record *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
     if(id && id<=m->maximum && m->slots[id-1].used) return &m->slots[id-1].state;
     char text[96];
     snprintf(text,sizeof(text),!id || id>m->maximum?"move state handle %u out of range\n":"invalid move state %u\n",id);
@@ -30,8 +103,8 @@ qa_bot_move_state *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
 }
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actions *actions,
                          const qa_bot_move_services *services, qa_bot_moves **out, qa_error *e) {
-    if (!maximum || SIZE_MAX / maximum < sizeof(bot_move_slot) || !library || !actions ||
-        !services || !services->navigation || !services->random.next || !out)
+    if (!maximum || maximum > BOT_MOVE_MAX_STATES || !library || !actions ||
+        !services || !services->navigation || !services->random.next || !out || *out)
         return bot_move_fail(e, "invalid bot movement services/capacity");
     qa_bot_moves *m = calloc(1, sizeof(*m));
     if (!m || !(m->slots = calloc(maximum, sizeof(*m->slots)))) {
@@ -41,6 +114,8 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
     }
     m->maximum = maximum;
     m->library = library;
+    m->memory = qa_bot_library_memory(library);
+    if (!qa_bot_memory_retain(m->memory,e)) { free(m->slots);free(m);return false; }
     m->actions = actions;
     m->services = *services;
     if (!qa_nav_workspace_create(&m->workspace, e)) {
@@ -53,6 +128,7 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
 void qa_bot_moves_destroy(qa_bot_moves *m) {
     if (!m || m->busy)
         return;
+    if (!qa_bot_moves_shutdown(m,NULL) || !qa_bot_memory_release(m->memory,NULL)) return;
     qa_nav_prediction_result_free(&m->prediction);
     qa_nav_route_free(&m->trajectory);
     qa_nav_workspace_destroy(m->workspace);
@@ -61,6 +137,18 @@ void qa_bot_moves_destroy(qa_bot_moves *m) {
     free(m->visited);
     free(m->slots);
     free(m);
+}
+bool qa_bot_moves_shutdown(qa_bot_moves *m,qa_error *e) {
+    if (!m) return true;
+    if (!bot_move_mutable(m,e)) return false;
+    for(uint32_t i=0;i<m->maximum;++i) if(m->slots[i].used) {
+        m->busy=true;
+        bool ok=qa_bot_memory_free(m->memory,m->slots[i].state.allocation,e);
+        m->busy=false;
+        if(!ok) return false;
+        m->slots[i]=(bot_move_slot){0};
+    }
+    return true;
 }
 const char *bot_move_variable_name(bot_move_variable variable) {
     static const char *const names[BOT_MOVE_VARIABLE_COUNT] = {
@@ -96,7 +184,13 @@ bool qa_bot_moves_allocate(qa_bot_moves *m, uint32_t *out, qa_error *e) {
     *out = 0;
     for (uint32_t i = 0; i < m->maximum; ++i)
         if (!m->slots[i].used) {
-            m->slots[i] = (bot_move_slot){.used = true};
+            qa_bot_memory_allocation allocation;
+            m->busy=true;
+            bool ok=qa_bot_memory_allocate(m->memory,BOT_MOVE_STATE_BYTES,QA_BOT_MEMORY_HEAP,
+                                           true,NULL,&allocation,e);
+            m->busy=false;
+            if(!ok) return false;
+            m->slots[i] = (bot_move_slot){.used=true,.state={.owner=m,.allocation=allocation}};
             *out = i + 1;
             break;
         }
@@ -104,7 +198,12 @@ bool qa_bot_moves_allocate(qa_bot_moves *m, uint32_t *out, qa_error *e) {
 }
 bool qa_bot_moves_free(qa_bot_moves *m, uint32_t id, qa_error *e) {
     if (!bot_move_mutable(m, e)) return false;
-    if (!bot_move_source_state(m, id)) return true;
+    bot_move_record *record=bot_move_source_state(m,id);
+    if (!record) return true;
+    m->busy=true;
+    bool ok=qa_bot_memory_free(m->memory,record->allocation,e);
+    m->busy=false;
+    if(!ok) return false;
     m->slots[id - 1] = (bot_move_slot){0};
     return true;
 }

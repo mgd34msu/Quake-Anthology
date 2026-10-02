@@ -424,6 +424,7 @@ void qawl_light_destroy(qaw_legacy *light)
     light->light_accumulation = NULL;
     light->style_count = 0;
     light->lightmapped = light->light_cache_valid = light->light_cache_dynamic = false;
+    light->light_cache_monolightmap = 0;
 }
 
 static qa_vec3 snapshot_style(const qa_scene_world *world,const qa_scene_world_input *input, uint16_t index)

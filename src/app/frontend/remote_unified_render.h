@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_RENDER_H
 #define QA_FRONTEND_REMOTE_UNIFIED_RENDER_H
 #include "remote_unified_media.h"
+#include "qa/ui.h"
 #include "remote_unified_prediction.h"
 typedef struct frontend_unified_render frontend_unified_render;
 typedef struct frontend_unified_render_children {

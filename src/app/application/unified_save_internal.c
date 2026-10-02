@@ -130,8 +130,8 @@ bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
 bool application_unified_save_source_obsolete(const application_unified_source *actual,
     const application_unified_source *saved)
 {
-    return actual && saved && (saved->publication < actual->publication ||
-        (saved->publication == actual->publication && saved->map_revision < actual->map_revision));
+    return actual && saved && saved->publication <= actual->publication && saved->map_revision <= actual->map_revision &&
+        (saved->publication < actual->publication || saved->map_revision < actual->map_revision);
 }
 bool application_unified_save_source_stamp_equal(const application_unified_source *a,
     const application_unified_source *b)

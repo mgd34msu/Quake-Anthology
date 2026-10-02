@@ -1191,6 +1191,7 @@ struct qa_input_platform_settings_ticket {
     size_t route_device_count;
     bool selected_routes;
     qa_input_seat *configuration[4];
+    bool owns_configuration[4];
     bool gyro_enabled[4], previous_gyro_enabled[4];
     SDL_Window *window;
     uint32_t window_id;
@@ -1258,10 +1259,22 @@ static int32_t settings_controller(const qa_input_platform_settings_ticket *t, u
 static bool settings_controller_changed(const qa_input_platform_settings_ticket *t, unsigned slot) {
     return qa_input_platform_controller(t->platform, slot) != settings_controller(t, slot);
 }
+static bool settings_bindings_is(const qa_input_platform_settings_ticket *t, unsigned slot) {
+    int32_t instance = t->next_routes[slot].instance;
+    if (!t->selected_routes || !t->configuration[slot] || instance < 0 ||
+        instance == t->routes[slot].instance) return true;
+    const qa_input_seat *candidate = t->configuration[slot];
+    for (size_t row = 0; row < qa_input_seat_binding_count(candidate); ++row) {
+        const qa_input_binding *b = qa_input_seat_binding_at(candidate, row);
+        if (!b || (b->input.kind >= QA_PHYSICAL_BUTTON && b->input.device != instance)) return false;
+    }
+    return true;
+}
 static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_error *error) {
     qa_input_platform *p = t->platform;
     for (unsigned slot = 0; slot < 4; ++slot) if (t->gyro_enabled[slot] &&
-        (!t->previous_gyro_enabled[slot] || settings_controller_changed(t, slot)) &&
+        (!t->previous_gyro_enabled[slot] ||
+         (settings_controller_changed(t, slot) && settings_controller(t, slot) >= 0)) &&
         !device(p, settings_controller(t, slot))) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Requested gyro configuration has no native controller sensor owner");
         return false;
@@ -1670,12 +1683,12 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
              (a->selection.serial && b->selection.serial && !strcmp(a->selection.serial, b->selection.serial)));
         if (a->seat && (!same_selection || a->instance != b->instance)) r->controller_routes |= 1u << slot;
         if (a->seat && b->instance >= 0 && a->instance != b->instance) {
-            if (configuration[slot] == a->seat) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                    "Controller reassignment requires a distinct prepared physical seat configuration");
-                return false;
+            if (t->configuration[slot] == a->seat) {
+                qa_input_seat *copy = NULL;
+                if (!qa_input_seat_configuration_clone(a->seat, &copy, error)) return false;
+                t->configuration[slot] = copy; t->owns_configuration[slot] = true;
             }
-            if (!qa_input_seat_remap_controller(configuration[slot], b->instance, error)) return false;
+            if (!qa_input_seat_remap_controller(t->configuration[slot], b->instance, error)) return false;
         }
     }
     if (r->source_changed) for (unsigned i = 0; i < 4; ++i)
@@ -1905,10 +1918,15 @@ bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
     return settings_current(t, error);
 }
 static bool settings_devices_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
+    for (unsigned slot = 0; slot < 4; ++slot) if (!settings_bindings_is(t, slot)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared controller dictionary lost its selected physical route");
+        return false;
+    }
     for (unsigned slot = 0; slot < 4; ++slot) if (t->next_routes[slot].instance >= 0) {
         struct device *d = device(t->platform, t->next_routes[slot].instance);
         if (!d || !t->next_handles[slot] || d->handle != t->next_handles[slot] ||
-            SDL_GameControllerGetAttached(d->handle) != SDL_TRUE)
+            SDL_GameControllerGetAttached(d->handle) != SDL_TRUE ||
+            SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(d->handle)) != t->next_routes[slot].instance)
             return failed(error, "Prepared controller route lost its retained native device");
     }
     if (t->joystick && SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
@@ -2106,8 +2124,11 @@ bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket
         p->options.assignment_changed != t->ready_options.assignment_changed) return false;
     for (unsigned slot = 0; slot < 4; ++slot) {
         const struct seat_route *a = &p->seats[slot], *b = &t->routes[slot];
+        if (!settings_bindings_is(t, slot)) return false;
         if (t->next_routes[slot].instance >= 0) {
-            struct device *d = device((qa_input_platform *)p, t->next_routes[slot].instance);
+            const struct device *d = NULL;
+            for (size_t row = 0; row < p->device_count; ++row)
+                if (p->devices[row].info.instance == t->next_routes[slot].instance) d = &p->devices[row];
             if (!d || !t->next_handles[slot] || d->handle != t->next_handles[slot]) return false;
         }
         if ((release ? release[slot] : NULL) != t->ready_release[slot] ||
@@ -2297,6 +2318,8 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
             t->next_routes[slot].selection = previous;
             r->instance = t->next_routes[slot].instance;
         }
+        if (t->owns_configuration[slot])
+            qa_input_seat_configuration_publish(r->seat, t->configuration[slot]);
         if (t->haptic_routes & (1u << slot)) {
             qa_haptic_pattern_release(r->haptic.pattern);
             r->haptic.pattern = NULL; r->haptic.last_index = -1;
@@ -2330,6 +2353,8 @@ bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket
     if (t->owns_midi_devices) free(t->midi_devices);
     if (t->selected_routes) for (unsigned slot = 0; slot < 4; ++slot)
         free((void *)t->next_routes[slot].selection.serial);
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->owns_configuration[slot])
+        qa_input_seat_destroy(t->configuration[slot]);
     free(t->outputs);
     free(t); return success;
 }

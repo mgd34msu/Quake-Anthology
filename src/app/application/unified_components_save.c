@@ -197,6 +197,7 @@ bool application_unified_components_checkpoint_retained(const application_unifie
         !(application_unified_source_current(p->application, source) ||
             application_unified_source_checkpoint_current(p->application, source)) ||
         (!obsolete && !source_current(p->application, retained, p->recipient, player)) ||
+        (obsolete && p->pending) ||
         (p->pending && (!p->pending->sealed || !application_unified_components_current(p->pending))))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component checkpoint lacks its actual current or historical recipient");
     if (!qa_actor_id_equal(player->actor, p->actor)) return bad(e, "Component publisher recipient changed");

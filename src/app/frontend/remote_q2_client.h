@@ -105,6 +105,10 @@ const char *frontend_remote_q2_config(const frontend_remote_q2 *, uint16_t);
 /* Pure observation of actual received entity/player rows. It grants no
  * canonical actor identity; the application observer owns that admission. */
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *, uint32_t source_number);
+/* Client number belongs to the negotiated player-state field or the genuine
+ * serverdata split-seat receipt. It is not a canonical actor identifier. */
+bool frontend_remote_q2_player_number(const frontend_remote_q2 *, const qa_q2_wire_frame *,
+    size_t player_index, int32_t *client_number);
 bool frontend_remote_q2_entity_generation(const frontend_remote_q2 *, uint32_t source_number,
     uint64_t *content_generation);
 bool frontend_remote_q2_entity_publication_read(const frontend_remote_q2 *,

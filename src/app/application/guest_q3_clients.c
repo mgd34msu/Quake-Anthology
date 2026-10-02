@@ -1,4 +1,5 @@
 #include "guest_q3_private.h"
+#include "guest_q3_factory.h"
 #include "guest_projection_private.h"
 #include "qa/application_players.h"
 #include "q3_world_restart.h"

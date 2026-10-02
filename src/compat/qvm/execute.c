@@ -329,11 +329,11 @@ void qa_qvm_execution_restore(qa_qvm *vm, const uint64_t values[3], bool candida
     exec->breaks = values[1];
     exec->instructions = values[2];
 }
-bool qa_qvm_checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *expected,
-    size_t count, const qa_qvm_saved_resolver *resolver, qa_error *error)
+static bool checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *expected,
+    size_t count, const qa_qvm_saved_resolver *resolver, bool watches, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
-    if ((count && !expected) || vm->watches || vm->lifecycle_depth || vm->write_delivery_depth)
+    if ((count && !expected) || (!watches && vm->watches) || vm->lifecycle_depth || vm->write_delivery_depth)
         return error_at(error,0,"QVM callback inventory has an unqualified write or lifecycle owner");
     uint64_t counters[3];
     qa_qvm_execution_checkpoint(vm,counters);
@@ -373,19 +373,33 @@ bool qa_qvm_checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *
     }
     return actual == count + (resolver != NULL) || error_at(error,0,"QVM source callback inventory is incomplete");
 }
+bool qa_qvm_checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *expected,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_error *error)
+{ return checkpoint_callbacks(vm,expected,count,resolver,false,error); }
+bool qa_qvm_execution_checkpoint_inventory(const qa_qvm *vm,
+    const qa_qvm_saved_function *expected, size_t count,
+    const qa_qvm_saved_resolver *resolver, qa_error *error)
+{ return checkpoint_callbacks(vm,expected,count,resolver,true,error); }
+bool qa_qvm_checkpoint_inventory(const qa_qvm *vm, const qa_qvm_saved_function *expected,
+    size_t count, const qa_qvm_saved_resolver *resolver,
+    const qa_qvm_saved_write_watch *watches, size_t watch_count, qa_error *error)
+{
+    return qa_qvm_memory_checkpoint_watches(vm,watches,watch_count,error) &&
+        checkpoint_callbacks(vm,expected,count,resolver,true,error);
+}
 bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *expected,
     size_t count, qa_error *error)
 { return qa_qvm_checkpoint_callbacks(vm, expected, count, NULL, error); }
-bool qa_qvm_execution_restore_callbacks(qa_qvm *vm, uint64_t generation,
+static bool restore_callbacks(qa_qvm *vm, uint64_t generation,
     const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
     size_t count, const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
-    qa_error *error)
+    bool watches, qa_error *error)
 {
     if (count && !saved) return error_at(error, 0, "QVM candidate saved binding inventory is absent");
-    if (!qa_qvm_checkpoint_callbacks(vm, constructed, count, resolver, error)) return false;
+    if (!checkpoint_callbacks(vm, constructed, count, resolver, watches, error)) return false;
     size_t total = count + (resolver != NULL);
     execution *exec = state(vm);
-    if (exec->next_binding != total || vm->next_watch != 1 || vm->write_sequence ||
+    if (exec->next_binding != total || (!watches && vm->next_watch != 1) || vm->write_sequence ||
         exec->instructions || exec->breaks || exec->failed || generation < total)
         return error_at(error, 0, "QVM binding reconstruction requires untouched constructor identities");
     if ((resolver && (!saved_resolver || saved_resolver > generation)) || (!resolver && saved_resolver))
@@ -409,6 +423,16 @@ bool qa_qvm_execution_restore_callbacks(qa_qvm *vm, uint64_t generation,
     exec->next_binding = generation;
     return true;
 }
+bool qa_qvm_execution_restore_callbacks(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
+    qa_error *error)
+{ return restore_callbacks(vm,generation,constructed,saved,count,resolver,saved_resolver,false,error); }
+bool qa_qvm_execution_restore_inventory(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
+    qa_error *error)
+{ return restore_callbacks(vm,generation,constructed,saved,count,resolver,saved_resolver,true,error); }
 bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
     const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
     size_t count, qa_error *error)

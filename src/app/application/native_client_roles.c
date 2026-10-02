@@ -255,6 +255,14 @@ bool qa_application_client_read(qa_application *app, qa_actor_owner receiver, ui
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT observation lost its retained physical receiver");
     *out = r->source; return true;
 }
+bool qa_application_client_physical_read(qa_application *app, qa_actor_owner receiver, uint32_t seat,
+    qa_application_client_source *out, qa_error *error)
+{
+    struct application_native_client_role *r = row_read(provider_read(app, receiver), seat);
+    if (!out || !physical_current(r))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT command namespace lost its retained physical owner");
+    *out = r->source; return true;
+}
 bool qa_application_client_current(qa_application *app, const qa_application_client_source *source)
 {
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
@@ -269,6 +277,8 @@ bool application_native_client_source_associated(const qa_application *app,const
     return p && p->application==app && p->constructed && p->attached && !p->close_pending &&
         application_native_client_only(p) && r && !r->retiring && source_equal(source,&r->source);
 }
+bool qa_application_client_associated(const qa_application *app,const qa_application_client_source *source)
+{ return application_native_client_source_associated(app,source); }
 bool qa_application_client_bind(qa_application *app, const qa_application_client_source *pending,
     qa_net_client_id client, qa_net_seat_id seat, uint64_t epoch, qa_application_client_source *out, qa_error *error)
 {

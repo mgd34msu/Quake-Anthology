@@ -72,6 +72,9 @@ bool qa_kex_lan_admitted(const qa_kex_lan *, const qa_net_address *);
 bool qa_kex_lan_ready(const qa_kex_lan *);
 bool qa_kex_lan_idle(const qa_kex_lan *);
 bool qa_kex_lan_set_attribute(qa_kex_lan *, const char *, const char *, qa_error *);
+/* Changes admission and discovery capacity; existing ordered lobby members
+ * retain their genuine IDs when the current Source lowers its capacity. */
+bool qa_kex_lan_set_maximum(qa_kex_lan *, uint8_t, qa_error *);
 size_t qa_kex_lan_player_count(const qa_kex_lan *);
 bool qa_kex_lan_player(const qa_kex_lan *, size_t, uint64_t *id, const qa_kex_attribute **, size_t *count);
 /* IDs come from the actual admitted lobby roster; they are not actor IDs. */

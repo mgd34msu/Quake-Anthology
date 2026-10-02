@@ -384,13 +384,13 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!strcmp(command, "kill"))
         return qa_application_network_q1_kill(peer->host->frontend->application, actor, error);
     if (!strcmp(command, "pause")) {
-        qa_buffer text = {0}; bool changed;
-        if (!qa_application_network_q1_pause(peer->host->frontend->application, actor, &text, &changed, error)) return false;
+        qa_buffer pause_text = {0}; bool changed;
+        if (!qa_application_network_q1_pause(peer->host->frontend->application, actor, &pause_text, &changed, error)) return false;
         uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-        qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = (const char *)text.data};
+        qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = (const char *)pause_text.data};
         bool ok = qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
             (qa_nq_options){.standard_quake = true}, &message, NULL, 0);
-        qa_buffer_free(&text);
+        qa_buffer_free(&pause_text);
         for (size_t i = 0; ok && i < NQ_CLIENTS; ++i) {
             nq_frontend_peer *target = peer->host->peers + i;
             if (!target->occupied || target->retiring || (!changed && target != peer)) continue;
@@ -657,7 +657,8 @@ bool frontend_nq_pump(frontend_nq_host *host, qa_error *error)
         if (!qa_nq_control_answer((qa_bytes){pending->bytes, pending->size}, &pending->address,
             pending->received_ns, &callbacks, &present, &writer, &local)) {
             if (local.code == QA_ERROR_MEMORY || qa_application_get_state(host->frontend->application) == QA_APPLICATION_FAULTED) {
-                if (error) *error = local; return false;
+                if (error) *error = local;
+                return false;
             }
             frontend_print(host->frontend, local.message); continue;
         }

@@ -106,9 +106,10 @@ typedef struct qa_input_platform_settings_requirements {
 bool qa_input_platform_settings_prepare(qa_input_platform *, const qa_input_platform_settings *,
     qa_input_seat *const configuration[4], double now_ms, qa_input_platform_settings_ticket **, qa_error *);
 /* Copy all four physical selectors and resolve them against the retained native
- * controller inventory. Changed assignments remap only distinct prepared seat
- * configurations. Active routes and their old release identities remain intact
- * until publication; abort keeps them intact and destroys the copied selectors. */
+ * controller inventory. Changed assignments remap prepared seat configurations;
+ * an unchanged active configuration is cloned and owned by the ticket if another
+ * selector displaces its controller. Active routes and old release identities
+ * remain intact until publication. Checked cleanup disposes owned copies. */
 bool qa_input_platform_settings_prepare_selected(qa_input_platform *, const qa_input_platform_settings *,
     qa_input_seat *const configuration[4], const qa_controller_selection selections[4], double now_ms,
     qa_input_platform_settings_ticket **, qa_error *);

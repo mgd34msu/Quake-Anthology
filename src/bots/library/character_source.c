@@ -108,27 +108,45 @@ bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_v
     put(span.data + offset + 4, raw); span.data[offset] = (uint8_t)value.kind;
     return true;
 }
-bool bot_character_project(qa_bot_character *c, qa_error *error) {
+bool bot_character_header(qa_bot_character *c, qa_error *error) {
     qa_bot_memory_span span;
     if (!bytes(c, &span, error) || !memchr(span.data, 0, 64))
         return fail(error, "Character source filename is unterminated");
     c->view.path = (const char *)span.data;
     uint32_t skill = word(span.data + 64); memcpy(&c->view.skill, &skill, 4);
-    for (uint32_t i = 0; i < QA_BOT_CHARACTERISTICS; ++i) {
-        uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + i * 8, raw = word(span.data + offset + 4);
-        qa_bot_character_value *value = c->view.values + i;
-        *value = (qa_bot_character_value){.kind = (qa_bot_character_value_kind)span.data[offset]};
-        if (value->kind == QA_BOT_CHARACTER_INTEGER) memcpy(&value->data.integer, &raw, 4);
-        else if (value->kind == QA_BOT_CHARACTER_FLOAT) memcpy(&value->data.number, &raw, 4);
-        else if (value->kind == QA_BOT_CHARACTER_STRING) {
-            bot_character_string *row = string(c->source, raw); qa_bot_memory_span text;
-            bot_memory_record *record = row ? bot_memory_record_get(c->source->memory, row->allocation) : NULL;
-            if (!record || record->kind != QA_BOT_MEMORY_HEAP ||
-                !qa_bot_memory_bytes(c->source->memory, row->allocation, &text, error) ||
-                !memchr(text.data, 0, text.size)) return fail(error, "Invalid character string pointer");
-            value->data.string = (const char *)text.data;
-        } else if (value->kind != QA_BOT_CHARACTER_UNSET) return fail(error, "Invalid character type byte");
-    }
+    return true;
+}
+bool bot_character_kind(qa_bot_character *c, uint32_t index, qa_bot_character_value_kind *out,
+                         qa_error *error) {
+    qa_bot_memory_span span;
+    if (!out || index >= QA_BOT_CHARACTERISTICS || !bytes(c, &span, error))
+        return fail(error, "Invalid character source cell");
+    *out = (qa_bot_character_value_kind)span.data[BOT_CHARACTER_VALUE_OFFSET + index * 8];
+    return (unsigned)*out <= QA_BOT_CHARACTER_STRING || fail(error, "Invalid character type byte");
+}
+bool bot_character_value(qa_bot_character *c, uint32_t index, qa_bot_character_value *value,
+                          qa_error *error) {
+    qa_bot_memory_span span;
+    if (!value || index >= QA_BOT_CHARACTERISTICS || !bytes(c, &span, error))
+        return fail(error, "Invalid character source cell");
+    uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + index * 8, raw = word(span.data + offset + 4);
+    *value = (qa_bot_character_value){.kind = (qa_bot_character_value_kind)span.data[offset]};
+    if (value->kind == QA_BOT_CHARACTER_INTEGER) memcpy(&value->data.integer, &raw, 4);
+    else if (value->kind == QA_BOT_CHARACTER_FLOAT) memcpy(&value->data.number, &raw, 4);
+    else if (value->kind == QA_BOT_CHARACTER_STRING) {
+        bot_character_string *row = string(c->source, raw); qa_bot_memory_span text;
+        bot_memory_record *record = row ? bot_memory_record_get(c->source->memory, row->allocation) : NULL;
+        if (!record || record->kind != QA_BOT_MEMORY_HEAP ||
+            !qa_bot_memory_bytes(c->source->memory, row->allocation, &text, error) ||
+            !memchr(text.data, 0, text.size)) return fail(error, "Invalid character string pointer");
+        value->data.string = (const char *)text.data;
+    } else if (value->kind != QA_BOT_CHARACTER_UNSET) return fail(error, "Invalid character type byte");
+    return true;
+}
+bool bot_character_project(qa_bot_character *c, qa_error *error) {
+    if (!bot_character_header(c, error)) return false;
+    for (uint32_t i = 0; i < QA_BOT_CHARACTERISTICS; ++i)
+        if (!bot_character_value(c, i, c->view.values + i, error)) return false;
     return true;
 }
 bool qa_bot_character_free(qa_bot_character *c, qa_error *error) {
@@ -137,10 +155,11 @@ bool qa_bot_character_free(qa_bot_character *c, qa_error *error) {
     qa_bot_memory_span span;
     if (!bytes(c, &span, error)) return false;
     for (uint32_t i = 0; i < 80; ++i) {
+        if (!bytes(c, &span, error)) return false;
         uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + i * 8;
         if (span.data[offset] != QA_BOT_CHARACTER_STRING) continue;
         uint32_t pointer = word(span.data + offset + 4);
-        if (!pointer) return fail(error, "Character free reached an uninitialized string pointer");
+        if (!pointer) continue;
         bot_character_string *row = string(c->source, pointer);
         if (!row || !qa_bot_memory_free(c->source->memory, row->allocation, error)) return false;
         row->pointer = 0;

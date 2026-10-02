@@ -18,6 +18,7 @@ bool qa_kex_transport_open(qa_net_transport *, const qa_kex_lan_options *,
                            qa_kex_transport **borrowed_control, qa_error *);
 qa_kex_lan *qa_kex_transport_lobby(qa_kex_transport *);
 bool qa_kex_transport_idle(const qa_kex_transport *);
+bool qa_kex_transport_set_maximum(qa_kex_transport *, uint8_t, qa_error *);
 bool qa_kex_transport_udp_policy(const qa_kex_transport *, qa_net_udp_policy *, bool *present, qa_error *);
 /* Shared services send through the actual raw socket, including while the
  * receive callback is entered. Game sends use the returned LAN transport. */

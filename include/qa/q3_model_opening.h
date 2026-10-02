@@ -3,6 +3,7 @@
 #include "qa/q3_presentation.h"
 
 #define QA_Q3_MODEL_PRIMARY_OPENING UINT32_MAX
+#define QA_Q3_MODEL_MD4_OPENING 3u
 typedef struct qa_q3_model_opening {
     bool present;
     const char *first_requested_path;

@@ -6,6 +6,8 @@ typedef struct equipment_scope {
     qa_qvm_source_frame frame;
     uint32_t gun;
     void *token;
+    qa_actor_id actor;
+    bool replacing, view;
 } equipment_scope;
 typedef struct equipment_hook {
     struct application_q3_equipment *owner;
@@ -154,7 +156,7 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     int32_t state, parent_pointer, entity_pointer;
     const application_q3_equipment_profile *profile = owner->profile;
     if (!qa_qvm_call_argument(call, profile->state_argument, &state, error)) return false;
-    if (state) return qa_qvm_proceed(call, result, error);
+    if (state && !owner->services.held_source) return qa_qvm_proceed(call, result, error);
     qa_bytes parent_bytes, entity_bytes;
     qa_q3_ref_entity parent;
     if (!qa_qvm_call_argument(call, profile->parent_argument, &parent_pointer, error) ||
@@ -171,30 +173,32 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         !owner->module.client.source_actor(owner->module.client.context,
             (uint32_t)number, &actor, &present, error)) return false;
     if (!present) return qa_qvm_proceed(call, result, error);
-    equipment_scope scope = {.previous = owner->scopes};
+    equipment_scope scope = {.previous = owner->scopes, .actor = actor, .view = state != 0};
     bool replace = false;
-    if (!owner->services.held_begin(owner->services.context, actor, &parent,
+    if (!state && !owner->services.held_begin(owner->services.context, actor, &parent,
             &scope.token, &replace, error)) {
         if (scope.token) owner->services.held_release(owner->services.context, scope.token);
         return false;
     }
-    if (!replace) {
+    if (!replace && !owner->services.held_source) {
         if (scope.token) owner->services.held_release(owner->services.context, scope.token);
         return qa_qvm_proceed(call, result, error);
     }
+    scope.replacing = replace;
     bool ok = qa_qvm_call_source_frame(call, owner->module.image, &scope.frame, error);
-    if (ok && (uint64_t)scope.frame.start + profile->gun + 140 > scope.frame.end)
+    if (ok && replace && (uint64_t)scope.frame.start + profile->gun + 140 > scope.frame.end)
         ok = application_fail(error, QA_ERROR_FORMAT, "Held gun leaves its actual source function frame");
     if (ok) {
-        scope.gun = scope.frame.start + profile->gun;
+        if (replace) scope.gun = scope.frame.start + profile->gun;
         owner->scopes = &scope;
         ok = qa_qvm_proceed(call, result, error);
         owner->scopes = scope.previous;
         bool cancelled = false;
         if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
-        if (ok && !cancelled) ok = owner->services.held_submit(owner->services.context, scope.token, error);
+        if (ok && !cancelled && replace)
+            ok = owner->services.held_submit(owner->services.context, scope.token, error);
     }
-    owner->services.held_release(owner->services.context, scope.token);
+    if (scope.token) owner->services.held_release(owner->services.context, scope.token);
     return ok;
 }
 
@@ -210,6 +214,8 @@ bool application_q3_equipment_source_entity(void *context, const qa_qvm_call *ca
     bool active;
     if (!selected(owner, &active, error)) return false;
     (void)active;
+    if (!scope->replacing)
+        return owner->services.held_source(owner->services.context, scope->actor, scope->view, entity, error);
     if (pointer < 0 || (uint32_t)pointer < scope->frame.start ||
         (uint64_t)(uint32_t)pointer + 140 > scope->frame.end) return true;
     if ((uint32_t)pointer == scope->gun &&

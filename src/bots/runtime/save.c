@@ -191,6 +191,10 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
     for (size_t i = 0; ok && i < count; ++i) {
         object = runtime->characters[i];
         ok = reference(io, assets, QA_BOT_SAVED_CHARACTER, &object);
+        if (ok && object) {
+            const qa_bot_character_view *view = NULL;
+            ok = qa_bot_character_view_read(object, &view, io->error);
+        }
         if (ok && object)
             for (size_t j = 0; j < i; ++j) if (runtime->characters[j] == object) ok = false;
         if (reading && ok) { runtime->characters[i] = object; qa_bot_character_retain(object); }

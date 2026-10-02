@@ -12,6 +12,7 @@
 #include "source_acoustics.h"
 #include "shared_resource_policy.h"
 #include "source_renderer_runtime.h"
+#include "q3_render_policy.h"
 #include "qa/material_source_scratch.h"
 
 typedef struct video_remote_row {
@@ -149,6 +150,9 @@ bool frontend_video_guests_reopen(frontend_video_guests *owner,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Video guest reconstruction lacks its admitted recipes");
     if (owner->reopened) return true;
     if (!frontend_source_renderer_runtime_bind(owner->frontend,error)) return false;
+    if (owner->frontend->source_color &&
+        (!frontend_q3_texture_mode_initialize(owner->frontend,error) ||
+         !frontend_q3_scene_limits_initialize(owner->frontend,error))) return false;
     if (!owner->resources_finished) {
         qa_frontend *f=owner->frontend;
         owner->resource_display=f->display; owner->resource_cpu=f->cpu; owner->resource_gl=f->gl;

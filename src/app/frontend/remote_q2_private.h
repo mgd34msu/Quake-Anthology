@@ -141,5 +141,6 @@ bool remote_q2_download_path_valid(const char *);
 qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *, const char *);
 void remote_q2_download_clear(frontend_remote_q2 *);
 bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
+bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 remote_q2_layout remote_q2_layout_read(qa_net_protocol_id);
 #endif

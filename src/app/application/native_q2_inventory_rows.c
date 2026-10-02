@@ -4,6 +4,7 @@
 #include "guest_native_q2_attack.h"
 #include "map_players_private.h"
 #include "supplies.h"
+#include "equipment_requests.h"
 #include "qa/game_q2_items.h"
 #include "guest_q3_private.h"
 #include "guest_q3_catalog.h"
@@ -529,11 +530,42 @@ static bool rows(void *context, qa_actor_id actor,
 static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *error) {
     application_native_q2_inventory_rows *owner = context;
     if (!owner_current(owner, error)) return false;
+    qa_application *app = owner->engine->provider->application;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     application_native_q2_inventory_source source;
     if (!application_native_q2_inventory_source_read(owner->engine, actor, &source, error)) return false;
+    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_revision;
+    if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     ++owner->calls; ++owner->engine->calls;
-    bool okay = qa_inventory_item_action(owner->engine->provider->application->inventory,
-        actor, item, QA_ITEM_USE, error) && application_native_q2_inventory_source_current(owner->engine, &source, error);
+    qa_item_definition component = {0};
+    qa_actor_owner component_owner = 0;
+    bool has_component = qa_inventory_item_owner(app->inventory, actor, item, &component_owner, NULL);
+    bool okay = !has_component || qa_inventory_source_definition_read(app->inventory, actor,
+        component_owner, item, &component, error);
+    bool weapon = has_component && component.weapon;
+    selected_catalog catalog = {0};
+    if (okay && !weapon && arsenal != owner->engine->provider) {
+        if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM) {
+            qa_inventory_source_snapshot empty = {0};
+            okay = catalog_read(app, arsenal, actor, &empty, &catalog, error);
+            for (size_t i = 0; okay && i < catalog.count; ++i)
+                if (catalog.items[i].item == item) weapon = true;
+        } else {
+            qa_item_definition definition;
+            qa_error lookup = {0};
+            if (qa_inventory_source_definition_read(app->inventory, actor, arsenal->owner, item,
+                &definition, &lookup)) weapon = definition.weapon;
+            else if (lookup.code != QA_ERROR_NOT_FOUND) { okay = false; if (error) *error = lookup; }
+        }
+    }
+    if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
+    if (okay && weapon) {
+        bool accepted = false;
+        okay = application_equipment_request_weapon(app, actor,
+            has_component ? component_owner : arsenal->owner, item, &accepted, error);
+    } else if (okay) okay = qa_inventory_item_action(app->inventory, actor, item, QA_ITEM_USE, error);
+    if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
+    catalog_free(&catalog);
     --owner->engine->calls; --owner->calls;
     return okay;
 }

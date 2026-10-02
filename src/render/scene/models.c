@@ -893,6 +893,61 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     return true;
 }
 
+bool scene_model_source_pose_retain(void *context, qa_error *error)
+{
+    scene_model_source_pose *pose = context;
+    return pose && pose->input.source_model_owner && pose->input.source_model_retain &&
+        pose->input.source_model_release &&
+        pose->input.source_model_retain(pose->input.source_model_owner, error);
+}
+void scene_model_source_pose_release(void *context)
+{
+    scene_model_source_pose *pose = context;
+    if (pose) pose->input.source_model_release(pose->input.source_model_owner);
+}
+bool scene_model_source_pose_read(void *context, int32_t current, int32_t previous, float back,
+    qa_scene_frame *frame, qa_scene_mesh *out, qa_error *error)
+{
+    scene_model_source_pose *pose = context;
+    qa_scene_model *model = pose ? pose->model : NULL;
+    if (!model || !model->source_topology || pose->surface >= model->source->mesh_count ||
+        !frame || !out || current < 0 || previous < 0 || !isfinite(back) ||
+        model->checkpoint_active || model->capture || model->image_policy) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source pose requires its retained physical model surface");
+        return false;
+    }
+    const qa_model_mesh *surface = &model->source->meshes[pose->surface];
+    const scene_model_mesh *retained = &model->meshes[pose->surface];
+    size_t count = surface->vertex_count;
+    if (retained->retained.vertex_count != surface->vertex_count ||
+        count > SIZE_MAX / sizeof(qa_model_vertex) || count > SIZE_MAX / sizeof(qa_scene_vertex)) {
+        qa_error_set(error, QA_ERROR_FORMAT, pose->surface, "Source pose lost its physical vertex extent");
+        return false;
+    }
+    *out = retained->retained;
+    if (!surface->vertex_count) return true;
+    qa_model_vertex *sampled = qa_arena_alloc(&frame->storage,
+        surface->vertex_count * sizeof(*sampled), _Alignof(qa_model_vertex), error);
+    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage,
+        surface->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
+    if (!sampled || !vertices || !qa_model_sample_mesh(model->source, pose->surface,
+        (uint32_t)current, (uint32_t)previous, current == previous ? 0 : back,
+        sampled, surface->vertex_count, error)) return false;
+    out->bounds = model_bounds_empty();
+    for (size_t i = 0; i < surface->vertex_count; ++i) {
+        if (retained->sources[i] != i) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Source pose lost its physical vertex order");
+            return false;
+        }
+        vertices[i] = retained->vertices[i];
+        vertices[i].position = model_vec(sampled[i].position);
+        vertices[i].normal = model_vec(sampled[i].normal);
+        model_bounds_add(&out->bounds, vertices[i].position);
+    }
+    out->vertices = vertices; out->identity = 0; out->revision = frame->sequence;
+    return true;
+}
+
 static bool model_submit(qa_scene_model *, const qa_scene_model_input *, qa_scene_frame *, unsigned, qa_error *);
 
 static void beam_axes(qa_vec3 direction, uint32_t roll_degrees, qa_model_transform *transform) {
@@ -1104,10 +1159,16 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         }
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
+            scene_model_source_pose *pose = NULL;
             scene_model_image *image;
             scene_model_image external = {0};
-            if (!mesh_geometry(model, &input, i, frame, &mesh, error) ||
-                !select_image(model, &input, i, &external, &image, error)) return false;
+            if (model->source_topology && input.source_scratch && input.source_model_owner && !input.shadow_only) {
+                pose = qa_arena_alloc(&frame->storage, sizeof(*pose), _Alignof(scene_model_source_pose), error);
+                if (!pose) return false;
+                *pose = (scene_model_source_pose){.model = model, .surface = i, .input = *original};
+                mesh = model->meshes[i].retained;
+            } else if (!mesh_geometry(model, &input, i, frame, &mesh, error)) return false;
+            if (!select_image(model, &input, i, &external, &image, error)) return false;
             bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
             if (!source_md3 && !input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;
@@ -1117,7 +1178,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 size_t plane_count = qa_scene_frustum(&input.view, planes);
                 if (!qa_scene_bounds_visible(bounds, planes, plane_count)) continue;
             }
-            if (!scene_model_emit(model, &input, &mesh, image, scene_model_has_shell(&input), false, frame, error)) return false;
+            if (!scene_model_emit(model, &input, &mesh, image, scene_model_has_shell(&input), false, pose, frame, error)) return false;
         }
     }
     return submit_attachments(model, &input, frame, depth, error);

@@ -1,4 +1,5 @@
 #include "audio_restore.h"
+#include "component_scene.h"
 #include "ui_features.h"
 #include "save_private.h"
 #include "native_q2_save.h"
@@ -119,6 +120,12 @@ static bool collect(qa_frontend *f, bank_inventory *inventory, qa_error *error)
             ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
                 add(inventory,graph,bank.sounds,(bank_owner){.kind=11,.ordinal=key},error);
         }
+    }
+    for(size_t i=0;ok && i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(f,i,&row,error) &&
+            add(inventory,graph,row.sounds,(bank_owner){.kind=12,.ordinal=i,
+                .identity=row.identity,.owner=row.receiver},error);
     }
     return ok;
 }

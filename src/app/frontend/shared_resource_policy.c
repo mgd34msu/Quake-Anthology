@@ -17,6 +17,7 @@
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
 #include "qa/q3_assets_save.h"
+#include "qa/render_controls.h"
 
 static bool policy_fail(qa_error *error, const char *text)
 { return frontend_fail(error, QA_ERROR_ARGUMENT, text); }
@@ -204,9 +205,11 @@ struct frontend_shared_resource_policy {
     frontend_remote_q2_image_policy *remote_q2_images;
     frontend_q1_sky *sky_owner;
     frontend_q1_sky_policy *sky;
+    qa_render_controls *image_controls;
+    qa_render_source_images_ticket *image_admissions;
     policy_scalar scalars[sizeof(policy_names) / sizeof(policy_names[0])];
     size_t scalar_count;
-    bool begun, source_profile, source_restart, children_entered, children_prepared, sealed, published;
+    bool begun, source_profile, source_restart, children_entered, children_prepared, sealed, published, render_published;
 };
 static bool scalar_current(const frontend_shared_resource_policy *ticket, bool sealed)
 {
@@ -269,6 +272,11 @@ static bool policy_cleanup(frontend_shared_resource_policy **address, bool publi
     frontend_shared_resource_policy *ticket = *address;
     if (ticket->published != published)
         return policy_fail(error, "Resource cleanup cannot change its actual publication branch");
+    if (published && ticket->image_admissions && !ticket->render_published)
+        return policy_fail(error, "Resource finish requires the actual native image publication");
+    if (ticket->image_admissions && !(published ?
+        qa_render_controls_source_images_finish(&ticket->image_admissions, error) :
+        qa_render_controls_source_images_abort(&ticket->image_admissions, error))) return false;
     if (ticket->sky && !(published ? frontend_q1_sky_policy_finish(&ticket->sky, error) :
         frontend_q1_sky_policy_abort(&ticket->sky, error))) return false;
     if (ticket->remote_q1_sky && !(published ? frontend_remote_q1_sky_policy_finish(&ticket->remote_q1_sky, error) :
@@ -573,6 +581,19 @@ bool frontend_shared_resource_policy_ready(frontend_shared_resource_policy *tick
         (ticket->sky && !frontend_q1_sky_policy_ready(ticket->sky, error))) return false;
     for (size_t i = 0; i < ticket->bank_count; ++i)
         if (!qa_scene_resource_policy_ready(ticket->banks[i], error)) return false;
+    bool new_source_images = false;
+    for (size_t i = 0; i < ticket->bank_count; ++i) {
+        size_t count = 0;
+        if (!qa_scene_resource_policy_source_image_count(ticket->banks[i], &count, error)) return false;
+        if (count) new_source_images = true;
+    }
+    if (new_source_images) {
+        ticket->image_controls = ticket->frontend->gl ? qa_gl_render_controls(ticket->frontend->gl) :
+            qa_cpu_render_controls(ticket->frontend->cpu);
+        if ((!ticket->image_admissions && !qa_render_controls_source_images_prepare(ticket->image_controls,
+                ticket->banks, ticket->bank_count, &ticket->image_admissions, error)) ||
+            !qa_render_controls_source_images_ready(ticket->image_admissions, error)) return false;
+    }
     if (!frontend_resource_inventory_seal(ticket->inventory, error)) return false;
     ticket->sealed = true; return frontend_shared_resource_policy_ready_is(ticket);
 }
@@ -581,6 +602,10 @@ static bool policy_ready_is(const frontend_shared_resource_policy *ticket, bool 
     if (!ticket || !ticket->sealed || ticket->published || !scalar_current(ticket, true) ||
         !(consuming ? frontend_resource_inventory_consume_ready_is(ticket->inventory) :
             frontend_resource_inventory_ready_is(ticket->inventory))) return false;
+    if (ticket->image_admissions &&
+        ((ticket->frontend->gl ? qa_gl_render_controls(ticket->frontend->gl) :
+            qa_cpu_render_controls(ticket->frontend->cpu)) != ticket->image_controls ||
+         !qa_render_controls_source_images_ready_is(ticket->image_admissions))) return false;
     for (size_t i = 0; i < ticket->bank_count; ++i) if (!qa_scene_resource_policy_ready_is(ticket->banks[i])) return false;
     for (size_t i = 0; i < ticket->order_count; ++i) if (!qa_material_order_image_policy_ready_is(ticket->orders[i])) return false;
     for (size_t i = 0; i < ticket->font_count; ++i) if (!qa_font_resource_policy_ready_is(ticket->fonts[i].ticket)) return false;
@@ -628,6 +653,12 @@ void frontend_shared_resource_policy_publish(frontend_shared_resource_policy *ti
 void frontend_shared_resource_policy_consume(frontend_shared_resource_policy *ticket)
 {
     if (frontend_shared_resource_policy_consume_ready_is(ticket)) policy_publish(ticket);
+}
+void frontend_shared_resource_policy_render_publish(frontend_shared_resource_policy *ticket)
+{
+    if (!ticket || !ticket->published || ticket->render_published) return;
+    if (ticket->image_admissions) qa_render_controls_source_images_publish(ticket->image_admissions);
+    ticket->render_published = true;
 }
 bool frontend_shared_resource_policy_finish(frontend_shared_resource_policy **ticket, qa_error *error)
 { return policy_cleanup(ticket, true, error); }

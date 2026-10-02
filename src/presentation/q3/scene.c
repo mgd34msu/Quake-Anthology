@@ -55,6 +55,26 @@ bool qa_q3_presentation_entity(qa_q3_presentation *p, const qa_q3_ref_entity *en
     return q3p_end(p, ok);
 }
 
+bool qa_q3_presentation_entity_cursor(const qa_q3_presentation *p, size_t *index,
+    bool *available, qa_error *error)
+{
+    if (!p || !index || !available)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Source entity cursor requires its actual presentation");
+    if (p->options.source_state) {
+        qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        qa_q3_source_scene_membership membership;
+        if (!bank || !qa_q3_source_scene_bank_membership(bank, &membership)) return false;
+        if (membership.first_entity > membership.entities)
+            return q3p_fail(error, QA_ERROR_FORMAT, "Source entity cursor leaves its actual scene membership");
+        *index = membership.entities - membership.first_entity;
+        *available = qa_q3_source_scene_bank_entity_capacity(bank);
+    } else {
+        *index = p->entity_count; *available = p->entity_count != SIZE_MAX;
+    }
+    return true;
+}
+
 bool qa_q3_presentation_poly(qa_q3_presentation *p, int32_t shader,
                               const qa_q3_poly_vertex *vertices, size_t count, qa_error *error)
 {

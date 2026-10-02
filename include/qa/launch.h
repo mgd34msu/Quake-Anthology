@@ -191,6 +191,8 @@ typedef struct qa_launch_resource {
 typedef struct qa_launch_resource_origin {
     qa_catalog *catalog;
     qa_vfs *content;
+    /* Content that owns the winning mount; the requested product remains in
+     * qa_launch_resource. The view belongs to that original requested scope. */
     qa_product_id product;
     qa_mount_id catalog_mount;
     const qa_vfs_acquisition *acquisition;

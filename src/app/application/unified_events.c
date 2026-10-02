@@ -110,24 +110,59 @@ const qa_resource *application_unified_event_resource_read(const qa_application 
     return NULL;
 }
 
-bool application_unified_event_resource_lookup_kind(qa_application *app, qa_actor_owner owner,
-    qa_native_host_resource_kind kind, const char *path, char id[81], bool *found, qa_error *error)
+bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_actor_owner owner,
+    qa_native_host_resource_kind kind, const char *path, char id[81], uint64_t *custody,
+    bool *found, qa_error *error)
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error) ||
-        (unsigned)kind > QA_NATIVE_HOST_IMAGE || !path || !id || !found)
+        (unsigned)kind > QA_NATIVE_HOST_IMAGE || !path || !id || !custody || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
-    id[0] = 0; *found = false;
+    id[0] = 0; *custody = 0; *found = false;
     for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
         const application_unified_event_registration *row = app->unified_event_registrations + i;
         const char *registered = qa_strings_cstr(qa_session_strings(app->session), row->path);
         if (row->provider != owner || row->kind != kind || !registered || strcmp(registered, path)) continue;
-        if (row->resource >= app->unified_event_resource_count)
+        if (row->resource >= app->unified_event_resource_count ||
+            row->custody > app->unified_event_resources[row->resource].custody_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source sound registration lost its retained resource");
         memcpy(id, app->unified_event_resources[row->resource].id, 81);
+        *custody = row->custody;
         *found = true; return true;
     }
     return true;
+}
+
+bool application_unified_event_resource_lookup_kind(qa_application *app, qa_actor_owner owner,
+    qa_native_host_resource_kind kind, const char *path, char id[81], bool *found, qa_error *error)
+{
+    uint64_t custody;
+    return application_unified_event_resource_lookup_receipt(app, owner, kind, path, id, &custody, found, error);
+}
+
+bool application_unified_event_resource_receipt_read(const qa_application *app, const char *id,
+    uint64_t custody, const qa_resource **resource, const qa_vfs **view,
+    const qa_vfs_acquisition **opening, qa_error *error)
+{
+    if (!app || !id || !resource || !view || !opening)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source resource receipt has no actual output");
+    for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
+        const application_unified_event_resource *row = app->unified_event_resources + i;
+        if (strcmp(row->id, id)) continue;
+        if (custody > row->custody_count)
+            return application_fail(error, QA_ERROR_FORMAT, "Source resource receipt has no captured opening");
+        if (custody) {
+            const application_unified_event_resource_custody *held = row->custodies + (size_t)custody - 1;
+            *resource = held->resource; *view = held->view; *opening = &held->opening;
+        } else {
+            *resource = row->resource; *view = row->view; *opening = &row->opening;
+        }
+        return *resource && *view && (*opening)->opening_present &&
+            (*opening)->resource_id == qa_resource_id(*resource) &&
+            qa_resource_pool_find(qa_vfs_resources(*view), qa_resource_id(*resource)) == *resource &&
+            qa_vfs_acquisition_retained(*view, *opening, error);
+    }
+    return application_fail(error, QA_ERROR_FORMAT, "Source resource receipt lost its immutable key");
 }
 
 bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
@@ -153,7 +188,7 @@ bool application_unified_event_registration_clear(qa_application *app, qa_actor_
 }
 
 static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_native_host_resource_kind kind,
-    const char *path, size_t resource, qa_error *error)
+    const char *path, size_t resource, uint64_t custody, qa_error *error)
 {
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), path, &name, error)) return false;
@@ -163,7 +198,8 @@ static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_nati
          app->unified_event_registrations[index].path != name ||
          app->unified_event_registrations[index].kind != kind)) ++index;
     if (index < app->unified_event_registration_count &&
-        app->unified_event_registrations[index].resource == resource) return true;
+        app->unified_event_registrations[index].resource == resource &&
+        app->unified_event_registrations[index].custody == custody) return true;
     if (app->unified_event_registration_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Source registration revision is exhausted");
     if (index == app->unified_event_registration_capacity) {
@@ -174,7 +210,7 @@ static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_nati
         if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source registrations");
         app->unified_event_registrations = rows; app->unified_event_registration_capacity = capacity;
     }
-    app->unified_event_registrations[index] = (application_unified_event_registration){owner, name, resource, kind};
+    app->unified_event_registrations[index] = (application_unified_event_registration){owner, name, resource, kind, custody};
     if (index == app->unified_event_registration_count) ++app->unified_event_registration_count;
     ++app->unified_event_registration_revision;
     return true;
@@ -189,6 +225,12 @@ void application_unified_events_resources_dispose(qa_application *app)
         qa_resource_release(row->resource);
         qa_launch_instance_lease_release(row->descriptor);
         qa_vfs_acquisition_dispose(&row->opening); qa_vfs_destroy(row->view);
+        for (size_t j = 0; j < row->custody_count; ++j) {
+            application_unified_event_resource_custody *held = row->custodies + j;
+            qa_resource_release(held->resource); qa_vfs_acquisition_dispose(&held->opening);
+            qa_vfs_destroy(held->view); qa_resource_pool_destroy(held->pool);
+        }
+        free(row->custodies);
         qa_resource_pool_destroy(row->pool);
     }
     free(app->unified_event_resources);
@@ -222,6 +264,46 @@ bool application_unified_event_resource_register(qa_application *app, qa_actor_o
     return application_fail(error, QA_ERROR_FORMAT, "Source registration is outside its actual precache opening");
 }
 
+static bool opening_equal(const qa_vfs_acquisition *a, const qa_vfs_acquisition *b)
+{
+    const char *left[] = {a->path, a->lookup_path, a->link_source, a->link_target, a->opening.prefix};
+    const char *right[] = {b->path, b->lookup_path, b->link_source, b->link_target, b->opening.prefix};
+    if (a->mount != b->mount || a->resource_id != b->resource_id ||
+        a->opening_present != b->opening_present || a->opening.rank != b->opening.rank ||
+        a->opening.user_overlay != b->opening.user_overlay || a->opening.order_count != b->opening.order_count) return false;
+    for (size_t i = 0; i < 5; ++i)
+        if ((left[i] != NULL) != (right[i] != NULL) || (left[i] && strcmp(left[i], right[i]))) return false;
+    return !a->opening.order_count ||
+        !memcmp(a->opening.order, b->opening.order, a->opening.order_count * sizeof(*a->opening.order));
+}
+
+static bool custody_retain(application_unified_event_resource *row, const qa_vfs *view,
+    const qa_resource *resource, const qa_vfs_acquisition *opening, uint64_t *index, qa_error *error)
+{
+    if (row->view == view && row->resource == resource && opening_equal(&row->opening, opening)) {
+        *index = 0; return true;
+    }
+    for (size_t i = 0; i < row->custody_count; ++i)
+        if (row->custodies[i].view == view && row->custodies[i].resource == resource &&
+            opening_equal(&row->custodies[i].opening, opening)) { *index = i + 1; return true; }
+    if (row->custody_count == row->custody_capacity) {
+        size_t capacity = row->custody_capacity ? row->custody_capacity * 2 : 4;
+        if (capacity <= row->custody_capacity || capacity > SIZE_MAX / sizeof(*row->custodies))
+            return application_fail(error, QA_ERROR_MEMORY, "Source resource opening extent overflows");
+        void *values = realloc(row->custodies, capacity * sizeof(*row->custodies));
+        if (!values) return application_fail(error, QA_ERROR_MEMORY, "Retaining Source resource openings");
+        row->custodies = values; row->custody_capacity = capacity;
+    }
+    application_unified_event_resource_custody held = {0};
+    if (!qa_vfs_acquisition_copy(opening, &held.opening, error) || !qa_vfs_retain((qa_vfs *)view, error)) {
+        qa_vfs_acquisition_dispose(&held.opening); return false;
+    }
+    held.view = (qa_vfs *)view; held.resource = (qa_resource *)resource; held.pool = qa_vfs_resources(view);
+    qa_resource_retain(held.resource); qa_resource_pool_retain(held.pool);
+    row->custodies[row->custody_count++] = held; *index = row->custody_count;
+    return true;
+}
+
 bool application_unified_event_resource_register_acquired(qa_application *app, qa_actor_owner owner,
     qa_native_host_resource_kind kind, const char *path, const qa_vfs *view, const qa_resource *resource,
     const qa_vfs_acquisition *opening, char id[81], qa_error *error)
@@ -241,7 +323,9 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
     if (!application_unified_resource_key(source.product, registration_path, resource, &key, actual_id, error)) return false;
     for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
         if (!strcmp(app->unified_event_resources[i].id, actual_id)) {
-            bool ok = registration_bind(app, owner, kind, path, i, error);
+            uint64_t custody;
+            bool ok = custody_retain(app->unified_event_resources + i, view, resource, opening, &custody, error) &&
+                registration_bind(app, owner, kind, path, i, custody, error);
             if (ok) memcpy(id, actual_id, 81);
             qa_unified_document_destroy(key);
             return ok;
@@ -275,7 +359,7 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
         qa_resource_retain(row.resource); qa_resource_pool_retain(pool);
         size_t index = app->unified_event_resource_count++;
         app->unified_event_resources[index] = row;
-        ok = registration_bind(app, owner, kind, path, index, error);
+        ok = registration_bind(app, owner, kind, path, index, 0, error);
         if (ok) memcpy(id, actual_id, 81);
     } else {
         qa_buffer_free(&row.key); qa_launch_instance_lease_release(row.descriptor);
@@ -1082,6 +1166,17 @@ static bool presentation_write(application_unified_json *j, qa_application *app,
         application_unified_json_text(j,",\"frameMilliseconds\":",error) &&
         application_unified_json_number(j,(double)row->q2_source_interval_ns/1000000.0,error) &&
         application_unified_json_text(j,"}",error);
+    if (ok && !row->q2_source_profile) {
+        qa_json_document *declaration=NULL;
+        ok=qa_json_parse((qa_bytes){payload.bytes.data,payload.bytes.size},&declaration,error);
+        if (ok && qa_json_string_equal(declaration,
+                qa_json_get(declaration,qa_json_root(declaration),"kind"),"q3-source"))
+            ok=application_unified_json_text(j,",\"source\":{\"provider\":",error) &&
+                application_unified_json_string(j,
+                    qa_strings_cstr(qa_session_strings(app->session),row->provider),error) &&
+                application_unified_json_text(j,"}",error);
+        qa_json_destroy(declaration);
+    }
     if (ok) ok = application_unified_json_text(j, ",\"sourceEntity\":", error) &&
         (row->has_source_entity ? application_unified_json_number(j, row->source_entity, error) :
             application_unified_json_text(j, "null", error)) && application_unified_json_text(j, "}", error);

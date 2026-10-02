@@ -56,7 +56,8 @@ typedef struct item_actor {
     qa_actor_id actor;
     item_record_address *addresses; size_t address_count;
     qa_inventory_lease lease;
-    qa_qvm_binding watch;
+    qa_qvm_binding watch,saved_watch;
+    qa_item_admission *definitions;
     item_pending *pending;
     application_q3_item_request request;
     application_q3_item_request_status status;
@@ -75,9 +76,10 @@ struct application_q3_mod_items_entry {
     struct application_q3_mod_items_entry *previous;
     qa_qvm_call call;
     qa_actor_id actor;
-    bool dispatcher,request,continuation,accepted,continued;
+    bool dispatcher,request,continuation,input,accepted,continued;
     int32_t requested;
     uint32_t movement;
+    qa_qvm_branch_binding *branches;
 };
 struct application_q3_mod_items {
     application_q3_mod_items_profile *profile;
@@ -102,4 +104,6 @@ bool q3items_field_parse(application_q3_mod_items_profile *,const qa_json_docume
 bool q3items_call_parse(application_q3_mod_items_profile *,const qa_json_document *,qa_json_id,application_q3_mod_call **,qa_error *);
 bool q3items_active(item_actor *,qa_item_id *,qa_error *);
 bool q3items_tests(item_actor *,const item_test *,size_t,bool *,qa_error *);
+bool q3items_binding(item_actor *,qa_inventory_items *,qa_error *);
+bool q3items_watch_create(item_actor *,qa_error *);
 #endif

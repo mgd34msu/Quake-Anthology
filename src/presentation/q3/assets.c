@@ -380,13 +380,13 @@ bool qa_q3_registered_models(const qa_q3_presentation_assets *assets, qa_arena *
     if (assets->model_count && !rows) return false;
     size_t n = 0;
     for (size_t i = 0; i < assets->model_count; ++i) {
-        const q3p_model *model = assets->models[i]; if (!model) continue;
+        const q3p_model *model = assets->models[i]; if (!model || model->registration_bad) continue;
         const char *name = registered_name(assets, Q3P_MODEL, (int32_t)i + 1);
         if (!name) return q3p_fail(error, QA_ERROR_FORMAT, "source model handle has no retained registration name");
         const qa_model *base = q3p_model_source(model, 0);
         rows[n++] = (qa_q3_registered_model){.handle = (int32_t)i + 1, .name = name,
             .world = model->world != NULL, .inline_model = model->world && !model->owns_world,
-            .format = base ? base->format : QA_MODEL_MDL};
+            .format = model->source_registration ? model->source_kind : base ? base->format : QA_MODEL_MDL};
     }
     *out = rows; *count = n; return true;
 }

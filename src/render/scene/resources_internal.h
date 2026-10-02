@@ -12,6 +12,7 @@ struct owned_image {
     scene_names *names;
     qa_scene_image_level *levels;
     image_lineage *lineage;
+    uint64_t creation_sequence;
     const qa_scene_image *sampling_source;
     bool sampling_mipmap;
     const qa_scene_image *source_variant_source;

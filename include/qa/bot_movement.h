@@ -107,6 +107,7 @@ typedef struct qa_bot_moves qa_bot_moves;
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *, qa_bot_actions *,
                          const qa_bot_move_services *, qa_bot_moves **, qa_error *);
 void qa_bot_moves_destroy(qa_bot_moves *);
+bool qa_bot_moves_shutdown(qa_bot_moves *, qa_error *);
 bool qa_bot_moves_active(const qa_bot_moves *);
 bool qa_bot_moves_setup(qa_bot_moves *, qa_error *);
 bool qa_bot_moves_time(qa_bot_moves *, float, qa_error *);

@@ -242,6 +242,7 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     instance->lifecycle = QA_NATIVE_SHUT_DOWN;
     qa_error cleanup = {0};
     if (!native_process_close(instance, &cleanup)) { *out = instance; return false; }
+    qa_buffer_free(&instance->process_host);
     native_profile_unbind(instance); free_allocations(instance);
     native_regions_destroy(instance); native_original_dependencies_destroy(instance);
     qa_native_module_release(module); free(instance->slots); free(instance); *out = NULL; return false;

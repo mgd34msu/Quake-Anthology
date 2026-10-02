@@ -1,5 +1,6 @@
 #include "unified_q3_client.h"
 #include "remote_unified_save.h"
+#include "video_guests.h"
 #include "qa/network_q3_fields_save.h"
 #include "qa/application_native_q3_cvars.h"
 #include "qa/application_native_q3_client.h"
@@ -39,6 +40,7 @@ struct frontend_unified_q3_client {
     char *instance;
     client_history *history;
     frontend_unified_q3_client_frame *prepared;
+    frontend_unified_q3_client_video *video;
     q3n_compiled_source *source;
     uint64_t revision;
     qa_native_q3_client_cvar *cvar_cache;
@@ -53,6 +55,16 @@ struct frontend_unified_q3_client_frame {
     q3n_compiled_source_rebind_ticket *rebind;
     q3n_compiled_source_basis candidate;
     qa_command_context command_context;
+};
+struct frontend_unified_q3_client_video {
+    frontend_unified_q3_client *owner;
+    qa_frontend *frontend;
+    const frontend_video_guests *aggregate;
+    frontend_unified_q3_source_view source;
+    client_history *history;
+    uint64_t revision;
+    int32_t message, time, reliable, reached;
+    bool begun;
 };
 static bool fail(qa_error *e, qa_status code, const char *s)
 { qa_error_set(e,code,0,"%s",s); return false; }
@@ -100,12 +112,21 @@ static bool cold_observation(const frontend_unified_q3_client *c,frontend_unifie
 }
 bool frontend_unified_q3_client_checkpoint_current(const frontend_unified_q3_client *c)
 { frontend_unified_q3_source_view v; return frontend_unified_q3_client_idle(c) && cold_observation(c,&v); }
+bool frontend_unified_q3_client_checkpoint_matches(const frontend_unified_q3_client *c,const frontend_unified_q3_source_view *v)
+{ return c && v && identity(c,v) && frontend_unified_q3_source_checkpoint_current(v); }
 bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 { return c && v && activation(c,v) &&
     (qa_actor_id_equal(v->viewer,c->constructor.viewer) || v->snapshot_bit != c->constructor.snapshot_bit) &&
     frontend_unified_q3_source_current(v); }
+bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *c,const char *instance,
+    const char *content,uint32_t source_epoch)
+{
+    frontend_unified_q3_source_view v;
+    return instance && content && observation(c,&v) && v.epoch == source_epoch &&
+        !strcmp(v.instance,instance) && !strcmp(v.content,content) && frontend_unified_q3_source_current(&v);
+}
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *c)
-{ return !c || (!c->busy && !c->prepared); }
+{ return !c || (!c->busy && !c->prepared && !c->video); }
 static void history_free(client_history *h)
 { if (h) { for (size_t i = 0; i < 64; ++i) qa_command_tokens_free(&h->commands[i].arguments); free(h); } }
 static bool arguments(const char *const *values, size_t count, qa_command_tokens *out, qa_error *e)
@@ -323,7 +344,7 @@ bool frontend_unified_q3_client_create(frontend_remote_unified *replica,frontend
 bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v,
     frontend_unified_q3_client_frame **out, qa_error *e)
 {
-    if (!c || !v || !out || *out || c->busy || c->prepared || c->revision == UINT64_MAX ||
+    if (!c || !v || !out || *out || c->busy || c->prepared || c->video || c->revision == UINT64_MAX ||
         !frontend_unified_q3_client_matches(c,v))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT frame requires its actual same Source activation");
     frontend_unified_q3_client_frame *t = calloc(1,sizeof(*t));
@@ -376,6 +397,69 @@ bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_err
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
     history_free(c->history); free(c->cvar_cache); free(c->instance); free(c); *out = NULL; return true;
 }
+bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
+{
+    frontend_unified_q3_client *c = t ? t->owner : NULL; frontend_unified_q3_source_view v;
+    return c && c->video == t && !c->busy && !c->prepared && c->history == t->history &&
+        frontend_video_guests_parent_is(t->frontend,t->aggregate) &&
+        qa_frontend_application(t->frontend) == c->domain->application && observation(c,&v) &&
+        v.source == t->source.source && v.revision == t->source.revision &&
+        c->history->number == t->message && c->history->time == t->time &&
+        c->history->reliable == t->reliable && c->history->command_sequence == t->reached &&
+        (c->revision == t->revision || (c->initialized && t->revision != UINT64_MAX && c->revision == t->revision+1));
+}
+bool frontend_unified_q3_client_video_prepare(frontend_unified_q3_client *c,qa_frontend *f,
+    const frontend_video_guests *aggregate,frontend_unified_q3_client_video **out,qa_error *e)
+{
+    frontend_unified_q3_source_view v; bool linked = false;
+    if (f && c) for (size_t i = 0; i < frontend_remote_unified_count(f); ++i)
+        if (frontend_remote_unified_at(f,i) == c->replica) linked = true;
+    if (!c || !f || !out || *out || !linked || !frontend_unified_q3_client_idle(c) || !c->initialized ||
+        !c->registered || c->history->unsealed_snapshot || c->revision >= UINT64_MAX-1 || !observation(c,&v) ||
+        !frontend_video_guests_parent_is(f,aggregate) || qa_frontend_application(f) != c->domain->application)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT video reset requires its actual returned CG and physical video aggregate");
+    frontend_unified_q3_client_video *t = calloc(1,sizeof(*t));
+    if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining actual compiled CLIENT video baseline");
+    *t = (frontend_unified_q3_client_video){.owner=c,.frontend=f,.aggregate=aggregate,.source=v,
+        .history=c->history,.revision=c->revision,.message=c->history->number,.time=c->history->time,
+        .reliable=c->history->reliable,.reached=c->history->command_sequence};
+    c->video = t; *out = t; return true;
+}
+bool frontend_unified_q3_client_video_begin(frontend_unified_q3_client_video *t,void *context,
+    bool (*closed)(const void *),qa_error *e)
+{
+    if (!frontend_unified_q3_client_video_current(t) || !context || !closed || !closed(context) ||
+        t->owner->revision >= UINT64_MAX-1)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT video Init requires its actual old CG child to close");
+    frontend_unified_q3_client *c = t->owner;
+    c->initialized = false; c->registered = false;
+    free(c->cvar_cache); c->cvar_cache = NULL; c->cvar_count = 0;
+    ++c->revision; t->revision = c->revision;
+    t->begun = true; return true;
+}
+bool frontend_unified_q3_client_video_baseline(const frontend_unified_q3_client_video *t,
+    const frontend_unified_q3_client *c,int32_t *message,int32_t *reached,qa_error *e)
+{
+    if (!message || !reached || !t || t->owner != c || !t->begun || !frontend_unified_q3_client_video_current(t))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled video cache requires its genuine held CLIENT baseline");
+    *message = t->message; *reached = t->reached; return true;
+}
+bool frontend_unified_q3_client_video_finish(frontend_unified_q3_client_video **out,qa_error *e)
+{
+    if (!out || !*out) return true;
+    frontend_unified_q3_client_video *t = *out;
+    if (!frontend_unified_q3_client_video_current(t) || !t->begun || !t->owner->initialized || !t->owner->registered)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled video retains unfinished actual CG registration and Init");
+    t->owner->video = NULL; free(t); *out = NULL; return true;
+}
+bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **out,qa_error *e)
+{
+    if (!out || !*out) return true;
+    frontend_unified_q3_client_video *t = *out;
+    if (t->begun) return frontend_unified_q3_client_video_finish(out,e);
+    if (!frontend_unified_q3_client_video_current(t)) return fail(e,QA_ERROR_ARGUMENT,"Compiled video cancellation lost its actual CLIENT parent");
+    t->owner->video = NULL; free(t); *out = NULL; return true;
+}
 q3n_compiled_source *frontend_unified_q3_client_source(frontend_unified_q3_client *c) { return c ? c->source : NULL; }
 const qa_command_context *frontend_unified_q3_client_context(const frontend_unified_q3_client *c)
 { return c && frontend_unified_q3_client_current(c) ? &c->command_context : NULL; }
@@ -405,7 +489,7 @@ bool frontend_unified_q3_client_snapshot_actor(const frontend_unified_q3_client 
 }
 bool frontend_unified_q3_client_command(frontend_unified_q3_client *c, int32_t sequence, frontend_unified_q3_command *out, qa_error *e)
 {
-    if (!c || !out || c->busy || c->prepared || c->revision == UINT64_MAX || sequence < 1 ||
+    if (!c || !out || c->busy || c->prepared || c->video || c->revision == UINT64_MAX || sequence < 1 ||
         sequence > c->history->reliable || (int64_t)sequence > (int64_t)c->history->command_sequence+1 ||
         !frontend_unified_q3_client_current(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled command must reach its actual next retained sequence");
     client_command *row = c->history->commands+((uint32_t)sequence&63u);
@@ -432,7 +516,7 @@ bool frontend_unified_q3_command_current(const frontend_unified_q3_command *r)
 bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, uint64_t event_sequence,
     int32_t recipient, const char *text, qa_error *e)
 {
-    if (!c || !text || c->busy || c->prepared || c->revision == UINT64_MAX || !frontend_unified_q3_client_current(c))
+    if (!c || !text || c->busy || c->prepared || c->video || c->revision == UINT64_MAX || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled source command requires its real returned CLIENT");
     client_history *h = c->history;
     if (h->has_event_sequence && event_sequence <= h->event_sequence) return true;
@@ -446,7 +530,7 @@ bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, ui
 }
 bool frontend_unified_q3_client_seal(frontend_unified_q3_client *c, qa_error *e)
 {
-    if (!c || c->busy || c->prepared || !frontend_unified_q3_client_current(c))
+    if (!c || c->busy || c->prepared || c->video || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled snapshot sealing requires its actual returned FRAME owner");
     if (!c->history->unsealed_snapshot) return true;
     if (c->revision == UINT64_MAX) return fail(e,QA_ERROR_FORMAT,"Compiled CLIENT sealing revision is exhausted");
@@ -510,7 +594,8 @@ bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *c, c
 }
 bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_client *c, qa_error *e)
 {
-    if (!c || !c->registered || c->initialized || !frontend_unified_q3_client_idle(c) ||
+    if (!c || !c->registered || c->initialized || c->busy || c->prepared ||
+        (c->video && (!c->video->begun || !frontend_unified_q3_client_video_current(c->video))) ||
         c->revision == UINT64_MAX || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG Init completion requires its actual returned constructor");
     c->initialized = true; ++c->revision; return true;

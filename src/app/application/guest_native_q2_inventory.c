@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_inventory_source.h"
+#include "guest_native_q2_attack.h"
 #include "qa/text.h"
 #include "qa/json.h"
 #include <math.h>
@@ -380,6 +381,43 @@ bool application_native_q2_inventory_source_current(struct application_native_q2
         actual.inventory_offset == source->inventory_offset && actual.count == source->count &&
         actual.cursor_offset == source->cursor_offset && actual.client_bytes == source->client_bytes && actual.empty == source->empty
         ? true : application_fail(error, QA_ERROR_ARGUMENT, "Native inventory source receipt changed its physical client or layout");
+}
+bool application_native_q2_weapon_request(application_provider *provider, qa_actor_id actor,
+    qa_item_id item, bool *admitted, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !admitted || !item || !engine->primary_inventory || !engine->map_ready ||
+        application_provider_for(provider->application, actor, QA_ROLE_ARSENAL, NULL) != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native weapon request requires its actual selected original owner");
+    *admitted = false;
+    application_native_q2_inventory_source source;
+    if (!application_native_q2_inventory_source_read(engine, actor, &source, error)) return false;
+    qa_item_id active;
+    if (!application_native_q2_attack_weapon_read(engine, source.slot, actor, &active, error)) return false;
+    if (active == item) { *admitted = true; return true; }
+    bool weapon;
+    if (!application_native_q2_attack_weapon_contains(engine, item, &weapon, error)) return false;
+    if (!weapon) return true;
+    uint32_t index;
+    int32_t count;
+    if (!application_native_q2_inventory_index(engine, item, &index, error) ||
+        !scalar_read(engine, source.client + engine->primary_inventory->inventory_offset + (uint64_t)index * 4,
+            4, &count, error)) return false;
+    if (count <= 0) return true;
+    uint32_t base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
+    if (index > UINT32_MAX - base || base + index >= engine->configstring_count)
+        return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");
+    const char *label = engine->configstrings[base + index];
+    if (!label) label = "";
+    /* This is the original source label in its own native byte encoding. The
+     * typed command owner copies it before invoking the mutable Source. */
+    const char *arguments[] = {"use", label};
+    qa_command_invocation command = {.argc = 2, .argv = arguments, .args_text = label};
+    bool handled;
+    if (!application_native_q2_inventory_source_current(engine, &source, error) ||
+        !application_native_q2_client_command(provider, actor, &command, &handled, error) ||
+        !application_native_q2_inventory_source_current(engine, &source, error)) return false;
+    *admitted = handled; return true;
 }
 static size_t inventory_count(void *opaque)
 {

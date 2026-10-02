@@ -240,6 +240,18 @@ bool frontend_input_settings_reconnect_prepare(qa_frontend *frontend,double now,
     if (!ok) retain_failure(owner,error);
     return ok;
 }
+bool frontend_input_settings_prepare_selected(qa_frontend *frontend,const qa_input_platform_settings *desired,
+    qa_input_seat *const configuration[QA_INPUT_LOCAL_SEATS],
+    const qa_controller_selection selections[QA_INPUT_LOCAL_SEATS],double now,
+    frontend_input_settings **out,qa_error *error)
+{
+    frontend_input_settings *owner=create(frontend,now,out,error);
+    if (!owner) return false;
+    bool ok=qa_input_platform_settings_prepare_selected(owner->platform,desired,configuration,selections,
+        now,&owner->native,error) && prepare_releases(owner,error);
+    if (!ok) retain_failure(owner,error);
+    return ok;
+}
 bool frontend_input_settings_read(const frontend_input_settings *owner,
     frontend_input_settings_view *out,qa_error *error)
 {

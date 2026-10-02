@@ -30,6 +30,10 @@ bool qa_native_host_q2_wire_entity(qa_native_host *, uint32_t,
  * New Source rows can be observed before the completed table count advances. */
 bool qa_native_host_q2_wire_entity_import(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
+/* The selected Source has returned even when another GAME owns the current
+ * session turn. Read only its actual signed public animation frame. */
+bool qa_native_host_q2_character_frame(qa_native_host *, uint32_t source_slot,
+    qa_actor_id, double *, qa_error *);
 bool qa_native_host_q2_wire_player(qa_native_host *, uint32_t,
     qa_actor_id, qa_q2_player *, qa_error *);
 bool qa_native_host_q2_wire_ping(qa_native_host *, uint32_t,

@@ -51,6 +51,8 @@ void frontend_shared_resource_policy_publish(frontend_shared_resource_policy *);
  * retained child receipt and the complete old physical roster still qualify. */
 bool frontend_shared_resource_policy_consume_ready_is(const frontend_shared_resource_policy *);
 void frontend_shared_resource_policy_consume(frontend_shared_resource_policy *);
+/* After bank migration and actual native surface/gamma transfer. */
+void frontend_shared_resource_policy_render_publish(frontend_shared_resource_policy *);
 bool frontend_shared_resource_policy_finish(frontend_shared_resource_policy **, qa_error *);
 bool frontend_shared_resource_policy_abort(frontend_shared_resource_policy **, qa_error *);
 

@@ -3,6 +3,7 @@
 #include "qa/frontend.h"
 #include "qa/q3_host.h"
 #include "qa/application_startup_prepare.h"
+struct frontend_video_guests;
 
 typedef struct frontend_key_profile frontend_key_profile;
 

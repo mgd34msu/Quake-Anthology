@@ -9,7 +9,8 @@ typedef struct application_q3_catalog application_q3_catalog;
 struct q3g_role;
 struct guest_inventory_weapon;
 typedef struct application_q3_catalog_record {
-    uint32_t index, address;
+    uint32_t index;
+    uint64_t address;
     int32_t type, tag;
     const char *class_name, *pickup_name;
 } application_q3_catalog_record;
@@ -25,6 +26,12 @@ typedef struct application_q3_catalog_weapon {
 bool application_q3_catalog_create(qa_qvm_image *, qa_qvm *, qa_qvm_abi,
     qa_strings *, qa_bytes primary, qa_bytes items_declaration,
     bool known_missionpack, application_q3_catalog **, qa_error *);
+/* The native receipt names this module's actual item RVAs, pointer fields and
+ * source type values. Absence is represented by no owner, never a QVM roster. */
+bool application_q3_catalog_create_native(struct q3g_role *, qa_bytes,
+    application_q3_catalog **, qa_error *);
+bool application_q3_catalog_role_current(const application_q3_catalog *,
+    const struct q3g_role *);
 void application_q3_catalog_destroy(application_q3_catalog *);
 /* Outputs borrow this owner's latest admitted records until its next read. */
 bool application_q3_catalog_records(application_q3_catalog *,

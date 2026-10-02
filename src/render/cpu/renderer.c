@@ -26,7 +26,7 @@ struct qa_cpu_surface_ticket {
 };
 
 static bool cpu_surface_idle(const qa_cpu_renderer *renderer, qa_error *error) {
-  if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.source.entered) return true;
+  if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.image_ticket && !renderer->controls.source.entered) return true;
   qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU renderer has a retained settings ticket");
   return false;
 }
@@ -145,7 +145,7 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
 void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   if (!renderer)
     return;
-  if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+  if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
   material_source_release(&renderer->controls.source);
   for (size_t i = 0; i < 2; ++i)
     qa_scene_image_release(renderer->bound[i]);

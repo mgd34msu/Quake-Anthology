@@ -695,9 +695,9 @@ static bool control_qw_input(struct application_qc_state *engine, int32_t refere
     if (!control_scalar(engine, reference, actor, "fixangle", &fix, error) ||
         !control_scalar(engine, reference, actor, "health", &health, error)) return false;
     if ((fix == 0 && !control_store_vector(engine, reference, actor, "v_angle", command->angles, error)) ||
-        !control_store_scalar(engine, reference, actor, "button0", (command->buttons & 1u) ? 1 : 0, error) ||
-        !control_store_scalar(engine, reference, actor, "button2", control_jump(command) ? 1 : 0, error) ||
-        (command->impulse != 0 && !control_store_scalar(engine, reference, actor, "impulse", command->impulse, error))) return false;
+        !control_store_scalar(engine, reference, actor, "button0", (command->buttons & 1u) ? 1.0f : 0.0f, error) ||
+        !control_store_scalar(engine, reference, actor, "button2", control_jump(command) ? 1.0f : 0.0f, error) ||
+        (command->impulse != 0 && !control_store_scalar(engine, reference, actor, "impulse", (float)command->impulse, error))) return false;
     if (health <= 0) return true;
     qa_vec3 angles, velocity;
     if (!control_vector(engine, reference, actor, "angles", &angles, error) ||

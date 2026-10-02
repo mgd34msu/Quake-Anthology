@@ -1,5 +1,6 @@
 #include "remote_q2_private.h"
 #include "qa/persistence_content.h"
+#include "qa/media_resource.h"
 #include "qa/scene_world_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/scene_resource_save.h"
@@ -257,7 +258,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     const qa_q2_server_record *records, size_t count, uint64_t received_ns, qa_error *error)
 {
     (void)records; (void)count; frontend_remote_q2 *row = context;
-    if (!hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
+    if (!row || row->busy || !hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
     qa_q2_wire_frame held = {0};
     if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
@@ -279,7 +280,8 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
         row->gun_set = true;
     }
     ++row->busy;
-    bool ok = !row->options.entities_changed || row->options.entities_changed(row->options.context,
+    bool ok = remote_q2_player_fog_receive(row, error);
+    if (ok && row->options.entities_changed) ok = row->options.entities_changed(row->options.context,
         &row->options.domain, error);
     if (ok) remote_q2_prediction_receive(row);
     if (ok) ok = remote_q2_prediction_replay(row, error);
@@ -456,13 +458,28 @@ bool remote_q2_capture_owned(const frontend_remote_q2 *row)
     }
     return true;
 }
+bool frontend_remote_q2_player_number(const frontend_remote_q2 *row,
+    const qa_q2_wire_frame *frame, size_t index, int32_t *number)
+{
+    if (!row || !frame || !number || (frame != &row->frame && frame != &row->previous) ||
+        !frame->valid || index >= frame->player_count) return false;
+    if (row->options.domain.protocol.kind == QA_NET_Q2PRO_36)
+        *number = frame->players[index].player.clientnum;
+    else {
+        if (index >= row->data.client_count || index >= QA_Q2_MAX_SEATS) return false;
+        *number = row->data.clientnums[index];
+    }
+    return true;
+}
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *row, uint32_t number)
 {
     if (!row || !linked(row) || row->retired || row->importing || !row->frame.valid || !number) return false;
     for (size_t i = 0; i < row->frame.entity_count; ++i) if (row->frame.entities[i].number == number) return true;
-    for (size_t i = 0; i < row->frame.player_count; ++i)
-        if (row->frame.players[i].player.clientnum >= 0 &&
-            (uint32_t)row->frame.players[i].player.clientnum + 1 == number) return true;
+    for (size_t i = 0; i < row->frame.player_count; ++i) {
+        int32_t player_number;
+        if (frontend_remote_q2_player_number(row, &row->frame, i, &player_number) &&
+            player_number >= 0 && (uint32_t)player_number + 1 == number) return true;
+    }
     return false;
 }
 bool frontend_remote_q2_entity_generation(const frontend_remote_q2 *row, uint32_t number, uint64_t *generation)

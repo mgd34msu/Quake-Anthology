@@ -19,6 +19,11 @@ typedef struct qa_application_qc_animation {
 bool qa_application_qc_animation_read(qa_application *,qa_actor_id,qa_launch_role,
     qa_application_qc_animation *,qa_error *);
 bool qa_application_qc_animation_current(qa_application *,const qa_application_qc_animation *);
+/* Observe the actual selected CHARACTER's raw declared frame while its own
+ * QC instance is returned, including another Source's genuine advance. */
+bool qa_application_qc_selected_character_frame_read(qa_application *,qa_actor_id,
+    qa_application_qc_animation *,qa_error *);
+bool qa_application_qc_selected_character_frame_current(qa_application *,const qa_application_qc_animation *);
 
 typedef struct qa_application_qc_message_source {
     qa_actor_owner provider;

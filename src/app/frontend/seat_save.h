@@ -14,5 +14,7 @@ bool frontend_seat_ui_clock_ready(void *,const qa_ui *,double (*)(void *),void *
 bool frontend_seat_client_recipient_ready(qa_frontend *,uint32_t,const qa_application_client_source *,qa_error *);
 bool frontend_seat_client_recipient_ready_is(const qa_frontend *,uint32_t,const qa_application_client_source *);
 void frontend_seat_client_recipient_publish(qa_frontend *,uint32_t,const qa_application_client_source *);
+bool frontend_seat_engine_recipient_ready(qa_frontend *,uint32_t,qa_command_context *,qa_error *);
+void frontend_seat_engine_recipient_publish(qa_frontend *,uint32_t,const qa_command_context *);
 bool frontend_seats_recipients_restore(qa_frontend *,qa_error *);
 #endif

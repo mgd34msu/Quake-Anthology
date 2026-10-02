@@ -298,7 +298,10 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT declarations require their actual normalized profile and new private heap");
     static const struct { const char *name,*value; } rows[]={
         {"ch_alpha","1"},{"ch_scale","1"},{"ch_x","0"},{"ch_y","0"},
-        {"cl_smooth_explosions","1"}
+        {"cl_smooth_explosions","1"},{"cl_disable_particles","0"},
+        {"cl_disable_explosions","0"},{"cl_dlight_hacks","0"},
+        {"cl_rerelease_effects","1"},{"cl_muzzlelight_time","100"},
+        {"cl_muzzleflashes","1"}
     };
     for (size_t i=0;i<sizeof(rows)/sizeof(*rows);++i)
         if (!qa_cvars_register(registry,rows[i].name,rows[i].value,0,command->owner,"",error)) return false;

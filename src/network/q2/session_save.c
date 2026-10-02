@@ -82,10 +82,18 @@ static bool download(qa_source_save_io *io, q2_server *server, const qa_network_
     if (!reading && (!server->download_view ||
         !refs->view_encode(refs->context, server->download_view, &view, io->error))) return false;
     if (!qa_source_save_u64(io, &view) || !view) return false;
+    if (reading) {
+        qa_vfs *decoded_view = NULL;
+        if (!refs->view_decode(refs->context, view, &decoded_view, io->error) || !decoded_view) return false;
+        server->download_view = decoded_view;
+    }
     if (server->download_memory) {
         if (server->download || server->download_opening.path || server->download_opening.lookup_path ||
             server->download_opening.link_source || server->download_opening.link_target ||
-            server->download_opening.mount || server->download_opening.resource_id)
+            server->download_opening.mount || server->download_opening.resource_id ||
+            server->download_opening.opening_present || server->download_opening.opening.prefix ||
+            server->download_opening.opening.order || server->download_opening.opening.order_count ||
+            server->download_opening.opening.rank || server->download_opening.opening.user_overlay)
             return invalid(io, "Memory Q2 download acquired a fabricated file opening");
         if (!buffer(io, &server->download_source, INT32_MAX)) return false;
     } else {
@@ -93,26 +101,24 @@ static bool download(qa_source_save_io *io, q2_server *server, const qa_network_
             server->download_opening.resource_id != qa_resource_id(server->download) ||
             !qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error) ||
             !refs->resource_encode(refs->context, server->download, &pool, &resource, io->error))) return false;
-        if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) || !pool || !resource ||
+        if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) || !pool || !resource) return false;
+        if (reading) {
+            const qa_resource *decoded = NULL;
+            if (!refs->resource_decode(refs->context, pool, resource, &decoded, io->error) || !decoded) return false;
+            server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
+            server->download_opening.resource_id = qa_resource_id(decoded);
+        }
+        if (
             !qa_source_save_u64(io, &server->download_opening.mount) ||
             !text(io, &server->download_opening.path) || !text(io, &server->download_opening.lookup_path) ||
-            !text(io, &server->download_opening.link_source) || !text(io, &server->download_opening.link_target)) return false;
+            !text(io, &server->download_opening.link_source) || !text(io, &server->download_opening.link_target) ||
+            !qa_vfs_acquisition_opening_codec(io, server->download_view, &server->download_opening) ||
+            !server->download_opening.opening_present) return false;
         if (server->download_source.data || server->download_source.size)
             return invalid(io, "File Q2 download retained unrelated catalog bytes");
     }
     if (!qa_source_save_count(io, &server->download_offset, INT32_MAX) ||
         !buffer(io, &server->download_wire, INT32_MAX)) return false;
-    if (reading) {
-        const qa_resource *decoded = NULL;
-        qa_vfs *decoded_view = NULL;
-        if (!refs->view_decode(refs->context, view, &decoded_view, io->error) || !decoded_view) return false;
-        server->download_view = decoded_view;
-        if (!server->download_memory) {
-            if (!refs->resource_decode(refs->context, pool, resource, &decoded, io->error) || !decoded) return false;
-            server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
-            server->download_opening.resource_id = qa_resource_id(decoded);
-        }
-    }
     qa_bytes bytes = q2_download_bytes(server);
     return bytes.size <= INT32_MAX && server->download_offset <= bytes.size &&
         (server->download_memory || qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error));
@@ -253,11 +259,11 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
-    uint32_t tag = UINT32_C(0x32534e51), version = 7, slot = session->id.slot;
+    uint32_t tag = UINT32_C(0x32534e51), version = 8, slot = session->id.slot;
     uint64_t generation = session->id.generation; bool server = session->server; size_t seats = session->seats;
     if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) || !qa_source_save_bool(io, &server) ||
         !qa_source_save_u32(io, &slot) || !qa_source_save_u64(io, &generation) || !qa_source_save_count(io, &seats, QA_NETWORK_MAX_SEATS)) return false;
-    if (tag != UINT32_C(0x32534e51) || version != 7 || server != session->server || !seats ||
+    if (tag != UINT32_C(0x32534e51) || version != 8 || server != session->server || !seats ||
         slot != client->id.slot || generation != client->id.generation || seats != client->seat_count)
         return invalid(io, "Saved Q2 session does not belong to its actual candidate connection");
     session->seats = seats;

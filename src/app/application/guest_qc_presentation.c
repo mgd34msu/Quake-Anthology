@@ -65,6 +65,29 @@ bool qa_application_qc_animation_current(qa_application *app,const qa_applicatio
         actual.instance==view->instance && actual.frame==view->frame && actual.next_frame_seconds==view->next_frame_seconds &&
         actual.attack_finished_seconds==view->attack_finished_seconds && actual.source_weapon==view->source_weapon;
 }
+bool qa_application_qc_selected_character_frame_read(qa_application *app,qa_actor_id actor,
+    qa_application_qc_animation *out,qa_error *error)
+{
+    if(!app || !out || (app->operation!=APPLICATION_IDLE && app->operation!=APPLICATION_ADVANCING) ||
+        !qa_actors_get(qa_session_actors(app->session),actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC character frame requires its actual selected actor");
+    application_provider *p=application_provider_for(app,actor,QA_ROLE_CHARACTER,""); uint32_t slot;
+    if(!source_returned(p) || !qa_qc_actor_observation_slot(p->state.qc.instance,actor,&slot,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC character frame lost its returned selected Source");
+    qa_application_qc_animation value={.actor=actor,.provider=p->owner,.descriptor=p->launch,
+        .program=p->state.qc.program,.instance=p->state.qc.instance,.role=QA_ROLE_CHARACTER};
+    if(!scalar(p,slot,actor,"frame",NULL,&value.frame,error) ||
+        application_provider_for(app,actor,QA_ROLE_CHARACTER,"")!=p || !source_returned(p)) return false;
+    *out=value; return true;
+}
+bool qa_application_qc_selected_character_frame_current(qa_application *app,const qa_application_qc_animation *view)
+{
+    qa_application_qc_animation actual;
+    return view && view->role==QA_ROLE_CHARACTER &&
+        qa_application_qc_selected_character_frame_read(app,view->actor,&actual,NULL) &&
+        actual.provider==view->provider && actual.descriptor==view->descriptor && actual.program==view->program &&
+        actual.instance==view->instance && actual.frame==view->frame;
+}
 bool qa_application_qc_message_source_read(qa_application *app,qa_actor_owner id,
     qa_application_qc_message_source *out,bool *found,qa_error *error)
 {

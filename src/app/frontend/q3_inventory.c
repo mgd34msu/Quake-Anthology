@@ -753,6 +753,10 @@ static void scene_adopt(void *context,uint64_t key)
 { frontend_scene_root_adopt(((q3_scope *)context)->inventory->refs.worlds,key); }
 static void world_adopt(void *context,uint64_t key)
 { frontend_world_adopt(((q3_scope *)context)->inventory->refs.worlds,key); }
+static bool registry_encode(void *context,const qa_q3_presentation_assets *assets,uint64_t *key,qa_error *error)
+{ return frontend_q3_assets_encode(((q3_scope *)context)->inventory,assets,key,error); }
+static bool registry_decode(void *context,uint64_t key,qa_q3_presentation_assets **assets,qa_error *error)
+{ return frontend_q3_assets_decode(((q3_scope *)context)->inventory,key,assets,error); }
 static qa_q3_asset_owner_refs asset_refs(q3_scope *scope)
 {
     return (qa_q3_asset_owner_refs){.context=scope,.services_encode=services_encode,.services_qualify=services_qualify,
@@ -760,7 +764,8 @@ static qa_q3_asset_owner_refs asset_refs(q3_scope *scope)
         .model_encode=model_encode,.model_decode=model_decode,.model_retain=model_retain,.scene_encode=scene_encode,.scene_decode=scene_decode,
         .world_encode=world_encode,.world_decode=world_decode,.collision_encode=collision_encode,.collision_decode=collision_decode,
         .material_encode=asset_material_encode,.material_decode=asset_material_decode,.audio_encode=audio_encode,.audio_decode=audio_decode,
-        .scene_owned_ready=scene_owned_ready,.world_owned_ready=world_owned_ready,.scene_adopt=scene_adopt,.world_adopt=world_adopt};
+        .scene_owned_ready=scene_owned_ready,.world_owned_ready=world_owned_ready,.scene_adopt=scene_adopt,.world_adopt=world_adopt,
+        .registry_encode=registry_encode,.registry_decode=registry_decode};
 }
 bool frontend_q3_checkpoint(qa_frontend *f,const frontend_q3_refs *refs,qa_buffer *out,qa_error *error)
 {

@@ -638,8 +638,13 @@ static bool emit_protocol(application_provider *provider,
         const qa_application_protocol_resource_reference *resource = event->resources + i;
         if ((unsigned)resource->kind > QA_NATIVE_HOST_IMAGE || !resource->name ||
             resource->record_ordinal >= event->payload.size || resource->resource_key[80] ||
-            (resource->resource_key[0] && !application_unified_event_resource_read(application, resource->resource_key)))
+            (!resource->resource_key[0] && resource->resource_custody))
             return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol resource lost its immutable precache receipt");
+        if (resource->resource_key[0]) {
+            const qa_resource *held; const qa_vfs *view; const qa_vfs_acquisition *opening;
+            if (!application_unified_event_resource_receipt_read(application, resource->resource_key,
+                resource->resource_custody, &held, &view, &opening, error)) return false;
+        }
     }
     application_protocol_record *storage = event_storage(application->protocol_events,
         application->protocol_event_count, &application->protocol_event_capacity,

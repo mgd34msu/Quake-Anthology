@@ -39,7 +39,7 @@ bool qa_kex_lan_valid(const qa_kex_lan *l)
         !qa_kex_text_valid((qa_bytes){(const uint8_t *)l->name, strlen(l->name)}) ||
         !qa_kex_save_address_valid(&l->local_address, true) || l->options.local_players > 8 ||
         (l->options.host && l->options.max_players < l->options.local_players) ||
-        (l->options.host && (!l->joined || l->player_count > l->options.max_players)) ||
+        (l->options.host && !l->joined) ||
         (!l->options.host && (!l->options.local_players || !qa_kex_save_address_valid(&l->options.server, true))) ||
         !attributes_valid(&l->attributes) || !qa_kex_save_address_valid(&l->dropped_from, false)) return false;
     if (l->transport && !qa_net_address_equal(&l->local_address, qa_net_transport_address(l->transport), true)) return false;

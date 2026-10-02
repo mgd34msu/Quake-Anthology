@@ -18,6 +18,7 @@
 #include "qa/source_frame_time.h"
 #include "qa/application_native_q3_cvars.h"
 #include "qa/q3_product_policy.h"
+#include "qa/input_release.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,8 @@ struct frontend_neutral_config {
     frontend_authored_bindings *authored;
     qa_input_console *bindings;
     qa_input_seat *input;
+    qa_input_seat *retirement_input;
+    qa_input_release *retirement_release;
     qa_cvars *client, *mouse, *movement;
     qa_cvar_archive client_archive, mouse_archive, movement_archive, shared_archive;
     qa_seat_settings settings;
@@ -47,6 +50,7 @@ struct frontend_neutral_config {
     bool issued, attached, found, ready, published, running, imported, retiring, movement_selected;
     bool write_registered,dump_registered;
     bool configuration_done,variables_seeded,archive_seeded,release_before,startup_owned;
+    bool retirement_started,recipient_returned;
     qa_error failure;
 };
 struct frontend_neutral_configs {
@@ -64,12 +68,14 @@ static const char *dialect_name(qa_console_dialect dialect)
 }
 static const qa_launch_instance *descriptor(const frontend_neutral_config *row)
 { return row?qa_launch_instance_lease_view(row->metadata):NULL; }
-static bool physical(const frontend_neutral_config *row,qa_application_client_source *out)
+static bool physical_read(const frontend_neutral_config *row,qa_application_client_source *out,bool connection)
 {
     const qa_launch_instance *held=descriptor(row);
     return row && row->attached && held &&
-        qa_application_client_read(row->owner->frontend->application,row->source.context.receiver,
-            row->source.context.seat,out,NULL) && out->descriptor &&
+        (connection?qa_application_client_read(row->owner->frontend->application,row->source.context.receiver,
+            row->source.context.seat,out,NULL):
+            qa_application_client_physical_read(row->owner->frontend->application,row->source.context.receiver,
+                row->source.context.seat,out,NULL)) && out->descriptor &&
         out->context.lifetime==row->source.context.lifetime && out->context.session==row->source.context.session &&
         out->descriptor->selection.clock.kind==held->selection.clock.kind &&
         !strcmp(out->descriptor->selection.instance,held->selection.instance) &&
@@ -77,6 +83,8 @@ static bool physical(const frontend_neutral_config *row,qa_application_client_so
         out->context.console==row->source.context.console && out->context.cvars==row->client &&
         out->context.physical_seat==row->physical_seat;
 }
+static bool physical(const frontend_neutral_config *row,qa_application_client_source *out)
+{ return physical_read(row,out,true); }
 static bool same_context(const qa_command_context *a,const qa_command_context *b)
 {
     return a && b && a->owner==b->owner && a->session==b->session && a->seat==b->seat &&
@@ -88,7 +96,7 @@ static bool active(const frontend_neutral_config *row,const qa_command_context *
 {
     qa_application_client_source actual;
     return row && row->attached && !row->retiring && !row->imported &&
-        physical(row,&actual) && same_context(command,&actual.context.command) &&
+        physical_read(row,&actual,false) && same_context(command,&actual.context.command) &&
         qa_application_command_context_active(row->owner->frontend->application,command);
 }
 static void print(void *context,const qa_command_context *command,const char *text)
@@ -310,14 +318,15 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
         qa_q3_product_policy policy;
         if (product->family!=QA_GAME_Q3 || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
             !qa_application_q3_product_policy_read(f->application,&policy) || !policy.restriction_resolved ||
-            policy.filesystem_restricted!=qa_catalog_q3_restricted(catalog) ||
-            !qa_q3_product_policy_register_source(&policy,client,command->owner,e))
+            policy.filesystem_restricted!=qa_catalog_q3_restricted(catalog))
             return fail(e,QA_ERROR_ARGUMENT,"Neutral Q3 CLIENT needs its retained compiled profile and resolved product policy");
+        if (!qa_q3_product_policy_register_source(&policy,client,command->owner,e)) return false;
         qa_q3_product q3=product->campaign && !strcmp(product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
         for (size_t i=0;i<qa_native_q3_cvar_definition_count(q3);++i) {
             qa_native_q3_cvar_definition value;
-            if (!qa_native_q3_cvar_definition_at(q3,i,&value) ||
-                !qa_cvars_register(client,value.name,value.reset,value.flags,command->owner,NULL,e)) return false;
+            if (!qa_native_q3_cvar_definition_at(q3,i,&value))
+                return fail(e,QA_ERROR_FORMAT,"Native Q3 CLIENT definition inventory changed during declaration");
+            if (!qa_cvars_register(client,value.name,value.reset,value.flags,command->owner,NULL,e)) return false;
         }
     }
     row->files=frontend_config_files_create(catalog,product->id,
@@ -545,6 +554,30 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
         bool complete=false;
         if (!qa_application_client_prepare_finish(&row->preparation,cleanup_preparation,row,&complete,e) || !complete) return false;
     }
+    if (row->published && !row->recipient_returned) {
+        qa_frontend *f=row->owner->frontend;
+        qa_application_client_source actual;
+        if (!f->seats || row->physical_seat>=f->options.seats || !physical_read(row,&actual,false))
+            return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement lost its retained physical input namespace");
+        qa_input_seat *input=f->seats[row->physical_seat].input;
+        qa_console *console=NULL; qa_cvars *registry=NULL; qa_command_context command;
+        if (!input || !qa_input_seat_recipient_read(input,&console,&registry,&command) ||
+            console!=actual.context.console || registry!=actual.context.cvars || !active(row,&command) ||
+            (row->retirement_input && row->retirement_input!=input))
+            return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement cannot clear another physical recipient");
+        qa_input_release_scope all={.all=true,.controller=-1};
+        if (!row->retirement_release) {
+            if (!qa_input_release_prepare(input,&all,(double)f->wall_time_ns/1000000.0,&row->retirement_release,e)) return false;
+            row->retirement_input=input; row->retirement_started=true;
+        }
+        qa_input_release_outcome outcome=QA_INPUT_RELEASE_UNENTERED;
+        if (!qa_input_release_advance(row->retirement_release,&outcome,e)) return false;
+        if (outcome==QA_INPUT_RELEASE_WAITING) return false;
+        if (outcome!=QA_INPUT_RELEASE_COMPLETED || !qa_input_release_ready(row->retirement_release,input,&all,e) ||
+            !frontend_seat_engine_recipient_ready(f,row->physical_seat,&command,e)) return false;
+        qa_input_release_publish(row->retirement_release); row->retirement_release=NULL; row->retirement_input=NULL;
+        frontend_seat_engine_recipient_publish(f,row->physical_seat,&command); row->recipient_returned=true;
+    }
     if (row->bindings && !qa_console_idle(row->source.context.console))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral input handlers still have an entered physical console");
     qa_input_console_destroy(row->bindings);
@@ -557,7 +590,8 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
 }
 static bool dispose(frontend_neutral_config *row,qa_error *e)
 {
-    if (row->running || row->preparation || row->bindings || row->phase || (row->files && !frontend_config_files_destroy(row->files,e))) return false;
+    if (row->running || row->preparation || row->retirement_release || row->bindings || row->phase ||
+        (row->files && !frontend_config_files_destroy(row->files,e))) return false;
     row->files=NULL;
     qa_input_seat_destroy(row->input);
     if (row->movement!=row->client) qa_cvars_destroy(row->movement);
@@ -701,7 +735,7 @@ bool frontend_neutral_config_read(const frontend_neutral_configs *owner,const qa
     if (!owner || !console || !out) return fail(e,QA_ERROR_ARGUMENT,"Neutral read needs its actual CLIENT console");
     for (const frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->attached || row->source.context.console!=console) continue;
-        if (row->retiring || row->imported || row->running || !row->ready || !row->published || row->phase || row->input ||
+        if (row->retiring || row->retirement_started || row->imported || row->running || !row->ready || !row->published || row->phase || row->input ||
             !qa_cvars_observer_idle(row->client) || !qa_cvars_observer_idle(row->mouse) || !qa_cvars_observer_idle(row->movement))
             return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT settings have not completed their actual programme");
         qa_application_client_source actual;

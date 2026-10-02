@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/qvm_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,77 @@ bool qa_qvm_unobserve_writes(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
     for (qa_qvm_write_watch *watch = vm->watches; watch != NULL; watch = watch->next)
         if (watch->id == id && watch->active) { watch->active = false; collect_watches(vm); return true; }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM write observer not found");
+}
+
+static bool watch_matches(const qa_qvm_write_watch *watch,
+    const qa_qvm_saved_write_watch *expected)
+{
+    if (!watch->active || watch->id != expected->binding ||
+        watch->publish != expected->publish || watch->after != expected->after ||
+        watch->context != expected->context || watch->count != expected->count ||
+        (expected->count && !expected->ranges)) return false;
+    for (size_t i = 0; i < watch->count; ++i)
+        if (watch->ranges[i].offset != expected->ranges[i].offset ||
+            watch->ranges[i].length != expected->ranges[i].length) return false;
+    return true;
+}
+bool qa_qvm_write_watch_read(const qa_qvm *vm, qa_qvm_binding id,
+    qa_qvm_saved_write_watch *out, qa_error *error)
+{
+    if (!out || !qa_qvm_live(vm,error)) return false;
+    for (const qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next)
+        if (watch->active && watch->id == id) {
+            *out = (qa_qvm_saved_write_watch){id,watch->ranges,watch->count,
+                watch->publish,watch->after,watch->context};
+            return true;
+        }
+    return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM retained write watch is absent");
+}
+bool qa_qvm_memory_checkpoint_watches(const qa_qvm *vm,
+    const qa_qvm_saved_write_watch *expected, size_t count, qa_error *error)
+{
+    if (!qa_qvm_live(vm,error) || (count && !expected) || vm->publication_depth ||
+        vm->write_delivery_depth || vm->lifecycle_depth) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!expected[i].binding || !expected[i].publish) return false;
+        for (size_t j = 0; j < i; ++j)
+            if (expected[i].binding == expected[j].binding) return false;
+    }
+    size_t actual = 0;
+    for (const qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next) {
+        size_t i = 0;
+        while (i < count && expected[i].binding != watch->id) ++i;
+        if (i == count || !watch_matches(watch,expected+i))
+            return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM write watch differs from its exact source descriptor");
+        ++actual;
+    }
+    return actual == count || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM write watch inventory is incomplete");
+}
+bool qa_qvm_memory_restore_watches_ready(const qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_write_watch *constructed, const qa_qvm_binding *saved,
+    size_t count, qa_error *error)
+{
+    if ((count && !saved) || count == SIZE_MAX ||
+        vm->next_watch != (uint64_t)count + 1 || vm->write_sequence ||
+        generation < vm->next_watch ||
+        !qa_qvm_memory_checkpoint_watches(vm,constructed,count,error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (saved[i] <= 1 || saved[i] > generation)
+            return qa_qvm_error(error,QA_ERROR_FORMAT,i,"Saved QVM watch leaves its actual source generation");
+        for (size_t j = 0; j < i; ++j)
+            if (saved[i] == saved[j]) return qa_qvm_error(error,QA_ERROR_FORMAT,i,"Saved QVM watch identity is duplicated");
+    }
+    return true;
+}
+void qa_qvm_memory_restore_watches(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_write_watch *constructed, const qa_qvm_binding *saved, size_t count)
+{
+    for (qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next) {
+        size_t i = 0;
+        while (i < count && constructed[i].binding != watch->id) ++i;
+        watch->id = saved[i];
+    }
+    vm->next_watch = generation;
 }
 
 static void free_deliveries(write_delivery *head)

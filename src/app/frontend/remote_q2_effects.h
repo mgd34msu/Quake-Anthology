@@ -54,6 +54,7 @@ typedef struct frontend_remote_q2_effects_source {
     bool (*hit_marker)(void *, int32_t damage, qa_error *);
     bool (*controls)(void *, frontend_remote_q2_effects_controls *, qa_error *);
     bool (*frame_milliseconds)(void *, double *, qa_error *);
+    bool (*render_clock)(void *, uint64_t *wall_milliseconds, uint64_t *presentation_sequence, qa_error *);
     bool (*footstep)(void *, const frontend_remote_q2_effects_pose *, uint32_t event,
         double milliseconds, qa_builtin_random *, qa_error *);
     bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);
@@ -66,6 +67,8 @@ typedef struct frontend_remote_q2_effects_sample {
     size_t entity_count;
     qa_scene_view view;
     qa_actor_id viewer;
+    qa_vec3 viewer_origin;
+    bool viewer_origin_present;
     qa_vec3 gun_offset;
     int32_t hand;
     bool hardware, per_pixel_lighting;

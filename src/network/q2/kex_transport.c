@@ -172,6 +172,13 @@ bool qa_kex_transport_idle(const qa_kex_transport *o)
     return qa_kex_transport_valid(o) && qa_kex_lan_idle(o->lobby) &&
         (!o->discovery || qa_kex_mdns_owner_idle(o->discovery));
 }
+bool qa_kex_transport_set_maximum(qa_kex_transport *o, uint8_t maximum, qa_error *e)
+{
+    if (!enter(o, e)) return false;
+    bool okay = qa_kex_lan_set_maximum(o->lobby, maximum, e);
+    o->entered = false;
+    return okay;
+}
 
 bool qa_kex_transport_send_connectionless(qa_kex_transport *o,
     const qa_net_address *to, qa_bytes bytes, qa_error *e)

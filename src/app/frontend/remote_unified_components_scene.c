@@ -1,5 +1,6 @@
 #include "remote_unified_components_private.h"
 #include "component_scene.h"
+#include <math.h>
 #include "qa/console.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -278,6 +279,23 @@ bool frontend_unified_components_submit(frontend_unified_components *o,qa_q3_pre
                 const qa_q3_scene_polygon *polygon=packet.polygons+k;
                 if(polygon->first>packet.vertex_count||polygon->count>packet.vertex_count-polygon->first)
                     return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component polygon leaves its actual vertices");
+                if(!qa_q3_source_scene_bank_poly_capacity(bank,polygon->count)) continue;
+                if(polygon->count>SIZE_MAX/sizeof(qa_q3_poly_vertex))
+                    return q3remote_component_fail(e,QA_ERROR_MEMORY,"Component polygon exceeds native Source vertex extent");
+                qa_q3_poly_vertex *raw=polygon->count?malloc(polygon->count*sizeof(*raw)):NULL;
+                if(polygon->count&&!raw) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Recovering actual component Source vertices");
+                for(size_t v=0;v<polygon->count;++v) {
+                    const qa_scene_vertex *vertex=packet.vertices+polygon->first+v;
+                    raw[v]=(qa_q3_poly_vertex){.position=vertex->position,.texcoord=vertex->texcoord,
+                        .color={(uint8_t)lroundf(vertex->color.x*255.0f),(uint8_t)lroundf(vertex->color.y*255.0f),
+                            (uint8_t)lroundf(vertex->color.z*255.0f),(uint8_t)lroundf(vertex->color.w*255.0f)}};
+                }
+                bool included=false;
+                bool stored=qa_q3_source_scene_bank_poly(bank,r->assets,polygon->shader,raw,
+                    polygon->count,&polygon->fog,&included,e);
+                free(raw);
+                if(!stored) return false;
+                if(!included) continue;
                 if(!qa_q3_presentation_source_component_poly(recipient,r->assets,polygon->shader,packet.vertices+polygon->first,
                     polygon->count,&polygon->fog,r->frame->context.time_ms,options,frame,e)) return false;
             }

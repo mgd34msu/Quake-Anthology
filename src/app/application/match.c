@@ -12,6 +12,7 @@
 #include "native_q1_composition_death.h"
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
+#include "qa/application_qc_presentation.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -255,6 +256,8 @@ static bool equipment_holster(void *opaque, qa_actor_id actor,
         return qa_q3_set_weapon_slot(provider->state.q3, actor, true, error);
     if (provider->kind == APPLICATION_PROVIDER_QVM)
         return application_arsenal_guest_equipment_handoff_ready(provider, actor, error);
+    if(provider->kind==APPLICATION_PROVIDER_QC)
+        return qa_actors_get(qa_session_actors(provider->application->session),actor)!=NULL;
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected arsenal has no equipment holster adapter");
 }
@@ -288,6 +291,14 @@ static bool equipment_holstered(void *opaque, qa_actor_id actor)
     return false;
 }
 
+static bool equipment_holstered_read(void *opaque,qa_actor_id actor,bool *out,qa_error *error)
+{
+    application_provider *provider=arsenal_provider(opaque,actor);
+    if(!provider||!out) return application_fail(error,QA_ERROR_NOT_FOUND,"Equipment holster lost its actual selected arsenal");
+    if(provider->kind==APPLICATION_PROVIDER_QC)
+        return qa_application_qc_weapon_settled(opaque,actor,out,error);
+    *out=equipment_holstered(opaque,actor); return true;
+}
 static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
 {
     application_provider *provider = arsenal_provider(opaque, actor);
@@ -308,6 +319,8 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
         return qa_q3_set_weapon_slot(provider->state.q3, actor, false, error);
     if (provider->kind == APPLICATION_PROVIDER_QVM)
         return application_arsenal_guest_equipment_handoff_ready(provider, actor, error);
+    if(provider->kind==APPLICATION_PROVIDER_QC)
+        return qa_actors_get(qa_session_actors(provider->application->session),actor)!=NULL;
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected arsenal has no equipment resume adapter");
 }
@@ -403,6 +416,7 @@ bool application_match_prepare_equipment(qa_application *application,
         .select_weapon = application_native_mode_select_weapon,
         .primary_holster = equipment_holster,
         .primary_holstered = equipment_holstered,
+        .primary_holstered_read = equipment_holstered_read,
         .primary_resume = equipment_resume,
         .primary_accepts = application_equipment_primary_accepts,
         .primary_select = application_equipment_primary_select,

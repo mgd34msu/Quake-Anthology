@@ -181,13 +181,18 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     qa_display_settings settings; bool window=false;
     if (!frontend_shared_video_settings(f,edit,&settings,&window,e)) return false;
     qa_input_seat *configuration[QA_INPUT_LOCAL_SEATS]={0};
+    qa_controller_selection selections[QA_INPUT_LOCAL_SEATS]={0};
     for (unsigned i=0;i<f->options.seats;++i) {
         if (!(owner->client?frontend_config_store_client_input_configuration(owner->manager,
             owner->client,i,configuration+i,e):frontend_config_store_input_configuration(owner->manager,
             owner->application,owner->candidate,i,configuration+i,e))) return false;
+        if (owner->client && !frontend_config_store_client_controller_selection(owner->manager,
+            owner->client,i,selections+i,e)) return false;
     }
-    bool prepared=frontend_input_settings_prepare(f,&owner->projected,configuration,
-        (double)f->wall_time_ns/1000000.0,&owner->input,e);
+    bool prepared=owner->client?frontend_input_settings_prepare_selected(f,&owner->projected,configuration,
+        selections,(double)f->wall_time_ns/1000000.0,&owner->input,e):
+        frontend_input_settings_prepare(f,&owner->projected,configuration,
+            (double)f->wall_time_ns/1000000.0,&owner->input,e);
     if (owner->input) f->input_settings=owner->input;
     if (!prepared || (window && !frontend_input_settings_release_all_prepare(owner->input,
         (double)f->wall_time_ns/1000000.0,e))) return false;
@@ -349,6 +354,7 @@ void frontend_shared_publication_consume(frontend_shared_publication *ticket)
         frontend_input_settings_publish(owner->input);
         if (ticket->video) frontend_shared_video_publish(ticket->video);
         else frontend_shared_gamma_publish(ticket->gamma);
+        frontend_shared_resource_policy_render_publish(ticket->resources);
         if (ticket->color) frontend_q3_source_color_publish(ticket->color);
         frontend_view_settings_publish(ticket->view);
     }

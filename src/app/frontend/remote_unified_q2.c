@@ -3,6 +3,7 @@
 #include "remote_unified_presentation.h"
 #include "remote_unified_save.h"
 #include "remote_q2_footsteps.h"
+#include "legacy_render_policy.h"
 #include "qa/hud_q2.h"
 #include "qa/caption_save.h"
 #include "qa/ui_preferences.h"
@@ -49,6 +50,11 @@ typedef struct q2_inventory_row {
     double count;
     bool selected;
 } q2_inventory_row;
+typedef struct q2_player_name {
+    struct q2_player_name *next;
+    uint32_t slot;
+    char *name;
+} q2_player_name;
 typedef struct q2_bank {
     struct q2_bank *next;
     struct frontend_unified_q2 *owner;
@@ -62,6 +68,7 @@ typedef struct q2_bank {
     qa_audio_bank *sounds;
     q2_activation *activation;
     frontend_remote_q2_effects_profile profile;
+    double frame_milliseconds;
     char *source_provider;
     q2_model *models;
     q2_alias *aliases;
@@ -78,6 +85,16 @@ struct frontend_unified_q2 {
     q2_activation *activations;
     q2_visual *visuals;
     q2_loop *loops;
+    q2_player_name *names;
+    qa_unified_document *story;
+    q2_activation *story_owner,*sky_owner,*fog_owner;
+    char *sky_name,*sky_content;
+    qa_scene_image *sky_images[6];
+    qa_vec3 sky_axis;
+    float sky_rotation;
+    bool sky_auto_rotate,fog_received;
+    qa_scene_fog fog_start,fog_target;
+    double fog_started_ms,fog_duration_ms;
     qa_unified_document *frame, *prepared_frame;
     qa_hud *hud;
     char *help, *layout, *help_text[2];
@@ -169,6 +186,12 @@ static void scores_clear(frontend_unified_q2 *o)
     for (size_t i=0;i<o->score_count;++i) free(o->score_rows[i]);
     free(o->score_rows); o->score_rows=NULL; o->score_count=0; o->score_visible=false; o->score_owner=NULL;
 }
+static void sky_clear(frontend_unified_q2 *o)
+{
+    for (size_t i=0;i<6;++i) { qa_scene_image_release(o->sky_images[i]); o->sky_images[i]=NULL; }
+    free(o->sky_name); free(o->sky_content); o->sky_name=NULL; o->sky_content=NULL;
+    o->sky_owner=NULL; o->sky_axis=qa_v3(0,0,0); o->sky_rotation=0; o->sky_auto_rotate=false;
+}
 static bool owner_token(const qa_unified_document *d,qa_json_id token,qa_buffer *provider,uint64_t *generation,qa_error *e)
 {
     const qa_json_document *j=qa_unified_document_json(d);
@@ -210,7 +233,14 @@ static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_document *d,q
     v->activation=owner; *out=v; return true;
 }
 static bool bank(frontend_unified_q2 *,const char *,q2_activation *,const char *,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
+static bool source_bank(frontend_unified_q2 *,const qa_unified_document *,qa_json_id,const char *,bool,q2_bank **,qa_error *);
 static bool model(void *,const char *,bool,qa_scene_model **,qa_error *);
+static bool source_interval(const qa_unified_document *d,qa_json_id row,double *out,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d);
+    return (number(d,get(j,get(j,row,"source"),"frameMilliseconds"),out,e) && *out>0) ||
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 Source has no positive finite frame interval receipt");
+}
 static bool semantic_source(const qa_unified_document *d,qa_json_id row,bool required,qa_buffer *provider,
     frontend_remote_q2_effects_profile *profile,qa_error *e)
 {
@@ -222,7 +252,8 @@ static bool semantic_source(const qa_unified_document *d,qa_json_id row,bool req
     if (qa_json_string_equal(j,get(j,source_row,"profile"),"classic")) *profile=FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC;
     else if (qa_json_string_equal(j,get(j,source_row,"profile"),"rerelease")) *profile=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
     else return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 Source rules receipt is unknown");
-    return true;
+    double interval;
+    return source_interval(d,row,&interval,e);
 }
 static bool visual_record(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,qa_actor_id *a,qa_error *e)
 {
@@ -272,7 +303,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_document *d,qa_
     }
     if (okay) okay=visual_prepare(o,d,row,a,&v,e);
     if (okay && profile) { q2_bank *effects_bank=NULL;
-        okay=bank(o,(const char *)content.data,v->activation,(const char *)source_provider.data,profile,true,&effects_bank,e); }
+        okay=source_bank(o,d,row,(const char *)content.data,true,&effects_bank,e); }
     if (okay) {
         bool same_source=(v->source_provider!=NULL)==(source_provider.data!=NULL) &&
             (!source_provider.data || !strcmp(v->source_provider,(const char *)source_provider.data));
@@ -329,6 +360,10 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_do
     for (size_t i=0;i<2;++i) if (o->help_owner[i]==a) { free(o->help_text[i]); o->help_text[i]=NULL; o->help_owner[i]=NULL; }
     if (o->inventory_owner==a) inventory_clear(o);
     if (o->score_owner==a) scores_clear(o);
+    if (o->story_owner==a) { qa_unified_document_destroy(o->story); o->story=NULL; o->story_owner=NULL; }
+    if (o->sky_owner==a) sky_clear(o);
+    if (o->fog_owner==a) { o->fog_received=false; o->fog_owner=NULL; o->fog_start=(qa_scene_fog){0};
+        o->fog_target=(qa_scene_fog){0}; o->fog_started_ms=0; o->fog_duration_ms=0; }
     if (o->view_owner==a) { free(o->view_content); free(o->view_provider); o->view_content=NULL; o->view_provider=NULL;
         o->view_owner=NULL; o->view_profile=0; o->view_layouts=0; o->view_gun_offset=qa_v3(0,0,0); }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a)
@@ -429,7 +464,8 @@ static bool source_current(void *ctx,const frontend_remote_q2_effects_source *s,
         s->video_frame==expected.video_frame && s->video_context==expected.video_context &&
         s->current==expected.current && s->actor==expected.actor && s->actor_pose==expected.actor_pose && s->viewer==expected.viewer &&
         s->model==expected.model && s->sound==expected.sound && s->hit_marker==expected.hit_marker &&
-        s->footstep==expected.footstep && s->trace==expected.trace && s->controls==expected.controls && current(b->owner,e);
+        s->footstep==expected.footstep && s->trace==expected.trace && s->controls==expected.controls &&
+        s->frame_milliseconds==expected.frame_milliseconds && current(b->owner,e);
     if (okay && b->footsteps) { frontend_q2_footstep_source actual=footstep_source(b);
         okay=frontend_q2_footsteps_current(b->footsteps,&actual,e); }
     return okay;
@@ -495,6 +531,14 @@ static bool controls(void *ctx,frontend_remote_q2_effects_controls *out,qa_error
         .muzzleflashes=flashes->integer!=0,.dlight_hacks=(uint32_t)hacks->integer,
         .disable_particles=(uint32_t)particles->integer,.disable_explosions=(uint32_t)explosions->integer}; return true;
 }
+static bool frame_milliseconds(void *ctx,double *out,qa_error *e)
+{
+    q2_bank *b=ctx;
+    if (!out || !current(b->owner,e)) return false;
+    if (!isfinite(b->frame_milliseconds) || b->frame_milliseconds<=0)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 effects lost the actual Source frame interval");
+    *out=b->frame_milliseconds; return true;
+}
 static bool footstep_current(void *ctx,const frontend_q2_footstep_source *s)
 {
     q2_bank *b=ctx; frontend_q2_footstep_source actual=footstep_source(b);
@@ -534,7 +578,7 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,
         .images=b->images,.materials=b->materials,.world=frontend_unified_media_world(b->owner->media),.white=qa_scene_white(b->images),.context=b,
         .current=source_current,.actor=pose,.actor_pose=full_pose,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
-        .controls=controls,.trace=trace,.footstep=footstep};
+        .controls=controls,.frame_milliseconds=frame_milliseconds,.trace=trace,.footstep=footstep};
 }
 static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activation_owner,const char *source_provider,
     frontend_remote_q2_effects_profile profile,bool effects,q2_bank **out,qa_error *e)
@@ -581,7 +625,13 @@ static bool source_bank(frontend_unified_q2 *o,const qa_unified_document *d,qa_j
     if (!activation(o,d,get(qa_unified_document_json(d),row,"owner"),&a,e) || (a && a->retired))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 effect lost its actual retained Source owner");
     qa_buffer provider={0}; frontend_remote_q2_effects_profile profile;
-    bool okay=semantic_source(d,row,true,&provider,&profile,e) && bank(o,content,a,(const char *)provider.data,profile,effects,out,e);
+    double interval=0; q2_bank *b=NULL;
+    bool okay=semantic_source(d,row,true,&provider,&profile,e) && source_interval(d,row,&interval,e) &&
+        bank(o,content,a,(const char *)provider.data,profile,false,&b,e);
+    if (okay) {
+        b->frame_milliseconds=interval;
+        okay=bank(o,content,a,(const char *)provider.data,profile,effects,out,e);
+    }
     qa_buffer_free(&provider); return okay;
 }
 static bool event_bank(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,const char *content,q2_bank **out,qa_error *e)
@@ -694,27 +744,95 @@ static bool effect(const qa_unified_document *d,qa_json_id event,qa_q2_temp_enti
     if (t->field_count==4) t->fields[at++]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COLOR,.kind=QA_Q2_TEMP_INTEGER,.value.integer=color};
     return true;
 }
+static bool player_names_expand(frontend_unified_q2 *o,qa_buffer *text,qa_error *e)
+{
+    const char *input=(const char *)text->data; size_t extent=0; char *output=NULL;
+    for (unsigned pass=0;pass<2;++pass) {
+        size_t used=0;
+        for (size_t i=0;i<text->size;) {
+            const char *part=input+i; size_t length=1;
+            if (text->size-i>=4 && input[i]=='#' && input[i+1]=='#' && input[i+2]=='P' &&
+                input[i+3]>='0' && input[i+3]<='9') {
+                size_t next=i+3; uint32_t slot=0; bool overflow=false;
+                while (next<text->size && input[next]>='0' && input[next]<='9') {
+                    unsigned digit=(unsigned)(input[next]-'0');
+                    if (slot>(UINT32_MAX-digit)/10) overflow=true;
+                    if (!overflow) slot=slot*10+digit;
+                    ++next;
+                }
+                q2_player_name *name=overflow?NULL:o->names;
+                while (name && name->slot!=slot) name=name->next;
+                part=name?name->name:""; length=strlen(part); i=next;
+            } else ++i;
+            if (length>SIZE_MAX-1-used) { free(output);
+                return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 player name expansion exceeds text storage"); }
+            if (pass) memcpy(output+used,part,length);
+            used+=length;
+        }
+        if (!pass) {
+            extent=used; output=malloc(extent+1);
+            if (!output) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 localized player names");
+        }
+    }
+    output[extent]=0; qa_buffer_free(text); *text=(qa_buffer){(uint8_t *)output,extent}; return true;
+}
+static bool userinfo(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id event,bool publish,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d); qa_actor_id id; uint64_t slot;
+    qa_buffer name={0},skin={0};
+    bool okay=actor(o,d,get(j,event,"actor"),&id,e) && id.registry &&
+        qa_json_u64(j,get(j,event,"slot"),&slot,e) && slot<=UINT32_MAX &&
+        string(d,get(j,event,"name"),&name,e) && string(d,get(j,event,"skin"),&skin,e);
+    if (okay && publish) {
+        q2_player_name *row=o->names;
+        while (row && row->slot!=(uint32_t)slot) row=row->next;
+        if (!row) {
+            row=calloc(1,sizeof(*row));
+            if (!row) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 player name declaration");
+            else { row->slot=(uint32_t)slot; row->next=o->names; o->names=row; }
+        }
+        if (okay) { free(row->name); row->name=(char *)name.data; name=(qa_buffer){0}; }
+    }
+    qa_buffer_free(&name); qa_buffer_free(&skin); return okay;
+}
 static bool localized(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,qa_json_id event,qa_buffer *out,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); qa_buffer content={0},text={0};
+    const qa_json_document *j=qa_unified_document_json(d); qa_buffer content={0},text={0},provider={0};
+    frontend_remote_q2_effects_profile profile=0;
     q2_bank *b=NULL;
     bool okay=string(d,get(j,event,"text"),&text,e) && string(d,get(j,row,"content"),&content,e) &&
-        bank(o,(const char *)content.data,NULL,NULL,0,false,&b,e);
-    if (okay && b->product->edition==QA_EDITION_RERELEASE) {
+        semantic_source(d,row,false,&provider,&profile,e) && bank(o,(const char *)content.data,NULL,NULL,0,false,&b,e);
+    bool localize=qa_json_string_equal(j,get(j,row,"kind"),"q2-rerelease") || profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    if (okay && localize) {
+        qa_json_id args=get(j,event,"args"); size_t count=args==QA_JSON_NONE?0:qa_json_size(j,args);
+        qa_buffer *values=NULL; const char **arguments=NULL;
+        okay=args==QA_JSON_NONE || qa_json_type(j,args)==QA_JSON_ARRAY;
+        if (okay && count) {
+            okay=count<=SIZE_MAX/sizeof(*values) && count<=SIZE_MAX/sizeof(*arguments);
+            if (okay) { values=calloc(count,sizeof(*values)); arguments=calloc(count,sizeof(*arguments)); okay=values && arguments; }
+            if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received localization arguments");
+        }
+        for (size_t i=0;okay && i<count;++i) {
+            okay=string(d,qa_json_at(j,args,i),values+i,e);
+            if (okay) arguments[i]=(const char *)values[i].data;
+        }
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         qa_ui_preferences preferences; qa_localization *catalog=NULL;
         qa_localization_options opts={.profile=QA_LOCALIZATION_Q2_RERELEASE};
-        okay=qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&preferences,e) &&
+        okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&preferences,e) &&
             qa_localization_acquire(o->localizations,b->files,preferences.language,&opts,&catalog,e);
         if (okay) {
-            char output[1024]; size_t n=qa_localize_presentation(catalog,(const char *)text.data,NULL,0,false,output,sizeof(output));
+            char output[1024]; size_t n=qa_localize_presentation(catalog,(const char *)text.data,arguments,count,false,output,sizeof(output));
             uint8_t *p=malloc(n+1);
             if (!p) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q2 localized text");
             else { memcpy(p,output,n+1); qa_buffer_free(&text); text=(qa_buffer){p,n}; }
         }
         qa_localization_release(catalog);
+        for (size_t i=0;values && i<count;++i) qa_buffer_free(values+i);
+        free(values); free(arguments);
+        if (okay) okay=player_names_expand(o,&text,e);
     }
-    qa_buffer_free(&content);
+    qa_buffer_free(&content); qa_buffer_free(&provider);
     if (okay) { *out=text; return true; } qa_buffer_free(&text); return false;
 }
 static bool received_text(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,qa_json_id event,
@@ -904,11 +1022,93 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
     scores_clear(o); o->score_rows=scores; o->score_count=count; o->score_visible=true; o->score_owner=owner;
     o->help_visible=false; inventory_clear(o); return true;
 }
+static float fog_fraction(float value)
+{
+    float scaled=value*255;
+    if (!isfinite(scaled)) return 0;
+    double word=fmod(trunc((double)scaled),256);
+    if (word<0) word+=256;
+    return (float)(word/255);
+}
+static qa_vec3 fog_color(qa_vec3 color)
+{ return qa_v3(fog_fraction(color.x),fog_fraction(color.y),fog_fraction(color.z)); }
+static bool fog_record(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id event,
+    qa_scene_fog *out,double *duration,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d); qa_actor_id id;
+    qa_json_id value=get(j,event,"value"),fog=get(j,value,"fog"),height=get(j,value,"heightFog");
+    qa_scene_fog result={.kind=QA_FOG_Q2}; int32_t start,end;
+    if (!actor(o,d,get(j,event,"actor"),&id,e) || !id.registry ||
+        !vector(d,get(j,fog,"color"),&result.color,e) || !real(d,get(j,fog,"density"),&result.density,e) ||
+        !real(d,get(j,fog,"skyFactor"),&result.sky_factor,e) ||
+        !vector(d,get(j,height,"startColor"),&result.height_color,e) ||
+        !vector(d,get(j,height,"endColor"),&result.height_end_color,e) ||
+        !integer(d,get(j,height,"startDistance"),&start,e) || !integer(d,get(j,height,"endDistance"),&end,e) ||
+        !real(d,get(j,height,"falloff"),&result.height_falloff,e) || !real(d,get(j,height,"density"),&result.height_density,e) ||
+        !number(d,get(j,event,"transitionMilliseconds"),duration,e)) return false;
+    result.color=fog_color(result.color); result.height_color=fog_color(result.height_color);
+    result.height_end_color=fog_color(result.height_end_color); result.sky_factor=fog_fraction(result.sky_factor);
+    result.height_start=(float)start; result.height_end=(float)end; *out=result; return true;
+}
+static qa_scene_fog fog_sample(frontend_unified_q2 *o,double seconds)
+{
+    double elapsed=seconds*1000-o->fog_started_ms;
+    double front=o->fog_duration_ms==0 || elapsed>o->fog_duration_ms?1:elapsed/o->fog_duration_ms,back=1-front;
+    qa_scene_fog a=o->fog_start,b=o->fog_target,result={.kind=QA_FOG_Q2};
+    result.color=qa_v3((float)(a.color.x*back+b.color.x*front),(float)(a.color.y*back+b.color.y*front),(float)(a.color.z*back+b.color.z*front));
+    result.height_color=qa_v3((float)(a.height_color.x*back+b.height_color.x*front),
+        (float)(a.height_color.y*back+b.height_color.y*front),(float)(a.height_color.z*back+b.height_color.z*front));
+    result.height_end_color=qa_v3((float)(a.height_end_color.x*back+b.height_end_color.x*front),
+        (float)(a.height_end_color.y*back+b.height_end_color.y*front),(float)(a.height_end_color.z*back+b.height_end_color.z*front));
+    result.density=(float)(a.density*back+b.density*front); result.sky_factor=(float)(a.sky_factor*back+b.sky_factor*front);
+    result.height_start=(float)(a.height_start*back+b.height_start*front); result.height_end=(float)(a.height_end*back+b.height_end*front);
+    result.height_falloff=(float)(a.height_falloff*back+b.height_falloff*front);
+    result.height_density=(float)(a.height_density*back+b.height_density*front); return result;
+}
+static bool sky_record(const qa_unified_document *d,qa_json_id event,qa_buffer *name,float *rotation,
+    bool *auto_rotate,qa_vec3 *axis,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d);
+    return string(d,get(j,event,"name"),name,e) && real(d,get(j,event,"rotation"),rotation,e) &&
+        qa_json_bool(j,get(j,event,"autoRotate"),auto_rotate,e) && vector(d,get(j,event,"axis"),axis,e);
+}
+static bool sky_receive(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(d); qa_buffer name={0},content={0};
+    float rotation; bool auto_rotate; qa_vec3 axis; q2_activation *owner=NULL; q2_bank *b=NULL;
+    qa_scene_image *images[6]={0};
+    bool okay=sky_record(d,get(j,row,"event"),&name,&rotation,&auto_rotate,&axis,e) &&
+        string(d,get(j,row,"content"),&content,e) && activation(o,d,get(j,row,"owner"),&owner,e) &&
+        !(owner && owner->retired) && bank(o,(const char *)content.data,NULL,NULL,0,false,&b,e);
+    static const char *const suffixes[]={"rt","lf","bk","ft","up","dn"};
+    qa_scene_image_options options={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,
+        .filter=QA_SCENE_LINEAR,.transparent_index=-1};
+    if (okay && name.size>SIZE_MAX-7) okay=false;
+    char *path=okay?malloc(name.size+7):NULL;
+    if (okay && !path) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q2 sky path");
+    for (size_t i=0;okay && i<6;++i) {
+        snprintf(path,name.size+7,"env/%s%s",(const char *)name.data,suffixes[i]);
+        okay=qa_scene_image_load(b->images,path,&options,images+i,e);
+        if (okay && !images[i]) { images[i]=(qa_scene_image *)qa_scene_missing(b->images); qa_scene_image_retain(images[i]); }
+    }
+    free(path);
+    if (okay) { sky_clear(o); o->sky_name=(char *)name.data; name=(qa_buffer){0};
+        o->sky_content=(char *)content.data; content=(qa_buffer){0}; o->sky_rotation=rotation;
+        o->sky_axis=axis; o->sky_auto_rotate=rotation!=0 && auto_rotate; o->sky_owner=owner;
+        memcpy(o->sky_images,images,sizeof(images)); memset(images,0,sizeof(images)); }
+    for (size_t i=0;i<6;++i) qa_scene_image_release(images[i]);
+    qa_buffer_free(&name); qa_buffer_free(&content); return okay;
+}
 bool frontend_unified_q2_validate(frontend_unified_q2 *o,bool simulation,const qa_unified_document *d,qa_json_id row,qa_error *e)
 {
     if (!o || !d) return false;
     const qa_json_document *j=qa_unified_document_json(d);
     qa_json_id event=get(j,row,"event"),kind=get(j,event,"kind");
+    if (!simulation) {
+        qa_buffer provider={0}; frontend_remote_q2_effects_profile profile;
+        bool okay=semantic_source(d,row,false,&provider,&profile,e); qa_buffer_free(&provider);
+        if (!okay) return false;
+    }
     if (simulation) {
         qa_json_id payload=get(j,row,"payload");
         if (qa_json_string_equal(j,get(j,payload,"kind"),"message")) return message_valid(d,get(j,payload,"event"),e);
@@ -956,6 +1156,27 @@ bool frontend_unified_q2_validate(frontend_unified_q2 *o,bool simulation,const q
     if (!simulation && qa_json_string_equal(j,get(j,row,"kind"),"q2-player") && qa_json_string_equal(j,kind,"help")) {
         qa_actor_id a; bool visible; return actor(o,d,get(j,event,"actor"),&a,e) && qa_json_bool(j,get(j,event,"visible"),&visible,e);
     }
+    if (!simulation && qa_json_string_equal(j,get(j,row,"kind"),"q2-player") && qa_json_string_equal(j,kind,"userinfo"))
+        return userinfo(o,d,event,false,e);
+    if (!simulation && qa_json_string_equal(j,get(j,row,"kind"),"q2-rerelease") && qa_json_string_equal(j,kind,"localized-print")) {
+        qa_actor_id a; qa_buffer text={0}; qa_json_id args=get(j,event,"args");
+        bool okay=actor(o,d,get(j,event,"actor"),&a,e) && string(d,get(j,event,"text"),&text,e) &&
+            qa_json_type(j,args)==QA_JSON_ARRAY;
+        qa_buffer_free(&text);
+        static const char *const levels[]={"low","medium","high","chat"}; bool known=false;
+        for (size_t i=0;i<4;++i) if (qa_json_string_equal(j,get(j,event,"level"),levels[i])) known=true;
+        for (size_t i=0;okay && i<qa_json_size(j,args);++i) {
+            qa_buffer arg={0}; okay=string(d,qa_json_at(j,args,i),&arg,e); qa_buffer_free(&arg);
+        }
+        return okay && known;
+    }
+    if (!simulation && qa_json_string_equal(j,get(j,row,"kind"),"q2-rerelease")) {
+        if (qa_json_string_equal(j,kind,"fog")) { qa_scene_fog fog; double duration; return fog_record(o,d,event,&fog,&duration,e); }
+        if (qa_json_string_equal(j,kind,"sky")) { qa_buffer name={0}; float rotation; bool auto_rotate; qa_vec3 axis;
+            bool okay=sky_record(d,event,&name,&rotation,&auto_rotate,&axis,e); qa_buffer_free(&name); return okay; }
+        if (qa_json_string_equal(j,kind,"story")) { qa_buffer text={0};
+            bool okay=string(d,get(j,event,"text"),&text,e); qa_buffer_free(&text); return okay; }
+    }
     if (!simulation && qa_json_string_equal(j,get(j,row,"kind"),"q2-player") &&
         (qa_json_string_equal(j,kind,"inventory") || qa_json_string_equal(j,kind,"scoreboard") || qa_json_string_equal(j,kind,"view")))
         return player_overlay_valid(o,d,event,e);
@@ -976,6 +1197,26 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_do
     qa_json_id event=get(j,row,"event"),kind=get(j,event,"kind");
     double seconds;
     if (!number(d,get(j,row,"seconds"),&seconds,e)) return false;
+    if (qa_json_string_equal(j,get(j,row,"kind"),"q2-player") && qa_json_string_equal(j,kind,"userinfo"))
+        return userinfo(o,d,event,true,e);
+    if (qa_json_string_equal(j,get(j,row,"kind"),"q2-rerelease")) {
+        if (qa_json_string_equal(j,kind,"sky")) return sky_receive(o,d,row,e);
+        if (qa_json_string_equal(j,kind,"story")) {
+            qa_unified_document *story=NULL; q2_activation *owner=NULL;
+            if (!activation(o,d,get(j,row,"owner"),&owner,e) || (owner && owner->retired) ||
+                !qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,row),&story,e)) return false;
+            qa_unified_document_destroy(o->story); o->story=story; o->story_owner=owner; return true;
+        }
+        if (qa_json_string_equal(j,kind,"fog")) {
+            qa_scene_fog fog; double duration; qa_actor_id a,viewer; uint32_t number_id; q2_activation *owner=NULL;
+            if (!fog_record(o,d,event,&fog,&duration,e) || !actor(o,d,get(j,event,"actor"),&a,e) ||
+                !frontend_remote_unified_player(o->replica,&viewer,&number_id)) return false;
+            if (!qa_actor_id_equal(a,viewer)) return true;
+            if (!activation(o,d,get(j,row,"owner"),&owner,e) || (owner && owner->retired)) return false;
+            if (duration!=0) { o->fog_start=o->fog_target; o->fog_started_ms=seconds*1000; }
+            o->fog_target=fog; o->fog_duration_ms=duration; o->fog_received=true; o->fog_owner=owner; return true;
+        }
+    }
     if (qa_json_string_equal(j,get(j,row,"kind"),"q2") && qa_json_string_equal(j,kind,"lightstyle")) {
         qa_buffer content={0},pattern={0}; int32_t style; uint64_t sequence; q2_bank *b=NULL;
         bool okay=integer(d,get(j,event,"style"),&style,e) && style>=0 && style<256 &&
@@ -1062,7 +1303,8 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_do
             --o->busy; }
         qa_buffer_free(&name); qa_buffer_free(&content); return okay;
     }
-    if (qa_json_string_equal(j,kind,"centerprint") || qa_json_string_equal(j,kind,"print")) {
+    bool localized_print=qa_json_string_equal(j,get(j,row,"kind"),"q2-rerelease") && qa_json_string_equal(j,kind,"localized-print");
+    if (qa_json_string_equal(j,kind,"centerprint") || qa_json_string_equal(j,kind,"print") || localized_print) {
         qa_json_id target=get(j,event,qa_json_string_equal(j,kind,"print")?"target":"actor");
         if (target==QA_JSON_NONE) target=get(j,event,"actor");
         qa_actor_id actual,viewer; uint32_t n;
@@ -1071,7 +1313,7 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_do
         bool center=qa_json_string_equal(j,kind,"centerprint");
         /* Source print has an independent simulation console record. */
         if (!received_text(o,d,row,event,seconds,center,!center,e)) return false;
-        *mirrored=center; return true;
+        *mirrored=center || localized_print; return true;
     }
     if (qa_json_string_equal(j,get(j,row,"kind"),"q2-player") && qa_json_string_equal(j,kind,"help")) {
         qa_actor_id a,viewer; uint32_t n; bool visible;
@@ -1301,6 +1543,16 @@ static bool style_sample(const char *pattern,double seconds,float *out,qa_error 
 bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input *input,qa_error *e)
 {
     if (!o || !input || o->busy || !current(o,e)) return false;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
+    const qa_recipe_choices *choices=qa_executable_recipe_choices(recipe);
+    const qa_product *product=choices?qa_catalog_product(qa_executable_recipe_catalog(recipe),choices->world.presentation):NULL;
+    frontend_legacy_render_policy policy;
+    if (!domain || !frontend_legacy_render_policy_read_registry(domain->cvars,product,&policy,e) || !current(o,e)) return false;
+    input->legacy_policy=policy.lighting;
+    input->legacy_flashblend=policy.flashblend;
+    input->legacy_texture_sort=policy.texture_sort;
+    if (policy.lighting.present) input->view.clear_color=policy.lighting.clear;
     bool present[256]={0}; uint64_t sequences[256]={0};
     for (size_t i=0;i<256;++i) o->sampled_styles[i]=input->q2_styles && i<input->style_count?input->q2_styles[i]:qa_v3(1,1,1);
     for (q2_bank *b=o->banks;b;b=b->next) for (size_t i=0;i<256;++i)
@@ -1308,7 +1560,7 @@ bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input
             float value; if (!style_sample(b->styles[i],input->seconds,&value,e)) return false;
             o->sampled_styles[i]=qa_v3(value,value,value); present[i]=true; sequences[i]=b->style_sequences[i];
         }
-    input->q2_styles=o->sampled_styles; input->style_count=256; return true;
+    input->q2_styles=o->sampled_styles; input->style_count=256; return current(o,e);
 }
 bool frontend_unified_q2_world(frontend_unified_q2 *o,const qa_scene_view *view,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
 {
@@ -1382,6 +1634,22 @@ static bool overlay_text(qa_ui *ui,qa_scene_rect target,qa_scene_frame *frame,co
         qa_font_draw_layout(frame,&layout,&(qa_font_draw_options){.seat=presentation.fonts.seat,.target=target,
             .origin={x,y},.space=QA_FONT_BASE_UI_640},e);
 }
+static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
+{
+    if (!o->story) return true;
+    const qa_json_document *j=qa_unified_document_json(o->story); qa_json_id row=qa_unified_document_root(o->story);
+    qa_buffer text={0};
+    if (!localized(o,o->story,row,get(j,row,"event"),&text,e)) return false;
+    qa_ui_presentation presentation; qa_font_layout layout;
+    bool okay=qa_ui_presentation_read(ui,&presentation,e);
+    qa_font_layout_options opts={.text={text.data,text.size},.color={1,1,1,1},
+        .color_codes=QA_FONT_COLOR_LITERAL,.alignment=QA_FONT_ALIGN_CENTER,.force_color=true};
+    if (okay) { opts.scale=presentation.text_scale;
+        okay=qa_font_layout_build(&presentation.fonts,&opts,&frame->storage,&layout,e); }
+    if (okay) okay=qa_font_draw_layout(frame,&layout,&(qa_font_draw_options){.seat=presentation.fonts.seat,
+        .target=viewport,.origin={(640-layout.width)*.5f,(480-layout.height)*.5f},.space=QA_FONT_STRETCH_640},e);
+    qa_buffer_free(&text); return okay;
+}
 static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     if (!o->marker_count) return true;
@@ -1435,6 +1703,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (okay && (o->score_visible || o->frontend->seats[d->physical_seat].scores))
         for (size_t i=0;okay && i<o->score_count;++i)
             okay=overlay_text(ui,viewport,frame,o->score_rows[i],64,110+(float)i*20,(qa_scene_vec4){1,1,1,1},e);
+    if (okay) okay=story_draw(o,ui,viewport,frame,e);
     return okay;
 }
 bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
@@ -1464,10 +1733,12 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
     free(o->view_content); free(o->view_provider);
+    qa_unified_document_destroy(o->story); sky_clear(o);
     qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_free(v); }
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
+    while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
     free(o->layout); free(o->lights); free(o->muzzles); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
@@ -1607,10 +1878,10 @@ static bool saved_visuals(qa_source_save_io *io,frontend_unified_q2 *o,const fro
 static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const frontend_unified_q2_refs *refs)
 {
     bool read=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[5]={'Q','U','Q','2','5'};
+    uint8_t magic[5]={'Q','U','Q','2','7'};
     uint32_t epoch=frontend_remote_unified_epoch(o->replica);
     uint32_t physical=frontend_remote_unified_domain_read(o->replica)->physical_seat;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ25",sizeof(magic)) ||
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ27",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=frontend_remote_unified_epoch(o->replica) ||
         !qa_source_save_u32(io,&physical) || physical!=frontend_remote_unified_domain_read(o->replica)->physical_seat ||
         !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) || !qa_source_save_u64(io,&o->frame_number) ||
@@ -1662,6 +1933,16 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
         if (!o->config) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring Q2 CLIENT configstrings");
     }
     for (size_t i=0;i<o->config_count;++i) if (!saved_text(io,o->config+i)) return false;
+    size_t names=0; for (q2_player_name *n=o->names;n;n=n->next) ++names;
+    if (!qa_source_save_count(io,&names,65536)) return false;
+    q2_player_name *name=o->names,**name_tail=&o->names;
+    for (size_t i=0;i<names;++i) {
+        if (read) { name=calloc(1,sizeof(*name)); if (!name) return false; *name_tail=name; name_tail=&name->next; }
+        if (!qa_source_save_u32(io,&name->slot) || !saved_text(io,&name->name) || !name->name) return false;
+        for (q2_player_name *previous=o->names;previous!=name;previous=previous->next)
+            if (previous->slot==name->slot) return false;
+        if (!read) name=name->next;
+    }
     if (!saved_activation(io,o,&o->inventory_owner) || !saved_activation(io,o,&o->score_owner) ||
         !qa_source_save_bool(io,&o->inventory_visible) || !qa_source_save_bool(io,&o->score_visible) ||
         !qa_source_save_count(io,&o->item_count,65536)) return false;
@@ -1720,6 +2001,8 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
             bool okay=bank(o,content,bank_owner,source_provider,(frontend_remote_q2_effects_profile)profile,false,&b,io->error);
             free(content); free(source_provider); if (!okay) return false;
         }
+        if (!qa_source_save_f64(io,&b->frame_milliseconds) || !isfinite(b->frame_milliseconds) ||
+            (profile?b->frame_milliseconds<=0:b->frame_milliseconds!=0)) return false;
         for (size_t k=0;k<256;++k)
             if (!saved_text(io,b->styles+k) || !qa_source_save_u64(io,b->style_sequences+k) ||
                 (!b->styles[k] && b->style_sequences[k])) return false;

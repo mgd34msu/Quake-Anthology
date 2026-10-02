@@ -520,7 +520,7 @@ bool frontend_component_scene_metadata_read(const qa_frontend *f,size_t ordinal,
         .descriptor=qa_launch_instance_lease_view(owner->descriptor),.catalog=owner->request.catalog,
         .files=owner->files,.images=owner->images,.materials=owner->materials,.fonts=owner->fonts,
         .sounds=owner->sounds,.media=owner->media,.movies=owner->movies,.assets=owner->assets,
-        .presentation=owner->presentation,.frame=&owner->frame,.music=owner->music,
+        .presentation=owner->presentation,.policy=binding.options,.frame=&owner->frame,.music=owner->music,
         .music_intro=owner->music_intro,.music_loop=owner->music_loop,.begun=owner->begun,
         .music_attached=attached!=NULL,.music_looping=owner->music_looping,.music_pending=owner->music_pending};
     return true;
@@ -638,6 +638,26 @@ bool frontend_component_scene_restore_movies(qa_frontend *f,uint64_t identity,
     frontend_material_movie_source source={.frontend=f,.files=owner->files,.images=owner->images,
         .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
     return frontend_material_movies_restore(&source,refs,bytes,&owner->movies,e);
+}
+bool frontend_component_scene_movie_source_read(const qa_frontend *f,uint64_t identity,
+    frontend_material_movie_source *out,qa_error *e)
+{
+    for (struct frontend_component_scene *owner=f?f->component_scenes:NULL;owner;owner=owner->next)
+        if (owner->identity==identity && owner->ready &&
+            ((f->capture || f->resource_inventory)?structural_retained(owner):retained(owner))) {
+            if (!out) return false;
+            *out=(frontend_material_movie_source){.frontend=owner->frontend,.files=owner->files,.images=owner->images,
+                .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
+            return true;
+        }
+    return frontend_fail(e,QA_ERROR_ARGUMENT,"Component movie source leaves its genuine private owner roster");
+}
+bool frontend_component_scenes_bind_restored(qa_frontend *f,qa_error *e)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory) return false;
+    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next)
+        if (!owner->ready || !retained(owner) || !frontend_q3_material_source_bind(f,owner->materials,e)) return false;
+    return true;
 }
 bool frontend_component_scenes_finish_restore(qa_frontend *f,qa_error *e)
 {

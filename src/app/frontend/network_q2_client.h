@@ -5,6 +5,7 @@
 #include "remote_q2_source.h"
 #include "qa/application_client.h"
 #include "qa/application_client_save.h"
+#include "qa/network_q2_kex.h"
 typedef struct frontend_network_q2_client frontend_network_q2_client;
 typedef struct frontend_network_q2_client_options {
     qa_frontend *frontend;
@@ -13,6 +14,7 @@ typedef struct frontend_network_q2_client_options {
     qa_net_protocol_id protocol;
     uint16_t qport;
     uint32_t physical_seat;
+    qa_kex_lan *lobby;
     void *context;
     bool (*current)(void *, const frontend_network_q2_client *);
     bool (*download_nonce)(void *, uint64_t *, qa_error *);

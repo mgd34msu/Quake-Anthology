@@ -205,7 +205,7 @@ static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *g
 {
     qa_material_source_scratch *source = context->source_scratch;
     qa_material_stage rgb = *stage;
-    rgb.alpha = stage->rgb == QA_COLOR_CONSTANT && stage->alpha == QA_COLOR_CONSTANT ? QA_COLOR_CONSTANT : QA_COLOR_SKIP;
+    rgb.alpha = stage->rgb == QA_COLOR_CONSTANT ? QA_COLOR_CONSTANT : QA_COLOR_SKIP;
     if (rgb.rgb == QA_COLOR_WAVE && !source_wave(rgb.rgb_wave, true, error)) return false;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         qa_scene_vec4 color;
@@ -474,8 +474,10 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
     if (volume && context->source_scratch && context->source_scratch->issuing &&
         (!material_source_client_arrays(context->source_scratch, true, true, error) ||
         !material_source_client_coordinate_pointer(context->source_scratch, MATERIAL_SOURCE_COORDINATES_STAGE, 0, error))) return false;
-    qa_scene_vertex *vertices = frame_array(frame, geometry->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
-    if (geometry->vertex_count && vertices == NULL) return false;
+    size_t storage = volume && context->source_scratch && context->source_scratch->issuing ?
+        QA_SOURCE_TESS_VERTICES : geometry->vertex_count;
+    qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
+    if (storage && vertices == NULL) return false;
     if (volume) {
         if (material->fog_image == NULL) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Fog lookup texture is unavailable");
@@ -502,11 +504,18 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
             context->source_scratch->coordinates[0][i] = vertices[i].texcoord;
         }
     }
+    for (size_t i = geometry->vertex_count; i < storage; ++i) {
+        vertices[i] = context->source_scratch->vertices[i];
+        vertices[i].color = context->source_scratch->colors[i];
+        vertices[i].texcoord = context->source_scratch->coordinates[0][i];
+        vertices[i].lightmap = context->source_scratch->coordinates[1][i];
+    }
     draw.mesh.vertices = vertices;
     if (volume && context->source_scratch && context->source_scratch->issuing) {
         if (!material_source_texture_bind(context->source_scratch, draw.textures[0], error) ||
             !material_source_stage_state(context->source_scratch, &draw.state, error)) return false;
         draw.source_arrays = true;
+        draw.source_vertex_storage = QA_SOURCE_TESS_VERTICES;
     }
     return qa_scene_frame_draw(frame, &draw, error);
 }
@@ -571,6 +580,8 @@ static bool execute_material(const qa_material *material, const qa_material *ori
             context->source_diagnostics.polygon_offset_factor, context->source_diagnostics.polygon_offset_units, error)) return false;
         if (!fast_iterator && (passes > 1 || collapsed) && !material_source_client_arrays(source, false, false, error)) return false;
         if (!material_source_client_arrays(source, true, true, error)) return false;
+        if (!fast_iterator && passes == 1 && !collapsed &&
+            !material_source_client_coordinate_pointer(source, MATERIAL_SOURCE_COORDINATES_STAGE, 0, error)) return false;
         if (iterator == QA_MATERIAL_LIGHTMAPPED) {
             qa_scene_state state; qa_scene_state_default(&state);
             if (!material_source_stage_state(source, &state, error) || !material_source_texture_select(source, 0, error)) return false;
@@ -988,10 +999,11 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         row->context.source_surface_context = source->sky.source_surface_context;
     }
     /* Shadow and effect producers may replace their frame slices after submit. */
-    qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
+    qa_scene_vertex *vertices = context->source_model_pose ? NULL :
+        frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
     uint32_t *indices = frame_array(frame, mesh->index_count, sizeof(*indices), alignof(uint32_t), error);
-    if ((mesh->vertex_count && !vertices) || (mesh->index_count && !indices)) return false;
-    if (mesh->vertex_count) memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
+    if ((!context->source_model_pose && mesh->vertex_count && !vertices) || (mesh->index_count && !indices)) return false;
+    if (!context->source_model_pose && mesh->vertex_count) memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
     if (mesh->index_count) memcpy(indices, mesh->indices, mesh->index_count * sizeof(*indices));
     row->mesh.vertices = vertices; row->mesh.indices = indices;
     if (context->light_count) {
@@ -1024,16 +1036,44 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         qa_material_release(original); return false;
     }
     row->held_light_world = (qa_scene_world *)context->source_light_world;
+    if (context->source_model_pose && (!context->source_model_retain || !context->source_model_release ||
+        !context->source_model_retain(context->source_model_context, error))) {
+        qa_scene_world_release(row->held_light_world); qa_material_release(original);
+        if (!error || error->code == QA_OK)
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source model queue requires its actual registration owner");
+        return false;
+    }
     if (source->tail) source->tail->next = row; else source->head = row;
     source->tail = row; ++source->submission_count; return true;
 }
-static void source_append(qa_material_source_scratch *source, const material_source_submission *row)
+static bool source_append(qa_material_source_scratch *source, const material_source_submission *row,
+    qa_scene_frame *frame, qa_error *error)
 {
+    qa_scene_mesh mesh = row->mesh;
+    if (row->context.source_model_pose) {
+        int32_t current = row->context.source_model_frame, previous = row->context.source_model_old_frame;
+        float back = row->context.source_model_back_lerp;
+        if (row->context.source_entity_cell) {
+            qa_q3_source_entity_cell cell;
+            if (!source->scene_bank || !qa_q3_source_scene_bank_entity_read(source->scene_bank,
+                row->context.entity, &cell)) {
+                qa_error_set(error, QA_ERROR_FORMAT, row->context.entity, "Source model pose lost its selected physical entity");
+                return false;
+            }
+            current = cell.value.frame; previous = cell.value.old_frame; back = cell.value.back_lerp;
+        }
+        if (!row->context.source_model_pose(row->context.source_model_context, current, previous,
+            back, frame, &mesh, error) || !material_source_current(source, error)) return false;
+        if (mesh.vertex_count != row->mesh.vertex_count || mesh.index_count != row->mesh.index_count ||
+            (mesh.vertex_count && !mesh.vertices) || (mesh.index_count && !mesh.indices)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source model pose changed its admitted surface topology"); return false;
+        }
+    }
     size_t base = source->vertex_count;
     const qa_material *material = source->material;
     bool stencil = stencil_material(material);
-    for (size_t i = 0; i < row->mesh.vertex_count; ++i) {
-        qa_scene_vertex previous = source->vertices[base + i], vertex = row->mesh.vertices[i];
+    for (size_t i = 0; i < mesh.vertex_count; ++i) {
+        qa_scene_vertex previous = source->vertices[base + i], vertex = mesh.vertices[i];
         switch (row->context.source_writer) {
         case QA_SOURCE_WRITE_MODEL: /* fall through */
         case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
@@ -1053,9 +1093,10 @@ static void source_append(qa_material_source_scratch *source, const material_sou
         source->vertices[base + i] = vertex;
     }
     size_t index_base = row->context.source_writer == QA_SOURCE_WRITE_MODEL_MD4 ? source->index_count : base;
-    for (size_t i = 0; i < row->mesh.index_count; ++i)
-        source->indices[source->index_count + i] = (uint32_t)index_base + row->mesh.indices[i];
-    source->vertex_count += row->mesh.vertex_count; source->index_count += row->mesh.index_count;
+    for (size_t i = 0; i < mesh.index_count; ++i)
+        source->indices[source->index_count + i] = (uint32_t)index_base + mesh.indices[i];
+    source->vertex_count += mesh.vertex_count; source->index_count += mesh.index_count;
+    return true;
 }
 bool qa_material_source_commands(const qa_material *material, const qa_material_context *context,
     qa_scene_frame *frame, size_t first, qa_error *error)
@@ -1351,7 +1392,8 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
                 for (size_t j = 0; j < part.mesh.index_count; ++j)
                     indices[j] = row->mesh.indices[used * (columns - 1) * 6 + j] - (uint32_t)(used * columns);
                 part.mesh.indices = indices;
-                source_append(source, &part); batch = row; key = next_key;
+                if (!source_append(source, &part, frame, error)) { ok = false; break; }
+                batch = row; key = next_key;
                 used += slab - 1;
             }
             continue;
@@ -1381,7 +1423,7 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
                 if (ok) { ok = source_restart_surface(source, row, error); light_mask = source->light_mask; }
             }
             if (!ok) break;
-            source_append(source, &part);
+            if (!source_append(source, &part, frame, error)) { ok = false; break; }
             batch = row; key = next_key;
             if (!row->context.source_dlight_before_overflow && part.mesh.index_count) {
                 light_mask |= row->context.light_mask; source->light_mask = light_mask;
@@ -1553,11 +1595,13 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
     }
     if (requested && frame->source_skip_backend) frame->command_count = frame->group_count = 0;
     for (material_source_submission *row = pending; row; row = row->next) {
+        if (row->context.source_model_pose) row->context.source_model_release(row->context.source_model_context);
         qa_scene_world_release(row->held_light_world); qa_material_release(row->original);
     }
     qa_scene_world_release(pending_world);
     for (material_source_operation *operation = source->operations; operation; operation = operation->next) {
         for (material_source_submission *row = operation->head; row; row = row->next) {
+            if (row->context.source_model_pose) row->context.source_model_release(row->context.source_model_context);
             qa_scene_world_release(row->held_light_world); qa_material_release(row->original);
         }
         qa_scene_world_release(operation->view.world);

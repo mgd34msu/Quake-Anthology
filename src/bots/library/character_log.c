@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "character_source.h"
 #include "qa/bots_log_consumers.h"
 #include "qa/text.h"
 #include <stdio.h>
@@ -12,11 +13,11 @@ bool qa_bot_character_dump(qa_bot_library *library, qa_bot_log *log,
     if (!log) return true;
     qa_bot_character *held = (qa_bot_character *)character;
     qa_bot_character_retain(held);
-    const qa_bot_character_view *view = NULL;
-    bool okay = qa_bot_character_view_read(held, &view, error);
+    const qa_bot_character_view *view = &held->view;
+    bool okay = bot_character_header(held, error);
     if (okay) okay = qa_bot_log_write(log, view->path, error);
     if (okay && qa_bot_log_file_pointer(log)) {
-        okay = qa_bot_character_view_read(held, &view, error);
+        okay = bot_character_header(held, error);
         const qa_script_services *services = &library->options.scripts;
         if (okay && services->diagnostic) {
             qa_script_diagnostic warning = {
@@ -27,9 +28,10 @@ bool qa_bot_character_dump(qa_bot_library *library, qa_bot_log *log,
     }
     if (okay) okay = qa_bot_log_write(log, "{\n", error);
     for (uint32_t index = 0; okay && index < 80; ++index) {
-        okay = qa_bot_character_view_read(held, &view, error);
+        qa_bot_character_value current;
+        okay = bot_character_value(held, index, &current, error);
         if (!okay) break;
-        const qa_bot_character_value *value = view->values + index;
+        const qa_bot_character_value *value = &current;
         if (value->kind == QA_BOT_CHARACTER_UNSET) continue;
         char number[64];
         const char *text = number;

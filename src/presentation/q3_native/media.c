@@ -85,6 +85,24 @@ bool q3n_media_create(const q3n_media_options *options, q3n_media **out, qa_erro
 }
 void q3n_media_destroy(q3n_media *m)
 { if (q3n_media_idle(m)) { free(m->inline_models); free(m); } }
+bool q3n_media_compiled_reset(q3n_media *m,const q3n_compiled_source_view *source,qa_error *e)
+{
+    if(!q3n_media_idle(m) || !source || m->options.remote_source ||
+        m->options.compiled_source!=source->owner || m->options.assets!=source->basis.assets ||
+        m->options.product!=source->basis.product || !qa_q3_assets_idle(m->options.assets) ||
+        !q3n_compiled_source_current(source))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Compiled CG media reset requires its returned Source and asset bank");
+    q3n_inline_media *inline_models=calloc(1,sizeof(*inline_models));
+    if(!inline_models)return q3p_fail(e,QA_ERROR_MEMORY,"Retaining fresh compiled CG inline media");
+    q3n_media_options options=m->options;
+    size_t item_count;
+    qa_q3_items(options.product,&item_count);
+    free(m->inline_models);
+    *m=(q3n_media){.options=options,.inline_models=inline_models,
+        .view={.product=options.product,.item_count=item_count,.inline_count=1,.inline_models=inline_models}};
+    for(size_t i=0;i<16;++i)m->view.weapons[i].item_index=-1;
+    return true;
+}
 
 static bool model(q3n_media *m, const char *path, int32_t *out, qa_error *e)
 { return qa_q3_register_model(m->options.assets, path, out, e); }

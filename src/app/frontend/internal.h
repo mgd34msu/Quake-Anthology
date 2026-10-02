@@ -358,6 +358,8 @@ typedef struct frontend_source_group_view {
 } frontend_source_group_view;
 size_t frontend_source_group_count(const qa_frontend *);
 bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
+bool frontend_source_group_video_read(const qa_frontend *,size_t,frontend_source_group_view *,
+    const struct frontend_video_guests *);
 bool frontend_source_identity_allocate(qa_frontend *,uint64_t *,qa_error *);
 bool frontend_source_identity_used(const qa_frontend *,uint64_t);
 bool frontend_q3_configuration(qa_frontend *,uint8_t out[11332],qa_error *);

@@ -74,7 +74,7 @@ struct qa_bot_weapon_selector {
 struct qa_bot_library {
     qa_bot_library_options options;
     qa_bot_memory *memory;
-    bool character_loading, item_loading;
+    bool character_loading, character_exhausted, item_loading;
     qa_bot_log *log;
     struct bot_fuzzy_store *fuzzy_store;
     qa_arena arena;

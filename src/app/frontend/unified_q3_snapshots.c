@@ -32,7 +32,7 @@ struct frontend_unified_q3_snapshots {
     qa_vec3 correction;
     int32_t correction_time;
     uint64_t revision, scope, command_receipt;
-    int32_t time, processed, commands;
+    int32_t time, processed, commands, constructor_message, constructor_command;
     q3n_compiled_stage stage;
     bool has_snap, has_next, has_prediction, hyperspace, this_teleport, next_teleport;
     bool busy, callback, faulted, transition_alias;
@@ -150,6 +150,17 @@ static bool create(const frontend_unified_q3_snapshots_options *o,bool restoring
 bool frontend_unified_q3_snapshots_create(const frontend_unified_q3_snapshots_options *o,
     frontend_unified_q3_snapshots **out,qa_error *e)
 { return create(o,false,out,e); }
+bool frontend_unified_q3_snapshots_create_video(const frontend_unified_q3_snapshots_options *o,
+    const frontend_unified_q3_client_video *ticket,frontend_unified_q3_snapshots **out,qa_error *e)
+{
+    int32_t message, command;
+    if (!o || !out || *out || !frontend_unified_q3_client_video_baseline(ticket,o->client,&message,&command,e))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled video CG cache requires its actual CLIENT constructor baseline");
+    if (!create(o,false,out,e)) return false;
+    (*out)->constructor_message = (*out)->processed = message;
+    (*out)->constructor_command = (*out)->commands = command;
+    return true;
+}
 bool frontend_unified_q3_snapshots_idle(const frontend_unified_q3_snapshots *s) { return !s || !s->busy; }
 bool frontend_unified_q3_snapshots_destroy(frontend_unified_q3_snapshots **out,qa_error *e)
 {
@@ -354,6 +365,21 @@ bool frontend_unified_q3_snapshots_read(const frontend_unified_q3_snapshots *s,q
     if (!s || !out || s->busy || s->faulted || !s->has_snap) return fail(e,QA_ERROR_ARGUMENT,"Compiled CG draw requires its genuine completed snapshot cache");
     return frame((frontend_unified_q3_snapshots *)s,out,e);
 }
+bool frontend_unified_q3_snapshots_entered_draw(frontend_unified_q3_snapshots *s,q3n_compiled_stage stage,
+    bool (*execute)(void *,const q3n_compiled_frame *,qa_error *),void *context,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if (!s || !execute || !context || s->busy || s->faulted || !s->options.draw_reason ||
+        (stage != Q3N_COMPILED_AWAITING_SNAPSHOT && stage != Q3N_COMPILED_LOADING_INFORMATION) ||
+        !s->options.draw_reason(s->options.context,stage) ||
+        !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
+        !source.basis.initialized)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled special draw requires its actual runtime branch and returned CG constructor");
+    s->busy = true; q3n_compiled_frame f;
+    bool ok = begin(s,stage,&f,e);
+    if (ok) ok = end(s,&f,execute(context,&f,e)) && s->options.draw_reason(s->options.context,stage);
+    s->busy = false; return ok;
+}
 bool frontend_unified_q3_snapshots_prediction(frontend_unified_q3_snapshots *s,const qa_q3_player *player,
     uint64_t receipt,qa_vec3 correction,int32_t correction_time,bool hyperspace,qa_error *e)
 {
@@ -416,14 +442,17 @@ static bool fields(frontend_unified_q3_snapshots *s,qa_source_save_io *io)
     char magic[4] = {'Q','3','C','G'}; uint32_t version = 1;
     bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CG",4) && qa_source_save_u32(io,&version) && version == 1 &&
         q3n_compiled_source_fields(io,source.owner) && qa_source_save_u64(io,&s->revision) && s->revision &&
+        qa_source_save_i32(io,&s->constructor_message) && s->constructor_message >= 0 &&
+        qa_source_save_i32(io,&s->constructor_command) && s->constructor_command >= source.basis.initial_command &&
         qa_source_save_u64(io,&s->scope) && qa_source_save_i32(io,&s->time) && qa_source_save_i32(io,&s->processed) && s->processed >= 0 &&
-        qa_source_save_i32(io,&s->commands) && s->commands == source.basis.reached_command &&
+        s->processed >= s->constructor_message && qa_source_save_i32(io,&s->commands) &&
+        s->commands >= s->constructor_command && s->commands == source.basis.reached_command &&
         qa_source_save_bool(io,&s->has_snap) && qa_source_save_bool(io,&s->has_next) && (!s->has_next || s->has_snap) &&
         qa_source_save_bool(io,&s->has_prediction) && (!s->has_prediction || s->has_snap) &&
         qa_source_save_bool(io,&s->hyperspace) && qa_source_save_bool(io,&s->this_teleport) && qa_source_save_bool(io,&s->next_teleport) &&
         qa_source_save_vec3(io,&s->correction) && qa_vec_finite(s->correction) && qa_source_save_i32(io,&s->correction_time) &&
         qa_source_save_u64(io,&s->command_receipt);
-    if (ok && s->has_snap) ok = snapshot_fields(s,io,&s->snap,source.basis.product);
+    if (ok && s->has_snap) ok = snapshot_fields(s,io,&s->snap,source.basis.product) && s->snap.value.message_number > s->constructor_message;
     if (ok && s->has_next) ok = snapshot_fields(s,io,&s->next,source.basis.product) && s->next.value.message_number > s->snap.value.message_number &&
         s->next.value.server_time > s->time;
     for (size_t i = 0; ok && i < QA_Q3_ENTITIES; ++i) {

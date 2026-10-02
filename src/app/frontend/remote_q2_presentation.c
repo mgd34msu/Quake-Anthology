@@ -108,6 +108,86 @@ static qa_scene_fog fog_sample(const frontend_remote_q2 *row, double millisecond
 #undef MIX
     return value;
 }
+bool remote_q2_player_fog_receive(frontend_remote_q2 *row, qa_error *error)
+{
+    if (row->options.domain.protocol.kind != QA_NET_Q2PRO_36 || row->data.protocol_revision < 1026) return true;
+    uint32_t seat;
+    if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
+    const qa_q2_player_fog zero = {0};
+    const qa_q2_player_fog *fog = &row->frame.players[seat].player.fog;
+    const qa_q2_player_fog *before = row->previous.valid && seat < row->previous.player_count ?
+        &row->previous.players[seat].player.fog : &zero;
+    qa_scene_fog *target = &row->fog_end; bool changed = false;
+    if (fog->density != before->density || fog->sky_factor != before->sky_factor) {
+        target->density = (float)fog->density / 65535; target->sky_factor = (float)fog->sky_factor / 65535; changed = true;
+    }
+    if (fog->height_density != before->height_density) { target->height_density = (float)fog->height_density / 65535; changed = true; }
+    if (fog->height_falloff != before->height_falloff) { target->height_falloff = (float)fog->height_falloff / 65535; changed = true; }
+    if (memcmp(fog->color, before->color, 3)) {
+        target->color = qa_v3((float)fog->color[0] / 255, (float)fog->color[1] / 255, (float)fog->color[2] / 255); changed = true;
+    }
+    if (memcmp(fog->height_start_color, before->height_start_color, 3)) {
+        target->height_color = qa_v3((float)fog->height_start_color[0] / 255,
+            (float)fog->height_start_color[1] / 255, (float)fog->height_start_color[2] / 255); changed = true;
+    }
+    if (memcmp(fog->height_end_color, before->height_end_color, 3)) {
+        target->height_end_color = qa_v3((float)fog->height_end_color[0] / 255,
+            (float)fog->height_end_color[1] / 255, (float)fog->height_end_color[2] / 255); changed = true;
+    }
+    if (fog->height_start_distance != before->height_start_distance) {
+        target->height_start = (float)fog->height_start_distance * .125f; changed = true;
+    }
+    if (fog->height_end_distance != before->height_end_distance) {
+        target->height_end = (float)fog->height_end_distance * .125f; changed = true;
+    }
+    if (changed) { row->fog_duration_ms = 0; row->fog_received = true; }
+    return true;
+}
+static qa_scene_vec4 player_blend(const float current[4], const float *previous, float fraction)
+{
+    qa_scene_vec4 value = {current[0], current[1], current[2], current[3]};
+    if (previous && previous[3] != 0) {
+        value.x = previous[0] + (current[0] - previous[0]) * fraction;
+        value.y = previous[1] + (current[1] - previous[1]) * fraction;
+        value.z = previous[2] + (current[2] - previous[2]) * fraction;
+        value.w = previous[3] + (current[3] - previous[3]) * fraction;
+    }
+    return value;
+}
+static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
+    qa_scene_vec4 color, qa_error *error)
+{
+    if (color.w <= 0) return true;
+    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "gl_damageblend_frac");
+    if (!setting || !isfinite(setting->number))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 damage blend has no actual CLIENT fraction control");
+    float fraction = (float)fmin(.5, fmax(0, setting->number));
+    if (!fraction) return qa_scene_frame_picture(&row->frontend->frame, row->white, viewport, viewport,
+        (qa_scene_vec4){0, 0, 1, 1}, color, error);
+    qa_scene_frame *frame = &row->frontend->frame;
+    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, 8 * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
+    uint32_t *indices = qa_arena_alloc(&frame->storage, 24 * sizeof(*indices), _Alignof(uint32_t), error);
+    if (!vertices || !indices) return false;
+    static const uint32_t order[24] = {0, 5, 4, 0, 1, 5, 1, 6, 5, 1, 2, 6, 6, 2, 3, 6, 3, 7, 0, 7, 3, 0, 4, 7};
+    memcpy(indices, order, sizeof(order));
+    float distance = truncf(fminf((float)viewport.width, (float)viewport.height) * fraction);
+    float x = 2 * distance / (float)viewport.width, y = 2 * distance / (float)viewport.height;
+    qa_vec3 positions[8] = {{-1, 1, 0}, {1, 1, 0}, {1, -1, 0}, {-1, -1, 0},
+        {-1 + x, 1 - y, 0}, {1 - x, 1 - y, 0}, {1 - x, -1 + y, 0}, {-1 + x, -1 + y, 0}};
+    for (size_t i = 0; i < 8; ++i) {
+        vertices[i] = (qa_scene_vertex){.position = positions[i], .color = color};
+        if (i >= 4) vertices[i].color.w = 0;
+    }
+    qa_scene_draw draw = {.mesh = {.vertices = vertices, .indices = indices, .vertex_count = 8,
+        .index_count = 24, .primitive = QA_SCENE_TRIANGLES,
+        .bounds = {{-1, -1, 0}, {1, 1, 0}}}, .textures = {row->white, NULL}, .texture_count = 1};
+    qa_scene_matrix_identity(&draw.model); qa_scene_matrix_identity(&draw.mvp);
+    qa_scene_state_default(&draw.state);
+    draw.state.blend_source = QA_BLEND_SRC_ALPHA; draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
+    draw.state.depth_test = QA_DEPTH_ALWAYS; draw.state.depth_write = false;
+    qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = {.viewport = viewport}};
+    return qa_scene_frame_emit(frame, &view, error) && qa_scene_frame_draw(frame, &draw, error);
+}
 static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect viewport, qa_error *error)
 {
@@ -367,6 +447,11 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (!remote_q2_live(row, error)) return false;
     const qa_q2_frame_player *frame = frame_player(row, &row->frame);
     if (!row->media_ready || !frame) { *listener = (qa_audio_listener){.seat = seat, .actor = QA_AUDIO_NO_ACTOR}; return true; }
+    uint32_t player_index; int32_t player_number;
+    if (!frontend_remote_q2_wire_seat(row, &player_index, error) ||
+        !frontend_remote_q2_player_number(row, &row->frame, player_index, &player_number))
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 camera has no negotiated player identity receipt");
+    uint32_t player_entity_number = player_number >= 0 ? (uint32_t)player_number + 1 : 0;
     const qa_q2_frame_player *before = frame_player(row, &row->previous);
     const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
     frontend_legacy_render_policy policy;
@@ -376,7 +461,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     qa_vec3 origin = player_origin(row, &frame->player), offset = vector(frame->player.viewoffset), angles = vector(frame->player.viewangles);
     bool continuous = before && near(player_origin(row, &before->player), origin, 256);
     if (continuous && row->layout.max_models == 8192) {
-        const qa_q2_entity *player_entity = entity(&row->frame, (uint32_t)frame->player.clientnum + 1);
+        const qa_q2_entity *player_entity = entity(&row->frame, player_entity_number);
         continuous = row->frame.server_frame == row->previous.server_frame + 1 &&
             (!player_entity || (player_entity->event != 6 && player_entity->event != 7)) &&
             !((before->player.rdflags ^ frame->player.rdflags) & 16);
@@ -414,6 +499,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     angles = qa_vec_add(angles, continuous ?
         qa_vec_lerp(vector(before->player.kick_angles), vector(frame->player.kick_angles), row->fraction) :
         vector(frame->player.kick_angles));
+    qa_vec3 viewer_origin = origin;
     origin = qa_vec_add(origin, offset);
     double time = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms;
     if (row->layout.max_models == 8192) {
@@ -443,6 +529,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         .q2_styles = styles, .style_count = 256, .no_world = (frame->player.rdflags & 2) != 0,
         .legacy_policy = policy.lighting,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = f};
+    if (row->fog_received && !world.no_world) world.fog = fog_sample(row, time);
     if (ok && row->shader_movies) ok = frontend_material_movies_frame(row->shader_movies, &f->frame, error);
     bool sky_auto = true; char *sky_end;
     world.sky_rotation = strtof(frontend_remote_q2_config(row, 3), &sky_end);
@@ -456,7 +543,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sky configuration has nonfinite received parameters");
     world.sky_auto_rotate = sky_auto;
     frontend_remote_q2_effects_sample effects_sample = {0}; frontend_remote_q2_effects_pose *effects_poses = NULL;
-    if (ok) ok = remote_q2_effects_sample_prepare(row, &view, vector(frame->player.gunoffset), frame->player.clientnum,
+    if (ok) ok = remote_q2_effects_sample_prepare(row, &view, viewer_origin, vector(frame->player.gunoffset), player_number,
         &effects_sample, &effects_poses, &world.lights, &world.light_count, error);
     effects_sample.world_input = &world;
     const qa_cvar_view *light_setting = qa_cvars_find(row->options.domain.cvars, "cl_lights");
@@ -473,7 +560,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             continue;
         }
         if (!current->modelindex || current->modelindex >= row->layout.max_models ||
-            current->number == (uint32_t)frame->player.clientnum + 1) continue;
+            current->number == player_entity_number) continue;
         const qa_q2_entity *prior = entity(&row->previous, current->number);
         if (!prior || prior->modelindex != current->modelindex || current->event == 6 || current->event == 7 ||
             !near(vector(prior->origin), vector(current->origin), 512)) prior = NULL;
@@ -550,7 +637,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok && entities_enabled && (!gun_setting || gun_setting->number != 0) &&
         (row->layout.max_models == 8192 || frame->player.fov <= 90) &&
         frame->player.gunindex && frame->player.gunindex < row->layout.max_models) {
-        qa_q2_entity gun = {.number = (uint32_t)frame->player.clientnum + 1, .frame = frame->player.gunframe,
+        qa_q2_entity gun = {.number = player_entity_number, .frame = frame->player.gunframe,
             .skinnum = frame->player.gunskin, .renderfx = 1 | 4 | 16, .scale = 1};
         qa_q2_entity old = gun; old.frame = before && before->player.gunindex == frame->player.gunindex ? before->player.gunframe : gun.frame;
         if (!gun.frame) old.frame = 0;
@@ -566,13 +653,18 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         !particles_setting || particles_setting->number != 0, entities_enabled,
         &f->frame, error);
     free(effects_poses);
+    world.fog.sky_drawn = !world.no_world && qa_scene_world_sky_drawn(row->world);
     if (ok) ok = qa_scene_frame_finish(&f->frame, &view, &world.fog, error);
     const qa_cvar_view *blend_setting = qa_cvars_find(row->options.domain.cvars, "cl_blend");
-    if (ok && policy.lighting.polyblend && (!blend_setting || blend_setting->number != 0) && frame->player.blend[3] > 0) {
-        qa_scene_vec4 blend = {frame->player.blend[0], frame->player.blend[1],
-            frame->player.blend[2], frame->player.blend[3]};
-        ok = qa_scene_frame_picture(&f->frame, row->white, view.viewport, view.viewport,
+    if (ok && policy.lighting.polyblend && (!blend_setting || blend_setting->number != 0)) {
+        bool extended = row->layout.max_models == 8192 || (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
+            row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
+        qa_scene_vec4 blend = player_blend(frame->player.blend,
+            extended && continuous ? before->player.blend : NULL, row->fraction);
+        if (blend.w > 0) ok = qa_scene_frame_picture(&f->frame, row->white, view.viewport, view.viewport,
             (qa_scene_vec4){0, 0, 1, 1}, blend, error);
+        if (ok && extended) ok = damage_blend_draw(row, view.viewport,
+            player_blend(frame->player.damage_blend, continuous ? before->player.damage_blend : NULL, row->fraction), error);
     }
     if (!policy.lighting.cull)
         for (size_t i = scene_first; i < f->frame.command_count; ++i)
@@ -585,13 +677,13 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         options.fonts.classic = row->classic;
         qa_hud_q2_frame hud = {.protocol = row->options.domain.protocol, .stats = frame->player.stats,
             .stat_count = QA_Q2_MAX_STATS, .inventory = row->inventory, .inventory_count = 256,
-            .layout = row->overlay ? row->overlay : "", .player_number = frame->player.clientnum,
+            .layout = row->overlay ? row->overlay : "", .player_number = player_number,
             .server_frame = row->frame.server_frame, .time_ns = row->sample_ns, .frame_ns = (uint64_t)(row->frame_ms * 1000000)};
         ok = qa_hud_q2_draw(&options, &hud, false, &f->frame, error);
     }
     if (ok) ok = hit_marker_draw(row, &frame->player, view.viewport, error);
     --row->busy;
-    *listener = (qa_audio_listener){.seat = seat, .actor = (uint32_t)frame->player.clientnum + 1,
+    *listener = (qa_audio_listener){.seat = seat, .actor = player_entity_number ? player_entity_number : QA_AUDIO_NO_ACTOR,
         .origin = view.origin, .gain = 1};
     memcpy(listener->axis, view.axis, sizeof(listener->axis));
     return ok && remote_q2_live(row, error);

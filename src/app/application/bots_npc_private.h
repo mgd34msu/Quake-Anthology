@@ -10,7 +10,8 @@ typedef struct npc_graph {
     qa_bounds bounds;
     uint32_t flags;
     qa_nav_graph *graph;
-    qa_buffer asset;
+    qa_resource *asset;
+    qa_vfs_acquisition acquisition;
 } npc_graph;
 typedef struct npc_actor {
     struct npc_actor *next;

@@ -193,6 +193,41 @@ bool qa_native_host_q2_wire_entity_import(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
 { return entity_read(host, slot, out, true, error); }
 
+static bool character_returned(qa_native_host *host, qa_error *error)
+{
+    return (host && host->kind == NATIVE_HOST_Q2_GAME && host->instance && host->edict &&
+        !host->destroying && !host->restoring && !host->reconstruction && !host->callback_depth &&
+        !host->filter_depth && !qa_native_terminal(host->instance) && qa_native_can_destroy(host->instance) &&
+        host->world.session && host->world.world) ||
+        native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 CHARACTER frame requires its returned actual GAME owner");
+}
+
+bool qa_native_host_q2_character_frame(qa_native_host *host, uint32_t slot,
+    qa_actor_id actor, double *out, qa_error *error)
+{
+    qa_native_entity_table table, after;
+    qa_native_slot_binding binding, current;
+    qa_native_address address; uint8_t frame[4], inuse[4] = {0};
+    if (!out || !actor.registry || !character_returned(host, error) ||
+        !qa_native_entity_table_get(host->instance, &table, error)) return false;
+    if (slot >= table.count || table.stride < host->edict->bytes ||
+        !binding_current(host, slot, &binding, error) || binding.kind == QA_NATIVE_SLOT_FREE ||
+        !qa_actor_id_equal(binding.actor, actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 CHARACTER frame lost its real Source edict");
+    bool classic = host->profile == QA_NATIVE_Q2_GAME_API3;
+    if (!qa_native_entity_address(host->instance, slot, &address, error) ||
+        !native_host_read(host, address + 56, frame, sizeof(frame), error) ||
+        !native_host_read(host, address + host->edict->inuse, inuse, classic ? 4u : 1u, error)) return false;
+    if (!(classic ? qa_load_i32le(inuse) != 0 : inuse[0] != 0))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 CHARACTER frame names an inactive Source edict");
+    if (!character_returned(host, error) || !qa_native_entity_table_get(host->instance, &after, error) ||
+        !binding_current(host, slot, &current, error)) return false;
+    if (table.base != after.base || table.stride != after.stride || table.count != after.count ||
+        table.capacity != after.capacity || !binding_equal(binding, current))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 CHARACTER frame changed its actual Source binding");
+    *out = (double)qa_load_i32le(frame); return true;
+}
+
 static void classic_player(const uint8_t *bytes, qa_q2_player *state)
 {
     state->pmove.type = qa_load_i32le(bytes);

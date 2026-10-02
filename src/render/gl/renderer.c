@@ -29,7 +29,7 @@ struct qa_gl_surface_ticket {
 
 static bool gl_surface_idle(const qa_gl_renderer *renderer,qa_error *error)
 {
-    if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.source.entered) return true;
+    if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.image_ticket && !renderer->controls.source.entered) return true;
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or retains a settings ticket");
     return false;
 }
@@ -296,7 +296,7 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
 void qa_gl_destroy(qa_gl_renderer *renderer)
 {
     if (renderer == NULL || renderer->closed) return;
-    if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+    if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
     material_source_release(&renderer->controls.source);
     renderer->closed = true;
     qa_output_domains_destroy(&renderer->output_domains);

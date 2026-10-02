@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "native_q2_client_stages.h"
 #include "guest_input_private.h"
 #include "control_frame.h"
 #include "client_outputs.h"
@@ -686,6 +687,8 @@ typedef struct application_control_mod_input {
     bool borrowed, suspended;
     size_t count;
     application_q3_component_input **scopes;
+    struct application_native_q2_input **native_scopes;
+    size_t native_count;
 } application_control_mod_input;
 
 static qa_vec3 component_aim(const qa_movement_state *state, const qa_movement_command *command)
@@ -851,7 +854,7 @@ static void component_input_free(application_control_mod_input *scope)
     while (*link && *link != scope) link = &(*link)->next;
     if (*link) *link = scope->next;
     application_control_mod_head_set(scope->application, head);
-    free(scope->scopes); free(scope);
+    free(scope->native_scopes); free(scope->scopes); free(scope);
 }
 
 static bool component_input_close(application_control_mod_input **in, bool completed, qa_error *error)
@@ -866,13 +869,30 @@ static bool component_input_close(application_control_mod_input **in, bool compl
             ok = false;
         }
     }
-    for (size_t i = scope->count; i > 0; --i) {
+    for (size_t i = 0; i < scope->native_count; ++i) {
+        qa_error current = {0};
+        if (!application_native_q2_input_complete(scope->native_scopes[i], completed, &current)) {
+            if (ok) first = current;
+            ok = false;
+        }
+    }
+    for (size_t i = scope->native_count; i > 0; --i) {
+        qa_error current = {0};
+        if (!application_native_q2_input_abort(scope->native_scopes + i - 1, &current)) {
+            if (ok) first = current;
+            ok = false;
+        }
+        if (scope->native_scopes[i - 1]) break;
+    }
+    bool native_retained = false;
+    for (size_t i = 0; i < scope->native_count; ++i) native_retained |= scope->native_scopes[i] != NULL;
+    for (size_t i = native_retained ? 0 : scope->count; i > 0; --i) {
         qa_error current = {0};
         bool closed = application_q3_component_input_abort(scope->scopes + i - 1, &current);
         if (!closed) { if (ok) first = current; ok = false; }
         if (scope->scopes[i - 1]) break;
     }
-    bool retained = false;
+    bool retained = native_retained;
     for (size_t i = 0; i < scope->count; ++i) retained |= scope->scopes[i] != NULL;
     if (!retained) { component_input_free(scope); *in = NULL; }
     else scope->borrowed = false;
@@ -902,7 +922,13 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
         return component_input_close(&scope->components, live(move->application, move->control->actor), error);
     }
     size_t count = application_q3_components_count(move->application);
-    if (!count) return true;
+    size_t native_count = 0;
+    for (size_t i = 0; i < move->application->provider_count; ++i) {
+        application_provider *provider = move->application->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->attached &&
+            provider->state.native.q2_engine && provider->state.native.q2_engine->callbacks) ++native_count;
+    }
+    if (!count && !native_count) return true;
     if (scope->components) return application_fail(error, QA_ERROR_ARGUMENT, "Component input scope is already entered");
     const application_control_context *source = application_control_frame_current(move->application, move->control->actor);
     if (!source) {
@@ -915,8 +941,12 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
     }
     application_control_mod_input *input = calloc(1, sizeof(*input));
     if (!input) return application_fail(error, QA_ERROR_MEMORY, "Retaining canonical component input");
-    input->scopes = calloc(count, sizeof(*input->scopes));
-    if (!input->scopes) { free(input); return application_fail(error, QA_ERROR_MEMORY, "Retaining component input roster"); }
+    input->scopes = count ? calloc(count, sizeof(*input->scopes)) : NULL;
+    input->native_scopes = native_count ? calloc(native_count, sizeof(*input->native_scopes)) : NULL;
+    if ((count && !input->scopes) || (native_count && !input->native_scopes)) {
+        free(input->native_scopes); free(input->scopes); free(input);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining component input roster");
+    }
     input->application = move->application; input->actor = move->control->actor; input->source = *source;
     input->state = state; input->command = command; input->command_sequence = command->sequence;
     input->elapsed_ns = elapsed_ns; input->borrowed = true;
@@ -934,6 +964,14 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
         input->count = i + 1;
         if (!application_q3_component_input_begin(component, input->actor, slice, component_input_values,
             component_input_output, input, input->scopes + i, error)) return false;
+    }
+    for (size_t i = 0; i < move->application->provider_count && live(move->application, input->actor); ++i) {
+        application_provider *provider = move->application->providers[i];
+        if (provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->attached ||
+            !provider->state.native.q2_engine || !provider->state.native.q2_engine->callbacks) continue;
+        size_t index = input->native_count++;
+        if (!application_native_q2_input_begin(provider->state.native.q2_engine, input->actor, slice,
+            component_input_values, component_input_output, input, input->native_scopes + index, error)) return false;
     }
     return true;
 }

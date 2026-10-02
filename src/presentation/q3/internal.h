@@ -153,6 +153,7 @@ bool q3p_skin_materials(const qa_q3_presentation_assets *, int32_t, const qa_mat
 qa_audio_asset *q3p_sound(const qa_q3_presentation_assets *, int32_t);
 void q3p_model_free(q3p_model *);
 const qa_model *q3p_model_source(const q3p_model *, uint32_t);
+const qa_model *q3p_model_md4_source(const q3p_model *);
 bool q3p_assets_children_idle(const qa_q3_presentation_assets *);
 void q3p_provider_custody_release(qa_q3_presentation_assets *);
 bool q3p_model_shared(const qa_q3_presentation_assets *, const q3p_model *);

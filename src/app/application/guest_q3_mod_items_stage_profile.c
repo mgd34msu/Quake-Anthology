@@ -20,6 +20,7 @@ static bool pointer(application_q3_mod_items_profile *p,const qa_json_document *
 static bool actor(application_q3_mod_items_profile *p,const qa_json_document *d,qa_json_id id,item_actor_pointer *out,qa_error *e)
 {
     qa_buffer name={0};if(!qa_json_string(d,qa_json_get(d,id,"record"),&name,e))return false;
+    if(memchr(name.data,0,name.size)){qa_buffer_free(&name);return q3mod_fail(e,QA_ERROR_FORMAT,"Weapon actor record contains NUL");}
     size_t i=0;while(i<p->source->record_count&&strcmp((char *)name.data,p->source->records[i].id))++i;qa_buffer_free(&name);
     if(i==p->source->record_count||!p->source->records[i].client)return q3mod_fail(e,QA_ERROR_FORMAT,"Weapon actor pointer lacks admitted client record");
     out->record=i;return pointer(p,d,qa_json_get(d,id,"pointer"),&out->pointer,e);

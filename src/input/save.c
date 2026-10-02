@@ -228,7 +228,7 @@ static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_in
 bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!seat || seat->release || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=2; uint64_t services=0;
+    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=3; uint64_t services=0;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     qa_input_seat saved=*seat;
     bool ok=qa_input_seat_context_ready(seat,&seat->options.context,error) &&
@@ -246,7 +246,7 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
     qa_input_seat *saved=calloc(1,sizeof(*saved));
     if (!saved) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored input seat"); return false; }
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { free(saved); return false; }
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==2 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==3 &&
         qa_source_save_u64(&io,&services) && refs->services_decode(refs->context,services,&saved->options,error) &&
         qa_source_save_u32(&io,&ordinal) && ordinal<4 && ordinal==seat->options.seat && ordinal==saved->options.seat &&
         qa_source_save_u32(&io,&launch_seat) && launch_seat==saved->options.context.seat &&

@@ -151,6 +151,56 @@ static bool player(void *context, qa_net_client_id client, qa_unified_session_pl
         application_unified_player_read(owner->application, client, owner->seat, out, error);
 }
 
+static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_net_client_id client,
+    uint32_t epoch,qa_error *error)
+{
+    application_unified_server *owner=context;
+    qa_unified_session *installed=NULL;
+    const qa_net_client *peer=runtime?qa_net_connections_get(qa_network_connections(runtime),client):NULL;
+    if (!peer_is(owner,runtime,client) || owner->entered || !owner->session || !peer ||
+        peer->protocol.kind!=QA_NET_UNIFIED_1 || peer->seat_count!=1 || !peer->seats ||
+        peer->seats[0].seat.owner!=owner->seat.owner || peer->seats[0].seat.index!=owner->seat.index ||
+        !qa_unified_session_find(runtime,client,&installed,error) || installed!=owner->session)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody changed its actual installed peer");
+    bool checkpoint=owner->application->operation==APPLICATION_PERSISTING;
+    application_unified_source actual;
+    if (!(checkpoint?application_unified_source_checkpoint_read(owner->application,&actual,error):
+        application_unified_source_read(owner->application,&actual,error))) return false;
+    bool current=actual.owner==owner->offered.owner && actual.family==owner->offered.family &&
+        actual.publication==owner->offered.publication && actual.map_revision==owner->offered.map_revision &&
+        actual.max_clients==owner->offered.max_clients && actual.launch==owner->offered.launch &&
+        actual.session==owner->offered.session && actual.world==owner->offered.world;
+    if (owner->epoch!=epoch) {
+        return (epoch!=UINT32_MAX && owner->epoch==epoch+1 && current && !owner->admitted &&
+            !owner->inputs && !owner->components && !owner->pending_capture &&
+            !owner->pending.frame && !owner->admitted_receipt) ||
+            application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody has no genuine prepared travel offer");
+    }
+    if (!qa_sha256_equal(&peer->composition,&owner->composition))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody changed its admitted composition");
+    if (current) {
+        if (!owner->admitted) return true;
+        qa_unified_session_player actual_player;
+        return checkpoint?application_unified_player_checkpoint_read(owner->application,client,owner->seat,&actual_player,error):
+            application_unified_player_read(owner->application,client,owner->seat,&actual_player,error);
+    }
+    const qa_unified_session_player *saved=&owner->admitted_player;
+    qa_saved_actor_id historical;
+    bool obsolete=actual.publication>=owner->offered.publication && actual.map_revision>=owner->offered.map_revision &&
+        (actual.publication>owner->offered.publication || actual.map_revision>owner->offered.map_revision);
+    if (obsolete && !owner->admitted && !owner->admitted_receipt && !owner->inputs && !owner->components &&
+        !owner->pending_capture && !owner->pending.frame) return true;
+    bool slot=owner->offered.family==QA_GAME_Q3?saved->source_slot<owner->offered.max_clients:
+        saved->source_slot && saved->source_slot<=owner->offered.max_clients;
+    return (obsolete && owner->admitted && owner->player_attached && owner->admitted_receipt && saved->seat.owner==owner->seat.owner &&
+        saved->seat.index==owner->seat.index && saved->source_owner==owner->offered.owner &&
+        slot && saved->movement>=QA_MOVEMENT_NETQUAKE && saved->movement<=QA_MOVEMENT_Q3 &&
+        saved->arsenal.data==owner->admitted_arsenal.data && saved->arsenal.size==owner->admitted_arsenal.size &&
+        (!saved->arsenal.size || saved->arsenal.data) &&
+        qa_actors_save_reference(qa_session_actors(actual.session),saved->actor,&historical,error)) ||
+        application_fail(error,QA_ERROR_ARGUMENT,"Unified obsolete offer lacks its genuine historical player admission");
+}
+
 static bool admitted_document(application_unified_server *owner, const qa_unified_session_player *player,
     qa_unified_document **out, qa_error *error)
 {
@@ -326,7 +376,7 @@ static void closed(void *context, qa_net_client_id client)
 
 qa_unified_session_hooks application_unified_server_hooks(application_unified_server *owner)
 {
-    return (qa_unified_session_hooks){.context = owner, .player = player, .control = control,
+    return (qa_unified_session_hooks){.context = owner, .player = player, .source_ready=source_custody_ready, .control = control,
         .input = input, .restart = restart, .closed = closed};
 }
 

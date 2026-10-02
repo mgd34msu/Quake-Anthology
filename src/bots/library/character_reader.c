@@ -14,7 +14,17 @@ static void release_source(void *context, qa_script_resource *resource) {
 }
 static void diagnostic_source(void *context, const qa_script_diagnostic *diagnostic) {
     bot_character_reader *reader = context;
+    if (diagnostic->severity == QA_SCRIPT_ERROR || diagnostic->severity == QA_SCRIPT_FATAL)
+        reader->error_reported = true;
     if (reader->services.diagnostic) reader->services.diagnostic(reader->services.context, diagnostic);
+}
+void bot_character_reader_report(bot_character_reader *reader, qa_script *source,
+                                 const char *path, const qa_error *error) {
+    if (reader->error_reported || !error) return;
+    qa_script_diagnostic diagnostic = {.severity = QA_SCRIPT_ERROR,
+        .location = source ? qa_script_position(source) : (qa_script_location){.path = path, .offset = error->offset},
+        .message = error->message};
+    diagnostic_source(reader, &diagnostic);
 }
 bool bot_character_reader_create(const qa_script_services *services, bot_character_reader **out,
                                  qa_error *error) {
@@ -41,6 +51,7 @@ bool bot_character_reader_copy(qa_script *source, const bot_character_reader *ho
         bot_character_reader_create(&host->services, out_host, error);
     if (okay) {
         (*out_host)->callback_failed = host->callback_failed;
+        (*out_host)->error_reported = host->error_reported;
         qa_script_services services = bot_character_reader_services(*out_host);
         okay = qa_script_restore(&services, &image, out, error);
     }
@@ -54,8 +65,9 @@ bool bot_character_reader_fields(qa_source_save_io *io, qa_script **reader,
     if (!qa_source_save_bool(io, &present)) return false;
     if (!present) return true;
     bool failed = !reading && *host && (*host)->callback_failed;
+    bool reported = !reading && *host && (*host)->error_reported;
     qa_script_checkpoint saved = {0}; qa_buffer encoded = {0}; size_t length = 0;
-    bool okay = qa_source_save_bool(io, &failed) && (reading ||
+    bool okay = qa_source_save_bool(io, &failed) && qa_source_save_bool(io, &reported) && (reading ||
         (qa_script_capture(*reader, &saved, io->error) &&
          qa_script_checkpoint_encode(&saved, &encoded, io->error)));
     if (!reading) length = encoded.size;
@@ -68,6 +80,7 @@ bool bot_character_reader_fields(qa_source_save_io *io, qa_script **reader,
                 bot_character_reader_create(services, host, io->error);
             if (okay) {
                 (*host)->callback_failed = failed;
+                (*host)->error_reported = reported;
                 qa_script_services wrapped = bot_character_reader_services(*host);
                 okay = qa_script_restore(&wrapped, &saved, reader, io->error);
             }

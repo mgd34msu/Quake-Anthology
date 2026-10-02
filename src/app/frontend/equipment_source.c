@@ -19,6 +19,12 @@ typedef struct equipment_world_packet {
     frontend_equipment_gear_world_output *output;
 } equipment_world_packet;
 
+typedef struct equipment_source_actor {
+    size_t entity;
+    qa_actor_id actor;
+    bool view;
+} equipment_source_actor;
+
 struct frontend_equipment_source {
     frontend_equipment_source_options options;
     qa_application_q3_client_context client;
@@ -33,6 +39,8 @@ struct frontend_equipment_source {
     frontend_equipment_gear_output *gear_view;
     equipment_packet *active, *packets, *tail;
     equipment_world_packet *world_packets;
+    equipment_source_actor *source_actors;
+    size_t source_actor_count;
     qa_model_transform view_transform;
     qa_q3_ref_entity view_entity;
     qa_vec3 view_offset;
@@ -107,6 +115,67 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
     frontend_equipment_q3_output_destroy(owner->q3_view); owner->q3_view = NULL;
     frontend_equipment_gear_output_destroy(owner->gear_view); owner->gear_view = NULL;
     owner->reserved = 0; owner->view_ready = false;
+    free(owner->source_actors); owner->source_actors = NULL; owner->source_actor_count = 0;
+}
+
+static bool source_scene_current(const frontend_equipment_source *owner,
+    size_t count, qa_error *error)
+{
+    if (!owner || !owner->drawing || !current_owner(owner))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon attribution lost its actual Draw lease");
+    for (size_t i = 0; i < owner->source_actor_count; ++i)
+        if (owner->source_actors[i].entity >= count)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon attribution leaves its reached entity queue");
+    return true;
+}
+
+bool frontend_equipment_source_scene_actors(const frontend_equipment_source *owner,
+    size_t count, qa_actor_id *out, qa_error *error)
+{
+    if ((count && !out) || count > SIZE_MAX / sizeof(*out))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon actors require their actual output extent");
+    if (!source_scene_current(owner, count, error)) return false;
+    if (count) memset(out, 0, count * sizeof(*out));
+    for (size_t i = 0; i < owner->source_actor_count; ++i)
+        out[owner->source_actors[i].entity] = owner->source_actors[i].actor;
+    return true;
+}
+
+bool frontend_equipment_source_scene_views(const frontend_equipment_source *owner,
+    size_t count, bool *out, qa_error *error)
+{
+    if ((count && !out) || count > SIZE_MAX / sizeof(*out))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon views require their actual output extent");
+    if (!source_scene_current(owner, count, error)) return false;
+    if (count) memset(out, 0, count * sizeof(*out));
+    for (size_t i = 0; i < owner->source_actor_count; ++i)
+        out[owner->source_actors[i].entity] = owner->source_actors[i].view;
+    return true;
+}
+
+static bool held_source(void *context, qa_actor_id actor, bool view,
+    const qa_q3_ref_entity *ref, qa_error *error)
+{
+    frontend_equipment_source *owner = context;
+    if (!owner->original_q3_view) return true;
+    if (!ref || !owner->drawing || !current_owner(owner) ||
+        !qa_actors_get(qa_session_actors(owner->client.session), actor))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon ref lost its actual full actor and Draw");
+    size_t entity; bool available;
+    if (!qa_q3_presentation_entity_cursor(owner->options.presentation, &entity, &available, error)) return false;
+    if (!available) return true;
+    if (owner->source_actor_count == SIZE_MAX / sizeof(*owner->source_actors))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Source weapon attribution exceeds native extent");
+    for (size_t i = 0; i < owner->source_actor_count; ++i)
+        if (owner->source_actors[i].entity == entity)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon attribution repeats an uncommitted ref");
+    equipment_source_actor *rows = realloc(owner->source_actors,
+        (owner->source_actor_count + 1) * sizeof(*rows));
+    if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Source weapon actor attribution");
+    owner->source_actors = rows;
+    rows[owner->source_actor_count++] = (equipment_source_actor){entity, actor, view};
+    return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+        "Source weapon attribution changed its genuine Draw namespace");
 }
 
 static void release_draw(void *context)
@@ -415,8 +484,10 @@ bool frontend_equipment_source_create(const frontend_equipment_source_options *o
 void frontend_equipment_source_services(frontend_equipment_source *owner,
     qa_application_q3_equipment_services *out)
 {
-    if (out) *out = (qa_application_q3_equipment_services){owner, prepare, current_draw,
-        release_draw, held_begin, held_pass, held_submit, held_release};
+    if (out) *out = (qa_application_q3_equipment_services){.context = owner,
+        .prepare = prepare, .current = current_draw, .release_draw = release_draw,
+        .held_begin = held_begin, .held_pass = held_pass, .held_submit = held_submit,
+        .held_release = held_release, .held_source = held_source};
 }
 
 bool frontend_equipment_source_idle(const frontend_equipment_source *owner)
@@ -431,7 +502,7 @@ bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_erro
     if (!owner) return true;
     if (!frontend_equipment_source_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment receiver retains actual draw or submission scopes");
-    free(owner->hud_label); free(owner);
+    free(owner->source_actors); free(owner->hud_label); free(owner);
     return true;
 }
 

@@ -408,9 +408,8 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     if (!s) return true;
     size_t expected = 1u + (s->registry != NULL ? 1u : 0u) + (s->app_attached ? 1u : 0u);
     if (!frontend_client_source_idle(s) || s->frontend->capture || s->frontend->resource_inventory ||
-        s->references != expected || !qa_console_destroy_ready(s->console) ||
-        (s->app_attached && !qa_application_client_idle(s->frontend->application, &s->application)) ||
-        !frontend_client_registry_release_ready(s->registry, error))
+        s->references != expected ||
+        (s->app_attached && !qa_application_client_idle(s->frontend->application, &s->application)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source retains an entered or borrowed physical child");
     if(!s->programme_retired) {
         if(s->options.retire) {
@@ -421,6 +420,8 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
         }
         s->programme_retired=true;
     }
+    if (!qa_console_destroy_ready(s->console) || !frontend_client_registry_release_ready(s->registry, error))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT programme retains a physical console or registry lease");
     s->closing = true;
     if (s->app_attached && !qa_application_client_retire(s->frontend->application, &s->application, error)) return false;
     qa_console_destroy(s->console); s->console = NULL;

@@ -27,7 +27,7 @@ typedef struct q2fx_beam {
     uint8_t model;
     qa_actor_id actor, destination;
     qa_vec3 start, end, offset;
-    double die;
+    double die, sound_until;
 } q2fx_beam;
 typedef struct q2fx_laser {
     bool active;
@@ -62,7 +62,8 @@ typedef struct q2fx_model_draw {
     qa_vec3 origin, angles;
     int32_t frame, old_frame, skin;
     uint32_t flags;
-    float alpha, back_lerp, scale;
+    float alpha, back_lerp;
+    qa_vec3 scale;
 } q2fx_model_draw;
 typedef struct q2fx_weapon_muzzle {
     bool active;
@@ -101,6 +102,8 @@ struct frontend_remote_q2_effects {
     qa_error event_error;
     q2fx_weapon_muzzle weapon_muzzle;
     uint32_t sampled_dlight_hacks, sampled_disable_particles;
+    uint32_t slow_bin, slow_base, slow_seed;
+    uint64_t slow_frame, render_frame;
 };
 extern const char *const q2fx_model_paths[Q2FX_MODEL_COUNT];
 bool q2fx_fail(qa_error *, qa_status, const char *);

@@ -1,4 +1,5 @@
 #include "material_inventory.h"
+#include "component_scene.h"
 #include "capture.h"
 #include "visual_restore.h"
 #include "native_q3_client.h"
@@ -20,7 +21,7 @@
 
 typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3,
     MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2, MATERIAL_RENDERER,MATERIAL_RENDERER_WORLD,
-    MATERIAL_UNIFIED } material_owner_kind;
+    MATERIAL_UNIFIED,MATERIAL_COMPONENT } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -167,6 +168,9 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
         if(banks>SIZE_MAX-capacity) return false;
         capacity+=banks;
     }
+    size_t components=frontend_component_scene_count(f);
+    if(components>SIZE_MAX-capacity) return false;
+    capacity+=components;
     if(capacity>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote material inventory exceeds address space");
     material_owner *owners=calloc(capacity,sizeof(*owners));
@@ -232,6 +236,12 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
                 (size_t)key,0,0,NULL,bank.product->family==QA_GAME_Q1?QA_SCENE_Q1:
                     bank.product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3,error);
         }
+    }
+    for(size_t i=0;ok && i<components;++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(f,i,&row,error) &&
+            append(owners,count,graph,row.materials,row.images,row.files,MATERIAL_COMPONENT,
+                i,row.receiver,row.identity,row.descriptor?row.descriptor->content:NULL,QA_SCENE_Q3,error);
     }
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);

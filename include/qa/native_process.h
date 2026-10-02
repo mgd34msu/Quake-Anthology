@@ -35,6 +35,9 @@ typedef struct qa_native_process_options {
 } qa_native_process_options;
 
 bool qa_native_process_checkpoint(qa_native_instance *, qa_buffer *, qa_error *);
+/* The enclosing decoded HOST must exactly match the retained process capsule.
+ * This commits the real actor decoder and independent capability adoption;
+ * any postmutation failure makes the candidate terminal. */
 bool qa_native_process_restore_host(qa_native_instance *, qa_bytes expected_host, qa_error *);
 bool qa_native_process_restore_pending(const qa_native_instance *);
 

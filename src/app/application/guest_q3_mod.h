@@ -128,6 +128,8 @@ bool application_q3_mod_open(application_q3_mod *, qa_actor_id,
     const application_q3_mod_inputs *, application_q3_mod_application **, qa_error *);
 bool application_q3_mod_close(application_q3_mod_application **, qa_error *);
 bool application_q3_mod_client_live(const application_q3_mod *, qa_actor_id);
+bool application_q3_mod_application_current(application_q3_mod *,
+    const application_q3_mod_application *,qa_actor_id);
 bool application_q3_mod_input_update(application_q3_mod_application *,
     const application_q3_mod_inputs *, qa_error *);
 typedef bool (*application_q3_mod_input_values_fn)(void *,application_q3_mod_inputs *,qa_error *);

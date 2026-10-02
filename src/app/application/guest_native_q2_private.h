@@ -16,6 +16,7 @@ typedef struct application_native_q2_client {
     qa_actor_id actor;
     uint32_t seat;
     bool reserved, connected, begun, bot, disconnect_started;
+    bool denied;
     bool userinfo_present;
     char userinfo[2048];
     char layout[1024];
@@ -36,6 +37,7 @@ struct application_native_q2 {
     qa_native_profile profile;
     qa_native_declaration *declaration;
     struct application_native_q2_callbacks *callbacks;
+    struct application_native_q2_stages *stages;
     struct application_native_q2_publication *publication;
     struct application_native_q2_wire_engine *wire_engine;
     application_native_process_owner process;
@@ -97,6 +99,8 @@ bool application_native_q2_console_command(application_provider *, qa_actor_id, 
                                             bool *, qa_error *);
 bool application_native_q2_client_command(application_provider *, qa_actor_id,
     const qa_command_invocation *, bool *, qa_error *);
+bool application_native_q2_weapon_request(application_provider *, qa_actor_id,
+    qa_item_id, bool *admitted, qa_error *);
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *);
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
 bool application_native_q2_move(application_provider *, qa_actor_id,

@@ -7,6 +7,8 @@
 
 typedef struct frontend_unified_q3_client frontend_unified_q3_client;
 typedef struct frontend_unified_q3_client_frame frontend_unified_q3_client_frame;
+typedef struct frontend_unified_q3_client_video frontend_unified_q3_client_video;
+typedef struct frontend_video_guests frontend_video_guests;
 typedef struct frontend_unified_q3_command {
     const frontend_unified_q3_client *owner;
     uint64_t revision;
@@ -29,9 +31,23 @@ void frontend_unified_q3_client_commit(frontend_unified_q3_client_frame **);
 void frontend_unified_q3_client_abort(frontend_unified_q3_client_frame **);
 bool frontend_unified_q3_client_current(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_checkpoint_current(const frontend_unified_q3_client *);
+bool frontend_unified_q3_client_checkpoint_matches(const frontend_unified_q3_client *, const frontend_unified_q3_source_view *);
 bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *, const frontend_unified_q3_source_view *);
+bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *, const char *instance,
+    const char *content, uint32_t source_epoch);
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **, qa_error *);
+/* The real video aggregate holds transport steady while its CG child closes,
+ * registers and initializes against the reached CLIENT baseline. */
+bool frontend_unified_q3_client_video_prepare(frontend_unified_q3_client *, qa_frontend *,
+    const frontend_video_guests *, frontend_unified_q3_client_video **, qa_error *);
+bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *);
+bool frontend_unified_q3_client_video_begin(frontend_unified_q3_client_video *,
+    void *, bool (*cg_closed)(const void *), qa_error *);
+bool frontend_unified_q3_client_video_baseline(const frontend_unified_q3_client_video *,
+    const frontend_unified_q3_client *, int32_t *message, int32_t *reached_command, qa_error *);
+bool frontend_unified_q3_client_video_finish(frontend_unified_q3_client_video **, qa_error *);
+bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **, qa_error *);
 q3n_compiled_source *frontend_unified_q3_client_source(frontend_unified_q3_client *);
 const qa_command_context *frontend_unified_q3_client_context(const frontend_unified_q3_client *);
 qa_cvars *frontend_unified_q3_client_cvars(const frontend_unified_q3_client *);

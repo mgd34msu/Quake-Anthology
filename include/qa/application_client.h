@@ -79,7 +79,13 @@ bool qa_application_client_create(qa_application *, const qa_application_client_
     qa_application_client_source *, qa_error *);
 bool qa_application_client_read(qa_application *, qa_actor_owner, uint32_t,
     qa_application_client_source *, qa_error *);
+/* Retained physical CLIENT command namespace only. This makes no claim that
+ * its previously attached transport connection remains live. */
+bool qa_application_client_physical_read(qa_application *, qa_actor_owner, uint32_t,
+    qa_application_client_source *, qa_error *);
 bool qa_application_client_current(qa_application *, const qa_application_client_source *);
+/* Retained physical row/provider association only; invokes no callbacks. */
+bool qa_application_client_associated(const qa_application *, const qa_application_client_source *);
 /* Called only with the genuine successful Network attach receipt. The owner
  * callback authenticates the complete full-generation connection tuple. */
 bool qa_application_client_bind(qa_application *, const qa_application_client_source *,

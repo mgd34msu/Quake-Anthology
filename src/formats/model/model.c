@@ -256,11 +256,12 @@ bool qa_model_sample_mesh(const qa_model *m, uint32_t mesh, uint32_t frame, uint
                 const qa_model_weight *weight = &s->weights[range.first + w];
                 const float *matrix = matrices[weight->bone];
                 for (unsigned k = 0; k < 3; ++k) {
-                    float p = matrix[k * 4 + 3], n = 0;
-                    for (unsigned j = 0; j < 3; ++j) {
-                        p += matrix[k * 4 + j] * weight->offset[j];
-                        n += matrix[k * 4 + j] * s->vertices[v].normal[j];
-                    }
+                    const float *row = matrix + k * 4;
+                    float px = row[0] * weight->offset[0], py = row[1] * weight->offset[1];
+                    float pz = row[2] * weight->offset[2];
+                    float nx = row[0] * s->vertices[v].normal[0], ny = row[1] * s->vertices[v].normal[1];
+                    float nz = row[2] * s->vertices[v].normal[2];
+                    float p = ((px + py) + pz) + row[3], n = (nx + ny) + nz;
                     out[v].position[k] += p * weight->bias;
                     out[v].normal[k] += n * weight->bias;
                 }

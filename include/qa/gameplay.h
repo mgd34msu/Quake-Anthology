@@ -393,6 +393,12 @@ typedef struct qa_pickup_offer {
 typedef enum qa_pickup_outcome { QA_PICKUP_REFUSED, QA_PICKUP_ACCEPTED, QA_PICKUP_STALE } qa_pickup_outcome;
 typedef struct qa_pickup_execution qa_pickup_execution;
 bool qa_pickup_current(const qa_pickup_execution *);
+/* Pure proof that this current grant receipt owns the actual full recipient. */
+bool qa_pickup_recipient_is(const qa_pickup_execution *,qa_actor_id);
+/* Borrows the innermost open execution for this full recipient only until its
+ * synchronous dispatch returns. No execution is true with found=false. */
+bool qa_pickups_execution_read(qa_pickups *,qa_actor_id,const qa_pickup_execution **,
+    bool *found,qa_error *);
 const qa_pickup_write *qa_pickup_writes(const qa_pickup_execution *, size_t *count);
 bool qa_pickup_store_protection(qa_pickup_execution *, const qa_protection_store *, qa_error *);
 typedef struct qa_pickup_rule {

@@ -3,6 +3,9 @@
 #include "remote_q2_restore.h"
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
+#include "qa/scene_resource_save.h"
+#include "qa/material_library_save.h"
+#include "qa/media_library_save.h"
 
 static bool shader_movies_current(void *context, const frontend_material_movie_source *source)
 {

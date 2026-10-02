@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "component_scene.h"
 #include "content_inventory.h"
 #include "qa/scene_resource_save.h"
 #include "qa/vfs_view_save.h"
@@ -109,6 +110,12 @@ bool frontend_content_visit(void *context, const qa_application *application,
             !visit_view(visitor,owner.content.mounts,error)) return false;
         frontend_remote_q1_skins *skins=frontend_remote_q1_skins_owner(frontend_remote_q1_at(frontend,i));
         if(skins && !visit_view(visitor,frontend_remote_q1_skins_files(skins),error)) return false;
+    }
+    for(size_t i=0;i<frontend_component_scene_count(frontend);++i) {
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(frontend,i,&row,error) ||
+            !visit_catalog(visitor,row.catalog,error) || !visit_view(visitor,row.files,error) ||
+            (row.descriptor && !visit_view(visitor,row.descriptor->content,error))) return false;
     }
     if (!frontend_native_q3_content_visit(frontend,visitor,error) ||
         !frontend_client_sources_visit(frontend,visitor,error) ||

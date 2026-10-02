@@ -6,6 +6,7 @@
 #include "qa/server_admin.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_local.h"
+#include "qa/network_kex_transport.h"
 typedef struct frontend_network_q2_host frontend_network_q2_host;
 typedef struct frontend_network_q2_host_options {
     qa_frontend *frontend;
@@ -17,6 +18,7 @@ typedef struct frontend_network_q2_host_options {
     bool (*current)(void *,const frontend_network_q2_host *);
     qa_q2_random_fn random;
     qa_kex_lan *lobby;
+    qa_kex_transport *transport;
 } frontend_network_q2_host_options;
 bool frontend_network_q2_host_create(const frontend_network_q2_host_options *,frontend_network_q2_host **,qa_error *);
 bool frontend_network_q2_host_receive(frontend_network_q2_host *,const qa_net_datagram *,bool *,qa_error *);

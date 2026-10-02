@@ -26,6 +26,7 @@ typedef struct frontend_component_scene_view {
     frontend_material_movies *movies;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
+    qa_q3_presentation_options policy;
     const qa_scene_frame *frame;
     qa_audio_music *music;
     const char *music_intro,*music_loop;
@@ -50,6 +51,9 @@ bool frontend_component_scene_restore_music(qa_frontend *,uint64_t identity,qa_a
 bool frontend_component_scene_restore_movies(qa_frontend *,uint64_t identity,
     const frontend_material_movies_refs *,qa_bytes,qa_error *);
 bool frontend_component_scenes_finish_restore(qa_frontend *,qa_error *);
+bool frontend_component_scene_movie_source_read(const qa_frontend *,uint64_t,
+    frontend_material_movie_source *,qa_error *);
+bool frontend_component_scenes_bind_restored(qa_frontend *,qa_error *);
 bool frontend_component_scene_packet_count(const qa_frontend *,uint64_t identity,uint64_t sequence,size_t *,qa_error *);
 typedef struct frontend_component_scene_packet {
     qa_q3_refdef definition;

@@ -82,5 +82,5 @@ bool scene_model_sprite_submit(qa_scene_model *model, const qa_scene_model_input
     }
     qa_scene_mesh mesh = {.vertices = vertices, .indices = indices, .vertex_count = 4,
         .index_count = 6, .bounds = bounds, .primitive = QA_SCENE_TRIANGLES};
-    return scene_model_emit(model, input, &mesh, model->sprites[selected], true, true, frame, error);
+    return scene_model_emit(model, input, &mesh, model->sprites[selected], true, true, NULL, frame, error);
 }

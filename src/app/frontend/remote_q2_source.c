@@ -307,7 +307,7 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
         {"ch_alpha", "1", 0}, {"ch_scale", "1", 0}, {"ch_x", "0", 0}, {"ch_y", "0", 0},
         {"cl_muzzlelight_time", "100", 0}, {"cl_rerelease_effects", "1", 0}, {"cl_dlight_hacks", "0", 0},
         {"cl_muzzleflashes", "1", 0}, {"cl_disable_particles", "0", 0}, {"cl_disable_explosions", "0", 0},
-        {"cl_smooth_explosions", "1", 0}
+        {"cl_smooth_explosions", "1", 0}, {"gl_damageblend_frac", "0.2", 0}
     };
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
         if (!qa_cvars_register(source->domain.cvars, values[i].name, values[i].value, values[i].flags,

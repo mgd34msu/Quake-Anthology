@@ -20,6 +20,9 @@ bool bot_character_store_create(qa_bot_memory *, bool, bot_character_store **, q
 void bot_character_store_release(bot_character_store *);
 bool bot_character_create(bot_character_store *, const char *, float, qa_bot_character **, qa_error *);
 bool bot_character_project(qa_bot_character *, qa_error *);
+bool bot_character_header(qa_bot_character *, qa_error *);
+bool bot_character_kind(qa_bot_character *, uint32_t, qa_bot_character_value_kind *, qa_error *);
+bool bot_character_value(qa_bot_character *, uint32_t, qa_bot_character_value *, qa_error *);
 bool bot_character_write(qa_bot_character *, uint32_t, qa_bot_character_value, bool, qa_error *);
 bool bot_character_skill(qa_bot_character *, float, qa_error *);
 bool bot_character_filename(qa_bot_character *, const char *, qa_error *);

@@ -377,6 +377,31 @@ bool qa_pickup_current(const qa_pickup_execution *execution)
         rule_current(execution->service, execution->registration, execution->rule)) && scope_current(execution);
 }
 
+bool qa_pickup_recipient_is(const qa_pickup_execution *execution,qa_actor_id actor)
+{
+    return execution&&!execution->failed&&qa_pickup_current(execution)&&
+        qa_actor_id_equal(execution->offer.recipient,actor);
+}
+
+bool qa_pickups_execution_read(qa_pickups *service,qa_actor_id actor,
+                              const qa_pickup_execution **out,bool *found,qa_error *e)
+{
+    if (!service || !out || !found)
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid pickup execution read");
+    *out = NULL; *found = false;
+    for (qa_pickup_execution *execution = service->scopes; execution; execution = execution->previous) {
+        if (!qa_actor_id_equal(execution->offer.recipient, actor)) continue;
+        if (execution->failed) {
+            if (e) *e = execution->failure;
+            return false;
+        }
+        if (execution->service != service || !qa_pickup_current(execution))
+            return fail(e, QA_ERROR_ARGUMENT, "Pickup execution is no longer current");
+        *out = execution; *found = true; return true;
+    }
+    return true;
+}
+
 const qa_pickup_write *qa_pickup_writes(const qa_pickup_execution *execution, size_t *count)
 {
     if (count) *count = 0;

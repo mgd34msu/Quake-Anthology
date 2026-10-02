@@ -23,6 +23,8 @@ struct qa_qvm {
     unsigned publication_depth, write_delivery_depth, lifecycle_depth;
     uint32_t api_version;
     bool retired;
+    bool candidate_inventory;
+    qa_sha256_digest candidate_inventory_digest;
     void *execution; /* Executor owns all invocation, operand and hook state. */
 };
 
@@ -39,6 +41,19 @@ bool qa_qvm_execution_checkpoint_ready(const qa_qvm *, const uint64_t values[3],
 void qa_qvm_execution_restore(qa_qvm *, const uint64_t values[3], bool candidate);
 struct qa_qvm_saved_function;
 struct qa_qvm_saved_resolver;
+struct qa_qvm_saved_write_watch;
+bool qa_qvm_memory_checkpoint_watches(const qa_qvm *,
+    const struct qa_qvm_saved_write_watch *, size_t, qa_error *);
+bool qa_qvm_memory_restore_watches_ready(const qa_qvm *, uint64_t,
+    const struct qa_qvm_saved_write_watch *, const qa_qvm_binding *, size_t, qa_error *);
+void qa_qvm_memory_restore_watches(qa_qvm *, uint64_t,
+    const struct qa_qvm_saved_write_watch *, const qa_qvm_binding *, size_t);
+bool qa_qvm_execution_checkpoint_inventory(const qa_qvm *,
+    const struct qa_qvm_saved_function *, size_t,
+    const struct qa_qvm_saved_resolver *, qa_error *);
+bool qa_qvm_execution_restore_inventory(qa_qvm *, uint64_t,
+    const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t,
+    const struct qa_qvm_saved_resolver *, qa_qvm_binding, qa_error *);
 bool qa_qvm_execution_restore_bindings(qa_qvm *, uint64_t generation,
     const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t, qa_error *);
 bool qa_qvm_execution_restore_callbacks(qa_qvm *, uint64_t generation,

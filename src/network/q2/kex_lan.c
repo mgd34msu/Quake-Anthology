@@ -601,6 +601,15 @@ bool qa_kex_lan_set_attribute(qa_kex_lan *l, const char *key, const char *value,
     l->entered = false;
     return ok;
 }
+bool qa_kex_lan_set_maximum(qa_kex_lan *l, uint8_t maximum, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool okay = l->options.host && maximum >= l->options.local_players;
+    if (okay) l->options.max_players = maximum;
+    else qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX capacity requires the actual host and its retained local members");
+    l->entered = false;
+    return okay;
+}
 bool qa_kex_lan_tick(qa_kex_lan *l, uint64_t now, qa_error *e)
 {
     if (!enter(l, e)) return false;

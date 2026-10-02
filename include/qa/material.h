@@ -151,6 +151,14 @@ typedef struct qa_material_context {
     qa_material_source_writer source_writer;
     const qa_material *source_default_material;
     size_t source_grid_columns, source_grid_rows;
+    bool (*source_model_pose)(void *, int32_t, int32_t, float,
+        qa_scene_frame *, qa_scene_mesh *, qa_error *);
+    int32_t source_model_frame, source_model_old_frame;
+    float source_model_back_lerp;
+    bool (*source_model_retain)(void *, qa_error *);
+    void (*source_model_release)(void *);
+    void *source_model_context;
+    qa_q3_presentation_assets *source_model_assets;
     bool (*source_surface)(void *, const qa_material *, const qa_material *,
         const qa_scene_mesh *, const struct qa_material_context *, qa_scene_frame *, qa_error *);
     void *source_surface_context;

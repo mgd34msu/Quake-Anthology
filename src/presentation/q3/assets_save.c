@@ -234,11 +234,13 @@ static bool opening_empty(const qa_vfs_acquisition *opening, int64_t rank,
 {
     return !opening->mount && !opening->resource_id && !opening->path && !opening->lookup_path &&
         !opening->link_source && !opening->link_target && !rank && !order->mounts && !order->count &&
-        !order->prefix && !order->user_overlay;
+        !order->prefix && !order->user_overlay && !opening->opening_present &&
+        !opening->opening.rank && !opening->opening.order && !opening->opening.order_count &&
+        !opening->opening.prefix && !opening->opening.user_overlay;
 }
 static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
     int64_t *rank, q3p_opening_order *order, const qa_resource *resource,
-    const qa_q3_presentation_provider *provider, const char *path)
+    const qa_q3_presentation_provider *provider, const char *path, uint32_t schema)
 {
     if (!resource) return opening_empty(opening, *rank, order);
     if (!qa_source_save_u64(io, &opening->mount) || !qa_source_save_u64(io, &opening->resource_id) ||
@@ -275,12 +277,21 @@ static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
             }
         }
     }
-    char *normalized = path ? qa_vfs_normalize_path(path, io->error) : NULL;
+    char *normalized = qa_vfs_normalize_path(path ? path : opening->path, io->error);
     bool matches = normalized && !strcmp(normalized, opening->path); free(normalized);
-    return matches && opening->resource_id == qa_resource_id(resource) && resource_owned(provider, resource) &&
-        qa_vfs_acquisition_retained(provider->mounts, opening, io->error);
+    if (!matches || opening->resource_id != qa_resource_id(resource) || !resource_owned(provider, resource) ||
+        !qa_vfs_acquisition_retained(provider->mounts, opening, io->error)) return false;
+    if (schema < 6) return true;
+    if (!qa_vfs_acquisition_opening_codec(io, provider->mounts, opening)) return false;
+    if (!opening->opening_present) return true;
+    const qa_vfs_read_opening *snapshot = &opening->opening;
+    if (snapshot->rank != *rank || snapshot->order_count != order->count ||
+        snapshot->user_overlay != order->user_overlay || (!snapshot->prefix != !order->prefix) ||
+        (snapshot->prefix && strcmp(snapshot->prefix, order->prefix))) return false;
+    for (size_t i = 0; i < order->count; ++i) if (snapshot->order[i] != order->mounts[i]) return false;
+    return true;
 }
-static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r)
+static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r, uint32_t schema)
 {
     if (!qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
         !qa_source_save_u32(io, &m->lods.lod_count) || m->lods.lod_count > 3 ||
@@ -295,7 +306,7 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
             !resource_fields(io, &m->lod_resources[i], r) ||
             !resource_owned(&m->provider, m->lod_resources[i]) ||
             !opening_fields(io, &m->lod_openings[i], &m->lod_opening_ranks[i],
-                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i])) return false;
+                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i], schema)) return false;
         const char *base = m->opening.path, *dot = strrchr(base, '.');
         size_t stem = dot ? (size_t)(dot - base) : strlen(base);
         if (!i) { if (strcmp(m->lods.paths[i], base)) return false; }
@@ -344,13 +355,13 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
     return true;
 }
 static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
-    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
+    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
 {
     if (!provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||
         !resource_owned(&m->provider, m->resource) ||
         !private_text(io, &m->first_requested_path) || !m->first_requested_path || !*m->first_requested_path ||
         !opening_fields(io, &m->opening, &m->opening_rank, &m->opening_order,
-            m->resource, &m->provider, m->first_requested_path) ||
+            m->resource, &m->provider, m->first_requested_path, schema) ||
         !qa_source_save_bool(io, &m->has_lods) || !qa_source_save_bool(io, &m->owns_world) ||
         !qa_source_save_u32(io, &m->inline_model) ||
         !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
@@ -368,7 +379,7 @@ static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
             m->inline_model >= qa_collision_model_count(a->geometry))) return false;
     } else {
         if (!m->resource || m->owns_world || m->inline_model) return false;
-        if (m->has_lods) { if (!lod_fields(io, m, r)) return false; }
+        if (m->has_lods) { if (!lod_fields(io, m, r, schema)) return false; }
         else {
             const qa_model *source = reading(io) ? NULL : q3p_model_source(m, 0);
             if (!source_fields(io, &source, m->resource, r) || !source) return false;
@@ -392,6 +403,167 @@ static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
             !m->source_leases[i].context || !m->source_leases[i].release)) return false;
     }
     return true;
+}
+static bool source_lod_path(const q3p_model *m, unsigned slot, qa_error *error)
+{
+    char *base = qa_vfs_normalize_path(m->first_requested_path, error);
+    if (!base) return false;
+    const char *dot = strrchr(base, '.');
+    size_t stem = dot ? (size_t)(dot - base) : strlen(base);
+    const char *path = m->lods.paths[slot];
+    bool same = path && (!slot ? !strcmp(path, base) :
+        stem <= SIZE_MAX - 6 && strlen(path) == stem + 6 &&
+        !memcmp(path, base, stem) && !strcmp(path + stem, slot == 1 ? "_1.md3" : "_2.md3"));
+    free(base); return same;
+}
+static bool source_model_fields(qa_source_save_io *io, q3p_model *m,
+    const qa_q3_asset_owner_refs *r)
+{
+    uint32_t kind = m->source_kind;
+    if (!qa_source_save_bool(io, &m->registration_bad) ||
+        !qa_source_save_u32(io, &kind) || (kind != QA_MODEL_MD3 && kind != QA_MODEL_MD4) ||
+        !qa_source_save_u32(io, &m->source_num_lods) || m->source_num_lods > 3 ||
+        !provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||
+        !resource_owned(&m->provider, m->resource) ||
+        !private_text(io, &m->first_requested_path) || !m->first_requested_path ||
+        !*m->first_requested_path || strlen(m->first_requested_path) >= 64 ||
+        !opening_fields(io, &m->opening, &m->opening_rank, &m->opening_order,
+            m->resource, &m->provider, m->opening.path, 6) || (m->resource && !m->opening.opening_present) ||
+        !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
+        !qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
+        !qa_source_save_u32(io, &m->lods.lod_count) || m->lods.lod_count > 3 ||
+        !qa_source_save_count(io, &m->lods.byte_length, SIZE_MAX)) return false;
+    if (reading(io)) { m->source_kind = (qa_model_format)kind; m->has_lods = true; }
+    if (!m->has_lods || m->world || m->owns_world || m->inline_model) return false;
+    bool ordered[3] = {false}; uint32_t successful = 0, aliases = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t state = m->lods.states[i];
+        if (!qa_source_save_u32(io, &state) || state > QA_MODEL_LOD_ALIAS ||
+            !qa_source_save_u32(io, &m->lods.aliases[i]) || m->lods.aliases[i] >= 3 ||
+            !qa_source_save_u32(io, &m->lods.load_order[i]) || m->lods.load_order[i] >= 3 ||
+            !qa_source_save_bool(io, &m->source_md4_slots[i]) ||
+            !private_text(io, &m->lods.paths[i]) || !source_lod_path(m, i, io->error) ||
+            !resource_fields(io, &m->lod_resources[i], r) ||
+            !resource_owned(&m->provider, m->lod_resources[i]) ||
+            !opening_fields(io, &m->lod_openings[i], &m->lod_opening_ranks[i],
+                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i], 6) ||
+            (m->lod_resources[i] && !m->lod_openings[i].opening_present)) return false;
+        if (reading(io)) m->lods.states[i] = (qa_model_lod_state)state;
+        if (i < m->lods.load_count) {
+            uint32_t slot = m->lods.load_order[i];
+            if (ordered[slot] || (i && slot >= m->lods.load_order[i - 1])) return false;
+            ordered[slot] = true;
+        } else if (m->lods.load_order[i]) return false;
+        if (state == QA_MODEL_LOD_LOADED || m->source_md4_slots[i]) ++successful;
+        if (state == QA_MODEL_LOD_ALIAS) {
+            if (i == 2 || m->lods.aliases[i] != i + 1 || m->lod_resources[i]) return false;
+            ++aliases;
+        } else if (m->lods.aliases[i]) return false;
+        if (m->source_md4_slots[i] && (state != QA_MODEL_LOD_MISSING || !m->lod_resources[i])) return false;
+        if ((state == QA_MODEL_LOD_LOADED || state == QA_MODEL_LOD_INVALID) && !m->lod_resources[i]) return false;
+    }
+    if (successful + aliases != m->source_num_lods ||
+        m->lods.lod_count != m->source_num_lods ||
+        (!m->registration_bad && !successful)) return false;
+    int failed_slot = -1; bool unknown = false;
+    for (unsigned i = 0; i < 3; ++i) if (m->lod_resources[i]) {
+        bool failure = m->lods.states[i] == QA_MODEL_LOD_INVALID ||
+            (m->lods.states[i] == QA_MODEL_LOD_MISSING && !m->source_md4_slots[i]);
+        if (!failure) continue;
+        if (failed_slot >= 0 || !m->lods.load_count ||
+            i != m->lods.load_order[m->lods.load_count - 1]) return false;
+        failed_slot = (int)i;
+        unknown = m->lods.states[i] == QA_MODEL_LOD_MISSING;
+        qa_bytes bytes = qa_resource_bytes(m->lod_resources[i]);
+        bool known = bytes.size >= 4 && (!memcmp(bytes.data, "IDP3", 4) || !memcmp(bytes.data, "IDP4", 4));
+        if (unknown == known) return false;
+    }
+    if (m->registration_bad != (!successful || unknown || failed_slot == 0)) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if ((m->lods.states[i] == QA_MODEL_LOD_ALIAS) !=
+            (!m->registration_bad && failed_slot > 0 && i < (unsigned)failed_slot)) return false;
+    size_t allocations = 0;
+    for (unsigned i = 0; i < 3; ++i) if (m->lods.states[i] == QA_MODEL_LOD_LOADED || m->source_md4_slots[i]) {
+        qa_bytes bytes = qa_resource_bytes(m->lod_resources[i]);
+        size_t end = m->source_md4_slots[i] ? 96 : 104;
+        if (bytes.size < end + 4 || memcmp(bytes.data, m->source_md4_slots[i] ? "IDP4" : "IDP3", 4)) return false;
+        size_t length = qa_load_u32le(bytes.data + end);
+        if (length > bytes.size || length > SIZE_MAX - allocations) return false;
+        allocations += length;
+    }
+    if (allocations != m->lods.byte_length) return false;
+    const qa_resource *primary = NULL; unsigned primary_slot = 3, md4_slot = 3;
+    uint32_t latest_kind = QA_MODEL_MD3;
+    for (unsigned n = 0; n < 3; ++n) {
+        if (ordered[n] != (m->lod_resources[n] != NULL)) return false;
+        if (n >= m->lods.load_count) continue;
+        unsigned slot = m->lods.load_order[n];
+        if (!primary) { primary = m->lod_resources[slot]; primary_slot = slot; }
+        if (m->lods.states[slot] == QA_MODEL_LOD_LOADED || m->source_md4_slots[slot]) {
+            primary = m->lod_resources[slot];
+            primary_slot = slot;
+            latest_kind = m->source_md4_slots[slot] ? QA_MODEL_MD4 : QA_MODEL_MD3;
+            if (m->source_md4_slots[slot]) md4_slot = slot;
+        }
+    }
+    if (m->resource != primary || kind != latest_kind ||
+        (primary_slot < 3 && strcmp(m->opening.path, m->lod_openings[primary_slot].path))) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        const qa_model *source = reading(io) ? NULL : q3p_model_source(m, i);
+        unsigned target = i;
+        for (unsigned depth = 0; depth < 3 && m->lods.states[target] == QA_MODEL_LOD_ALIAS; ++depth)
+            target = m->lods.aliases[target];
+        const qa_resource *resource = m->lods.states[target] == QA_MODEL_LOD_LOADED ? m->lod_resources[target] : NULL;
+        if (!source_fields(io, &source, resource, r) ||
+            (resource != NULL) != (source != NULL) || (source && source->format != QA_MODEL_MD3)) return false;
+        if (reading(io)) m->sources[i] = source;
+        if (!scene_fields(io, &m->scene[i], &m->scene_ordinals[i], r) ||
+            (source != NULL) != (m->scene[i] != NULL) || (m->scene[i] &&
+            (qa_scene_model_source(m->scene[i]) != source ||
+             qa_scene_model_resource_owner(m->scene[i]) != m->provider.images ||
+             qa_scene_model_material_owner(m->scene[i]) != m->provider.materials))) return false;
+        for (unsigned j = 0; j < i; ++j)
+            if ((source && source == q3p_model_source(m, j)) !=
+                (m->scene[i] && m->scene[i] == m->scene[j])) return false;
+    }
+    for (unsigned i = 0; i < 3; ++i) if (m->lods.states[i] == QA_MODEL_LOD_ALIAS &&
+        (q3p_model_source(m, i) != q3p_model_source(m, m->lods.aliases[i]) ||
+         m->scene[i] != m->scene[m->lods.aliases[i]])) return false;
+    if (!resource_fields(io, &m->source_md4_resource, r) ||
+        !resource_owned(&m->provider, m->source_md4_resource) ||
+        m->source_md4_resource != (md4_slot < 3 ? m->lod_resources[md4_slot] : NULL) ||
+        !opening_fields(io, &m->source_md4_opening, &m->source_md4_rank, &m->source_md4_order,
+            m->source_md4_resource, &m->provider, md4_slot < 3 ? m->lods.paths[md4_slot] : NULL, 6) ||
+        (m->source_md4_resource && !m->source_md4_opening.opening_present)) return false;
+    const qa_model *md4 = reading(io) ? NULL : (m->borrowed_models ? m->source_md4 :
+        (m->source_md4_resource ? &m->source_md4_model : NULL));
+    if (!source_fields(io, &md4, m->source_md4_resource, r) ||
+        (md4 != NULL) != (m->source_md4_resource != NULL) || (md4 && md4->format != QA_MODEL_MD4) ||
+        !scene_fields(io, &m->source_md4_scene, &m->source_md4_scene_ordinal, r) ||
+        (md4 != NULL) != (m->source_md4_scene != NULL) || (m->source_md4_scene &&
+        (qa_scene_model_source(m->source_md4_scene) != md4 ||
+         qa_scene_model_resource_owner(m->source_md4_scene) != m->provider.images ||
+         qa_scene_model_material_owner(m->source_md4_scene) != m->provider.materials))) return false;
+    if (reading(io)) {
+        m->source_md4 = md4;
+        for (unsigned i = 0; i < 3; ++i) {
+            const qa_model *source = m->sources[i]; bool shared = false;
+            for (unsigned j = 0; j < i; ++j) if (source == m->sources[j]) shared = true;
+            if (source && !shared && (!r->model_retain(r->context, source, &m->source_leases[i], io->error) ||
+                !m->source_leases[i].context || !m->source_leases[i].release)) return false;
+        }
+        if (md4 && (!r->model_retain(r->context, md4, &m->source_md4_lease, io->error) ||
+            !m->source_md4_lease.context || !m->source_md4_lease.release)) return false;
+    }
+    return true;
+}
+static bool model_fields(qa_source_save_io *io, q3p_model *m,
+    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
+{
+    if (schema >= 6 && !qa_source_save_bool(io, &m->source_registration)) return false;
+    if (m->source_registration) return
+        qa_material_library_has_source_profile(a->options.provider.materials) && source_model_fields(io, m, r);
+    return ordinary_model_fields(io, m, a, r, schema);
 }
 static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r, uint32_t schema)
 {
@@ -467,12 +639,16 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
             if (!a->models[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 model holder");
             a->models[i]->borrowed_models = a->models[i]->borrowed_scenes = a->models[i]->borrowed_world = true;
         }
-        if (!shared && !model_fields(io, a->models[i], a, r)) return false;
+        if (!shared && !model_fields(io, a->models[i], a, r, schema)) return false;
         for (size_t j = 0; j < i; ++j) if (a->models[j]) {
             q3p_model *prior = a->models[j], *current = a->models[i];
             if (current->owns_world && prior->owns_world && current->world == prior->world) return false;
             for (unsigned x = 0; x < 3; ++x) for (unsigned y = 0; y < 3; ++y)
                 if (current->scene[x] && current->scene[x] == prior->scene[y]) return false;
+            if (current->source_md4_scene && current->source_md4_scene == prior->source_md4_scene) return false;
+            for (unsigned x = 0; x < 3; ++x)
+                if ((current->scene[x] && current->scene[x] == prior->source_md4_scene) ||
+                    (current->source_md4_scene && current->source_md4_scene == prior->scene[x])) return false;
         }
     }
     for (size_t i = 0; i < a->skin_count; ++i) {
@@ -506,8 +682,8 @@ static bool name_valid(const qa_q3_presentation_assets *a, const q3p_name *entry
         (entry->hash & (a->name_capacity - 1)) != bucket) return false;
     size_t count = entry->kind == Q3P_MODEL ? a->model_count : entry->kind == Q3P_SKIN ? a->skin_count :
         entry->kind == Q3P_SHADER ? a->shader_count : a->sound_count;
-    if ((size_t)entry->handle > count ||
-        (entry->kind == Q3P_MODEL && entry->handle && !a->models[entry->handle - 1])) return false;
+    if ((size_t)entry->handle > count || (entry->kind == Q3P_MODEL && entry->handle &&
+        (!a->models[entry->handle - 1] || a->models[entry->handle - 1]->registration_bad))) return false;
     if (entry->kind == Q3P_SHADER) for (const char *p = entry->name; *p; ++p)
         if (*p >= 'A' && *p <= 'Z') return false;
     return true;
@@ -579,6 +755,11 @@ static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
             kind == Q3P_SHADER ? a->shader_count : a->sound_count;
         for (size_t i = 0; i < count; ++i) {
             if (kind == Q3P_MODEL && !a->models[i]) continue;
+            if (kind == Q3P_MODEL && a->models[i]->registration_bad) {
+                const q3p_name *first = q3p_find_name(a, Q3P_MODEL, a->models[i]->first_requested_path);
+                if (!first || first->handle) return false;
+                continue;
+            }
             if (kind == Q3P_SKIN && a->skins[i]->source_registration && !a->skins[i]->map.count) continue;
             bool found = false;
             for (size_t bucket = 0; bucket < a->name_capacity && !found; ++bucket)
@@ -680,6 +861,8 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
             for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
             if (m->scene[x] && !shared) ok = r->scene_owned_ready(r->context, m->scene_ordinals[x], i, error);
         }
+        if (ok && m->source_md4_scene)
+            ok = r->scene_owned_ready(r->context, m->source_md4_scene_ordinal, i, error);
         if (ok && m->owns_world) ok = r->world_owned_ready(r->context, m->world_ordinal, i, error);
     }
     if (ok) for (size_t i = 0; i < a->model_count; ++i) if (a->models[i] && !q3p_model_shared(a, a->models[i])) {
@@ -689,6 +872,7 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
             for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
             if (m->scene[x] && !shared) r->scene_adopt(r->context, m->scene_ordinals[x]);
         }
+        if (m->source_md4_scene) r->scene_adopt(r->context, m->source_md4_scene_ordinal);
         if (m->owns_world) r->world_adopt(r->context, m->world_ordinal);
         m->borrowed_scenes = m->borrowed_world = false;
     }

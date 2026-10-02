@@ -1,5 +1,6 @@
 #include "guest_q3_catalog.h"
 #include "guest_projection_private.h"
+#include "guest_q3_native_catalog.h"
 #include "qa/game_q3.h"
 #include "qa/json.h"
 #include <limits.h>
@@ -10,6 +11,8 @@
 typedef struct catalog_locator { uint32_t value, maximum; bool global; } catalog_locator;
 typedef struct catalog_selection { int32_t value; qa_item_id item; } catalog_selection;
 struct application_q3_catalog {
+    application_q3_native_catalog *native;
+    q3g_role *native_role;
     qa_qvm_image *image;
     qa_qvm *vm;
     qa_qvm_abi abi;
@@ -298,6 +301,25 @@ bool application_q3_catalog_current(const application_q3_catalog *c, const qa_qv
         qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(image)) &&
         qa_qvm_read(vm, 0, NULL, 0, NULL);
 }
+bool application_q3_catalog_role_current(const application_q3_catalog *c, const q3g_role *role)
+{
+    return c && role && (c->native ? c->native_role == role &&
+        application_q3_native_catalog_current(c->native, role) :
+        application_q3_catalog_current(c, role->image, role->vm, role->abi));
+}
+bool application_q3_catalog_create_native(q3g_role *role, qa_bytes declaration,
+    application_q3_catalog **out, qa_error *e)
+{
+    if (!out || *out || !role || !declaration.size)
+        return fail(e, QA_ERROR_ARGUMENT, "Native catalog requires its retained declaration and empty owner");
+    application_q3_catalog *c = calloc(1, sizeof(*c));
+    if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining native GAME catalog");
+    c->native_role = role;
+    if (!application_q3_native_catalog_create(role, declaration, &c->native, e)) {
+        free(c); return false;
+    }
+    *out = c; return true;
+}
 bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi abi,
     qa_strings *strings, qa_bytes declared, qa_bytes items, bool missionpack,
     application_q3_catalog **out, qa_error *e)
@@ -367,6 +389,7 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
 void application_q3_catalog_destroy(application_q3_catalog *c)
 {
     if (!c) return;
+    application_q3_native_catalog_destroy(c->native);
     records_free(c->records, c->record_count);
     records_free(c->source_records, c->source_record_count);
     free(c->weapons); free(c->inventory); free(c->selection); free(c->stored);
@@ -375,6 +398,7 @@ void application_q3_catalog_destroy(application_q3_catalog *c)
 bool application_q3_catalog_records(application_q3_catalog *c,
     const application_q3_catalog_record **out, size_t *count, qa_error *e)
 {
+    if (c && c->native) return application_q3_native_catalog_records(c->native, out, count, e);
     if (!out || !count || !c || !application_q3_catalog_current(c, c->image, c->vm, c->abi) ||
         (!c->table && !c->source_count))
         return fail(e, QA_ERROR_ARGUMENT, "Catalog records require their actual retained GAME table");
@@ -397,16 +421,18 @@ bool application_q3_catalog_records(application_q3_catalog *c,
 bool application_q3_catalog_weapons(application_q3_catalog *c,
     const application_q3_catalog_weapon **out, size_t *count, qa_error *e)
 {
+    if (c && c->native) return application_q3_native_catalog_weapons(c->native, out, count, e);
     if (!out || !count || !c || !application_q3_catalog_current(c, c->image, c->vm, c->abi))
         return fail(e, QA_ERROR_ARGUMENT, "Catalog weapons require their actual retained GAME owner");
     if (c->live && !refresh(c, true, true, e)) return false;
     *out = c->weapons; *count = c->weapon_count; return true;
 }
 bool application_q3_catalog_standard(const application_q3_catalog *c)
-{ return c && !c->table; }
+{ return c && !c->native && !c->table; }
 bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id item,
     const char **out, qa_error *e)
 {
+    if (c && c->native) return application_q3_native_catalog_ammo_label(c->native, item, out, e);
     if (!c || !item || !out || !application_q3_catalog_current(c, c->image, c->vm, c->abi))
         return fail(e, QA_ERROR_ARGUMENT, "Ammo label requires its actual retained GAME catalog");
     const application_q3_catalog_record *records;

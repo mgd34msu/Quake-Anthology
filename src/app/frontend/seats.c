@@ -269,7 +269,7 @@ bool frontend_seat_client_recipient_ready_is(const qa_frontend *f,uint32_t physi
 {
     if (!f || !source || !f->seats || physical>=f->options.seats ||
         source->context.physical_seat!=physical || !source->context.console || !source->context.cvars ||
-        !qa_application_client_current(f->application,source)) return false;
+        !qa_application_client_associated(f->application,source)) return false;
     const frontend_seat *seat=f->seats+physical;
     return seat->frontend==f && seat->id==physical &&
         qa_input_seat_recipient_ready_is(seat->input,source->context.console,source->context.cvars,&source->context.command) &&
@@ -278,7 +278,8 @@ bool frontend_seat_client_recipient_ready_is(const qa_frontend *f,uint32_t physi
 bool frontend_seat_client_recipient_ready(qa_frontend *f,uint32_t physical,
     const qa_application_client_source *source,qa_error *error)
 {
-    if (!frontend_seat_client_recipient_ready_is(f,physical,source))
+    if (!frontend_seat_client_recipient_ready_is(f,physical,source) ||
+        !qa_application_client_current(f->application,source))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT input recipient lost its returned physical source");
     frontend_seat *seat=f->seats+physical;
     return qa_input_seat_recipient_ready(seat->input,source->context.console,source->context.cvars,
@@ -294,8 +295,12 @@ void frontend_seat_client_recipient_publish(qa_frontend *f,uint32_t physical,
 }
 bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
 {
-    if (!f || !f->source_restoring || !f->seats)
+    if (!f || !f->source_restoring)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input recipient import requires the actual restoring frontend");
+    if (f->options.dedicated) return !f->seats ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has unexpected physical seats");
+    if (!f->seats || !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Input import lost its actual physical seat roster");
     frontend_network_client_recipient recipients[QA_INPUT_LOCAL_SEATS]={0};
     bool present[QA_INPUT_LOCAL_SEATS]={0};
     for (uint32_t i=0;i<f->options.seats;++i) {
@@ -306,6 +311,28 @@ bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
     for (uint32_t i=0;i<f->options.seats;++i)
         if (present[i]) frontend_seat_client_recipient_publish(f,i,&recipients[i].source);
     return true;
+}
+bool frontend_seat_engine_recipient_ready(qa_frontend *f,uint32_t physical,qa_command_context *out,qa_error *error)
+{
+    if (!f || !f->application || !f->seats || physical>=f->options.seats || !out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"ENGINE input handoff lost its actual physical seat");
+    frontend_seat *seat=f->seats+physical;
+    if (seat->frontend!=f || seat->id!=physical || !seat->input || !seat->console)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"ENGINE input handoff lost its installed physical services");
+    qa_command_context previous=qa_input_seat_context(seat->input);
+    qa_command_context command={.seat=physical,.origin=QA_COMMAND_SEAT,.dialect=previous.dialect,.direct=true};
+    (void)frontend_seat_launch_id_read(f,physical,&command.seat);
+    qa_console *console=qa_application_console(f->application); qa_cvars *cvars=qa_application_cvars(f->application);
+    if (!qa_input_seat_recipient_ready(seat->input,console,cvars,&command,error) ||
+        !qa_seat_console_recipient_ready(seat->console,console,&command,error)) return false;
+    *out=command; return true;
+}
+void frontend_seat_engine_recipient_publish(qa_frontend *f,uint32_t physical,const qa_command_context *command)
+{
+    frontend_seat *seat=f->seats+physical;
+    qa_console *console=qa_application_console(f->application); qa_cvars *cvars=qa_application_cvars(f->application);
+    qa_input_seat_recipient_publish(seat->input,console,cvars,command);
+    qa_seat_console_recipient_publish(seat->console,console,command);
 }
 bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
 {
@@ -473,21 +500,23 @@ static bool input_services_encode(void *context, const qa_input_seat_options *op
         options->before_ui!=source_input || options->before_ui_user!=seat ||
         options->context_ready!=frontend_seat_context_ready || options->context_user!=seat)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved input services differ from their actual frontend seat binding");
-    *out=((uint64_t)seat->id+1)|(client?UINT64_C(256):0); return true;
+    *out=((uint64_t)seat->id+1)|(client?UINT64_C(256):0)|((uint64_t)options->context.dialect<<16); return true;
 }
 static bool input_services_decode(void *context, uint64_t key, qa_input_seat_options *out, qa_error *error)
 {
     frontend_seat *seat=context;
     bool client=(key&UINT64_C(256))!=0;
-    if (!saved_seat_ready(seat) || !out || (key&~UINT64_C(256))!=(uint64_t)seat->id+1)
+    uint64_t dialect=key>>16;
+    if (!saved_seat_ready(seat) || !out || dialect<QA_CONSOLE_Q1 || dialect>QA_CONSOLE_Q3 ||
+        (key&UINT64_C(65535)&~UINT64_C(256))!=(uint64_t)seat->id+1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
-    qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=QA_CONSOLE_Q1,.direct=true};
+    qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=(qa_console_dialect)dialect,.direct=true};
     qa_console *console=qa_application_console(seat->frontend->application);
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     if (client) {
         frontend_network_client_recipient recipient; bool present;
         if (!frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,error) ||
-            !present || !recipient.ready)
+            !present || !recipient.ready || recipient.source.context.command.dialect!=(qa_console_dialect)dialect)
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved input CLIENT recipient is absent or incomplete");
         command=recipient.source.context.command; console=recipient.source.context.console; cvars=recipient.source.context.cvars;
     }
@@ -545,8 +574,9 @@ qa_input_checkpoint_refs frontend_seat_input_refs(frontend_seat *seat)
 }
 static bool console_services(const frontend_seat *seat, const qa_seat_console_options *options)
 {
+    bool client=false;
     return saved_seat_ready(seat) && options && options->seat==seat->id &&
-        options->commands==qa_application_console(seat->frontend->application) && options->context==seat &&
+        recipient_services(seat,options->commands,NULL,&options->command,&client) && options->context==seat &&
         options->context_ready==frontend_seat_context_ready &&
         options->now_ms==input_now_ms && options->connected==connected && options->clipboard==clipboard &&
         options->focus==focus && options->chat==chat;
@@ -554,20 +584,35 @@ static bool console_services(const frontend_seat *seat, const qa_seat_console_op
 static bool seat_console_encode(void *context, const qa_seat_console_options *options, qa_buffer *out, qa_error *error)
 {
     frontend_seat *seat=context;
-    if (!console_services(seat,options) || !local_context(&options->command,seat) || !out || out->data || out->size)
+    bool client=false;
+    if (!console_services(seat,options) ||
+        !recipient_services(seat,options->commands,NULL,&options->command,&client) || !out || out->data || out->size)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat console capture lacks its actual installed callbacks");
-    uint8_t *data=malloc(8);
+    uint8_t *data=malloc(12);
     if (!data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining seat console service descriptor");
     memcpy(data,"QFSC",4); qa_store_u32le(data+4,seat->id);
-    *out=(qa_buffer){data,8}; return true;
+    qa_store_u32le(data+8,client?1u:0u);
+    *out=(qa_buffer){data,12}; return true;
 }
 static bool seat_console_decode(void *context, const qa_seat_console_options *candidate, qa_bytes bytes,
     qa_command_context *command, qa_error *error)
 {
     frontend_seat *seat=context;
-    if (!console_services(seat,candidate) || !command || !bytes.data || bytes.size!=8 ||
-        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || !local_context(command,seat))
+    if (!console_services(seat,candidate) || !command || !bytes.data || bytes.size!=12 ||
+        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || qa_load_u32le(bytes.data+8)>1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved console descriptor differs from its prepared actual seat");
+    bool client=false;
+    if (!recipient_services(seat,candidate->commands,NULL,&candidate->command,&client) ||
+        client!=(qa_load_u32le(bytes.data+8)!=0) || command->script)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved console command names another physical recipient");
+    if (client) {
+        if (command->dialect!=candidate->command.dialect || command->origin!=candidate->command.origin ||
+            command->seat!=candidate->command.seat || command->direct!=candidate->command.direct ||
+            command->console_text!=candidate->command.console_text)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved CLIENT console command differs from its actual namespace");
+        *command=candidate->command;
+    } else if (!local_context(command,seat))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved ENGINE console template belongs to another physical seat");
     return true;
 }
 qa_seat_console_save_resolvers frontend_seat_console_refs(frontend_seat *seat)
