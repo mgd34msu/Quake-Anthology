@@ -491,8 +491,8 @@ static bool q3_source_info(application_provider *p, qa_error *error) {
 bool application_native_q3_settings_source_loaded(application_provider *p, qa_error *error) {
     qa_application *app = p->application;
     const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
-    if (!map || !application_native_q3_settings_force_set(p, "mapname", map, error) ||
-        !application_native_q3_settings_force_set(p, "sv_mapname", map, error)) return false;
+    if (!map || !application_native_q3_settings_source_set(p, "mapname", map, error) ||
+        !application_native_q3_settings_source_set(p, "sv_mapname", map, error)) return false;
     return application_native_q3_settings_remap_teams(p, error) &&
         application_native_q3_settings_update(p, error) && q3_source_rules(p, error) &&
         application_native_q3_settings_source_modes(p, error) && q3_source_info(p, error);
