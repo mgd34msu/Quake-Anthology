@@ -382,11 +382,11 @@ static bool patrol(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_er
     if(point<0) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
     bot_source_waypoint *current=&b->source_orders.points[point];
     if(qa_bot_goal_touching(s->player.origin,&current->goal)) {
-        if(order->patrol_flags&4) {
+        if(bot_ai_patrol_flags(s)&4) {
             if(current->prev>=0) order->current_patrol_point=current->prev;
-            else {order->current_patrol_point=current->next;order->patrol_flags&=~4;}
+            else {order->current_patrol_point=current->next;bot_ai_patrol_flags_set(s,bot_ai_patrol_flags(s)&~4);}
         } else if(current->next>=0) order->current_patrol_point=current->next;
-        else {order->current_patrol_point=current->prev;order->patrol_flags|=4;}
+        else {order->current_patrol_point=current->prev;bot_ai_patrol_flags_set(s,bot_ai_patrol_flags(s)|4);}
     }
     if(bot_ai_team_goal_time(s)<b->time) {
         SOURCE_CALL(chat(b,s,"patrol_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));

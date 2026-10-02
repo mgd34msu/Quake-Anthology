@@ -96,4 +96,10 @@ static inline int32_t bot_ai_team_task_preference(const bot_ai_state *s) {
 static inline void bot_ai_team_task_preference_set(bot_ai_state *s,int32_t value) {
     bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_TEAM_TASK_PREFERENCE,value);
 }
+static inline int32_t bot_ai_patrol_flags(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_PATROL_FLAGS);
+}
+static inline void bot_ai_patrol_flags_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_PATROL_FLAGS,value);
+}
 #endif

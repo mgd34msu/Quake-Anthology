@@ -18,8 +18,7 @@ typedef struct bot_source_orders_state {
     int32_t client_name_maxclients, team_name_maxclients;
 } bot_source_orders_state;
 typedef struct bot_source_order_state {
-    char subteam[32];
-    int32_t checkpoints, patrol_points, current_patrol_point, patrol_flags;
+    int32_t checkpoints, patrol_points, current_patrol_point;
 } bot_source_order_state;
 
 struct qa_bots;

@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=27;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=28;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==27?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==28?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -51,9 +51,7 @@ static bool player_fields(qa_source_save_io *io, qa_bot_player *player)
     return true;
 }
 static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *order) {
-    if(!qa_source_save_bytes(io,order->subteam,sizeof(order->subteam)) ||
-       !memchr(order->subteam,0,sizeof(order->subteam))) return false;
-    I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);I(order->patrol_flags);
+    I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);
     return true;
 }
 static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders) {

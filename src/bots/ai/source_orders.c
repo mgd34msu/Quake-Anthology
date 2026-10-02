@@ -187,8 +187,15 @@ static bool addressed(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,
             if(!found) return true;
             if(addressee.type==MSG_EVERYONE) {*out=true;return true;}
             char target[256];if(!variable(&addressee,VAR_TEAMMATE,target,e)) return false;
-            if(*target && (qa_bot_chat_contains(own_name,target,false)>=0 ||
-                qa_bot_chat_contains(s->source_order.subteam,target,false)>=0)) {*out=true;return true;}
+            if(*target) {
+                bool contains=qa_bot_chat_contains(own_name,target,false)>=0;
+                if(!contains) {
+                    const char *team;
+                    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_SUBTEAM,&team,e)) return false;
+                    contains=qa_bot_chat_contains(team,target,false)>=0;
+                }
+                if(contains) {*out=true;return true;}
+            }
             if(addressee.type!=MSG_NAMES) return true;
             if(!variable(&addressee,VAR_TIME,text,e)) return false;
         }
@@ -514,7 +521,7 @@ static bool patrol_points(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,
     }
     free_points(b,s->source_order.patrol_points);
     s->source_order.patrol_points=points;s->source_order.current_patrol_point=points;
-    s->source_order.patrol_flags=flags;*out=true;return true;
+    bot_ai_patrol_flags_set(s,flags);*out=true;return true;
 }
 static bool patrol(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
     bool allowed;if(!order_allowed(b,s,m,&allowed,e)) return false;
@@ -597,20 +604,19 @@ static bool subteam(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_err
     if(!allowed || !alive(b,s)) return true;
     if(m->type==MSG_JOIN) {
         char team[256];if(!variable(m,VAR_TEAMMATE,team,e)) return false;
-        size_t length=strlen(team);if(length>32) length=32;
-        memcpy(s->source_order.subteam,team,length);
-        if(length<32) memset(s->source_order.subteam+length,0,32-length);
-        s->source_order.subteam[31]=0;
+        if(!qa_bot_source_record_subteam(&b->services.memory,s->source_record,team,false,e)) return false;
         return requester_chat(b,s,m,"joinedteam",team,NULL,QA_BOT_CHAT_TELL,e);
     }
     if(m->type==MSG_LEAVE) {
-        if(*s->source_order.subteam &&
-           !requester_chat(b,s,m,"leftteam",s->source_order.subteam,NULL,QA_BOT_CHAT_TELL,e)) return false;
-        s->source_order.subteam[0]=0;return true;
+        const char *team;
+        if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_SUBTEAM,&team,e)) return false;
+        if(*team && !requester_chat(b,s,m,"leftteam",team,NULL,QA_BOT_CHAT_TELL,e)) return false;
+        return qa_bot_source_record_subteam(&b->services.memory,s->source_record,NULL,true,e);
     }
     int32_t self;if(!bot_ai_source_client(b,s,&self,e)) return false;
-    return send_chat(b,s,*s->source_order.subteam?"inteam":"noteam",
-        *s->source_order.subteam?s->source_order.subteam:NULL,NULL,self,QA_BOT_CHAT_TEAM,e);
+    const char *team;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_SUBTEAM,&team,e)) return false;
+    return send_chat(b,s,*team?"inteam":"noteam",*team?team:NULL,NULL,self,QA_BOT_CHAT_TEAM,e);
 }
 static bool formation_space(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
     bool allowed;if(!order_allowed(b,s,m,&allowed,e)) return false;
