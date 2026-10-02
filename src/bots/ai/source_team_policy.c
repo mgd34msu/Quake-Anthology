@@ -29,9 +29,6 @@ static bool same(const char *a, const char *b) {
         if(!x) return true;
     }
 }
-static void leader_name(const bot_ai_state *s, char name[33]) {
-    memcpy(name,s->team_leader_name,32);name[32]=0;
-}
 static int32_t maximum(qa_bots *b, int32_t *cache) {
     if(!*cache) {
         qa_cvars *vars=b->services.configuration?b->services.configuration(b->services.context):NULL;
@@ -422,8 +419,9 @@ static bool orders_team(qa_bots *b, bot_ai_state *s, qa_error *e) {
     return true;
 }
 static bool known_bot_leader(qa_bots *b, bot_ai_state *s, bool *out, qa_error *e) {
-    char name[33];leader_name(s,name);int32_t client;
+    const char *name;int32_t client;
     *out=false;if(!alive(b,s)) return true;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&name,e)) return false;
     if(!bot_ai_source_client_from_name(b,name,&client,e)) return false;
     if(!alive(b,s) || client<0 || client>=64) return true;
     uint32_t slot=b->source_clients[client];
@@ -448,7 +446,8 @@ bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
         if(picked(s,old_inventory,QA_BOT_INV_AMMO_REGEN)) offense=0;
     }
     if(offense<0) return true;
-    int32_t leader;char name[33];leader_name(s,name);
+    int32_t leader;const char *name;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&name,e)) return false;
     if(!bot_ai_source_client_from_name(b,name,&leader,e)) return false;
     if(!alive(b,s)) return true;
     int32_t type=b->source_goals.game_type;
@@ -572,16 +571,6 @@ bool bot_ai_source_set_last_order(qa_bots *b, bot_ai_state *s, bool *out, qa_err
     }
     *out=alive(b,s);return true;
 }
-static void copy_leader(bot_ai_state *s, const char *name, bool overflow) {
-    size_t length=strlen(name),maximum_bytes=overflow?32:31;
-    if(length>maximum_bytes) length=maximum_bytes;
-    memcpy(s->team_leader_name,name,length);
-    if(length<32) memset(s->team_leader_name+length,0,32-length);
-    if(overflow) {
-        uint32_t bits;memcpy(&bits,&s->source_order.ask_team_leader_time,sizeof(bits));
-        bits&=UINT32_C(0xffffff00);memcpy(&s->source_order.ask_team_leader_time,&bits,sizeof(bits));
-    }
-}
 static bool human_leader(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     *found=false;
     if(!b->services.source_player) return bot_ai_fail(e,"Source human leadership requires actual GAME clients");
@@ -597,14 +586,7 @@ static bool human_leader(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) 
         if(!b->services.configstring || !b->services.configstring(b->services.context,544+(uint32_t)i,information,sizeof(information),e)) return false;
         if(!alive(b,s)) return true;
         if(!qa_q3_info_value(information,"n",name,sizeof(name),e)) return false;
-        copy_leader(s,name,false);
-        size_t written=0;
-        for(size_t j=0;j<32 && s->team_leader_name[j];++j) {
-            unsigned char c=(unsigned char)s->team_leader_name[j];
-            if(c=='^' && j+1<32 && s->team_leader_name[j+1] && s->team_leader_name[j+1]!='^') {++j;continue;}
-            if(c>=32 && c<=126) s->team_leader_name[written++]=(char)c;
-        }
-        s->team_leader_name[written]=0;
+        if(!qa_bot_source_record_team_leader(&b->services.memory,s->source_record,name,false,true,e)) return false;
         bool retained;if(!bot_ai_source_set_last_order(b,s,&retained,e)) return false;
         if(!alive(b,s)) return true;
         if(!retained) {
@@ -634,35 +616,39 @@ static bool leader_chat(qa_bots *b, bot_ai_state *s, const char *type, qa_error 
     if(!chat_initial(b,s,type,NULL,NULL,e)) return false;
     return !alive(b,s) || qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),0,QA_BOT_CHAT_TEAM,e);
 }
-static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, float *out, qa_error *e) {
+static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, uint32_t offset, qa_error *e) {
     if(!alive(b,s)) return true;
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    if(alive(b,s)) {volatile float delay=random*10.0f;volatile float start=b->time+wait;*out=start+delay;}
+    if(alive(b,s)) {
+        volatile float delay=random*10.0f;volatile float start=b->time+wait;
+        bot_source_f32_write(s->source_span.data+offset,start+delay);
+    }
     return true;
 }
 bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s) || b->source_goals.game_type<3) return true;
-    char leader[33];leader_name(s,leader);int32_t client=-1;
+    const char *leader;int32_t client=-1;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
     if(*leader && !bot_ai_source_client_from_name(b,leader,&client,e)) return false;
     if(!alive(b,s)) return true;
     if(!*leader || client==-1) {
         bool found;if(!human_leader(b,s,&found,e)) return false;
         if(!alive(b,s)) return true;
         if(!found) {
-            if(!s->source_order.ask_team_leader_time && !s->source_team_policy.become_team_leader_time) {
-                float *time=s->view.enter_time+10.0f>b->time?&s->source_order.ask_team_leader_time:
-                    &s->source_team_policy.become_team_leader_time;
-                if(!random_deadline(b,s,5,time,e)) return false;
+            if(!bot_ai_ask_team_leader_time(s) && !bot_ai_become_team_leader_time(s)) {
+                uint32_t offset=bot_ai_enter_time(s)+10.0f>b->time?QA_BOT_SOURCE_ASK_TEAM_LEADER_TIME:
+                    QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME;
+                if(!random_deadline(b,s,5,offset,e)) return false;
             }
             if(!alive(b,s)) return true;
-            if(s->source_order.ask_team_leader_time && s->source_order.ask_team_leader_time<b->time) {
+            if(bot_ai_ask_team_leader_time(s) && bot_ai_ask_team_leader_time(s)<b->time) {
                 if(!leader_chat(b,s,"whoisteamleader",e)) return false;
                 if(!alive(b,s)) return true;
-                s->source_order.ask_team_leader_time=0;
-                if(!random_deadline(b,s,8,&s->source_team_policy.become_team_leader_time,e)) return false;
+                bot_ai_ask_team_leader_time_set(s,0);
+                if(!random_deadline(b,s,8,QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME,e)) return false;
             }
             if(!alive(b,s)) return true;
-            if(s->source_team_policy.become_team_leader_time && s->source_team_policy.become_team_leader_time<b->time) {
+            if(bot_ai_become_team_leader_time(s) && bot_ai_become_team_leader_time(s)<b->time) {
                 if(!leader_chat(b,s,"iamteamleader",e) || !bot_ai_source_voice(b,s,-1,"startleader",false,e)) return false;
                 if(!alive(b,s)) return true;
                 int32_t self;char name[36];
@@ -670,27 +656,28 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(!alive(b,s)) return true;
                 if(!bot_ai_client_name(b,self,name,sizeof(name),true,e)) return false;
                 if(!alive(b,s)) return true;
-                copy_leader(s,name,true);s->source_team_policy.become_team_leader_time=0;
+                if(!qa_bot_source_record_team_leader(&b->services.memory,s->source_record,name,true,false,e)) return false;
+                bot_ai_become_team_leader_time_set(s,0);
             }
             return true;
         }
     }
-    s->source_order.ask_team_leader_time=0;s->source_team_policy.become_team_leader_time=0;
+    bot_ai_ask_team_leader_time_set(s,0);bot_ai_become_team_leader_time_set(s,0);
     int32_t self;char name[36];
     if(!bot_ai_source_client(b,s,&self,e)) return false;
     if(!alive(b,s)) return true;
     if(!bot_ai_client_name(b,self,name,sizeof(name),true,e)) return false;
     if(!alive(b,s)) return true;
-    leader_name(s,leader);if(!same(name,leader)) return true;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
+    if(!same(name,leader)) return true;
     int32_t teammates[64],count;
     if(!team_mates(b,s,maximum(b,&b->source_team_policy.num_team_mates_maxclients),teammates,&count,e)) return false;
     if(!alive(b,s)) return true;
     int32_t type=b->source_goals.game_type;
     if(type>7 || (type>4 && !s->team_arena)) return true;
-    bot_source_team_policy_state *policy=&s->source_team_policy;
     bool flags=type==4 || type==5;
     if(bot_ai_num_teammates(s)!=count || bot_ai_force_orders(s) || (flags && bot_ai_flag_status_changed(s))) {
-        policy->team_give_orders_time=b->time;bot_ai_num_teammates_set(s,count);
+        bot_ai_give_orders_time_set(s,b->time);bot_ai_num_teammates_set(s,count);
         if(flags) bot_ai_flag_status_changed_set(s,false);
         bot_ai_force_orders_set(s,false);
     }
@@ -699,15 +686,15 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(!bot_ai_random(b,&random,e)) return false;
         if(!alive(b,s)) return true;
         if((double)random<.4) {
-            bot_ai_ctf_strategy_set(s,bot_ai_ctf_strategy(s)^1);policy->team_give_orders_time=b->time;
+            bot_ai_ctf_strategy_set(s,bot_ai_ctf_strategy(s)^1);bot_ai_give_orders_time_set(s,b->time);
         }
     }
     float delay=type==4?3.0f:type==5?2.0f:5.0f;
-    if(!policy->team_give_orders_time || !(policy->team_give_orders_time<b->time-delay)) return true;
+    if(!bot_ai_give_orders_time(s) || !(bot_ai_give_orders_time(s)<b->time-delay)) return true;
     bool ok=type==3?orders_team(b,s,e):type==4?orders_ctf(b,s,e):type==5?orders_one_flag(b,s,e):
         type==6?orders_bases(b,s,"cmd_attackenemybase",e):type==7?orders_bases(b,s,"cmd_harvest",e):true;
     if(!ok) return false;
-    if(alive(b,s) && type>=3 && type<=7) policy->team_give_orders_time=flags?0:b->time+(type==3?120.0f:30.0f);
+    if(alive(b,s) && type>=3 && type<=7) bot_ai_give_orders_time_set(s,flags?0:b->time+(type==3?120.0f:30.0f));
     return true;
 }
 static bool carries(qa_bots *b, bot_ai_state *s, const qa_bot_entity_info *info,

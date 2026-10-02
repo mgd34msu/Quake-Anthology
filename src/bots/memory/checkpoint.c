@@ -198,6 +198,20 @@ bool qa_bot_memory_checkpoint_resolve(const qa_bot_memory_prepared *plan,qa_bot_
     }
     return bot_memory_fail(error,QA_ERROR_FORMAT,"Bot alias is outside the captured live allocations");
 }
+bool qa_bot_memory_checkpoint_script_alias(const qa_bot_memory_prepared *plan,size_t reference,
+    qa_bytes expected,qa_script_memory_allocation *out,qa_script_memory_span *span,qa_error *error)
+{
+    if(!plan || !out || !span || reference>=plan->image->count)
+        return bot_memory_fail(error,QA_ERROR_FORMAT,"Script alias is outside prepared MEMORY");
+    const memory_image_record *image=&plan->image->records[reference];
+    if(expected.size!=image->size || (expected.size && (!expected.data ||
+       memcmp(expected.data,image->bytes+4,expected.size))))
+        return bot_memory_fail(error,QA_ERROR_FORMAT,"Script continuation differs from captured MEMORY bytes");
+    qa_bot_memory_allocation allocation=plan->aliases[reference];
+    bot_memory_record *record=&plan->records[allocation.slot];
+    *out=(qa_script_memory_allocation){allocation.owner,allocation.generation,allocation.slot};
+    *span=(qa_script_memory_span){record->backing+4,record->size};return true;
+}
 void qa_bot_memory_checkpoint_finish(qa_bot_memory_prepared *plan,bool commit)
 {
     if(!plan) return;

@@ -243,19 +243,22 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
     if(!bot_ai_source_client(b,s,&self,e) || !source_team(b,self,&team,e) ||
        !source_team(b,client,&requester_team,e)) return false;
     if(client<0 || client>=64 || team!=requester_team) return true;
-    char leader[33];memcpy(leader,s->team_leader_name,32);leader[32]=0;
     if(command_word(text,"startleader")) {
-        return bot_ai_client_name(b,client,s->team_leader_name,sizeof(s->team_leader_name),true,e);
+        return bot_ai_leader_client_name(b,s,client,e);
     }
     if(command_word(text,"stopleader")) {
+        const char *leader;
+        if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
         char name[256];if(!bot_ai_client_name(b,client,name,sizeof(name),true,e)) return false;
         if(command_word(leader,name)) {
-            s->team_leader_name[0]=0;b->not_leader[client]=true;
+            bot_ai_team_leader_clear(s);b->not_leader[client]=true;
         }
         return true;
     }
     if(command_word(text,"whoisleader")) {
         char name[256];if(!bot_ai_client_name(b,self,name,sizeof(name),true,e)) return false;
+        const char *leader;
+        if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
         return !command_word(leader,name) ||
             (initial_chat(b,s,"iamteamleader",NULL,0,QA_BOT_CHAT_TEAM,e) && voice_only(b,s,-1,"startleader",e));
     }

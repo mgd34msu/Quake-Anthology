@@ -228,6 +228,7 @@ qa_script_services q3_script_services(qa_q3_host *host)
 {
     return (qa_script_services){host, read_source, release_source, diagnostic,
                                   host->options.script_date, host->options.script_time,
+        qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):
         qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),true};
 }
 
@@ -251,6 +252,7 @@ qa_script_services q3_script_handle_services(q3_script *script, qa_q3_host *host
     script->member = host; script->entered = host;
     return (qa_script_services){script, handle_read, release_source, handle_diagnostic,
         host->options.script_date, host->options.script_time,
+        qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):
         qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),true};
 }
 

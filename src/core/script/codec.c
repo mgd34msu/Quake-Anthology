@@ -170,7 +170,8 @@ static bool codec_macro(script_codec *c, qa_script_macro_state *value) {
     uint32_t builtin = value->builtin;
     if (!codec_span(c, &value->name) || !codec_u32(c, &builtin) ||
         !codec_bool(c, &value->function) || !codec_bool(c, &value->fixed) ||
-        !codec_bool(c, &value->active) || !codec_size(c, &value->parameter_count))
+        !codec_bool(c, &value->active) || !codec_u32(c,&value->pointer) ||
+        !codec_index(c,&value->memory_reference) || !codec_span(c,&value->record) || !codec_size(c, &value->parameter_count))
         return false;
     if (value->parameter_count > 128)
         return codec_bad(c, "Too many script checkpoint macro parameters");
@@ -228,7 +229,8 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
     }
     if (!codec_options(c, &value->options) || !codec_string(c, &value->date) ||
         !codec_string(c, &value->time) || !codec_size(c, &value->expansions) ||
-        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_u32(c,&value->next_token_pointer) ||
+        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_u32(c,&value->next_token_pointer) || !codec_u32(c,&value->next_define_pointer) ||
+        !codec_u32(c,&value->define_first) || !codec_span(c,&value->define_hash) || !codec_index(c,&value->hash_reference) ||
         !codec_span(c, &value->source_record) || !codec_index(c, &value->source_reference) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
         !codec_bool(c, &value->source_failure) || !codec_bool(c, &value->file_text) ||

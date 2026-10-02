@@ -81,4 +81,7 @@ static inline int32_t bot_ai_ctf_strategy(const bot_ai_state *s) {
 static inline void bot_ai_ctf_strategy_set(bot_ai_state *s,int32_t value) {
     bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_CTF_STRATEGY,value);
 }
+static inline void bot_ai_team_leader_clear(bot_ai_state *s) {
+    s->source_span.data[QA_BOT_SOURCE_TEAM_LEADER]=0;
+}
 #endif

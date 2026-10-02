@@ -47,13 +47,6 @@ static bool copy_options(qa_arena *arena, const qa_script_options *source, qa_sc
     out->include_path = script_string(arena, path, strlen(path), e);
     return out->include_path != NULL;
 }
-static size_t find_macro(const script_macro *const *macros, size_t count,
-                         const script_macro *macro) {
-    for (size_t i = 0; i < count; ++i)
-        if (macros[i] == macro)
-            return i;
-    return SIZE_MAX;
-}
 static size_t find_expansion(const script_expansion *const *expansions, size_t count,
                              const script_expansion *expansion) {
     for (size_t i = 0; i < count; ++i)
@@ -75,55 +68,33 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                    .storage = storage,
                                    .frame_count = s->frame_count,
                                    .stack_count = s->stack_count,
-                                   .queue_count = s->queue_count,
+                                   .queue_count = s->macros.queue_count,
                                    .condition_count = s->condition_count,
                                    .expansions = s->expansions,
                                    .outputs = s->outputs,
                                    .next_condition_pointer = s->next_condition_pointer,
-                                   .next_token_pointer = s->next_token_pointer,
+                                   .next_token_pointer = s->macros.next_token_pointer,
                                    .empty_expansion = s->empty_expansion,
                                    .source_failure = s->source_failure,
                                    .file_text = s->services.file_text};
     qa_arena *arena = &storage->arena;
-    qa_script_queued_state *qs=array(arena,s->queue_count,sizeof(*qs),_Alignof(qa_script_queued_state),e);
-    if((s->queue_count && !qs) || !script_queue_snapshot(s,qs,arena,e)) {
-        qa_script_checkpoint_free(&result);return false;
-    }
-    const script_macro **macros = NULL;
-    size_t mc = 0, mcap = 0;
-    const script_expansion **expansions = NULL, **chain = NULL;
-    size_t ec = 0, ecap = 0, chaincap = 0;
-    for (size_t bucket = 0; bucket < 1024; ++bucket)
-        for (const script_macro *m = s->macros.buckets[bucket]; m != NULL; m = m->next) {
-            if (!script_grow((void **)&macros, &mcap, mc + 1, sizeof(*macros), e))
-                goto fail;
-            macros[mc++] = m;
+    if(!script_table_capture((script_macro_table *)&s->macros,&result,arena,e)) {qa_script_checkpoint_free(&result);return false;}
+    qa_script_queued_state *qs=(qa_script_queued_state *)result.queue;
+    const script_expansion **expansions=NULL,**chain=NULL;size_t ec=0,ecap=0,chaincap=0;
+    for(size_t i=0;i<s->macros.queue_records;++i) {
+        if(!s->macros.queue[i].record.bytes) continue;
+        size_t count=0;
+        for(const script_expansion *p=s->macros.queue[i].expansion;
+            p && find_expansion(expansions,ec,p)==SIZE_MAX;p=p->parent) {
+            if(!script_grow((void **)&chain,&chaincap,count+1,sizeof(*chain),e)) goto fail;
+            chain[count++]=p;
         }
-    size_t linked_macros=mc;
-    for (size_t i = 0; i < s->queue_records; ++i) {
-        if(!s->queue[i].record.bytes) continue;
-        size_t count = 0;
-        for (const script_expansion *p = s->queue[i].expansion;
-             p != NULL && find_expansion(expansions, ec, p) == SIZE_MAX; p = p->parent) {
-            if (!script_grow((void **)&chain, &chaincap, count + 1, sizeof(*chain), e))
-                goto fail;
-            chain[count++] = p;
-        }
-        while (count != 0) {
-            const script_expansion *p = chain[--count];
-            if (!script_grow((void **)&expansions, &ecap, ec + 1, sizeof(*expansions), e))
-                goto fail;
-            expansions[ec++] = p;
-            if (find_macro(macros, mc, p->macro) == SIZE_MAX) {
-                if (!script_grow((void **)&macros, &mcap, mc + 1, sizeof(*macros), e))
-                    goto fail;
-                macros[mc++] = p->macro;
-            }
+        while(count) {
+            if(!script_grow((void **)&expansions,&ecap,ec+1,sizeof(*expansions),e)) goto fail;
+            expansions[ec++]=chain[--count];
         }
     }
-    result.macro_count = mc;
     result.expansion_count = ec;
-    qa_script_macro_state *ms = array(arena, mc, sizeof(*ms), _Alignof(qa_script_macro_state), e);
     qa_script_expansion_state *xs =
         array(arena, ec, sizeof(*xs), _Alignof(qa_script_expansion_state), e);
     qa_script_frame_state *fs =
@@ -131,45 +102,17 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
     qa_script_condition_state *cs =
         array(arena, s->condition_count, sizeof(*cs), _Alignof(qa_script_condition_state), e);
     size_t *stack = array(arena, s->stack_count, sizeof(*stack), _Alignof(size_t), e);
-    if ((mc != 0 && ms == NULL) || (ec != 0 && xs == NULL) || (s->frame_count != 0 && fs == NULL) ||
-        (s->queue_count != 0 && qs == NULL) || (s->condition_count != 0 && cs == NULL) ||
+    if ((ec != 0 && xs == NULL) || (s->frame_count != 0 && fs == NULL) ||
+        (s->condition_count != 0 && cs == NULL) ||
         (s->stack_count != 0 && stack == NULL))
         goto fail;
-    result.macros = ms;
     result.expansion_states = xs;
     result.frames = fs;
     result.queue = qs;
     result.conditions = cs;
     result.stack = stack;
-    for (size_t i = 0; i < mc; ++i) {
-        const script_macro *m = macros[i];
-        ms[i] = (qa_script_macro_state){.parameter_count = m->parameter_count,
-                                        .token_count = m->token_count,
-                                        .builtin = m->builtin,
-                                        .function = m->function,
-                                        .fixed = m->fixed,
-                                        .active = i<linked_macros};
-        if (!copy_bytes(arena, m->name, &ms[i].name, e))
-            goto fail;
-        qa_bytes *parameters =
-            array(arena, m->parameter_count, sizeof(*parameters), _Alignof(qa_bytes), e);
-        qa_script_token *tokens =
-            array(arena, m->token_count, sizeof(*tokens), _Alignof(qa_script_token), e);
-        if ((m->parameter_count != 0 && parameters == NULL) ||
-            (m->token_count != 0 && tokens == NULL))
-            goto fail;
-        ms[i].parameters = parameters;
-        ms[i].tokens = tokens;
-        for (size_t j = 0; j < m->parameter_count; ++j)
-            if (!copy_bytes(arena, m->parameters[j], parameters + j, e))
-                goto fail;
-        for (size_t j = 0; j < m->token_count; ++j)
-            if (!copy_token(arena, m->tokens + j, tokens + j, e))
-                goto fail;
-    }
-    for (size_t i = 0; i < ec; ++i)
-        xs[i] = (qa_script_expansion_state){find_macro(macros, mc, expansions[i]->macro),
-                                            find_expansion(expansions, ec, expansions[i]->parent)};
+    for(size_t i=0;i<ec;++i)
+        xs[i]=(qa_script_expansion_state){expansions[i]->macro,find_expansion(expansions,ec,expansions[i]->parent)};
     for (size_t i = 0; i < s->frame_count; ++i) {
         const script_frame *f = s->frames + i;
         fs[i] = (qa_script_frame_state){.condition_base = f->condition_base,
@@ -185,9 +128,9 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
     }
     if (s->stack_count != 0)
         memcpy(stack, s->stack, s->stack_count * sizeof(*stack));
-    for (size_t i=0,j=0;i<s->queue_records;++i) {
-        if(!s->queue[i].record.bytes) continue;
-        qs[j].expansion=find_expansion(expansions,ec,s->queue[i].expansion);
+    for (size_t i=0,j=0;i<s->macros.queue_records;++i) {
+        if(!s->macros.queue[i].record.bytes) continue;
+        qs[j].expansion=find_expansion(expansions,ec,s->macros.queue[i].expansion);
         if(!copy_token(arena,&qs[j].token,&qs[j].token,e)) goto fail;
         ++j;
     }
@@ -206,13 +149,11 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
         if (result.time == NULL)
             goto fail;
     }
-    free(macros);
     free(expansions);
     free(chain);
     *out = result;
     return true;
 fail:
-    free(macros);
     free(expansions);
     free(chain);
     qa_script_checkpoint_free(&result);
@@ -254,10 +195,11 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         c->options.maximum_defines == 0 || c->options.maximum_expression_tokens == 0 ||
         c->options.maximum_source_tokens == 0 ||
         c->stack_count > c->options.maximum_include_depth ||
-        c->queue_count > c->options.maximum_queued_tokens ||
         c->expansions > c->options.maximum_expansions ||
-        c->outputs > c->options.maximum_output_tokens || !c->next_condition_pointer || !c->next_token_pointer ||
+        c->outputs > c->options.maximum_output_tokens || !c->next_condition_pointer || !c->next_token_pointer || !c->next_define_pointer || c->define_first ||
+        c->define_hash.size!=4096 || !c->define_hash.data ||
         c->source_record.size!=SCRIPT_SOURCE_BYTES || !c->source_record.data ||
+        qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_HASH)!=1 ||
         !memchr(c->source_record.data,0,1024) || !memchr(c->source_record.data+SCRIPT_SOURCE_INCLUDE,0,1024) ||
         !c->options.include_path || strcmp(c->options.include_path,(const char *)c->source_record.data+SCRIPT_SOURCE_INCLUDE) ||
         (c->macro_count != 0 && c->macros == NULL) || (c->frame_count != 0 && c->frames == NULL) ||
@@ -267,6 +209,7 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         (c->condition_count != 0 && c->conditions == NULL) ||
         !raw_token_valid(&c->raw_token, c->options.token_limit))
         goto bad;
+    if(!script_table_saved_valid(c,false,e)) return false;
     size_t active = 0;
     for (size_t i = 0; i < c->macro_count; ++i) {
         const qa_script_macro_state *m = c->macros + i;
@@ -315,7 +258,7 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
     }
     for (size_t i = 0; i < c->expansion_count; ++i) {
         const qa_script_expansion_state *x = c->expansion_states + i;
-        if (x->macro >= c->macro_count || (x->parent != SIZE_MAX && x->parent >= i))
+        if (!x->macro || x->macro>=c->next_define_pointer || (x->parent != SIZE_MAX && x->parent >= i))
             goto bad;
     }
     for (size_t i = 0; i < c->queue_count; ++i) {
@@ -338,7 +281,7 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
     uint32_t token_pointer=qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_TOKENS);
     size_t token_walk=0;
     while(token_pointer) {
-        if(token_walk++>=c->queue_count) goto bad;
+        if(token_walk++>=c->queue_count || token_walk>c->options.maximum_queued_tokens) goto bad;
         const qa_script_queued_state *cell=NULL;
         for(size_t i=0;i<c->queue_count;++i) if(c->queue[i].pointer==token_pointer) cell=c->queue+i;
         if(!cell) goto bad;
@@ -401,7 +344,6 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
     s->outputs = c->outputs;
     s->empty_expansion = c->empty_expansion;
     s->source_failure = c->source_failure;
-    script_macro **macros = NULL;
     script_expansion *expansions = NULL;
     if (!copy_options(&s->arena, &c->options, &s->options, e) ||
         !copy_location(&s->arena, c->last_location, &s->last_location, e) ||
@@ -419,20 +361,12 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
             goto fail;
     } else
         s->services.time = NULL;
-    macros = array(&s->arena, c->macro_count, sizeof(*macros), _Alignof(script_macro *), e);
-    expansions =
-        array(&s->arena, c->expansion_count, sizeof(*expansions), _Alignof(script_expansion), e);
-    if ((c->macro_count != 0 && macros == NULL) || (c->expansion_count != 0 && expansions == NULL))
-        goto fail;
-    for (size_t i = 0; i < c->macro_count; ++i) {
-        if (!script_macro_copy(&s->macros, c->macros + i, macros + i, e))
-            goto fail;
-    }
-    for (size_t i = 0; i < c->expansion_count; ++i)
-        expansions[i] = (script_expansion){macros[c->expansion_states[i].macro],
-                                           c->expansion_states[i].parent == SIZE_MAX
-                                               ? NULL
-                                               : expansions + c->expansion_states[i].parent};
+    s->macros.memory=s->memory;s->macros.deferred=detached;s->macros.source=s;
+    expansions=array(&s->arena,c->expansion_count,sizeof(*expansions),_Alignof(script_expansion),e);
+    if(c->expansion_count && !expansions) goto fail;
+    for(size_t i=0;i<c->expansion_count;++i)
+        expansions[i]=(script_expansion){(uint32_t)c->expansion_states[i].macro,
+            c->expansion_states[i].parent==SIZE_MAX?NULL:expansions+c->expansion_states[i].parent};
     if (!script_grow((void **)&s->frames, &s->frame_capacity, c->frame_count, sizeof(*s->frames),
                      e) ||
         !script_grow((void **)&s->stack, &s->stack_capacity, c->stack_count, sizeof(*s->stack),
@@ -464,7 +398,7 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
         memcpy(s->stack, c->stack, c->stack_count * sizeof(*s->stack));
     s->stack_count = c->stack_count;
     if (!script_source_restore(s,c,e) || !script_conditions_restore(s,c,e) ||
-        !script_queue_restore(s,c,expansions,e)) goto fail;
+        !script_queue_restore(&s->macros,c,expansions,e) || !script_table_restore(&s->macros,c,e)) goto fail;
     *out = s;
     return true;
 fail:

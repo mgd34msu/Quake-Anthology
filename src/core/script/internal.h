@@ -105,29 +105,8 @@ static inline bool script_name(uint8_t c) { return script_alpha(c) || script_dig
 static inline bool script_hex(uint8_t c) {
     return script_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
-typedef struct script_macro {
-    struct script_macro *next;
-    qa_bytes name, *parameters;
-    qa_script_token *tokens;
-    size_t parameter_count, token_count;
-    unsigned builtin;
-    bool function, fixed;
-} script_macro;
-typedef struct script_macro_table {
-    script_macro *buckets[1024];
-    size_t count;
-    qa_arena arena;
-} script_macro_table;
-struct qa_script_defines {
-    atomic_uint references;
-    script_macro_table table;
-    script_macro *first;
-    struct qa_script_defines *retired;
-};
-typedef struct script_expansion {
-    const script_macro *macro;
-    const struct script_expansion *parent;
-} script_expansion;
+typedef struct script_expansion script_expansion;
+typedef struct script_macro_table script_macro_table;
 typedef struct script_queued_token {
     qa_script_token token;
     const script_expansion *expansion;
@@ -142,6 +121,33 @@ typedef struct script_token_record {
     size_t extent;
     const script_expansion *expansion;
 } script_token_record;
+typedef struct script_macro {
+    struct script_macro *registry_next;
+    script_macro_table *owner;
+    script_lexer_allocation record;
+    uint32_t pointer;
+    bool published;
+} script_macro;
+struct script_macro_table {
+    qa_script *source;
+    script_macro *records;
+    script_lexer_allocation hash;
+    script_token_record *queue;
+    size_t queue_count,queue_records,queue_capacity;
+    uint32_t next_token_pointer,next_define_pointer,first;
+    size_t count;
+    qa_script_memory memory;
+    qa_arena arena;
+    bool global,retained,deferred;
+};
+struct qa_script_defines {
+    atomic_uint references;
+    script_macro_table table;
+};
+struct script_expansion {
+    uint32_t macro;
+    const script_expansion *parent;
+};
 typedef struct script_frame {
     qa_script_resource resource;
     qa_script_lexer *lexer;
@@ -149,7 +155,7 @@ typedef struct script_frame {
     bool active, owned;
 } script_frame;
 enum { SCRIPT_SOURCE_BYTES=3144, SCRIPT_SOURCE_INCLUDE=1024,
-       SCRIPT_SOURCE_STACK=2052, SCRIPT_SOURCE_TOKENS=2056, SCRIPT_SOURCE_TOKEN=2076, SCRIPT_SOURCE_INDENT=2068, SCRIPT_SOURCE_SKIP=2072 };
+       SCRIPT_SOURCE_HASH=2064, SCRIPT_SOURCE_STACK=2052, SCRIPT_SOURCE_TOKENS=2056, SCRIPT_SOURCE_TOKEN=2076, SCRIPT_SOURCE_INDENT=2068, SCRIPT_SOURCE_SKIP=2072 };
 typedef struct script_source_record {
     qa_script_memory_allocation allocation;
     size_t memory_reference;
@@ -175,9 +181,6 @@ struct qa_script {
     qa_arena arena;
     script_frame *frames;
     size_t frame_count, frame_capacity, *stack, stack_count, stack_capacity;
-    script_token_record *queue;
-    size_t queue_count, queue_records, queue_capacity;
-    uint32_t next_token_pointer;
     qa_script_memory memory;
     script_source_record source_record;
     script_condition_record *conditions;
@@ -194,7 +197,7 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 6 };
+enum { SCRIPT_CHECKPOINT_VERSION = 7 };
 bool script_source_create(qa_script *,qa_error *);
 void script_source_stack(qa_script *);
 bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);
@@ -221,10 +224,14 @@ static inline void script_skipping_set(qa_script *s,uint32_t value) {
     qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_SKIP,value);
 }
 bool script_queue_pop(qa_script *,script_queued_token *,qa_error *);
-bool script_queue_snapshot(const qa_script *,qa_script_queued_state *,qa_arena *,qa_error *);
-bool script_queue_restore(qa_script *,const qa_script_checkpoint *,const script_expansion *,qa_error *);
-bool script_queue_adopt(qa_script *,qa_error *);
+bool script_queue_snapshot(const script_macro_table *,qa_script_queued_state *,qa_arena *,qa_error *);
+bool script_queue_restore(script_macro_table *,const qa_script_checkpoint *,const script_expansion *,qa_error *);
+bool script_queue_adopt(script_macro_table *,bool,qa_error *);
 void script_queue_close(qa_script *,bool);
+script_token_record *script_heap_token(const script_macro_table *,uint32_t);
+bool script_heap_copy_token(script_macro_table *,script_queued_token,script_token_record **,qa_error *);
+bool script_heap_free_token(script_macro_table *,script_token_record *,qa_error *);
+bool script_heap_token_bytes(const script_macro_table *,script_token_record *,qa_error *);
 bool script_memory_bind(qa_script *,qa_error *);
 bool script_memory_enter(qa_script *,qa_error *);
 bool script_condition_top(qa_script *,script_condition *,qa_error *);
@@ -238,14 +245,33 @@ typedef struct script_eval_value {
     int32_t integer;
     double number;
 } script_eval_value;
+uint32_t script_macro_hash(qa_bytes);
+bool script_read_nested(qa_script *,script_queued_token *,bool *,qa_error *);
+bool script_macro_lookup(const script_macro_table *,qa_bytes,script_macro **,qa_error *);
 script_macro *script_macro_find(const script_macro_table *, qa_bytes);
-bool script_macro_remove(script_macro_table *, qa_bytes, bool *fixed);
-bool script_macro_parse(script_macro_table *, const qa_script_token *, size_t, size_t, qa_error *);
+bool script_macro_remove(script_macro_table *, qa_bytes, bool *fixed,qa_error *);
 bool script_macro_text(script_macro_table *, const char *, size_t, qa_error *);
-bool script_macro_copy(script_macro_table *, const qa_script_macro_state *, script_macro **,
-                       qa_error *);
 bool script_globals_import(script_macro_table *, const qa_script_defines *, qa_error *);
-void script_table_clear(script_macro_table *);
+bool script_table_clear(script_macro_table *,qa_error *);
+bool script_table_open(script_macro_table *,const qa_script_memory *,bool,qa_error *);
+void script_table_dispose(script_macro_table *,bool);
+bool script_table_adopt(script_macro_table *,bool,qa_error *);
+bool script_table_hash_bind(const script_macro_table *,qa_error *);
+script_macro *script_macro_resolve(const script_macro_table *,uint32_t);
+qa_bytes script_macro_name(const script_macro *);
+bool script_macro_bind(script_macro *,qa_error *);
+uint32_t script_macro_word(const script_macro *,size_t);
+void script_macro_word_set(script_macro *,size_t,uint32_t);
+script_token_record *script_macro_token_at(script_macro *,size_t,size_t,qa_error *);
+bool script_table_saved_valid(const qa_script_checkpoint *,bool,qa_error *);
+bool script_macro_project(const script_macro *,qa_script_macro_state *,qa_arena *,qa_error *);
+bool script_macro_publish(script_macro_table *,script_macro *,qa_error *);
+bool script_macro_allocate(script_macro_table *,qa_bytes,bool,script_macro **,qa_error *);
+bool script_macro_free(script_macro *,qa_error *);
+bool script_macro_add_token(script_macro *,size_t,script_queued_token,uint32_t *,qa_error *);
+bool script_define_stream(qa_script *,qa_script_location,qa_error *);
+bool script_table_capture(script_macro_table *,qa_script_checkpoint *,qa_arena *,qa_error *);
+bool script_table_restore(script_macro_table *,const qa_script_checkpoint *,qa_error *);
 bool script_fail(qa_script *, qa_script_location, const char *, qa_error *);
 void script_warn(qa_script *, qa_script_location, const char *);
 bool script_raw(qa_script *, script_queued_token *, bool *, qa_error *);

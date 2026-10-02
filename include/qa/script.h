@@ -202,11 +202,13 @@ typedef struct qa_script_options {
     const qa_script_defines *globals;
 } qa_script_options;
 bool qa_script_defines_create(qa_script_defines **, qa_error *);
+bool qa_script_defines_bind_memory(qa_script_defines *,const qa_script_memory *,qa_error *);
+const qa_script_memory *qa_script_defines_memory(const qa_script_defines *);
 void qa_script_defines_retain(qa_script_defines *);
 void qa_script_defines_release(qa_script_defines *);
 bool qa_script_defines_add(qa_script_defines *, const char *definition, qa_error *);
 bool qa_script_defines_remove(qa_script_defines *, const char *name, qa_error *);
-void qa_script_defines_clear(qa_script_defines *);
+bool qa_script_defines_clear(qa_script_defines *,qa_error *);
 bool qa_script_open(const char *path, const qa_script_services *, const qa_script_options *,
                     qa_script **, qa_error *);
 void qa_script_close(qa_script *);
@@ -243,6 +245,9 @@ typedef struct qa_script_macro_state {
     size_t parameter_count, token_count;
     unsigned builtin;
     bool function, fixed, active;
+    uint32_t pointer;
+    size_t memory_reference;
+    qa_bytes record;
 } qa_script_macro_state;
 typedef struct qa_script_frame_state {
     const char *path;
@@ -283,7 +288,9 @@ typedef struct qa_script_checkpoint {
     const qa_script_condition_state *conditions;
     size_t macro_count, frame_count, stack_count, expansion_count, queue_count, condition_count;
     size_t expansions, outputs;
-    uint32_t next_condition_pointer, next_token_pointer;
+    uint32_t next_condition_pointer, next_token_pointer, next_define_pointer, define_first;
+    qa_bytes define_hash;
+    size_t hash_reference;
     qa_bytes source_record;
     size_t source_reference;
     bool empty_expansion;

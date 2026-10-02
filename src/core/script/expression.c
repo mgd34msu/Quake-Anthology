@@ -169,7 +169,9 @@ bool script_expression(qa_script *s, const qa_script_token *tokens, size_t count
                 return script_fail(s, t->location, "defined requires a macro name", e);
             if (tokens[i].kind != QA_SCRIPT_NAME)
                 return script_fail(s, t->location, "defined requires a macro name", e);
-            value.integer = script_macro_find(&s->macros, tokens[i].text) != NULL;
+            script_macro *defined_macro=NULL;
+            if(!script_macro_lookup(&s->macros,tokens[i].text,&defined_macro,e)) return false;
+            value.integer=defined_macro!=NULL;
             value.number = value.integer;
             add = true;
             if (brace && (++i == count || !qa_script_token_is(tokens + i, ")")))

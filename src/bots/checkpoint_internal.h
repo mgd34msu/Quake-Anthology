@@ -10,6 +10,13 @@
 #include "actions_private.h"
 
 typedef struct bot_goal_history bot_goal_history;
+typedef struct bot_define_history bot_define_history;
+typedef struct bot_define_history_restore bot_define_history_restore;
+bool bot_define_history_capture(qa_bot_library *,bot_define_history **,qa_error *);
+void bot_define_history_destroy(bot_define_history *);
+bool bot_define_history_prepare(qa_bot_library *,const bot_define_history *,
+    const qa_bot_memory_prepared *,bot_define_history_restore **,qa_error *);
+void bot_define_history_finish(bot_define_history_restore *,bool);
 typedef struct bot_goal_history_restore bot_goal_history_restore;
 bool bot_goal_history_capture(qa_bot_goals *,bot_fuzzy_history *,bot_goal_history **,qa_error *);
 void bot_goal_history_destroy(bot_goal_history *);

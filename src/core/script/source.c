@@ -205,25 +205,15 @@ bool script_line(qa_script *s, qa_script_token **out, size_t *count, qa_error *e
         tokens[length++] = token.token;
     }
 }
-static bool install_builtins(qa_script *s, qa_error *e) {
-    static const char *names[] = {"__LINE__", "__FILE__", "__DATE__", "__TIME__"};
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
-        if (s->macros.count >= s->options.maximum_defines) {
-            qa_error_set(e, QA_ERROR_FORMAT, 0, "Script builtin count exceeds configured define limit");
-            return false;
-        }
-        script_macro_table parsed = {.arena = s->macros.arena};
-        bool okay = script_macro_text(&parsed, names[i], SIZE_MAX, e);
-        s->macros.arena = parsed.arena;
-        if (!okay) return false;
-        size_t bucket = 0;
-        while (bucket < 1024 && !parsed.buckets[bucket]) ++bucket;
-        script_macro *m = parsed.buckets[bucket];
-        m->builtin = (unsigned)i + 1;
-        m->fixed = true;
-        m->next = s->macros.buckets[bucket];
-        s->macros.buckets[bucket] = m;
-        ++s->macros.count;
+static bool install_builtins(qa_script *source,qa_error *error) {
+    static const char *names[]={"__LINE__","__FILE__","__DATE__","__TIME__"};
+    for(size_t i=0;i<sizeof(names)/sizeof(*names);++i) {
+        if(source->macros.count>=source->options.maximum_defines)
+            return script_fail(source,qa_script_position(source),"Script builtin count exceeds configured define limit",error);
+        script_macro *macro;
+        if(!script_macro_allocate(&source->macros,script_bytes(names[i]),true,&macro,error)) return false;
+        script_macro_word_set(macro,8,(uint32_t)i+1);script_macro_word_set(macro,4,1);
+        if(!script_macro_publish(&source->macros,macro,error)) return false;
     }
     return true;
 }
@@ -273,22 +263,19 @@ bool qa_script_open(const char *path, const qa_script_services *services,
         if (s->services.time == NULL)
             goto fail;
     }
-    if (s->options.globals != NULL) {
-        s->globals = (qa_script_defines *)s->options.globals;
-        qa_script_defines_retain(s->globals);
-        if (!script_globals_import(&s->macros, s->globals, e))
-            goto fail;
+    qa_script_include request={QA_SCRIPT_ROOT,NULL,path,s->options.include_path};
+    if(!script_include(s,&request,e) || !script_source_create(s,e) ||
+       !script_table_open(&s->macros,s->memory.context?&s->memory:NULL,false,e)) goto fail;
+    qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_HASH,1);
+    s->macros.source=s;
+    if(s->options.globals) {
+        s->globals=(qa_script_defines *)s->options.globals;qa_script_defines_retain(s->globals);
+        if(!script_globals_import(&s->macros,s->globals,e)) goto fail;
     }
-    if (s->macros.count > s->options.maximum_defines) {
-        script_fail(s, (qa_script_location){path, 1, 1, 0},
-                    "Initial defines exceed configured limit", e);
-        goto fail;
+    if(s->macros.count>s->options.maximum_defines) {
+        script_fail(s,(qa_script_location){path,1,1,0},"Initial defines exceed configured limit",e);goto fail;
     }
-    if (s->options.builtins && !install_builtins(s, e))
-        goto fail;
-    qa_script_include request = {QA_SCRIPT_ROOT, NULL, path, s->options.include_path};
-    if (!script_include(s, &request, e) || !script_source_create(s,e))
-        goto fail;
+    if(s->options.builtins && !install_builtins(s,e)) goto fail;
     *out = s;
     return true;
 fail:
@@ -316,11 +303,12 @@ static void close_source(qa_script *s,bool source) {
     free(s->frames);
     free(s->stack);
     script_queue_close(s,source);
+    if(source) (void)script_table_clear(&s->macros,NULL);
     script_conditions_close(s,source);
+    script_table_dispose(&s->macros,source);
     script_source_close(s,source);
     if(s->memory.context) s->memory.release(s->memory.context);
     free(s->reads);
-    qa_arena_destroy(&s->macros.arena);
     qa_arena_destroy(&s->arena);
     qa_script_defines_release(s->globals);
     free(s);
@@ -332,7 +320,7 @@ bool qa_script_define(qa_script *s, const char *text, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing script source");
         return false;
     }
-    return script_macro_text(&s->macros, text, s->options.maximum_defines, e);
+    return script_memory_enter(s,e) && script_macro_text(&s->macros, text, s->options.maximum_defines, e);
 }
 bool qa_script_undefine(qa_script *s, const char *name, qa_error *e) {
     if (s == NULL || name == NULL) {
@@ -340,7 +328,10 @@ bool qa_script_undefine(qa_script *s, const char *name, qa_error *e) {
         return false;
     }
     bool fixed;
-    (void)script_macro_remove(&s->macros, script_bytes(name), &fixed);
+    if(!script_memory_enter(s,e)) return false;
+    qa_error failure={0};
+    (void)script_macro_remove(&s->macros,script_bytes(name),&fixed,&failure);
+    if(failure.code!=QA_OK) {if(e) *e=failure;return false;}
     if (fixed)
         script_warn(s, qa_script_position(s), "Cannot undefine a fixed script macro");
     return true;

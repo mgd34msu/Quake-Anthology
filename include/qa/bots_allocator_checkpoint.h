@@ -16,5 +16,9 @@ bool qa_bot_memory_checkpoint_prepare(qa_bot_memory *,const qa_bot_memory_checkp
     qa_bot_memory_prepared **,qa_error *);
 bool qa_bot_memory_checkpoint_resolve(const qa_bot_memory_prepared *,qa_bot_memory_allocation,
     qa_bot_memory_allocation *,qa_error *);
+/* Captured script references are ordered allocation indices. Validate exact
+ * saved bytes before returning the future backing, including recreated cells. */
+bool qa_bot_memory_checkpoint_script_alias(const qa_bot_memory_prepared *,size_t,qa_bytes,
+    qa_script_memory_allocation *,qa_script_memory_span *,qa_error *);
 void qa_bot_memory_checkpoint_finish(qa_bot_memory_prepared *,bool commit);
 #endif

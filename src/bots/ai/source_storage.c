@@ -15,6 +15,23 @@ static bool span(qa_bots *b,bot_ai_state *s,uint32_t offset,uint32_t size,uint8_
     *bytes=s->source_span.data+offset;return true;
 }
 
+bool bot_ai_storage_text(qa_bots *b,bot_ai_state *s,uint32_t offset,const char **out,qa_error *e) {
+    if(!out || !s || s->source_record.length!=QA_BOT_STATE_SOURCE_BYTES ||
+       s->source_record.offset>QA_BOT_GAME_MEMORY_BYTES-QA_BOT_STATE_SOURCE_BYTES ||
+       offset>=s->source_record.length) {
+        bot_ai_fail(e,"BotState text has no actual GAME allocation");return false;
+    }
+    uint32_t start=s->source_record.offset+offset;
+    /* Source CString reads may continue beyond the declared field and record. */
+    qa_bot_source_span text;
+    if(!qa_bot_source_record_span(&b->services.memory,
+        (qa_bot_source_record){start,QA_BOT_GAME_MEMORY_BYTES-start},&text,e)) return false;
+    if(!memchr(text.data,0,text.length)) {
+        qa_error_set(e,QA_ERROR_FORMAT,0,"BotState string reads beyond its real GAME pool");return false;
+    }
+    *out=(const char *)text.data;return true;
+}
+
 bool bot_ai_storage_i32(qa_bots *b,bot_ai_state *s,uint32_t offset,int32_t *value,bool write,qa_error *e) {
     uint8_t *bytes;if(!value || !span(b,s,offset,4,&bytes,e)) return false;
     if(write) bot_source_i32_write(bytes,*value);else *value=bot_source_i32_read(bytes);

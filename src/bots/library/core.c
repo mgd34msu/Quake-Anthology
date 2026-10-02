@@ -3,6 +3,8 @@
 #include "source_weapon_resource.h"
 #include "character_source.h"
 #include "../chat/internal.h"
+#include "../checkpoint_internal.h"
+#include "qa/script_defines_save.h"
 
 bool bot_grow(void **data, size_t *capacity, size_t need, size_t stride, qa_error *e) {
     if (need <= *capacity)
@@ -108,6 +110,8 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
         }
         library->options.preprocessor.globals = globals;
     }
+    if(!qa_script_defines_bind_memory((qa_script_defines *)library->options.preprocessor.globals,
+        qa_bot_memory_script_services(library->memory),e)) {qa_bot_library_destroy(library);return false;}
     if (options->preprocessor.include_path != NULL) {
         library->options.preprocessor.include_path =
             bot_string(&library->arena,
@@ -145,6 +149,44 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
 }
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *library) {
     return library ? library->options.preprocessor.globals : NULL;
+}
+struct bot_define_history {qa_script_defines *owner;qa_buffer bytes;};
+struct bot_define_history_restore {qa_script_defines_prepared *globals;};
+bool bot_define_history_capture(qa_bot_library *library,bot_define_history **out,qa_error *error) {
+    if(!library || !out || *out) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Global history requires its library and empty output");return false;
+    }
+    bot_define_history *image=calloc(1,sizeof(*image));
+    if(!image) {qa_error_set(error,QA_ERROR_MEMORY,0,"Capturing global define history");return false;}
+    image->owner=(qa_script_defines *)library->options.preprocessor.globals;
+    qa_script_defines_retain(image->owner);
+    if(!qa_script_defines_save_capture(image->owner,&image->bytes,error)) {
+        bot_define_history_destroy(image);return false;
+    }
+    *out=image;return true;
+}
+void bot_define_history_destroy(bot_define_history *image) {
+    if(!image) return;
+    qa_buffer_free(&image->bytes);qa_script_defines_release(image->owner);free(image);
+}
+static bool define_history_alias(void *context,size_t reference,qa_bytes bytes,
+    qa_script_memory_allocation *out,qa_script_memory_span *span,qa_error *error) {
+    return qa_bot_memory_checkpoint_script_alias(context,reference,bytes,out,span,error);
+}
+bool bot_define_history_prepare(qa_bot_library *library,const bot_define_history *image,
+    const qa_bot_memory_prepared *memory,bot_define_history_restore **out,qa_error *error) {
+    if(!library || !image || !memory || !out || *out || image->owner!=library->options.preprocessor.globals) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Global history owner differs from its library");return false;
+    }
+    bot_define_history_restore *plan=calloc(1,sizeof(*plan));
+    if(!plan) {qa_error_set(error,QA_ERROR_MEMORY,0,"Preparing global define history");return false;}
+    if(!qa_script_defines_save_prepare(image->owner,(qa_bytes){image->bytes.data,image->bytes.size},
+        (void *)memory,define_history_alias,&plan->globals,error)) {free(plan);return false;}
+    *out=plan;return true;
+}
+void bot_define_history_finish(bot_define_history_restore *plan,bool commit) {
+    if(!plan) return;
+    qa_script_defines_save_finish(plan->globals,commit);free(plan);
 }
 qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
     return library?library->memory:NULL;

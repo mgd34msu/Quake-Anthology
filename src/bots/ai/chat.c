@@ -31,6 +31,14 @@ bool bot_ai_client_name(qa_bots *b,int32_t client,char *name,size_t capacity,boo
     }
     return true;
 }
+bool bot_ai_leader_client_name(qa_bots *b,bot_ai_state *s,int32_t client,qa_error *e) {
+    if(client<0 || client>=64)
+        return bot_ai_source_print(b,"^1Error: ClientName: client out of range\n",e);
+    char information[1024],raw[1024];
+    if(!player_information(b,client,information,e) ||
+       !qa_q3_info_value(information,"n",raw,sizeof(raw),e)) return false;
+    return qa_bot_source_record_team_leader(&b->services.memory,s->source_record,raw,false,true,e);
+}
 bool bot_ai_source_print(qa_bots *b,const char *text,qa_error *e) {
     return b->services.print?b->services.print(b->services.context,text,e):
         bot_ai_fail(e,"bot source Print service is unavailable");

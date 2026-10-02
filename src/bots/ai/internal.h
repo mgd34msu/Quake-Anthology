@@ -52,7 +52,6 @@ typedef struct bot_ai_state {
     float blocked_time;
     bool team_arena, retired;
     uint64_t command_sequence;
-    char team_leader_name[32];
     bot_source_order_state source_order;
     bot_source_team_policy_state source_team_policy;
     bot_source_setup_state source_setup;
@@ -123,6 +122,7 @@ bool bot_ai_session_write(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_client(qa_bots *,bot_ai_state *,int32_t *,qa_error *);
 qa_actor_id bot_ai_source_actor(qa_bots *,int32_t);
 bool bot_ai_client_name(qa_bots *,int32_t,char *,size_t,bool,qa_error *);
+bool bot_ai_leader_client_name(qa_bots *,bot_ai_state *,int32_t,qa_error *);
 bool bot_ai_easy_name(qa_bots *,int32_t,char *,size_t,qa_error *);
 bool bot_ai_decide(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_order_active(const bot_ai_state *);

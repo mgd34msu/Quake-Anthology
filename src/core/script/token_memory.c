@@ -70,13 +70,13 @@ bool script_token_load(const uint8_t *bytes,size_t extent,qa_script_location loc
     return true;
 }
 
-static script_token_record *queue_pointer(const qa_script *s,uint32_t pointer)
+script_token_record *script_heap_token(const script_macro_table *s,uint32_t pointer)
 {
     for(size_t i=0;i<s->queue_records;++i)
         if(s->queue[i].record.bytes && s->queue[i].pointer==pointer) return s->queue+i;
     return NULL;
 }
-static bool queue_bytes(const qa_script *s,script_token_record *node,qa_error *error)
+bool script_heap_token_bytes(const script_macro_table *s,script_token_record *node,qa_error *error)
 {
     if(!node || !node->record.bytes) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Source token pointer has no actual live token_t");return false;
@@ -91,7 +91,7 @@ static bool queue_bytes(const qa_script *s,script_token_record *node,qa_error *e
     }
     return true;
 }
-static bool queue_slot(qa_script *s,script_token_record **out,qa_error *error)
+static bool queue_slot(script_macro_table *s,script_token_record **out,qa_error *error)
 {
     size_t slot=0;
     while(slot<s->queue_records && s->queue[slot].record.bytes) ++slot;
@@ -102,7 +102,7 @@ static bool queue_slot(qa_script *s,script_token_record **out,qa_error *error)
     s->queue[slot]=(script_token_record){.record={.reference=SIZE_MAX,.size=SCRIPT_TOKEN_BYTES}};
     *out=s->queue+slot;return true;
 }
-static bool queue_context(qa_script *s,script_token_record *node,const qa_script_token *token,qa_error *error)
+static bool queue_context(script_macro_table *s,script_token_record *node,const qa_script_token *token,qa_error *error)
 {
     node->location=token->location;
     const char *path=token->location.path?token->location.path:"";
@@ -112,11 +112,8 @@ static bool queue_context(qa_script *s,script_token_record *node,const qa_script
     node->extent=token->text.size && memchr(token->text.data,0,token->text.size)?token->text.size:SIZE_MAX;
     return node->location.path && node->whitespace.data;
 }
-bool script_push(qa_script *s,script_queued_token token,qa_error *error)
+bool script_heap_copy_token(script_macro_table *s,script_queued_token token,script_token_record **out,qa_error *error)
 {
-    if(!script_memory_enter(s,error)) return false;
-    if(s->queue_count>=s->options.maximum_queued_tokens)
-        return script_fail(s,token.token.location,"Script queue exceeds configured limit",error);
     if(!s->next_token_pointer || s->next_token_pointer==UINT32_MAX) {
         qa_error_set(error,QA_ERROR_MEMORY,0,"Source token pointer identities exhausted");return false;
     }
@@ -138,36 +135,56 @@ bool script_push(qa_script *s,script_queued_token token,qa_error *error)
         node->record.bytes=malloc(SCRIPT_TOKEN_BYTES);
         if(!node->record.bytes) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating raw source token");return false;}
     }
-    memcpy(node->record.bytes,token.bytes,SCRIPT_TOKEN_BYTES);
-    node->expansion=token.expansion;
+    memcpy(node->record.bytes,token.bytes,SCRIPT_TOKEN_BYTES);node->expansion=token.expansion;
+    qa_store_u32le(node->record.bytes+1064,0);++s->queue_count;*out=node;return true;
+}
+bool script_push(qa_script *s,script_queued_token token,qa_error *error)
+{
+    if(!script_memory_enter(s,error)) return false;
+    size_t count=0;uint32_t pointer=qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS);
+    while(pointer) {
+        script_token_record *node=script_heap_token(&s->macros,pointer);
+        if(!script_heap_token_bytes(&s->macros,node,error)) return false;
+        if(count++>=s->options.maximum_queued_tokens || count>s->macros.queue_count)
+            return script_fail(s,token.token.location,"Script queue exceeds configured limit",error);
+        pointer=qa_load_u32le(node->record.bytes+1064);
+    }
+    if(count>=s->options.maximum_queued_tokens)
+        return script_fail(s,token.token.location,"Script queue exceeds configured limit",error);
+    script_token_record *node;
+    if(!script_heap_copy_token(&s->macros,token,&node,error)) return false;
     qa_store_u32le(node->record.bytes+1064,qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS));
-    qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS,node->pointer);++s->queue_count;
-    return true;
+    qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS,node->pointer);return true;
+}
+bool script_heap_free_token(script_macro_table *table,script_token_record *node,qa_error *error)
+{
+    if(!script_heap_token_bytes(table,node,error)) return false;
+    if(table->memory.context && !node->record.detached) {
+        if(!table->memory.free(table->memory.context,node->record.allocation,error)) return false;
+    } else free(node->record.bytes);
+    node->record.bytes=NULL;--table->queue_count;return true;
 }
 bool script_queue_pop(qa_script *s,script_queued_token *out,qa_error *error)
 {
-    script_token_record *node=queue_pointer(s,qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS));
-    if(!queue_bytes(s,node,error)) return false;
+    script_token_record *node=script_heap_token(&s->macros,qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS));
+    if(!script_heap_token_bytes(&s->macros,node,error)) return false;
     uint32_t next=qa_load_u32le(node->record.bytes+1064);
-    if(next && !queue_pointer(s,next)) {
+    if(next && !script_heap_token(&s->macros,next)) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Source token next pointer has no live token_t");return false;
     }
     *out=(script_queued_token){.expansion=node->expansion,.raw=true};
     memcpy(out->bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
     if(!script_token_load(out->bytes,node->extent,node->location,node->whitespace,&s->arena,&out->token,error)) return false;
     qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS,next);
-    if(s->memory.context && !node->record.detached) {
-        if(!s->memory.free(s->memory.context,node->record.allocation,error)) return false;
-    } else free(node->record.bytes);
-    node->record.bytes=NULL;--s->queue_count;return true;
+    return script_heap_free_token(&s->macros,node,error);
 }
-bool script_queue_snapshot(const qa_script *s,qa_script_queued_state *out,qa_arena *arena,qa_error *error)
+bool script_queue_snapshot(const script_macro_table *s,qa_script_queued_state *out,qa_arena *arena,qa_error *error)
 {
     size_t count=0;
     for(size_t i=0;i<s->queue_records;++i) {
         script_token_record *node=s->queue+i;
         if(!node->record.bytes) continue;
-        if(!queue_bytes(s,node,error)) return false;
+        if(!script_heap_token_bytes(s,node,error)) return false;
         qa_script_queued_state *saved=out+count++;
         saved->pointer=node->pointer;saved->memory_reference=node->record.reference;saved->text_extent=node->extent;
         memcpy(saved->bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
@@ -177,7 +194,7 @@ bool script_queue_snapshot(const qa_script *s,qa_script_queued_state *out,qa_are
     }
     return count==s->queue_count;
 }
-bool script_queue_restore(qa_script *s,const qa_script_checkpoint *checkpoint,const script_expansion *expansions,qa_error *error)
+bool script_queue_restore(script_macro_table *s,const qa_script_checkpoint *checkpoint,const script_expansion *expansions,qa_error *error)
 {
     s->next_token_pointer=checkpoint->next_token_pointer;
     for(size_t i=0;i<checkpoint->queue_count;++i) {
@@ -186,7 +203,7 @@ bool script_queue_restore(qa_script *s,const qa_script_checkpoint *checkpoint,co
         node->pointer=saved->pointer;node->extent=saved->text_extent;
         node->expansion=saved->expansion==SIZE_MAX?NULL:expansions+saved->expansion;
         node->record.reference=saved->memory_reference;
-        if(s->memory.context && !s->memory_deferred) {
+        if(s->memory.context && !s->deferred) {
             qa_script_memory_span span;
             if(saved->memory_reference==SIZE_MAX ||
                 !s->memory.resolve(s->memory.context,saved->memory_reference,&node->record.allocation,error) ||
@@ -204,15 +221,15 @@ bool script_queue_restore(qa_script *s,const qa_script_checkpoint *checkpoint,co
     }
     return true;
 }
-bool script_queue_adopt(qa_script *s,qa_error *error)
+bool script_queue_adopt(script_macro_table *s,bool history,qa_error *error)
 {
     if(!s->memory.context) return true;
     for(size_t i=0;i<s->queue_records;++i) {
         script_token_record *node=s->queue+i;
         if(!node->record.bytes || !node->record.detached) continue;
         qa_script_memory_span span;
-        if(node->record.reference==SIZE_MAX || !s->memory.resolve_history(s->memory.context,
-            node->record.reference,&node->record.allocation,error) ||
+        if(node->record.reference==SIZE_MAX || !(history?s->memory.resolve_history(s->memory.context,node->record.reference,&node->record.allocation,error):
+            s->memory.resolve(s->memory.context,node->record.reference,&node->record.allocation,error)) ||
             !s->memory.bytes(s->memory.context,node->record.allocation,&span,error)) return false;
         if(span.size!=SCRIPT_TOKEN_BYTES || memcmp(span.data,node->record.bytes,SCRIPT_TOKEN_BYTES)) {
             qa_error_set(error,QA_ERROR_FORMAT,i,"History source token differs from committed MEMORY");return false;
@@ -225,22 +242,15 @@ void script_queue_close(qa_script *s,bool source)
 {
     if(source && s->source_record.bytes) {
         uint32_t pointer=qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS);
-        size_t visited=0;
-        while(pointer && visited++<s->queue_count) {
-            script_token_record *node=queue_pointer(s,pointer);
-            if(!queue_bytes(s,node,NULL)) break;
+        size_t visited=0,total=s->macros.queue_count;
+        while(pointer && visited++<total) {
+            script_token_record *node=script_heap_token(&s->macros,pointer);
+            if(!script_heap_token_bytes(&s->macros,node,NULL)) break;
             pointer=qa_load_u32le(node->record.bytes+1064);
             qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS,pointer);
-            if(s->memory.context && !node->record.detached) (void)s->memory.free(s->memory.context,node->record.allocation,NULL);
-            else free(node->record.bytes);
-            node->record.bytes=NULL;
+            if(!script_heap_free_token(&s->macros,node,NULL)) break;
         }
     }
-    for(size_t i=0;i<s->queue_records;++i) {
-        script_token_record *node=s->queue+i;
-        if(node->record.bytes && (node->record.detached || !s->memory.context)) free(node->record.bytes);
-    }
-    free(s->queue);
 }
 bool script_token_saved_valid(const qa_script_queued_state *saved,qa_error *error)
 {

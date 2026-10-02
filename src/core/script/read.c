@@ -66,8 +66,8 @@ accept_token:
     token = &frame->token;
     if (script_skipping(s))
         goto read_next;
-    script_macro *macro =
-        token->kind == QA_SCRIPT_NAME ? script_macro_find(&s->macros, token->text) : NULL;
+    script_macro *macro=NULL;
+    if(token->kind==QA_SCRIPT_NAME && !script_macro_lookup(&s->macros,token->text,&macro,e)) {ok=false;goto completed;}
     if (macro) {
         ok = script_expand(s, *frame, macro, e);
         if (!ok)
@@ -110,6 +110,14 @@ completed:
             goto completed;
     }
     goto accept_token;
+}
+bool script_read_nested(qa_script *source,script_queued_token *out,bool *found,qa_error *error)
+{
+    script_queued_token *saved=source->reads;size_t capacity=source->read_capacity,count=source->read_count;
+    source->reads=NULL;source->read_capacity=source->read_count=0;
+    bool ok=read_token(source,found,error);
+    *out=source->read_count?source->reads[0]:(script_queued_token){0};
+    free(source->reads);source->reads=saved;source->read_capacity=capacity;source->read_count=count;return ok;
 }
 bool qa_script_next(qa_script *s, qa_script_token *out, bool *found, qa_error *e) {
     if (s == NULL || out == NULL || found == NULL || s->read_count != 0) {

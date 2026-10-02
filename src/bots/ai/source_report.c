@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_report.h"
+#include "source_storage.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -104,7 +105,7 @@ bool bot_ai_source_report(qa_bots *bots,qa_error *error)
         if(!qa_bot_source_record_bool(&bots->services.memory,state->source_record,
             QA_BOT_SOURCE_INUSE,&inuse,false,error)) return false;
         if(!inuse) continue;
-        char information[1024],name[256],leader[257],cargo[32],description[512],value[320];
+        char information[1024],name[256],cargo[32],description[512],value[320];const char *leader;
         if(!bots->services.configstring(bots->services.context,544+(uint32_t)index,
             information,sizeof(information),error) ||
            !qa_q3_info_value(information,"n",name,sizeof(name),error)) return false;
@@ -112,8 +113,7 @@ bool bot_ai_source_report(qa_bots *bots,qa_error *error)
         int32_t client;
         if(!integer(bots,state,QA_BOT_SOURCE_CLIENT,&client,error) ||
            !bot_ai_client_name(bots,client,name,sizeof(name),true,error) ||
-           !qa_bot_source_record_text_read(&bots->services.memory,state->source_record,
-                QA_BOT_SOURCE_TEAM_LEADER,leader,sizeof(leader),error) ||
+           !bot_ai_storage_text(bots,state,QA_BOT_SOURCE_TEAM_LEADER,&leader,error) ||
            !carrying(bots,state,client,cargo,error) || !action(bots,state,description,error)) return false;
         snprintf(value,sizeof(value),"l\\%s\\c\\%.31s\\a\\%.255s",same_name(name,leader)?"L":" ",cargo,description);
         if(!bots->services.set_configstring(bots->services.context,25u+(uint32_t)client,value,error)) return false;

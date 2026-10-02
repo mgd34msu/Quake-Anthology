@@ -12,7 +12,7 @@ static bool append(qa_script *s, script_queued_token **tokens, size_t *count, si
     (*tokens)[(*count)++] = token;
     return true;
 }
-static int parameter(const script_macro *m, const qa_script_token *token) {
+static int parameter(const qa_script_macro_state *m, const qa_script_token *token) {
     if (token->kind != QA_SCRIPT_NAME)
         return -1;
     for (size_t i = 0; i < m->parameter_count; ++i)
@@ -20,7 +20,7 @@ static int parameter(const script_macro *m, const qa_script_token *token) {
             return (int)i;
     return -1;
 }
-static bool arguments(qa_script *s, const script_macro *m, qa_script_location location,
+static bool arguments(qa_script *s, const qa_script_macro_state *m, qa_script_location location,
                       macro_argument args[128], script_queued_token **out, size_t *count,
                       qa_error *e) {
     script_queued_token token;
@@ -128,7 +128,7 @@ static bool stringize(qa_script *s, const script_queued_token *tokens, macro_arg
                              .location = location};
     return true;
 }
-static bool builtin(qa_script *s, const script_macro *m, script_queued_token invocation,
+static bool builtin(qa_script *s, const qa_script_macro_state *m, script_queued_token invocation,
                     qa_error *e) {
     qa_script_token token = invocation.token;
     char number[32];
@@ -183,20 +183,23 @@ static bool builtin(qa_script *s, const script_macro *m, script_queued_token inv
         token.subtype = (uint32_t)size;
     return script_push(s, (script_queued_token){.token=token,.expansion=invocation.expansion}, e);
 }
-bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m, qa_error *e) {
+bool script_expand(qa_script *s, script_queued_token invocation, script_macro *record, qa_error *e) {
+    qa_script_macro_state state={0};
+    if(!script_macro_project(record,&state,&s->arena,e)) return false;
+    const qa_script_macro_state *m=&state;
     s->empty_expansion = false;
     if (s->expansions >= s->options.maximum_expansions)
         return script_fail(s, invocation.token.location,
                            "Macro expansion count exceeds configured limit", e);
     ++s->expansions;
     for (const script_expansion *p = invocation.expansion; p != NULL; p = p->parent)
-        if (p->macro == m)
+        if (p->macro == record->pointer)
             return script_fail(s, invocation.token.location, "Recursive macro expansion", e);
     script_expansion *expansion =
         qa_arena_alloc(&s->arena, sizeof(*expansion), _Alignof(script_expansion), e);
     if (expansion == NULL)
         return false;
-    *expansion = (script_expansion){m, invocation.expansion};
+    *expansion = (script_expansion){record->pointer, invocation.expansion};
     invocation.expansion = expansion;
     if (m->builtin != 0)
         return builtin(s, m, invocation, e);
@@ -218,6 +221,7 @@ bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m
             }
             continue;
         }
+        bool stringized=false;
         if (qa_script_token_is(&token, "#")) {
             if (i + 1 == m->token_count || (index = parameter(m, m->tokens + i + 1)) < 0) {
                 script_warn(s, invocation.token.location,
@@ -225,11 +229,17 @@ bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m
                 continue;
             }
             ++i;
+            stringized=true;
             if (!stringize(s, arg_tokens, args[index], invocation.token.location, &token, e))
                 goto fail;
         }
-        if (!append(s, &tokens, &count, &capacity, (script_queued_token){.token=token,.expansion=expansion}, e))
-            goto fail;
+        script_queued_token copied={.token=token,.expansion=expansion};
+        if(!stringized) {
+            script_token_record *stored=script_macro_token_at(record,20,i,e);
+            if(!stored) goto fail;
+            memcpy(copied.bytes,stored->record.bytes,SCRIPT_TOKEN_BYTES);copied.raw=true;
+        }
+        if(!append(s,&tokens,&count,&capacity,copied,e)) goto fail;
     }
     for (size_t i = 0; i + 2 < count;) {
         if (!qa_script_token_is(&tokens[i + 1].token, "##")) {
@@ -247,7 +257,10 @@ bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m
         if (!joined(s, a->text, b->text, strings ? 1 : 0, strings ? 1 : 0, &a->text, e))
             goto fail;
         a->subtype = (uint32_t)a->text.size;
-        tokens[i].raw=false;
+        if(tokens[i].raw) {
+            memset(tokens[i].bytes,0,1024);memcpy(tokens[i].bytes,a->text.data,a->text.size);
+            qa_store_u32le(tokens[i].bytes+1028,a->subtype);
+        }
         memmove(tokens + i + 1, tokens + i + 3, (count - i - 3) * sizeof(*tokens));
         count -= 2;
     }

@@ -566,13 +566,11 @@ static bool checkpoint(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_
     snprintf(coordinates,sizeof(coordinates),"%s %s %s",x,y,z);
     return send_chat(b,s,"checkpoint_confirm",point->name,coordinates,client,QA_BOT_CHAT_TELL,e);
 }
-static void leader_name(const bot_ai_state *s,char name[33]) {
-    memcpy(name,s->team_leader_name,32);name[32]=0;
-}
 static bool self_is_leader(qa_bots *b,bot_ai_state *s,size_t size,bool *out,qa_error *e) {
-    char own[256],leader[33];int32_t self;
+    char own[256];const char *leader;int32_t self;
     if(!bot_ai_source_client(b,s,&self,e) || !bot_ai_client_name(b,self,own,size,true,e)) return false;
-    leader_name(s,leader);*out=same(own,leader);return true;
+    if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
+    *out=same(own,leader);return true;
 }
 static bool preference(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
     bool leader;if(!self_is_leader(b,s,36,&leader,e)) return false;
@@ -863,26 +861,22 @@ static bool leader_command(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
     if(m->type==MSG_START_LEADER) {
         if(m->subtype&MATCH_I) {
             char name[256];if(!variable(m,VAR_NAME,name,e)) return false;
-            size_t length=strlen(name);if(length>32) length=32;
-            memcpy(s->team_leader_name,name,length);
-            if(length<32) memset(s->team_leader_name+length,0,32-length);
-            uint32_t bits;memcpy(&bits,&s->source_order.ask_team_leader_time,sizeof(bits));
-            bits&=UINT32_C(0xffffff00);memcpy(&s->source_order.ask_team_leader_time,&bits,sizeof(bits));
+            return qa_bot_source_record_team_leader(&b->services.memory,s->source_record,name,true,false,e);
         } else {
             char name[256];int32_t client;
             if(!variable(m,VAR_TEAMMATE,name,e) || !find_name(b,s,name,false,&client,e)) return false;
-            if(client>=0 && !bot_ai_client_name(b,client,s->team_leader_name,sizeof(s->team_leader_name),true,e)) return false;
+            if(client>=0 && !bot_ai_leader_client_name(b,s,client,e)) return false;
         }
         return true;
     }
     if(m->type==MSG_STOP_LEADER) {
-        char name[256],actual[256],leader[33];int32_t client;
+        char name[256],actual[256];const char *leader;int32_t client;
         if(!variable(m,m->subtype&MATCH_I?VAR_NAME:VAR_TEAMMATE,name,e) ||
             !find_name(b,s,name,false,&client,e)) return false;
         if(client<0) return true;
         if(!bot_ai_client_name(b,client,actual,sizeof(actual),true,e)) return false;
-        leader_name(s,leader);
-        if(same(leader,actual)) {s->team_leader_name[0]=0;b->not_leader[client]=true;}
+        if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
+        if(same(leader,actual)) {bot_ai_team_leader_clear(s);b->not_leader[client]=true;}
         return true;
     }
     bool leader;if(!self_is_leader(b,s,256,&leader,e)) return false;
@@ -933,8 +927,7 @@ bool bot_ai_source_order_message(qa_bots *b,bot_ai_state *s,const char *message,
            !find_name(b,s,name,false,&client,e) ||
            !bot_ai_source_same_team(b,s,client,&same_team,e)) return false;
         if(same_team && alive(b,s)) {
-            size_t length=strlen(name);if(length>31) length=31;
-            memcpy(s->team_leader_name,name,length);memset(s->team_leader_name+length,0,32-length);
+            return qa_bot_source_record_team_leader(&b->services.memory,s->source_record,name,false,false,e);
         }
         return true;
     }

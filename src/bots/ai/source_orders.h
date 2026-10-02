@@ -20,7 +20,6 @@ typedef struct bot_source_orders_state {
 typedef struct bot_source_order_state {
     char subteam[32];
     int32_t checkpoints, patrol_points, current_patrol_point, patrol_flags;
-    float ask_team_leader_time;
 } bot_source_order_state;
 
 struct qa_bots;

@@ -6,6 +6,9 @@
 static inline bool bot_ai_respawn_wait(const bot_ai_state *s) {
     return bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_RESPAWN_WAIT)!=0;
 }
+static inline float bot_ai_enter_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ENTER_TIME);
+}
 static inline void bot_ai_respawn_wait_set(bot_ai_state *s,bool value) {
     bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_RESPAWN_WAIT,value?1u:0u);
 }
@@ -225,5 +228,23 @@ static inline float bot_ai_last_flag_capture_time(const bot_ai_state *s) {
 }
 static inline void bot_ai_last_flag_capture_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LAST_FLAG_CAPTURE_TIME,value);
+}
+static inline float bot_ai_ask_team_leader_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ASK_TEAM_LEADER_TIME);
+}
+static inline void bot_ai_ask_team_leader_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ASK_TEAM_LEADER_TIME,value);
+}
+static inline float bot_ai_become_team_leader_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME);
+}
+static inline void bot_ai_become_team_leader_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME,value);
+}
+static inline float bot_ai_give_orders_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_GIVE_ORDERS_TIME);
+}
+static inline void bot_ai_give_orders_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_GIVE_ORDERS_TIME,value);
 }
 #endif

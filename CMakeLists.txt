@@ -63,6 +63,7 @@ add_library(qa_script STATIC
     src/core/script/checkpoint.c
     src/core/script/codec.c
     src/core/script/condition_memory.c
+    src/core/script/define_memory.c
     src/core/script/defines.c
     src/core/script/defines_save.c
     src/core/script/directives.c

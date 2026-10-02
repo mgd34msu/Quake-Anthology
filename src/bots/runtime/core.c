@@ -174,7 +174,7 @@ static bool close(qa_bot_runtime *r,bool source,qa_bot_runtime_source_shutdown s
     } else qa_bot_actions_dispose_resources(r->actions);
     if (!r->closed) {
         qa_bot_library_variables_clear(r->library);
-        qa_script_defines_clear(r->globals);
+        if(source && !qa_script_defines_clear(r->globals,error)) return false;
         if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}
     }
     r->busy=true;

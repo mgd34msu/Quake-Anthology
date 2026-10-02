@@ -40,7 +40,8 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
             else if (qa_script_token_is(t, "defined"))
                 defined = true;
             else {
-                script_macro *m = script_macro_find(&s->macros, t->text);
+                script_macro *m=NULL;
+                if(!script_macro_lookup(&s->macros,t->text,&m,e)) goto fail;
                 if (m == NULL) {
                     script_fail(s, t->location, "Undefined name in expression", e);
                     goto fail;
@@ -289,7 +290,9 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
             return false;
         if (!found || item.token.kind != QA_SCRIPT_NAME)
             return script_fail(s, location, "Conditional requires a macro name", e);
-        bool exists = script_macro_find(&s->macros, item.token.text) != NULL;
+        script_macro *defined_macro=NULL;
+        if(!script_macro_lookup(&s->macros,item.token.text,&defined_macro,e)) return false;
+        bool exists=defined_macro!=NULL;
         return push_condition(s, invert ? 16 : 8, invert ? exists : !exists, e);
     }
     if (qa_script_token_is(name, "elif") || qa_script_token_is(name, "else") ||
@@ -320,19 +323,7 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
     if (qa_script_token_is(name, "define")) {
         if (script_skipping(s) != 0)
             return true;
-        qa_script_token *tokens;
-        size_t count;
-        if (!script_line(s, &tokens, &count, e))
-            return false;
-        qa_error failure = {0};
-        bool ok =
-            script_macro_parse(&s->macros, tokens, count, s->options.maximum_defines, &failure);
-        free(tokens);
-        if (!ok && failure.code == QA_ERROR_FORMAT)
-            return script_fail(s, location, failure.message, e);
-        if (!ok && e)
-            *e = failure;
-        return ok;
+        return script_define_stream(s,location,e);
     }
     if (qa_script_token_is(name, "undef")) {
         if (script_skipping(s) != 0)
@@ -342,7 +333,9 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         if (!found || item.token.kind != QA_SCRIPT_NAME)
             return script_fail(s, location, "Undef requires a macro name", e);
         bool fixed;
-        (void)script_macro_remove(&s->macros, item.token.text, &fixed);
+        qa_error failure={0};
+        (void)script_macro_remove(&s->macros,item.token.text,&fixed,&failure);
+        if(failure.code!=QA_OK) {if(e) *e=failure;return false;}
         if (fixed)
             script_warn(s, location, "Cannot undefine fixed macro");
         return true;
