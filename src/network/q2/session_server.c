@@ -49,8 +49,10 @@ static bool new_client(q2_session *session, qa_error *error)
         client = qa_net_connections_get(session->runtime->connections, session->id);
         for (size_t i = 0; i < session->seats; ++i) {
             qa_network_q2_player physical;
-            if (!server->hooks.player(server->hooks.context, session->id, client->seats[i].seat, &physical, error) ||
-                !physical.source_owner || !physical.source_slot || physical.source_slot > INT32_MAX) {
+            if (!server->hooks.player(server->hooks.context, session->id, client->seats[i].seat, &physical, error)) {
+                q2_game_state_free(&state); return false;
+            }
+            if (!physical.source_owner || !physical.source_slot || physical.source_slot > INT32_MAX) {
                 q2_game_state_free(&state); return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 signon lacks its physical Source edict");
             }
             state.view.data.clientnums[i] = (int32_t)physical.source_slot - 1;
