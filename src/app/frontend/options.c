@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "install_locations.h"
 #include <errno.h>
 #include <stdio.h>
 
@@ -14,7 +15,7 @@ void qa_frontend_options_default(qa_frontend_options *options)
         .network_protocol = {QA_NET_UNIFIED_1, 0, 0}, .network_port = 27960,
         .font_directory = "/usr/share/fonts/truetype/dejavu", .font_file = "DejaVuSans.ttf"};
     qa_application_options_default(&options->application);
-    options->application.content_root = "../qfiles";
+    options->application.content_root = NULL;
     qa_display_options_default(&options->display);
     options->display.title = "Quake Anthology";
 }
@@ -102,6 +103,14 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         if (i + 1 == argc) { frontend_fail(error, QA_ERROR_ARGUMENT, "startup option needs a value"); goto fail; }
         const char *value = argv[++i];
         if (!strcmp(arg, "--content-root")) options->application.content_root = value;
+        else if (!strcmp(arg, "--game-path")) {
+            if (!*value) { frontend_fail(error,QA_ERROR_ARGUMENT,"--game-path needs a directory"); goto fail; }
+            if (!push(&options->game_paths,&options->game_path_count,value,error)) goto fail;
+        }
+        else if (!strcmp(arg, "--save-game-path")) {
+            if (!*value) { frontend_fail(error,QA_ERROR_ARGUMENT,"--save-game-path needs a directory"); goto fail; }
+            if (!push(&options->save_game_paths,&options->save_game_path_count,value,error)) goto fail;
+        }
         else if (!strcmp(arg, "--user-content-root")) options->application.user_root = value;
         else if (!strcmp(arg, "--native-runtime-root")) options->native_runtime_root = value;
         else if (!strcmp(arg, "--native-wine")) options->native_wine = value;
@@ -195,6 +204,11 @@ void qa_frontend_options_destroy(qa_frontend_options *options)
     if (!options) return;
     for (size_t i = 0; i < options->startup_count; ++i) free((void *)options->startup[i]);
     free((void *)options->startup); free((void *)options->mods);
+    free((void *)options->game_paths); free((void *)options->save_game_paths);
+    options->game_paths=NULL; options->save_game_paths=NULL;
+    options->game_path_count=options->save_game_path_count=0;
+    frontend_install_locations_destroy(options->install_locations);
+    options->install_locations=NULL;
     options->startup = NULL; options->startup_count = 0;
     options->mods = NULL; options->mod_count = 0;
     free(options->native_bootstrap);
@@ -213,8 +227,13 @@ bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, 
     qa_catalog *catalog = qa_application_catalog(application);
     for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
         const qa_product *product = qa_catalog_at(catalog, i);
-        fprintf(stream, "%s\t%s\t%s\n", product->key, product->availability == QA_CONTENT_INSTALLED ? "installed" : "unavailable", product->title);
+        const qa_catalog_mount *mount=qa_catalog_product_loose_mount(catalog,product->id);
+        fprintf(stream, "%s\t%s\t%s\t%s\n", product->key,
+            product->availability == QA_CONTENT_INSTALLED ? "installed" : "unavailable",
+            product->title,mount?mount->path:"");
     }
+    fputs("To add an installation: --game-path PATH --list-content\n"
+        "To remember it: --save-game-path PATH (uses your user settings directory)\n",stream);
     bool written = !ferror(stream);
     if (!written) frontend_fail(error, QA_ERROR_IO, "writing content listing");
     qa_error cleanup={0};

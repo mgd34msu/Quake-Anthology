@@ -22,11 +22,13 @@ typedef struct catalog_product {
     /* Discovery-only admission for an explicitly created empty write directory.
      * Its resulting mounts/availability are saved; restore never rescans it. */
     bool remote_directory;
+    const char *installed_directory;
     const char *witness;
     const char *required[4];
     size_t required_count;
 } catalog_product;
 typedef qa_catalog_member_identity catalog_member;
+typedef struct catalog_location { const char *logical, *path; } catalog_location;
 typedef struct catalog_physical {
     qa_catalog_mount view;
     qa_sha256_digest digest;
@@ -42,6 +44,11 @@ struct qa_catalog {
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;
+    const char **install_roots;
+    size_t install_root_count;
+    catalog_location *locations;
+    size_t location_count, location_capacity;
+    qa_mount_id q3_install_mount;
     qa_mount_id q3_download_mount, corpus_mount, q2_download_mount[2];
     catalog_product *products;
     size_t product_count, product_capacity;
@@ -65,6 +72,11 @@ bool catalog_stock(qa_catalog *, qa_error *);
 bool catalog_add_product(qa_catalog *, const qa_product *, catalog_product **, qa_error *);
 bool catalog_scan(qa_catalog *, bool mods, const char *remote_base,
     const char *remote_directory, qa_product_id *selected, qa_error *);
+bool catalog_discover_locations(qa_catalog *, qa_error *);
+const char *catalog_native_parent(qa_catalog *, const char *, qa_error *);
+bool catalog_physical_path(qa_catalog *,const char *,const char *,const char **,qa_error *);
+bool catalog_location_matches(const qa_catalog *,const char *,const char *);
+bool catalog_product_directory(qa_catalog *,catalog_product *,const char **,qa_error *);
 bool catalog_index_product(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_index_maps(qa_catalog *, catalog_product *, bool archives_only, qa_error *);
 bool catalog_read_mods(qa_catalog *, catalog_product *, qa_error *);

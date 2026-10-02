@@ -274,6 +274,8 @@ struct qa_application {
     struct application_portals *portals;
     bool map_force_reload;
     char *content_root;
+    char **install_roots;
+    size_t install_root_count;
     char *user_root;
     qa_resource_pool *resources;
     qa_fs_root *user_files;

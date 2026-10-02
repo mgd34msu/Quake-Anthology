@@ -122,7 +122,8 @@ bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
 static bool discover(const qa_catalog_options *options, const char *remote_base,
     const char *directory, qa_product_id *selected, qa_catalog **out, qa_error *error)
 {
-    if (!options || !options->resources || !options->content_root || !*options->content_root || !out) {
+    if (!options || !options->resources || !options->content_root || !*options->content_root || !out ||
+        (options->install_root_count && !options->install_roots)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "catalog discovery requires a content root"); return false;
     }
     qa_catalog *catalog = calloc(1, sizeof(*catalog));
@@ -135,8 +136,21 @@ static bool discover(const qa_catalog_options *options, const char *remote_base,
     if (!catalog->mounts) goto fail;
     catalog->root = catalog_string(catalog, options->content_root, error);
     if (options->user_root) catalog->user = catalog_string(catalog, options->user_root, error);
+    if (options->install_root_count>SIZE_MAX/sizeof(*catalog->install_roots)) goto fail;
+    catalog->install_roots=options->install_root_count?calloc(options->install_root_count,sizeof(*catalog->install_roots)):NULL;
+    if (options->install_root_count && !catalog->install_roots) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining configured install search locations"); goto fail;
+    }
+    for (size_t i=0;i<options->install_root_count;++i) {
+        if (!options->install_roots[i] || !*options->install_roots[i]) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Install search location is empty"); goto fail;
+        }
+        const char *path=catalog_string(catalog,options->install_roots[i],error);
+        if (!path) goto fail;
+        catalog->install_roots[catalog->install_root_count++]=path;
+    }
     if (!catalog->root || (options->user_root && !catalog->user) ||
-        !catalog_stock(catalog, error) || !catalog_scan(catalog, options->discover_mods,
+        !catalog_stock(catalog, error) || !catalog_discover_locations(catalog,error) || !catalog_scan(catalog, options->discover_mods,
             remote_base, directory, selected, error)) goto fail;
     for (size_t i = 0; i < catalog->product_count; ++i) {
         catalog_product *p = &catalog->products[i];
@@ -175,7 +189,8 @@ bool qa_catalog_discover_remote_q3(const qa_catalog *source, qa_product_id base_
         return false;
     }
     qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
-        .user_root = source->user, .generation = generation};
+        .user_root = source->user, .generation = generation,
+        .install_roots=source->install_roots,.install_root_count=source->install_root_count};
     qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
     if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
     const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
@@ -203,7 +218,8 @@ bool qa_catalog_discover_remote_q2(const qa_catalog *source, qa_product_id base_
         return false;
     }
     qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
-        .user_root = source->user, .generation = generation};
+        .user_root = source->user, .generation = generation,
+        .install_roots=source->install_roots,.install_root_count=source->install_root_count};
     qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
     if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
     const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
@@ -232,7 +248,8 @@ bool qa_catalog_discover_remote_q1(const qa_catalog *source, qa_product_id base_
         return false;
     }
     qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
-        .user_root = source->user, .generation = generation};
+        .user_root = source->user, .generation = generation,
+        .install_roots=source->install_roots,.install_root_count=source->install_root_count};
     qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
     if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
     const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
@@ -300,6 +317,7 @@ void qa_catalog_release(qa_catalog *catalog)
     free(catalog->behaviors);
     for (size_t i = 0; i < catalog->physical_count; ++i) free(catalog->physical[i].members);
     free(catalog->products); free(catalog->physical); free(catalog->mods);
+    free(catalog->install_roots); free(catalog->locations);
     if (catalog->mounts) qa_resource_pool_trim(catalog->resources);
     qa_vfs_destroy(catalog->mounts); qa_strings_destroy(catalog->strings);
     qa_strings_destroy(catalog->restored_literals); free(catalog);

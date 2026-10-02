@@ -120,6 +120,8 @@ static bool discover(qa_application *application, bool discover_mods,
     qa_catalog_options options = {
         .resources = application->resources,
         .content_root = application->content_root,
+        .install_roots = (const char *const *)application->install_roots,
+        .install_root_count = application->install_root_count,
         .user_root = application->user_root,
         .generation = generation,
         .discover_mods = discover_mods,
@@ -136,7 +138,9 @@ static bool create_application(const qa_application_options *options,
 {
     if (options == NULL || out == NULL || options->content_root == NULL ||
         options->content_root[0] == '\0' || options->actor_capacity == 0 ||
-        options->component_capacity == 0)
+        options->component_capacity == 0 ||
+        (options->install_root_count && !options->install_roots) ||
+        options->install_root_count > SIZE_MAX / sizeof(char *))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application needs content and session capacities");
     *out = NULL;
@@ -198,6 +202,24 @@ static bool create_application(const qa_application_options *options,
         (options->user_root != NULL && application->user_root == NULL) ||
         (options->ranking_game_key != NULL && application->ranking_game_key == NULL))
         goto fail;
+    if (options->install_root_count) {
+        application->install_roots = calloc(options->install_root_count,
+                                            sizeof(*application->install_roots));
+        if (!application->install_roots) {
+            application_fail(error, QA_ERROR_MEMORY, "cannot retain game installation locations");
+            goto fail;
+        }
+        for (size_t i = 0; i < options->install_root_count; ++i) {
+            const char *root = options->install_roots[i];
+            if (!root || !*root) {
+                application_fail(error, QA_ERROR_ARGUMENT, "game installation location is empty");
+                goto fail;
+            }
+            application->install_roots[i] = copy_text(root, error);
+            if (!application->install_roots[i]) goto fail;
+            ++application->install_root_count;
+        }
+    }
 
     if (restore) {
         if (!application->content_graph ||

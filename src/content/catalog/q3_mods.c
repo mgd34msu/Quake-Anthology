@@ -127,9 +127,9 @@ bool qa_catalog_q3_mod_list(const qa_catalog *catalog, qa_vfs_listing *out, qa_e
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 mod list requires its retained catalog and empty output"); return false;
     }
     mod_root roots[2] = {{qa_catalog_q3_download_root(catalog), ""},
-        {qa_vfs_mount_root(catalog->mounts, catalog->corpus_mount), ""}};
+        {qa_vfs_mount_root(catalog->mounts, catalog->q3_install_mount?catalog->q3_install_mount:catalog->corpus_mount), ""}};
     char *base_prefix = NULL;
-    if (roots[1].root) {
+    if (roots[1].root && !catalog->q3_install_mount) {
         qa_error local = {0};
         if (qa_fs_root_resolve(roots[1].root, "q3a", name_equal, NULL, false, &base_prefix, &local))
             roots[1].prefix = base_prefix;

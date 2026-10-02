@@ -9,6 +9,7 @@
 #define QA_FRONTEND_COMMAND_OWNER UINT64_C(0x716166726f6e7401)
 
 typedef struct qa_frontend qa_frontend;
+struct frontend_install_locations;
 struct qa_application_persistence_ops;
 typedef struct qa_frontend_options {
     qa_application_options application;
@@ -19,6 +20,9 @@ typedef struct qa_frontend_options {
     const char *network_host, *network_connect;
     const char *native_runtime_root, *native_wine;
     char *native_bootstrap;
+    const char **game_paths, **save_game_paths;
+    size_t game_path_count, save_game_path_count;
+    struct frontend_install_locations *install_locations;
     qa_net_protocol_id network_protocol;
     uint16_t network_port;
     const char **mods;
@@ -38,6 +42,10 @@ void qa_frontend_options_default(qa_frontend_options *);
 /* argv strings are borrowed until options_destroy; generated command strings
  * and option pointer arrays are owned. Parsing never opens SDL or a session. */
 bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options *, qa_error *);
+/* Resolves executable-relative and saved search directories after the genuine
+ * executable bootstrap path is installed. Owned paths live until destroy. */
+bool qa_frontend_options_resolve_locations(qa_frontend_options *,qa_error *);
+const char *qa_frontend_options_locations_file(const qa_frontend_options *);
 void qa_frontend_options_destroy(qa_frontend_options *);
 /* On construction failure, a non-NULL output retains the actual frontend
  * when checked cleanup rejects. Retry qa_frontend_destroy on that owner. */

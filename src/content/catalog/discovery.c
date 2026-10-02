@@ -62,10 +62,22 @@ static bool catalog_name_equal(const char *left, const char *right,
     return catalog_ascii_equal(left, right);
 }
 
-bool catalog_path(qa_catalog *c, const char *root, const char *relative,
+bool catalog_physical_path(qa_catalog *c, const char *root, const char *relative,
                    const char **out, qa_error *error)
 {
     *out = NULL;
+    if (!*relative) {
+        qa_fs_entry_kind kind;
+        if (!qa_fs_path_status(root,true,&kind,NULL,error)) return false;
+        if (kind==QA_FS_DIRECTORY) {
+            qa_fs_root *opened=NULL; char *path=NULL;
+            bool ok=qa_fs_root_open(root,&opened,error) && qa_fs_root_join(opened,"",&path,error);
+            if (ok) *out=catalog_string(c,path,error);
+            free(path); qa_fs_root_close(opened);
+            if (!ok) return false;
+        }
+        return kind!=QA_FS_DIRECTORY || *out!=NULL;
+    }
     char *normalized = qa_archive_normalize_path(relative, error);
     if (!normalized) return false;
     qa_error local = {0};
@@ -111,6 +123,28 @@ bool catalog_path(qa_catalog *c, const char *root, const char *relative,
     *out = catalog_string(c, native, error);
     free(native);
     return *out != NULL;
+}
+
+bool catalog_path(qa_catalog *c,const char *root,const char *relative,const char **out,qa_error *error)
+{
+    if (!strcmp(root,c->root)) {
+        size_t longest=0;
+        for (size_t i=0;i<c->location_count;++i) {
+            size_t length=strlen(c->locations[i].logical);
+            if (length>longest && !strncmp(relative,c->locations[i].logical,length) &&
+                (!relative[length] || relative[length]=='/')) longest=length;
+        }
+        for (size_t length=longest;length;--length) for (size_t i=0;i<c->location_count;++i) {
+            const catalog_location *location=c->locations+i;
+            if (strlen(location->logical)!=length || strncmp(relative,location->logical,length) ||
+                (relative[length] && relative[length]!='/')) continue;
+            const char *tail=relative+length;
+            if (*tail=='/') ++tail;
+            if (!catalog_physical_path(c,location->path,tail,out,error)) return false;
+            if (*out) return true;
+        }
+    }
+    return catalog_physical_path(c,root,relative,out,error);
 }
 
 static bool regular_file(const char *path, bool *regular, qa_error *error)
@@ -204,7 +238,10 @@ static bool scan_directory(qa_catalog *c, catalog_product *p, const char *root,
                             bool writable, bool corpus, qa_error *error)
 {
     const char *path;
-    if (!catalog_path(c, root, p->view.directory, &path, error)) return false;
+    if (corpus) {
+        if (!catalog_product_directory(c,p,&path,error)) return false;
+        p->installed_directory=path;
+    } else if (!catalog_physical_path(c, root, p->view.directory, &path, error)) return false;
     if (!path) return true;
     directory dir = {0};
     if (!read_directory(c, path, &dir, error)) { free(dir.entries); return false; }
@@ -273,10 +310,10 @@ static bool content_directory(qa_catalog *c, const char *path, bool *result, qa_
 }
 
 static bool discover_directory(qa_catalog *c, const char *root, const char *parent,
-                               qa_product_id base_id, qa_error *error)
+                               qa_product_id base_id,const char *physical, qa_error *error)
 {
-    const char *path;
-    if (!catalog_path(c, root, parent, &path, error)) return false;
+    const char *path=physical;
+    if (!path && !catalog_path(c, root, parent, &path, error)) return false;
     if (!path) return true;
     directory dir = {0};
     if (!read_directory(c, path, &dir, error)) { free(dir.entries); return false; }
@@ -290,11 +327,15 @@ static bool discover_directory(qa_catalog *c, const char *root, const char *pare
         bool known = false;
         for (size_t j = 0; j < c->product_count; ++j)
             if (c->products[j].view.edition == base->edition && catalog_ascii_equal(c->products[j].view.directory, relative)) { known = true; break; }
+        for (size_t j=0;!known && j<c->location_count;++j) if (!strcmp(c->locations[j].path,e->path))
+            for (size_t k=0;k<c->product_count;++k)
+                if (c->products[k].view.builtin && c->products[k].view.family==base->family &&
+                    !strcmp(c->products[k].view.directory,c->locations[j].logical)) { known=true; break; }
         if (known) continue;
         bool has_content;
         if (!content_directory(c, e->path, &has_content, error)) goto done;
         if (!has_content) continue;
-        if (!catalog_safe_name(e->name)) { qa_error_set(error, QA_ERROR_FORMAT, 0, "mod directory has an invalid identity: %s", relative); goto done; }
+        if (!catalog_safe_name(e->name)) continue;
         if (managed_addon(e->name)) {
             const char *removed = join(c, ".addons/removed", relative, error), *marker;
             if (!removed || !catalog_path(c, root, removed, &marker, error)) goto done;
@@ -314,6 +355,7 @@ static bool discover_directory(qa_catalog *c, const char *root, const char *pare
         view.identity = catalog_string(c, key, error); free(key);
         catalog_product *p;
         if (!view.key || !view.identity || !catalog_add_product(c, &view, &p, error)) goto done;
+        if (physical) p->installed_directory=e->path;
     }
     ok = true;
 done:
@@ -379,10 +421,12 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
         if (!own) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain QuakeWorld content mounts"); return false; }
         memcpy(own, p->own_mounts, own_count * sizeof(*own));
         qa_mount_id write_mount = p->write_mount, loose_mount = p->loose_mount;
+        const char *installed_directory=p->installed_directory;
         catalog_product *variant;
         if (!catalog_add_product(c, &view, &variant, error)) { free(own); return false; }
         variant->own_mounts = own; variant->own_count = own_count;
         variant->write_mount = write_mount; variant->loose_mount = loose_mount;
+        variant->installed_directory=installed_directory;
     }
     return true;
 }
@@ -528,8 +572,13 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
         };
         for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); ++i) {
             qa_product_id base = qa_catalog_find(c, roots[i].base)->id;
-            if (!discover_directory(c, c->root, roots[i].directory, base, error) ||
-                (c->user && !discover_directory(c, c->user, roots[i].directory, base, error))) return false;
+            bool mapped=false;
+            for (size_t j=0;j<c->location_count;++j) if (!strcmp(c->locations[j].logical,roots[i].directory)) {
+                if (!discover_directory(c,c->root,roots[i].directory,base,c->locations[j].path,error)) return false;
+                mapped=true;
+            }
+            if ((!mapped && !discover_directory(c, c->root, roots[i].directory, base, NULL,error)) ||
+                (c->user && !discover_directory(c, c->user, roots[i].directory, base,NULL,error))) return false;
         }
     }
     if (remote_base && !remote_product(c, remote_base, remote_directory, selected, error)) return false;
@@ -541,8 +590,13 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
                             c->user && !strcmp(c->user, c->root), true, error)) return false;
         for (size_t j = 0; !p->remote_directory && j < p->required_count; ++j) {
             const char *path;
-            if (!catalog_path(c, c->root, p->required[j], &path, error)) return false;
-            if (!path && c->user && !catalog_path(c, c->user, p->required[j], &path, error)) return false;
+            const char *leaf=strrchr(p->required[j],'/');
+            path=NULL;
+            if (p->installed_directory && !catalog_physical_path(c,p->installed_directory,
+                leaf?leaf+1:p->required[j],&path,error)) return false;
+            /* A user package is an independent complete directory, not an
+             * archive-by-archive repair of another installed package. */
+            if (!p->installed_directory && c->user && !catalog_physical_path(c,c->user,p->required[j],&path,error)) return false;
             bool regular;
             if (!regular_file(path, &regular, error)) return false;
             if (!regular && !catalog_requirement(c, p, p->required[j], error)) return false;
@@ -553,12 +607,35 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
             && !catalog_requirement(c, p, p->view.directory, error)) return false;
         if (p->view.edition == QA_EDITION_RERELEASE && !p->view.base) {
             const char *archive = p->view.family == QA_GAME_Q1 ? "q1/rerelease/QuakeEX.kpf" : "q2/rerelease/Q2Game.kpf", *path;
-            if (!catalog_path(c, c->root, archive, &path, error)) return false;
+            path=NULL;
+            const char *parent=p->installed_directory?catalog_native_parent(c,p->installed_directory,error):NULL;
+            if (!parent && error && error->code==QA_ERROR_MEMORY) return false;
+            if (parent) {
+                const char *leaf=strrchr(archive,'/');
+                bool ok=catalog_physical_path(c,parent,leaf?leaf+1:archive,&path,error);
+                if (!ok) return false;
+            }
             if (path && !mount_file(c, p, path, QA_ARCHIVE_KPF, false, error)) return false;
         }
     }
     if (mods && !quakeworld_variants(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) if (!finalize_product(c, &c->products[i], 0, error)) return false;
+    const char *installed_q3=NULL;
+    const qa_product *q3_base=qa_catalog_find(c,"q3-baseq3");
+    const char *q3_data=q3_base?c->products[q3_base->id-1].installed_directory:NULL;
+    if (!q3_data) {
+        q3_base=qa_catalog_find(c,"q3-demota");
+        q3_data=q3_base?c->products[q3_base->id-1].installed_directory:NULL;
+    }
+    if (q3_data) installed_q3=catalog_native_parent(c,q3_data,error);
+    if (!installed_q3 && error && error->code==QA_ERROR_MEMORY) return false;
+    if (!installed_q3 && !catalog_path(c,c->root,"q3a",&installed_q3,error)) return false;
+    if (installed_q3) {
+        if (!mount_file(c,NULL,installed_q3,QA_ARCHIVE_AUTO,false,error)) return false;
+        for (size_t i=0;i<c->physical_count;++i)
+            if (c->physical[i].view.format==QA_ARCHIVE_AUTO && !strcmp(c->physical[i].view.path,installed_q3) &&
+                !c->physical[i].view.writable) c->q3_install_mount=c->physical[i].view.id;
+    }
     if (c->user) {
         const char *family;
         if (!catalog_path(c, c->user, "q3a", &family, error) || !family ||

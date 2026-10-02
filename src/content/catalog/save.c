@@ -133,7 +133,13 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog, uint32_t schema
         ENUM(view, program_kind, QA_PROGRAM_NATIVE); FIELD(u32, view, program_product);
         if (view->program_product > catalog->product_count ||
             !mount_ids(io, catalog, &product->own_mounts, &product->own_count) ||
-            !mount_ids(io, catalog, &product->mounts, &product->mount_count) ||
+            !mount_ids(io, catalog, &product->mounts, &product->mount_count)) return false;
+        if (schema>=7 && !text(io,catalog,&product->installed_directory)) return false;
+        if (schema<7 && io->direction==QA_SOURCE_SAVE_READ && product->loose_mount) {
+            const qa_catalog_mount *loose=catalog_mount(catalog,product->loose_mount);
+            product->installed_directory=loose?loose->path:NULL;
+        }
+        if (
             !text(io, catalog, &product->witness) ||
             !qa_source_save_count(io, &product->required_count, 4)) return false;
         for (size_t j = 0; j < 4; ++j)
@@ -191,15 +197,17 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog, uint32_t schema
         if (product->loose_mount) {
             const qa_catalog_mount *loose = catalog_mount(catalog, product->loose_mount);
             const qa_catalog_mount *corpus = catalog_mount(catalog, catalog->corpus_mount);
-            if (!loose || loose->format != QA_ARCHIVE_AUTO || !corpus || corpus->format != QA_ARCHIVE_AUTO ||
-                corpus->writable || loose->id == corpus->id) return false;
+            if (!loose || loose->format != QA_ARCHIVE_AUTO) return false;
+            if (schema>=7 && (!product->installed_directory || strcmp(product->installed_directory,loose->path))) return false;
             size_t path_length = strlen(loose->path), directory_length = strlen(product->view.directory);
-            size_t root_length = strlen(corpus->path);
+            size_t root_length = corpus?strlen(corpus->path):0;
             bool separator = root_length && corpus->path[root_length - 1] != '/' && corpus->path[root_length - 1] != '\\';
-            if (!directory_length || path_length <= root_length || memcmp(loose->path, corpus->path, root_length) ||
-                (separator && loose->path[root_length] != '/' && loose->path[root_length] != '\\') ||
-                path_length - root_length - (separator ? 1 : 0) != directory_length ||
-                !catalog_ascii_equal(loose->path + root_length + (separator ? 1 : 0), product->view.directory)) return false;
+            bool corpus_path=corpus && corpus->format==QA_ARCHIVE_AUTO && !corpus->writable && loose->id!=corpus->id &&
+                directory_length && path_length>root_length && !memcmp(loose->path,corpus->path,root_length) &&
+                (!separator || loose->path[root_length]=='/' || loose->path[root_length]=='\\') &&
+                path_length-root_length-(separator?1:0)==directory_length &&
+                catalog_ascii_equal(loose->path+root_length+(separator?1:0),product->view.directory);
+            if (!corpus_path && !(schema>=7 && catalog_location_matches(catalog,product->view.directory,loose->path))) return false;
             if (!catalog->q3_demo_restricted || product->view.family != QA_GAME_Q3) {
                 bool own = false;
                 for (size_t j = 0; j < product->own_count; ++j) own |= product->own_mounts[j] == product->loose_mount;
@@ -282,15 +290,16 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 }
 static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
 {
-    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 6;
+    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 7;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QCAT", 4) ||
-        !qa_source_save_u32(io, &schema) || (schema < 2 || schema > 6)) return false;
+        !qa_source_save_u32(io, &schema) || (schema < 2 || schema > 7)) return false;
     FIELD(u64, catalog, generation);
     FIELD(bool, catalog, q3_demo_restricted);
     if (schema >= 3) { FIELD(u64, catalog, q3_download_mount); }
     if (schema >= 5) { FIELD(u64, catalog, corpus_mount); }
     if (schema >= 6) for (size_t i = 0; i < 2; ++i)
         if (!qa_source_save_u64(io, &catalog->q2_download_mount[i])) return false;
+    if (schema>=7) { FIELD(u64,catalog,q3_install_mount); }
     qa_buffer dictionary = {0};
     bool ok = io->direction == QA_SOURCE_SAVE_READ || qa_save_strings_encode(catalog->strings, &dictionary, io->error);
     if (ok) ok = blob(io, &dictionary);
@@ -298,7 +307,26 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
         (qa_bytes){dictionary.data, dictionary.size}, &catalog->strings, io->error);
     qa_buffer_free(&dictionary);
     if (!ok || !text(io, catalog, &catalog->root) || !catalog->root || !*catalog->root ||
-        !text(io, catalog, &catalog->user) || !blob(io, files)) return false;
+        !text(io, catalog, &catalog->user)) return false;
+    if (schema>=7) {
+        if (!strings(io,catalog,&catalog->install_roots,&catalog->install_root_count)) return false;
+        for (size_t i=0;i<catalog->install_root_count;++i) if (!*catalog->install_roots[i]) return false;
+        ARRAY(catalog,locations,location_count,2);
+        static const char *const names[]={"q1","q1/id1","q1/rerelease","q1/rerelease/id1",
+            "q2","q2/baseq2","q2/rerelease","q2/rerelease/baseq2","q3a","q3a/baseq3","q3a/demota"};
+        for (size_t i=0;i<catalog->location_count;++i) {
+            catalog_location *location=catalog->locations+i;
+            if (!text(io,catalog,&location->logical) || !location->logical ||
+                !text(io,catalog,&location->path) || !location->path || !*location->path) return false;
+            bool known=false;
+            for (size_t j=0;j<sizeof(names)/sizeof(*names);++j) known|=!strcmp(names[j],location->logical);
+            if (!known) return false;
+            for (size_t j=0;j<i;++j) if (!strcmp(catalog->locations[j].logical,location->logical) &&
+                !strcmp(catalog->locations[j].path,location->path)) return false;
+        }
+        catalog->location_capacity=catalog->location_count;
+    }
+    if (!blob(io,files)) return false;
     if (!physical(io, catalog) || !products(io, catalog, schema) || !mods(io, catalog) || !behaviors(io, catalog)) return false;
     if (catalog->corpus_mount) {
         const qa_catalog_mount *root = catalog_mount(catalog, catalog->corpus_mount);
@@ -306,6 +334,23 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
         for (size_t i = 0; i < catalog->product_count; ++i)
             for (size_t j = 0; j < catalog->products[i].mount_count; ++j)
                 if (catalog->products[i].mounts[j] == catalog->corpus_mount) return false;
+    }
+    if (catalog->q3_install_mount) {
+        const qa_catalog_mount *root=catalog_mount(catalog,catalog->q3_install_mount);
+        if (!root || root->format!=QA_ARCHIVE_AUTO || root->writable) return false;
+        bool mapped=catalog_location_matches(catalog,"q3a",root->path);
+        const qa_catalog_mount *corpus=catalog_mount(catalog,catalog->corpus_mount);
+        if (!mapped && corpus) {
+            size_t length=strlen(corpus->path);
+            bool separator=length && corpus->path[length-1]!='/' && corpus->path[length-1]!='\\';
+            mapped=strlen(root->path)==length+(separator?1:0)+3 && !memcmp(root->path,corpus->path,length) &&
+                (!separator || root->path[length]=='/' || root->path[length]=='\\') &&
+                catalog_ascii_equal(root->path+length+(separator?1:0),"q3a");
+        }
+        if (!mapped) return false;
+        for (size_t i=0;i<catalog->product_count;++i)
+            for (size_t j=0;j<catalog->products[i].mount_count;++j)
+                if (catalog->products[i].mounts[j]==root->id) return false;
     }
     if (catalog->q3_download_mount) {
         const catalog_physical *root = catalog_package(catalog, catalog->q3_download_mount);
@@ -370,6 +415,11 @@ bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint
             qa_vfs_mount_root(catalog->mounts, catalog->corpus_mount);
     }
     if (ok && catalog->q3_download_mount && !qa_catalog_q3_download_root(catalog)) ok = false;
+    if (ok && catalog->q3_install_mount) {
+        const qa_catalog_mount *root=catalog_mount(catalog,catalog->q3_install_mount);
+        const char *path=qa_vfs_mount_path(catalog->mounts,catalog->q3_install_mount);
+        ok=root && path && !strcmp(root->path,path) && qa_vfs_mount_root(catalog->mounts,root->id);
+    }
     for (size_t i = 0; ok && i < 2; ++i)
         if (catalog->q2_download_mount[i] && !qa_catalog_q2_download_root(catalog,
             i ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC)) ok = false;

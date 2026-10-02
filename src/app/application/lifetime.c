@@ -380,6 +380,9 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_resource_pool_destroy(application->resources);
     application_save_content_destroy(application->content_graph);
     free(application->content_root);
+    for (size_t i = 0; i < application->install_root_count; ++i)
+        free(application->install_roots[i]);
+    free(application->install_roots);
     free(application->user_root);
     free(application->native_bootstrap);
     qa_native_runtime_release(application->native_runtime);

@@ -86,6 +86,10 @@ typedef struct qa_catalog_weapon_behavior {
 typedef struct qa_catalog_options {
     qa_resource_pool *resources;
     const char *content_root, *user_root;
+    /* Additional physical search locations; product directory names remain
+     * logical identities independent of native install folder names. */
+    const char *const *install_roots;
+    size_t install_root_count;
     uint64_t generation;
     bool discover_mods;
 } qa_catalog_options;

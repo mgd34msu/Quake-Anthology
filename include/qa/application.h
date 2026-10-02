@@ -324,6 +324,8 @@ typedef struct qa_application_options {
     /* Pure isolated baseline construction imports this retained owner. */
     const qa_q3_product_policy *q3_product_policy;
     const char *content_root;
+    const char *const *install_roots;
+    size_t install_root_count;
     const char *user_root;
     /* Actual input configuration directory, independent of content roots and
      * GAME selection. The application retains this native directory owner. */

@@ -76,7 +76,9 @@ static void usage(FILE *stream)
           "       quake-anthology --list ARCHIVE\n"
           "       quake-anthology --inspect-bsp ARCHIVE MEMBER\n"
           "\n"
-          "  --content-root PATH      Installed game data root, default ../qfiles\n"
+          "  --content-root PATH      Primary data root, default executable folder\n"
+          "  --game-path PATH         Additional install folder, repeatable\n"
+          "  --save-game-path PATH    Remember an install folder and list content\n"
           "  --user-content-root PATH Writable user content root\n"
           "  --list-content           List discovered products\n"
           "  --menu                   Open the startup menu, default without --game\n"
@@ -102,7 +104,13 @@ static void usage(FILE *stream)
           "  --gamma 0.5..3           Output brightness\n"
           "  --frames N               Stop after N frames, zero is unlimited\n"
           "  --hidden --no-audio      Select window visibility and audio delivery\n"
-          "  --font-directory PATH --font FILE  Native menu font resource\n", stream);
+          "  --font-directory PATH --font FILE  Native menu font resource\n"
+          "\n"
+          "First use: put the executable beside your installed games, or run\n"
+          "  quake-anthology --save-game-path \"/path/to/your/games\"\n"
+          "Nearby folders, Steam libraries and saved paths are searched. Saved\n"
+          "paths live under --user-content-root or the platform user settings.\n"
+          "Use --list-content to find installed product IDs before --game.\n", stream);
 }
 
 static int report_error(const char *source, const qa_error *error)
@@ -213,8 +221,16 @@ int main(int argc, char **argv)
         return report_error("startup", &error);
     }
     options.application.native_bootstrap = options.native_bootstrap;
+    if (!qa_frontend_options_resolve_locations(&options,&error)) {
+        qa_frontend_options_destroy(&options);
+        return report_error("game locations",&error);
+    }
     bool list = false;
     for (int i = 1; i < argc; ++i) list |= strcmp(argv[i], "--list-content") == 0;
+    if (options.save_game_path_count) {
+        printf("Saved game search locations in %s\n",qa_frontend_options_locations_file(&options));
+        if (!list) { qa_frontend_options_destroy(&options); return 0; }
+    }
     bool ok, owners_released = true;
     if (list) {
         qa_application *retained = NULL;

@@ -15,57 +15,99 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target quake-anthology --parallel
 ```
 
-After arranging your game data as described below, open the startup menu:
+Open the startup menu:
 
 ```sh
-./build/quake-anthology --content-root /path/to/qfiles --user-content-root /path/to/anthology-user
+./build/quake-anthology
 ```
 
-`--content-root` points to installed game data. `--user-content-root` selects writable user content. Keep the same user directory between sessions to retain your files. Without an explicit content root, the application looks in `../qfiles` relative to the working directory.
+The application searches for installed games beside the executable, in surrounding directories, and in Steam libraries. Discovery uses the executable's location, so launching from another working directory does not change where it looks.
+
+`--user-content-root PATH` selects a different directory for writable settings and user content. Keep the same user directory between sessions to retain your files.
 
 For a system or user installation, choose an installation prefix when configuring, then run `cmake --install build`. Keep the installed native runtime files alongside the application’s installation; original native mods use them.
 
 ## Add your games
 
-Copy each game's data directory contents into the matching location under your content root. Keep PAK and PK3 archives intact, and include loose files and additional archives from the installation.
+Keep your games in their existing installation directories. You can place the executable, or the folder containing it, alongside your games. For example:
 
-| Game or campaign | Directory under your content root | Product ID |
-| --- | --- | --- |
-| Quake | `q1/id1/` | `q1-classic-id1` |
-| Scourge of Armagon | `q1/hipnotic/` | `q1-classic-hipnotic` |
-| Dissolution of Eternity | `q1/rogue/` | `q1-classic-rogue` |
-| Quake rerelease | `q1/rerelease/id1/` | `q1-rerelease-id1` |
-| Quake II | `q2/baseq2/` | `q2-classic-baseq2` |
-| The Reckoning | `q2/xatrix/` | `q2-classic-xatrix` |
-| Ground Zero | `q2/rogue/` | `q2-classic-rogue` |
-| Quake II rerelease | `q2/rerelease/baseq2/` | `q2-rerelease-baseq2` |
-| Quake III Arena | `q3a/baseq3/` | `q3-baseq3` |
-| Team Arena | `q3a/missionpack/` | `q3-missionpack` |
-
-For example, a classic Quake installation should contain `q1/id1/pak0.pak` and `q1/id1/pak1.pak`. Quake III's archives belong in `q3a/baseq3/`, including its installed updates. Expansions also need their base game's data.
-
-List the products discovered in your installation:
-
-```sh
-./build/quake-anthology --content-root /path/to/qfiles --list-content
+```text
+SteamLibrary/steamapps/common/
+    Quake/
+        id1/
+    Quake II/
+        baseq2/
+    Quake III Arena/
+        baseq3/
+    Quake Anthology/
+        quake-anthology
 ```
 
-Use the product IDs from that output when selecting a game. Rerelease campaigns and discovered mods have their own entries.
+The outer installation folder names can differ. Quake Anthology recognizes the game data inside them. Expansions need their base game's data too.
+
+Check which games were found:
+
+```sh
+./build/quake-anthology --list-content
+```
+
+If a game is elsewhere, add its installation directory for the current launch:
+
+```sh
+./build/quake-anthology --game-path "/path/to/Quake II" --list-content
+```
+
+To remember that directory for later launches:
+
+```sh
+./build/quake-anthology --save-game-path "/path/to/Quake II"
+```
+
+Repeat either option for multiple installations. `--save-game-path` updates `install-locations.json` in your user settings directory and exits without starting a game. The command prints the configuration file's location. You can also edit that file directly, using absolute paths:
+
+```json
+{
+    "schema": "quake-anthology/install-locations",
+    "version": 1,
+    "paths": [
+        "/path/to/Quake",
+        "/another/drive/Quake II",
+        "/path/to/Quake III Arena"
+    ]
+}
+```
+
+Use the product IDs from `--list-content` when selecting a game:
+
+| Game or campaign | Product ID |
+| --- | --- |
+| Quake | `q1-classic-id1` |
+| Scourge of Armagon | `q1-classic-hipnotic` |
+| Dissolution of Eternity | `q1-classic-rogue` |
+| Quake rerelease | `q1-rerelease-id1` |
+| Quake II | `q2-classic-baseq2` |
+| The Reckoning | `q2-classic-xatrix` |
+| Ground Zero | `q2-classic-rogue` |
+| Quake II rerelease | `q2-rerelease-baseq2` |
+| Quake III Arena | `q3-baseq3` |
+| Team Arena | `q3-missionpack` |
+
+Rerelease campaigns and discovered mods have their own entries. `--content-root PATH` is also available to select a directory to search.
 
 ## Start playing
 
 Launch a game directly, or omit `--game` to choose through the startup menu:
 
 ```sh
-./build/quake-anthology --content-root /path/to/qfiles --game q1-classic-id1 --map start
-./build/quake-anthology --content-root /path/to/qfiles --game q2-classic-baseq2 --map base1
-./build/quake-anthology --content-root /path/to/qfiles --game q3-baseq3 --map q3dm1
+./build/quake-anthology --game q1-classic-id1 --map start
+./build/quake-anthology --game q2-classic-baseq2 --map base1
+./build/quake-anthology --game q3-baseq3 --map q3dm1
 ```
 
 To use Quake III movement while playing Quake II:
 
 ```sh
-./build/quake-anthology --content-root /path/to/qfiles --game q2-classic-baseq2 --movement q3
+./build/quake-anthology --game q2-classic-baseq2 --movement q3
 ```
 
 `--movement` accepts `q1`, `qw`, `q2`, `q3` or a discovered product ID. `--character` accepts `q1`, `q2`, `q3` or a product ID. `--map-game PRODUCT` selects map content independently. Add `--mod PRODUCT/COMPONENT` for an independent mod component; repeat the option to combine components.
@@ -90,20 +132,20 @@ Quake-style startup commands follow the options, for example `+set name Player`.
 Anthology sessions use `unified-1` by default. To run a dedicated server with a stdin console:
 
 ```sh
-./build/quake-anthology --content-root /path/to/qfiles --game q2-classic-baseq2 --map base1 --dedicated --host 0.0.0.0 --port 27910
+./build/quake-anthology --game q2-classic-baseq2 --map base1 --dedicated --host 0.0.0.0 --port 27910
 ```
 
 Connect to an Anthology server with `--connect ADDRESS --port PORT`. For an original game server, explicitly choose its protocol, for example:
 
 ```sh
-./build/quake-anthology --content-root /path/to/qfiles --game q2-classic-baseq2 --connect 192.0.2.10 --port 27910 --protocol q2-34
+./build/quake-anthology --game q2-classic-baseq2 --connect 192.0.2.10 --port 27910 --protocol q2-34
 ```
 
 Protocol names include `nq15`, `fitz666`, `rmq999`, `qw28`, `qw29`, `q2-34`, `r1q2-35`, `q2pro-36`, `q2repro-1038`, `q2kex-2023`, `q3-68` and `unified-1`. Match the server's game, protocol and required content.
 
 ## Troubleshooting
 
-- **Game missing from the menu:** check the directory layout and run `--list-content`. The root should contain `q1`, `q2` or `q3a`, rather than pointing directly at `id1` or `baseq2`.
+- **Game missing from the menu:** run `--game-path "/path/to/game installation" --list-content`. If the game is found, remember its location with `--save-game-path`. Check that the installation contains the complete game archives.
 - **Missing expansion assets:** install the base game and the expansion's complete data directory.
 - **Display problems:** try `--renderer cpu` and a smaller window size.
 - **Menu font missing:** pass `--font-directory /path/to/fonts --font Font.ttf`. The default font is `DejaVuSans.ttf` in `/usr/share/fonts/truetype/dejavu`.

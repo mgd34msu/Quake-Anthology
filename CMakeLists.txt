@@ -715,6 +715,7 @@ add_library(qa_catalog STATIC
     src/content/catalog/behaviors.c
     src/content/catalog/catalog.c
     src/content/catalog/discovery.c
+    src/content/catalog/locations.c
     src/content/catalog/metadata.c
     src/content/catalog/mounts.c
     src/persistence/q1_product.c
@@ -1719,6 +1720,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/network_qw.c
     src/app/frontend/network_qw_save.c
     src/app/frontend/options.c
+    src/app/frontend/install_locations.c
     src/app/frontend/particle_events.c
     src/app/frontend/persistence.c
     src/app/frontend/root_restore.c
