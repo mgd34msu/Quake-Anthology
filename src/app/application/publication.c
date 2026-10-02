@@ -741,6 +741,7 @@ bool application_publication_finish(qa_application *application,
             application_q3_components_prepare(publication->components,error);
     }
     if (!construct_and_reserve(application, publication, NULL, error) ||
+        !application_map_prepare_points(application, publication, error) ||
         !prepare_supplies(application, publication, error) ||
         !application_match_prepare(application, publication, error) ||
         !application_equipment_runtime_prepare_components(publication->equipment_runtime, error) ||

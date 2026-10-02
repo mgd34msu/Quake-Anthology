@@ -232,8 +232,6 @@ bool application_map_prepare(qa_application *application,
 {
     if (!application_map_prepare_content(application, publication, error))
         return false;
-    const qa_launch_choices *choices =
-        qa_launch_snapshot_choices(publication->candidate);
     bool carry, unit;
     const qa_q2_landmark *landmark;
     application_map_travel_options(application, &carry, &unit, &landmark);
@@ -253,6 +251,15 @@ bool application_map_prepare(qa_application *application,
             return false;
         application_players_world_type(publication->players, world_type);
     }
+    return true;
+}
+
+bool application_map_prepare_points(qa_application *application,
+                                     application_publication *publication,
+                                     qa_error *error)
+{
+    const qa_launch_choices *choices =
+        qa_launch_snapshot_choices(publication->candidate);
     qa_strings *strings = qa_session_strings(application->session);
     for (size_t i = 0; i < publication->entities.count; ++i) {
         qa_bytes name;
