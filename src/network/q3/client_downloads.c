@@ -351,6 +351,11 @@ bool qa_q3_client_downloads_pump(qa_q3_client_downloads *owner,qa_error *error)
 {
     if(!current(owner,error) || owner->receiving)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 package continuation requires its current returned packet owner");
+    if(owner->active && !owner->paused) {
+        bool allowed;
+        if(!owner->bindings.permission(owner->bindings.context,&allowed,error)) return false;
+        if(!allowed && !qa_q3_client_downloads_cancel(owner,error)) return false;
+    }
     uint64_t generation=owner->generation; bool terminal=false; qa_error operation={0};
     owner->receiving=true;
     bool ok=progress(owner,&terminal,&operation); owner->receiving=false;
