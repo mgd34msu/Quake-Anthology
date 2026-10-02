@@ -1753,6 +1753,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/selected_effects_q2_particles.c
     src/app/frontend/source.c
     src/app/frontend/startup_server_browser.c
+    src/app/frontend/startup_downloads.c
     src/app/frontend/system_cinematic.c
     src/app/frontend/system_cinematic_save.c
     src/app/frontend/tools.c

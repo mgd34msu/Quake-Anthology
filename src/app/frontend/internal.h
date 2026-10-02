@@ -93,6 +93,7 @@ typedef struct frontend_seat {
     qa_ui_mods *mods;
     struct frontend_startup_server_browser *server_browser;
     struct frontend_startup_rotation *rotation_menu;
+    struct frontend_startup_downloads *downloads_menu;
     struct frontend_source_prompt *source_prompt;
     qa_ui_rankings *rankings;
     qa_ui_llm *assistance;

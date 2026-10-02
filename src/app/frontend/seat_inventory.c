@@ -12,11 +12,12 @@
 #include "qa/ui_assistance_save.h"
 #include "ui_features_private.h"
 #include "startup_server_browser.h"
+#include "startup_downloads.h"
 #include "source_prompt.h"
 
 enum { SEAT_INPUT, SEAT_CONSOLE, SEAT_UI, SEAT_HUD, SEAT_WHEEL,
     SEAT_LIBRARY, SEAT_MODS, SEAT_RANKINGS, SEAT_ASSISTANCE, SEAT_MENU,
-    SEAT_SERVER_BROWSER, SEAT_SOURCE_PROMPT, SEAT_COMPONENTS };
+    SEAT_SERVER_BROWSER, SEAT_SOURCE_PROMPT, SEAT_DOWNLOADS, SEAT_COMPONENTS };
 typedef struct seat_record {
     qa_input_command_builder builder;
     qa_actor_id actor;
@@ -35,7 +36,7 @@ static bool actual(const frontend_seat *seat)
         features->fallbacks[0]==features->bold ? 1 : 0;
     return f && f->application && !f->stepping && !f->options.dedicated && f->seats &&
         seat->id<f->options.seats && seat==f->seats+seat->id && seat->input && seat->console &&
-        seat->ui && seat->hud && seat->wheel && seat->library && seat->rankings && seat->assistance && seat->server_browser && seat->source_prompt &&
+        seat->ui && seat->hud && seat->wheel && seat->library && seat->rankings && seat->assistance && seat->server_browser && seat->source_prompt && seat->downloads_menu &&
         features && seat->fonts.seat==seat->id && seat->fonts.classic==f->classic &&
         (seat->fonts.primary==f->primary || seat->fonts.primary==features->bold) &&
         skip<=features->fallback_count && seat->fonts.fallback_count==features->fallback_count-skip &&
@@ -85,17 +86,19 @@ static bool builder_fields(qa_source_save_io *io,qa_input_command_builder *build
         (builder->pending_impulse && kind!=QA_MOVEMENT_NETQUAKE && kind!=QA_MOVEMENT_QUAKEWORLD)) return false;
     builder->kind=(qa_movement_kind)kind; return true;
 }
-static bool header(qa_source_save_io *io,qa_frontend *f,bool input)
+static bool header(qa_source_save_io *io,qa_frontend *f,bool input,uint32_t *version)
 {
     uint8_t magic[4]={'Q','F','S',input?'U':'V'};
-    uint32_t version=input?2:4,seats=f->options.seats; bool dedicated=f->options.dedicated;
+    uint32_t seats=f->options.seats; bool dedicated=f->options.dedicated;
+    *version=input?2:5;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,input?"QFSU":"QFSV",4) &&
-        qa_source_save_u32(io,&version) && version==(input?2u:4u) && qa_source_save_u32(io,&seats) && seats==f->options.seats &&
+        qa_source_save_u32(io,version) && (input?*version==2u:(*version==4u || *version==5u)) && qa_source_save_u32(io,&seats) && seats==f->options.seats &&
         qa_source_save_bool(io,&dedicated) && dedicated==f->options.dedicated;
 }
 static bool fields(qa_source_save_io *io,qa_frontend *f,bool input,seat_record *records)
 {
-    if (!header(io,f,input)) return false;
+    uint32_t version;
+    if (!header(io,f,input,&version)) return false;
     if (f->options.dedicated) return true;
     for (unsigned i=0;i<f->options.seats;++i) {
         seat_record *row=records+i; uint32_t seat=i;
@@ -115,8 +118,10 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,bool input,seat_record *
                 !reservation(io,row->wheel_capacity,sizeof(qa_hud_wheel_item)) ||
                 !reservation(io,row->wheel_capacity,sizeof(qa_item_definition)) ||
                 !qa_source_save_count(io,&row->wheel_labels,SIZE_MAX) || !reservation(io,row->wheel_labels,1)) return false;
-            for (unsigned j=SEAT_UI;j<SEAT_COMPONENTS;++j)
+            for (unsigned j=SEAT_UI;j<SEAT_COMPONENTS;++j) {
+                if(version==4 && j==SEAT_DOWNLOADS)continue;
                 if (!blob(io,row->components+j) || (j!=SEAT_MODS && !row->components[j].size)) return false;
+            }
         }
     }
     return true;
@@ -196,7 +201,8 @@ bool frontend_seats_checkpoint(qa_frontend *f,frontend_scene_namespace *space,
             qa_ui_llm_checkpoint(seat->assistance,&assistance,&owned[i][SEAT_ASSISTANCE],error) &&
             frontend_menu_checkpoint(seat,&owned[i][SEAT_MENU],error) &&
             frontend_startup_server_browser_checkpoint(seat->server_browser,&owned[i][SEAT_SERVER_BROWSER],error) &&
-            frontend_source_prompt_checkpoint(seat->source_prompt,&owned[i][SEAT_SOURCE_PROMPT],error);
+            frontend_source_prompt_checkpoint(seat->source_prompt,&owned[i][SEAT_SOURCE_PROMPT],error) &&
+            frontend_startup_downloads_checkpoint(seat->downloads_menu,&owned[i][SEAT_DOWNLOADS],error);
         for (unsigned j=0;j<SEAT_COMPONENTS;++j) row->components[j]=(qa_bytes){owned[i][j].data,owned[i][j].size};
     }
     qa_source_save_io in={0},shown={0}; qa_buffer input_saved={0},shown_saved={0};
@@ -257,6 +263,7 @@ bool frontend_seats_restore(qa_frontend *f,frontend_scene_namespace *space,
             frontend_menu_restore(seat,row->components[SEAT_MENU],error) &&
             frontend_startup_server_browser_restore(seat->server_browser,row->components[SEAT_SERVER_BROWSER],error) &&
             frontend_source_prompt_restore(seat->source_prompt,row->components[SEAT_SOURCE_PROMPT],error) &&
+            (!row->components[SEAT_DOWNLOADS].size || frontend_startup_downloads_restore(seat->downloads_menu,row->components[SEAT_DOWNLOADS],error)) &&
             qa_ui_restore(seat->ui,&ui,row->components[SEAT_UI],error) &&
             hud_restore(seat,&hud,row->components[SEAT_HUD],error) &&
             qa_hud_wheel_restore(seat->wheel,&wheel,row->components[SEAT_WHEEL],error);

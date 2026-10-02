@@ -1,4 +1,5 @@
 #include "startup_server_browser.h"
+#include "startup_downloads.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
 #include "qa/ui_preferences.h"
@@ -616,6 +617,7 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
                !frontend_network_menu_master(f,view,protocol,remote,e))return false;
             snprintf(d->status,sizeof(d->status),"Querying master..."); return true;
         }
+        if(control==7 && event->kind==QA_UI_ACTIVATE)return frontend_startup_downloads_open(o->seat->downloads_menu,e);
         return control!=6 || event->kind!=QA_UI_ACTIVATE || qa_ui_close(o->ui,now(o),e);
     }
     if(context->id==o->menus.details && event->kind==QA_UI_ACTIVATE) {
@@ -687,8 +689,9 @@ static bool options_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     o->controls[2].value.checked=o->draft.hide_full;
     o->controls[3]=field(context,4,"Master address or HTTP list",o->draft.masters[o->draft.family],2048,64,226,512);
     o->controls[4]=button(context,5,"Find Internet servers",64,288,512,true);
-    o->controls[5]=button(context,6,"Back",64,356,512,true);
-    *out=(qa_ui_menu){.id=context->id,.title="Server filters",.controls=o->controls,.count=6};
+    o->controls[5]=button(context,7,"Downloads",64,322,512,true);
+    o->controls[6]=button(context,6,"Back",64,390,512,true);
+    *out=(qa_ui_menu){.id=context->id,.title="Server filters",.controls=o->controls,.count=7};
     bool okay=frontend_network_menu_current(o->seat->frontend,&view); o->busy=was_busy; return okay;
 }
 static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e)

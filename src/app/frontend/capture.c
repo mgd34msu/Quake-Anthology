@@ -52,6 +52,7 @@
 #include "qa/scene_model_save.h"
 #include "qa/application_startup_prepare.h"
 #include "startup_server_browser.h"
+#include "startup_downloads.h"
 #include "source_prompt.h"
 
 typedef enum capture_kind { CAPTURE_ASSETS, CAPTURE_IMAGES, CAPTURE_LIBRARY,
@@ -188,6 +189,7 @@ bool frontend_seat_callbacks_returned(const qa_frontend *f)
         if ((seat->ui && !qa_ui_idle(seat->ui)) || (seat->hud && !qa_hud_idle(seat->hud)) ||
             (seat->wheel && !qa_hud_wheel_round_ready(seat->wheel)) ||
             !frontend_startup_server_browser_idle(seat->server_browser) ||
+            !frontend_startup_downloads_idle(seat->downloads_menu) ||
             (seat->source_prompt && !frontend_source_prompt_idle(seat->source_prompt))) return false;
     }
     return true;

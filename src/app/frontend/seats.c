@@ -4,6 +4,7 @@
 #include "startup_rotation.h"
 #include "internal.h"
 #include "startup_server_browser.h"
+#include "startup_downloads.h"
 #include "qa/ui_menu_save.h"
 #include "qa/ui_save.h"
 #include "qa/binary.h"
@@ -446,6 +447,7 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
                 .context = seat, .factory = settings, .open = settings_open}, error)) return false;
         frontend_startup_server_browser_menus browser={200,201,202};
         if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
+            !frontend_startup_downloads_create(seat,203,204,&seat->downloads_menu,error) ||
             !frontend_startup_rotation_create(seat,205,&seat->rotation_menu,error) ||
             !frontend_source_prompt_create(seat,206,&seat->source_prompt,error)) return false;
         if (!frontend_bindings_create(seat, error) || !frontend_accessibility_create(seat, error) ||
@@ -476,6 +478,7 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         frontend_seat *seat = &frontend->seats[i];
         if (!frontend_source_prompt_destroy(&seat->source_prompt,error) ||
             !frontend_startup_rotation_destroy(&seat->rotation_menu,error) ||
+            !frontend_startup_downloads_destroy(&seat->downloads_menu,error) ||
             !frontend_startup_server_browser_destroy(&seat->server_browser,error)) return false;
         if (!qa_hud_wheel_destroy(seat->wheel, error)) return false;
         seat->wheel = NULL;
