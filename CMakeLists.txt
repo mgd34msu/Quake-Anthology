@@ -1723,6 +1723,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/network_nq_save.c
     src/app/frontend/network_q3_packages.c
     src/app/frontend/network_qw.c
+    src/app/frontend/network_qw_logfile.c
     src/app/frontend/network_qw_save.c
     src/app/frontend/options.c
     src/app/frontend/install_locations.c

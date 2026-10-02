@@ -11,6 +11,7 @@ bool qa_application_network_qw_log_read(qa_application *, qa_q1_qw_fraglog_view 
     bool *present, qa_error *);
 bool qa_application_network_qw_log_check(qa_application *, double realtime,
     bool *present, qa_error *);
+bool qa_application_network_qw_log_enabled(qa_application *,bool *,qa_error *);
 
 /* Authenticate selected control separately from the literal source commands. */
 bool qa_application_network_qw_commands(qa_application *,

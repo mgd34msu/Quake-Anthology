@@ -486,6 +486,7 @@ void frontend_qw_destroy(frontend_qw_host *host)
 {
     if (!host) return;
     qa_qw_challenges_destroy(host->challenges);
+    for (size_t i = 0; i < QW_PENDING; ++i) qa_buffer_free(&host->pending[i].reply);
     for (size_t i = 0; i < QW_CLIENTS; ++i) free(host->peers[i].userinfo);
     for (size_t i = 0; i < 255; ++i) { free(host->models[i]); free(host->sounds[i]); }
     for (size_t i = 0; i < 64; ++i) free(host->styles[i]);
@@ -627,9 +628,42 @@ static bool source_status(void *context, const char **out, qa_error *error)
     if (!ok) { qa_buffer_free(&status); return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source status response exceeds packet extent"); }
     status.size = used; qa_buffer_free(&host->status); host->status = status; *out = (const char *)status.data; return true;
 }
-typedef struct qw_reply { frontend_qw_host *host; qa_net_address address; } qw_reply;
+static bool source_log(void *context,int32_t sequence,const char **out,qa_error *error)
+{
+    frontend_qw_host *host=context; bool enabled=false,present=false;
+    *out=NULL;
+    if (!qa_application_network_qw_log_enabled(host->frontend->application,&enabled,error)) return false;
+    if (!enabled) return true;
+    qa_q1_qw_fraglog_view log;
+    if (!qa_application_network_qw_log_read(host->frontend->application,&log,&present,error) || !present) return false;
+    uint32_t previous=log.sequence-1;
+    if (sequence==(int32_t)previous) return true;
+    qa_bytes bytes=log.buffers[previous&1u];
+    const uint8_t *nul=bytes.size?memchr(bytes.data,0,bytes.size):NULL;
+    if (bytes.size && !nul) return frontend_fail(error,QA_ERROR_FORMAT,"QuakeWorld frag buffer lost its Source string terminator");
+    size_t length=nul?(size_t)(nul-bytes.data):0;
+    char prefix[64]; int size=snprintf(prefix,sizeof(prefix),"stdlog %u\n",previous);
+    if (size<0 || (size_t)size>=sizeof(prefix) || length>65534-(size_t)size)
+        return frontend_fail(error,QA_ERROR_FORMAT,"QuakeWorld frag response exceeds its native datagram");
+    qa_buffer response={malloc((size_t)size+length+1),(size_t)size+length};
+    if (!response.data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining QuakeWorld frag response");
+    memcpy(response.data,prefix,(size_t)size);
+    if (length) memcpy(response.data+(size_t)size,bytes.data,length);
+    response.data[response.size]=0;
+    qa_buffer_free(&host->status); host->status=response; *out=(const char *)response.data; return true;
+}
+typedef struct qw_reply { frontend_qw_host *host; qw_pending_control *pending; } qw_reply;
 static bool send_reply(void *context, qa_bytes bytes, qa_error *error)
-{ qw_reply *reply = context; return qa_network_send_address(reply->host->runtime, &reply->address, bytes, error); }
+{
+    qw_reply *reply=context; qw_pending_control *pending=reply->pending;
+    if (!bytes.size || bytes.size>65535)
+        return frontend_fail(error,QA_ERROR_FORMAT,"QuakeWorld connectionless response exceeds its datagram");
+    pending->reply.data=malloc(bytes.size);
+    if (!pending->reply.data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining QuakeWorld native reply");
+    pending->reply.size=bytes.size; memcpy(pending->reply.data,bytes.data,bytes.size);
+    if (!qa_network_send_address(reply->host->runtime,&pending->address,bytes,error)) return false;
+    qa_buffer_free(&pending->reply); return true;
+}
 bool frontend_qw_receive(frontend_qw_host *host, const qa_net_datagram *packet, bool *recognized, qa_error *error)
 {
     if (!host || !packet || !recognized) return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld connectionless owner");
@@ -723,13 +757,19 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld authentication lacks its actual constructor policies");
     qa_qw_connection_host hooks = {.context = host, .password = password->value,
         .spectator_password = spectator->value, .rcon_password = rcon->value,
-        .high_characters = high->number != 0, .blocked = blocked, .connect = connect_source, .status = source_status};
+        .high_characters = high->number != 0, .blocked = blocked, .connect = connect_source,
+        .status = source_status,.log=source_log};
     while (host->pending_count) {
-        qw_pending_control *pending = host->pending; qw_reply reply = {host, pending->address};
-        if (!qa_qw_connectionless_receive(&hooks, host->challenges, (qa_bytes){pending->bytes, pending->size},
+        qw_pending_control *pending = host->pending; qw_reply reply = {host, pending};
+        if (pending->reply.size) {
+            if (!qa_network_send_address(host->runtime,&pending->address,
+                (qa_bytes){pending->reply.data,pending->reply.size},error)) return false;
+            qa_buffer_free(&pending->reply);
+        } else if (!qa_qw_connectionless_receive(&hooks, host->challenges, (qa_bytes){pending->bytes, pending->size},
             &pending->address, pending->time_ns, send_reply, &reply, error)) return false;
         --host->pending_count;
         memmove(host->pending, host->pending + 1, host->pending_count * sizeof(*host->pending));
+        host->pending[host->pending_count]=(qw_pending_control){0};
     }
     return true;
 }

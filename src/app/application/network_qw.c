@@ -5,6 +5,7 @@
 #include "control_frame.h"
 #include "native_q1_wire_qw.h"
 #include "native_q1_spectator.h"
+#include "native_q1_console.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
 
@@ -35,6 +36,16 @@ bool qa_application_network_qw_log_check(qa_application *app, double realtime,
     application_native_q1_wire_end(&source);
     *present = okay;
     return okay;
+}
+bool qa_application_network_qw_log_enabled(qa_application *app,bool *enabled,qa_error *error)
+{
+    if (!app || !enabled) return application_fail(error,QA_ERROR_ARGUMENT,"Missing QuakeWorld frag file observation");
+    *enabled=false;
+    if (!application_native_q1_qw_selected(app)) return true;
+    application_native_q1_wire_source source={0};
+    if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
+    bool okay=application_native_q1_source_logfrag_enabled(source.provider,enabled,error);
+    application_native_q1_wire_end(&source); return okay;
 }
 
 bool qa_application_network_qw_userinfo_read(qa_application *app,

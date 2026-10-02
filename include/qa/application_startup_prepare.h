@@ -122,6 +122,11 @@ typedef struct qa_application_startup_hooks {
      * candidate names only the application's real source-free bootstrap. */
     bool (*prepare_root)(void *, qa_application *, const qa_launch_snapshot *,
         qa_console *, qa_cvars *, const qa_command_context *, qa_error *);
+    /* The physical QW GAME appends its obituary before this reached writer.
+     * The backend owns the session-lived fraglogfile handle independently of
+     * replaced map consoles. Buffers alone never certify enabled logging. */
+    void (*qw_logfrag_write)(void *, qa_application *, const qa_application_startup_source *, const char *);
+    bool (*qw_logfrag_enabled)(void *, qa_application *, const qa_application_startup_source *, bool *, qa_error *);
 } qa_application_startup_hooks;
 
 /* READY remains READY across a source wait. No GAME Init or world publication

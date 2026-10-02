@@ -210,6 +210,9 @@ typedef struct qa_q1_host {
     bool (*sound_precache)(void *, const char *path, qa_error *);
     bool (*precache_reset)(void *, qa_error *);
     void (*source_console_print)(void *, const char *);
+    /* PF_logfrag writes and flushes its optional host file after SZ_Print.
+     * Source ignores file I/O results; the physical log append stays reached. */
+    void (*source_logfrag_write)(void *, const char *record);
 } qa_q1_host;
 typedef struct qa_q1_boss_fields {
     const char *wave1, *wave2, *wave3, *teleport_target;

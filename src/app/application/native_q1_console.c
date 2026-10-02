@@ -70,6 +70,43 @@ void application_native_q1_source_console_print(void *opaque, const char *text)
     if (owner && provider->kind == APPLICATION_PROVIDER_Q1 && text)
         qa_console_emit(owner->console, NULL, text);
 }
+static bool log_source(application_provider *provider,qa_application_startup_source *out)
+{
+    struct application_native_q1_console *owner=provider?provider->native_q1_console:NULL;
+    if (!owner || provider->kind!=APPLICATION_PROVIDER_Q1 || !provider->constructed ||
+        !provider->attached || provider->close_pending || !provider->launch ||
+        provider->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD) return false;
+    *out=(qa_application_startup_source){.descriptor=provider->launch,
+        .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q1_GAME},
+        .console=owner->console,.cvars=owner->cvars,
+        .command={.owner=provider->owner,.dialect=QA_CONSOLE_QW,.origin=QA_COMMAND_SERVER},
+        .declaration_owner=provider->owner};
+    return true;
+}
+void application_native_q1_source_logfrag_write(void *opaque,const char *record)
+{
+    application_provider *provider=opaque; qa_application_startup_source source;
+    if (!record || !log_source(provider,&source)) return;
+    const qa_application_startup_hooks *hooks=provider->application->startup_hooks;
+    if (!hooks || !hooks->qw_logfrag_write) return;
+    ++provider->native_q1_console->calls;
+    hooks->qw_logfrag_write(hooks->context,provider->application,&source,record);
+    --provider->native_q1_console->calls;
+}
+bool application_native_q1_source_logfrag_enabled(application_provider *provider,
+    bool *enabled,qa_error *error)
+{
+    qa_application_startup_source source;
+    if (!enabled || !log_source(provider,&source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QuakeWorld frag file lost its physical console owner");
+    *enabled=false;
+    const qa_application_startup_hooks *hooks=provider->application->startup_hooks;
+    if (!hooks || !hooks->qw_logfrag_enabled) return true;
+    ++provider->native_q1_console->calls;
+    bool okay=hooks->qw_logfrag_enabled(hooks->context,provider->application,&source,enabled,error);
+    --provider->native_q1_console->calls;
+    return okay;
+}
 
 static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, const char *name)
 {

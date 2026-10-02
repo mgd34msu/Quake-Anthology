@@ -36,6 +36,7 @@ typedef struct qw_pending_control {
     uint64_t time_ns;
     size_t size;
     uint8_t bytes[QW_MESSAGE];
+    qa_buffer reply;
 } qw_pending_control;
 struct frontend_qw_host {
     qa_frontend *frontend;

@@ -903,6 +903,10 @@ bool qa_q1_wire_qw_logfrag(qa_q1_game *g, qa_actor_id killer, qa_actor_id victim
     else memcpy(log->buffers[index] + cursor - (trailing ? 1u : 0u), record, length);
     log->sizes[index] = (uint32_t)(cursor + reserved);
     q1_wire_changed(g->wire);
+    if (g->host.source_logfrag_write)
+        g->host.source_logfrag_write(g->host.context, (const char *)record);
+    if (!qa_q1_game_operation_live(&operation))
+        okay = fail(error, "QuakeWorld server retired during its fraglog file write");
 finish:
     qa_q1_game_operation_end(&operation);
     return okay;

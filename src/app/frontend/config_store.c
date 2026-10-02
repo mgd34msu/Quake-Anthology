@@ -12,6 +12,7 @@
 #include "network_config.h"
 #include "network_admin.h"
 #include "source_admin.h"
+#include "network_qw_logfile.h"
 #include "native_q3_client.h"
 #include "selected_effects.h"
 #include "shared_settings.h"
@@ -66,7 +67,7 @@ struct frontend_config_source {
     config_seat seats[QA_INPUT_LOCAL_SEATS];
     size_t seat_count,seat_index,registry_references,admin_registered;
     qa_console_dialect movement_dialect;
-    bool primary,published,configured,released,running,write_registered,dump_registered,has_mod;
+    bool primary,published,configured,released,running,write_registered,dump_registered,frag_registered,has_mod;
     bool imported;
     bool profile_carried,variables_carried,initial_variables;
     qa_error observation_failure;
@@ -86,6 +87,7 @@ struct frontend_config_store {
     frontend_remote_configs *clients;
     frontend_neutral_configs *neutral;
     frontend_source_admin *admin;
+    frontend_qw_logfile *qw_logfile;
     char *admin_source;
     qa_sha256_digest admin_identity;
     config_variable_carry *variable_carries;
@@ -897,6 +899,53 @@ bool frontend_config_store_server_invocation_application(frontend_config_store *
     if (!physical) return fail(error,QA_ERROR_ARGUMENT,"Server operator lost its actual application owner");
     *out=physical->application; return true;
 }
+bool frontend_config_store_server_write_root(frontend_config_store *manager,
+    const qa_command_invocation *call, qa_settings_store *store, qa_fs_root **root, qa_error *error)
+{
+    qa_application_startup_source source;
+    if (!store || !root || !frontend_config_store_server_invocation_read(manager,call,&source,error)) return false;
+    if (call->context.origin==QA_COMMAND_REMOTE)
+        return fail(error,QA_ERROR_ARGUMENT,"Remote client has no local Source file authority");
+    frontend_config_source *physical=frontend_config_store_source(manager,source.console);
+    *store=frontend_config_files_store(physical->files,false);
+    *root=frontend_config_files_root(physical->files,false);
+    return (*root && qa_vfs_mount_root(store->vfs,store->mount)==*root) ||
+        fail(error,QA_ERROR_ARGUMENT,"Source command lost its retained product write root");
+}
+static frontend_config_source *qw_log_source(frontend_config_store *manager, qa_application *app,
+    const qa_application_startup_source *physical)
+{
+    if (!manager || manager->restoring || !physical || !physical->descriptor ||
+        physical->command.dialect!=QA_CONSOLE_QW) return NULL;
+    frontend_config_source *source=frontend_config_store_source(manager,physical->console);
+    const qa_launch_instance *selected=source?instance(source):NULL;
+    return source && source->primary && !source->imported && source->application==app && selected &&
+        selected->storage==physical->descriptor->storage && selected->state==physical->descriptor->state &&
+        source->scope.kind==physical->scope.kind && source->scope.provider==physical->scope.provider &&
+        source->declaration_owner==physical->declaration_owner && source->cvars==physical->cvars &&
+        source->command.owner==physical->command.owner?source:NULL;
+}
+static void qw_log_write(void *context,qa_application *app,
+    const qa_application_startup_source *source,const char *record)
+{
+    frontend_config_store *manager=context;
+    if (qw_log_source(manager,app,source)) frontend_qw_logfile_write(manager->qw_logfile,record);
+}
+static bool qw_log_enabled(void *context,qa_application *app,
+    const qa_application_startup_source *source,bool *enabled,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!enabled || !qw_log_source(manager,app,source))
+        return fail(error,QA_ERROR_ARGUMENT,"QuakeWorld frag logging lost its physical Source namespace");
+    *enabled=frontend_qw_logfile_enabled(manager->qw_logfile); return true;
+}
+static bool fraglog_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_config_source *source=context; qa_settings_store store={0}; qa_fs_root *root=NULL;
+    if (source->console!=call->console ||
+        !frontend_config_store_server_write_root(source->manager,call,&store,&root,error)) return false;
+    return frontend_qw_logfile_toggle(store,call->console,&call->context,&source->manager->qw_logfile,error);
+}
 bool frontend_config_store_primary_server_read(frontend_config_store *manager,
     qa_application_startup_source *out,bool *present,qa_error *error)
 {
@@ -1609,7 +1658,8 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     source->admin_registered=0;
     if (source->write_registered) qa_console_unregister(source->console,"writeconfig",source->command.owner);
     if (source->dump_registered) qa_console_unregister(source->console,"condump",source->command.owner);
-    source->write_registered=source->dump_registered=false;
+    if (source->frag_registered) qa_console_unregister(source->console,"fraglogfile",source->command.owner);
+    source->write_registered=source->dump_registered=source->frag_registered=false;
     if (source->keys) {
         qa_cvars *bound=frontend_key_profile_registry(source->keys);
         if (bound && bound!=source->cvars)
@@ -1634,6 +1684,12 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
 }
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
+    if (source->primary && source->command.dialect==QA_CONSOLE_QW && !source->frag_registered) {
+        source->frag_registered=qa_console_register_owned(source->console,"fraglogfile",
+            "Toggle the actual QuakeWorld frag file",source->command.owner,source->command.owner,
+            true,fraglog_command,source,error);
+        if (!source->frag_registered) return false;
+    }
     if (source->primary && !source->imported &&
         !qa_server_admin_declarations(source->cvars,source->declaration_owner,error)) return false;
     if (source->primary && !source->imported && !source->manager->frontend->network) {
@@ -2690,7 +2746,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .candidate_languages=candidate_languages,.prepare_publication=prepare_publication,
         .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
         .consume_publication=consume_publication,.finish_publication=finish_publication,
-        .abort_publication=abort_publication};
+        .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
@@ -2707,6 +2763,7 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
     if (!manager) return true;
     if (manager->running || manager->prepared || manager->shared || manager->publication || manager->key_publication.owner)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration manager retains an executing or prepared candidate");
+    if (!frontend_qw_logfile_close(&manager->qw_logfile,error)) return false;
     if (!shared_program_destroy(manager,error)) return false;
     if (!frontend_neutral_configs_destroy(manager->neutral,error)) return false;
     manager->neutral=NULL;
@@ -3121,6 +3178,7 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
     }
     return frontend_remote_configs_visit(manager->clients,visitor,error) &&
         frontend_neutral_configs_visit(manager->neutral,visitor,error) &&
+        frontend_qw_logfile_visit(manager->qw_logfile,visitor,error) &&
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
@@ -3128,7 +3186,7 @@ static bool config_header(qa_source_save_io *io,size_t *count,uint32_t *version)
 {
     uint8_t magic[4]={'Q','F','C','S'};
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,version) && (*version==11 || *version==12) && qa_source_save_count(io,count,
+        qa_source_save_u32(io,version) && (*version==11 || *version==12 || *version==13) && qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -3234,7 +3292,7 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
             return fail(error,QA_ERROR_ARGUMENT,"Configuration key alias leaves its genuine physical GAME registry");
         ++count;
     }
-    qa_source_save_io io={0}; uint32_t version=12;
+    qa_source_save_io io={0}; uint32_t version=13;
     bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count,&version);
     for (frontend_config_source *source=manager->sources;ok && source;source=source->next)
         ok=config_row(source,&io,(qa_application_content_graph *)graph,NULL,refs);
@@ -3281,6 +3339,15 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
         if (!ok && error && error->code==QA_OK)
             fail(error,QA_ERROR_ARGUMENT,"Early administration capture lacks its genuine published primary Source");
     }
+    bool logging=manager->qw_logfile!=NULL;
+    if (ok) ok=qa_source_save_bool(&io,&logging);
+    if (ok && logging) {
+        qa_buffer logfile={0};
+        ok=frontend_qw_logfile_checkpoint(manager->qw_logfile,graph,&logfile,error);
+        bytes=(qa_bytes){logfile.data,logfile.size};
+        if (ok) ok=config_blob(&io,&bytes);
+        qa_buffer_free(&logfile);
+    }
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -3293,7 +3360,7 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     frontend_config_store *manager=frontend_config_store_create(frontend,error);
     if (!manager) return false;
     manager->restoring=true; manager->restore_refs=*refs;
-    qa_source_save_io io={0}; size_t count=0; uint32_t version=12;
+    qa_source_save_io io={0}; size_t count=0; uint32_t version=13;
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count,&version);
     frontend_config_source **tail=&manager->sources;
     for (size_t i=0;ok && i<count;++i) {
@@ -3342,6 +3409,10 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
         while (ok && source && strcmp(source->saved_instance,manager->admin_source)) source=source->next;
         if (ok) ok=source && source->primary && qa_sha256_equal(&source->saved_identity,&manager->admin_identity);
     }
+    bool logging=false; qa_bytes logfile={0};
+    if (ok && version>=13) ok=qa_source_save_bool(&io,&logging);
+    if (ok && logging) ok=config_blob(&io,&logfile) && logfile.size &&
+        frontend_qw_logfile_restore(graph,logfile,&manager->qw_logfile,error);
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (ok && early) ok=frontend_source_admin_restore(frontend,admin,&manager->admin,error);
@@ -3354,7 +3425,7 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
 {
     if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) || !frontend_neutral_configs_empty(manager->neutral) ||
         manager->variable_carries || manager->restoring || manager->running || manager->prepared || manager->shared ||
-        manager->storage || manager->restored_storage.data || manager->storage_graph || manager->admin || manager->admin_source)
+        manager->storage || manager->restored_storage.data || manager->storage_graph || manager->admin || manager->admin_source || manager->qw_logfile)
         return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
     frontend_config_store *decoded=NULL;
     if (!frontend_config_store_restore(manager->frontend,application,graph,keys,refs,bytes,&decoded,error)) return false;
@@ -3366,6 +3437,7 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     manager->admin=decoded->admin; decoded->admin=NULL;
     manager->admin_source=decoded->admin_source; decoded->admin_source=NULL;
     manager->admin_identity=decoded->admin_identity;
+    manager->qw_logfile=decoded->qw_logfile; decoded->qw_logfile=NULL;
     frontend_remote_configs_destroy(manager->clients,NULL);
     manager->clients=decoded->clients; decoded->clients=NULL;
     frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
@@ -3524,6 +3596,7 @@ bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_erro
         return fail(error,QA_ERROR_FORMAT,"Saved sticky preference seed lacks its genuine admitted product store");
     if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
     if (!frontend_neutral_configs_finish_restore(manager->neutral,error)) return false;
+    if (manager->qw_logfile && !frontend_qw_logfile_finish_restore(manager->qw_logfile,error)) return false;
     if (manager->admin) {
         frontend_config_source *source=manager->sources;
         while (source && (!source->metadata || strcmp(instance(source)->selection.instance,manager->admin_source))) source=source->next;

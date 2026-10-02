@@ -200,6 +200,9 @@ bool frontend_config_store_server_invocation_read(frontend_config_store *,const 
     qa_application_startup_source *,qa_error *);
 bool frontend_config_store_server_invocation_application(frontend_config_store *,const qa_command_invocation *,
     qa_application **,qa_error *);
+/* Borrows the exact entered primary Source's retained product write owner. */
+bool frontend_config_store_server_write_root(frontend_config_store *,const qa_command_invocation *,
+    qa_settings_store *,qa_fs_root **,qa_error *);
 bool frontend_config_store_primary_server_read(frontend_config_store *,qa_application_startup_source *,
     bool *present,qa_error *);
 bool frontend_config_store_admin_dispatch(frontend_config_store *,const qa_command_invocation *,
