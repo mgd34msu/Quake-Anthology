@@ -2,7 +2,7 @@
 
 Quake Anthology brings Quake, QuakeWorld, Quake II and Quake III Arena into one application. Choose a game and campaign, or combine map content, movement, characters and independent mods from different games.
 
-This is a pre-release version. Game data is not included; use the files from your own game installations.
+This native C version is not ready to play yet. Game data is not included; use the files from your own game installations.
 
 ## Build and launch
 
