@@ -270,6 +270,9 @@ static bool q2_local_groups_prepare(qa_frontend_network *n,qa_error *error)
 {
     qa_frontend *f=n->frontend;
     if(n->q2_host || n->detached_transport || f->options.network_host || f->options.network_connect) return true;
+    qa_application_map_view map;
+    if(qa_application_get_state(f->application)!=QA_APPLICATION_RUNNING ||
+        !qa_application_map_read(f->application,&map)) return true;
     qa_application_native_q2_presentation source; bool found=false;
     if(!qa_application_native_q2_presentation_selected(f->application,&source,&found,error)) return false;
     if(!found) return true;
