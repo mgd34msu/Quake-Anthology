@@ -547,7 +547,8 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
         return true;
     }
     qa_actor_id allocated = {0};
-    if (!q3_spawn_actor(game, &(qa_builtin_spawn){.owner = game->options.owner},
+    if (!q3_spawn_actor(game, &(qa_builtin_spawn){.owner = game->options.owner,
+                         .definition = game->source_noclass},
                          &allocated, error))
         return false;
     qa_q3_map_actor_state state;
@@ -564,6 +565,9 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
         q3_map_warn(game, (qa_actor_id){0}, "Q3 authored entity has no classname");
         return qa_session_release(game->options.services.session, state.actor, error);
     }
+    if (!qa_actors_set_metadata(qa_session_actor_registry(game->options.services.session),
+            allocated, game->options.owner, state.classname, error))
+        return q3_rollback_spawn(game, allocated, error);
     qa_q3_map_filter reason = QA_Q3_MAP_FILTER_NONE;
     bool rejected;
     if (!filtered(game, fields, &reason, &rejected, error))
@@ -636,6 +640,9 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
         state.kind = QA_Q3_MAP_POINT;
         if (!strcmp(classname, "info_player_start")) {
             if (!q3_map_intern_cstr(game, "info_player_deathmatch", &state.classname, error))
+                return q3_rollback_spawn(game, state.actor, error);
+            if (!qa_actors_set_metadata(qa_session_actor_registry(game->options.services.session),
+                    state.actor, game->options.owner, state.classname, error))
                 return q3_rollback_spawn(game, state.actor, error);
             game->source_entities[source_slot].classname = state.classname;
         }
