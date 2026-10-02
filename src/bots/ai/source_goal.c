@@ -194,18 +194,23 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
         SOURCE_CALL(bot_ai_random(b,&random,e));
         best.z+=96.0f*(2.0f*(random-.5f));
         qa_trace_result trace;
-        SOURCE_CALL(qa_bot_navigation_trace(nav,bot_ai_origin(s),best,NULL,s->view.actor,1,&trace,e));
+        int32_t entity;SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+        SOURCE_CALL(qa_bot_navigation_trace(nav,bot_ai_origin(s),best,NULL,
+            b->services.entity_actor(b->services.context,entity),1,&trace,e));
         qa_vec3 direction=qa_vec_sub(trace.end,bot_ai_origin(s));
         float distance=qa_vec_length(direction);
         if(distance>200.0f) {
             best=qa_vec_add(bot_ai_origin(s),
                 qa_vec_scale(qa_vec_normalize(direction),distance*trace.fraction-40.0f));
             qa_vec3 below=best;below.z-=800.0f;
-            SOURCE_CALL(qa_bot_navigation_trace(nav,best,below,NULL,s->view.actor,1,&trace,e));
+            SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+            SOURCE_CALL(qa_bot_navigation_trace(nav,best,below,NULL,
+                b->services.entity_actor(b->services.context,entity),1,&trace,e));
             if(!trace.start_solid && !trace.all_solid) {
-                qa_vec3 point=trace.end;point.z+=1.0f;int32_t contents;
-                SOURCE_CALL(qa_bot_navigation_contents(nav,point,&contents,e));
-                if(!(contents&(8|16))) {*out=best;return true;}
+                qa_vec3 point=trace.end;point.z+=1.0f;int32_t point_contents;
+                SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+                SOURCE_CALL(contents(b,point,b->services.entity_actor(b->services.context,entity),&point_contents,e));
+                if(!(point_contents&(8|16))) {*out=best;return true;}
             }
         }
         *out=best;

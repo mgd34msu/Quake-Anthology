@@ -12,6 +12,7 @@
 #include "source_selectors.h"
 #include "source_flags.h"
 #include "source_command.h"
+#include "source_storage.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
@@ -73,8 +74,12 @@ bool bot_ai_source_go_for_air(qa_bots *b, bot_ai_state *s, const qa_bot_goal *lo
         qa_bounds bounds={qa_v3(-15,-15,-2),qa_v3(15,15,2)};
         qa_trace_result ceiling,surface;
         qa_vec3 above=qa_vec_add(bot_ai_origin(s),qa_v3(0,0,1000));
-        if(!qa_bot_navigation_trace(nav,bot_ai_origin(s),above,&bounds,s->view.actor,0x10001,&ceiling,e) ||
-           !qa_bot_navigation_trace(nav,ceiling.end,bot_ai_origin(s),&bounds,s->view.actor,BOT_LIQUID,&surface,e)) return false;
+        int32_t entity;DECISION_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+        DECISION_CALL(qa_bot_navigation_trace(nav,bot_ai_origin(s),above,&bounds,
+            b->services.entity_actor(b->services.context,entity),0x10001,&ceiling,e));
+        DECISION_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+        DECISION_CALL(qa_bot_navigation_trace(nav,ceiling.end,bot_ai_origin(s),&bounds,
+            b->services.entity_actor(b->services.context,entity),BOT_LIQUID,&surface,e));
         if(surface.fraction>0) {
             uint32_t area;
             if(!bot_ai_point_area(b,s,surface.end,&area,e)) return false;
