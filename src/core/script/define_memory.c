@@ -113,7 +113,7 @@ bool script_macro_add_token(script_macro *macro,size_t offset,script_queued_toke
     } else script_macro_word_set(macro,offset,node->pointer);
     *last=node->pointer;return true;
 }
-static bool free_chain(script_macro_table *table,uint32_t head,qa_error *error)
+bool script_heap_free_chain(script_macro_table *table,uint32_t head,qa_error *error)
 {
     size_t remaining=table->queue_count;
     while(head) {
@@ -127,8 +127,8 @@ static bool free_chain(script_macro_table *table,uint32_t head,qa_error *error)
 }
 bool script_macro_free(script_macro *macro,qa_error *error)
 {
-    return script_macro_bind(macro,error) && free_chain(macro->owner,script_macro_word(macro,16),error) &&
-        free_chain(macro->owner,script_macro_word(macro,20),error) && release(macro->owner,&macro->record,error);
+    return script_macro_bind(macro,error) && script_heap_free_chain(macro->owner,script_macro_word(macro,16),error) &&
+        script_heap_free_chain(macro->owner,script_macro_word(macro,20),error) && release(macro->owner,&macro->record,error);
 }
 bool script_table_open(script_macro_table *table,const qa_script_memory *memory,bool global,qa_error *error)
 {
@@ -343,18 +343,6 @@ bool qa_script_defines_bind_memory(qa_script_defines *owner,const qa_script_memo
     return true;
 
 }
-script_token_record *script_macro_token_at(script_macro *macro,size_t offset,size_t index,qa_error *error)
-{
-    uint32_t pointer=script_macro_word(macro,offset);size_t remaining=macro->owner->queue_count;
-    while(pointer && remaining--) {
-        script_token_record *node=script_heap_token(macro->owner,pointer);
-        if(!script_heap_token_bytes(macro->owner,node,error)) return NULL;
-        if(!index--) return node;
-        pointer=qa_load_u32le(node->record.bytes+1064);
-    }
-    qa_error_set(error,QA_ERROR_FORMAT,0,"Define token index exceeds its raw chain");return NULL;
-}
-
 static bool token_equal(const qa_script_token *left,const qa_script_token *right)
 {
     return left->kind==right->kind && left->subtype==right->subtype && left->integer==right->integer &&

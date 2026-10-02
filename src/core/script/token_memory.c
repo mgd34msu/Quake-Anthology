@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static void float_bytes(uint8_t *bytes,double number)
+void script_token_float(uint8_t *bytes,double number)
 {
     uint64_t bits;memcpy(&bits,&number,8);
     uint64_t fraction=bits&UINT64_C(0xfffffffffffff),significand;
@@ -44,7 +44,7 @@ bool script_token_store(uint8_t *bytes,const qa_script_token *token,uint32_t sta
     memset(bytes,0,SCRIPT_TOKEN_BYTES);
     if(token->text.size) memcpy(bytes,token->text.data,token->text.size);
     qa_store_u32le(bytes+1024,(uint32_t)token->kind);qa_store_u32le(bytes+1028,token->subtype);
-    qa_store_u32le(bytes+1032,(uint32_t)token->integer);float_bytes(bytes+1036,token->number);
+    qa_store_u32le(bytes+1032,(uint32_t)token->integer);script_token_float(bytes+1036,token->number);
     qa_store_u32le(bytes+1048,start);qa_store_u32le(bytes+1052,end);
     qa_store_u32le(bytes+1056,token->location.line);qa_store_u32le(bytes+1060,token->lines_crossed);
     return true;
