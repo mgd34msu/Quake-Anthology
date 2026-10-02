@@ -531,6 +531,7 @@ bool guest_windows_create(const guest_windows_options *options, guest_windows **
         options->guest->options.image.target.os != QA_NATIVE_OS_WINDOWS || !options->primary_image || !options->capabilities.id ||
         !options->capabilities.entropy || !options->capabilities.milliseconds || !options->capabilities.performance ||
         !options->capabilities.calendar || options->capabilities.performance_frequency <= 0 ||
+        !qa_native_windows_locale_profile_valid(&options->capabilities.locale) ||
         !call_policy(qa_native_guest_execution(options->guest), options->instruction_budget))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows construction requires the genuine process, clock, entropy and stack capabilities");
     guest_windows *owner = calloc(1, sizeof(*owner));
@@ -951,6 +952,28 @@ static bool codec_bool(windows_codec *io, bool *value)
     *value = byte != 0; return true;
 }
 
+static bool codec_locale(windows_codec *io, qa_native_windows_locale_profile *profile)
+{
+    if (!codec_u32(io,&profile->source) || !codec_u32(io,&profile->ansi_code_page) ||
+        !codec_u32(io,&profile->oem_code_page)) return false;
+    qa_native_windows_locale *locales[] = {&profile->user,&profile->system};
+    for (size_t i = 0; i < 2; ++i) {
+        qa_native_windows_locale *locale = locales[i];
+        if (!codec_u32(io,&locale->lcid) || !codec_u32(io,&locale->language_id) || !codec_u32(io,&locale->ansi_code_page) ||
+            !codec_u32(io,&locale->oem_code_page)) return false;
+        uint16_t *fields[] = {locale->decimal,locale->thousands,locale->grouping,
+            locale->default_decimal,locale->default_thousands,locale->default_grouping};
+        for (size_t j = 0; j < sizeof(fields)/sizeof(*fields); ++j)
+            for (size_t k = 0; k < QA_NATIVE_WINDOWS_LOCALE_UNITS; ++k) {
+                uint8_t bytes[2]; if (!io->reading) qa_store_u16le(bytes,fields[j][k]);
+                if (!codec_bytes(io,bytes,2)) return false;
+                if (io->reading) fields[j][k] = qa_load_u16le(bytes);
+            }
+    }
+    return qa_native_windows_locale_profile_valid(profile) ||
+        guest_fail(io->error,QA_ERROR_FORMAT,io->offset,"Windows continuation locale snapshot is invalid");
+}
+
 static bool codec_count(windows_codec *io, size_t *count, size_t minimum)
 {
     uint64_t value = *count;
@@ -1084,6 +1107,7 @@ static bool codec_owner(windows_codec *io, guest_windows *owner,
         frequency > INT64_MAX || !frequency)
         return guest_fail(io->error,QA_ERROR_FORMAT,io->offset,"Windows continuation budget or clock capability is invalid");
     owner->instruction_budget = (size_t)budget; owner->capabilities.performance_frequency = (int64_t)frequency;
+    if (!codec_locale(io,&owner->capabilities.locale)) return false;
     if (io->reading && (!windows_kernel_descriptors(owner,false,io->error) ||
         !windows_crt_descriptors(owner,false,io->error) || !windows_msvc_descriptors(owner,false,io->error))) return false;
     size_t services = owner->service_count;
@@ -1163,6 +1187,7 @@ static bool records_valid(guest_windows *owner, qa_error *error)
 {
     guest_windows_kernel *kernel = owner->kernel;
     if (!call_policy(owner->execution, owner->instruction_budget) ||
+        !qa_native_windows_locale_profile_valid(&owner->capabilities.locale) ||
         (owner->guest && qa_native_guest_execution(owner->guest) != owner->execution))
         return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows continuation differs from its actual execution policy");
     if (!owner->primary_image || !windows_image_at(owner, owner->primary_image))
@@ -1309,7 +1334,7 @@ bool guest_windows_checkpoint(const guest_windows *source, qa_buffer *out, qa_er
     if (!guest_windows_idle(source) || !out || out->data || out->size)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows checkpoint requires idle real owner and empty output");
     windows_codec io = {.error=error}; guest_windows *owner = (guest_windows *)source;
-    char magic[] = "QAWN4"; qa_buffer imports = {0}, resources = {0};
+    char magic[] = "QAWN5"; qa_buffer imports = {0}, resources = {0};
     bool okay = records_valid(owner,error) && windows_stdio_lower_valid(owner,error) && registry_valid(owner,error) && codec_bytes(&io,magic,5) && codec_owner(&io,owner,NULL,NULL) &&
         guest_runtime_imports_checkpoint(owner->imports,&imports,error) &&
         guest_runtime_resources_checkpoint(owner->resources,&resources,error) && blob(&io,&imports) && blob(&io,&resources);
@@ -1327,7 +1352,7 @@ bool guest_windows_decode(qa_bytes bytes, guest_windows_image_resolve_fn resolve
     owner->detached = true; owner->kernel = calloc(1,sizeof(*owner->kernel)); owner->crt = calloc(1,sizeof(*owner->crt)); owner->msvc = calloc(1,sizeof(*owner->msvc));
     if (!owner->kernel || !owner->crt || !owner->msvc) { dispose(owner); return guest_fail(error,QA_ERROR_MEMORY,0,"allocating detached Windows services"); }
     windows_codec io = {.input=bytes,.error=error,.reading=true}; char magic[5]; qa_buffer imports = {0}, resources = {0};
-    bool okay = codec_bytes(&io,magic,5) && !memcmp(magic,"QAWN4",5);
+    bool okay = codec_bytes(&io,magic,5) && !memcmp(magic,"QAWN5",5);
     if (!okay) guest_fail(error,QA_ERROR_FORMAT,0,"Windows continuation signature differs");
     if (okay) okay = codec_owner(&io,owner,resolve,context) && blob(&io,&imports) && blob(&io,&resources);
     if (okay && io.offset != bytes.size) okay = guest_fail(error,QA_ERROR_FORMAT,io.offset,"Windows continuation has trailing bytes");
@@ -1417,6 +1442,7 @@ bool guest_windows_attach(guest_windows *owner, qa_native_guest *guest,
         (owner->stream_ids[0] && !capabilities->standard_input.read) ||
         (owner->stream_ids[1] && !capabilities->standard_output.write) || (owner->stream_ids[2] && !capabilities->standard_error.write) ||
         capabilities->performance_frequency != owner->capabilities.performance_frequency ||
+        !qa_native_windows_locale_profile_equal(&capabilities->locale,&owner->capabilities.locale) ||
         guest->options.image.target.os != owner->target.os || guest->options.image.target.arch != owner->target.arch ||
         guest->options.image.target.abi != owner->target.abi || guest->options.image.target.pointer_bytes != owner->target.pointer_bytes)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows cold attach requires its exact completed guest and retained capability identity");

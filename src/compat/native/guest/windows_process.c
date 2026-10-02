@@ -83,6 +83,7 @@ guest_windows_capabilities windows_process_capabilities(qa_native_windows_proces
 {
     const qa_native_windows_capabilities *source = &owner->options.capabilities;
     guest_windows_capabilities out = {.id = source->id, .entropy = entropy,
+        .locale = source->locale,
         .milliseconds = milliseconds, .performance = performance,
         .performance_frequency = source->performance_frequency, .calendar = calendar,
         .open_file = source->open_file ? open_file : NULL, .resolve_file = resolve_file, .context = owner};
@@ -121,7 +122,8 @@ static bool options_valid(const qa_native_windows_process_options *o, qa_error *
     if (!o || !o->artifact_count || !o->artifacts || !o->primary_image ||
         o->artifact_count > SIZE_MAX / sizeof(windows_process_image) || !o->stack_bytes ||
         o->stack_bytes % QA_NATIVE_GUEST_PAGE || o->guest.image.target.os != QA_NATIVE_OS_WINDOWS ||
-        !o->capabilities.id || !o->capabilities.entropy || !o->capabilities.milliseconds ||
+        !o->capabilities.id || !qa_native_windows_locale_profile_valid(&o->capabilities.locale) ||
+        !o->capabilities.entropy || !o->capabilities.milliseconds ||
         !o->capabilities.performance || !o->capabilities.calendar || !o->capabilities.current ||
         o->capabilities.performance_frequency <= 0 ||
         (o->command_line_units && !o->command_line) || (o->environment_units && !o->environment))

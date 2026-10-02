@@ -32,6 +32,10 @@ bool qa_native_process_platform_milliseconds(void *, int64_t *, qa_error *);
 bool qa_native_process_platform_seconds(void *, int64_t *, qa_error *);
 bool qa_native_process_platform_performance(void *, int64_t *, qa_error *);
 int64_t qa_native_process_platform_frequency(const qa_native_process_platform *);
+/* Pure read of the fresh owner's acquired formatting locale. Unknown POSIX
+ * mappings retain an unavailable default, never an assumed English locale. */
+bool qa_native_process_platform_locale_read(const qa_native_process_platform *,
+    qa_native_windows_locale_profile *, qa_error *);
 bool qa_native_process_platform_calendar(void *, int64_t, bool,
     qa_native_windows_calendar *, qa_error *);
 /* Actual Linux security credentials/kernel personality and owned stream

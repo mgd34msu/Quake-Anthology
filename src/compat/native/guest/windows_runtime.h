@@ -4,6 +4,7 @@
 #include "pe.h"
 #include "runtime_import.h"
 #include "runtime_resource.h"
+#include "qa/native_windows_locale.h"
 
 typedef struct guest_windows guest_windows;
 typedef struct guest_windows_kernel guest_windows_kernel;
@@ -27,6 +28,7 @@ typedef struct guest_windows_stream_capability {
  * capabilities after all records decode; it never reopens an existing file. */
 typedef struct guest_windows_capabilities {
     uint64_t id;
+    qa_native_windows_locale_profile locale;
     bool (*entropy)(void *, void *, size_t, qa_error *);
     bool (*milliseconds)(void *, int64_t *, qa_error *);
     bool (*performance)(void *, int64_t *, qa_error *);

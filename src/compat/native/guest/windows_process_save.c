@@ -1,4 +1,5 @@
 #include "windows_process_private.h"
+#include "qa/native_windows_locale_save.h"
 #include "qa/native_windows_process_save.h"
 #include "qa/source_save.h"
 
@@ -42,7 +43,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 static bool process_fields(qa_source_save_io *io, qa_native_windows_process *owner)
 {
-    uint8_t magic[] = {'Q','W','P','R',2}, expected[] = {'Q','W','P','R',2};
+    uint8_t magic[] = {'Q','W','P','R',3}, expected[] = {'Q','W','P','R',3};
     qa_native_windows_process_options *o = &owner->options;
     qa_native_windows_capabilities *c = &o->capabilities;
     uint32_t backend = o->guest.backend;
@@ -57,7 +58,8 @@ static bool process_fields(qa_source_save_io *io, qa_native_windows_process *own
     if (!qa_source_save_count(io, &o->guest.maximum_backing_bytes, SIZE_MAX) ||
         !qa_source_save_count(io, &o->stack_bytes, SIZE_MAX) ||
         !qa_source_save_count(io, &o->instruction_budget, SIZE_MAX) ||
-        !qa_source_save_i64(io, &c->performance_frequency)) return false;
+        !qa_source_save_i64(io, &c->performance_frequency) ||
+        !qa_native_windows_locale_profile_save(io,&c->locale)) return false;
     bool native = backend == QA_NATIVE_GUEST_HOST_X86_64;
     return ((backend == QA_NATIVE_GUEST_EMULATED || native) &&
         (native ? o->instruction_budget == 0 : o->instruction_budget != 0) &&
@@ -80,6 +82,7 @@ static bool runtime_matches(const qa_native_windows_process *owner, qa_error *er
         r->stack_bytes != o->stack_bytes || r->instruction_budget != o->instruction_budget ||
         r->capability_id != o->capabilities.id ||
         r->capabilities.performance_frequency != o->capabilities.performance_frequency ||
+        !qa_native_windows_locale_profile_equal(&r->capabilities.locale,&o->capabilities.locale) ||
         r->image_count != owner->image_count)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows process differs from its actual runtime owner");
     for (size_t i = 0; i < 3; ++i)
@@ -159,7 +162,8 @@ static bool capabilities_match(const qa_native_windows_process *owner,
     const qa_native_windows_capabilities *a = &owner->options.capabilities, *b = &bindings->capabilities;
     if (owner->options.guest.backend != bindings->backend ||
         owner->options.guest.maximum_backing_bytes != bindings->maximum_backing_bytes ||
-        a->id != b->id || a->performance_frequency != b->performance_frequency)
+        a->id != b->id || a->performance_frequency != b->performance_frequency ||
+        !qa_native_windows_locale_profile_equal(&a->locale,&b->locale))
         return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows cold process differs from actual external authority");
     for (size_t i = 0; i < 3; ++i)
         if (a->streams[i].id != b->streams[i].id ||
@@ -194,7 +198,8 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
             (!bindings->host_executable || !*bindings->host_executable || !bindings->profile_guard)) ||
         !bindings->capabilities.id || !bindings->capabilities.current || !bindings->capabilities.entropy ||
         !bindings->capabilities.milliseconds || !bindings->capabilities.performance || !bindings->capabilities.calendar ||
-        bindings->capabilities.performance_frequency <= 0)
+        bindings->capabilities.performance_frequency <= 0 ||
+        !qa_native_windows_locale_profile_valid(&bindings->capabilities.locale))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows restore needs its actual prepared capability graph");
     qa_native_windows_process *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning cold Windows process");

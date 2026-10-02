@@ -9,6 +9,7 @@
 #endif
 #include "qa/native_process_platform.h"
 #include "qa/source_save.h"
+#include "qa/native_windows_locale_save.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -22,6 +23,8 @@
 #include <io.h>
 #include <sys/stat.h>
 #else
+#include <locale.h>
+#include <langinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -47,6 +50,9 @@ struct qa_native_process_platform {
     uint64_t id;
     size_t references, busy;
     int64_t frequency;
+    qa_native_windows_locale_profile locale;
+    char *locale_name;
+    uint32_t locale_input;
     platform_stream streams[3];
     bool closing, failed, terminal;
 };
@@ -102,6 +108,111 @@ static bool stream_identity(int descriptor, uint64_t *device, uint64_t *object)
 #endif
     return true;
 }
+#if defined(_WIN32)
+static bool locale_text(qa_native_process_platform *owner, LCID id, LCTYPE type,
+    uint16_t out[QA_NATIVE_WINDOWS_LOCALE_UNITS], qa_error *error)
+{
+    WCHAR text[QA_NATIVE_WINDOWS_LOCALE_UNITS];
+    int count = GetLocaleInfoW(id,type,text,QA_NATIVE_WINDOWS_LOCALE_UNITS);
+    if (!count) return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows locale text");
+    if (count > QA_NATIVE_WINDOWS_LOCALE_UNITS || text[count - 1])
+        return fail(error,QA_ERROR_FORMAT,"Actual Windows locale text is unterminated");
+    for (int i = 0; i < count; ++i) out[i] = (uint16_t)text[i];
+    return true;
+}
+static bool locale_record(qa_native_process_platform *owner, LCID id,
+    qa_native_windows_locale *out, qa_error *error)
+{
+    DWORD language = 0, ansi = 0, oem = 0;
+    if (!GetLocaleInfoW(id,LOCALE_ILANGUAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&language,2) ||
+        !GetLocaleInfoW(id,LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&ansi,2) ||
+        !GetLocaleInfoW(id,LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&oem,2))
+        return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows locale code pages");
+    out->lcid = id; out->language_id = language; out->ansi_code_page = ansi; out->oem_code_page = oem;
+    return locale_text(owner,id,LOCALE_SDECIMAL,out->decimal,error) &&
+        locale_text(owner,id,LOCALE_STHOUSAND,out->thousands,error) &&
+        locale_text(owner,id,LOCALE_SGROUPING,out->grouping,error) &&
+        locale_text(owner,id,LOCALE_SDECIMAL | LOCALE_NOUSEROVERRIDE,out->default_decimal,error) &&
+        locale_text(owner,id,LOCALE_STHOUSAND | LOCALE_NOUSEROVERRIDE,out->default_thousands,error) &&
+        locale_text(owner,id,LOCALE_SGROUPING | LOCALE_NOUSEROVERRIDE,out->default_grouping,error);
+}
+#else
+static bool locale_ascii(const char *source, uint16_t out[QA_NATIVE_WINDOWS_LOCALE_UNITS])
+{
+    size_t count = strlen(source);
+    if (count >= QA_NATIVE_WINDOWS_LOCALE_UNITS) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if ((unsigned char)source[i] > 127) return false;
+        out[i] = (uint8_t)source[i];
+    }
+    return true;
+}
+static bool locale_grouping(const char *source, uint16_t out[QA_NATIVE_WINDOWS_LOCALE_UNITS])
+{
+    size_t at = 0;
+    for (size_t i = 0; i < QA_NATIVE_WINDOWS_LOCALE_UNITS; ++i) {
+        unsigned char value = (unsigned char)source[i];
+        if (value == (unsigned char)CHAR_MAX) {
+            if (!at) out[0] = '0';
+            return true;
+        }
+        if (value > 9 || at + (at ? 2u : 1u) >= QA_NATIVE_WINDOWS_LOCALE_UNITS) return false;
+        if (at) out[at++] = ';';
+        out[at++] = (uint16_t)('0' + value);
+        if (!value) return true;
+    }
+    return false;
+}
+#endif
+static bool acquire_locale(qa_native_process_platform *owner, qa_error *error)
+{
+#if defined(_WIN32)
+    owner->locale.source = 2; owner->locale.ansi_code_page = GetACP(); owner->locale.oem_code_page = GetOEMCP();
+    if (!locale_record(owner,GetUserDefaultLCID(),&owner->locale.user,error) ||
+        !locale_record(owner,GetSystemDefaultLCID(),&owner->locale.system,error)) return false;
+#else
+    owner->locale.source = 1; owner->locale.ansi_code_page = 1252; owner->locale.oem_code_page = 437;
+    const char *name = getenv("LC_ALL"); owner->locale_input = 1;
+    if (!name || !*name) { name = getenv("LC_NUMERIC"); owner->locale_input = 2; }
+    if (!name || !*name) { name = getenv("LANG"); owner->locale_input = 3; }
+    if (!name || !*name) { name = "C"; owner->locale_input = 4; }
+    owner->locale_name = strdup(name);
+    if (!owner->locale_name) return fail(error,QA_ERROR_MEMORY,"Retaining acquired POSIX locale identity");
+    /* The library object resolves installed locale data without changing the
+     * controller's global locale. Its records are copied before it is freed. */
+    errno = 0;
+    locale_t acquired = newlocale(LC_NUMERIC_MASK | LC_CTYPE_MASK,owner->locale_name,(locale_t)0);
+    if (!acquired) {
+        if (errno == ENOMEM) return fail(error,QA_ERROR_MEMORY,"Acquiring actual POSIX locale records");
+        return true; /* Unsupported/uninstalled input stays an unavailable default. */
+    }
+    name = owner->locale_name;
+    uint32_t id = 0;
+    if (!strcmp(name,"C") || !strcmp(name,"POSIX") || !strncmp(name,"C.",2)) id = 0x007f;
+    else if (!strcmp(name,"en_US") || !strncmp(name,"en_US.",6)) id = 0x0409;
+    qa_native_windows_locale record = {.lcid = id, .language_id = id, .ansi_code_page = 1252, .oem_code_page = 437};
+    bool supported = id && locale_ascii(nl_langinfo_l(RADIXCHAR,acquired),record.decimal) &&
+        locale_ascii(nl_langinfo_l(THOUSEP,acquired),record.thousands) &&
+        locale_grouping(nl_langinfo_l(GROUPING,acquired),record.grouping);
+    freelocale(acquired);
+    if (supported) {
+        memcpy(record.default_decimal,record.decimal,sizeof(record.decimal));
+        memcpy(record.default_thousands,record.thousands,sizeof(record.thousands));
+        memcpy(record.default_grouping,record.grouping,sizeof(record.grouping));
+        /* The explicit POSIX cross-OS policy uses this process formatting
+         * snapshot for both Win32 default aliases; it has no Windows NLS host. */
+        owner->locale.user = owner->locale.system = record;
+    }
+#endif
+    return qa_native_windows_locale_profile_valid(&owner->locale) ||
+        fail(error,QA_ERROR_FORMAT,"Acquired native locale snapshot is invalid");
+}
+bool qa_native_process_platform_locale_read(const qa_native_process_platform *owner,
+    qa_native_windows_locale_profile *out, qa_error *error)
+{
+    if (!out || !qa_native_process_platform_retained(owner,error)) return false;
+    *out = owner->locale; return true;
+}
 bool qa_native_process_platform_current(const qa_native_process_platform *owner, qa_error *error)
 {
     platform_operation_begin(owner);
@@ -145,6 +256,7 @@ bool qa_native_process_platform_create(const qa_native_process_platform_options 
     owner->id = options->id; owner->references = 1; owner->failed = true;
     for (size_t i = 0; i < 3; ++i) owner->streams[i].closed = true;
     *out = owner;
+    if (!acquire_locale(owner,error)) return false;
 #if defined(_WIN32)
     LARGE_INTEGER frequency;
     if (!QueryPerformanceFrequency(&frequency))
@@ -201,6 +313,10 @@ bool qa_native_process_platform_capture(const qa_native_process_platform *source
     qa_native_process_platform *copy = malloc(sizeof(*copy));
     if (!copy) return fail(error, QA_ERROR_MEMORY, "Retaining native platform stream graph");
     *copy = *source; copy->references = 1; copy->busy = 0;
+    copy->locale_name = source->locale_name ? strdup(source->locale_name) : NULL;
+    if (source->locale_name && !copy->locale_name) {
+        free(copy); return fail(error,QA_ERROR_MEMORY,"Retaining actual POSIX locale snapshot");
+    }
     for (size_t i = 0; i < 3; ++i) {
         copy->streams[i].owner = copy;
         if (!copy->streams[i].closed && copy->streams[i].held) ++copy->streams[i].held->references;
@@ -722,13 +838,24 @@ bool qa_native_process_platform_program_files(qa_native_process_platform *owner,
 static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner)
 {
     uint8_t magic[4] = {'Q','N','P','L'};
-    uint32_t version = 2; uint64_t id = owner->id; int64_t frequency = owner->frequency;
+    uint32_t version = 3; uint64_t id = owner->id; int64_t frequency = owner->frequency;
     bool terminal = owner->terminal;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNPL", 4) ||
-        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u64(io, &id) || id != owner->id ||
         !qa_source_save_i64(io, &frequency) || frequency != owner->frequency ||
         !qa_source_save_bool(io, &terminal) || terminal != owner->terminal) return false;
+    qa_native_windows_locale_profile locale = owner->locale; uint32_t input = owner->locale_input;
+    size_t length = owner->locale_name ? strlen(owner->locale_name) : 0;
+    if (!qa_native_windows_locale_profile_save(io,&locale) || !qa_native_windows_locale_profile_equal(&locale,&owner->locale) ||
+        !qa_source_save_u32(io,&input) || input != owner->locale_input || !qa_source_save_count(io,&length,SIZE_MAX) ||
+        length != (owner->locale_name ? strlen(owner->locale_name) : 0)) return false;
+    for (size_t at = 0; at < length;) {
+        char bytes[64]; size_t count = length - at > sizeof(bytes) ? sizeof(bytes) : length - at;
+        memcpy(bytes,owner->locale_name + at,count);
+        if (!qa_source_save_bytes(io,bytes,count) || memcmp(bytes,owner->locale_name + at,count)) return false;
+        at += count;
+    }
     for (size_t i = 0; i < 3; ++i) {
         const platform_stream *row = owner->streams + i;
         uint64_t saved_id = row->id, device = row->device, object = row->durable_object ? row->object : 0;
@@ -776,5 +903,5 @@ bool qa_native_process_platform_release(qa_native_process_platform **pointer, qa
     }
     if (!okay) { if (error) *error = first; return false; }
     if (native_error_owner == owner) platform_operation_begin(NULL);
-    free(owner); *pointer = NULL; return true;
+    free(owner->locale_name); free(owner); *pointer = NULL; return true;
 }

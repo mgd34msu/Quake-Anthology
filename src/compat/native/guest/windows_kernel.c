@@ -563,35 +563,68 @@ static bool locale_information(windows_service *service, const qa_native_value *
         return invalid_result(owner, out, QA_NATIVE_I32, 87, 0, error);
     if (request & UINT32_C(0x1fff0000))
         return invalid_result(owner, out, QA_NATIVE_I32, 1004, 0, error);
-    /* Only these explicit locales have the implemented 1252 text profile.
-     * The C CRT locale is not a Win32 user/system default locale capability. */
-    if (locale != 0x007f && locale != 0x0409)
-        return guest_fail(error, QA_ERROR_UNSUPPORTED, locale, "Windows locale information requires an implemented explicit locale");
+    const qa_native_windows_locale_profile *profile = &owner->capabilities.locale;
+    const qa_native_windows_locale *record = NULL;
+    qa_native_windows_locale canonical = {.lcid = locale, .language_id = locale, .ansi_code_page = 1252, .oem_code_page = 437,
+        .decimal = {'.'}, .thousands = {','}, .grouping = {'3',';','0'},
+        .default_decimal = {'.'}, .default_thousands = {','}, .default_grouping = {'3',';','0'}};
+    if (locale == 0 || locale == 0x0400 || locale == 0x0800) {
+        record = locale == 0x0800 ? &profile->system : &profile->user;
+        if (!record->lcid)
+            return guest_fail(error,QA_ERROR_UNSUPPORTED,locale,"Windows default locale has no acquired supported profile");
+    } else if (locale == profile->user.lcid) record = &profile->user;
+    else if (locale == profile->system.lcid) record = &profile->system;
+    else if (locale == 0x007f || locale == 0x0409) record = &canonical;
+    else return guest_fail(error,QA_ERROR_UNSUPPORTED,locale,"Windows locale information requires an implemented explicit locale");
     bool number = (request & UINT32_C(0x20000000)) != 0;
-    uint32_t kind = request & 0xffffu, value = 0; const char *text;
+    bool defaults = (request & UINT32_C(0x80000000)) != 0;
+    uint32_t kind = request & 0xffffu, value = 0; uint16_t numeric[16] = {0}; const uint16_t *text;
     switch (kind) {
-    case 0x0001: value = locale; text = locale == 0x007f ? "007f" : "0409"; break; /* ILANGUAGE */
-    case 0x000b: value = 437; text = "437"; break; /* IDEFAULTCODEPAGE */
-    case 0x1004: value = 1252; text = "1252"; break; /* IDEFAULTANSICODEPAGE */
-    case 0x000e: text = "."; break; /* SDECIMAL */
-    case 0x000f: text = ","; break; /* STHOUSAND */
-    case 0x0010: text = "3;0"; break; /* SGROUPING */
+    case 0x0001: value = record->language_id; text = numeric; break;
+    case 0x000b: value = record->oem_code_page; text = numeric; break;
+    case 0x1004: value = record->ansi_code_page; text = numeric; break;
+    case 0x000e: text = defaults ? record->default_decimal : record->decimal; break;
+    case 0x000f: text = defaults ? record->default_thousands : record->thousands; break;
+    case 0x0010: text = defaults ? record->default_grouping : record->grouping; break;
     default: return guest_fail(error, QA_ERROR_UNSUPPORTED, kind, "Windows locale information field is not implemented");
     }
-    if (number && kind != 0x0001 && kind != 0x000b && kind != 0x1004)
-        return invalid_result(owner, out, QA_NATIVE_I32, 1004, 0, error);
-    size_t needed = number ? (wide ? 2u : 4u) : strlen(text) + 1;
-    if (!capacity) { result(out, QA_NATIVE_I32, needed); return true; }
-    if (!output || (size_t)capacity < needed)
-        return invalid_result(owner, out, QA_NATIVE_I32, 122, 0, error);
+    if (number && text != numeric) return invalid_result(owner,out,QA_NATIVE_I32,1004,0,error);
+    if (text == numeric && !number) {
+        char digits[16];
+        int length = kind == 1 ? snprintf(digits,sizeof(digits),"%04x",value) : snprintf(digits,sizeof(digits),"%u",value);
+        if (length < 0 || (size_t)length >= sizeof(digits))
+            return guest_fail(error,QA_ERROR_FORMAT,value,"Windows locale numeric text exceeds its actual field");
+        for (int i = 0; i < length; ++i) numeric[i] = (uint8_t)digits[i];
+    }
+    size_t needed = number ? (wide ? 2u : 4u) : 0;
+    uint8_t bytes[QA_NATIVE_WINDOWS_LOCALE_UNITS];
+    if (!number) {
+        while (text[needed]) ++needed;
+        ++needed;
+        if (!wide) {
+            uint32_t cp = request & UINT32_C(0x40000000) ? profile->ansi_code_page : record->ansi_code_page;
+            if (!cp) cp = profile->source ? profile->ansi_code_page : 1252;
+            for (size_t i = 0; i < needed; ++i) {
+                uint16_t c = text[i]; int encoded = c < 128 ? c : -1;
+                if (cp == 1252) {
+                    if (c >= 160 && c <= 255) encoded = c;
+                    for (size_t j = 0; j < 32; ++j) if (cp1252[j] == c) encoded = (int)j + 128;
+                    if (encoded < 0) encoded = '?';
+                }
+                if (encoded < 0) return guest_fail(error,QA_ERROR_UNSUPPORTED,cp,"Windows locale text code page is not implemented");
+                bytes[i] = (uint8_t)encoded;
+            }
+        }
+    }
+    if (!capacity) { result(out,QA_NATIVE_I32,needed); return true; }
+    if (!output || (size_t)capacity < needed) return invalid_result(owner,out,QA_NATIVE_I32,122,0,error);
     if (number) {
-        if (!windows_write(owner, output, 4, value, error)) return false;
+        if (!windows_write(owner,output,4,value,error)) return false;
     } else if (wide) {
         for (size_t i = 0; i < needed; ++i)
-            if (!windows_write(owner, output + i * 2, 2, (uint8_t)text[i], error)) return false;
-    } else if (!qa_native_guest_write(owner->guest, output,
-        (qa_bytes){(const uint8_t *)text, needed}, error)) return false;
-    result(out, QA_NATIVE_I32, needed); return true;
+            if (!windows_write(owner,output + i * 2,2,text[i],error)) return false;
+    } else if (!qa_native_guest_write(owner->guest,output,(qa_bytes){bytes,needed},error)) return false;
+    result(out,QA_NATIVE_I32,needed); return true;
 }
 
 static bool locale_operation(windows_service *service, const qa_native_value *args,
@@ -602,6 +635,8 @@ static bool locale_operation(windows_service *service, const qa_native_value *ar
     size_t shift = operation == K_STRING_TYPE_A ? 1 : 0;
     bool string_type = operation == K_STRING_TYPE_A || operation == K_STRING_TYPE_W;
     uint32_t cp = (uint32_t)integer(args);
+    if ((operation == K_MULTI_WIDE || operation == K_WIDE_MULTI) && !cp)
+        cp = owner->capabilities.locale.source ? owner->capabilities.locale.ansi_code_page : 1252;
     if ((operation == K_MULTI_WIDE || operation == K_WIDE_MULTI) && cp != 0 && cp != 1252 && cp != 65001)
         return guest_fail(error, QA_ERROR_UNSUPPORTED, cp, "unsupported Windows text code page");
     if (string_type && integer(args + shift) != 1) return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "only Windows CT_CTYPE1 is implemented");
@@ -717,11 +752,18 @@ bool windows_kernel_invoke(windows_service *service, const qa_native_value *args
     case K_VERSION: result(out, type, 0x05650004); return true;
     case K_COMMAND_A: result(out, type, kernel->command_line_a); return true;
     case K_COMMAND_W: result(out, type, kernel->command_line_w); return true;
-    case K_ACP: result(out, type, 1252); return true;
-    case K_OEM: result(out, type, 437); return true;
-    case K_VALID_CP: result(out, type, a == 1252 || a == 437 || a == 65001); return true;
+    case K_ACP: result(out, type, owner->capabilities.locale.source ? owner->capabilities.locale.ansi_code_page : 1252); return true;
+    case K_OEM: result(out, type, owner->capabilities.locale.source ? owner->capabilities.locale.oem_code_page : 437); return true;
+    case K_VALID_CP: result(out, type, a == 1252 || a == 437 || a == 65001 ||
+        (a && owner->capabilities.locale.source &&
+         (a == owner->capabilities.locale.ansi_code_page || a == owner->capabilities.locale.oem_code_page ||
+          a == owner->capabilities.locale.user.ansi_code_page || a == owner->capabilities.locale.user.oem_code_page ||
+          a == owner->capabilities.locale.system.ansi_code_page || a == owner->capabilities.locale.system.oem_code_page))); return true;
     case K_CP_INFO:
-        if (a != 0 && a != 1 && a != 1252 && a != 437 && a != 65001) return invalid_result(owner, out, type, 87, 0, error);
+        if (a == 0) a = owner->capabilities.locale.source ? owner->capabilities.locale.ansi_code_page : 1252;
+        else if (a == 1) a = owner->capabilities.locale.source ? owner->capabilities.locale.oem_code_page : 437;
+        if (a != 1252 && a != 437 && a != 65001)
+            return guest_fail(error,QA_ERROR_UNSUPPORTED,a,"Windows code page metadata is not implemented");
         if (!windows_zero(owner, b, 20, error) || !windows_write(owner, b, 4, a == 65001 ? 4 : 1, error) || !windows_write(owner, b + 4, 2, 63, error)) return false;
         result(out, type, 1); return true;
     case K_ENV_A: result(out, type, kernel->environment_a); return true;

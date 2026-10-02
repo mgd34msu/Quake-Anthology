@@ -2,6 +2,7 @@
 #define QA_NATIVE_WINDOWS_PROCESS_H
 
 #include "qa/native_guest.h"
+#include "qa/native_windows_locale.h"
 
 typedef struct qa_native_windows_process qa_native_windows_process;
 /* All runtime service IDs, including dynamically unresolved imports, occupy
@@ -41,6 +42,7 @@ typedef struct qa_native_windows_stream {
  * resolve_file borrows an existing durable capability without opening it. */
 typedef struct qa_native_windows_capabilities {
     uint64_t id;
+    qa_native_windows_locale_profile locale;
     bool (*entropy)(void *, void *, size_t, qa_error *);
     bool (*milliseconds)(void *, int64_t *, qa_error *);
     bool (*performance)(void *, int64_t *, qa_error *);

@@ -690,6 +690,7 @@ static bool resources_create(const qa_native_process_resources_options *options,
         .entropy = platform_entropy, .milliseconds = platform_milliseconds, .performance = platform_performance,
         .performance_frequency = qa_native_process_platform_frequency(options->platform), .calendar = platform_calendar,
         .open_file = windows_open, .resolve_file = windows_resolve, .current = current_callback, .context = owner};
+    if (!qa_native_process_platform_locale_read(options->platform,&capabilities.locale,error)) return false;
     if (!qa_native_process_platform_windows_streams(options->platform, capabilities.streams, error)) return false;
     owner->windows = (qa_native_windows_process_options){.guest = guest, .artifacts = owner->windows_artifacts,
         .artifact_count = owner->artifact_count, .primary_image = qa_resource_id(owner->artifacts[options->primary].resource),
@@ -1002,6 +1003,7 @@ static bool resource_copy(const qa_native_process_resources *source,
     copy->windows.artifacts = copy->windows_artifacts; copy->windows.command_line = copy->command_line;
     copy->windows.environment = copy->windows_environment; copy->windows.guest = copy->sysv.guest;
     copy->windows.capabilities.context = copy;
+    if (!qa_native_process_platform_locale_read(copy->options.platform,&copy->windows.capabilities.locale,error)) return false;
     if (!qa_native_process_platform_windows_streams(copy->options.platform, copy->windows.capabilities.streams, error)) return false;
     copy->sysv_restore.host_executable = copy->bootstrap_path; copy->sysv_restore.profile_guard = copy->sysv.guest.profile_guard;
     copy->sysv_restore.context = copy; copy->sysv_restore.file_context = copy;
