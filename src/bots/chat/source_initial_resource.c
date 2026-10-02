@@ -77,8 +77,37 @@ static void source_release(void *context,qa_script_resource *source) {
     bot_chat_initial_resource *resource=context;
     resource->services.release(resource->services.context,source);
 }
+static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
+    bot_chat_initial_resource *resource=context;if(!current(resource,error)) return false;
+    bool ok=resource->services.file_open(resource->services.context,request,out,found,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) resource->service_failed=true;bool live=current(resource,error);
+    if(!ok && error) *error=reached;
+    if(ok && live && !*found && request->kind==QA_SCRIPT_ROOT) resource->missing_root=true;
+    if(ok && live && *found && request->kind==QA_SCRIPT_ROOT && out->path.data && !out->path.data[0]) {
+        resource->own_failure=true;qa_error_set(error,QA_ERROR_ARGUMENT,0,"Bot config open returned an empty canonical path");return false;
+    }
+    return ok && live;
+}
+static bool staged_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error) {
+    bot_chat_initial_resource *resource=context;if(!current(resource,error)) return false;
+    bool ok=resource->services.file_read(resource->services.context,file,span,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) resource->service_failed=true;bool live=current(resource,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
+static bool staged_close(void *context,const qa_script_file *file,qa_error *error) {
+    bot_chat_initial_resource *resource=context;if(!current(resource,error)) return false;
+    bool ok=resource->services.file_close(resource->services.context,file,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) resource->service_failed=true;bool live=current(resource,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 qa_script_services bot_chat_initial_resource_services(bot_chat_initial_resource *resource) {
     qa_script_services services=resource->services;
+    services.file_open=resource->services.file_open?staged_open:NULL;
+    services.file_read=resource->services.file_read?staged_read:NULL;
+    services.file_close=resource->services.file_close?staged_close:NULL;
+
     services.context=resource;services.read=source_read;services.release=source_release;
     services.diagnostic=source_report;return services;
 }
@@ -96,7 +125,7 @@ static bool equal_name(void *context,qa_bytes name,bool *out,qa_error *error) {
 bool bot_chat_initial_resource_create(qa_bot_memory *memory,const qa_script_services *services,
     const qa_script_options *options,const bot_chat_initial_resource_host *host,
     bot_chat_initial_resource **out,qa_error *error) {
-    if(!memory || !services || !services->read || !services->release || !options || !host ||
+    if(!memory || !qa_script_services_valid(services) || !options || !host ||
        !host->current || !host->report || !host->name_equal || !host->path || !host->identity ||
        !host->publish || !out || *out)
         return fail(error,"Initial chat resource requires its real services/callbacks and empty output");

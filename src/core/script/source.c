@@ -39,52 +39,60 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
         return script_fail(s, qa_script_position(s),
                            "Script include depth exceeds configured limit", e);
     qa_script_resource resource = {0};
-    bool found = false;
-    if (!s->services.read(s->services.context, request, &resource, &found, e))
-        return false;
-    if (!found) {
-        if (request->kind != QA_SCRIPT_ROOT) {
-            char message[256];
-            snprintf(message, sizeof(message), "file %s not found", request->requested_path);
-            return script_fail(s, qa_script_position(s), message, e);
+    qa_script_file file={0};
+    qa_script_lexer *lexer=NULL;
+    bool staged=s->services.file_open!=NULL,found=false;
+    qa_script_lexer_options options = {.flags=s->options.lexer_flags,
+        .token_limit=s->options.token_limit,.context=s->services.context,
+        .diagnostic=s->services.diagnostic,.memory=s->services.memory};
+    bool opened=staged?s->services.file_open(s->services.context,request,&file,&found,e):
+        s->services.read(s->services.context,request,&resource,&found,e);
+    if(!opened) {qa_buffer_free(&file.path);return false;}
+    if(!found) {
+        qa_buffer_free(&file.path);
+        if(request->kind!=QA_SCRIPT_ROOT) {
+            char message[256];snprintf(message,sizeof(message),"file %s not found",request->requested_path);
+            return script_fail(s,qa_script_position(s),message,e);
         }
-        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Script resource not found: %s",
-                     request->requested_path);
-        return false;
+        qa_error_set(e,QA_ERROR_NOT_FOUND,0,"Script resource not found: %s",request->requested_path);return false;
     }
-    if (resource.path == NULL || resource.path[0] == 0 ||
-        (resource.bytes.size != 0 && resource.bytes.data == NULL)) {
-        s->services.release(s->services.context, &resource);
-        return script_fail(s, qa_script_position(s), "Script resolver returned an invalid resource",
-                           e);
+    if(staged) {
+        if(!file.path.data || !file.path.size || file.path.data[file.path.size-1] ||
+           !file.path.data[0] || !memchr(file.path.data,0,file.path.size)) {
+            qa_buffer_free(&file.path);
+            return script_fail(s,qa_script_position(s),"Script open returned an invalid filename",e);
+        }
+        bool loaded=script_lexer_open_file(&file,&s->services,&options,&lexer,e);
+        qa_buffer_free(&file.path);
+        if(!loaded) return false;
+        const char *text=script_string(&s->arena,lexer->input.data,lexer->input.size,e);
+        if(!text) {script_lexer_dispose(lexer);return false;}
+        resource=(qa_script_resource){.path=lexer->path,.bytes={(const uint8_t *)text,lexer->input.size}};
+        if(s->services.file_text) script_lexer_compress(lexer);
+    } else if(!resource.path || !resource.path[0] || (resource.bytes.size && !resource.bytes.data)) {
+        s->services.release(s->services.context,&resource);
+        return script_fail(s,qa_script_position(s),"Script resolver returned an invalid resource",e);
     }
-    for (size_t i = 0; i < s->stack_count; ++i)
-        if (same_path(s->frames[s->stack[i]].resource.path, resource.path)) {
-            script_warn(s, qa_script_position(s), "Recursive script include ignored");
-            s->services.release(s->services.context, &resource);
+    for(size_t i=0;i<s->stack_count;++i)
+        if(same_path(s->frames[s->stack[i]].resource.path,resource.path)) {
+            script_warn(s,qa_script_position(s),"Recursive script include ignored");
+            if(staged) qa_script_lexer_close(lexer);
+            else s->services.release(s->services.context,&resource);
             return true;
         }
-    if (!script_grow((void **)&s->frames, &s->frame_capacity, s->frame_count + 1,
-                     sizeof(*s->frames), e) ||
-        !script_grow((void **)&s->stack, &s->stack_capacity, s->stack_count + 1, sizeof(*s->stack),
-                     e)) {
-        s->services.release(s->services.context, &resource);
+    if(!script_grow((void **)&s->frames,&s->frame_capacity,s->frame_count+1,sizeof(*s->frames),e) ||
+       !script_grow((void **)&s->stack,&s->stack_capacity,s->stack_count+1,sizeof(*s->stack),e)) {
+        if(staged) script_lexer_dispose(lexer);
+        else s->services.release(s->services.context,&resource);
         return false;
     }
-    qa_script_lexer_options options = {.flags = s->options.lexer_flags,
-                                       .token_limit = s->options.token_limit,
-                                       .context = s->services.context,
-                                       .diagnostic = s->services.diagnostic,
-                                       .memory=s->services.memory};
-    qa_script_lexer *lexer;
-    if (!qa_script_lexer_open(resource.path, resource.bytes, &options, &lexer, e)) {
-        s->services.release(s->services.context, &resource);
-        return false;
+    if(!staged && !qa_script_lexer_open(resource.path,resource.bytes,&options,&lexer,e)) {
+        s->services.release(s->services.context,&resource);return false;
     }
-    if(s->services.file_text) script_lexer_compress(lexer);
+    if(!staged && s->services.file_text) script_lexer_compress(lexer);
     qa_store_u32le(lexer->record.bytes+SCRIPT_LEXER_NEXT,script_source_pointer(s));
     s->frames[s->frame_count] = (script_frame){
-        .resource = resource, .lexer = lexer, .condition_base = s->condition_count, .active = true};
+        .resource = resource, .lexer = lexer, .owned=staged, .condition_base = s->condition_count, .active = true};
     s->stack[s->stack_count++] = s->frame_count++;
     script_source_stack(s);
     return true;
@@ -229,7 +237,7 @@ static bool install_builtins(qa_script *source,qa_error *error) {
 }
 bool qa_script_open(const char *path, const qa_script_services *services,
                     const qa_script_options *options, qa_script **out, qa_error *e) {
-    if (path == NULL || services == NULL || services->read == NULL || services->release == NULL ||
+    if (path == NULL || !qa_script_services_valid(services) ||
         out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid script source services");
         return false;

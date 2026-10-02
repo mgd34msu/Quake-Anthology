@@ -40,7 +40,7 @@ static bool source_fields(qa_source_save_io *io,bot_weapon_resource *resource) {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && resource->reader!=NULL;
     if(!qa_source_save_bool(io,&present)) return false;
     if(!present) return true;
-    if(!resource->services.read || !resource->services.release)
+    if(!qa_script_services_valid(&resource->services))
         return bot_save_fail(io,QA_ERROR_FORMAT,"Retained weapon PC requires its actual source services");
     qa_script_checkpoint state={0};qa_buffer bytes={0};size_t extent=0;
     bool ok=reading || (qa_script_capture(resource->reader,&state,io->error) &&
@@ -98,7 +98,7 @@ static bool pending_fields(qa_source_save_io *io,bot_weapon_resource *resource) 
 }
 static bool qualified(qa_source_save_io *io,bot_weapon_resource *resource,bool allocation,bool bound) {
     if(resource->active || (bound && (!allocation || !resource->path || !*resource->path || resource->reader || resource->report_failed)) ||
-       (!resource->services.read && (!bound || resource->pending || resource->reader)) ||
+       (!qa_script_services_valid(&resource->services) && (!bound || resource->pending || resource->reader)) ||
        (resource->reader && (!resource->attempted || bound || resource->missing_root)) ||
        (resource->missing_root && (!resource->attempted || allocation || bound || resource->reader)) ||
        (resource->pending && (!resource->attempted || bound || resource->missing_root)) ||

@@ -329,7 +329,7 @@ bad:
 }
 static bool restore_source(const qa_script_services *services, const qa_script_checkpoint *c,
                            qa_script **out, bool detached, qa_error *e) {
-    if (services == NULL || services->read == NULL || services->release == NULL || out == NULL) {
+    if (!qa_script_services_valid(services) || out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid restored script services/output");
         return false;
     }

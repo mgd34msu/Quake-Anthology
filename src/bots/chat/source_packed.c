@@ -74,8 +74,34 @@ static void source_report(void *context,const qa_script_diagnostic *issue) {
     if(source->diagnostic) source->diagnostic(source->context,issue);
     (void)current(packed,&error);
 }
+static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
+    bot_chat_packed *packed=context;if(!current(packed,error)) return false;
+    bool ok=packed->services.file_open(packed->services.context,request,out,found,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) packed->service_failed=true;bool live=current(packed,error);
+    if(!ok && error) *error=reached;
+    if(ok && live && !*found && request->kind==QA_SCRIPT_ROOT) packed->missing_root=true;
+    return ok && live;
+}
+static bool staged_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error) {
+    bot_chat_packed *packed=context;if(!current(packed,error)) return false;
+    bool ok=packed->services.file_read(packed->services.context,file,span,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) packed->service_failed=true;bool live=current(packed,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
+static bool staged_close(void *context,const qa_script_file *file,qa_error *error) {
+    bot_chat_packed *packed=context;if(!current(packed,error)) return false;
+    bool ok=packed->services.file_close(packed->services.context,file,error);
+    qa_error reached=error?*error:(qa_error){0};if(!ok) packed->service_failed=true;bool live=current(packed,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 static qa_script_services services(bot_chat_packed *packed) {
     qa_script_services result=packed->services;
+    result.file_open=packed->services.file_open?staged_open:NULL;
+    result.file_read=packed->services.file_read?staged_read:NULL;
+    result.file_close=packed->services.file_close?staged_close:NULL;
+
     result.context=packed;result.read=source_read;result.release=source_release;result.diagnostic=source_report;
     return result;
 }

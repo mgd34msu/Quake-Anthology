@@ -89,8 +89,37 @@ static void source_release(void *context,qa_script_resource *source) {
     bot_weapon_resource *resource=context;
     resource->services.release(resource->services.context,source);
 }
+static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
+    bot_weapon_resource *resource=context;if(!bot_weapon_resource_current(resource,error)) return false;
+    bool ok=resource->services.file_open(resource->services.context,request,out,found,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=reached;
+    if(ok && live && !*found && request->kind==QA_SCRIPT_ROOT) resource->missing_root=true;
+    if(ok && live && *found && request->kind==QA_SCRIPT_ROOT && out->path.data && !out->path.data[0]) {
+        resource->own_failure=true;resource->invalid_root_path=true;qa_error_set(error,QA_ERROR_ARGUMENT,0,"Bot config open returned an empty canonical path");return false;
+    }
+    return ok && live;
+}
+static bool staged_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error) {
+    bot_weapon_resource *resource=context;if(!bot_weapon_resource_current(resource,error)) return false;
+    bool ok=resource->services.file_read(resource->services.context,file,span,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
+static bool staged_close(void *context,const qa_script_file *file,qa_error *error) {
+    bot_weapon_resource *resource=context;if(!bot_weapon_resource_current(resource,error)) return false;
+    bool ok=resource->services.file_close(resource->services.context,file,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 qa_script_services bot_weapon_resource_services(bot_weapon_resource *resource) {
     qa_script_services services=resource->services;
+    services.file_open=resource->services.file_open?staged_open:NULL;
+    services.file_read=resource->services.file_read?staged_read:NULL;
+    services.file_close=resource->services.file_close?staged_close:NULL;
+
     services.context=resource;services.read=source_read;services.release=source_release;
     services.diagnostic=source_diagnostic;return services;
 }
@@ -104,7 +133,7 @@ static bool complete(void *context,qa_error *error) {
 bool bot_weapon_resource_create(qa_bot_memory *memory,const qa_script_services *services,
     const qa_script_options *options,const bot_weapon_resource_host *host,
     bot_weapon_resource **out,qa_error *error) {
-    if(!memory || !services || !services->read || !services->release || !options || !out || *out)
+    if(!memory || !qa_script_services_valid(services) || !options || !out || *out)
         return fail(error,"Weapon resource requires its actual memory, source services and empty output");
     bot_weapon_resource *resource=calloc(1,sizeof(*resource));
     if(!resource) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining weapon resource owner");return false;}
@@ -178,7 +207,7 @@ bool bot_weapon_resource_bind(bot_weapon_resource *resource,bot_weapon_config_re
 bool bot_weapon_resource_load(bot_weapon_resource *resource,const char *path,uint32_t weapons,
     uint32_t projectiles,bool *source_failure,qa_error *error) {
     if(!resource || !source_failure || !path || !*path || resource->attempted || resource->active || resource->bound ||
-       !resource->services.read || !resource->services.release)
+       !qa_script_services_valid(&resource->services))
         return fail(error,"Weapon load requires an unattempted source owner, path and outcome");
     *source_failure=false;
     if(weapons>INT32_MAX || projectiles>INT32_MAX)

@@ -81,6 +81,7 @@ void script_lexer_compress(qa_script_lexer *);
 bool script_lexer_memory_validate(qa_script_lexer *,qa_error *);
 void script_lexer_memory_close(qa_script_lexer *,bool);
 void script_lexer_dispose(qa_script_lexer *);
+bool script_lexer_open_file(const qa_script_file *,const qa_script_services *,const qa_script_lexer_options *,qa_script_lexer **,qa_error *);
 bool script_lexer_retire(qa_script_lexer *,qa_error *);
 bool script_lexer_frame_capture(const qa_script_lexer *,qa_script_frame_state *,qa_arena *,qa_error *);
 bool script_lexer_frame_valid(const qa_script_frame_state *,qa_error *);

@@ -55,7 +55,7 @@ bool bot_weapon_resource_clone(const bot_weapon_resource *source,bool rebind,
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Weapon history requires an idle actual resource and empty output");return false;
     }
     bot_weapon_resource *copy=NULL;
-    bool ok=source->services.read?
+    bool ok=qa_script_services_valid(&source->services)?
         bot_weapon_resource_create(source->memory,&source->services,&source->options,&source->host,&copy,error):
         bot_weapon_resource_pure(source->memory,&copy,error);
     if(!ok) return false;

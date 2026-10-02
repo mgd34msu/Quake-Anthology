@@ -49,7 +49,7 @@ static bool graph_fields(qa_source_save_io *io,application_bots_npc *owner,npc_g
 {
     if(!qa_persistence_bounds(io,&graph->bounds) || !qa_source_save_u32(io,&graph->flags) ||
        (graph->flags&~(uint32_t)(QA_PHYSICS_FLYING|QA_PHYSICS_SWIMMING)) ||
-       !application_navigation_asset_field(io,owner->source->application,owner->files,
+       !application_bot_resource_field(io,owner->source->application,owner->files,
             &graph->asset,&graph->acquisition,io->direction==QA_SOURCE_SAVE_READ))
         return fail(io,"Invalid monster graph profile");
     qa_buffer encoded={0};qa_nav_asset *asset=NULL;

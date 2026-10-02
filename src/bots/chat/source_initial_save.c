@@ -70,7 +70,7 @@ static bool reader_fields(qa_source_save_io *io,bot_chat_initial_resource *resou
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && resource->reader;
     if(!qa_source_save_bool(io,&present)) return false;
     if(!present) return true;
-    if(!resource->services.read || !resource->services.release)
+    if(!qa_script_services_valid(&resource->services))
         return bot_save_fail(io,QA_ERROR_FORMAT,"Retained chat PC requires its actual source services");
     qa_script_checkpoint checkpoint={0};qa_buffer bytes={0};size_t extent=0;
     bool ok=reading || (qa_script_capture(resource->reader,&checkpoint,io->error) &&

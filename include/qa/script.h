@@ -178,6 +178,12 @@ typedef struct qa_script_memory {
     bool (*resolve)(void *,size_t,qa_script_memory_allocation *,qa_error *);
     bool (*resolve_history)(void *,size_t,qa_script_memory_allocation *,qa_error *);
 } qa_script_memory;
+typedef struct qa_script_file {
+    qa_buffer path; /* Caller owns the NUL-terminated source filename. */
+    size_t size;
+    uint32_t handle;
+    void *lease; /* The filesystem retains the actual opened file. */
+} qa_script_file;
 typedef struct qa_script_services {
     void *context;
     /* Callbacks must not close or mutate the active source. Handle owners may
@@ -190,7 +196,16 @@ typedef struct qa_script_services {
     const qa_script_memory *memory;
     /* LoadScriptFile compresses the loaded text in place before scanning. */
     bool file_text;
+    bool (*file_open)(void *,const qa_script_include *,qa_script_file *,bool *found,qa_error *);
+    bool (*file_read)(void *,const qa_script_file *,qa_script_memory_span,qa_error *);
+    bool (*file_close)(void *,const qa_script_file *,qa_error *);
 } qa_script_services;
+static inline bool qa_script_services_valid(const qa_script_services *services) {
+    if (!services) return false;
+    if (services->file_open || services->file_read || services->file_close)
+        return services->file_open && services->file_read && services->file_close;
+    return services->read && services->release;
+}
 typedef struct qa_script_defines qa_script_defines;
 typedef struct qa_script qa_script;
 typedef struct qa_script_options {

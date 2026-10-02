@@ -259,6 +259,64 @@ static size_t free_slot(qa_q3_host *host, qa_error *error)
     return 0;
 }
 
+bool q3_script_file_open(qa_q3_host *host,qa_vfs *mounts,const char *lookup,const char *path,
+                         qa_script_file *out,bool *found,qa_error *error)
+{
+    *found=false;
+    if(*lookup=='/' || *lookup=='\\') ++lookup;
+    if(strstr(lookup,"..") || strstr(lookup,"::") || strstr(lookup,"q3key")) return true;
+    qa_resource *resource=NULL;qa_mount_id mount=0;qa_error local={0};
+    if(!qa_vfs_acquire(mounts,lookup,&resource,&mount,&local)) {
+        if(local.code==QA_ERROR_NOT_FOUND) return true;
+        if(error) *error=local;
+        return false;
+    }
+    qa_bytes bytes=qa_resource_bytes(resource);
+    if(bytes.size>INT32_MAX) {
+        qa_resource_release(resource);
+        return q3_fail(error,QA_ERROR_FORMAT,bytes.size,"Q3 opened file exceeds source length");
+    }
+    size_t slot=free_slot(host,error);
+    if(!slot || host->file_serial==UINT64_MAX) {
+        qa_resource_release(resource);
+        if(slot) q3_fail(error,QA_ERROR_FORMAT,0,"Q3 file identity exhausted");
+        return false;
+    }
+    size_t length=strlen(path)+1;
+    qa_buffer name={.data=malloc(length),.size=length};
+    if(!name.data) {qa_resource_release(resource);return q3_fail(error,QA_ERROR_MEMORY,0,"Retaining Q3 source filename");}
+    memcpy(name.data,path,length);
+    q3_file file={.kind=Q3_FILE_READ,.serial=++host->file_serial,.resource=resource};
+    for(size_t i=0;i<qa_vfs_mount_count(mounts);++i) {
+        qa_vfs_mount_info info;
+        if(qa_vfs_mount_at(mounts,i,&info) && info.id==mount) {file.zip=info.format==QA_ARCHIVE_PK3;break;}
+    }
+    host->files[slot]=file;
+    *out=(qa_script_file){.path=name,.size=bytes.size,.handle=(uint32_t)slot,.lease=host};
+    *found=true;return true;
+}
+bool q3_script_file_read(const qa_script_file *source,qa_script_memory_span destination,qa_error *error)
+{
+    qa_q3_host *host=source->lease;
+    if(!host || source->handle>=64) return q3_fail(error,QA_ERROR_ARGUMENT,0,"PC read lacks its opened filesystem owner");
+    q3_file *file=file_at(host,(int32_t)source->handle,error);
+    if(!file) return false;
+    if(file->kind!=Q3_FILE_READ || destination.size!=source->size || (!destination.data && destination.size))
+        return q3_fail(error,QA_ERROR_ARGUMENT,source->handle,"Invalid PC opened-file transfer");
+    qa_bytes bytes=file_bytes(file);
+    size_t count=file->position<bytes.size?bytes.size-(size_t)file->position:0;
+    if(count>destination.size) count=destination.size;
+    if(count) memcpy(destination.data,bytes.data+(size_t)file->position,count);
+    file->position+=count;return true;
+}
+bool q3_script_file_close(const qa_script_file *source,qa_error *error)
+{
+    qa_q3_host *host=source->lease;
+    if(!host || source->handle>=64) return q3_fail(error,QA_ERROR_ARGUMENT,0,"PC close lacks its opened filesystem owner");
+    q3_file *file=file_at(host,(int32_t)source->handle,error);
+    return file && q3_file_close_checked(file,error);
+}
+
 static bool publish_open(q3_call *call, uint64_t destination, q3_file *file,
                           int32_t value, int32_t *result, qa_error *error)
 {

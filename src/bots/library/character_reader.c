@@ -28,15 +28,37 @@ void bot_character_reader_report(bot_character_reader *reader, qa_script *source
 }
 bool bot_character_reader_create(const qa_script_services *services, bot_character_reader **out,
                                  qa_error *error) {
-    if (!services || !services->read || !services->release || !out || *out) {
+    if (!qa_script_services_valid(services) || !out || *out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot parser requires its real source services"); return false;
     }
     bot_character_reader *reader = calloc(1, sizeof(*reader));
     if (!reader) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining bot parser source callbacks"); return false; }
     reader->services = *services; *out = reader; return true;
 }
+static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
+    bot_character_reader *reader=context;
+    bool okay=reader->services.file_open(reader->services.context,request,out,found,error);
+    if(!okay) reader->callback_failed=true;
+    return okay;
+}
+static bool staged_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error) {
+    bot_character_reader *reader=context;
+    bool okay=reader->services.file_read(reader->services.context,file,span,error);
+    if(!okay) reader->callback_failed=true;
+    return okay;
+}
+static bool staged_close(void *context,const qa_script_file *file,qa_error *error) {
+    bot_character_reader *reader=context;
+    bool okay=reader->services.file_close(reader->services.context,file,error);
+    if(!okay) reader->callback_failed=true;
+    return okay;
+}
 qa_script_services bot_character_reader_services(bot_character_reader *reader) {
     qa_script_services services = reader->services;
+    services.file_open=reader->services.file_open?staged_open:NULL;
+    services.file_read=reader->services.file_read?staged_read:NULL;
+    services.file_close=reader->services.file_close?staged_close:NULL;
+
     services.context = reader; services.read = read_source; services.release = release_source;
     services.diagnostic = diagnostic_source; return services;
 }

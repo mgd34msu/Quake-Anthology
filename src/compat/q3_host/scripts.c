@@ -128,10 +128,6 @@ void q3_script_namespace_release(qa_q3_host *host)
     qa_script_defines_release(owner->globals); free(owner);
 }
 
-typedef struct script_resource {
-    qa_resource *resource;
-    char path[];
-} script_resource;
 
 static void diagnostic(void *context, const qa_script_diagnostic *diagnostic)
 {
@@ -145,7 +141,7 @@ static void diagnostic(void *context, const qa_script_diagnostic *diagnostic)
     }
 }
 
-static bool source(qa_q3_host *host, qa_vfs *mounts, const char *path, qa_script_resource *out,
+static bool source(qa_q3_host *host, qa_vfs *mounts, const char *path, qa_script_file *out,
                      bool *found, qa_error *error)
 {
     size_t length = strlen(path);
@@ -159,25 +155,11 @@ static bool source(qa_q3_host *host, qa_vfs *mounts, const char *path, qa_script
         snprintf(text, sizeof(text), "Com_sprintf: overflow of %zu in 64\n", length);
         host->options.common.print(host->options.common.context, text);
     }
-    qa_resource *resource;
-    qa_error local = {0};
-    if (!qa_vfs_acquire(mounts, lookup, &resource, NULL, &local)) {
-        if (local.code == QA_ERROR_NOT_FOUND) { *found = false; return true; }
-        if (error) *error = local;
-        return false;
-    }
-    script_resource *lease = malloc(sizeof(*lease) + length + 1);
-    if (!lease) {
-        qa_resource_release(resource);
-        return q3_fail(error, QA_ERROR_MEMORY, 0, "retaining Q3 script source");
-    }
-    lease->resource = resource; memcpy(lease->path, path, length + 1);
-    *out = (qa_script_resource){lease->path, qa_resource_bytes(resource), lease};
-    *found = true; return true;
+    return q3_script_file_open(host,mounts,lookup,path,out,found,error);
 }
 
 static bool read_source_view(qa_q3_host *host, qa_vfs *mounts, const qa_script_include *request,
-                          qa_script_resource *out, bool *found, qa_error *error)
+                          qa_script_file *out, bool *found, qa_error *error)
 {
     if (request->kind == QA_SCRIPT_ROOT) return source(host, mounts, request->requested_path, out, found, error);
     size_t length = strlen(request->requested_path);
@@ -209,16 +191,17 @@ static bool read_source_view(qa_q3_host *host, qa_vfs *mounts, const qa_script_i
     free(path); return ok;
 }
 
-static void release_source(void *context, qa_script_resource *resource)
+static bool file_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error)
 {
-    (void)context;
-    script_resource *lease = resource->lease;
-    if (lease) { qa_resource_release(lease->resource); free(lease); }
-    *resource = (qa_script_resource){0};
+    (void)context;return q3_script_file_read(file,span,error);
+}
+static bool file_close(void *context,const qa_script_file *file,qa_error *error)
+{
+    (void)context;return q3_script_file_close(file,error);
 }
 
 static bool read_source(void *context, const qa_script_include *request,
-    qa_script_resource *out, bool *found, qa_error *error)
+    qa_script_file *out, bool *found, qa_error *error)
 {
     qa_q3_host *host=context;
     return read_source_view(host,host->options.mounts,request,out,found,error);
@@ -226,14 +209,15 @@ static bool read_source(void *context, const qa_script_include *request,
 
 qa_script_services q3_script_services(qa_q3_host *host)
 {
-    return (qa_script_services){host, read_source, release_source, diagnostic,
-                                  host->options.script_date, host->options.script_time,
+    return (qa_script_services){.context=host,.diagnostic=diagnostic,
+        .file_open=read_source,.file_read=file_read,.file_close=file_close,
+        .date=host->options.script_date,.time=host->options.script_time,.memory=
         qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):
-        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),true};
+        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),.file_text=true};
 }
 
 static bool handle_read(void *context, const qa_script_include *request,
-    qa_script_resource *out, bool *found, qa_error *error)
+    qa_script_file *out, bool *found, qa_error *error)
 {
     q3_script *script = context;
     if (!script->entered)
@@ -250,10 +234,11 @@ static void handle_diagnostic(void *context, const qa_script_diagnostic *value)
 qa_script_services q3_script_handle_services(q3_script *script, qa_q3_host *host)
 {
     script->member = host; script->entered = host;
-    return (qa_script_services){script, handle_read, release_source, handle_diagnostic,
-        host->options.script_date, host->options.script_time,
+    return (qa_script_services){.context=script,.diagnostic=handle_diagnostic,
+        .file_open=handle_read,.file_read=file_read,.file_close=file_close,
+        .date=host->options.script_date,.time=host->options.script_time,.memory=
         qa_script_defines_memory(host->options.script_globals)?qa_script_defines_memory(host->options.script_globals):
-        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),true};
+        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots)),.file_text=true};
 }
 
 void q3_script_close(q3_script *script)

@@ -129,8 +129,34 @@ bool bot_fuzzy_reader_create(bot_fuzzy_store *store,uint64_t generation,bot_fuzz
     reader->store=store;reader->services=store->library->options.scripts;
     reader->generation=generation;reader->next=store->readers;store->readers=reader;*out=reader;return true;
 }
+static bool staged_open(void *context,const qa_script_include *request,qa_script_file *out,bool *found,qa_error *error) {
+    bot_fuzzy_reader *reader=context;if(!reader_current(reader,error)) return false;
+    bool ok=reader->services.file_open(reader->services.context,request,out,found,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=reader_current(reader,error);
+    if(!ok && error) *error=reached;
+    if(ok && live && !*found && request->kind==QA_SCRIPT_ROOT) reader->missing_root=true;
+    return ok && live;
+}
+static bool staged_read(void *context,const qa_script_file *file,qa_script_memory_span span,qa_error *error) {
+    bot_fuzzy_reader *reader=context;if(!reader_current(reader,error)) return false;
+    bool ok=reader->services.file_read(reader->services.context,file,span,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=reader_current(reader,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
+static bool staged_close(void *context,const qa_script_file *file,qa_error *error) {
+    bot_fuzzy_reader *reader=context;if(!reader_current(reader,error)) return false;
+    bool ok=reader->services.file_close(reader->services.context,file,error);
+    qa_error reached=error?*error:(qa_error){0};bool live=reader_current(reader,error);
+    if(!ok && error) *error=reached;
+    return ok && live;
+}
 qa_script_services bot_fuzzy_reader_services(bot_fuzzy_reader *reader) {
     qa_script_services services=reader->services;
+    services.file_open=reader->services.file_open?staged_open:NULL;
+    services.file_read=reader->services.file_read?staged_read:NULL;
+    services.file_close=reader->services.file_close?staged_close:NULL;
+
     services.context=reader;services.read=source_read;services.release=source_release;services.diagnostic=source_diagnostic;
     return services;
 }

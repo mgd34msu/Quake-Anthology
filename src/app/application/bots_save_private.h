@@ -6,7 +6,7 @@
 #include "qa/source_save.h"
 
 bool application_bots_content_visit(const qa_application *,const qa_application_content_visitor *,qa_error *);
-bool application_navigation_asset_field(qa_source_save_io *,qa_application *,qa_vfs *,
+bool application_bot_resource_field(qa_source_save_io *,qa_application *,qa_vfs *,
     qa_resource **,qa_vfs_acquisition *,bool prepare);
 
 /* Prepare under the candidate persistence lease after pinned map, shared

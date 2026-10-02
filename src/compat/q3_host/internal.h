@@ -234,6 +234,9 @@ bool q3_game_portal_reference(qa_q3_host *, uint32_t first, uint32_t second,
                               q3_portal_reference *, qa_error *);
 size_t q3_shared_offset(qa_qvm_abi, size_t modern);
 void q3_file_close(q3_file *);
+bool q3_script_file_open(qa_q3_host *,qa_vfs *,const char *,const char *,qa_script_file *,bool *,qa_error *);
+bool q3_script_file_read(const qa_script_file *,qa_script_memory_span,qa_error *);
+bool q3_script_file_close(const qa_script_file *,qa_error *);
 void q3_script_close(q3_script *);
 qa_script_services q3_script_services(qa_q3_host *);
 qa_script_services q3_script_handle_services(q3_script *, qa_q3_host *);

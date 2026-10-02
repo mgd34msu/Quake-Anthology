@@ -49,6 +49,12 @@ typedef struct application_bot_guest {
     uint32_t client_base, entity_base;
     struct application_bot_guest *next;
 } application_bot_guest;
+typedef struct application_bot_script_file {
+    qa_resource *resource;
+    qa_vfs_acquisition acquisition;
+    uint64_t position;
+    struct application_bot_script_file *next;
+} application_bot_script_file;
 typedef struct application_bots {
     qa_application *application;
     application_provider *source;
@@ -62,6 +68,7 @@ typedef struct application_bots {
     struct application_bot_world_binding *shared_binding;
     struct application_bot_transport *transport;
     qa_vfs *files;
+    application_bot_script_file *script_files;
     qa_vfs *navigation_files;
     bool files_launch;
     qa_string_id files_product;

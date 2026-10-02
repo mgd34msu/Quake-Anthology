@@ -37,8 +37,9 @@ static int32_t source_milliseconds(const qa_source_frame *frame) {
     else word=(uint32_t)(frame->time_ns/1000000);
     int32_t value;memcpy(&value,&word,sizeof(value));return value;
 }
-static bool read_file(void *opaque,const qa_script_include *request,qa_script_resource *out,bool *found,qa_error *error) {
-    application_bots *bots=opaque;*found=false;
+static bool acquire_script_file(application_bots *bots,const qa_script_include *request,
+    qa_resource **out,qa_vfs_acquisition *receipt,bool *found,qa_error *error) {
+    *found=false;
     size_t directory=0;
     if(request->kind==QA_SCRIPT_INCLUDE_QUOTED && request->from_path) {
         const char *slash=strrchr(request->from_path,'/');
@@ -54,12 +55,68 @@ static bool read_file(void *opaque,const qa_script_include *request,qa_script_re
         if(!path) return application_fail(error,QA_ERROR_MEMORY,"allocating bot script path");
         memcpy(path,prefix,prefix_size);memcpy(path+prefix_size,request->requested_path,requested+1);
         qa_resource *resource=NULL;qa_error local={0};
-        bool ok=qa_vfs_acquire(bots->files,path,&resource,NULL,&local);free(path);
-        if(!ok) {if(local.code==QA_ERROR_NOT_FOUND) continue;if(error)*error=local;return false;}
-        *out=(qa_script_resource){.path=qa_resource_path(resource),.bytes=qa_resource_bytes(resource),.lease=resource};
+        bool ok=receipt?qa_vfs_acquire_receipt(bots->files,path,&resource,receipt,&local):
+            qa_vfs_acquire(bots->files,path,&resource,NULL,&local);
+        free(path);
+        if(!ok) {
+            if(receipt) qa_vfs_acquisition_dispose(receipt);
+            if(local.code==QA_ERROR_NOT_FOUND) continue;
+            if(error) *error=local;
+            return false;
+        }
+        *out=resource;
         *found=true;return true;
     }
     return true;
+}
+static bool read_file(void *opaque,const qa_script_include *request,qa_script_resource *out,bool *found,qa_error *error) {
+    qa_resource *resource=NULL;
+    if(!acquire_script_file(opaque,request,&resource,NULL,found,error)) return false;
+    if(*found) *out=(qa_script_resource){.path=qa_resource_path(resource),
+        .bytes=qa_resource_bytes(resource),.lease=resource};
+    return true;
+}
+static bool script_file_open(void *opaque,const qa_script_include *request,qa_script_file *out,
+    bool *found,qa_error *error) {
+    application_bots *bots=opaque;
+    application_bot_script_file *file=calloc(1,sizeof(*file));
+    if(!file) return application_fail(error,QA_ERROR_MEMORY,"Retaining opened bot script file");
+    bool okay=acquire_script_file(bots,request,&file->resource,&file->acquisition,found,error);
+    if(!okay || !*found) {
+        qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
+        return okay;
+    }
+    file->next=bots->script_files;bots->script_files=file;
+    const char *path=qa_resource_path(file->resource);size_t length=strlen(path)+1;
+    *out=(qa_script_file){.size=qa_resource_bytes(file->resource).size,.lease=file};
+    out->path.data=malloc(length);
+    if(!out->path.data) return application_fail(error,QA_ERROR_MEMORY,"Retaining bot script filename");
+    memcpy(out->path.data,path,length);out->path.size=length;return true;
+}
+static application_bot_script_file **script_file_find(application_bots *bots,const qa_script_file *file) {
+    application_bot_script_file **position=&bots->script_files;
+    while(*position && *position!=file->lease) position=&(*position)->next;
+    return position;
+}
+static bool script_file_read(void *opaque,const qa_script_file *file,qa_script_memory_span target,
+    qa_error *error) {
+    application_bot_script_file *actual=*script_file_find(opaque,file);
+    if(!actual || file->handle || file->size!=qa_resource_bytes(actual->resource).size ||
+        actual->position>file->size || (target.size && !target.data))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot script read lost its actual opened file or MEMORY extent");
+    qa_bytes bytes=qa_resource_bytes(actual->resource);
+    size_t remaining=bytes.size-(size_t)actual->position;
+    size_t count=remaining<target.size?remaining:target.size;
+    if(count) memcpy(target.data,bytes.data+(size_t)actual->position,count);
+    actual->position+=count;
+    return true;
+}
+static bool script_file_close(void *opaque,const qa_script_file *file,qa_error *error) {
+    application_bot_script_file **position=script_file_find(opaque,file),*actual=*position;
+    if(!actual || file->handle || file->size!=qa_resource_bytes(actual->resource).size)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot script close lost its actual opened file");
+    *position=actual->next;qa_resource_release(actual->resource);
+    qa_vfs_acquisition_dispose(&actual->acquisition);free(actual);return true;
 }
 static void release_file(void *,qa_script_resource *);
 static bool character_path(application_bots *bots,const char *name,char path[160],qa_error *error) {
@@ -647,6 +704,10 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
     application_bots_knowledge_dispose(bots);
     qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
+    while(bots->script_files) {
+        application_bot_script_file *file=bots->script_files;bots->script_files=file->next;
+        qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
+    }
     qa_resource_release(bots->source_map_resource);qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
     qa_vfs_destroy(bots->navigation_files);
     qa_bots_save_requirements_free(&bots->saved_requirements);
@@ -838,7 +899,8 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
     if(!qa_entities_parse(geometry->lumps[QA_BSP_ENTITIES].bytes,
             geometry->family==QA_BSP_Q3?QA_ENTITY_Q3:QA_ENTITY_Q1,&bots->entities,error)) goto fail;
     if(!application_bot_navigation_prepare(bots,error)) goto fail;
-    qa_bot_runtime_options options={.library={.scripts={.context=bots,.read=read_file,.release=release_file},
+    qa_bot_runtime_options options={.library={.scripts={.context=bots,.read=read_file,.release=release_file,
+        .file_open=script_file_open,.file_read=script_file_read,.file_close=script_file_close},
         .preprocessor={.include_path="botfiles",.builtins=true}},.maximum_states=64,
         .minimum_clients=actor_capacity,.observations=QA_BOT_OBSERVATION_NATIVE};
     if(!application_bots_runtime_create(bots,&options,&bots->runtime,error) ||
@@ -876,6 +938,8 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     qa_bot_runtime_options options=*given;
     options.library.scripts.context=bots;
     options.library.scripts.read=read_file; options.library.scripts.release=release_file;
+    options.library.scripts.file_open=script_file_open;
+    options.library.scripts.file_read=script_file_read;options.library.scripts.file_close=script_file_close;
     qa_bot_random_source random={bots,random_word};
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
         .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),

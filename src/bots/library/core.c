@@ -85,8 +85,7 @@ float bot_random(const qa_bot_random_source *source) {
 }
 bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library **out,
                            qa_error *e) {
-    if (options == NULL || out == NULL || options->scripts.read == NULL ||
-        options->scripts.release == NULL) {
+    if (options == NULL || out == NULL || !qa_script_services_valid(&options->scripts)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot resource services/output");
         return false;
     }

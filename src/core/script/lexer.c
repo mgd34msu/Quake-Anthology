@@ -239,6 +239,20 @@ bool qa_script_lexer_open(const char *path,qa_bytes input,const qa_script_lexer_
                           qa_script_lexer **out,qa_error *error) {
     return create_lexer(path,input,options,true,out,error);
 }
+bool script_lexer_open_file(const qa_script_file *file,const qa_script_services *services,
+                            const qa_script_lexer_options *options,qa_script_lexer **out,qa_error *error) {
+    qa_script_lexer *lexer=NULL;
+    if(!create_lexer((const char *)file->path.data,(qa_bytes){0},options,false,&lexer,error)) return false;
+    if(!script_lexer_memory_open(lexer,(const char *)file->path.data,(qa_bytes){.size=file->size},error) ||
+       !script_lexer_punctuation_open(lexer,error) ||
+       !services->file_read(services->context,file,
+           (qa_script_memory_span){lexer->record.bytes+SCRIPT_LEXER_BYTES,(uint32_t)file->size},error) ||
+       !services->file_close(services->context,file,error)) {
+        script_lexer_dispose(lexer);return false;
+    }
+    qa_store_u32le(lexer->record.bytes+SCRIPT_LEXER_FLAGS,lexer->options.flags);
+    *out=lexer;return true;
+}
 void qa_script_lexer_close(qa_script_lexer *l) {close_lexer(l,true);}
 void script_lexer_dispose(qa_script_lexer *l) {close_lexer(l,false);}
 bool qa_script_token_is(const qa_script_token *token, const char *text) {
