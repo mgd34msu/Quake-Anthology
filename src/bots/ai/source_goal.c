@@ -15,6 +15,7 @@
 #include "source_events.h"
 #include "source_storage.h"
 #include "source_view.h"
+#include "source_player.h"
 
 enum { SOURCE_DEFAULT_TRAVEL=0x011c0fbe, SOURCE_LIQUID=8|16|32, SOURCE_FOG=64 };
 
@@ -77,13 +78,13 @@ static bool team_base(qa_bots *b,bot_ai_state *s,qa_bot_goal *goal,bool enemy,
 static bool travel_time(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,uint32_t flags,
                           uint32_t *time,qa_error *e) {
     qa_bot_nav_route_query query={.area=bot_ai_area(s),.goal_area=(uint32_t)goal->area,
-        .origin=s->player.origin,.has_origin=true,.travel_flags=flags};
+        .origin=bot_ai_origin(s),.has_origin=true,.travel_flags=flags};
     qa_bot_nav_route route;
     SOURCE_CALL(qa_bot_navigation_route(navigation(b,s),&query,&route,e));
     *time=route.travel_time;return true;
 }
 static void look_at(bot_ai_state *s,qa_vec3 target) {
-    qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,s->player.origin));ideal.z*=.5f;
+    qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
     bot_ai_view_ideal_set(s,ideal);
 }
 static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
@@ -99,7 +100,7 @@ static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
     return true;
 }
 static bool swimming(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
-    return qa_bot_navigation_swimming(navigation(b,s),s->player.origin,out,e);
+    return qa_bot_navigation_swimming(navigation(b,s),bot_ai_origin(s),out,e);
 }
 static bool observation(qa_bots *b,int32_t client,qa_bot_entity_info *out,qa_error *e) {
     bool found;
@@ -122,18 +123,18 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
         qa_vec_scale(qa_vec_add(info.state.mins,info.state.maxs),.5f));
     qa_bot_navigation *nav=navigation(b,s);
     int32_t point_contents;
-    SOURCE_CALL(contents(b,s->player.eye,(qa_actor_id){0},&point_contents,e));
+    SOURCE_CALL(contents(b,bot_ai_eye(s),(qa_actor_id){0},&point_contents,e));
     bool in_fog=(point_contents&SOURCE_FOG)!=0,in_water=(point_contents&SOURCE_LIQUID)!=0;
     qa_actor_id target=bot_ai_source_actor(b,entity);
     qa_actor_id viewer=bot_ai_source_actor(b,s->view.entity);
     for(unsigned i=0;i<3;++i) {
         uint32_t mask=1|0x10000;
-        qa_vec3 start=s->player.eye,end=middle;
+        qa_vec3 start=bot_ai_eye(s),end=middle;
         qa_actor_id pass=viewer,hit=target;
         SOURCE_CALL(contents(b,middle,(qa_actor_id){0},&point_contents,e));
         if(point_contents&SOURCE_LIQUID) mask|=SOURCE_LIQUID;
         if(in_water) {
-            if(!(mask&SOURCE_LIQUID)) {pass=target;hit=viewer;start=middle;end=s->player.eye;}
+            if(!(mask&SOURCE_LIQUID)) {pass=target;hit=viewer;start=middle;end=bot_ai_eye(s);}
             mask^=SOURCE_LIQUID;
         }
         qa_trace_result trace;
@@ -144,16 +145,16 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
             bool other_fog=(point_contents&SOURCE_FOG)!=0;
             float fog_distance=0;
             if(in_fog && other_fog) {
-                qa_vec3 direction=qa_vec_sub(trace.end,s->player.eye);
+                qa_vec3 direction=qa_vec_sub(trace.end,bot_ai_eye(s));
                 fog_distance=qa_vec_dot(direction,direction);
             } else if(in_fog) {
-                SOURCE_CALL(qa_bot_navigation_trace(nav,trace.end,s->player.eye,NULL,
+                SOURCE_CALL(qa_bot_navigation_trace(nav,trace.end,bot_ai_eye(s),NULL,
                     viewer,SOURCE_FOG,&trace,e));
-                qa_vec3 direction=qa_vec_sub(s->player.eye,trace.end);
+                qa_vec3 direction=qa_vec_sub(bot_ai_eye(s),trace.end);
                 fog_distance=qa_vec_dot(direction,direction);
             } else if(other_fog) {
                 end=trace.end;
-                SOURCE_CALL(qa_bot_navigation_trace(nav,s->player.eye,end,NULL,
+                SOURCE_CALL(qa_bot_navigation_trace(nav,bot_ai_eye(s),end,NULL,
                     viewer,SOURCE_FOG,&trace,e));
                 qa_vec3 direction=qa_vec_sub(end,trace.end);
                 fog_distance=qa_vec_dot(direction,direction);
@@ -172,7 +173,7 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
     *out=qa_v3(0,0,0);if(!alive(b,s)) return true;
     qa_bot_navigation *nav=navigation(b,s);
     for(unsigned attempt=0;attempt<10;++attempt) {
-        qa_vec3 best=s->player.origin;
+        qa_vec3 best=bot_ai_origin(s);
         float random,sign,magnitude;
         SOURCE_CALL(bot_ai_random(b,&random,e));
         if(random>.25f) {
@@ -188,11 +189,11 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
         SOURCE_CALL(bot_ai_random(b,&random,e));
         best.z+=96.0f*(2.0f*(random-.5f));
         qa_trace_result trace;
-        SOURCE_CALL(qa_bot_navigation_trace(nav,s->player.origin,best,NULL,s->view.actor,1,&trace,e));
-        qa_vec3 direction=qa_vec_sub(trace.end,s->player.origin);
+        SOURCE_CALL(qa_bot_navigation_trace(nav,bot_ai_origin(s),best,NULL,s->view.actor,1,&trace,e));
+        qa_vec3 direction=qa_vec_sub(trace.end,bot_ai_origin(s));
         float distance=qa_vec_length(direction);
         if(distance>200.0f) {
-            best=qa_vec_add(s->player.origin,
+            best=qa_vec_add(bot_ai_origin(s),
                 qa_vec_scale(qa_vec_normalize(direction),distance*trace.fraction-40.0f));
             qa_vec3 below=best;below.z-=800.0f;
             SOURCE_CALL(qa_bot_navigation_trace(nav,best,below,NULL,s->view.actor,1,&trace,e));
@@ -301,7 +302,7 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
     SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),&visibility,e));
     if(visibility!=0) {
         bot_ai_teammate_visible_time_set(s,b->time);
-        qa_vec3 direction=qa_vec_sub(info.state.origin,s->player.origin);
+        qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
         if(qa_vec_dot(direction,direction)<bot_ai_formation_distance(s)*bot_ai_formation_distance(s)) {
             qa_bot_entity_info self;
             SOURCE_CALL(observation(b,s->view.entity,&self,e));
@@ -316,7 +317,7 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
                 qa_vec3 forward;
                 qa_builtin_angle_vectors(c->angles,&forward,NULL,NULL);forward.z=0;
                 qa_vec3 horizontal=qa_vec_normalize(forward);
-                qa_vec3 away=qa_vec_normalize(qa_vec_sub(s->player.origin,c->origin));
+                qa_vec3 away=qa_vec_normalize(qa_vec_sub(bot_ai_origin(s),c->origin));
                 if(qa_vec_dot(horizontal,away)>.7f) {
                     bool moved;
                     SOURCE_CALL(bot_ai_move_setup(b,s,e));
@@ -379,7 +380,7 @@ static bool patrol(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_er
     }
     bot_source_waypoint *current=order->current_patrol_point;
     if(!current) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
-    if(qa_bot_goal_touching(s->player.origin,&current->goal)) {
+    if(qa_bot_goal_touching(bot_ai_origin(s),&current->goal)) {
         if(bot_ai_patrol_flags(s)&4) {
             if(current->prev) order->current_patrol_point=current->prev;
             else {order->current_patrol_point=current->next;bot_ai_patrol_flags_set(s,bot_ai_patrol_flags(s)&~4);}
@@ -405,7 +406,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
             SOURCE_CALL(chat(b,s,"camp_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));
         bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
     }
-    qa_vec3 direction=qa_vec_sub(out->origin,s->player.origin);
+    qa_vec3 direction=qa_vec_sub(out->origin,bot_ai_origin(s));
     if(!(qa_vec_dot(direction,direction)<60.0f*60.0f)) {*found=true;return true;}
     if(!bot_ai_arrive_time(s)) {
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER) {
@@ -423,7 +424,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
     SOURCE_CALL(swimming(b,s,&in_water,e));
     if(in_water) bot_ai_attack_crouch_time_set(s,b->time-1.0f);
     int32_t point_contents;
-    SOURCE_CALL(contents(b,s->player.eye,bot_ai_source_actor(b,s->view.entity),&point_contents,e));
+    SOURCE_CALL(contents(b,bot_ai_eye(s),bot_ai_source_actor(b,s->view.entity),&point_contents,e));
     if(point_contents&SOURCE_LIQUID) {
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER) {
             SOURCE_CALL(chat(b,s,"camp_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));
@@ -457,7 +458,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
         if(!*found) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
         if(type==BOT_LTG_RUSH_BASE && !carrying_flag(s,false)) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
         if(bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
-        if(qa_bot_goal_touching(s->player.origin,out)) {
+        if(qa_bot_goal_touching(bot_ai_origin(s),out)) {
             if(type==BOT_LTG_RUSH_BASE && carrying_flag(s,false)) {
                 SOURCE_CALL(reset_avoid(b,s,e));float random;
                 SOURCE_CALL(bot_ai_random(b,&random,e));
@@ -481,13 +482,13 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             if(bot_ai_team_message_time(s) && bot_ai_team_message_time(s)<b->time)
                 SOURCE_CALL(team_chat(b,s,"captureflag_start","ongetflag",e));
             *out=b->source_goals.neutral_flag;*found=true;
-            if(qa_bot_goal_touching(s->player.origin,out) || bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
+            if(qa_bot_goal_touching(bot_ai_origin(s),out) || bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
             return true;
         }
         if(type==BOT_LTG_RUSH_BASE) {
             SOURCE_CALL(team_base(b,s,out,true,false,found,e));
             if(!*found) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
-            if(!carrying_flag(s,true) || bot_ai_team_goal_time(s)<b->time || qa_bot_goal_touching(s->player.origin,out))
+            if(!carrying_flag(s,true) || bot_ai_team_goal_time(s)<b->time || qa_bot_goal_touching(bot_ai_origin(s),out))
                 bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
             return bot_ai_source_route_goal(b,s,out,e);
         }
@@ -500,7 +501,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
     }
     if(mode==7 && type==BOT_LTG_RUSH_BASE) {
         SOURCE_CALL(team_base(b,s,out,true,true,found,e));
-        if(!*found || !carrying_cubes(s) || bot_ai_team_goal_time(s)<b->time || qa_bot_goal_touching(s->player.origin,out)) {
+        if(!*found || !carrying_cubes(s) || bot_ai_team_goal_time(s)<b->time || qa_bot_goal_touching(bot_ai_origin(s),out)) {
             *found=false;return bot_ai_source_go_harvest(b,s,e);
         }
         return bot_ai_source_route_goal(b,s,out,e);
@@ -523,11 +524,11 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             float feeling=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
                 tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
             if(feeling>50) return bot_ai_source_item_goal(b,s,out,found,e);
-            if(qa_bot_goal_touching(s->player.origin,out)) {
+            if(qa_bot_goal_touching(bot_ai_origin(s),out)) {
                 float random;SOURCE_CALL(bot_ai_random(b,&random,e));
                 bot_ai_attack_away_time_set(s,(b->time+3.0f)+5.0f*random);
             }
-            qa_vec3 direction=qa_vec_sub(s->player.origin,out->origin);
+            qa_vec3 direction=qa_vec_sub(bot_ai_origin(s),out->origin);
             if(qa_vec_dot(direction,direction)<60.0f*60.0f) {
                 float random;SOURCE_CALL(bot_ai_random(b,&random,e));
                 bot_ai_attack_away_time_set(s,(b->time+3.0f)+5.0f*random);
@@ -536,7 +537,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             return bot_ai_source_route_goal(b,s,out,e);
         }
         if(bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
-        if(qa_bot_goal_touching(s->player.origin,out)) {
+        if(qa_bot_goal_touching(bot_ai_origin(s),out)) {
             float random;SOURCE_CALL(bot_ai_random(b,&random,e));
             bot_ai_attack_away_time_set(s,(b->time+2.0f)+5.0f*random);
         }
@@ -547,7 +548,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             SOURCE_CALL(team_chat(b,s,"harvest_start","onoffense",e));
         *out=b->source_goals.neutral_obelisk;*found=true;
         if(bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
-        if(qa_bot_goal_touching(s->player.origin,out)) {
+        if(qa_bot_goal_touching(bot_ai_origin(s),out)) {
             float random;SOURCE_CALL(bot_ai_random(b,&random,e));
             bot_ai_harvest_away_time_set(s,(b->time+4.0f)+3.0f*random);
         }
@@ -567,7 +568,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         SOURCE_CALL(observation(b,bot_ai_teammate(s),&info,e));
         SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),&visibility,e));
         if(visibility!=0) {
-            qa_vec3 direction=qa_vec_sub(info.state.origin,s->player.origin);
+            qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
             if(qa_vec_dot(direction,direction)<100.0f*100.0f) return reset_avoid(b,s,e);
         } else bot_ai_teammate_visible_time_set(s,b->time);
         if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_TEAM_GOAL,bot_ai_teammate(s),info.state.origin,e));
@@ -592,7 +593,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                 SOURCE_CALL(chat(b,s,"defend_stop",name,0,QA_BOT_CHAT_TEAM,e));
                 bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
             }
-            qa_vec3 direction=qa_vec_sub(out->origin,s->player.origin);
+            qa_vec3 direction=qa_vec_sub(out->origin,bot_ai_origin(s));
             if(qa_vec_dot(direction,direction)<70.0f*70.0f) {
                 SOURCE_CALL(reset_avoid(b,s,e));float random;
                 SOURCE_CALL(bot_ai_random(b,&random,e));
@@ -626,7 +627,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         if(status==QA_BOT_GOAL_UNAVAILABLE) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
         *found=true;if(status==QA_BOT_GOAL_AVAILABLE) return true;
         bool missing;
-        SOURCE_CALL(qa_bot_goals_missing_visible(goals(b),(int32_t)s->view.client,s->player.eye,out,&missing,e));
+        SOURCE_CALL(qa_bot_goals_missing_visible(goals(b),(int32_t)s->view.client,bot_ai_eye(s),out,&missing,e));
         if(missing) {
             SOURCE_CALL(chat(b,s,"getitem_notthere",name,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));
             bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
@@ -664,7 +665,7 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_lead_teammate(s),&visibility,e));
         if(visibility!=0) bot_ai_lead_visible_time_set(s,b->time);
         if(bot_ai_lead_visible_time(s)<b->time-1.0f) bot_ai_lead_backup_time_set(s,b->time+2.0f);
-        qa_vec3 direction=qa_vec_sub(s->player.origin,bot_ai_lead_goal(s).origin);
+        qa_vec3 direction=qa_vec_sub(bot_ai_origin(s),bot_ai_lead_goal(s).origin);
         float distance=qa_vec_dot(direction,direction);
         if(bot_ai_lead_backup_time(s)>b->time) {
             if(bot_ai_lead_message_time(s)<b->time-20.0f) {

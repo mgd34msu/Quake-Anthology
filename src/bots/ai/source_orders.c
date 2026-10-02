@@ -6,6 +6,7 @@
 #include "source_timers.h"
 #include "source_orders.h"
 #include "source_storage.h"
+#include "source_player.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -506,7 +507,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     if(client<0) return send_chat(b,s,"whois",name,NULL,self,QA_BOT_CHAT_TEAM,e);
     if(!variable(m,VAR_AREA,area,e)) return false;
     if(m->subtype&MATCH_THERE) {
-        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)bot_ai_area(s),s->player.origin);
+        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)bot_ai_area(s),bot_ai_origin(s));
     } else if(m->subtype&MATCH_HERE) {
         if(client==self) return true;
         if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_TEAM_GOAL,e)) return false;
@@ -771,12 +772,12 @@ static bool nearest_item(qa_bots *b,bot_ai_state *s,const char *name,qa_bot_goal
         if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),candidate.number,&current_name,e)) return false;
         copy_name(goal_name,sizeof(goal_name),current_name);
         if(same(goal_name,name)) {
-            float distance=qa_vec_length(qa_vec_sub(candidate.origin,s->player.origin));
+            float distance=qa_vec_length(qa_vec_sub(candidate.origin,bot_ai_origin(s)));
             if(distance<*out) {
                 qa_bot_navigation *navigation=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
                 if(!navigation) return bot_ai_fail(e,"Source bot location requires its loaded AAS query owner");
                 qa_trace_result trace;
-                if(!qa_bot_navigation_trace(navigation,s->player.eye,candidate.origin,NULL,s->view.actor,0x10001,&trace,e)) return false;
+                if(!qa_bot_navigation_trace(navigation,bot_ai_eye(s),candidate.origin,NULL,s->view.actor,0x10001,&trace,e)) return false;
                 if(!alive(b,s)) return true;
                 if(trace.fraction>=1) {*out=distance;*goal=candidate;}
             }
@@ -806,7 +807,7 @@ static bool where(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error
         if(!navigation) return bot_ai_fail(e,"Source WhereAreYou requires loaded AAS routing");
         const qa_bot_goal *red_goal=flags?&b->source_goals.red_flag:&b->source_goals.red_obelisk;
         const qa_bot_goal *blue_goal=flags?&b->source_goals.blue_flag:&b->source_goals.blue_obelisk;
-        qa_bot_nav_route_query query={.area=bot_ai_area(s),.origin=s->player.origin,.has_origin=true,
+        qa_bot_nav_route_query query={.area=bot_ai_area(s),.origin=bot_ai_origin(s),.has_origin=true,
             .travel_flags=0x011c0fbe,.goal_area=(uint32_t)red_goal->area};qa_bot_nav_route route;
         if(!qa_bot_navigation_route(navigation,&query,&route,e)) return false;
         red=route.travel_time;query.goal_area=(uint32_t)blue_goal->area;

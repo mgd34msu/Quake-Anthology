@@ -49,7 +49,10 @@ static bool ready(qa_bots *b, bot_ai_state *s) {
 static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_live(b, s->view.actor)) { s->retired = true; return true; }
     qa_q3_player source;
-    if (!b->services.player(b->services.context, s->view.actor, &s->player, &source, e)) return false;
+    qa_bot_player observed=bot_ai_player_sample(s);
+    bool ok=b->services.player(b->services.context,s->view.actor,&observed,&source,e);
+    bot_ai_player_observe(s,&observed);
+    if(!ok) return false;
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
     if(!bot_ai_source_player_copy(b,s,&source,e)) return false;
     if (!bot_ai_carrying(b,s,&s->player.carrying_objective,e)) return false;
@@ -127,15 +130,16 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_LOCAL_TIME,&local_time,true,e)) return false;
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_THINK_TIME,&elapsed,true,e)) return false;
     int32_t height;
-    bool ok=bot_ai_source_player_vector(b,s,BOT_PS_ORIGIN,&s->player.origin,e);
+    qa_vec3 origin;
+    bool ok=bot_ai_source_player_vector(b,s,BOT_PS_ORIGIN,&origin,e);
     if(ok) {
-        s->player.eye=s->player.origin;
+        bot_ai_origin_set(s,origin);bot_ai_eye_set(s,origin);
         ok=bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&height,e);
-        if(ok) s->player.eye.z+=(float)height;
+        if(ok) bot_ai_eye_height_add(s,height);
     }
     if(ok) {
         uint32_t area;
-        ok=bot_ai_point_area(b,s,s->player.origin,&area,e);
+        ok=bot_ai_point_area(b,s,bot_ai_origin(s),&area,e);
         if(ok) bot_ai_area_set(s,area);
     }
     bool setup_ready=true;
@@ -152,8 +156,11 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
             qa_bot_player_state_view source;
             ok=bot_ai_source_set_teleport_time(b,s,e) &&
                 bot_ai_source_inventory_snapshot(&inventory,old_inventory,e) &&
-                bot_ai_source_player_view(b,s,&source,e) &&
-                b->services.inventory(b->services.context,s->view.actor,&s->player,&source,&target,e);
+                bot_ai_source_player_view(b,s,&source,e);
+            if(ok) {
+                qa_bot_player sample=bot_ai_player_sample(s);
+                ok=b->services.inventory(b->services.context,s->view.actor,&sample,&source,&target,e);
+            }
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
             if(ok) ok=bot_ai_source_task_preference(b,s,old_inventory,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -161,7 +168,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
             qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
             int32_t contents;
-            if(ok) ok = navigation && qa_bot_navigation_contents(navigation, s->player.eye, &contents, e);
+            if(ok) ok = navigation && qa_bot_navigation_contents(navigation, bot_ai_eye(s), &contents, e);
             if (ok && (bot_ai_inventory_value(s,QA_BOT_INV_ENVIRO) > 0 || !(contents & (8 | 16 | 32))))
                 bot_ai_last_air_time_set(s,b->time);
         }

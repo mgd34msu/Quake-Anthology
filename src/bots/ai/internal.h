@@ -46,12 +46,24 @@ typedef struct bot_ai_view {
     qa_bot_decision decision;
     qa_bot_order order;
 } bot_ai_view;
+typedef struct bot_ai_player {
+    bool connected, observer, intermission, dead, grounded, crouched, teleported;
+    bool water_jump, grapple_pull, firing, invisible, chatting, carrying_objective;
+    qa_vec3 velocity, view_angles;
+    int32_t delta_angles[3];
+    uint32_t presence;
+    int32_t current_weapon, weapon_state, weapon_time_ms;
+    qa_actor_id last_attacker, last_victim;
+    int32_t deaths, kills, last_damage_cause;
+    float air_time, teleport_time;
+    uint64_t spawn_sequence, teleport_sequence;
+} bot_ai_player;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
     qa_bot_source_span source_span;
     bot_ai_view view;
-    qa_bot_player player;
+    bot_ai_player player;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
     char *admitted_character;

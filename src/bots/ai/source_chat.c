@@ -198,7 +198,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     if(type==3) {*out=true;return true;}
     static const int powerups[]={QA_BOT_INV_QUAD,QA_BOT_INV_HASTE,QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT};
     for(size_t i=0;i<5;++i) if(bot_ai_inventory_value(s,powerups[i])!=0) return true;
-    qa_vec3 below=s->player.origin,above=below;int32_t point;
+    qa_vec3 below=bot_ai_origin(s),above=below;int32_t point;
     below.z-=24.0f;above.z+=32.0f;
     qa_actor_id pass=bot_ai_source_actor(b,s->view.entity);
     CHAT_CALL(contents(b,below,pass,&point,e));if(point&(8|16)) return true;
@@ -206,7 +206,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     qa_bot_navigation *nav=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
     if(!nav) return bot_ai_fail(e,"Source chat position lacks its actual navigation");
     qa_bounds bounds=qa_bot_navigation_presence(nav,4);qa_trace_result trace;
-    qa_vec3 start=s->player.origin,end=start;start.z+=1.0f;end.z-=10.0f;
+    qa_vec3 start=bot_ai_origin(s),end=start;start.z+=1.0f;end.z-=10.0f;
     int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));
     CHAT_CALL(qa_bot_navigation_trace(nav,start,end,&bounds,bot_ai_source_actor(b,self),1,&trace,e));
     qa_actor_id world=bot_ai_source_actor(b,QA_Q3_ENTITY_WORLD);

@@ -10,6 +10,7 @@
 #include "source_goal.h"
 #include "source_storage.h"
 #include "source_view.h"
+#include "source_player.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -563,9 +564,9 @@ bool bot_ai_source_set_last_order(qa_bots *b, bot_ai_state *s, bool *out, qa_err
         const qa_bot_goal *own=team==1?&b->source_goals.red_flag:&b->source_goals.blue_flag;
         const qa_bot_goal *enemy=team==1?&b->source_goals.blue_flag:&b->source_goals.red_flag;
         uint32_t own_time,enemy_time;
-        if(!travel(b,s,s->player.origin,bot_ai_area(s),own,SOURCE_DEFAULT_TRAVEL,&own_time,e)) return false;
+        if(!travel(b,s,bot_ai_origin(s),bot_ai_area(s),own,SOURCE_DEFAULT_TRAVEL,&own_time,e)) return false;
         if(!alive(b,s)) return true;
-        if(!travel(b,s,s->player.origin,bot_ai_area(s),enemy,SOURCE_DEFAULT_TRAVEL,&enemy_time,e)) return false;
+        if(!travel(b,s,bot_ai_origin(s),bot_ai_area(s),enemy,SOURCE_DEFAULT_TRAVEL,&enemy_time,e)) return false;
         if(!alive(b,s)) return true;
         if(enemy_time>own_time && !bot_ai_source_alternate_route(b,s,opposite(team),e)) return false;
     }
@@ -840,8 +841,8 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
             if(!alive(b,s)) return true;
             if(!source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
-            qa_vec3 direction=team==1?qa_vec_sub(s->player.origin,b->source_goals.blue_flag.origin):
-                team==2?qa_vec_sub(s->player.origin,b->source_goals.red_flag.origin):qa_v3(999,999,999);
+            qa_vec3 direction=team==1?qa_vec_sub(bot_ai_origin(s),b->source_goals.blue_flag.origin):
+                team==2?qa_vec_sub(bot_ai_origin(s),b->source_goals.red_flag.origin):qa_v3(999,999,999);
             if(qa_vec_length(direction)<128) {
                 if(!bot_ai_source_alternate_route(b,s,opposite(team),e)) return false;
             } else bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_ALT_GOAL+12,0);
@@ -1133,7 +1134,7 @@ bool bot_ai_source_route_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, qa
     if(!alive(b,s) || !bot_ai_alternate_goal(s).area || bot_ai_alternate_goal_reached_time(s)) return true;
     uint32_t time;
     qa_bot_goal alternate=bot_ai_alternate_goal(s);
-    if(!travel(b,s,s->player.origin,bot_ai_area(s),&alternate,bot_ai_travel_flags(s),&time,e)) return false;
+    if(!travel(b,s,bot_ai_origin(s),bot_ai_area(s),&alternate,bot_ai_travel_flags(s),&time,e)) return false;
     if(!alive(b,s)) return true;
     if(time && time<20) bot_ai_alternate_goal_reached_time_set(s,b->time);
     *goal=bot_ai_alternate_goal(s);return true;

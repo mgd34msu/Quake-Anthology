@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_activation.h"
+#include "source_player.h"
 
 static bool same_order(const qa_bot_order *a, const qa_bot_order *b) {
     if (a->kind != b->kind) return false;
@@ -82,12 +83,12 @@ bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *fou
     qa_vec3 origin = follow ? target.origin : order->point;
     float own_radius = radius(self.bounds);
     float clearance = follow ? sqrtf(2) * (own_radius + radius(target.bounds)) : 0;
-    if (qa_vec_length(qa_vec_sub(origin, s->player.origin)) <=
+    if (qa_vec_length(qa_vec_sub(origin, bot_ai_origin(s))) <=
         (follow ? clearance + own_radius : own_radius * 2)) {
         order->status = QA_BOT_ORDER_SUCCESS;
         return true;
     }
-    qa_vec3 toward = qa_vec_sub(s->player.origin, origin);
+    qa_vec3 toward = qa_vec_sub(bot_ai_origin(s), origin);
     float horizontal = hypotf(toward.x, toward.y);
     float stand_off = follow && horizontal ? (clearance + own_radius * .5f) / horizontal : 0;
     qa_vec3 destination = qa_v3(origin.x + toward.x * stand_off,
