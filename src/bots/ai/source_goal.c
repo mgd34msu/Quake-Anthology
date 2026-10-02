@@ -512,17 +512,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
         SOURCE_CALL(team_base(b,s,out,true,mode!=5,found,e));
         if(!*found) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
         if(mode==6) {
-            const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
-            if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-            if(!alive(b,s)) {b->services.arsenal_end(b->services.context,lease);return true;}
-            qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(NULL);
-            for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {
-                tactics=qa_bot_weapon_tactics_for(weapons+i);break;
-            }
-            b->services.arsenal_end(b->services.context,lease);
-            if(!alive(b,s)) return true;
-            float feeling=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
-                tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
+            float feeling;SOURCE_CALL(bot_ai_feeling_bad(b,s,&feeling,e));
             if(feeling>50) return bot_ai_source_item_goal(b,s,out,found,e);
             if(qa_bot_goal_touching(bot_ai_origin(s),out)) {
                 float random;SOURCE_CALL(bot_ai_random(b,&random,e));

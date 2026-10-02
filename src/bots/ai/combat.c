@@ -8,6 +8,7 @@
 #include "source_flags.h"
 #include "source_storage.h"
 #include "source_selectors.h"
+#include "source_team_state.h"
 #include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
@@ -183,12 +184,11 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     return ok;
 }
-bool bot_ai_retreat(qa_bots *b, bot_ai_state *s, bool *retreat, qa_error *e) {
+static bool aggression(qa_bots *b,bot_ai_state *s,float *out,qa_error *e) {
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
-    float aggression = qa_bot_knowledge_aggression(weapons, count, bot_ai_weapon_number(s), bot_ai_inventory(s));
+    *out=qa_bot_knowledge_aggression(weapons,count,bot_ai_weapon_number(s),bot_ai_inventory(s));
     b->services.arsenal_end(b->services.context, lease);
-    *retreat = aggression < 50 || s->player.carrying_objective;
     return true;
 }
 static int32_t source_inventory_integer(float value) {
@@ -208,6 +208,70 @@ bool bot_ai_battle_inventory(qa_bots *b,bot_ai_state *s,int32_t enemy,qa_error *
 static bool enemy_carries_flag(const qa_bots *b,const qa_bot_entity_info *info) {
     uint32_t flags=(1u<<7)|(1u<<8)|(b->services.team_arena?(1u<<9):0);
     return ((uint32_t)info->state.powerups&flags)!=0;
+}
+static bool carrying_source_objective(const qa_bots *b,const bot_ai_state *s) {
+    int32_t type=b->source_goals.game_type;
+    if(type==4) return bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 ||
+        bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0;
+    if(s->team_arena && type==5) return bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0;
+    if(s->team_arena && type==7) return bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 ||
+        bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0;
+    return false;
+}
+bool bot_ai_feeling_bad(qa_bots *b,bot_ai_state *s,float *out,qa_error *e) {
+    const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
+    if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
+    qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(NULL);
+    if(!s->retired && bot_ai_live(b,s->view.actor)) {
+        for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {
+            tactics=qa_bot_weapon_tactics_for(weapons+i);break;
+        }
+    }
+    b->services.arsenal_end(b->services.context,lease);
+    *out=tactics.melee || bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40?100:
+        tactics.weakness>0?tactics.weakness:bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60?80:0;
+    return true;
+}
+bool bot_ai_retreat(qa_bots *b,bot_ai_state *s,bool *retreat,qa_error *e) {
+    *retreat=false;
+    if(carrying_source_objective(b,s)) {*retreat=true;return true;}
+    if(s->team_arena && b->source_goals.game_type==6) {
+        if(bot_ai_long_term_goal(s)==BOT_LTG_ATTACK_BASE &&
+           (bot_ai_enemy_number(s)!=b->source_goals.red_obelisk.entity ||
+            bot_ai_enemy_number(s)!=b->source_goals.blue_obelisk.entity)) {
+            *retreat=true;return true;
+        }
+        float feeling;
+        if(!bot_ai_feeling_bad(b,s,&feeling,e)) return false;
+        *retreat=feeling>50;return true;
+    }
+    int32_t enemy=bot_ai_enemy_number(s);
+    if(enemy>=0) {
+        qa_bot_entity_info info;bool found;
+        if(!qa_bot_runtime_entity(b->runtime,enemy,&info,&found,e)) return false;
+        if(enemy_carries_flag(b,&info)) return true;
+    }
+    if(bot_ai_long_term_goal(s)==BOT_LTG_GET_FLAG) {*retreat=true;return true;}
+    float level;
+    if(!aggression(b,s,&level,e)) return false;
+    *retreat=level<50;return true;
+}
+bool bot_ai_chase(qa_bots *b,bot_ai_state *s,bool *chase,qa_error *e) {
+    *chase=false;
+    if(carrying_source_objective(b,s)) return true;
+    int32_t type=b->source_goals.game_type;
+    if(type==4 || (s->team_arena && type==5)) {
+        qa_bot_entity_info info;bool found;
+        if(!qa_bot_runtime_entity(b->runtime,bot_ai_enemy_number(s),&info,&found,e)) return false;
+        if(enemy_carries_flag(b,&info)) {*chase=true;return true;}
+    }
+    if(s->team_arena && type==6 && bot_ai_long_term_goal(s)==BOT_LTG_ATTACK_BASE &&
+       (bot_ai_enemy_number(s)!=b->source_goals.red_obelisk.entity ||
+        bot_ai_enemy_number(s)!=b->source_goals.blue_obelisk.entity)) return true;
+    if(bot_ai_long_term_goal(s)==BOT_LTG_GET_FLAG) return true;
+    float level;
+    if(!aggression(b,s,&level,e)) return false;
+    *chase=level>50;return true;
 }
 static bool source_enemy_dead(qa_bots *b,bot_ai_state *s,const qa_bot_entity_info *info,
                               bool *dead,qa_error *e) {

@@ -571,15 +571,15 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 s->view.enemy=(qa_actor_id){0};
                 ENTER(node==QA_BOT_BATTLE_NEARBY?QA_BOT_SEEK_NEARBY:QA_BOT_SEEK_LONG_TERM);continue;
             }
-            bool retreat=false;
+            bool retreat=false,chase=false;
             if(node==QA_BOT_RETREATING) {
                 DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
             }
             if(node==QA_BOT_RETREATING || (node==QA_BOT_FIGHTING && !visible)) {
-                DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
+                DECISION_CALL(bot_ai_chase(b,s,&chase,e));
             }
             if(node==QA_BOT_FIGHTING) {
-                if(!visible) {ENTER(!retreat && bot_ai_last_enemy_area(s)?QA_BOT_CHASING:QA_BOT_SEEK_LONG_TERM);continue;}
+                if(!visible) {ENTER(chase?QA_BOT_CHASING:QA_BOT_SEEK_LONG_TERM);continue;}
                 DECISION_CALL(travel(b,s,e));
                 if(!bot_ai_attack_move(b,s,e) || !battle(b,s,false,e)) return false;
                 if(!bot_ai_flag(s,BOT_AI_FIGHT_SUICIDAL)) {
@@ -594,9 +594,9 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(found) {ENTER(QA_BOT_FIGHTING);continue;}
             }
             DECISION_CALL(travel(b,s,e));
-            if(node==QA_BOT_RETREATING && !retreat) {
+            if(node==QA_BOT_RETREATING && chase) {
                 if(!qa_bot_goals_empty(goals(b),s->goals,e)) return false;
-                ENTER(visible?QA_BOT_FIGHTING:QA_BOT_CHASING);continue;
+                ENTER(QA_BOT_CHASING);continue;
             }
             if(node==QA_BOT_RETREATING && !visible && bot_ai_enemy_visible_time(s)<b->time-4) {
                 ENTER(QA_BOT_SEEK_LONG_TERM);continue;
@@ -650,6 +650,10 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             if(visible && !(result.flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET|QA_BOT_MOVE_WEAPON)))
                 return battle(b,s,true,e);
+            if(node==QA_BOT_CHASING) {
+                DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
+                if(retreat) ENTER(QA_BOT_RETREATING);
+            }
             return true;
         }
         return bot_ai_fail(e,"invalid native bot decision continuation");

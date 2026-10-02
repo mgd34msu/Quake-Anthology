@@ -124,6 +124,8 @@ bool bot_ai_enemy_visible(qa_bots *, bot_ai_state *, qa_actor_id, float *, qa_er
 bool bot_ai_same_team(qa_bots *, bot_ai_state *, qa_actor_id, bool *, qa_error *);
 bool bot_ai_target(qa_bots *, bot_ai_state *, qa_actor_id, qa_bot_player *, bool *, qa_error *);
 bool bot_ai_retreat(qa_bots *, bot_ai_state *, bool *, qa_error *);
+bool bot_ai_chase(qa_bots *,bot_ai_state *,bool *,qa_error *);
+bool bot_ai_feeling_bad(qa_bots *,bot_ai_state *,float *,qa_error *);
 bool bot_ai_move_setup(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_attack_move(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_console(qa_bots *, bot_ai_state *, qa_error *);
