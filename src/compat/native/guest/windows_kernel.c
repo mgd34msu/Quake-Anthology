@@ -497,7 +497,24 @@ static bool file_operation(windows_service *service, const qa_native_value *args
             distance_bits = (bits << 32) | (uint32_t)args[1].as.i32; memcpy(&distance, &distance_bits, 8);
         } else distance = args[1].as.i32;
         uint32_t origin = (uint32_t)integer(args + 3); uint64_t start = origin == 0 ? 0 : view.offset;
-        if (origin == 2 && !guest_runtime_resources_size(owner->resources, address, &start, error)) return false;
+        if (origin == 2) {
+            if (!guest_runtime_resources_size(owner->resources, address, &start, error)) return false;
+            /* Source size() is a Number before BigInt seek arithmetic. Round
+             * its physical integer to 53 significant bits, nearest/even,
+             * independently of the guest's current floating-point mode. */
+            unsigned shift = 0; uint64_t significand = start;
+            while (significand > UINT64_C(9007199254740991)) { significand >>= 1; ++shift; }
+            if (shift) {
+                uint64_t remainder = start & ((UINT64_C(1) << shift) - 1);
+                uint64_t half = UINT64_C(1) << (shift - 1);
+                if (remainder > half || (remainder == half && (significand & 1u))) ++significand;
+                /* A size rounded to 2^64 cannot reach a safe Source position
+                 * with this API's signed 64-bit displacement. */
+                if (significand > (UINT64_MAX >> shift))
+                    return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
+                start = significand << shift;
+            }
+        }
         uint64_t magnitude = distance < 0 ? UINT64_C(0) - (uint64_t)distance : (uint64_t)distance;
         if (origin > 2 || (distance < 0 ? magnitude > start : magnitude > UINT64_C(9007199254740991) || start > UINT64_C(9007199254740991) - magnitude))
             return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
