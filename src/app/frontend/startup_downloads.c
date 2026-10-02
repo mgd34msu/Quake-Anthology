@@ -193,7 +193,7 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *e)
     download_context *c=context; frontend_startup_downloads *o=c?c->owner:NULL;
     if(!out || !bound(o) || seat!=o->seat->id || o->retiring)return fail(e,QA_ERROR_ARGUMENT,"Downloads lost their physical UI owner");
     if(c->menu==o->contexts[1].menu) {
-        static const char *labels[]={"Destination path under user content","HTTP or HTTPS URL","Expected SHA-256","Expected file size in bytes"};
+        static const char *labels[]={"Destination path","HTTP or HTTPS URL","Expected SHA-256","Expected size (bytes)"};
         const char *texts[]={o->draft.path,o->draft.url,o->draft.digest,o->draft.bytes};
         const size_t limits[]={sizeof(o->draft.path)-1,sizeof(o->draft.url)-1,sizeof(o->draft.digest)-1,sizeof(o->draft.bytes)-1};
         for(unsigned i=0;i<4;++i) {
@@ -212,7 +212,7 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *e)
     o->controls[0]=control(c,1,"Allow automatic client downloads",108,present); o->controls[0].kind=QA_UI_TOGGLE;
     o->controls[0].value.checked=present && policy.allowed;
     o->controls[1]=control(c,2,o->count?"Verified package downloads":"No verified package downloads",148,o->count!=0);
-    o->controls[1].kind=QA_UI_LIST; o->controls[1].rect.height=154;
+    o->controls[1].kind=o->count?QA_UI_LIST:QA_UI_BUTTON; o->controls[1].rect.height=154;
     o->controls[1].value.list.rows=o->rows; o->controls[1].value.list.count=o->count;
     o->controls[1].value.list.selected=o->draft.selected; o->controls[1].value.list.row_height=38;
     o->controls[1].value.list.revision=o->revision;
