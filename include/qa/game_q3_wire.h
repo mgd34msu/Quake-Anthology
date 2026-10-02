@@ -143,6 +143,9 @@ bool qa_q3_wire_player_loop_sound(qa_q3_game *, qa_actor_id,
  * advances entityEventSequence. Call at the source ClientThink/EndFrame sites. */
 bool qa_q3_wire_player_publish(qa_q3_game *, qa_actor_id, bool snap,
                                bool extrapolate, int32_t time_ms, qa_error *);
+/* ClientThink reads s.pos.trBase before ClientEvents and trap_LinkEntity. */
+bool qa_q3_wire_player_position_read(const qa_q3_game *, qa_actor_id,
+                                      qa_vec3 *, qa_error *);
 /* SendPendingPredictableEvents authors a real temporary row and consumes the
  * next native ring entry after ordinary BG conversion. */
 bool qa_q3_wire_player_pending(qa_q3_game *, qa_actor_id, qa_error *);

@@ -397,12 +397,9 @@ static bool client_think(void *opaque, qa_session *session,
                     water_level, water_type, error);
             bool origin_scope = false;
             if (ok && live(app, call->actor)) {
-                uint32_t source_slot;
-                qa_q3_entity entity; qa_q3_wire_visibility visibility;
-                ok = qa_q3_native_client_slot(provider->state.q3, call->actor, &source_slot, error) &&
-                    qa_q3_wire_entity_read(provider->state.q3, source_slot, &entity, &visibility, error);
+                qa_vec3 snapped;
+                ok = qa_q3_wire_player_position_read(provider->state.q3, call->actor, &snapped, error);
                 if (ok) {
-                    qa_vec3 snapped = qa_v3(entity.pos.base[0], entity.pos.base[1], entity.pos.base[2]);
                     ok = qa_q3_client_current_origin(provider->state.q3, call->actor, snapped, error);
                     origin_scope = ok;
                     if (ok) ok = qa_q3_client_events(provider->state.q3, call->actor, old_sequence, error);
