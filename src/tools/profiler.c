@@ -21,7 +21,10 @@ struct qa_profiler {
 };
 static bool clock_read(qa_profiler *p, double *out, qa_error *error) {
     p->busy = true; double value = p->clock(p->context); p->busy = false;
-    if (!isfinite(value)) return tools_fail(error, "profiler clock must be finite");
+    if (!isfinite(value)) {
+        tools_fail(error, "profiler clock must be finite");
+        return false;
+    }
     *out = value; return true;
 }
 static void *grow(void *array, size_t *capacity, size_t item, qa_error *error) {

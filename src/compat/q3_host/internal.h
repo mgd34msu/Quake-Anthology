@@ -167,7 +167,11 @@ typedef struct q3_record {
     uint64_t address;
 } q3_record;
 
-bool q3_fail(qa_error *, qa_status, size_t, const char *);
+static inline bool q3_fail(qa_error *error, qa_status status, size_t offset, const char *text)
+{
+    qa_error_set(error, status, offset, "%s", text);
+    return false;
+}
 bool q3_bot_client_number(const q3_call *, int32_t source, int32_t *, qa_error *);
 qa_bot_runtime *q3_bot_runtime(const q3_call *);
 bool q3_bot_entity_number(const q3_call *, int32_t source, int32_t *, qa_error *);

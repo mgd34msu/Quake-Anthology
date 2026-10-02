@@ -1,11 +1,5 @@
 #include "internal.h"
 
-bool q3_fail(qa_error *error, qa_status status, size_t offset, const char *text)
-{
-    qa_error_set(error, status, offset, "%s", text);
-    return false;
-}
-
 bool q3_vm_span(qa_qvm *vm, uint64_t address, size_t size, qa_bytes *out, qa_error *error)
 {
     uint64_t bias = qa_qvm_memory_size(vm);
