@@ -98,7 +98,10 @@ bool qa_unified_channel_checkpoint(const qa_unified_channel *c, qa_buffer *out, 
 static bool flag(qa_net_reader *r, bool *out)
 {
     uint8_t value = qa_net_read_u8(r);
-    if (value > 1) return qa_net_reader_fail(r, "Invalid unified channel flag");
+    if (value > 1) {
+        qa_net_reader_fail(r, "Invalid unified channel flag");
+        return false;
+    }
     *out = value != 0; return !r->failed;
 }
 

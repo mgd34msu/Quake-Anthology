@@ -546,8 +546,10 @@ bool qa_qw_service_read(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence, q
 
 static bool attenuation_byte(qa_net_writer *w, float attenuation, uint8_t *out)
 {
-    if (!isfinite(attenuation) || attenuation<0 || attenuation*64.0f>255)
-        return qa_net_writer_fail(w,"QuakeWorld attenuation exceeds byte range");
+    if (!isfinite(attenuation) || attenuation<0 || attenuation*64.0f>255) {
+        qa_net_writer_fail(w,"QuakeWorld attenuation exceeds byte range");
+        return false;
+    }
     *out=(uint8_t)(attenuation*64.0f); return true;
 }
 static bool write_nails(qa_net_writer *w, const qa_qw_service *m)

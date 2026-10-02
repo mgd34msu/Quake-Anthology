@@ -137,8 +137,10 @@ bool qa_q2pro_entity_remove(qa_q2_codec *c,qa_net_writer *w,uint32_t number) {
 }
 static bool eighths(qa_net_writer *w,float input,int32_t *out,bool v2) {
     double value=trunc((double)input*8.0);
-    if (!isfinite(value) || value<(v2?-4194304:-32768) || value>(v2?4194303:32767))
-        return qa_net_writer_fail(w,"Q2PRO origin outside negotiated coordinate range");
+    if (!isfinite(value) || value<(v2?-4194304:-32768) || value>(v2?4194303:32767)) {
+        qa_net_writer_fail(w,"Q2PRO origin outside negotiated coordinate range");
+        return false;
+    }
     *out=(int32_t)value; return true;
 }
 static bool alpha_byte(qa_net_writer *w,float value,float factor) {
