@@ -115,18 +115,21 @@ static bool contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_e
 }
 
 bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
-                                  float *out,qa_error *e) {
+                                  float fov,float *out,qa_error *e) {
     *out=0;if(!alive(b,s)) return true;
+    int32_t viewer_number=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
     qa_bot_entity_info info;
     SOURCE_CALL(observation(b,entity,&info,e));
     qa_vec3 middle=qa_vec_add(info.state.origin,
         qa_vec_scale(qa_vec_add(info.state.mins,info.state.maxs),.5f));
+    if(!qa_bot_field_of_vision(bot_ai_view_angles(s),fov,
+        bot_ai_angles(qa_vec_sub(middle,bot_ai_eye(s))))) return true;
     qa_bot_navigation *nav=navigation(b,s);
     int32_t point_contents;
     SOURCE_CALL(contents(b,bot_ai_eye(s),(qa_actor_id){0},&point_contents,e));
     bool in_fog=(point_contents&SOURCE_FOG)!=0,in_water=(point_contents&SOURCE_LIQUID)!=0;
-    qa_actor_id target=bot_ai_source_actor(b,entity);
-    qa_actor_id viewer=bot_ai_source_actor(b,s->view.entity);
+    qa_actor_id target=b->services.entity_actor(b->services.context,entity);
+    qa_actor_id viewer=b->services.entity_actor(b->services.context,viewer_number);
     for(unsigned i=0;i<3;++i) {
         uint32_t mask=1|0x10000;
         qa_vec3 start=bot_ai_eye(s),end=middle;
@@ -159,7 +162,8 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
                 qa_vec3 direction=qa_vec_sub(end,trace.end);
                 fog_distance=qa_vec_dot(direction,direction);
             }
-            float visibility=1.0f/fmaxf(1.0f,fog_distance*.001f);
+            float scaled_distance=fog_distance*.001f;
+            float visibility=1.0f/(scaled_distance<1.0f?1.0f:scaled_distance);
             if(visibility>*out) *out=visibility;
             if(*out>=.95f) return true;
         }
@@ -299,7 +303,7 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
     qa_bot_entity_info info;
     SOURCE_CALL(observation(b,bot_ai_teammate(s),&info,e));
     float visibility;
-    SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),&visibility,e));
+    SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),360,&visibility,e));
     if(visibility!=0) {
         bot_ai_teammate_visible_time_set(s,b->time);
         qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
@@ -556,7 +560,7 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         if(bot_ai_team_goal_time(s)<b->time || bot_ai_teammate_visible_time(s)<b->time-10.0f) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
         qa_bot_entity_info info;float visibility;
         SOURCE_CALL(observation(b,bot_ai_teammate(s),&info,e));
-        SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),&visibility,e));
+        SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_teammate(s),360,&visibility,e));
         if(visibility!=0) {
             qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
             if(qa_vec_dot(direction,direction)<100.0f*100.0f) return reset_avoid(b,s,e);
@@ -652,7 +656,7 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         SOURCE_CALL(observation(b,bot_ai_lead_teammate(s),&info,e));
         if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_LEAD_GOAL,bot_ai_lead_teammate(s),info.state.origin,e));
         float visibility;
-        SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_lead_teammate(s),&visibility,e));
+        SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_lead_teammate(s),360,&visibility,e));
         if(visibility!=0) bot_ai_lead_visible_time_set(s,b->time);
         if(bot_ai_lead_visible_time(s)<b->time-1.0f) bot_ai_lead_backup_time_set(s,b->time+2.0f);
         qa_vec3 direction=qa_vec_sub(bot_ai_origin(s),bot_ai_lead_goal(s).origin);

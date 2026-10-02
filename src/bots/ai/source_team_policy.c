@@ -728,7 +728,7 @@ bool bot_ai_source_flag_carrier(qa_bots *b, bot_ai_state *s, bool teammate,
         if(!alive(b,s)) return true;
         if(same_team!=teammate) continue;
         if(visible) {
-            float visibility;if(!bot_ai_source_entity_visible(b,s,i,&visibility,e)) return false;
+            float visibility;if(!bot_ai_source_entity_visible(b,s,i,360,&visibility,e)) return false;
             if(!alive(b,s)) return true;
             if(visibility<=0) continue;
         }

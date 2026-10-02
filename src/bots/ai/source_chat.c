@@ -180,7 +180,7 @@ bool bot_ai_source_visible_enemies(qa_bots *b,bot_ai_state *s,bool *out,qa_error
         bool invisible=!((uint32_t)info.state.powerups&flags) && ((uint32_t)info.state.powerups&(1u<<4));
         if(invisible && !(info.state.flags&0x100)) continue;
         bool same;CHAT_CALL(bot_ai_source_same_team(b,s,client,&same,e));if(same) continue;
-        float visible;CHAT_CALL(bot_ai_source_entity_visible(b,s,client,&visible,e));
+        float visible;CHAT_CALL(bot_ai_source_entity_visible(b,s,client,360,&visible,e));
         if(visible>0) {*out=true;return true;}
     }
     return true;

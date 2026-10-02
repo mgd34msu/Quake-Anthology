@@ -9,6 +9,7 @@
 #include "source_storage.h"
 #include "source_selectors.h"
 #include "source_team_state.h"
+#include "source_goal.h"
 #include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
@@ -361,15 +362,14 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         if(same) continue;
         volatile float scaled=fminf(distance,810*810)/(810*9),remaining=90-scaled;
         float fov=current_enemy<0 && (hurt || firing)?360:180-remaining;
-        if(!in_view(bot_ai_view_angles(s),direction,fov)) continue;
-        qa_actor_id actor=b->services.entity_actor(b->services.context,info.number);
-        if(!bot_ai_live(b,actor)) continue;
         float visible;
-        if(!bot_ai_enemy_visible(b,s,actor,&visible,e)) return false;
+        if(!bot_ai_source_entity_visible(b,s,client,fov,&visible,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+        qa_actor_id actor=b->services.entity_actor(b->services.context,info.number);
         if(visible<=0 || !bot_ai_live(b,actor)) continue;
         if(current_enemy<0 && distance>100*100 && !hurt && !firing &&
-           !in_view(info.state.angles,qa_vec_sub(bot_ai_origin(s),info.state.origin),90)) {
+           !qa_bot_field_of_vision(info.state.angles,90,
+               bot_ai_angles(qa_vec_sub(bot_ai_origin(s),info.state.origin)))) {
             if(!bot_ai_battle_inventory(b,s,client,e)) return false;
             bool retreat;
             if(!bot_ai_retreat(b,s,&retreat,e)) return false;
@@ -506,7 +506,9 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
         !bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&croucher,e)) return false;
     if (skill < .2f) return true;
     if (!bot_ai_move_setup(b,s,e)) return false;
-    qa_vec3 toward=qa_vec_sub(bot_ai_enemy_origin(s),bot_ai_origin(s));
+    qa_bot_entity_info info;bool observed;
+    if(!qa_bot_runtime_entity(b->runtime,bot_ai_enemy_number(s),&info,&observed,e)) return false;
+    qa_vec3 toward=qa_vec_sub(info.state.origin,bot_ai_origin(s));
     float distance=qa_vec_length(toward);
     qa_vec3 forward=qa_vec_normalize(toward),backward=qa_vec_scale(forward,-1);
     uint32_t type=QA_BOT_DIRECTION_WALK;

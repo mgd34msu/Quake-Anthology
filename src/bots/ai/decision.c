@@ -23,6 +23,7 @@ static bool live(qa_bots *b,bot_ai_state *s) {return !s->retired && bot_ai_live(
 static bool enter(qa_bots *b, bot_ai_state *s, qa_bot_decision decision,qa_error *e) {
     if(s->view.decision==QA_BOT_ACTIVATING && decision!=QA_BOT_ACTIVATING &&
        !bot_ai_activation_clear(b,s,e)) return false;
+    if(decision==QA_BOT_FIGHTING && !qa_bot_moves_reset_avoid(moves(b),s->movement,true,e)) return false;
     s->view.decision=decision;s->state_time=b->time;
     if(decision==QA_BOT_CHASING) bot_ai_chase_time_set(s,b->time);
     if(decision==QA_BOT_SEEK_LONG_TERM) bot_ai_check_time_set(s,0);
@@ -233,7 +234,19 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
     if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
     return true;
 }
-static bool enemy_state(qa_bots *b, bot_ai_state *s, bool *alive, bool *visible, qa_error *e) {
+static bool remember_enemy_position(qa_bots *b,bot_ai_state *s,qa_vec3 origin,qa_error *e) {
+    int32_t enemy=bot_ai_enemy_number(s);
+    if(enemy>=64 && s->team_arena &&
+       (enemy==b->source_goals.red_obelisk.entity || enemy==b->source_goals.blue_obelisk.entity)) origin.z+=16;
+    uint32_t area;
+    DECISION_CALL(bot_ai_point_area(b,s,origin,&area,e));
+    if(area && qa_bot_navigation_area(navigation(b,s),area).reach_count) {
+        bot_ai_last_enemy_area_set(s,area);bot_ai_last_enemy_origin_set(s,origin);
+    }
+    return true;
+}
+static bool enemy_state(qa_bots *b, bot_ai_state *s, bool remember,
+                         bool *alive, bool *visible, qa_error *e) {
     *alive=false;*visible=false;
     qa_actor_id enemy_actor=bot_ai_enemy_actor(b,s);
     s->view.enemy=enemy_actor;
@@ -244,24 +257,27 @@ static bool enemy_state(qa_bots *b, bot_ai_state *s, bool *alive, bool *visible,
     *alive=present && !enemy.dead && !enemy.observer && enemy.connected;
     if(!*alive) return true;
     float visibility;
-    if(!bot_ai_enemy_visible(b,s,bot_ai_enemy_actor(b,s),&visibility,e)) return false;
+    DECISION_CALL(bot_ai_source_entity_visible(b,s,bot_ai_enemy_number(s),360,&visibility,e));
     *visible=visibility>0;
-    if(*visible) {
-        bot_ai_enemy_visible_time_set(s,b->time);bot_ai_enemy_origin_set(s,enemy.origin);bot_ai_enemy_velocity_set(s,enemy.velocity);
-        uint32_t area;
-        if(!bot_ai_point_area(b,s,enemy.origin,&area,e)) return false;
-        if(area && qa_bot_navigation_area(navigation(b,s),area).reach_count) {
-            bot_ai_last_enemy_area_set(s,area);bot_ai_last_enemy_origin_set(s,enemy.origin);
-        }
+    if(*visible && remember) {
+        bot_ai_enemy_visible_time_set(s,b->time);
+        qa_bot_entity_info info;bool observed;
+        DECISION_CALL(qa_bot_runtime_entity(b->runtime,bot_ai_enemy_number(s),&info,&observed,e));
+        return remember_enemy_position(b,s,info.state.origin,e);
     }
     return true;
 }
-static bool battle(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
+static bool battle_items(qa_bots *b,bot_ai_state *s,qa_error *e) {
     bool carrying=s->player.carrying_objective;
     if((bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40 && bot_ai_inventory_value(s,QA_BOT_INV_TELEPORTER)>0 && !carrying) ||
        (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60 && bot_ai_inventory_value(s,QA_BOT_INV_MEDKIT)>0))
-        if(!qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_USE,e)) return false;
-    return bot_ai_choose_weapon(b,s,e) && bot_ai_attack(b,s,moving,e);
+        DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_USE,e));
+    return true;
+}
+static bool battle(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
+    DECISION_CALL(battle_items(b,s,e));
+    DECISION_CALL(bot_ai_choose_weapon(b,s,e));
+    return bot_ai_attack(b,s,moving,e);
 }
 static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
     *handled=true;
@@ -548,6 +564,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     float random;DECISION_CALL(bot_ai_random(b,&random,e));
                     if(random<.2f) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
                 }
+                DECISION_CALL(remember_enemy_position(b,s,info.state.origin,e));
                 DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
                 bool chat=false;
                 if(bot_ai_last_frame_health(s)>bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)) {
@@ -565,7 +582,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     bot_ai_stand_until_set(s,b->time+duration);ENTER(QA_BOT_STANDING);continue;
                 }
             }
-            DECISION_CALL(enemy_state(b,s,&alive,&visible,e));
+            DECISION_CALL(enemy_state(b,s,node==QA_BOT_RETREATING || node==QA_BOT_BATTLE_NEARBY,
+                &alive,&visible,e));
             if(!alive) {
                 if(node==QA_BOT_FIGHTING && bot_ai_enemy_death_time(s)!=0) return true;
                 s->view.enemy=(qa_actor_id){0};
@@ -580,8 +598,11 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             if(node==QA_BOT_FIGHTING) {
                 if(!visible) {ENTER(chase?QA_BOT_CHASING:QA_BOT_SEEK_LONG_TERM);continue;}
+                DECISION_CALL(battle_items(b,s,e));
                 DECISION_CALL(travel(b,s,e));
-                if(!bot_ai_attack_move(b,s,e) || !battle(b,s,false,e)) return false;
+                DECISION_CALL(bot_ai_choose_weapon(b,s,e));
+                DECISION_CALL(bot_ai_attack_move(b,s,e));
+                DECISION_CALL(bot_ai_attack(b,s,false,e));
                 if(!bot_ai_flag(s,BOT_AI_FIGHT_SUICIDAL)) {
                     DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
                     if(retreat) ENTER(QA_BOT_RETREATING);
