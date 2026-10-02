@@ -300,6 +300,31 @@ static bool info_command(void *opaque, const qa_command_invocation *invocation, 
     }
     return okay;
 }
+static bool visible_gamedir_command(void *opaque, const qa_command_invocation *invocation,
+    qa_error *error)
+{
+    struct application_native_q1_console *owner = opaque;
+    (void)error;
+    ++owner->calls;
+    owner->info_context = &invocation->context;
+    if (invocation->argc == 1) {
+        const char *value; size_t size;
+        info_value(owner->serverinfo, "*gamedir", &value, &size);
+        char text[sizeof(owner->serverinfo) + 32];
+        snprintf(text, sizeof(text), "Current *gamedir: %.*s\n", (int)size, value);
+        info_print(owner, text);
+    } else if (invocation->argc != 2) {
+        info_print(owner, "Usage: sv_gamedir <newgamedir>\n");
+    } else {
+        const char *directory = invocation->argv[1];
+        if (strstr(directory, "..") || strpbrk(directory, "/\\:"))
+            info_print(owner, "*Gamedir should be a single filename, not a path\n");
+        else info_set(owner, owner->serverinfo, 512, "*gamedir", directory, true);
+    }
+    owner->info_context = NULL;
+    --owner->calls;
+    return true;
+}
 bool application_native_q1_source_info(application_provider *provider, bool local,
     const char **out, qa_error *error)
 {
@@ -466,7 +491,9 @@ bool application_native_q1_console_create_restored(application_provider *provide
         (!qa_console_register(owner->console, "serverinfo", NULL, provider->owner,
             false, info_command, owner, error) ||
          !qa_console_register(owner->console, "localinfo", NULL, provider->owner,
-            false, info_command, owner, error))) {
+            false, info_command, owner, error) ||
+         !qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
+            false, visible_gamedir_command, owner, error))) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars);
         free(owner); provider->native_q1_console = NULL; return false;
     }
