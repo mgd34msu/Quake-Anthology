@@ -4,6 +4,7 @@
 #include "qa/application_q3_factory.h"
 #include "engine_shutdown.h"
 #include "qa/script_defines_save.h"
+#include "qa/bots_allocator_save.h"
 #include "qa/console_cvar_observer.h"
 
 typedef enum client_configuration_state {
@@ -19,6 +20,7 @@ struct application_guest_q3_client_console {
     qa_console *console;
     qa_cvars *cvars;
     qa_script_defines *script_globals;
+    qa_bot_memory *script_memory;
     qa_string_id script_globals_owner;
     size_t calls;
     application_provider *retiring_game;
@@ -30,6 +32,12 @@ struct application_guest_q3_client_console {
 
 static bool available(const struct application_guest_q3_client_console *row)
 { return !row->retiring && row->configuration < CLIENT_CONFIGURATION_RETIRING; }
+static bool globals_close(struct application_guest_q3_client_console *row,qa_error *error)
+{
+    qa_script_defines_release(row->script_globals); row->script_globals=NULL;
+    if(!qa_bot_memory_release(row->script_memory,error)) return false;
+    row->script_memory=NULL; return true;
+}
 
 static struct application_guest_q3_client_console *find(struct application_q3_guest *engine,
     uint32_t seat)
@@ -142,7 +150,10 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     qa_sha256_hex(&engine->provider->launch->identity, identity);
     snprintf(name, sizeof(name), "q3-client-globals:%u:%s:%u", engine->provider->owner, identity, seat);
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), name,
-        &row->script_globals_owner, error) || !qa_script_defines_create(&row->script_globals, error)) {
+        &row->script_globals_owner, error) || !qa_bot_memory_create(NULL,&row->script_memory,error) ||
+        !qa_script_defines_create(&row->script_globals, error) ||
+        !qa_script_defines_bind_memory(row->script_globals,qa_bot_memory_script_services(row->script_memory),error)) {
+        (void)globals_close(row,NULL);
         free(row); return false;
     }
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = engine->provider->application,
@@ -157,7 +168,7 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     if (row->cvars) row->console = qa_console_create(&options, error);
     if (!row->console || (!engine->restore_pending && !application_startup_seed_source(engine->provider, row->cvars, error))) {
         qa_console_destroy(row->console); qa_cvars_destroy(row->cvars);
-        qa_script_defines_release(row->script_globals); free(row); return false;
+        (void)globals_close(row,NULL); free(row); return false;
     }
     struct application_guest_q3_client_console **tail = &engine->client_preparation;
     while (*tail) tail = &(*tail)->next;
@@ -222,13 +233,25 @@ bool application_guest_q3_client_console_globals(struct application_q3_guest *en
     qa_script_defines **out, qa_string_id *owner, qa_error *error)
 {
     struct application_guest_q3_client_console *row = find(engine, seat);
-    if (!row || !available(row) || !out || !owner || !row->script_globals || !row->script_globals_owner)
+    if (!row || !available(row) || !out || !owner || !row->script_globals || !row->script_globals_owner ||
+        !row->script_memory || !qa_script_defines_memory(row->script_globals) ||
+        qa_script_defines_memory(row->script_globals)->context!=row->script_memory)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT parser globals lost their physical console owner");
     *out = row->script_globals; *owner = row->script_globals_owner; return true;
 }
+bool application_guest_q3_client_console_globals_capture(struct application_q3_guest *engine,uint32_t seat,
+    qa_string_id *owner,qa_buffer *memory,qa_buffer *definitions,qa_error *error)
+{
+    qa_script_defines *globals=NULL;
+    if(!memory||!definitions||!application_guest_q3_client_console_globals(engine,seat,&globals,owner,error)) return false;
+    struct application_guest_q3_client_console *row=find(engine,seat);
+    if(engine->calls||row->calls||!qa_console_idle(row->console)||!qa_bot_memory_idle(row->script_memory))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT parser capture requires its returned shared MEMORY owner");
+    return qa_bot_memory_capture(row->script_memory,memory,error)&&qa_script_defines_save_capture(globals,definitions,error);
+}
 
 bool application_guest_q3_client_console_globals_restore(struct application_q3_guest *engine, uint32_t seat,
-    qa_qvm_role kind, qa_string_id owner, qa_bytes bytes, qa_error *error)
+    qa_qvm_role kind, qa_string_id owner, qa_bytes memory,qa_bytes bytes, qa_error *error)
 {
     struct application_guest_q3_client_console *row = find(engine, seat);
     if (!row || !available(row) || row->kind != kind || row->script_globals_owner != owner ||
@@ -238,13 +261,13 @@ bool application_guest_q3_client_console_globals_restore(struct application_q3_g
     for (const q3g_role *role = engine->roles; role; role = role->next)
         if (role->kind != QA_QVM_GAME && role->seat == seat && role->host)
             return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT globals import must precede every shared host");
-    return qa_script_defines_save_restore_into(row->script_globals, bytes, error);
+    return qa_bot_memory_restore(row->script_memory,memory,error)&&qa_script_defines_save_restore_into(row->script_globals, bytes, error);
 }
 bool application_guest_q3_client_console_idle(const struct application_q3_guest *engine)
 {
     for (const struct application_guest_q3_client_console *row = engine ? engine->client_preparation : NULL;
         row; row = row->next)
-        if (row->calls || !qa_console_idle(row->console) ||
+        if (row->calls || !qa_console_idle(row->console) || !qa_bot_memory_idle(row->script_memory) ||
             (available(row) && !qa_cvars_observer_idle(row->cvars))) return false;
     return true;
 }
@@ -484,10 +507,10 @@ bool application_guest_q3_client_consoles_retarget(struct application_q3_guest *
             if (!q3g_role_destroy(role, error)) return false;
             *role_position = next;
         }
+        if(!globals_close(row,error)) return false;
         *position = row->next;
         qa_console_destroy(row->console);
         if (row->owns_cvars) qa_cvars_destroy(row->cvars);
-        qa_script_defines_release(row->script_globals);
         free(row);
     }
     return true;
@@ -513,10 +536,10 @@ bool application_guest_q3_client_console_destroy(struct application_q3_guest *en
          * so cleanup retries never inspect that consumed registry. */
         row->retiring = true;
         if (!application_startup_tuple_retire(engine->provider, &source, error)) return false;
+        if(!globals_close(row,error)) return false;
         engine->client_preparation = row->next;
         qa_console_destroy(row->console);
         if (row->owns_cvars) qa_cvars_destroy(row->cvars);
-        qa_script_defines_release(row->script_globals);
         free(row);
     }
     return true;

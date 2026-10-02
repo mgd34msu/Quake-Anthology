@@ -445,8 +445,8 @@ typedef struct saved_registry {
 typedef struct saved_client_globals {
     uint32_t kind, seat;
     qa_string_id owner;
-    qa_bytes definitions;
-    qa_buffer storage;
+    qa_bytes memory,definitions;
+    qa_buffer memory_storage,storage;
 } saved_client_globals;
 typedef struct saved_role {
     size_t artifact, registry;
@@ -517,8 +517,10 @@ static void saved_free(q3g_restore *saved)
         qa_buffer_free(&saved->registries[i].storage);
     }
     free(saved->registries);
-    for (size_t i = 0; saved->globals && i < saved->globals_count; ++i)
+    for (size_t i = 0; saved->globals && i < saved->globals_count; ++i) {
+        qa_buffer_free(&saved->globals[i].memory_storage);
         qa_buffer_free(&saved->globals[i].storage);
+    }
     free(saved->globals);
     for (size_t i = 0; saved->roles && i < saved->role_count; ++i) {
         saved_role *role = &saved->roles[i];
@@ -669,7 +671,7 @@ static bool client_globals_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     if (!qa_source_save_count(io, &saved->globals_count, 64)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && saved->globals_count) {
-        if (saved->globals_count > (io->input.size - io->offset) / 40)
+        if (saved->globals_count > (io->input.size - io->offset) / 68)
             return state_fail(io, QA_ERROR_FORMAT, "Truncated physical CLIENT parser globals inventory");
         saved->globals = calloc(saved->globals_count, sizeof(*saved->globals));
         if (!saved->globals) return state_fail(io, QA_ERROR_MEMORY, "Restoring physical CLIENT parser globals");
@@ -678,7 +680,7 @@ static bool client_globals_fields(qa_source_save_io *io, q3g_restore *saved)
         saved_client_globals *row = saved->globals + i;
         if (!qa_source_save_u32(io, &row->kind) || row->kind < QA_QVM_CGAME || row->kind > QA_QVM_UI ||
             !qa_source_save_u32(io, &row->seat) || row->seat == UINT32_MAX ||
-            !qa_source_save_u32(io, &row->owner) || !row->owner || !blob(io, &row->definitions, 20))
+            !qa_source_save_u32(io, &row->owner) || !row->owner || !blob(io,&row->memory,20) || !blob(io, &row->definitions, 20))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid physical CLIENT parser globals namespace");
         for (size_t j = 0; j < i; ++j)
             if (saved->globals[j].seat == row->seat || saved->globals[j].owner == row->owner)
@@ -734,9 +736,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 14;
+    uint32_t version = 15;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 14 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 15 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
@@ -997,12 +999,12 @@ static bool saved_collect(application_provider *provider,
     }
     for (size_t i = 0; i < saved->globals_count; ++i) {
         saved_client_globals *row = saved->globals + i;
-        qa_script_defines *globals = NULL;
         if (!application_guest_q3_client_console_source(engine, i, &client_source) ||
-            !application_guest_q3_client_console_globals(engine, client_source.scope.seat, &globals, &row->owner, error) ||
-            !qa_script_defines_save_capture(globals, &row->storage, error)) { saved_free(saved); return false; }
+            !application_guest_q3_client_console_globals_capture(engine,client_source.scope.seat,&row->owner,
+                &row->memory_storage,&row->storage,error)) { saved_free(saved); return false; }
         row->kind = client_source.scope.kind == QA_APPLICATION_CONSOLE_Q3_CGAME ? QA_QVM_CGAME : QA_QVM_UI;
         row->seat = client_source.scope.seat;
+        row->memory = (qa_bytes){row->memory_storage.data,row->memory_storage.size};
         row->definitions = (qa_bytes){row->storage.data, row->storage.size};
     }
     for (q3g_artifact *a = engine->artifacts; a; a = a->next) ++saved->artifact_count;
@@ -1751,7 +1753,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (row->seat != globals_source.scope.seat || row->kind != (uint32_t)
             (globals_source.scope.kind == QA_APPLICATION_CONSOLE_Q3_CGAME ? QA_QVM_CGAME : QA_QVM_UI) ||
             !application_guest_q3_client_console_globals_restore(engine, row->seat, (qa_qvm_role)row->kind,
-                row->owner, row->definitions, error))
+                row->owner,row->memory, row->definitions, error))
             return application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT globals changed their actual slot ownership");
     }
     for (size_t index = 0;; ++index) {
