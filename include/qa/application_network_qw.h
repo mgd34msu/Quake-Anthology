@@ -3,6 +3,14 @@
 #include "qa/application.h"
 #include "qa/network_q1_qw.h"
 #include "qa/network_runtime.h"
+#include "qa/game_q1_wire.h"
+
+/* The primary native QW GAME owns these two retained SVS buffers. Other
+ * Source kinds report present=false; this does not enable file logging. */
+bool qa_application_network_qw_log_read(qa_application *, qa_q1_qw_fraglog_view *,
+    bool *present, qa_error *);
+bool qa_application_network_qw_log_check(qa_application *, double realtime,
+    bool *present, qa_error *);
 
 /* Authenticate selected control separately from the literal source commands. */
 bool qa_application_network_qw_commands(qa_application *,

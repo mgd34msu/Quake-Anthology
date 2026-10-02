@@ -710,6 +710,9 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
 {
     if (!host) return true;
     if (!frontend_qw_prepare(host, error)) return false;
+    bool log_present = false;
+    if (!qa_application_network_qw_log_check(host->frontend->application,
+        (double)host->frontend->wall_time_ns / 1000000000.0, &log_present, error)) return false;
     qa_application_network_qw_world world;
     if (!source_world(host, &world, error)) return false;
     const qa_cvar_view *password = qa_cvars_find(world.source.cvars, "password"),
@@ -721,11 +724,12 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
     qa_qw_connection_host hooks = {.context = host, .password = password->value,
         .spectator_password = spectator->value, .rcon_password = rcon->value,
         .high_characters = high->number != 0, .blocked = blocked, .connect = connect_source, .status = source_status};
-    size_t count = host->pending_count; host->pending_count = 0;
-    for (size_t i = 0; i < count; ++i) {
-        qw_pending_control *pending = host->pending + i; qw_reply reply = {host, pending->address};
+    while (host->pending_count) {
+        qw_pending_control *pending = host->pending; qw_reply reply = {host, pending->address};
         if (!qa_qw_connectionless_receive(&hooks, host->challenges, (qa_bytes){pending->bytes, pending->size},
             &pending->address, pending->time_ns, send_reply, &reply, error)) return false;
+        --host->pending_count;
+        memmove(host->pending, host->pending + 1, host->pending_count * sizeof(*host->pending));
     }
     return true;
 }

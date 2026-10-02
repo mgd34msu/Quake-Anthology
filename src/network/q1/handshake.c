@@ -400,11 +400,13 @@ static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *chal
     }
     if (!strcmp(command, "log")) {
         int32_t sequence = -1; const char *text = NULL;
-        if (args->count > 1 && !decimal_prefix(argument(args, 1), &sequence))
+        if (args->count == 2 && !decimal_prefix(argument(args, 1), &sequence))
             return fail(error, QA_ERROR_FORMAT, "Invalid QuakeWorld log sequence");
-        if (!host->log) return reply_text(reply, reply_context, "", "m", error);
-        return host->log(host->context, sequence, &text, error) &&
-               reply_text(reply, reply_context, "", text ? text : "m", error);
+        if (host->log && !host->log(host->context, sequence, &text, error)) return false;
+        if (!text) return reply(reply_context, (qa_bytes){(const uint8_t *)"m", 1}, error);
+        size_t length = strlen(text);
+        if (length > 65534) return fail(error, QA_ERROR_FORMAT, "QuakeWorld fraglog exceeds packet capacity");
+        return reply(reply_context, (qa_bytes){(const uint8_t *)text, length + 1}, error);
     }
     if (!strcmp(command, "rcon")) {
         if (!*host->rcon_password || strcmp(argument(args, 1), host->rcon_password))

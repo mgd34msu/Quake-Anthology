@@ -8,6 +8,35 @@
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
 
+bool qa_application_network_qw_log_read(qa_application *app,
+    qa_q1_qw_fraglog_view *out, bool *present, qa_error *error)
+{
+    if (!app || !out || !present)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld fraglog observation");
+    *present = false;
+    if (!application_native_q1_qw_selected(app)) return true;
+    application_native_q1_wire_source source = {0};
+    if (!application_native_q1_wire_qw_begin(app, &source, error)) return false;
+    bool okay = qa_q1_wire_qw_log_read(source.provider->state.q1, out, error);
+    application_native_q1_wire_end(&source);
+    *present = okay;
+    return okay;
+}
+bool qa_application_network_qw_log_check(qa_application *app, double realtime,
+    bool *present, qa_error *error)
+{
+    if (!app || !present)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld fraglog clock owner");
+    *present = false;
+    if (!application_native_q1_qw_selected(app)) return true;
+    application_native_q1_wire_source source = {0};
+    if (!application_native_q1_wire_qw_begin(app, &source, error)) return false;
+    bool okay = qa_q1_wire_qw_log_check(source.provider->state.q1, realtime, error);
+    application_native_q1_wire_end(&source);
+    *present = okay;
+    return okay;
+}
+
 bool qa_application_network_qw_userinfo_read(qa_application *app,
     qa_actor_id actor, const char **out, qa_error *error)
 {
