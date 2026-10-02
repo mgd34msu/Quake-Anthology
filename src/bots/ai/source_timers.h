@@ -46,6 +46,12 @@ static inline float bot_ai_enemy_death_time(const bot_ai_state *s) {
 static inline void bot_ai_enemy_death_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ENEMY_DEATH_TIME,value);
 }
+static inline float bot_ai_enemy_position_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ENEMY_POSITION_TIME);
+}
+static inline void bot_ai_enemy_position_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ENEMY_POSITION_TIME,value);
+}
 static inline float bot_ai_last_air_time(const bot_ai_state *s) {
     return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LAST_AIR_TIME);
 }

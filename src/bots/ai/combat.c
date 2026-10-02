@@ -10,6 +10,7 @@
 #include "source_selectors.h"
 #include "source_team_state.h"
 #include "source_goal.h"
+#include "source_orders.h"
 #include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
@@ -562,7 +563,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     return true;
 }
-bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
+static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     (void)moving;
     qa_actor_id enemy=bot_ai_enemy_actor(b,s);
     s->view.enemy=enemy;
@@ -689,3 +690,233 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(fire && !qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e)) return false;
     bot_ai_flag_toggle(s,BOT_AI_ATTACKED);return true;
 }
+static bool source_attack_live(qa_bots *b,bot_ai_state *s) {
+    return !s->retired && bot_ai_live(b,s->view.actor);
+}
+#define SOURCE_ATTACK_CALL(call) do {if(!(call)) return false;if(!source_attack_live(b,s)) return true;} while(0)
+static bool source_weapon(qa_bots *b,bot_ai_state *s,qa_bot_weapon_knowledge *out,bool *found,qa_error *e) {
+    const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
+    *found=false;
+    if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
+    if(source_attack_live(b,s)) for(size_t i=0;i<count;++i)
+        if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {*out=weapons[i];*found=true;break;}
+    b->services.arsenal_end(b->services.context,lease);return true;
+}
+static bool source_trace_hits(qa_bots *b,const qa_trace_result *trace_result,int32_t number) {
+    qa_actor_id expected=b->services.entity_actor(b->services.context,number);
+    return expected.registry && qa_actor_id_equal(trace_result->actor,expected);
+}
+static qa_actor_id source_viewer(qa_bots *b,const bot_ai_state *s) {
+    return b->services.entity_actor(b->services.context,
+        bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY));
+}
+static bool source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    int32_t enemy=bot_ai_enemy_number(s);
+    if(enemy<0) return true;
+    qa_bot_entity_info info;bool observed;
+    SOURCE_ATTACK_CALL(qa_bot_runtime_entity(b->runtime,enemy,&info,&observed,e));
+    if(bot_ai_enemy_number(s)>=64) {
+        qa_vec3 target=info.state.origin;
+        if(s->team_arena && (bot_ai_enemy_number(s)==b->source_goals.red_obelisk.entity ||
+                            bot_ai_enemy_number(s)==b->source_goals.blue_obelisk.entity)) target.z+=32;
+        bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s))));
+        bot_ai_aim_target_set(s,target);return true;
+    }
+    float skill,accuracy;
+    SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_AIM_SKILL,0,1,&skill,e));
+    SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_ACCURACY,0,1,&accuracy,e));
+    if(skill>.95f) {
+        float reaction;
+        SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_REACTION,0,1,&reaction,e));
+        reaction*=.5f;
+        if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction) return true;
+    }
+    qa_bot_weapon_knowledge selected;bool exists;
+    SOURCE_ATTACK_CALL(source_weapon(b,s,&selected,&exists,e));
+    if(!exists) return true;
+    qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(&selected);
+    if(tactics.accuracy_characteristic>=0)
+        SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,(uint32_t)tactics.accuracy_characteristic,0,1,&accuracy,e));
+    if(tactics.skill_characteristic>=0)
+        SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,(uint32_t)tactics.skill_characteristic,0,1,&skill,e));
+    if(accuracy<=0) accuracy=.0001f;
+    SOURCE_ATTACK_CALL(qa_bot_runtime_entity(b->runtime,bot_ai_enemy_number(s),&info,&observed,e));
+    float random;
+    if(!enemy_carries_flag(b,&info) && ((uint32_t)info.state.powerups&(1u<<5))) {
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
+        if(random>.1f) accuracy*=.4f;
+    }
+    qa_vec3 velocity=qa_vec_scale(qa_vec_sub(info.state.origin,info.last_visible_origin),1.0f/info.update_interval);
+    if(bot_ai_enemy_position_time(s)<b->time) {
+        bot_ai_enemy_position_time_set(s,b->time+.5f);
+        bot_ai_enemy_velocity_set(s,velocity);bot_ai_enemy_origin_set(s,info.state.origin);
+    }
+    qa_vec3 movement=qa_vec_sub(info.state.origin,bot_ai_enemy_origin(s));
+    if(skill<.9f && qa_vec_dot(movement,movement)>48*48 &&
+       qa_vec_dot(bot_ai_enemy_velocity(s),velocity)<0) accuracy*=.7f;
+    float visibility;
+    SOURCE_ATTACK_CALL(bot_ai_source_entity_visible(b,s,bot_ai_enemy_number(s),360,&visibility,e));
+    bool visible=source_inventory_integer(visibility)!=0;
+    qa_vec3 best;
+    if(visible) {
+        best=info.state.origin;best.z+=8;
+        int32_t view_height;
+        SOURCE_ATTACK_CALL(bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&view_height,e));
+        qa_vec3 start=bot_ai_origin(s);start.z+=(float)view_height;start.z+=selected.weapon.offset.z;
+        qa_bounds shot_bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)};qa_trace_result hit;
+        SOURCE_ATTACK_CALL(trace(b,s,start,best,&shot_bounds,source_viewer(b,s),BOT_SHOT,&hit,e));
+        if(hit.fraction<=1 && !source_trace_hits(b,&hit,info.number)) best.z+=16;
+        if(selected.weapon.speed!=0) {
+            float distance=qa_vec_length(qa_vec_sub(best,bot_ai_origin(s)));
+            movement=qa_vec_sub(info.state.origin,bot_ai_enemy_origin(s));
+            if(!(distance>100 && qa_vec_dot(movement,movement)<32*32)) {
+                int32_t weapon_state=0;
+                if(skill>.8f) SOURCE_ATTACK_CALL(bot_ai_source_player_word(b,s,BOT_PS_WEAPON_STATE,&weapon_state,e));
+                if(skill>.8f && weapon_state==0) {
+                    if(!b->services.predict_motion)
+                        return bot_ai_fail(e,"Source aim requires the target's actual movement prediction");
+                    distance=qa_vec_length(qa_vec_sub(info.state.origin,bot_ai_origin(s)));
+                    qa_vec3 origin=info.state.origin;origin.z+=1;
+                    qa_bot_movement_prediction_query query={.origin=origin,.velocity=velocity,.presence=4,
+                        .maximum_frames=source_inventory_integer((distance*10)/selected.weapon.speed),.frame_time=.1f};
+                    qa_bot_movement_prediction prediction;bool available;
+                    qa_actor_id actor=bot_ai_enemy_actor(b,s);
+                    SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,actor,&query,&prediction,&available,e));
+                    if(!available) return bot_ai_fail(e,"Source aim target has no retained movement prediction owner");
+                    best=prediction.end;
+                } else if(skill>.4f) {
+                    distance=qa_vec_length(qa_vec_sub(info.state.origin,bot_ai_origin(s)));
+                    qa_vec3 horizontal=qa_vec_sub(info.state.origin,info.last_visible_origin);horizontal.z=0;
+                    float length=qa_vec_length(horizontal),speed=length/info.update_interval;
+                    if(length!=0) horizontal=qa_vec_scale(horizontal,1.0f/length);
+                    best=qa_vec_add(info.state.origin,qa_vec_scale(horizontal,(distance/selected.weapon.speed)*speed));
+                }
+            }
+        }
+        if(skill>.6f && (selected.projectile.damage_type&BOT_RADIAL) && info.state.origin.z<bot_ai_origin(s).z+16) {
+            qa_vec3 end=info.state.origin;end.z-=64;
+            SOURCE_ATTACK_CALL(trace(b,s,info.state.origin,end,NULL,
+                b->services.entity_actor(b->services.context,info.number),BOT_SHOT,&hit,e));
+            qa_vec3 ground=best;ground.z=hit.start_solid?info.state.origin.z-16:hit.end.z-8;
+            SOURCE_ATTACK_CALL(trace(b,s,start,ground,NULL,source_viewer(b,s),BOT_SHOT,&hit,e));
+            qa_vec3 delta=qa_vec_sub(hit.end,ground),self=qa_vec_sub(hit.end,start);
+            if(fabsf(hit.end.z-ground.z)<50 && qa_vec_dot(delta,delta)<60*60 && qa_vec_dot(self,self)>100*100) {
+                end=hit.end;end.z+=1;
+                SOURCE_ATTACK_CALL(trace(b,s,end,info.state.origin,NULL,
+                    b->services.entity_actor(b->services.context,info.number),BOT_SHOT,&hit,e));
+                if(hit.fraction>=1) best=ground;
+            }
+        }
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));best.x+=(20*(random*2-1))*(1-accuracy);
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));best.y+=(20*(random*2-1))*(1-accuracy);
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));best.z+=(10*(random*2-1))*(1-accuracy);
+    } else {
+        best=bot_ai_last_enemy_origin(s);best.z+=8;
+        if(skill>.5f && tactics.predict_occluded_splash) {
+            qa_bot_goal goal={.entity=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),
+                .area=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_AREA),.origin=bot_ai_eye(s),
+                .mins={-8,-8,-8},.maxs={8,8,8}};
+            qa_vec3 target;bool found;
+            SOURCE_ATTACK_CALL(qa_bot_moves_visible_position(qa_bot_runtime_moves(b->runtime),(int32_t)s->view.client,
+                bot_ai_last_enemy_origin(s),bot_ai_last_enemy_area(s),&goal,0x011c0fbe,&target,&found,e));
+            if(found) {
+                qa_vec3 direction=qa_vec_sub(target,bot_ai_eye(s));
+                if(qa_vec_dot(direction,direction)>80*80) {best=target;best.z-=20;}
+            }
+            accuracy=1;
+        }
+    }
+    if(visible) {
+        qa_trace_result hit;
+        SOURCE_ATTACK_CALL(trace(b,s,bot_ai_eye(s),best,NULL,source_viewer(b,s),BOT_SHOT,&hit,e));
+        bot_ai_aim_target_set(s,hit.end);
+    } else bot_ai_aim_target_set(s,best);
+    qa_vec3 direction=qa_vec_sub(best,bot_ai_eye(s));
+    if(selected.weapon.speed==0 && !tactics.melee) {
+        float distance=qa_vec_length(direction);if(distance>150) distance=150;
+        accuracy*=.6f+(distance/150)*.4f;
+    }
+    if(accuracy<.8f) {
+        float length=qa_vec_length(direction);
+        if(length!=0) direction=qa_vec_scale(direction,1.0f/length);
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));direction.x+=(.3f*(random*2-1))*(1-accuracy);
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));direction.y+=(.3f*(random*2-1))*(1-accuracy);
+        SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));direction.z+=(.3f*(random*2-1))*(1-accuracy);
+    }
+    bot_ai_view_ideal_set(s,bot_ai_angles(direction));
+    SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
+    float pitch=bot_ai_view_ideal(s).x+((6*selected.weapon.vertical_spread)*(random*2-1))*(1-accuracy);
+    bot_ai_view_ideal_axis_set(s,0,qa_builtin_angle_mod(pitch));
+    SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
+    float yaw=bot_ai_view_ideal(s).y+((6*selected.weapon.horizontal_spread)*(random*2-1))*(1-accuracy);
+    bot_ai_view_ideal_axis_set(s,1,qa_builtin_angle_mod(yaw));
+    if(b->source_match.cvars[BOT_SOURCE_CHALLENGE].integer_value && accuracy>.9f &&
+       bot_ai_enemy_sight_time(s)<b->time-1) {
+        bot_ai_view_prepare(s);bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
+        SOURCE_ATTACK_CALL(qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e));
+    }
+    return true;
+}
+static bool source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    int32_t enemy=bot_ai_enemy_number(s);
+    float reaction;
+    SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_REACTION,0,1,&reaction,e));
+    if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction ||
+       bot_ai_weapon_change_time(s)>b->time-.1f || bot_ai_fire_wait_time(s)>b->time) return true;
+    float throttle;
+    SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_FIRE_THROTTLE,0,1,&throttle,e));
+    if(bot_ai_fire_shoot_time(s)<b->time) {
+        float random;SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
+        if(random>throttle) {bot_ai_fire_wait_time_set(s,b->time+throttle);bot_ai_fire_shoot_time_set(s,0);}
+        else {bot_ai_fire_shoot_time_set(s,(b->time+1)-throttle);bot_ai_fire_wait_time_set(s,0);}
+    }
+    qa_vec3 direction=qa_vec_sub(bot_ai_aim_target(s),bot_ai_eye(s));
+    float distance=qa_vec_dot(direction,direction);
+    qa_bot_weapon_knowledge selected;bool exists;
+    SOURCE_ATTACK_CALL(source_weapon(b,s,&selected,&exists,e));
+    if(!exists) return true;
+    qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(&selected);
+    if(tactics.ranged_limit && distance>tactics.maximum_range*tactics.maximum_range) return true;
+    if(!qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100*100?120:50,bot_ai_angles(direction))) return true;
+    qa_trace_result hit;
+    qa_actor_id client=b->services.entity_actor(b->services.context,
+        bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT));
+    SOURCE_ATTACK_CALL(trace(b,s,bot_ai_eye(s),bot_ai_aim_target(s),NULL,client,BOT_SOLID|BOT_PLAYERCLIP,&hit,e));
+    if(hit.fraction<1 && !source_trace_hits(b,&hit,enemy)) return true;
+    SOURCE_ATTACK_CALL(source_weapon(b,s,&selected,&exists,e));
+    if(!exists) return true;
+    int32_t view_height;
+    SOURCE_ATTACK_CALL(bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&view_height,e));
+    qa_vec3 start=bot_ai_origin(s);start.z+=(float)view_height;
+    qa_vec3 forward,right;qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,&right,NULL);
+    start.x+=forward.x*selected.weapon.offset.x+right.x*selected.weapon.offset.y;
+    start.y+=forward.y*selected.weapon.offset.x+right.y*selected.weapon.offset.y;
+    start.z+=(forward.z*selected.weapon.offset.x+right.z*selected.weapon.offset.y)+selected.weapon.offset.z;
+    qa_vec3 end=qa_vec_add(start,qa_vec_scale(forward,1000));start=qa_vec_add(start,qa_vec_scale(forward,-12));
+    qa_bounds bounds={qa_v3(-8,-8,-8),qa_v3(8,8,8)};
+    SOURCE_ATTACK_CALL(trace(b,s,start,end,&bounds,source_viewer(b,s),BOT_SHOT,&hit,e));
+    if(!source_trace_hits(b,&hit,enemy)) for(int32_t number=1;number<=64;++number) {
+        if(!source_trace_hits(b,&hit,number)) continue;
+        bool same;SOURCE_ATTACK_CALL(bot_ai_source_same_team(b,s,number,&same,e));
+        if(same) return true;
+        break;
+    }
+    if((!source_trace_hits(b,&hit,enemy) || enemy>=64) && (selected.projectile.damage_type&BOT_RADIAL) &&
+       hit.fraction*1000<selected.projectile.radius &&
+       (selected.selected_projectile_damage-((.5f*hit.fraction)*1000))*.5f>0) return true;
+    if(!(selected.weapon.flags&BOT_FIRE_RELEASED) || bot_ai_flag(s,BOT_AI_ATTACKED))
+        SOURCE_ATTACK_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e));
+    bot_ai_flag_toggle(s,BOT_AI_ATTACKED);return true;
+}
+bool bot_ai_attack(qa_bots *b,bot_ai_state *s,bool moving,qa_error *e) {
+    qa_actor_id enemy=bot_ai_enemy_actor(b,s);
+    s->view.enemy=enemy;
+    qa_actor_id source=bot_ai_source_actor(b,bot_ai_enemy_number(s));
+    if(source.registry && qa_actor_id_equal(source,enemy)) {
+        if(!source_attack_live(b,s) || !bot_ai_live(b,enemy)) return true;
+        SOURCE_ATTACK_CALL(source_aim(b,s,e));
+        return source_check_attack(b,s,e);
+    }
+    return canonical_attack(b,s,moving,e);
+}
+#undef SOURCE_ATTACK_CALL
