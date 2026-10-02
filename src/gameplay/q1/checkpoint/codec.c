@@ -93,8 +93,10 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
     uint32_t count = 0;
     if (!io->reading && g->maps)
         for (q1_door_group *group = g->maps->door_groups; group; group = group->next) {
-            if (count == UINT32_MAX)
-                return q1_save_fail(io, "Too many Q1 door groups");
+            if (count == UINT32_MAX) {
+                q1_save_fail(io, "Too many Q1 door groups");
+                return false;
+            }
             ++count;
         }
     if (!q1_save_u32(io, &count))
@@ -104,8 +106,10 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
         *out_count = 0;
         return true;
     }
-    if (!g->maps || (io->reading && count > (io->input.size - io->offset) / 4))
-        return q1_save_fail(io, "Invalid Q1 checkpoint door group count");
+    if (!g->maps || (io->reading && count > (io->input.size - io->offset) / 4)) {
+        q1_save_fail(io, "Invalid Q1 checkpoint door group count");
+        return false;
+    }
     q1_door_group **index = allocate(io, count, sizeof(*index));
     if (!index)
         return false;

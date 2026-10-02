@@ -21,8 +21,10 @@ typedef struct fog_value {
     uint32_t flags;
 } fog_value;
 static bool fog_round(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return q1_map_fail(error, "Q1 addon fog result exceeds native range");
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        q1_map_fail(error, "Q1 addon fog result exceeds native range");
+        return false;
+    }
     *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
     return true;
 }

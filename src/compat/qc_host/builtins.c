@@ -30,11 +30,17 @@ static bool concatenate(qa_qc_instance *vm, uint32_t first, char **out, qa_error
         const char *value;
         if (!qa_qc_arg_string(vm, i, &value, error)) return false;
         size_t length = strlen(value);
-        if (length > SIZE_MAX - size) return qc_game_fail(error, QA_ERROR_MEMORY, "QC print string overflow");
+        if (length > SIZE_MAX - size) {
+            qc_game_fail(error, QA_ERROR_MEMORY, "QC print string overflow");
+            return false;
+        }
         size += length;
     }
     char *text = malloc(size);
-    if (!text) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC print text");
+    if (!text) {
+        qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC print text");
+        return false;
+    }
     size_t used = 0;
     for (uint32_t i = first; i < count; ++i) {
         const char *value;

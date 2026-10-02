@@ -32,8 +32,10 @@ static uint32_t flags_word(float value) {
     return (uint32_t)bits;
 }
 static bool clock_word(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC pusher clock exceeds finite binary32");
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        qc_game_fail(error, QA_ERROR_ARGUMENT, "QC pusher clock exceeds finite binary32");
+        return false;
+    }
     *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
     return true;
 }

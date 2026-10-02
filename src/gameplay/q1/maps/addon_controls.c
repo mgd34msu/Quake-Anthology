@@ -7,8 +7,10 @@ static q1_actor *control(qa_q1_game *g, qa_actor_id id) {
     return e && e->map && q1_map_is_addon_control(e->map->kind) ? e : NULL;
 }
 static bool source_deadline(double value, double *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return q1_map_fail(error, "Q1 addon trigger deadline exceeds native range");
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        q1_map_fail(error, "Q1 addon trigger deadline exceeds native range");
+        return false;
+    }
     *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
     return true;
 }

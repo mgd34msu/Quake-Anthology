@@ -114,14 +114,18 @@ const qa_model *q3p_model_md4_source(const q3p_model *model)
 bool q3p_model_get(const qa_q3_presentation_assets *a, int32_t handle,
                     const q3p_model **out, qa_error *error)
 {
-    if (!a || !out)
-        return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model lookup");
+    if (!a || !out) {
+        q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model lookup");
+        return false;
+    }
     if ((handle < 0 || (size_t)handle > a->model_count) &&
         qa_material_library_has_source_profile(a->options.provider.materials)) {
         *out = NULL; return true;
     }
-    if (handle < 0 || (size_t)handle > a->model_count)
-        return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model handle");
+    if (handle < 0 || (size_t)handle > a->model_count) {
+        q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model handle");
+        return false;
+    }
     *out = handle ? a->models[handle - 1] : NULL; return true;
 }
 

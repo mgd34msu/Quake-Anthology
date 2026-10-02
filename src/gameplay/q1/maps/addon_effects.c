@@ -21,8 +21,10 @@ static bool particles(qa_q1_game *g, qa_actor_id actor, qa_vec3 origin, qa_vec3 
 }
 static float signed_random(qa_q1_game *g) { return q1_random(g) * 2 - 1; }
 static bool effect_float(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return q1_map_fail(error, "Q1 authored effect exceeds finite float range");
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        q1_map_fail(error, "Q1 authored effect exceeds finite float range");
+        return false;
+    }
     *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
     return true;
 }

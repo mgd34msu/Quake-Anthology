@@ -60,10 +60,16 @@ static bool prepare(qa_q3_presentation *p, const char *request,
     if (!ok) { free(name); if (error) *error = local; return false; }
     size_t length = strlen(request);
     if (length > SIZE_MAX - sizeof(q3p_movie_source) - 1) {
-        free(name); return q3p_fail(error, QA_ERROR_MEMORY, "cinematic request exceeds capacity");
+        free(name);
+        q3p_fail(error, QA_ERROR_MEMORY, "cinematic request exceeds capacity");
+        return false;
     }
     q3p_movie_source *source = malloc(sizeof(*source) + length + 1);
-    if (!source) { free(name); return q3p_fail(error, QA_ERROR_MEMORY, "retaining prepared cinematic"); }
+    if (!source) {
+        free(name);
+        q3p_fail(error, QA_ERROR_MEMORY, "retaining prepared cinematic");
+        return false;
+    }
     qa_cinematic_asset *asset = NULL;
     ok = qa_media_library_load(assets->options.movies, assets->options.provider.mounts, name, &asset, error);
     if (!ok) { free(name); free(source); return false; }
