@@ -41,10 +41,12 @@ struct frontend_unified_q3_client {
     client_history *history;
     frontend_unified_q3_client_frame *prepared;
     frontend_unified_q3_client_video *video;
+    frontend_unified_q3_source_retirement *retirement;
     q3n_compiled_source *source;
     uint64_t revision;
     qa_native_q3_client_cvar *cvar_cache;
     size_t cvar_count;
+    int32_t local_server;
     bool busy, registered, initialized;
 };
 struct frontend_unified_q3_client_frame {
@@ -103,6 +105,8 @@ static bool cold_observation(const frontend_unified_q3_client *c,frontend_unifie
 {
     if (!c || c->domain != frontend_remote_unified_domain_read(c->replica) || c->prepared ||
         !frontend_unified_q3_sources_checkpoint_current(c->sources)) return false;
+    if (c->retirement && frontend_unified_q3_source_retirement_checkpoint_current(c->retirement) &&
+        frontend_unified_q3_source_retirement_read(c->retirement,out,NULL) && identity(c,out)) return true;
     for (size_t i = 0; i < frontend_unified_q3_sources_committed_count(c->sources); ++i) {
         frontend_unified_q3_source_view v;
         if (!frontend_unified_q3_sources_checkpoint_read(c->sources,i,&v,NULL)) return false;
@@ -113,7 +117,13 @@ static bool cold_observation(const frontend_unified_q3_client *c,frontend_unifie
 bool frontend_unified_q3_client_checkpoint_current(const frontend_unified_q3_client *c)
 { frontend_unified_q3_source_view v; return frontend_unified_q3_client_idle(c) && cold_observation(c,&v); }
 bool frontend_unified_q3_client_checkpoint_matches(const frontend_unified_q3_client *c,const frontend_unified_q3_source_view *v)
-{ return c && v && identity(c,v) && frontend_unified_q3_source_checkpoint_current(v); }
+{
+    frontend_unified_q3_source_view retained;
+    return c && v && identity(c,v) && (frontend_unified_q3_source_checkpoint_current(v) ||
+        (c->retirement && frontend_unified_q3_source_retirement_checkpoint_current(c->retirement) &&
+            frontend_unified_q3_source_retirement_read(c->retirement,&retained,NULL) &&
+            retained.source == v->source && retained.revision == v->revision));
+}
 bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 { return c && v && activation(c,v) &&
     (qa_actor_id_equal(v->viewer,c->constructor.viewer) || v->snapshot_bit != c->constructor.snapshot_bit) &&
@@ -127,6 +137,41 @@ bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *
 }
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *c)
 { return !c || (!c->busy && !c->prepared && !c->video); }
+bool frontend_unified_q3_client_retirement_current(const frontend_unified_q3_client *c)
+{
+    frontend_unified_q3_source_view view;
+    return c && c->retirement && !c->prepared && !c->video && c->domain == frontend_remote_unified_domain_read(c->replica) &&
+        frontend_unified_q3_source_retirement_read(c->retirement,&view,NULL) && identity(c,&view);
+}
+bool frontend_unified_q3_client_retirement_departed(const frontend_unified_q3_client *c)
+{
+    return frontend_unified_q3_client_idle(c) && frontend_unified_q3_client_retirement_current(c) &&
+        frontend_unified_q3_source_retirement_departed(c->retirement);
+}
+bool frontend_unified_q3_client_retirement_bind(frontend_unified_q3_client *c,
+    frontend_unified_q3_source_retirement *t,qa_error *e)
+{
+    frontend_unified_q3_source_view view;
+    if (!c || c->retirement || !frontend_unified_q3_client_idle(c) ||
+        !frontend_unified_q3_source_retirement_read(t,&view,e) || !identity(c,&view) ||
+        !frontend_unified_q3_source_retirement_client_hold(t,c,e))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT cleanup requires its exact retained Source row");
+    c->retirement = t; return true;
+}
+const qa_command_context *frontend_unified_q3_client_retirement_context(const frontend_unified_q3_client *c)
+{ return frontend_unified_q3_client_retirement_current(c) ? &c->command_context : NULL; }
+qa_cvars *frontend_unified_q3_client_retirement_cvars(const frontend_unified_q3_client *c)
+{ return frontend_unified_q3_client_retirement_current(c) ? c->domain->cvars : NULL; }
+bool frontend_unified_q3_client_retirement_unbind(frontend_unified_q3_client *c,
+    frontend_unified_q3_source_retirement *t,qa_error *e)
+{
+    frontend_unified_q3_source_view view;
+    if (!c || c->retirement != t || !frontend_unified_q3_client_idle(c) ||
+        !frontend_unified_q3_source_retirement_read(t,&view,e) || !identity(c,&view) ||
+        !frontend_unified_q3_source_current(&view) || !frontend_unified_q3_source_retirement_client_drop(t,c,e))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement rollback requires its still-published actual Source");
+    c->retirement = NULL; return true;
+}
 static void history_free(client_history *h)
 { if (h) { for (size_t i = 0; i < 64; ++i) qa_command_tokens_free(&h->commands[i].arguments); free(h); } }
 static bool arguments(const char *const *values, size_t count, qa_command_tokens *out, qa_error *e)
@@ -316,10 +361,12 @@ static bool client_actor(void *context, uint32_t slot, qa_actor_id *actor, bool 
     return frontend_unified_q3_source_current(&v);
 }
 static bool create(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
-    const frontend_unified_q3_source_view *v, uint64_t receiver,bool restoring,frontend_unified_q3_client **out, qa_error *e)
+    const frontend_unified_q3_source_view *v, uint64_t receiver,bool restoring,
+    frontend_unified_q3_source_retirement *retirement,frontend_unified_q3_client **out, qa_error *e)
 {
     if (!replica || !sources || !v || v->owner != sources || !v->has_client || !receiver || !out || *out ||
-        !(restoring ? frontend_unified_q3_source_checkpoint_current(v) : frontend_unified_q3_source_current(v)))
+        !(restoring ? retirement ? frontend_unified_q3_source_retirement_checkpoint_current(retirement) :
+            frontend_unified_q3_source_checkpoint_current(v) : frontend_unified_q3_source_current(v)))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT requires its real bound Source and receiver namespace");
     frontend_unified_q3_client *c = calloc(1,sizeof(*c));
     if (!c) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT transport");
@@ -333,14 +380,15 @@ static bool create(frontend_remote_unified *replica, frontend_unified_q3_sources
     q3n_compiled_source_options options = {.context=c,.read=source_read,.current=source_current,
         .configstring=configstring,.idle=source_idle,.actor_fields=actor_fields,.client_actor=client_actor,.actor_known=actor_known,
         .checkpoint_read=checkpoint_read,.checkpoint_current=checkpoint_current};
-    bool ok = c->domain && c->instance && c->history && receive(c->history,v,true,false,e) &&
+    bool ok = c->domain && c->instance && c->history && (!retirement || frontend_unified_q3_client_retirement_bind(c,retirement,e)) &&
+        receive(c->history,v,true,false,e) &&
         (restoring ? q3n_compiled_source_create_restored(&options,&c->source,e) : q3n_compiled_source_create(&options,&c->source,e));
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
 }
 bool frontend_unified_q3_client_create(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
     const frontend_unified_q3_source_view *v,uint64_t receiver,frontend_unified_q3_client **out,qa_error *e)
-{ return create(replica,sources,v,receiver,false,out,e); }
+{ return create(replica,sources,v,receiver,false,NULL,out,e); }
 bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v,
     frontend_unified_q3_client_frame **out, qa_error *e)
 {
@@ -392,9 +440,11 @@ void frontend_unified_q3_client_abort(frontend_unified_q3_client_frame **out)
 }
 bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_error *e)
 {
-    if (!out || !*out) return true; frontend_unified_q3_client *c = *out;
+    if (!out || !*out) return true;
+    frontend_unified_q3_client *c = *out;
     if (!frontend_unified_q3_client_idle(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT retains entered consumers or a candidate frame");
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
+    if (c->retirement && !frontend_unified_q3_source_retirement_client_drop(c->retirement,c,e)) return false;
     history_free(c->history); free(c->cvar_cache); free(c->instance); free(c); *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
@@ -437,6 +487,15 @@ bool frontend_unified_q3_client_video_begin(frontend_unified_q3_client_video *t,
     ++c->revision; t->revision = c->revision;
     t->begun = true; return true;
 }
+bool frontend_unified_q3_client_constructor_reset(frontend_unified_q3_client *c,void *context,
+    bool (*closed)(const void *),qa_error *e)
+{
+    if (!c || c->initialized || !frontend_unified_q3_client_idle(c) || c->revision == UINT64_MAX ||
+        !context || !closed || !closed(context) || !frontend_unified_q3_client_current(c))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled constructor retry requires its actual failed CG children to close");
+    free(c->cvar_cache); c->cvar_cache = NULL; c->cvar_count = 0; c->registered = false; c->local_server = 0;
+    ++c->revision; return true;
+}
 bool frontend_unified_q3_client_video_baseline(const frontend_unified_q3_client_video *t,
     const frontend_unified_q3_client *c,int32_t *message,int32_t *reached,qa_error *e)
 {
@@ -465,6 +524,10 @@ const qa_command_context *frontend_unified_q3_client_context(const frontend_unif
 { return c && frontend_unified_q3_client_current(c) ? &c->command_context : NULL; }
 qa_cvars *frontend_unified_q3_client_cvars(const frontend_unified_q3_client *c)
 { return c && frontend_unified_q3_client_current(c) ? c->domain->cvars : NULL; }
+const qa_command_context *frontend_unified_q3_client_checkpoint_context(const frontend_unified_q3_client *c)
+{ return c && frontend_unified_q3_client_checkpoint_current(c) ? &c->command_context : NULL; }
+qa_cvars *frontend_unified_q3_client_checkpoint_cvars(const frontend_unified_q3_client *c)
+{ return c && frontend_unified_q3_client_checkpoint_current(c) ? c->domain->cvars : NULL; }
 bool frontend_unified_q3_client_latest(const frontend_unified_q3_client *c, int32_t *number, int32_t *time, qa_error *e)
 {
     if (!number || !time || !frontend_unified_q3_client_current(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled snapshot history lost its real Source");
@@ -486,6 +549,21 @@ bool frontend_unified_q3_client_snapshot_actor(const frontend_unified_q3_client 
         return fail(e,QA_ERROR_ARGUMENT,"Compiled historical actor requires its genuine retained snapshot");
     const client_snapshot *row = c->history->snapshots+((uint32_t)message&31u);
     *actor = row->bindings[number]; *present = actor->registry != 0; return true;
+}
+bool frontend_unified_q3_client_snapshot_number(const frontend_unified_q3_client *c,int32_t message,
+    qa_actor_id actor,uint32_t *number,bool *present,qa_error *e)
+{
+    const qa_q3_snapshot *snapshot;
+    if (!number || !present || !actor.registry || !frontend_unified_q3_client_idle(c) ||
+        !frontend_unified_q3_client_snapshot(c,message,&snapshot,e) || !snapshot)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Source ownership requires its actual retained snapshot");
+    const client_snapshot *row = c->history->snapshots+((uint32_t)message&31u);
+    *number = QA_Q3_ENTITY_NONE; *present = false;
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
+        if (!qa_actor_id_equal(row->bindings[i],actor)) continue;
+        *number = i; *present = true; break;
+    }
+    return true;
 }
 bool frontend_unified_q3_client_command(frontend_unified_q3_client *c, int32_t sequence, frontend_unified_q3_command *out, qa_error *e)
 {
@@ -548,9 +626,9 @@ static bool cache_cvar(frontend_unified_q3_client *c, size_t index, bool force, 
     if (!actual) return fail(e,QA_ERROR_NOT_FOUND,"Compiled CG registered cvar is absent from its real registry");
     qa_native_q3_client_cvar *out = c->cvar_cache+index;
     if (!force && out->modification_count == actual->modification_count) return true;
-    out->modification_count = actual->modification_count;
     size_t bytes = strlen(actual->value);
     if (bytes >= sizeof(out->value)) return fail(e,QA_ERROR_FORMAT,"Compiled Cvar_Update exceeds MAX_CVAR_VALUE_STRING");
+    out->modification_count = actual->modification_count;
     memcpy(out->value,actual->value,bytes+1); out->number = actual->number; out->integer = actual->integer; return true;
 }
 bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error *e)
@@ -566,6 +644,21 @@ bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error
         ok = qa_native_q3_cvar_definition_at(c->constructor.product,i,&definition) &&
             qa_cvars_register(c->domain->cvars,definition.name,definition.reset,definition.flags,c->receiver,
                 "Compiled Q3 CLIENT",e) && frontend_unified_q3_client_current(c) && cache_cvar(c,i,true,e);
+    }
+    if (ok) {
+        const qa_cvar_view *running = qa_cvars_find(c->domain->cvars,"sv_running");
+        const char *running_value = running ? running->value : "";
+        char token[1024]; size_t length = strlen(running_value);
+        if (length >= sizeof(token)) length = sizeof(token)-1;
+        memcpy(token,running_value,length); token[length] = 0;
+        c->local_server = source_integer(token);
+        const char *team = c->constructor.product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
+        const char *head = c->constructor.product == QA_Q3_TEAM_ARENA ? "*james" : "sarge";
+        const char *names[] = {"model","headmodel","team_model","team_headmodel"};
+        const char *values[] = {"sarge","sarge",team,head};
+        for (size_t i = 0; ok && i < 4; ++i)
+            ok = qa_cvars_register(c->domain->cvars,names[i],values[i],QA_CVAR_USERINFO|QA_CVAR_ARCHIVE,
+                c->receiver,"Compiled Q3 CLIENT",e) && frontend_unified_q3_client_current(c);
     }
     c->busy = false;
     if (ok) c->registered = true;
@@ -600,7 +693,24 @@ bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_clie
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG Init completion requires its actual returned constructor");
     c->initialized = true; ++c->revision; return true;
 }
+bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *c,const char *symbol,float value,qa_error *e)
+{
+    if (!c || !symbol || !c->registered || c->busy || c->prepared || !frontend_unified_q3_client_current(c))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled VM cvar number requires its actual returned registered cache");
+    for (size_t i = 0; i < c->cvar_count; ++i) {
+        qa_native_q3_cvar_definition definition;
+        if (!qa_native_q3_cvar_definition_at(c->constructor.product,i,&definition)) return false;
+        if (!strcmp(definition.symbol,symbol)) { c->cvar_cache[i].number = value; return true; }
+    }
+    return fail(e,QA_ERROR_NOT_FOUND,"Compiled VM cvar number has no genuine registered symbol");
+}
 
+bool frontend_unified_q3_client_local_server_read(const frontend_unified_q3_client *c,int32_t *out,qa_error *e)
+{
+    if (!c || !out || !c->registered || !frontend_unified_q3_client_current(c))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled local-server observation requires its actual CG constructor");
+    *out = c->local_server; return true;
+}
 static bool saved_text(qa_source_save_io *io, char **text, size_t maximum)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -690,17 +800,17 @@ static bool history_fields(frontend_unified_q3_client *c, qa_source_save_io *io,
 }
 static bool client_fields(frontend_unified_q3_client *c, qa_source_save_io *io)
 {
-    char magic[4] = {'Q','3','C','T'}; uint32_t version = 1, epoch = c->constructor.epoch;
+    char magic[4] = {'Q','3','C','T'}; uint32_t version = 2, epoch = c->constructor.epoch;
     uint64_t publication = c->constructor.publication, map = c->constructor.map_revision, receiver = c->receiver;
     uint32_t client = c->constructor.client_number; qa_actor_id viewer = c->constructor.viewer;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CT",4) && qa_source_save_u32(io,&version) && version == 1 &&
+    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CT",4) && qa_source_save_u32(io,&version) && version == 2 &&
         qa_source_save_u32(io,&epoch) && epoch == c->constructor.epoch && qa_source_save_u64(io,&publication) && publication == c->constructor.publication &&
         qa_source_save_u64(io,&map) && map == c->constructor.map_revision && qa_source_save_u64(io,&receiver) && receiver == c->receiver &&
         qa_source_save_u32(io,&client) && client == c->constructor.client_number &&
         frontend_unified_q3_client_actor_fields(c,io,&viewer) && qa_actor_id_equal(viewer,c->constructor.viewer) &&
         qa_source_save_u64(io,&c->revision) && c->revision && qa_source_save_bool(io,&c->registered) && qa_source_save_bool(io,&c->initialized) &&
-        (!c->initialized || c->registered) && history_fields(c,io,c->history);
+        (!c->initialized || c->registered) && qa_source_save_i32(io,&c->local_server) && history_fields(c,io,c->history);
     size_t count = c->registered ? qa_native_q3_cvar_definition_count(c->constructor.product) : 0;
     if (ok) ok = qa_source_save_count(io,&count,128) && count == (c->registered ? qa_native_q3_cvar_definition_count(c->constructor.product) : 0);
     if (ok && reading && count) { c->cvar_cache = calloc(count,sizeof(*c->cvar_cache)); if (!c->cvar_cache) ok = false; }
@@ -721,17 +831,29 @@ bool frontend_unified_q3_client_checkpoint(const frontend_unified_q3_client *c, 
         frontend_unified_q3_client_checkpoint_current(c) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
-bool frontend_unified_q3_client_restore(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
+static bool restore(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
     const frontend_unified_q3_source_view *view, uint64_t receiver, qa_bytes bytes,
-    frontend_unified_q3_client **out, qa_error *e)
+    frontend_unified_q3_source_retirement *retirement,frontend_unified_q3_client **out, qa_error *e)
 {
     if (!out || *out) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT cold restore requires an empty isolated child");
     frontend_unified_q3_client *c = NULL; qa_source_save_io io = {0};
-    bool ok = create(replica,sources,view,receiver,true,&c,e);
+    bool ok = create(replica,sources,view,receiver,true,retirement,&c,e);
     if (ok) { history_free(c->history); c->history = calloc(1,sizeof(*c->history)); ok = c->history != NULL; }
     if (ok) ok = qa_source_save_reader(&io,NULL,bytes,e) && client_fields(c,&io) && io.offset == io.input.size &&
         c->history->time <= view->time && frontend_unified_q3_client_checkpoint_current(c);
     if (ok) *out = c; else frontend_unified_q3_client_destroy(&c,NULL);
     qa_source_save_dispose(&io);
     return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled CLIENT cold continuation is invalid"));
+}
+bool frontend_unified_q3_client_restore(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
+    const frontend_unified_q3_source_view *view,uint64_t receiver,qa_bytes bytes,frontend_unified_q3_client **out,qa_error *e)
+{ return restore(replica,sources,view,receiver,bytes,NULL,out,e); }
+bool frontend_unified_q3_client_restore_retired(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
+    frontend_unified_q3_source_retirement *t,uint64_t receiver,qa_bytes bytes,frontend_unified_q3_client **out,qa_error *e)
+{
+    frontend_unified_q3_source_view view;
+    if (!frontend_unified_q3_source_retirement_checkpoint_current(t) ||
+        !frontend_unified_q3_source_retirement_read(t,&view,e) || view.owner != sources)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retired CLIENT import requires its actual cold Source custody");
+    return restore(replica,sources,&view,receiver,bytes,t,out,e);
 }

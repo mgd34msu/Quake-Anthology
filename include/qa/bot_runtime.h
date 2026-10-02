@@ -61,6 +61,10 @@ bool qa_bot_runtime_lease_begin(qa_bot_runtime *, qa_error *);
 void qa_bot_runtime_lease_end(qa_bot_runtime *);
 bool qa_bot_runtime_setup(qa_bot_runtime *, int32_t *source_result, qa_error *);
 bool qa_bot_runtime_shutdown(qa_bot_runtime *, qa_error *);
+typedef bool (*qa_bot_runtime_source_shutdown)(void *,qa_error *);
+/* The real PC handle owner reports/disposes readers after LOG shutdown and
+ * before the shared MEMORY owner is disposed. */
+bool qa_bot_runtime_shutdown_with_sources(qa_bot_runtime *,qa_bot_runtime_source_shutdown,void *,qa_error *);
 bool qa_bot_runtime_initialized(const qa_bot_runtime *);
 bool qa_bot_runtime_loaded(const qa_bot_runtime *);
 bool qa_bot_runtime_closed(const qa_bot_runtime *);

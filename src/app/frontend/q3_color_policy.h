@@ -19,6 +19,9 @@ bool frontend_q3_source_output(qa_frontend *, const qa_material_library *, qa_sc
 bool frontend_q3_generic_overlay_begin(qa_frontend *, qa_scene_rect, qa_error *);
 bool frontend_q3_generic_overlay_end(qa_frontend *, qa_error *);
 bool frontend_q3_source_recipient(qa_frontend *, qa_scene_world_input *, qa_error *);
+/* A generic recipient reconstructs admitted Source textures in its own image
+ * domain; ordinary generic output gamma remains the physical authority. */
+bool frontend_q3_generic_recipient(qa_frontend *, qa_scene_world_input *, qa_error *);
 bool frontend_q3_source_color_retire(qa_frontend *, qa_error *);
 /* Target is the real installed display or entered native surface candidate.
  * Prepare before Source image-bank preparation; publish after video ownership. */

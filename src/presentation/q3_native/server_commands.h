@@ -77,6 +77,9 @@ typedef struct q3n_server_command_options {
     qa_native_q3_remote_client_service *remote_client;
     q3n_remote_source *remote_source;
     q3n_compiled_source *compiled_source;
+    /* Supplemental compiled CG has scene media, without primary console or
+     * Mission HUD ownership. This constructor scope is retained by the codec. */
+    bool compiled_scene_only;
     qa_cvars *compiled_cvars;
     qa_command_context compiled_context;
     bool (*compiled_current)(void *, const q3n_frame *, qa_cvars *, const qa_command_context *);

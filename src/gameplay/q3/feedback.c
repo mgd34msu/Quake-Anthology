@@ -57,8 +57,8 @@ static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, 
         for (size_t i = 0; i < outcome->mutation_count; ++i) {
             const qa_damage_mutation *mutation = &outcome->mutations[i];
             if (mutation->kind == QA_MUTATION_ARMOR)
-                armor += fmaxf(0, mutation->value.armor.before.regular.points -
-                                      mutation->value.armor.after.regular.points);
+                armor += fmaxf(0, (float)mutation->value.armor.before.regular.points -
+                                      (float)mutation->value.armor.after.regular.points);
         }
     player->damage_blood += blood;
     player->damage_armor += armor;

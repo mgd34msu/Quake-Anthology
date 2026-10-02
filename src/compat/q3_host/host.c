@@ -281,6 +281,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
             qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
         (!!options->source_entity != !!options->source_entity_context) ||
+        (!!options->source_poly != !!options->source_poly_context) ||
+        (!!options->source_light != !!options->source_light_context) ||
         (!!options->cvar_namespaces.reference != !!options->cvar_namespaces.resolve) ||
         (!!options->cvar_entry.context != !!options->cvar_entry.entered) ||
         (options->cvar_entry.entered && !options->console) ||
@@ -289,6 +291,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         (!!options->input.context != !!options->input.bindings) ||
         (options->input.bindings && (!options->seat || options->role == QA_QVM_GAME)) ||
         (options->source_entity && options->role != QA_QVM_CGAME) ||
+        ((options->source_poly || options->source_light) && options->role != QA_QVM_CGAME) ||
         (!!options->client.ui_state_context != !!options->client.ui_state) ||
         (options->client.ui_state && options->role != QA_QVM_UI) ||
         (!!options->presentation.system_movie_context != !!options->presentation.system_movie) ||

@@ -6,6 +6,8 @@
 
 typedef struct frontend_unified_q3_sources frontend_unified_q3_sources;
 typedef struct frontend_unified_q3_source_frame frontend_unified_q3_source_frame;
+typedef struct frontend_unified_q3_source_retirement frontend_unified_q3_source_retirement;
+typedef struct frontend_unified_q3_client frontend_unified_q3_client;
 typedef struct frontend_unified_q3_source_entity {
     qa_actor_id actor;
     qa_q3_entity state;
@@ -72,6 +74,23 @@ bool frontend_unified_q3_sources_current(const frontend_unified_q3_sources *);
  * isolated restore admission and grant no ordinary frame/effect authority. */
 bool frontend_unified_q3_sources_checkpoint_current(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *);
+/* Structural custody for checked cleanup and cold continuation. Removed rows
+ * never gain ordinary Source/draw authority through this receipt. */
+bool frontend_unified_q3_source_retirement_prepare(const frontend_unified_q3_source_view *,
+    frontend_unified_q3_source_retirement **,qa_error *);
+bool frontend_unified_q3_source_retirement_current(const frontend_unified_q3_source_retirement *);
+bool frontend_unified_q3_source_retirement_departed(const frontend_unified_q3_source_retirement *);
+bool frontend_unified_q3_source_retirement_checkpoint_current(const frontend_unified_q3_source_retirement *);
+bool frontend_unified_q3_source_retirement_client_hold(frontend_unified_q3_source_retirement *,
+    const frontend_unified_q3_client *,qa_error *);
+bool frontend_unified_q3_source_retirement_client_drop(frontend_unified_q3_source_retirement *,
+    const frontend_unified_q3_client *,qa_error *);
+bool frontend_unified_q3_source_retirement_read(const frontend_unified_q3_source_retirement *,
+    frontend_unified_q3_source_view *,qa_error *);
+bool frontend_unified_q3_source_retirement_return(frontend_unified_q3_source_retirement **,qa_error *);
+bool frontend_unified_q3_source_retirement_checkpoint(const frontend_unified_q3_source_retirement *,qa_buffer *,qa_error *);
+bool frontend_unified_q3_source_retirement_restore(frontend_unified_q3_sources *,qa_bytes,
+    frontend_unified_q3_source_retirement **,qa_error *);
 bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *, size_t,
     frontend_unified_q3_source_view *, qa_error *);
 bool frontend_unified_q3_sources_idle(const frontend_unified_q3_sources *);

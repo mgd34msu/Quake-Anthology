@@ -368,7 +368,7 @@ static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out
         for (size_t i = 0; i < s->tier_count; ++i)
             if (s->tiers[i].value == player.stats[s->tier_stat]) { protection = s->tiers[i].protection; break; }
     }
-    state.armor.regular = (qa_regular_armor){.kind = QA_ARMOR_Q3, .points = (float)points,
+    state.armor.regular = (qa_regular_armor){.kind = QA_ARMOR_Q3, .points = points,
         .protection.q3_protection = protection};
     qa_q3_host_game_data data;
     if (!current(&context, &data, error)) return false;

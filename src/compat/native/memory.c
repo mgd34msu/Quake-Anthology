@@ -226,6 +226,18 @@ bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_en
     return true;
 }
 
+bool qa_native_entity_table_refresh(qa_native_instance *instance, qa_native_entity_table *out,
+                                    qa_error *error)
+{
+    if (!instance || !out || instance->destroying || qa_native_terminal(instance))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "Native export refresh requires its live source instance");
+    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
+        return qa_native_entity_table_get(instance, out, error);
+    if (!native_profile_refresh_entities(instance, error)) return false;
+    return qa_native_entity_table_get(instance, out, error);
+}
+
 bool qa_native_terminal_entity_table(const qa_native_instance *instance,
                                       qa_native_entity_table *out, qa_error *error) {
     if (!out || !qa_native_terminal(instance) || !qa_native_can_destroy(instance))

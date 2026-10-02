@@ -1,4 +1,6 @@
 #include "network_q2_private.h"
+#include "native_q2_visibility.h"
+#include "qa/hud_q2.h"
 #include <math.h>
 
 static void vector(float out[3], qa_vec3 value)
@@ -34,7 +36,39 @@ static uint32_t packed_solid(qa_net_protocol_id protocol, qa_bounds bounds)
 static bool visible_state(const qa_q2_entity *state)
 {
     return state->modelindex || state->modelindex2 || state->modelindex3 || state->modelindex4 ||
-        state->effects || state->sound || state->event || (state->renderfx & 16384);
+        state->effects || state->morefx || state->sound || state->event || (state->renderfx & 16384);
+}
+
+static bool kex_fields(const qa_application_network_q2 *owner)
+{
+    return owner->host.protocol.kind == QA_NET_Q2KEX_2023;
+}
+
+static void entity_profile(qa_application_network_q2 *owner, qa_q2_entity *state)
+{
+    state->morefx |= (uint32_t)(state->effects >> 32);
+    state->effects = (uint32_t)state->effects;
+    if (!kex_fields(owner)) state->instance_bits = state->owner = state->old_frame = 0;
+}
+
+static void player_profile(qa_application_network_q2 *owner, qa_q2_player *state)
+{
+    if (!kex_fields(owner) && owner->host.protocol.kind != QA_NET_Q2PRO_36) {
+        state->clientnum = 0; state->clientnum_present = false;
+    }
+    if (owner->host.source.edition != QA_Q2_RERELEASE || kex_fields(owner)) return;
+    if (state->pmove.float_delta_angles) {
+        for (unsigned i = 0; i < 3; ++i) {
+            double word = fmod(trunc((double)state->pmove.delta_angles_f[i] * (65536.0 / 360.0)), 65536.0);
+            if (word < 0) word += 65536;
+            uint16_t bits = (uint16_t)word;
+            memcpy(&state->pmove.delta_angles[i], &bits, sizeof(bits));
+        }
+        state->pmove.float_delta_angles = false;
+    }
+    /* These are genuine KEX fields; 1038/4038 supplies client identity in SERVERDATA. */
+    state->team_id = 0;
+    state->fog = (qa_q2_player_fog){0};
 }
 
 static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
@@ -105,6 +139,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     if (!qa_q2_wire_actor(game, source.binding.actor, &after, error) || after.source_slot != slot ||
         source.body_serial != qa_world_body_storage_serial(owner->app->world, source.binding.actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity publication changed its physical actor/body binding");
+    entity_profile(owner, &value);
     *present = visible_state(&value); *out = value;
     return true;
 }
@@ -113,6 +148,34 @@ static struct application_native_q2 *original_engine(qa_application_network_q2 *
 {
     application_provider *provider = application_network_q2_provider(owner);
     return provider ? provider->state.native.q2_engine : NULL;
+}
+
+static bool original_weapon_skin(qa_application_network_q2 *owner,
+    const struct application_native_q2 *engine, uint32_t *skin, qa_error *error)
+{
+    uint32_t ordinal = (*skin >> 8) & 255u;
+    if (!ordinal) return true;
+    const char *weapon = NULL; uint32_t source_ordinal = 0;
+    for (uint32_t i = 1; i < engine->resource_limit[0]; ++i) {
+        const char *path = engine->configstrings[engine->resource_base[0] + i];
+        if (!path || path[0] != '#') continue;
+        if (++source_ordinal == ordinal) { weapon = path; break; }
+    }
+    uint32_t target_ordinal = 0;
+    if (weapon) {
+        application_q2_resource_table *table = &owner->resources[0];
+        bool found = false;
+        for (uint32_t i = 1; i <= table->count; ++i) {
+            const char *path = table->paths[i];
+            if (!path || path[0] != '#') continue;
+            ++target_ordinal;
+            if (!strcmp(path, weapon)) { found = true; break; }
+        }
+        if (!found || target_ordinal > 255)
+            return application_fail(error, QA_ERROR_FORMAT, "Q2 player weapon has no retained target appearance declaration");
+    }
+    *skin = (*skin & ~UINT32_C(0xff00)) | (target_ordinal << 8);
+    return true;
 }
 
 static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
@@ -137,7 +200,7 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
             (owner->host.protocol.kind == QA_NET_Q2PRO_36 ||
              (owner->host.protocol.kind == QA_NET_R1Q2_35 && owner->host.protocol.revision >= 1905)))
             value.solid = packed_solid(owner->host.protocol, source.bounds);
-        if (value.owner) {
+        if (kex_fields(owner) && value.owner) {
             qa_native_slot_binding binding;
             if (!qa_native_slot(qa_native_host_instance(engine->provider->state.native.host), value.owner, &binding, error)) return false;
             if (binding.kind != QA_NATIVE_SLOT_FREE &&
@@ -170,6 +233,20 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
             } else if (collision_error.code != QA_OK) { if (error) *error = collision_error; return false; }
         }
     } else if (!row->original) return true;
+    else {
+        uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
+        bool flare = (value.renderfx & (UINT32_C(1) << 21)) != 0;
+        for (unsigned i = 0; !flare && i < 4; ++i)
+            if (*models[i] != 255 && !application_network_q2_source_resource(owner, 0, *models[i], models[i], error)) return false;
+        bool player = value.modelindex == 255 || value.modelindex2 == 255 || value.modelindex3 == 255 || value.modelindex4 == 255;
+        if (player && !original_weapon_skin(owner, engine, &value.skinnum, error)) return false;
+        if ((value.renderfx & 256) && !player && !(value.renderfx & 128)) {
+            uint32_t *image = flare ? &value.frame : &value.skinnum;
+            if (!application_network_q2_source_resource(owner, 2, *image, image, error)) return false;
+        }
+    }
+    if (row->original && !application_network_q2_source_resource(owner, 1, value.sound, &value.sound, error)) return false;
+    entity_profile(owner, &value);
     *out = value; *present = visible_state(&value); return true;
 }
 
@@ -298,9 +375,43 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
 {
     qa_network_q2_player physical;
     if (!qa_application_network_q2_player(owner, actor, &physical, error)) return false;
-    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL)
-        return qa_native_host_q2_wire_player((qa_native_host *)owner->host.source.source.original.host,
-            physical.source_slot, actor, out, error);
+    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
+        qa_q2_player value;
+        if (!qa_native_host_q2_wire_player((qa_native_host *)owner->host.source.source.original.host,
+            physical.source_slot, actor, &value, error) ||
+            !application_network_q2_source_resource(owner, 0, value.gunindex, &value.gunindex, error)) return false;
+        qa_hud_q2_stat_references refs = {0};
+        const char *layout = owner->configs[5] ? owner->configs[5] : "";
+        bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
+        if (!qa_hud_q2_layout_stat_references(layout, rr, &refs, error)) return false;
+        const application_q2_layout_receipt *overlay = &owner->layouts[physical.source_slot];
+        if (qa_actor_id_equal(overlay->actor, actor)) {
+            refs.images |= overlay->references.images; refs.configstrings |= overlay->references.configstrings;
+        }
+        const unsigned images[] = {0, 2, 4, 6, 7, 9, 11};
+        for (size_t i = 0; i < sizeof(images) / sizeof(*images); ++i) refs.images |= UINT64_C(1) << images[i];
+        refs.configstrings |= (UINT64_C(1) << 8) | (UINT64_C(1) << 16);
+        if (rr) {
+            const unsigned extra[] = {18, 20, 22, 23, 24, 25, 26, 27, 30, 44, 45, 46};
+            for (size_t i = 0; i < sizeof(extra) / sizeof(*extra); ++i) refs.images |= UINT64_C(1) << extra[i];
+            refs.configstrings |= (UINT64_C(1) << 29) | (UINT64_C(1) << 31) |
+                (UINT64_C(1) << 48) | (UINT64_C(1) << 51);
+        }
+        if (refs.images & refs.configstrings)
+            return application_fail(error, QA_ERROR_FORMAT, "Q2 Source layout uses one stat as both image and config index");
+        for (unsigned i = 0; i < QA_Q2_MAX_STATS; ++i) {
+            uint64_t bit = UINT64_C(1) << i;
+            if (!(bit & (refs.images | refs.configstrings)) || !value.stats[i]) continue;
+            if (value.stats[i] < 0) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source HUD has a negative registered index");
+            uint32_t mapped;
+            if (!(refs.images & bit ? application_network_q2_source_resource(owner, 2, (uint32_t)value.stats[i], &mapped, error) :
+                application_network_q2_source_config(owner, (uint32_t)value.stats[i], &mapped, error))) return false;
+            if (mapped > INT16_MAX) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source HUD index exceeds its actual stat word");
+            value.stats[i] = (int16_t)mapped;
+        }
+        player_profile(owner, &value);
+        *out = value; return true;
+    }
     qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
     qa_q2_wire_view retained;
     qa_q2_wire_movement movement;
@@ -385,6 +496,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
     }
     if (owner->host.source.edition == QA_Q2_RERELEASE)
         integer_statistic(view.hit_marker_damage, &value.stats[50]);
+    player_profile(owner, &value);
     *out = value;
     return true;
 }
@@ -485,6 +597,13 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     }
     *out = false;
     if (flags & 1) return true;
+    if (sdk && rr && (flags & 256)) {
+        struct application_native_q2 *engine = original_engine(owner);
+        bool admitted;
+        if (!application_native_q2_visibility_read(engine, original.binding.source_slot,
+                original.binding.actor, recipient->slot, recipient->actor, &admitted, error)) return false;
+        if (!admitted) return true;
+    }
     const qa_cvar_view *novis = qa_cvars_find(owner->host.cvars, "sv_novis");
     if (state->number == recipient->slot || (rr && ((flags & 1024) || (novis && novis->number != 0)))) { *out = true; return true; }
     bool beam = (state->renderfx & 128) != 0, shadow = rr && (state->renderfx & 16384) != 0;
@@ -598,12 +717,18 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     for (size_t i = 0; ok && i < owner->entity_count; ++i) {
         qa_q2_entity state = owner->entities[i];
         bool visible = false, owned = false;
+        uint32_t hidden = 0;
         for (size_t j = 0; ok && j < seats; ++j) {
             bool seen = false, own = false;
             ok = source_visible(owner, &recipients[j], &state, leaves, leaf_capacity, &seen, &own, error);
             visible |= seen; owned |= own;
+            if (!seen) hidden |= UINT32_C(1) << j;
         }
-        if (ok && visible) { if (owned) state.solid = 0; owner->entities[count++] = state; }
+        if (ok && visible) {
+            if (kex_fields(owner)) state.instance_bits = hidden;
+            if (owned) state.solid = 0;
+            owner->entities[count++] = state;
+        }
     }
     free(leaves);
     if (ok && !qa_application_native_q2_presentation_current(owner->app, &owner->host.source))

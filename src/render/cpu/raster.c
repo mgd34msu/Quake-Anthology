@@ -39,8 +39,13 @@ bool cpu_image_valid(const qa_scene_image *image, qa_error *error) {
   if (!image->levels || !image->level_count ||
       (unsigned)image->kind > QA_SCENE_DEPTH32F ||
       (unsigned)image->filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
-      (unsigned)image->wrap > QA_SCENE_CLAMP || !finite4(image->border)) {
+      (unsigned)image->wrap > QA_SCENE_CLAMP || !finite4(image->border) ||
+      (image->source_q3 && (unsigned)image->source_format>QA_Q3_TEXTURE_RGB4_S3TC)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid CPU texture descriptor");
+    return false;
+  }
+  if (image->source_q3 && image->source_format==QA_Q3_TEXTURE_RGB4_S3TC) {
+    qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"CPU texture storage does not support the S3TC diagnostic profile");
     return false;
   }
   for (size_t i = 0; i < image->level_count; ++i) {
@@ -78,7 +83,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       (unsigned)draw->mesh.primitive > QA_SCENE_LINES ||
       (unsigned)s->blend_source > QA_BLEND_SRC_ALPHA_SATURATE ||
       (unsigned)s->blend_destination > QA_BLEND_SRC_ALPHA_SATURATE ||
-      (unsigned)s->depth_test > QA_DEPTH_GEQUAL ||
+      (unsigned)s->depth_test > QA_DEPTH_DISABLED ||
       (unsigned)s->alpha_test > QA_ALPHA_GE128 ||
       (unsigned)s->cull > QA_CULL_BACK ||
       (unsigned)s->stencil_test > QA_STENCIL_NOTEQUAL ||
@@ -757,7 +762,7 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
               qa_error *error) {
   qa_scene_draw resolved = *input;
-  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_SHADOW_VOLUME_END) {
+  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_RAW) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
     return false;
   }
@@ -775,6 +780,7 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
       qa_scene_image_retain(input->textures[i]);
       qa_scene_image_release(renderer->bound[unit]);
       renderer->bound[unit]=input->textures[i];
+      renderer->controls.attributes.actual_empty[unit]=false;
     }
   }
   const qa_scene_draw *draw = &resolved;

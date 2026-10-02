@@ -245,9 +245,9 @@ static bool inventory(qa_application *app, application_provider *p, qa_actor_id 
         ok = (first || text(j, ",", e)) && text(j, "{\"item\":", e) && string(j, name, e) &&
             scalar(j, "count", v->count, e) && scalar(j, "capacity", v->capacity, e);
         if (ok && v->policy == QA_COUNT_STACK) ok = text(j, ",\"countPolicy\":{\"kind\":\"stack\"}", e);
-        else if (ok && (v->policy == QA_COUNT_SOURCE_FLOAT || v->policy == QA_COUNT_SOURCE_INT32))
+        else if (ok && (v->policy == QA_COUNT_SOURCE_FLOAT || v->policy == QA_COUNT_SOURCE_INT32 || v->policy == QA_COUNT_SOURCE_DOUBLE))
             ok = text(j, ",\"countPolicy\":{\"kind\":\"source-counter\",\"arithmetic\":", e) &&
-                string(j, v->policy == QA_COUNT_SOURCE_FLOAT ? "binary32" : "int32", e) && text(j, "}", e);
+                string(j, v->policy == QA_COUNT_SOURCE_FLOAT ? "binary32" : v->policy == QA_COUNT_SOURCE_INT32 ? "int32" : "binary64", e) && text(j, "}", e);
         else if (ok) ok = application_fail(e, QA_ERROR_FORMAT, "Unified prediction inventory has an unknown actual count policy");
         if (ok) ok = text(j, "}", e);
         first = false;

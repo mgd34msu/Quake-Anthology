@@ -22,14 +22,14 @@ int32_t bot_trace_entity(const bot_travel *t, const qa_trace_result *trace) {
                : 0;
 }
 bool bot_on_ground(bot_travel *t, bool *out, qa_error *e) {
-    qa_bot_move_input *s = &t->state->input;
-    qa_vec3 end = s->origin;
+    bot_move_record *s = t->state;
+    qa_vec3 end = bot_move_vector(s,BM_ORIGIN);
     end.z -= 10;
     qa_trace_result trace;
-    if (!bot_trace_box(t, s->origin, end, s->presence, s->entity, &trace, e))
+    if (!bot_trace_box(t, bot_move_vector(s,BM_ORIGIN), end, bot_move_word(s,BM_PRESENCE), bot_move_integer(s,BM_ENTITY), &trace, e))
         return false;
     *out = !trace.start_solid && !trace.all_solid && trace.fraction < 1 &&
-           s->origin.z - trace.end.z <= 10 && trace.contact &&
+           bot_move_vector(s,BM_ORIGIN).z - trace.end.z <= 10 && trace.contact &&
            trace.contact_plane.normal.z >= t->graph->profile.minimum_floor_normal;
     return true;
 }
@@ -46,7 +46,7 @@ bool bot_on_mover(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
         return false;
     if (!found)
         return true;
-    qa_vec3 origin = t->state->input.origin;
+    qa_vec3 origin = bot_move_vector(t->state,BM_ORIGIN);
     qa_bounds bounds = t->graph->profile.shape.bounds;
     if (origin.x > model.origin.x + model.bounds.maxs.x - bounds.mins.x ||
         origin.x < model.origin.x + model.bounds.mins.x - bounds.maxs.x ||
@@ -59,7 +59,7 @@ bool bot_on_mover(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
     bounds.mins.z = -8;
     bounds.maxs.z = 8;
     qa_trace_result trace;
-    if (!bot_trace(t, start, end, &bounds, t->state->input.entity, 0x10001, &trace, e))
+    if (!bot_trace(t, start, end, &bounds, bot_move_integer(t->state,BM_ENTITY), 0x10001, &trace, e))
         return false;
     int32_t entity = bot_trace_entity(t, &trace);
     *out = !trace.start_solid && !trace.all_solid && entity != 1023 &&
@@ -75,19 +75,22 @@ bool bot_mover_down(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
     *out = found && model.origin.z + model.bounds.maxs.z < r->start.z;
     return true;
 }
-bool bot_gap_distance(bot_travel *t, qa_vec3 origin, qa_vec3 direction, float *out, qa_error *e) {
+static bool gap_distance_from(bot_travel *t,const qa_bot_vector_source *origin,qa_vec3 direction,
+                              int32_t entity,float *out,qa_error *e) {
     qa_trace_result trace;
-    qa_vec3 end = origin;
+    qa_vec3 end,start;
+    if(!qa_bot_vector_read(origin,&end,e)) return false;
     end.z -= 60;
-    int32_t entity = t->state->input.entity;
-    if (!bot_trace_box(t, origin, end, 4, entity, &trace, e))
+    if(!qa_bot_vector_read(origin,&start,e)) return false;
+    if (!bot_trace_box(t, start, end, 4, entity, &trace, e))
         return false;
     *out = 1;
     if (trace.fraction >= 1)
         return true;
     float start_z = trace.end.z + 1;
     for (int distance = 8; distance <= 100; distance += 8) {
-        qa_vec3 start = bot_ma(origin, (float)distance, direction);
+        if(!qa_bot_vector_read(origin,&start,e)) return false;
+        start = bot_ma(start, (float)distance, direction);
         start.z = start_z + 24;
         end = start;
         end.z -= 48 + bot_variable(t, BOT_BARRIER);
@@ -111,6 +114,14 @@ bool bot_gap_distance(bot_travel *t, qa_vec3 origin, qa_vec3 direction, float *o
     *out = 0;
     return true;
 }
+bool bot_gap_distance(bot_travel *t,qa_vec3 origin,qa_vec3 direction,float *out,qa_error *e) {
+    qa_bot_vector_source source={.value=&origin};
+    return gap_distance_from(t,&source,direction,bot_move_integer(t->state,BM_ENTITY),out,e);
+}
+bool bot_gap_distance_state(bot_travel *t,qa_vec3 direction,float *out,qa_error *e) {
+    qa_bot_vector_source source=bot_move_origin_source(t->state);
+    return gap_distance_from(t,&source,direction,bot_move_integer(t->state,BM_ENTITY),out,e);
+}
 bool bot_barrier_jump(bot_travel *t, qa_vec3 direction, float speed, bool *out, qa_error *e) {
     qa_bot_vector_source source = {.value = &direction};
     return bot_barrier_jump_from(t, &source, speed, out, e);
@@ -120,65 +131,65 @@ bool bot_barrier_jump_from(bot_travel *t, const qa_bot_vector_source *direction,
     *out = false;
     if (!(t->graph->profile.capabilities & QA_NAV_CAPABILITY(QA_NAV_JUMP)))
         return true;
-    qa_bot_move_input *s = &t->state->input;
-    qa_vec3 end = s->origin;
+    bot_move_record *s = t->state;
+    qa_vec3 end = bot_move_vector(s,BM_ORIGIN);
     end.z += bot_variable(t, BOT_BARRIER);
     qa_trace_result trace;
-    if (!bot_trace_box(t, s->origin, end, 2, s->entity, &trace, e))
+    if (!bot_trace_box(t, bot_move_vector(s,BM_ORIGIN), end, 2, bot_move_integer(s,BM_ENTITY), &trace, e))
         return false;
     if (trace.start_solid || trace.all_solid ||
-        trace.end.z - s->origin.z < bot_variable(t, BOT_STEP))
+        trace.end.z - bot_move_vector(s,BM_ORIGIN).z < bot_variable(t, BOT_STEP))
         return true;
     qa_vec3 horizontal = {0};
     if (!qa_bot_vector_component(direction, 0, &horizontal.x, e) ||
         !qa_bot_vector_component(direction, 1, &horizontal.y, e)) return false;
     horizontal = qa_vec_normalize(horizontal);
-    float distance = (s->think_time * speed) * .5f;
-    end = bot_ma(s->origin, distance, horizontal);
+    float distance = (bot_move_float(s,BM_THINK_TIME) * speed) * .5f;
+    end = bot_ma(bot_move_vector(s,BM_ORIGIN), distance, horizontal);
     end.z = trace.end.z;
-    if (!bot_trace_box(t, trace.end, end, 2, s->entity, &trace, e))
+    if (!bot_trace_box(t, trace.end, end, 2, bot_move_integer(s,BM_ENTITY), &trace, e))
         return false;
     if (trace.start_solid || trace.all_solid)
         return true;
     end = trace.end;
-    end.z = s->origin.z;
-    if (!bot_trace_box(t, trace.end, end, 2, s->entity, &trace, e))
+    end.z = bot_move_vector(s,BM_ORIGIN).z;
+    if (!bot_trace_box(t, trace.end, end, 2, bot_move_integer(s,BM_ENTITY), &trace, e))
         return false;
     if (trace.start_solid || trace.all_solid || trace.fraction >= 1 ||
-        trace.end.z - s->origin.z < bot_variable(t, BOT_STEP))
+        trace.end.z - bot_move_vector(s,BM_ORIGIN).z < bot_variable(t, BOT_STEP))
         return true;
-    if (!qa_navigation_admit_movement(t->runtime, t->actor, s->origin, trace.end, QA_NAV_JUMP,
+    if (!qa_navigation_admit_movement(t->runtime, t->actor, bot_move_vector(s,BM_ORIGIN), trace.end, QA_NAV_JUMP,
                                       &t->moves->trajectory, e))
         return false;
     if (!t->moves->trajectory.found)
         return true;
     if (!bot_jump_action(t, false, e) || !bot_move_action(t, horizontal, speed, e))
         return false;
-    s->flags |= QA_BOT_MOVE_BARRIER_JUMP;
+    bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) | (QA_BOT_MOVE_BARRIER_JUMP));
     *out = true;
     return true;
 }
 bool bot_blocked(bot_travel *t, qa_vec3 direction, bool bottom, qa_bot_move_result *out,
                  qa_error *e) {
-    qa_bot_move_input *s = &t->state->input;
-    qa_bounds bounds = qa_bot_navigation_presence(t->navigation, s->presence == 2 ? 2 : 4);
+    bot_move_record *s = t->state;
+    qa_bounds bounds = qa_bot_navigation_presence(t->navigation, bot_move_word(s,BM_PRESENCE) == 2 ? 2 : 4);
     if (fabsf(direction.z) < .7f) {
         bounds.mins.z += bot_variable(t, BOT_STEP);
         bounds.maxs.z -= 10;
     }
     qa_trace_result trace;
-    if (!bot_trace(t, s->origin, bot_ma(s->origin, 3, direction), &bounds, s->entity, 0x2010001,
+    if (!bot_trace(t, bot_move_vector(s,BM_ORIGIN), bot_ma(bot_move_vector(s,BM_ORIGIN), 3, direction), &bounds, bot_move_integer(s,BM_ENTITY), 0x2010001,
                    &trace, e))
         return false;
     int32_t entity = bot_trace_entity(t, &trace);
     if (!trace.start_solid && !trace.all_solid && entity != 1022 && entity != 1023) {
         out->blocked = true;
         out->block_entity = entity;
-    } else if (bottom && !qa_bot_navigation_area(t->navigation, t->state->area).reach_count) {
-        bounds = qa_bot_navigation_presence(t->navigation, s->presence == 2 ? 2 : 4);
-        qa_vec3 end = s->origin;
+    } else if (bottom && !qa_bot_navigation_area(t->navigation, bot_move_word(t->state,BM_AREA)).reach_count) {
+        bounds = qa_bot_navigation_presence(t->navigation, bot_move_word(s,BM_PRESENCE) == 2 ? 2 : 4);
+        qa_vec3 end = bot_move_vector(s,BM_ORIGIN);
         end.z -= 3;
-        if (!bot_trace(t, s->origin, end, &bounds, s->entity, 0x10001, &trace, e))
+        if (!bot_trace(t, bot_move_vector(s,BM_ORIGIN), end, &bounds, bot_move_integer(s,BM_ENTITY), 0x10001, &trace, e))
             return false;
         entity = bot_trace_entity(t, &trace);
         if (!trace.start_solid && !trace.all_solid && entity != 1022 && entity != 1023) {
@@ -218,7 +229,7 @@ bool bot_jump_speed(bot_travel *t, qa_vec3 start, qa_vec3 end, float vertical, f
     qa_nav_prediction_query q = {
         .origin = start,
         .presence = 2,
-        .velocity = {t->state->input.velocity.x, t->state->input.velocity.y, vertical},
+        .velocity = {bot_move_vector(t->state,BM_VELOCITY).x, bot_move_vector(t->state,BM_VELOCITY).y, vertical},
         .command_move = qa_vec_scale(direction, 400),
         .command_frames = 30,
         .maximum_frames = 30,
@@ -232,10 +243,10 @@ bool bot_jump_speed(bot_travel *t, qa_vec3 start, qa_vec3 end, float vertical, f
 }
 bool bot_air_control(bot_travel *t, qa_vec3 goal, bool *controlled, qa_vec3 *direction,
                      float *speed, qa_error *e) {
-    qa_bot_move_input *s = &t->state->input;
-    qa_nav_prediction_query q = {.origin = s->origin,
-                                 .velocity = s->velocity,
-                                 .presence = s->presence == 2 ? 2 : 4,
+    bot_move_record *s = t->state;
+    qa_nav_prediction_query q = {.origin = bot_move_vector(s,BM_ORIGIN),
+                                 .velocity = bot_move_vector(s,BM_VELOCITY),
+                                 .presence = bot_move_word(s,BM_PRESENCE) == 2 ? 2 : 4,
                                  .maximum_frames = 50,
                                  .frame_ms = 100};
     if (!bot_predict(t, &q, e))
@@ -244,7 +255,7 @@ bool bot_air_control(bot_travel *t, qa_vec3 goal, bool *controlled, qa_vec3 *dir
     *direction = qa_v3(0, 0, 0);
     *speed = 400;
     const qa_nav_prediction_result *p = &t->moves->prediction;
-    qa_vec3 previous = s->origin;
+    qa_vec3 previous = bot_move_vector(s,BM_ORIGIN);
     for (size_t i = 0; i < p->trajectory_count; ++i) {
         qa_vec3 next = p->trajectory[i];
         if (next.z < previous.z && previous.z >= goal.z && next.z < goal.z) {
@@ -285,12 +296,12 @@ qa_vec3 bot_vector_angles(qa_vec3 v) {
     return qa_v3(-pitch, yaw, 0);
 }
 bool bot_move_action(bot_travel *t, qa_vec3 direction, float speed, qa_error *e) {
-    return qa_bot_actions_move(t->moves->actions, (uint32_t)t->state->input.client, direction,
+    return qa_bot_actions_move(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), direction,
                                speed, e);
 }
 bool bot_flag_action(bot_travel *t, uint32_t flags, qa_error *e) {
-    return qa_bot_actions_add(t->moves->actions, (uint32_t)t->state->input.client, flags, e);
+    return qa_bot_actions_add(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), flags, e);
 }
 bool bot_jump_action(bot_travel *t, bool delayed, qa_error *e) {
-    return qa_bot_actions_jump(t->moves->actions, (uint32_t)t->state->input.client, delayed, e);
+    return qa_bot_actions_jump(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), delayed, e);
 }

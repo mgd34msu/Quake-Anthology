@@ -16,7 +16,7 @@ typedef struct qa_gl_options {
 typedef struct qa_gl_capabilities {
     unsigned color_bits, alpha_bits, depth_bits, stencil_bits;
     uint32_t maximum_texture_size, texture_units, vertex_attributes;
-    bool stereo, floating_depth, compiled_vertex_arrays;
+    bool stereo, floating_depth, compiled_vertex_arrays, s3tc;
     char vendor[128], renderer[128], version[128], shading_language[128];
 } qa_gl_capabilities;
 

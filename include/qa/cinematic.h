@@ -51,6 +51,9 @@ typedef struct qa_cinematic_audio_audience {
 } qa_cinematic_audio_audience;
 typedef struct qa_cinematic_options {
     qa_media_clock clock;
+    /* Explicit original Q3 shared decoder: its clock is the absolute Source
+     * clock. NULL keeps ordinary movie-local elapsed playback. */
+    qa_roq_scratch *roq_scratch;
     qa_cinematic_target target;
     bool loop, hold, silent;
     qa_audio_engine *audio;
@@ -84,8 +87,8 @@ typedef struct qa_cinematic_checkpoint {
 } qa_cinematic_checkpoint;
 typedef struct qa_cinematic qa_cinematic;
 typedef struct qa_media_library qa_media_library;
-/* One decoded-asset cache can serve multiple independently ordered VFS views.
- * Resolve a view first, then share by content digest and format. */
+/* One asset cache can serve multiple independently ordered VFS views. Resolve
+ * a view first, then share by content digest, format and admission mode. */
 qa_media_library *qa_media_library_create(qa_scene_resources *, qa_error *);
 void qa_media_library_destroy(qa_media_library *);
 void qa_media_library_trim(qa_media_library *);
@@ -94,6 +97,10 @@ bool qa_media_library_load(qa_media_library *, qa_vfs *, const char *path, qa_ci
 /* Shader registration opens its authored provider path before qualifying the
  * RoQ/CIN/OGV format, matching material directive evaluation order. */
 bool qa_media_library_load_shader(qa_media_library *, qa_vfs *, const char *path,
+    qa_cinematic_asset **out, qa_error *);
+/* Original numeric CIN opens the exact requested path and admits RoQ by
+ * header magic. An acquired empty file is an absent handle. */
+bool qa_media_library_load_source_roq(qa_media_library *, qa_vfs *, const char *path,
     qa_cinematic_asset **out, qa_error *);
 void qa_cinematic_asset_retain(qa_cinematic_asset *);
 void qa_cinematic_asset_release(qa_cinematic_asset *);
@@ -111,7 +118,25 @@ bool qa_cinematic_end_playback(qa_cinematic *, qa_cinematic_end, qa_error *);
 qa_media_status qa_cinematic_status(const qa_cinematic *);
 qa_cinematic_target qa_cinematic_destination(const qa_cinematic *);
 const qa_media_frame *qa_cinematic_frame(const qa_cinematic *);
+/* Original RoQ shader upload exposes the decoder's actual physical 256-square
+ * prefix. Other supported shader codecs retain their genuine decoded view. */
+bool qa_cinematic_shader_frame(const qa_cinematic *, qa_media_frame *, qa_error *);
+/* A reused numeric handle retains its creating SEAT/MATERIAL target. This
+ * pure view also qualifies already decoded cold candidates before commit. */
+bool qa_cinematic_upload_frame(const qa_cinematic *, bool shader, qa_media_frame *, qa_error *);
+/* Original Source UI selects its actual limited draw dimensions. Dirty
+ * resampling belongs to this reached call; clean draws borrow physical bytes. */
+bool qa_cinematic_source_ui_frame(qa_cinematic *, uint32_t width, uint32_t height,
+    bool dirty, qa_media_frame *, qa_error *);
+/* Rewinds the retained original RoQ decoder and epoch without clearing its
+ * shared buffers/codebooks or reopening its provider resource. */
+bool qa_cinematic_roq_restart(qa_cinematic *, qa_error *);
+bool qa_cinematic_roq_scratch_rebind_ready(const qa_cinematic *, const qa_roq_scratch *, qa_error *);
+void qa_cinematic_roq_scratch_rebind(qa_cinematic *, qa_roq_scratch *);
 uint64_t qa_cinematic_revision(const qa_cinematic *);
+/* Retained decoder revision, including a qualified cold candidate whose live
+ * playback operations remain unavailable until commit. */
+bool qa_cinematic_checkpoint_revision_read(const qa_cinematic *, uint64_t *);
 bool qa_cinematic_time(qa_cinematic *, double *elapsed_ms, double *source_ms, uint64_t *loop,
                        qa_error *);
 bool qa_cinematic_capture(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);

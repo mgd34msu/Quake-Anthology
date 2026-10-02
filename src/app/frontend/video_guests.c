@@ -168,6 +168,7 @@ bool frontend_video_guests_reopen(frontend_video_guests *owner,qa_error *error)
             frontend_shared_resource_policy_publish(owner->resources);
             owner->resources_published=true;
         }
+        frontend_shared_resource_policy_render_publish(owner->resources);
         if (!frontend_shared_resource_policy_finish(&owner->resources,error)) return false;
         owner->resources_finished=true; owner->resource_phase=false;
     }

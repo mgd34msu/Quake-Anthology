@@ -25,7 +25,8 @@ static bool checkpoint_owner(application_provider *provider, qa_error *error)
     if (provider->kind == APPLICATION_PROVIDER_QC)
         return (qa_qc_idle(provider->state.qc.instance) && application_qc_input_idle(provider)) ||
             application_fail(error, QA_ERROR_ARGUMENT, "QuakeC continuation has an active source/input scope");
-    if (provider->kind == APPLICATION_PROVIDER_QVM)
+    if (provider->kind == APPLICATION_PROVIDER_QVM ||
+        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))
         return application_q3_guest_idle(provider) ||
             application_fail(error, QA_ERROR_ARGUMENT, "Q3 continuation has an active source/input scope");
     return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -33,13 +34,13 @@ static bool checkpoint_owner(application_provider *provider, qa_error *error)
 }
 
 bool application_guest_checkpoint_capture(application_provider *provider,
-                                             qa_buffer *out, qa_error *error)
+    const struct qa_application_native_resource_refs *resources, qa_buffer *out, qa_error *error)
 {
     if (!out || !checkpoint_owner(provider, error)) return false;
     qa_qc_checkpoint *snapshot = NULL;
     qa_buffer encoded = {0};
-    bool ok = provider->kind == APPLICATION_PROVIDER_QVM ?
-        application_guest_q3_save_capture(provider, &encoded, error) :
+    bool ok = provider->kind != APPLICATION_PROVIDER_QC ?
+        application_guest_q3_save_capture(provider, resources, &encoded, error) :
         (qa_qc_checkpoint_capture(provider->state.qc.instance, &snapshot, error) &&
          qa_qc_checkpoint_encode(snapshot, &encoded, error));
     qa_qc_checkpoint_destroy(snapshot);
@@ -83,7 +84,7 @@ bool application_guest_checkpoint_restore(application_provider *provider,
     qa_bytes body;
     if (!checkpoint_owner(provider, error) || !application_guest_checkpoint_body(provider, bytes, &body, error))
         return false;
-    if (provider->kind == APPLICATION_PROVIDER_QVM)
+    if (provider->kind != APPLICATION_PROVIDER_QC)
         return application_guest_q3_save_restore(provider, body, error);
     qa_qc_checkpoint *snapshot = NULL;
     bool ok = qa_qc_checkpoint_decode(body, &snapshot, error) &&

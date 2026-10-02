@@ -84,23 +84,6 @@ bool application_native_q1_source_death_bound(void *context, qa_mode_id mode,
     return okay;
 }
 
-bool application_native_q1_source_note_damage(qa_application *app, qa_actor_id actor,
-    float health_damage, qa_error *error)
-{
-    if (!app) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source damage has no application");
-    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!source || source->kind != APPLICATION_PROVIDER_Q1) return true;
-    death_call call = {.app = app, .source = source, .level = source->q1_level};
-    bool okay = qa_q1_game_operation_begin(source->state.q1, &call.operation, error) && current(&call, error);
-    qa_q1_source_client_view client;
-    if (okay && qa_q1_source_client_read(call.operation.game, actor, &client))
-        okay = player_current(&call, actor, error) &&
-            qa_q1_level_note_damage(call.level, actor, health_damage, error) &&
-            player_current(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
-    return okay;
-}
-
 bool application_native_q1_source_fired(void *context, qa_actor_id actor,
     qa_item_id weapon, qa_error *error)
 {

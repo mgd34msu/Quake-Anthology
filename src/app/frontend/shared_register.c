@@ -76,6 +76,8 @@ static const shared_declaration declarations[]={
     {"r_simpleMipMaps","1","Source simple mipmap sampling",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
     {"r_colorMipLevels","0","Source mipmap color diagnostics",QA_CVAR_LATCH,ANY},
     {"r_picmip","1","Source texture mip level",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_texturebits","0","Source texture storage precision",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_ext_compressed_textures","0","Source compressed texture selection",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
     {"r_textureMode","GL_LINEAR_MIPMAP_NEAREST","Source texture sampling filter",QA_CVAR_ARCHIVE,ANY},
     {"r_fullbright","0","Source full bright lighting",QA_CVAR_LATCH|QA_CVAR_CHEAT,ANY},
     {"r_drawBuffer","GL_BACK","Source framebuffer selection",QA_CVAR_CHEAT,ANY},
@@ -127,6 +129,11 @@ static const shared_declaration declarations[]={
     {"r_fullscreen","0","Borderless desktop fullscreen",QA_CVAR_ARCHIVE,ANY},
     {"r_swapInterval","1","GL vertical synchronization",QA_CVAR_ARCHIVE,ANY},
     {"r_smp","0","Render worker selection applied by video restart",QA_CVAR_ARCHIVE,TOGGLE},
+#ifdef __APPLE__
+    {"r_inGameVideo","0","Original in-world cinematic playback",QA_CVAR_ARCHIVE,ANY},
+#else
+    {"r_inGameVideo","1","Original in-world cinematic playback",QA_CVAR_ARCHIVE,ANY},
+#endif
     {"gl_debug_linewidth","2","Shared debug line width",0,ANY},
     {"gl_debug_distfrac","0.004","World text distance culling factor",0,ANY},
     {"r_override_textures","1","Replacement image priority",QA_CVAR_ARCHIVE,ANY},
@@ -242,7 +249,8 @@ bool frontend_source_color_register(qa_frontend *f,const qa_cvars_edit *edit,qa_
     if (edit || frontend_config_store_shared_pending(f->config_store) || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration cannot replace a pending canonical owner");
     const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
-        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_overBrightBits","r_mapOverBrightBits"};
+        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_texturebits","r_ext_compressed_textures",
+        "r_overBrightBits","r_mapOverBrightBits"};
     for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
         const qa_cvar_view *row=qa_cvars_find(registry,names[i]);
         if (!row || row->console_created)
@@ -284,6 +292,30 @@ bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_err
     }
     return true;
 }
+bool frontend_source_q2_effects_register(qa_cvars *registry, const qa_command_context *command,
+    frontend_remote_q2_effects_profile profile, qa_error *error)
+{
+    if (!registry || !command || !command->owner || command->origin != QA_COMMAND_SEAT ||
+        qa_cvars_dialect(registry) != command->dialect || !qa_cvars_observer_idle(registry) ||
+        (profile != FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC && profile != FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 effects declarations require their reached Source profile and physical CLIENT heap");
+    static const struct { const char *name, *value; uint32_t flags; } rows[] = {
+        {"cl_smooth_explosions", "1", 0}, {"cl_disable_particles", "0", 0},
+        {"cl_disable_explosions", "0", 0}, {"cl_dlight_hacks", "0", 0},
+        {"cl_rerelease_effects", "1", 0}, {"cl_muzzlelight_time", "100", 0},
+        {"cl_muzzleflashes", "1", 0}, {"cl_gun", "1", 0}, {"cl_gunfov", "90", 0},
+        {"cl_railtrail_type", "0", 0}, {"cl_railtrail_time", "1.0", 0},
+        {"cl_railcore_color", "red", 0}, {"cl_railcore_width", "2", 0},
+        {"cl_railspiral_color", "blue", 0}, {"cl_railspiral_radius", "3", 0},
+        {"cl_footsteps", "1", 0}, {"hand", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}
+    };
+    for (size_t i = 0; i < sizeof(rows) / sizeof(*rows); ++i) {
+        const qa_cvar_view *existing = qa_cvars_find(registry, rows[i].name);
+        if (existing && !existing->console_created) continue;
+        if (!qa_cvars_register(registry, rows[i].name, rows[i].value, rows[i].flags, command->owner, "", error)) return false;
+    }
+    return true;
+}
 bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,qa_cvars *registry,
     const qa_command_context *command,qa_error *error)
 {
@@ -301,7 +333,10 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
         {"cl_smooth_explosions","1"},{"cl_disable_particles","0"},
         {"cl_disable_explosions","0"},{"cl_dlight_hacks","0"},
         {"cl_rerelease_effects","1"},{"cl_muzzlelight_time","100"},
-        {"cl_muzzleflashes","1"}
+        {"cl_muzzleflashes","1"},{"cl_gun","1"},{"cl_gunfov","90"},
+        {"cl_railtrail_type","0"},{"cl_railtrail_time","1.0"},
+        {"cl_railcore_color","red"},{"cl_railcore_width","2"},
+        {"cl_railspiral_color","blue"},{"cl_railspiral_radius","3"}
     };
     for (size_t i=0;i<sizeof(rows)/sizeof(*rows);++i)
         if (!qa_cvars_register(registry,rows[i].name,rows[i].value,0,command->owner,"",error)) return false;

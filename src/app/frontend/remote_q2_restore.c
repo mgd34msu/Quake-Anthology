@@ -47,8 +47,10 @@ static bool effect_actor_decode(void *context, qa_saved_actor_id saved, qa_actor
 }
 static frontend_remote_q2_effects_refs effect_refs(effects_refs *context)
 {
-    return (frontend_remote_q2_effects_refs){context, effect_image_encode, effect_image_decode,
-        effect_actor_encode, effect_actor_decode};
+    return (frontend_remote_q2_effects_refs){.context = context,
+        .image_encode = effect_image_encode, .image_decode = effect_image_decode,
+        .actor_encode = effect_actor_encode, .actor_decode = effect_actor_decode,
+        .light_encode = NULL, .light_decode = NULL};
 }
 static bool geometry_fields(qa_source_save_io *io, qa_collision_portal_checkpoint *state)
 {
@@ -128,6 +130,23 @@ static bool domain(qa_source_save_io *io, frontend_remote_q2_domain *d)
     if (io->direction == QA_SOURCE_SAVE_READ) { c->dialect = dialect; c->origin = origin; }
     return !c->script;
 }
+static bool model_receipt(qa_source_save_io *io, qa_resource **resource, qa_vfs_acquisition *receipt,
+    const frontend_remote_q2_restore_refs *refs, uint64_t saved_view, const qa_vfs *files)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint64_t pool = 0, id = 0;
+    if (!reading && *resource && !qa_application_content_resource_id(refs->content, *resource, &pool, &id)) return false;
+    if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &id) || !!pool != !!id ||
+        !opening(io, receipt, refs, saved_view, files)) return false;
+    if (reading && id) {
+        *resource = (qa_resource *)qa_application_content_resource(refs->content, pool, id);
+        if (!*resource) return false;
+        qa_resource_retain(*resource);
+    }
+    if (!id) return !*resource && !receipt->resource_id && !receipt->mount && !receipt->path &&
+        !receipt->lookup_path && !receipt->link_source && !receipt->link_target && !receipt->opening_present;
+    return *resource && receipt->resource_id == qa_resource_id(*resource);
+}
 static bool retained(frontend_remote_q2 *row, const frontend_remote_q2_restore_refs *refs, saved_q2 *saved, qa_error *error)
 {
     bool map = row->map != NULL;
@@ -151,7 +170,8 @@ static bool retained(frontend_remote_q2 *row, const frontend_remote_q2_restore_r
         if (!m->resource || !m->path || !*m->path || (row->importing && (!m->saved_model || !m->saved_scene)) ||
             qa_resource_pool_find(qa_vfs_resources(row->content.mounts), qa_resource_id(m->resource)) != m->resource ||
             m->opening.resource_id != qa_resource_id(m->resource) || !m->opening.path || strcmp(m->path, m->opening.path) ||
-            !qa_vfs_acquisition_retained(row->content.mounts, &m->opening, error)) return false;
+            !qa_vfs_acquisition_retained(row->content.mounts, &m->opening, error) ||
+            !remote_q2_model_scope_current(row, m, error)) return false;
     for (remote_q2_missing_model *missing = row->missing_models; missing; missing = missing->next) {
         if (!missing->path || !*missing->path || !saved->selected) return false;
         char *normalized = qa_archive_normalize_path(missing->path, error);
@@ -180,14 +200,15 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 9;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 13;
     bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 9 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 13 || !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
         !qa_source_save_bool(io, &saved->ready) || !qa_source_save_bool(io, &saved->retired) ||
+        !qa_source_save_bool(io, &row->retiring) || (row->retiring && !saved->bound) ||
         !qa_source_save_bool(io, &saved->images) || !qa_source_save_bool(io, &saved->materials) ||
         !qa_source_save_bool(io, &saved->fonts) || !qa_source_save_bool(io, &saved->sounds) ||
         !qa_source_save_bool(io, &saved->media) || (saved->media && (!saved->images || !saved->materials)) ||
@@ -220,7 +241,8 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         !qa_source_save_bool(io, &row->fog_received) || !qa_source_save_u16(io, &row->fog_duration_ms) ||
         !qa_source_save_f64(io, &row->fog_started_ms) || !isfinite(row->fog_started_ms) ||
         !fog_fields(io, &row->fog_start) || !fog_fields(io, &row->fog_end) ||
-        !qa_q2_save_serverdata(io, &row->data) || !qa_q2_save_frame(io, &row->frame) || !qa_q2_save_frame(io, &row->previous) ||
+        !qa_q2_save_serverdata(io, &row->data) || (reading && !remote_q2_layout_adopt(row, &row->data, io->error)) ||
+        !qa_q2_save_frame(io, &row->frame) || !qa_q2_save_frame(io, &row->previous) ||
         !qa_source_save_u64(io, &saved->map_pool) || !qa_source_save_u64(io, &saved->map_resource) ||
         !opening(io, &row->map_opening, refs, saved->mounts, row->content.mounts) || !qa_source_save_u64(io, &row->saved_world) ||
         !qa_source_save_u64(io, &row->saved_classic) || !qa_source_save_u64(io, &row->saved_white) ||
@@ -281,6 +303,8 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         if (!reading) { if (model == UINT64_MAX) return false; ++model; }
         if (!frontend_save_text(io, &m->path) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
             !opening(io, &m->opening, refs, saved->mounts, row->content.mounts) ||
+            !model_receipt(io, &m->scope, &m->scope_opening, refs, saved->mounts, row->content.mounts) ||
+            !model_receipt(io, &m->palette, &m->palette_opening, refs, saved->mounts, row->content.mounts) ||
             !qa_source_save_u64(io, &model) || !qa_source_save_u64(io, &scene)) return false;
         if (reading) {
             m->saved_model = model; m->saved_scene = scene;
@@ -417,7 +441,7 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
     row->bound = saved.bound; row->selected = saved.selected; row->retired = saved.retired;
     row->restore_media_ready = saved.ready;
     if (ok && saved.sounds) ok = qa_audio_bank_create(row->content.mounts, &row->sounds, error);
-    if (ok) ok = (!(saved.ready && row->layout.max_models == 8192) || saved.footsteps.size) &&
+    if (ok) ok = (!(saved.ready && remote_q2_rerelease_presentation(row)) || saved.footsteps.size) &&
         remote_q2_footsteps_restore(row, refs->content, (qa_bytes){saved.footsteps.data, saved.footsteps.size}, error);
     if (ok && saved.images) { row->images = qa_scene_resources_create_detached(row->content.mounts, error); ok = row->images != NULL; }
     if (ok && saved.materials) { row->materials = qa_material_library_create_detached(row->images, error); ok = row->materials != NULL; }
@@ -429,9 +453,12 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
         qa_download_request request = {.path = row->download_path, .maximum_bytes = INT32_MAX, .stage_nonce = row->download_logical_nonce};
         qa_download_view view = {.path = row->download_path, .received = row->download_bytes, .limit = INT32_MAX,
             .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = row->download_logical_nonce};
-        ok = row->download_root && refs->downloads.resource && refs->downloads.stage &&
-            refs->downloads.resource(refs->downloads.context, &request, &view, true, error) &&
-            refs->downloads.stage(refs->downloads.context, &request, &view,
+        qa_download_checkpoint_refs downloads = refs->downloads;
+        if (!downloads.context && !downloads.resource && !downloads.stage && !downloads.artifact)
+            ok = frontend_remote_q2_download_refs(row, &downloads, error);
+        ok = ok && row->download_root && downloads.resource && downloads.stage &&
+            downloads.resource(downloads.context, &request, &view, true, error) &&
+            downloads.stage(downloads.context, &request, &view,
                 (qa_bytes){saved.stage.data, saved.stage.size}, &row->download_stage, &row->download_nonce, error) &&
             row->download_stage && row->download_nonce;
     }
@@ -485,6 +512,8 @@ bool frontend_remote_q2_roots_attach_restored(frontend_remote_q2 *row,
         if (!frontend_scene_root_decode(refs->roots, m->saved_scene, &scene, error)) return false;
         m->scene = scene; frontend_scene_root_adopt(refs->roots, m->saved_scene);
     }
+    for (remote_q2_model *m = row->models; m; m = m->next)
+        if (!remote_q2_model_scope_current(row, m, error)) return false;
     return true;
 }
 bool frontend_remote_q2_restore_finish(frontend_remote_q2 *row,
@@ -493,7 +522,7 @@ bool frontend_remote_q2_restore_finish(frontend_remote_q2 *row,
     if (!row || !row->importing || !refs || !refs->content || !refs->models || !refs->roots || !refs->scene || row->busy) return false;
     if (row->saved_world && !row->world) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 saved world has not been adopted by its actual root owner");
     for (remote_q2_model *m = row->models; m; m = m->next) {
-        if (!m->scene || !m->source || !m->source_lease)
+        if (!m->scene || !m->source || !m->source_lease || !remote_q2_model_scope_current(row, m, error))
             return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 saved model has not retained its actual parsed/root holder");
     }
     for (remote_q2_picture *p = row->pictures; p; p = p->next) {
@@ -518,7 +547,8 @@ bool frontend_remote_q2_restore_finish(frontend_remote_q2 *row,
     }
     if (row->restore_media_ready && !row->effects)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 ready media has no retained actual effects owner");
-    if (row->bound && !row->retired && (!row->options.current(row->options.context, &row->options.domain, error) ||
+    if (row->retiring && !remote_q2_retirement_current(row, error)) return false;
+    if (row->bound && !row->retired && !row->retiring && (!row->options.current(row->options.context, &row->options.domain, error) ||
         qa_network_epoch(row->options.domain.runtime, row->options.domain.client) != row->options.domain.epoch)) return false;
     row->media_ready = row->restore_media_ready; row->restore_media_ready = false;
     qa_buffer_free(&row->saved_effects);

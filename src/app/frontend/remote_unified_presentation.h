@@ -11,6 +11,7 @@
 #include "remote_unified_q2.h"
 #include "remote_unified_q3.h"
 #include "remote_unified_components.h"
+#include "unified_q3_runtime_factory.h"
 
 typedef struct frontend_unified_presentation_children {
     frontend_unified_media *media,*pending_media;
@@ -40,6 +41,21 @@ frontend_unified_q3_sources *frontend_remote_unified_presentation_q3_sources(con
 size_t frontend_remote_unified_presentation_q3_client_count(const frontend_remote_unified *);
 frontend_unified_q3_client *frontend_remote_unified_presentation_q3_client(
     const frontend_remote_unified *,size_t);
+frontend_unified_q3_runtime_factory *frontend_remote_unified_presentation_q3_factory(
+    const frontend_remote_unified *,size_t);
+typedef struct frontend_unified_presentation_q3_row {
+    frontend_unified_q3_client *client;
+    frontend_unified_q3_runtime_factory *factory;
+    frontend_unified_media *media;
+    frontend_unified_q3_source_view source;
+    size_t bank;
+    uint64_t receiver,audio_owner;
+    bool retired;
+} frontend_unified_presentation_q3_row;
+bool frontend_remote_unified_presentation_q3_row_read(const frontend_remote_unified *,size_t,
+    frontend_unified_presentation_q3_row *,qa_error *);
+bool frontend_remote_unified_presentation_source_command_current(const frontend_remote_unified *,
+    const char *instance,uint64_t publication,uint64_t map_revision,const qa_command_context *,qa_error *);
 /* Transfer the actual detached media owners after the replica recipe prefix
  * imports. Shared dictionaries and family continuations still finish later. */
 bool frontend_remote_unified_presentation_restore_media(frontend_remote_unified *,
@@ -53,4 +69,6 @@ bool frontend_remote_unified_presentation_trace(const frontend_remote_unified *,
     const qa_trace_query *,qa_trace_result *,qa_error *);
 bool frontend_remote_unified_presentation_body(const frontend_remote_unified *,
     qa_actor_id,qa_body_state *,qa_error *);
+bool frontend_remote_unified_presentation_point_contents(const frontend_remote_unified *,
+    const qa_point_query *,qa_point_contents *,qa_error *);
 #endif

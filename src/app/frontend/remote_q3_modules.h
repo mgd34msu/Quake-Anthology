@@ -7,6 +7,7 @@
 #include "keys.h"
 #include "system_cinematic.h"
 #include "qa/application_native_q3_client_modules.h"
+#include "qa/q3_cinematic_handles.h"
 
 typedef struct frontend_remote_q3_modules frontend_remote_q3_modules;
 typedef struct frontend_remote_q3_module_media {
@@ -33,6 +34,7 @@ typedef struct frontend_remote_q3_module_topology {
     qa_q3_presentation *presentation;
     qa_q3_presentation_assets *assets;
     qa_media_library *movies;
+    qa_q3_cinematic_source *cinematics;
     qa_vfs *mounts;
     frontend_key_profile *keys;
     frontend_equipment_source *equipment;
@@ -55,7 +57,16 @@ size_t frontend_remote_q3_modules_role_count(const frontend_remote_q3_modules *)
 bool frontend_remote_q3_modules_role_read(const frontend_remote_q3_modules *, size_t,
     frontend_remote_q3_module_topology *, qa_error *);
 bool frontend_remote_q3_modules_role_current(const frontend_remote_q3_module_topology *);
+/* Exact numeric CIN namespace, also after ENGINE import but before role music
+ * continuation. This proves no completed ownership of the music bus. */
+bool frontend_remote_q3_modules_cinematics_role_read(const frontend_remote_q3_modules *, size_t,
+    frontend_remote_q3_module_topology *, qa_error *);
+bool frontend_remote_q3_modules_cinematics_role_current(const frontend_remote_q3_module_topology *);
 bool frontend_remote_q3_modules_capture_returned(const frontend_remote_q3_modules *, qa_error *);
+/* After the actual movie parents import, before global numeric handles and
+ * Q3MS role media: binds actual saved shared roles without Init. Saved local
+ * movie ownership stays local. */
+bool frontend_remote_q3_modules_cinematics_bind(frontend_remote_q3_modules *, qa_error *);
 bool frontend_remote_q3_modules_cinematic_source_decode(frontend_remote_q3_modules *,
     const frontend_system_cinematic_identity *, frontend_system_cinematic_source *, qa_error *);
 bool frontend_remote_q3_modules_idle(const frontend_remote_q3_modules *);

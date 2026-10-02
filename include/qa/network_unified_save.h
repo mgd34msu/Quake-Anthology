@@ -27,6 +27,9 @@ void qa_unified_session_source_retire(qa_unified_session *);
 /* A detached candidate or the exact retired lower owner has no physical
  * Source callback custody. This permits quiet bridge disposal while idle. */
 bool qa_unified_session_source_retired(const qa_unified_session *);
+/* The genuine SERVER Source close is retained before its disconnect callback
+ * runs. GAME-drop cleanup may persist only against this exact continuation. */
+bool qa_unified_session_source_close_pending(const qa_unified_session *);
 uint32_t qa_unified_session_required(const qa_unified_session *);
 /* Qualifies one genuinely queued control against the retained unacked bytes
  * or the actual cumulative acknowledgement. It never queues or sends. */

@@ -20,8 +20,9 @@ static bool address(qa_source_save_io *io, qa_net_address *value)
     }
     char text[256]; return ok && (qa_net_address_format(value, text, sizeof(text), io->error) || invalid(io, "Saved Q2 bootstrap endpoint is invalid"));
 }
-static bool connect(qa_source_save_io *io, qa_q2_connect_request *value, bool optional)
+bool qa_q2_save_connect_request(qa_source_save_io *io, qa_q2_connect_request *value, bool optional)
 {
+    if (!io || !value) return false;
     bool selected = qa_q2_protocol_version(value->protocol) != 0;
     if (!qa_source_save_bool(io, &selected)) return false;
     if (selected) {
@@ -73,7 +74,7 @@ static bool handshake(qa_source_save_io *io, qa_q2_handshake *value)
     if (io->direction == QA_SOURCE_SAVE_READ) value->phase = (qa_q2_handshake_phase)phase;
     for (size_t i = 0; i < value->preference_count; ++i)
         if (!qa_q2_save_protocol(io, value->preferences + i)) return false;
-    if (!qa_source_save_u16(io, &value->qport) || !connect(io, &value->request,
+    if (!qa_source_save_u16(io, &value->qport) || !qa_q2_save_connect_request(io, &value->request,
         phase == QA_Q2_CHALLENGING || phase == QA_Q2_REFUSED) ||
         !qa_source_save_u64(io, &value->last_sent_ns) || !qa_source_save_u64(io, &value->retry_ns) ||
         !qa_source_save_bool(io, &value->sent) ||
@@ -108,7 +109,7 @@ static bool fields(qa_source_save_io *io, qa_network_q2_bootstrap *owner,
             return invalid(io, "Q2 candidate challenge policy differs");
         for (size_t i = 0; i < owner->state.server.pending_count; ++i) {
             qa_q2_pending_connect *pending = owner->state.server.pending + i;
-            if (!address(io, &pending->from) || !connect(io, &pending->request, false) ||
+            if (!address(io, &pending->from) || !qa_q2_save_connect_request(io, &pending->request, false) ||
                 !qa_source_save_u64(io, &pending->received_ns)) return false;
             bool offered = false;
             for (size_t j = 0; j < owner->protocol_count; ++j)

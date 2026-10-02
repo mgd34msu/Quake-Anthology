@@ -183,10 +183,9 @@ static bool selected(void *context, qa_actor_id actor)
 {
     application_q3_weapons_services *s = context; q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, NULL)) return false;
-    qa_application *app = application(s); qa_equipment_state slot;
+    qa_application *app = application(s);
     return application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == s->role->engine->provider &&
-        (!qa_equipment_read(app->equipment, actor, &slot) ||
-            (!slot.slot_active && !slot.slot_holstering && !slot.slot_lowering));
+        (!app->equipment || qa_equipment_primary_selected(app->equipment, actor));
 }
 static size_t request_index(const application_q3_weapons_services *s, qa_actor_id actor)
 {
@@ -402,7 +401,8 @@ bool application_q3_weapons_services_equipment_animation(void *context, qa_actor
     if (!app->equipment || !qa_equipment_read(app->equipment, actor, &equipment) ||
         equipment.selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
         equipment.sources.grapple != provider->owner ||
-        !(equipment.slot_active || equipment.slot_lowering)) return true;
+        !(equipment.slot_active || equipment.slot_lowering) ||
+        !qa_equipment_weapon_presented(app->equipment, actor, provider->owner)) return true;
     if (!application_equipment_runtime_owner_current(app->equipment_runtime, provider->owner))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Equipment animation retired its retained source");
     struct application_q3_guest *engine = q3g_engine(physical);
@@ -441,9 +441,7 @@ bool application_q3_weapons_services_selected_fired(void *context, qa_actor_id a
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!physical || physical->kind != APPLICATION_PROVIDER_QVM) return true;
     if (application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider) return true;
-    qa_equipment_state equipment;
-    if (app->equipment && qa_equipment_read(app->equipment, actor, &equipment) &&
-        (equipment.slot_active || equipment.slot_holstering || equipment.slot_lowering)) return true;
+    if (app->equipment && !qa_equipment_primary_selected(app->equipment, actor)) return true;
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
@@ -636,9 +634,7 @@ bool application_q3_weapons_services_q2_input(void *context, qa_actor_id actor,
         if (!qa_q2_weapon_turn_read(provider->state.q2, actor, &turn, error)) return false;
         pressed = turn.attack;
     }
-    qa_equipment_state equipment;
-    bool primary = !app->equipment || !qa_equipment_read(app->equipment, actor, &equipment) ||
-        !(equipment.slot_active || equipment.slot_holstering || equipment.slot_lowering);
+    bool primary = !app->equipment || qa_equipment_primary_selected(app->equipment, actor);
     if (!q3_weapons_current(role->weapons, &source) ||
         application_world_provider(app, QA_ROLE_ENTITIES, "") != physical ||
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider)

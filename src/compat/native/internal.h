@@ -4,6 +4,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/native.h"
+#include "qa/native_region_scope.h"
 #include "qa/native_observe.h"
 #include "qa/native_process.h"
 #include "qa/native_process_resources.h"
@@ -147,10 +148,14 @@ struct qa_native_instance {
     bool process_host_pending;
     native_region_slot *regions;
     size_t region_count;
+    qa_native_region_scope *region_scopes;
     qa_native_entry_observer *entry_observers;
     qa_native_write_observer *write_observers;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
+    const qa_native_write_event *active_write_event;
+    struct qa_native_write_scope *write_scope;
+    struct qa_native_call_scope *call_scope;
     const qa_native_region_event *active_region_event;
     uint32_t region_callback_depth, region_call_depth;
     qa_native_address region_invocation_entry;
@@ -162,6 +167,13 @@ struct qa_native_instance {
     bool checkpointing, destroying, unloading, pending_shutdown, pending_restart,
         pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed, process_observing;
     qa_error failure;
+};
+
+struct qa_native_write_scope {
+    struct qa_native_write_scope *previous;
+    qa_native_instance *instance;
+    const qa_native_write_event *event;
+    uint32_t depth, invocation_depth;
 };
 
 struct qa_native_entry_observer {
@@ -342,6 +354,7 @@ bool native_runner_checkpoint_restore(qa_native_instance *instance,
                                       qa_native_restore_part part, qa_error *error);
 bool native_runner_region_event(qa_native_instance *instance, const qa_native_region_event *event,
                                 qa_native_region_decision *decision, qa_error *error);
+bool native_region_scopes_instruction(qa_native_instance *, uint64_t, bool *, qa_error *);
 bool native_runner_observer_entry_add(qa_native_entry_observer *binding, qa_error *error);
 bool native_runner_observer_entry_remove(qa_native_entry_observer *binding, qa_error *error);
 bool native_runner_observer_original(qa_native_entry_observer *binding,

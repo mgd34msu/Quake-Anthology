@@ -569,7 +569,7 @@ static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipie
     case QA_Q3_ITEM_ARMOR:
         if(player.persistent==QA_Q3_P_SCOUT) break;
         if(player.persistent!=QA_Q3_P_GUARD) maximum*=2;
-        *utility=fmaxf(0,fminf(maximum,combat.armor.regular.points+(float)item->quantity)-combat.armor.regular.points);
+        *utility=fmaxf(0,fminf(maximum,(float)combat.armor.regular.points+(float)item->quantity)-(float)combat.armor.regular.points);
         *available=combat.armor.regular.points<maximum;break;
     case QA_Q3_ITEM_HOLDABLE: *available=player.holdable==QA_Q3_H_NONE;*utility=*available?1:0;break;
     case QA_Q3_ITEM_POWERUP: *available=true;*utility=fmaxf(0,(float)quantity);break;
@@ -815,7 +815,7 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
         qa_regular_armor armor = {
             .kind = QA_ARMOR_Q3,
             .protection.q3_protection = 0.66f,
-            .points = fminf(maximum, combat.armor.regular.points + (float)item->quantity),
+            .points = fminf(maximum, (float)combat.armor.regular.points + (float)item->quantity),
             .item = game->item_ids[spawn.item_index]};
         if (!qa_combat_set_regular_armor(game->options.services.combat, offer->recipient, &armor,
                                          error))

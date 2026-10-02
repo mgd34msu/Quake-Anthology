@@ -60,12 +60,12 @@ static bool read_at(mod_actor_channel *c, uint32_t count_address, uint32_t selec
         selected=d->selection.values[i].selected;
     }
     if ((d->channel==QA_PROTECTION_REGULAR || selected!=QA_POWER_NONE) &&
-        (!read_scalar(o,count_address,d->count.encoding,&count,e) || count<0 || count>FLT_MAX))
+        (!read_scalar(o,count_address,d->count.encoding,&count,e) || count<0))
         return q3mod_fail(e,QA_ERROR_FORMAT,"Original protection count is invalid");
     if (d->channel==QA_PROTECTION_REGULAR)
-        out->regular=(qa_regular_armor){.kind=QA_ARMOR_SOURCE,.points=(float)count,.item=selected};
+        out->regular=(qa_regular_armor){.kind=QA_ARMOR_SOURCE,.points=count,.item=selected};
     else out->powered=(qa_powered_armor){.kind=(qa_power_kind)selected,
-        .cells=selected==QA_POWER_NONE?0:(float)count,
+        .cells=selected==QA_POWER_NONE?0:count,
         .source_owner=selected==QA_POWER_NONE?0:o->owner,
         .source_kind=selected==QA_POWER_NONE?QA_POWER_SOURCE_Q2:QA_POWER_SOURCE_GENERIC};
     return true;

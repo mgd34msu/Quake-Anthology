@@ -1,5 +1,6 @@
 #include "material_inventory.h"
 #include "component_scene.h"
+#include "equipment_media.h"
 #include "capture.h"
 #include "visual_restore.h"
 #include "native_q3_client.h"
@@ -21,7 +22,7 @@
 
 typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3,
     MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2, MATERIAL_RENDERER,MATERIAL_RENDERER_WORLD,
-    MATERIAL_UNIFIED,MATERIAL_COMPONENT } material_owner_kind;
+    MATERIAL_UNIFIED,MATERIAL_COMPONENT,MATERIAL_SOURCE_SLOT } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -79,10 +80,19 @@ static bool provider_at(const qa_frontend *f,size_t ordinal,qa_q3_presentation_p
         *provider=(qa_q3_presentation_provider){remote.mounts,remote.images,remote.materials,QA_SCENE_Q3}; return true;
     }
     ordinal-=remote_count;
-    frontend_network_initial_graph_view initial; frontend_remote_q3_initial_view owner;
-    if(ordinal || !frontend_network_initial_graph_read(f,&initial,&error) || !initial.present ||
-        !initial.parent || !frontend_remote_q3_initial_read(initial.parent,&owner,&error)) return false;
-    *provider=(qa_q3_presentation_provider){owner.mounts,owner.images,owner.materials,QA_SCENE_Q3}; return true;
+    frontend_network_initial_graph_view initial;
+    if(!frontend_network_initial_graph_read(f,&initial,&error)) return false;
+    if(initial.present) {
+        if(!ordinal) {
+            frontend_remote_q3_initial_view owner;
+            if(!initial.parent || !frontend_remote_q3_initial_read(initial.parent,&owner,&error)) return false;
+            *provider=(qa_q3_presentation_provider){owner.mounts,owner.images,owner.materials,QA_SCENE_Q3}; return true;
+        }
+        --ordinal;
+    }
+    frontend_component_scene_view component;
+    if(!frontend_component_scene_metadata_read(f,ordinal,&component,&error)) return false;
+    *provider=(qa_q3_presentation_provider){component.files,component.images,component.materials,QA_SCENE_Q3}; return true;
 }
 bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presentation_provider *provider,
     uint64_t *key,qa_error *error)
@@ -96,6 +106,9 @@ bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presenta
     if(remote>SIZE_MAX-count || !frontend_network_initial_graph_read(f,&initial,error)) return false;
     count+=remote;
     if(initial.present) { if(count==SIZE_MAX) return false; ++count; }
+    size_t components=frontend_component_scene_count(f);
+    if(components>SIZE_MAX-count) return false;
+    count+=components;
     for (size_t i=0;i<count;++i) {
         qa_q3_presentation_provider actual;
         if (provider_at(f,i,&actual) && actual.mounts==provider->mounts && actual.images==provider->images &&
@@ -153,9 +166,9 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     size_t q1=frontend_remote_q1_count(f),q2=frontend_remote_q2_count(f);
     if(q1>SIZE_MAX-capacity || q2>SIZE_MAX-capacity-q1) return false;
     capacity+=q1+q2;
-    frontend_renderer_materials_view retained; bool has_retained=false;
-    if(!frontend_renderer_materials_read(f,&retained,&has_retained,error)) return false;
-    if(has_retained) { if(capacity==SIZE_MAX) return false; ++capacity; }
+    size_t retained_count=0;
+    if(!frontend_renderer_materials_count(f,&retained_count,error) || retained_count>SIZE_MAX-capacity) return false;
+    capacity+=retained_count;
     frontend_renderer_worlds_view retained_world; bool has_world=false;
     if(!frontend_renderer_worlds_read(f,&retained_world,&has_world,error)) return false;
     if(has_world && retained_world.private_heaps) { if(capacity==SIZE_MAX) return false; ++capacity; }
@@ -171,6 +184,9 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     size_t components=frontend_component_scene_count(f);
     if(components>SIZE_MAX-capacity) return false;
     capacity+=components;
+    size_t equipment=frontend_equipment_media_count(f);
+    if(equipment>SIZE_MAX-capacity) return false;
+    capacity+=equipment;
     if(capacity>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote material inventory exceeds address space");
     material_owner *owners=calloc(capacity,sizeof(*owners));
@@ -221,8 +237,12 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
         if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
             MATERIAL_INITIAL,0,owner.attempt.source.receiver.receiver,owner.identity,owner.descriptor->content,QA_SCENE_Q3,error);
     }
-    if(ok && has_retained) ok=append(owners,count,graph,retained.library,retained.images,retained.mounts,
-        MATERIAL_RENDERER,0,0,0,NULL,QA_SCENE_Q3,error);
+    for(size_t i=0;ok && i<retained_count;++i) {
+        frontend_renderer_materials_view retained;
+        ok=frontend_renderer_materials_read_at(f,i,&retained,error) &&
+            append(owners,count,graph,retained.library,retained.images,retained.mounts,
+                MATERIAL_RENDERER,i,0,0,NULL,QA_SCENE_Q3,error);
+    }
     if(ok && has_world && retained_world.private_heaps) ok=append(owners,count,graph,
         retained_world.materials,retained_world.images,retained_world.files,MATERIAL_RENDERER_WORLD,0,0,0,NULL,QA_SCENE_Q3,error);
     for(size_t i=0;ok && i<unified_count;++i) {
@@ -243,10 +263,21 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
             append(owners,count,graph,row.materials,row.images,row.files,MATERIAL_COMPONENT,
                 i,row.receiver,row.identity,row.descriptor?row.descriptor->content:NULL,QA_SCENE_Q3,error);
     }
+    for(size_t i=0;ok && i<equipment;++i) {
+        frontend_equipment_media_view row;
+        ok=frontend_equipment_media_at(f,i,&row);
+        if(ok && row.source_slot) ok=append(owners,count,graph,row.owner.materials,row.owner.images,row.owner.mounts,
+            MATERIAL_SOURCE_SLOT,i,row.provider,row.source_generation,NULL,
+            row.family==QA_GAME_Q1?QA_SCENE_Q1:row.family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3,error);
+    }
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);
-        else ok=frontend_capture_library_at(f->capture,i)==owners[i].library &&
-            qa_material_library_order_owner(owners[i].library)==f->order && qa_material_library_order_ready(owners[i].library);
+        else {
+            size_t matches=0;
+            for(size_t j=0;j<*count;++j) if(frontend_capture_library_at(f->capture,j)==owners[i].library) ++matches;
+            ok=matches==1 && qa_material_library_order_owner(owners[i].library)==f->order &&
+                qa_material_library_order_ready(owners[i].library);
+        }
     }
     if (ok && !restoring) ok=frontend_capture_library_at(f->capture,*count)==NULL;
     if (!ok) {

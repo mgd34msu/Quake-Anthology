@@ -8,9 +8,14 @@
  * does not replace the role executors, host handles or shared services. */
 bool application_guest_q3_state_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_guest_q3_state_restore(application_provider *, qa_bytes, qa_error *);
-/* Complete QVM provider schema qa.q3.qvm/1, backend qvm. Native modules require
- * their genuine private-data relocation owner and are not admitted here. */
-bool application_guest_q3_save_capture(application_provider *, qa_buffer *, qa_error *);
+struct qa_application_native_resource_refs;
+bool application_guest_q3_save_capture(application_provider *,
+    const struct qa_application_native_resource_refs *, qa_buffer *, qa_error *);
+bool application_guest_q3_save_matches(application_provider *, qa_bytes,
+    const struct qa_application_native_resource_refs *, qa_error *);
+/* Actual retained capability recipe and process capsule of a decoded role. */
+bool application_guest_q3_native_restore_recipe(q3g_role *,
+    const qa_native_process_resources **, qa_bytes *, qa_bytes *, qa_error *);
 bool application_guest_q3_save_restore(application_provider *, qa_bytes, qa_error *);
 bool application_guest_q3_save_prepare(application_provider *, qa_world *, const qa_product *,
     const qa_launch_choices *, const qa_save_record *, qa_error *);

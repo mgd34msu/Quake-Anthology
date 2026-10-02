@@ -36,6 +36,7 @@ bool qa_unified_session_fail(qa_error *, qa_status, const char *);
 bool qa_unified_session_queue_control(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_command(void *, const qa_network_command *, qa_error *);
 bool qa_unified_session_queue_inputs(qa_unified_session *, qa_error *);
+bool qa_unified_session_receive_resume(qa_unified_session *, qa_error *);
 void qa_unified_session_ack(qa_unified_session *, int64_t);
 bool qa_unified_session_player_read(const qa_unified_session *, qa_unified_session_player *, qa_error *);
 bool qa_unified_session_document_epoch(const qa_unified_document *, uint32_t *, qa_error *);

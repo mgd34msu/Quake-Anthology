@@ -14,6 +14,73 @@ static bool actual_ops(const qa_network_peer_ops *ops)
         ops->receive_pending == actual.receive_pending;
 }
 uint32_t qa_unified_session_required(const qa_unified_session *s) { return s ? s->required : 0; }
+bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_network_runtime *runtime,
+    const qa_net_connect *request, const qa_unified_document *offer, qa_error *e)
+{
+    const qa_net_client *client = s && runtime ? qa_net_connections_get(qa_network_connections(runtime), s->id) : NULL;
+    const qa_network_peer *installed = s && runtime && s->id.slot < runtime->options.clients ?
+        runtime->peers + s->id.slot : NULL;
+    if (!s || s->runtime != runtime || !runtime || qa_network_callbacks_idle(runtime) || !s->bound_source ||
+        s->entered || s->closing || s->disconnected || s->timeout_pending || !request || !client ||
+        !qa_unified_session_peer(installed) || installed->state != s ||
+        request->attachment != client->attachment || request->attachment != QA_NET_REMOTE ||
+        request->protocol.kind != QA_NET_UNIFIED_1 || request->protocol.flags || request->protocol.revision ||
+        request->seats != client->seats || request->seat_count != 1 || client->seat_count != 1 ||
+        !qa_net_address_equal(&request->endpoint, &client->endpoint, true) || !qa_unified_session_kind(offer, "offer"))
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission lacks its actual canonical peer and offer");
+    if (!qa_unified_session_qualified(s, client, e)) return false;
+    uint32_t epoch;
+    if (!qa_unified_session_document_epoch(offer, &epoch, e)) return false;
+    if (s->server) {
+        if (s->processing || s->epoch == UINT32_MAX || epoch != s->epoch + 1)
+            return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Server restart admission changes its prepared next offer epoch");
+        for (const qa_unified_held *held = s->held; held; held = held->next)
+            if (held->source_finished)
+                return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Server restart admission retains a completed prior reply batch");
+    } else {
+        const qa_unified_held *held = s->held;
+        if (!s->processing || !held || held->source_finished || held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
+            !qa_unified_session_kind(held->document, "offer") || epoch <= s->epoch)
+            return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Client restart admission has no actual unfinished received offer");
+        qa_bytes actual = qa_json_source(qa_unified_document_json(held->document), qa_unified_document_root(held->document));
+        qa_bytes proposed = qa_json_source(qa_unified_document_json(offer), qa_unified_document_root(offer));
+        if (actual.size != proposed.size || (actual.size && memcmp(actual.data, proposed.data, actual.size)))
+            return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Client restart admission changes its authentic received offer bytes");
+    }
+    const qa_json_document *json = qa_unified_document_json(offer);
+    qa_json_id composition = qa_json_get(json, qa_unified_session_value(offer), "composition");
+    qa_unified_composition canonical = {0};
+    bool okay = qa_unified_composition_create(qa_json_source(json,
+        qa_json_get(json, composition, "composition")), &canonical, e);
+    bool same = okay && qa_sha256_equal(&request->composition, &canonical.digest);
+    qa_unified_composition_free(&canonical);
+    if (!okay) return false;
+    return same || qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission changes the actual offered composition");
+}
+bool qa_unified_session_client_disconnect_pending(const qa_unified_session *s,
+    qa_network_runtime *runtime, qa_net_client_id id, uint32_t epoch,
+    const qa_unified_document *disconnect, const qa_unified_document *offer, qa_error *e)
+{
+    qa_unified_session *installed = NULL;
+    const qa_unified_held *held = s ? s->held : NULL;
+    if (!s || s->server || s->runtime != runtime || !s->bound_source || !s->processing ||
+        s->entered || s->closing || s->disconnected || !s->timeout_pending || epoch != s->epoch ||
+        !qa_net_client_id_equal(id, s->id) || !s->timeout_delivery || s->timeout_delivery->source_finished ||
+        s->timeout_delivery->document != disconnect || !qa_unified_session_kind(disconnect, "disconnect") ||
+        !held || held->source_finished || held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
+        !qa_unified_session_kind(held->document, "offer") || !qa_unified_session_kind(offer, "offer") ||
+        !qa_unified_session_find(runtime, id, &installed, e) || installed != s)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "CLIENT retirement lacks its actual unfinished offer and local disconnect callback");
+    const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
+    if (!qa_unified_session_qualified(s, client, e)) return false;
+    uint32_t offered;
+    if (!qa_unified_session_document_epoch(offer, &offered, e)) return false;
+    qa_bytes actual = qa_json_source(qa_unified_document_json(held->document), qa_unified_document_root(held->document));
+    qa_bytes retained = qa_json_source(qa_unified_document_json(offer), qa_unified_document_root(offer));
+    return (offered > epoch && actual.size == retained.size &&
+        (!actual.size || !memcmp(actual.data, retained.data, actual.size))) ||
+        qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "CLIENT retirement changes its authentic newer received offer");
+}
 bool qa_unified_session_control_receipt(const qa_unified_session *s, uint32_t sequence,
     const qa_unified_document *document, qa_error *e)
 {

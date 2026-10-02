@@ -1,4 +1,5 @@
 #include "session_internal.h"
+#include "channel_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,17 @@ bool qa_unified_session_disconnected(const qa_unified_session *s)
     return !s || s->disconnected || (s->closing &&
         (qa_unified_channel_acknowledged(s->channel) >= s->required ||
          (s->now_ns >= s->closing_ns && s->now_ns - s->closing_ns > UINT64_C(1000000000))));
+}
+bool qa_unified_session_retiring(const qa_unified_session *s)
+{
+    return qa_unified_session_idle(s) && (s->timeout_pending || s->closing || s->disconnected);
+}
+bool qa_unified_session_active(const qa_unified_session *s)
+{
+    if (!qa_unified_session_idle(s) || !s->bound_source || !s->admitted ||
+        s->timeout_pending || s->closing || s->disconnected) return false;
+    const qa_net_client *client = qa_net_connections_get(qa_network_connections(s->runtime), s->id);
+    return client && client->phase == QA_NET_ACTIVE;
 }
 uint32_t qa_unified_session_epoch(const qa_unified_session *s) { return s ? s->epoch : 0; }
 int64_t qa_unified_session_acknowledged(const qa_unified_session *s) { return s ? s->acknowledged : -1; }
@@ -42,11 +54,22 @@ static void close_peer(void *state)
     qa_unified_session_release(s);
 }
 
+static bool admit_delivery(void *context, const qa_unified_delivery *delivery)
+{
+    const qa_unified_session *s = context;
+    if (s->held_count >= (size_t)s->limits.reliable_window_messages + 1 ||
+        delivery->payload.size > s->limits.queued_reliable_bytes + s->limits.message_bytes - s->held_bytes)
+        return false;
+    if (delivery->kind == QA_UNIFIED_FRAME)
+        for (const qa_unified_held *held = s->held; held; held = held->next)
+            if (held->kind != QA_UNIFIED_CONTROL_DOCUMENT) return false;
+    return true;
+}
+
 static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa_error *e)
 {
     qa_unified_session *s = context;
-    if (s->held_count >= (size_t)s->limits.reliable_window_messages + 1 ||
-        delivery->payload.size > s->limits.queued_reliable_bytes + s->limits.message_bytes - s->held_bytes)
+    if (!admit_delivery(s, delivery))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Production document holding capacity exceeded");
     qa_unified_held *held = calloc(1, sizeof(*held));
     if (!held) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining production document delivery");
@@ -67,6 +90,11 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     return true;
 }
 
+bool qa_unified_session_receive_resume(qa_unified_session *s, qa_error *e)
+{
+    return qa_unified_channel_resume(s->channel, admit_delivery, hold_delivery, s, e);
+}
+
 static bool receive_peer(void *state, qa_network_runtime *runtime, qa_net_client_id id,
     const qa_net_datagram *packet, qa_error *e)
 {
@@ -80,7 +108,8 @@ static bool receive_peer(void *state, qa_network_runtime *runtime, qa_net_client
     if (mismatch || packet->payload.size > s->limits.datagram_bytes ||
         (decoded.kind != QA_UNIFIED_ACK && (decoded.total_bytes > s->limits.message_bytes || decoded.fragments > s->limits.fragments))) return true;
     s->entered = true; s->now_ns = packet->received_ns;
-    bool ok = qa_unified_channel_receive(s->channel, packet->payload, packet->received_ns, hold_delivery, s, e);
+    bool ok = qa_unified_channel_receive_buffered(s->channel, packet->payload, packet->received_ns,
+        admit_delivery, hold_delivery, s, e);
     if (ok) ok = qa_network_received(runtime, id, packet->received_ns, e);
     s->entered = false;
     return ok;
@@ -103,8 +132,14 @@ static bool flush_peer(void *state, qa_network_runtime *runtime, qa_net_client_i
     if (!s->closing && !s->disconnected && !s->timeout_pending && client && now >= client->received_ns && now - client->received_ns > timeout) {
         s->timeout_pending = true; s->close_cause = 1; s->entered = false; return true;
     }
-    bool ok = s->server || !s->admitted || !client || client->phase != QA_NET_ACTIVE ||
-        s->disconnected || s->closing || qa_unified_session_queue_inputs(s, e);
+    bool ok = true;
+    if (!s->server && s->admitted && client && client->phase == QA_NET_ACTIVE &&
+        !s->disconnected && !s->closing && !s->timeout_pending) {
+        qa_error deferred = {0};
+        ok = qa_unified_session_queue_inputs(s, &deferred);
+        if (!ok && deferred.code == QA_ERROR_MEMORY) ok = true;
+        else if (!ok && e) *e = deferred;
+    }
     if (ok) ok = qa_unified_channel_flush(s->channel, now, send_peer, s, NULL, e);
     s->entered = false;
     return ok;
@@ -114,7 +149,6 @@ bool qa_unified_session_flush(qa_unified_session *s, uint64_t now, qa_error *e)
 {
     if (!qa_unified_session_idle(s) || now < s->now_ns)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production flush requires its idle monotonic owner");
-    if (s->held || s->timeout_pending) return true;
     return flush_peer(s, s->runtime, s->id, now, e);
 }
 
@@ -130,8 +164,12 @@ static bool restart_peer(void *state, uint64_t epoch, const qa_sha256_digest *co
         qa_unified_inputs_free(&s->inputs);
         return true;
     }
-    if (s->entered || s->processing || !s->hooks.restart || !epoch || s->epoch == UINT32_MAX)
+    if (s->entered || s->processing || s->closing || s->disconnected || s->timeout_pending ||
+        !s->hooks.restart || !epoch || s->epoch == UINT32_MAX)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart lacks its real server offer producer");
+    for (const qa_unified_held *held = s->held; held; held = held->next)
+        if (held->source_finished)
+            return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart retains an unfinished reply batch from its prior epoch");
     s->entered = true;
     qa_unified_document *offer = NULL;
     uint32_t next_wire_epoch = s->epoch + 1;

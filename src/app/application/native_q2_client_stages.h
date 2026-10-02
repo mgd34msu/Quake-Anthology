@@ -4,12 +4,17 @@
 #include "guest_q3_mod.h"
 struct application_native_q2_stages;
 struct application_native_q2_input;
+struct application_native_q2_client_outputs;
+struct application_native_q2_client_outputs *application_native_q2_stages_outputs(const struct application_native_q2 *);
+qa_bytes application_native_q2_stages_damage_saved(const struct application_native_q2 *);
+void application_native_q2_stages_damage_adopted(struct application_native_q2 *);
 bool application_native_q2_stages_prepare(struct application_native_q2 *,qa_error *);
 bool application_native_q2_stages_advance(struct application_native_q2 *,const qa_source_frame *,qa_error *);
 bool application_native_q2_stages_idle(const struct application_native_q2_stages *);
 bool application_native_q2_stages_close(struct application_native_q2 *,qa_error *);
 void application_native_q2_stages_released(struct application_native_q2 *,qa_actor_id);
 uint64_t application_native_q2_stages_frame(const struct application_native_q2 *);
+bool application_native_q2_stages_time_read(const struct application_native_q2 *,qa_source_frame *,qa_error *);
 bool application_native_q2_stages_capture(struct application_native_q2 *,qa_buffer *,qa_error *);
 bool application_native_q2_stages_restore(struct application_native_q2 *,qa_bytes,qa_error *);
 bool application_native_q2_input_begin(struct application_native_q2 *,qa_actor_id,bool slice,
@@ -18,4 +23,6 @@ bool application_native_q2_input_begin(struct application_native_q2 *,qa_actor_i
     struct application_native_q2_input **,qa_error *);
 bool application_native_q2_input_complete(struct application_native_q2_input *,bool,qa_error *);
 bool application_native_q2_input_abort(struct application_native_q2_input **,qa_error *);
+bool application_native_q2_input_values(struct application_native_q2 *,qa_actor_id,
+    application_native_callback_value[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *,qa_error *);
 #endif

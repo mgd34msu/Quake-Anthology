@@ -1,3 +1,4 @@
+#include "source_cinematics.h"
 #include "renderer_materials.h"
 #include "q3_color_policy.h"
 #include "remote_q3_initial.h"
@@ -162,7 +163,9 @@ static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
         if (!frontend_remote_q3_initial_movie_source_read(owner,&movie,error) ||
             !frontend_q3_material_profile_initialize(f,v->materials,error) ||
             !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,error) ||
-            !frontend_material_movies_create(&movie,&owner->shader_movies,error)) return false;
+            !frontend_material_movies_create(&movie,&owner->shader_movies,error) ||
+            !frontend_source_cinematics_ensure(f,v->images,error) ||
+            !frontend_material_movies_cinematic_attach(owner->shader_movies,f->source_cinematics,v->physical_seat,v->identity,error)) return false;
     }
     qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
@@ -170,6 +173,7 @@ static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
         .context=owner,.model_initialize=model_initialize};
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||
+        !qa_material_library_source_shaders_initialize(v->materials,&images,error) ||
         !frontend_material_remaps(f,v->materials,error) ||
         !qa_audio_bank_create(v->mounts,&v->sounds,error)) return false;
     assets.sounds=v->sounds; assets.movies=v->movies;

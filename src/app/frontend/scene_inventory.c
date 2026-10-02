@@ -153,6 +153,8 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
         frontend_equipment_media_view media;
         if (!frontend_equipment_media_at(f,i,&media) || !media.declaration || !media.held) return false;
         if (media.declaration->none) continue;
+        if(media.source_slot && !model_add(rows,(frontend_model_source){.model=media.held_parent.model,
+            .resource=media.held_parent.resource,.files=media.owner.mounts},error)) return false;
         if (!media.held_scene || !model_add(rows,(frontend_model_source){media.held->model,
             media.held_parent.resource,media.owner.mounts,
             media.held->model!=media.held_parent.model?media.held_parent.model:NULL},error)) return false;
@@ -174,7 +176,12 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
         }
     }
     for (size_t i=0;i<inventory->world_count;++i) {
-        const frontend_world_source *world=inventory->worlds+i;
+        frontend_world_source *world=inventory->worlds+i;
+        if(!world->resource) {
+            const qa_resource *resource=qa_scene_world_source_resource_read(world->world);
+            const qa_vfs *files=world->images?qa_scene_resources_files(world->images):NULL;
+            if(!resource || !files || !world_bind(inventory,world->world,resource,files,error)) return false;
+        }
         if (!world->resource || !world->files || !world->images || !world->materials ||
             qa_material_library_resource_owner(world->materials)!=world->images ||
             qa_scene_resources_files(world->images)!=world->files)

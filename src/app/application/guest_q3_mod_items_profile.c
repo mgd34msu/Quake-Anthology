@@ -1,4 +1,5 @@
 #include "guest_q3_mod_items_private.h"
+#include "qa/text.h"
 
 static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error *e)
 { uint64_t n; if(!qa_json_u64(d,id,&n,e)||n>UINT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Item address exceeds its source word"); *out=(uint32_t)n; return true; }
@@ -79,6 +80,76 @@ static bool raw_optional(const qa_json_document *d,qa_json_id id,qa_buffer *out,
     return true;
 }
 static bool same_field(item_field a,item_field b) { return a.record==b.record&&a.offset==b.offset; }
+static bool resource_path(const qa_json_document *d,qa_json_id id,qa_error *e)
+{
+    char *path=NULL;if(!text(d,id,&path,e))return false;
+    size_t size=strlen(path);bool ok=size!=0;
+    if(size>=2&&((path[0]>='A'&&path[0]<='Z')||(path[0]>='a'&&path[0]<='z'))&&path[1]==':')ok=false;
+    size_t start=0;
+    for(size_t i=0;ok&&i<=size;++i)if(i==size||path[i]=='/'||path[i]=='\\'){
+        size_t length=i-start;
+        if(!length||(length==1&&path[start]=='.')||(length==2&&path[start]=='.'&&path[start+1]=='.'))ok=false;
+        start=i+1;
+    }
+    free(path);return ok||q3mod_fail(e,QA_ERROR_FORMAT,"Item media path is not a relative source resource");
+}
+static bool digest(const qa_json_document *d,qa_json_id id,qa_error *e)
+{
+    char *value=NULL;if(!text(d,id,&value,e))return false;
+    bool ok=strlen(value)==71&&!memcmp(value,"sha256:",7);
+    for(size_t i=7;ok&&i<71;++i)ok=(value[i]>='0'&&value[i]<='9')||(value[i]>='a'&&value[i]<='f');
+    free(value);return ok||q3mod_fail(e,QA_ERROR_FORMAT,"Held item model digest is not a source SHA256 identity");
+}
+static bool vector(const qa_json_document *d,qa_json_id id,double out[3],qa_error *e)
+{
+    const char *names[]={"x","y","z"};
+    for(size_t i=0;i<3;++i)if(!qa_json_number(d,qa_json_get(d,id,names[i]),out+i,e)||!isfinite(out[i]))return false;
+    return true;
+}
+static double dot(const double a[3],const double b[3])
+{return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+static bool held(const qa_json_document *d,qa_json_id id,qa_error *e)
+{
+    if(id==QA_JSON_NONE)return true;
+    qa_json_id kind=qa_json_get(d,id,"kind");
+    if(qa_json_string_equal(d,kind,"none"))return true;
+    if(!qa_json_string_equal(d,kind,"model"))return false;
+    qa_json_id model=qa_json_get(d,id,"model"),grip=qa_json_get(d,model,"grip"),
+        axes=qa_json_get(d,grip,"axis"),scale=qa_json_get(d,grip,"scale"),
+        part=qa_json_get(d,model,"part"),hash=qa_json_get(d,model,"digest"),fallback=qa_json_get(d,model,"fallback");
+    uint64_t frame;double origin[3],axis[3][3],sizes[3]={1,1,1};
+    if(!resource_path(d,qa_json_get(d,model,"path"),e)||
+        !qa_json_u64(d,qa_json_get(d,model,"referenceFrame"),&frame,e)||frame>UINT64_C(9007199254740991)||
+        !vector(d,qa_json_get(d,grip,"origin"),origin,e)||qa_json_type(d,axes)!=QA_JSON_ARRAY||qa_json_size(d,axes)!=3||
+        (scale!=QA_JSON_NONE&&!vector(d,scale,sizes,e))||!sizes[0]||!sizes[1]||!sizes[2]||
+        (hash!=QA_JSON_NONE&&!digest(d,hash,e))||(fallback!=QA_JSON_NONE&&!resource_path(d,fallback,e)))return false;
+    for(size_t i=0;i<3;++i)if(!vector(d,qa_json_at(d,axes,i),axis[i],e)||fabs(dot(axis[i],axis[i])-1)>0.001)return false;
+    double cross[3]={axis[0][1]*axis[1][2]-axis[0][2]*axis[1][1],
+        axis[0][2]*axis[1][0]-axis[0][0]*axis[1][2],axis[0][0]*axis[1][1]-axis[0][1]*axis[1][0]};
+    if(fabs(dot(axis[0],axis[1]))>0.001||fabs(dot(axis[0],axis[2]))>0.001||fabs(dot(axis[1],axis[2]))>0.001||dot(cross,axis[2])<0.999)return false;
+    if(part!=QA_JSON_NONE){qa_json_id hashes=qa_json_get(d,part,"digests"),vertices=qa_json_get(d,part,"vertices");
+        if(qa_json_type(d,hashes)!=QA_JSON_ARRAY||!qa_json_size(d,hashes)||
+            qa_json_type(d,vertices)!=QA_JSON_ARRAY||!qa_json_size(d,vertices))return false;
+        for(size_t i=0;i<qa_json_size(d,hashes);++i)if(!digest(d,qa_json_at(d,hashes,i),e))return false;
+        for(size_t i=0;i<qa_json_size(d,vertices);++i){uint64_t vertex;
+            if(!qa_json_u64(d,qa_json_at(d,vertices,i),&vertex,e)||vertex>UINT64_C(9007199254740991))return false;
+            for(size_t j=0;j<i;++j){uint64_t prior;if(!qa_json_u64(d,qa_json_at(d,vertices,j),&prior,e)||prior==vertex)return false;}
+        }
+    }
+    return true;
+}
+static bool icon(const qa_json_document *d,qa_json_id id,qa_error *e)
+{
+    if(id==QA_JSON_NONE||qa_json_type(d,id)==QA_JSON_NULL)return true;
+    qa_json_id kind=qa_json_get(d,id,"kind");bool shader=qa_json_string_equal(d,kind,"shader"),wad=qa_json_string_equal(d,kind,"wad-picture");
+    if((!shader&&!wad&&!qa_json_string_equal(d,kind,"image"))||!resource_path(d,qa_json_get(d,id,shader?"name":"path"),e))return false;
+    if(wad){char *lump=NULL;if(!text(d,qa_json_get(d,id,"lump"),&lump,e))return false;
+        size_t cursor=0,units=0;uint32_t scalar;qa_bytes bytes={(const uint8_t *)lump,strlen(lump)};
+        while(qa_utf8_next(bytes,&cursor,&scalar))units+=scalar>0xffff?2u:1u;
+        free(lump);if(!units||units>16)return false;
+    }
+    return true;
+}
 static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,qa_json_id root,qa_strings *strings,qa_error *e)
 {
     qa_json_id definitions=qa_json_get(d,root,"definitions"),storage=qa_json_get(d,root,"storage");
@@ -94,6 +165,7 @@ static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,
             (!v->admission.replace_primary&&!qa_json_string_equal(d,admission,"add"))||
             !identity(d,qa_json_get(d,at,"item"),strings,&definition->item,e)||
             !text(d,qa_json_get(d,at,"label"),(char **)&definition->label,e)||
+            !icon(d,qa_json_get(d,at,"icon"),e)||(definition->weapon&&!held(d,qa_json_get(d,at,"held"),e))||
             !raw_optional(d,qa_json_get(d,at,"icon"),&v->icon,e)||!raw_optional(d,qa_json_get(d,at,"held"),&v->held,e)) return false;
         if(definition->weapon) {
             ++weapon_count; qa_json_id ammo=qa_json_get(d,at,"ammo");
@@ -167,15 +239,15 @@ bool application_q3_mod_items_profile_create(application_q3_mod_profile *source,
 void application_q3_mod_items_profile_destroy(application_q3_mod_items_profile *p)
 {
     if(!p) return;
-    for(size_t i=0;i<p->definition_count;++i) { item_definition *d=p->definitions+i;
+    for(size_t i=0;p->definitions&&i<p->definition_count;++i) { item_definition *d=p->definitions+i;
         free((void *)d->admission.definition.label); for(size_t j=0;j<2;++j) application_q3_mod_call_destroy(d->actions[j]);
         qa_buffer_free(&d->icon); qa_buffer_free(&d->held);
     }
-    for(size_t i=0;i<p->storage_count;++i) {free(p->storage[i].items);free(p->storage[i].capacity.overrides);}
+    for(size_t i=0;p->storage&&i<p->storage_count;++i) {free(p->storage[i].items);free(p->storage[i].capacity.overrides);}
     if(p->stage) { item_stage *s=p->stage;
         free(s->dispatcher.pointer.indirections);free(s->continuation.pointer.indirections);free(s->movement.indirections);
         free(s->values);free(s->settled);free(s->accepted);free(s->when);free(s->predicates);free(s->continue_predicates);
-        for(size_t i=0;i<s->call_count;++i) application_q3_mod_call_destroy(s->calls[i].call);
+        for(size_t i=0;s->calls&&i<s->call_count;++i) application_q3_mod_call_destroy(s->calls[i].call);
         free(s->calls);free(s);
     }
     free(p->definitions);free(p->storage);free(p);

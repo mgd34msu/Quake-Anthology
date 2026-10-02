@@ -107,9 +107,18 @@ bool material_source_current(const qa_material_source_scratch *, qa_error *);
 void material_source_leave(qa_material_source_scratch *);
 bool material_source_execute_prefix(qa_material_source_scratch *, const qa_scene_frame *, bool finish, qa_error *);
 void material_source_release(qa_material_source_scratch *);
+typedef struct material_source_reset material_source_reset;
+bool material_source_reset_prepare(qa_render_controls *, int32_t max_polys, int32_t max_vertices,
+    material_source_reset **, qa_error *);
+bool material_source_reset_ready(const material_source_reset *);
+void material_source_reset_publish(material_source_reset *);
+void material_source_reset_dispose(material_source_reset **);
 bool material_source_depth_range(qa_material_source_scratch *, float near_depth, float far_depth, qa_error *);
 bool material_source_polygon_offset(qa_material_source_scratch *, bool enabled, float factor, float units, qa_error *);
 bool material_source_cull(qa_material_source_scratch *, qa_scene_cull, qa_error *);
+bool material_source_cull_disable(qa_material_source_scratch *, qa_error *);
+bool material_source_cull_invalidate(qa_material_source_scratch *, qa_error *);
+bool material_source_color(qa_material_source_scratch *, qa_scene_vec4, qa_error *);
 bool material_source_client_arrays(qa_material_source_scratch *, bool color, bool current_unit_uv, qa_error *);
 bool material_source_client_coordinate_pointer(qa_material_source_scratch *, material_source_coordinate_kind,
     uint32_t bank, qa_error *);

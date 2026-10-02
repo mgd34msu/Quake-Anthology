@@ -44,6 +44,8 @@ bool frontend_source_retire_client_configuration(qa_frontend *, qa_application *
 bool frontend_source_identity_used(const qa_frontend *, uint64_t);
 bool frontend_source_group_role_read(const qa_frontend *, size_t group,
     size_t role, frontend_source_role_identity *);
+bool frontend_source_group_role_video_read(const qa_frontend *, size_t group,
+    size_t role, frontend_source_role_identity *, const struct frontend_video_guests *);
 bool frontend_source_geometry_checkpoint(qa_frontend *,size_t,qa_buffer *,qa_error *);
 /* The world dictionary qualifies source map/resource/heaps and sole root
  * destructor authority before the nofail ownership transfer. */

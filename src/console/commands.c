@@ -673,6 +673,18 @@ bool qa_console_registration_owner(const qa_console *console, const char *name,
     return false;
 }
 
+bool qa_console_registration_read(const qa_console *console, const char *name,
+    uint64_t dispatch_owner, uint64_t *lifetime_owner, qa_command_handler *handler, void **user)
+{
+    if (!console || !name || !lifetime_owner || !handler || !user) return false;
+    for (const command_entry *entry = console->commands; entry; entry = entry->next)
+        if (entry->view.owner == dispatch_owner && !strcmp(entry->view.name, name) && entry->ordinary_registration) {
+            *lifetime_owner = entry->registration_owner; *handler = entry->handler; *user = entry->user;
+            return true;
+        }
+    return false;
+}
+
 static void clear_registration(command_entry *entry)
 {
     entry->ordinary_registration = false;

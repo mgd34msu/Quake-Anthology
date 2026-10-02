@@ -49,7 +49,7 @@ bool application_native_q2_scratch_prepare(application_provider *target,
         !target->constructed || !target->attached || !target->state.native.q2_engine ||
         !candidate->map_resource || !target->product_catalog ||
         (services->context != NULL) != (services->destroy != NULL) ||
-        ((services->options.native_q2_services || services->options.console_print ||
+        ((services->options.native_q2_services || services->options.model_admission || services->options.console_print ||
           services->options.world_change_ready || services->options.before_world_change ||
           services->options.world_retired) &&
          (!services->context || services->options.guest_context == candidate->guest_context)))

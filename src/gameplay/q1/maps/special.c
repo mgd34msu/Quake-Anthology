@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_wire.h"
 #include <stdio.h>
 
 bool q1_map_make_static(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -28,9 +29,17 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
         qa_string_id sound = entity->map->noise[0];
         if (!sound)
             return q1_remove(g, entity, error);
+        const char *path = qa_strings_cstr(qa_session_strings(g->services.session), sound);
+        if (!path || !qa_q1_wire_declare_sound(g, path, error)) return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map) return true;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map) return true;
         float volume = entity->map->volume ? entity->map->volume : .5f;
         float attenuation = entity->delay ? entity->delay : 3;
-        if (!g->maps->options.ambient(g->maps->options.context, origin, sound, volume,
+        if (!g->maps->options.ambient(g->maps->options.context, body.origin, sound, volume,
                                     attenuation, error))
             return false;
         entity = q1_entity(g, id);
@@ -50,6 +59,16 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
                   {"ambient_comp_hum", "ambience/comp1.wav", 1}};
     for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
         if (q1_classnamed(g, id, sounds[i].classname)) {
+            if (addon) {
+                if (!qa_q1_wire_declare_sound(g, sounds[i].sound, error)) return false;
+                entity = q1_entity(g, id);
+                if (!entity || !entity->map) return true;
+                qa_body_state body;
+                if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+                origin = body.origin;
+                entity = q1_entity(g, id);
+                if (!entity || !entity->map) return true;
+            }
             if (!q1_map_ambient(g, origin, sounds[i].sound, sounds[i].volume, error))
                 return false;
             entity = q1_entity(g, id);
@@ -134,11 +153,33 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             bool silent = g->options.program == QA_Q1_ROGUE &&
                           q1_classnamed(g, entity->id, "light_torch_small_walltorch") &&
                           (entity->spawnflags & 1);
-            if (!q1_model(g, entity, model, error) ||
-                (!silent && !q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error)))
-                return false;
-            if (!q1_alive(g, entity->id))
-                return true;
+            if (g->options.program == QA_Q1_ROGUE &&
+                q1_classnamed(g, id, "light_torch_small_walltorch")) {
+                if (!qa_q1_wire_declare_model(g, model, error)) return false;
+                entity = q1_entity(g, id);
+                if (!entity || !entity->map) return true;
+                silent = (entity->spawnflags & 1u) != 0;
+            }
+            if (!q1_model(g, entity, model, error)) return false;
+            entity = q1_entity(g, id);
+            if (!entity || !entity->map) return true;
+            if (g->options.program == QA_Q1_ROGUE &&
+                q1_classnamed(g, id, "light_torch_small_walltorch"))
+                silent = (entity->spawnflags & 1u) != 0;
+            if (!silent) {
+                if (g->options.program == QA_Q1_ROGUE &&
+                    q1_classnamed(g, id, "light_torch_small_walltorch")) {
+                    if (!qa_q1_wire_declare_sound(g, "ambience/fire1.wav", error)) return false;
+                    entity = q1_entity(g, id);
+                    if (!entity || !entity->map) return true;
+                    if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+                    entity = q1_entity(g, id);
+                    if (!entity || !entity->map) return true;
+                }
+                if (!q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error)) return false;
+                entity = q1_entity(g, id);
+                if (!entity || !entity->map) return true;
+            }
         }
         return q1_map_make_static(g, entity, error);
     case Q1_MAP_AMBIENT:

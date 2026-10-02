@@ -20,6 +20,9 @@ typedef struct application_q3_component_scene_frontend {
     bool (*finish)(void *,bool,qa_error *);
     bool (*completed)(void *,uint64_t,const qa_scene_frame **,qa_error *);
     bool (*identity_read)(const void *,uint64_t *);
+    /* Stops executable services after host return while retained scene-bank
+     * cells still own this physical renderer and its private dictionaries. */
+    bool (*retire)(void *,qa_error *);
 } application_q3_component_scene_frontend;
 
 typedef struct application_q3_component_scene_preparation {
@@ -45,6 +48,7 @@ typedef struct application_q3_component_scene_preparation {
     qa_q3_presentation_assets **assets;
     application_q3_component_scene_frontend *frontend;
     bool restoring;
+    bool retired;
     void *context;
     /* Pure owner identity, valid through constructor and checked retirement.
      * Source execution remains qualified by preparation.source separately. */

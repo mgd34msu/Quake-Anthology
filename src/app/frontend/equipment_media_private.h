@@ -20,13 +20,25 @@ struct frontend_equipment_media {
     size_t users;
     size_t saved_owner, saved_view, saved_parent;
     bool restoring, bound;
+    bool source_slot;
+    uint64_t source_generation;
+    qa_buffer source_held;
+    qa_buffer source_icon;
+    const qa_material *icon;
+    qa_resource *icon_source;
+    size_t saved_icon;
+    qa_model *source_model;
+    qa_frontend *frontend;
+    qa_media_library *media;
+    frontend_material_movies *movies;
 };
 struct frontend_equipment {
     frontend_equipment_media *media, *tail;
     bool admitting;
 };
 
-void frontend_equipment_media_dispose(frontend_equipment_media *);
+bool frontend_equipment_media_dispose(frontend_equipment_media *,qa_error *);
 bool frontend_equipment_media_namespace_current(const qa_frontend *, const frontend_equipment_media *);
+frontend_material_movie_source frontend_equipment_media_movie_source(frontend_equipment_media *);
 
 #endif

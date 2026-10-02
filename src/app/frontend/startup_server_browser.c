@@ -1,6 +1,7 @@
 #include "startup_server_browser.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
+#include "qa/ui_preferences.h"
 #include <math.h>
 #include <stdio.h>
 #include <unicode/ucol.h>
@@ -117,8 +118,8 @@ static bool compare(frontend_startup_server_browser *o,size_t left,size_t right,
         if(o->draft.sort==BROWSER_MAP_ZA)value=-value;
         break;
     case BROWSER_PLAYERS_MOST: case BROWSER_PLAYERS_FEWEST:
-        { uint32_t left=a->entry.available?a->entry.players:0,right=b->entry.available?b->entry.players:0;
-        value=left<right?-1:left>right; }
+        { uint32_t left_players=a->entry.available?a->entry.players:0,right_players=b->entry.available?b->entry.players:0;
+        value=left_players<right_players?-1:left_players>right_players; }
         if(o->draft.sort==BROWSER_PLAYERS_MOST)value=-value;
         break;
     default:return fail(e,QA_ERROR_FORMAT,"Server browser has an invalid retained sort choice");

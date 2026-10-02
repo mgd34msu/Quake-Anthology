@@ -41,6 +41,7 @@ typedef struct frontend_client_source_options {
     void (*released)(void *);
     bool (*configuration_advance)(void *,const qa_application_client_source *,
         qa_application_client_preparation *,bool *,qa_error *);
+    bool (*retirement_current)(void *,const qa_application_client_source *);
 } frontend_client_source_options;
 typedef struct frontend_client_source_view {
     const frontend_client_source *owner;
@@ -56,11 +57,25 @@ bool frontend_client_source_read(const frontend_client_source *, frontend_client
 /* Installed physical topology only; never calls the transport or app current
  * facade. Cold codecs and child destructors retain readiness separately. */
 bool frontend_client_source_metadata_read(const frontend_client_source *, frontend_client_source_view *, qa_error *);
+/* Only the actual restored constructor callback can qualify its supplied
+ * candidate before the application row is installed. No callbacks run. */
+bool frontend_client_source_preinstall_current(const frontend_client_source *,
+    const qa_application_client_source *, qa_error *);
 bool frontend_client_source_current(const frontend_client_source_view *);
 bool frontend_client_source_bind(frontend_client_source *, qa_net_client_id, qa_net_seat_id, uint64_t epoch, qa_error *);
+bool frontend_client_source_epoch_adopt(frontend_client_source *,uint64_t,qa_error *);
 bool frontend_client_source_drain(frontend_client_source *, size_t budget, size_t *, qa_error *);
+bool frontend_client_source_remote(frontend_client_source *,const qa_application_client_source *,const char *,qa_error *);
+bool frontend_client_source_retirement_current(const frontend_client_source *,
+    const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
+bool frontend_client_sources_retirement_current(const qa_frontend *,
+    const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
+bool frontend_client_sources_restore_discarded(const qa_frontend *,
+    const qa_application_client_source *,qa_error *);
 bool frontend_client_source_idle(const frontend_client_source *);
 bool frontend_client_source_retain(frontend_client_source *, qa_error *);
+bool frontend_client_source_checkpoint_retain(frontend_client_source *,
+    const qa_application_client_source *,qa_error *);
 bool frontend_client_source_release(frontend_client_source *, qa_error *);
 bool frontend_client_source_destroy(frontend_client_source **, qa_error *);
 bool frontend_client_sources_idle(const qa_frontend *);
@@ -78,6 +93,7 @@ typedef struct frontend_client_source_state {
     qa_buffer console;
     uint32_t capabilities;
     bool ready;
+    bool retiring, programme_retired, release_programmes;
 } frontend_client_source_state;
 typedef struct frontend_client_source_prefix {
     qa_launch_client_metadata recipe;
@@ -104,6 +120,7 @@ bool frontend_client_source_commands_capture(qa_frontend *, qa_application *,
 bool frontend_client_source_commands_restore(qa_frontend *, qa_application *,
     const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
 bool frontend_client_sources_finish_restore(qa_frontend *, qa_error *);
+bool frontend_client_source_restore_finished(const frontend_client_source *);
 bool frontend_client_source_commands_owned(const qa_frontend *, const qa_application *,
     const qa_application_console_scope *, const qa_console *);
 #endif

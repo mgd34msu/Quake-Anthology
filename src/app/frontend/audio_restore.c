@@ -180,6 +180,41 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
     }
     ok = ok && frontend_event_audio_assets_read(f, &part, &size, error) && append(out, count, part, size, error);
     free(part); part=NULL; size=0;
+    for(size_t i=0;ok && i<frontend_remote_unified_count(f);++i) {
+        frontend_unified_presentation_children children;
+        ok=frontend_remote_unified_presentation_children_read(frontend_remote_unified_at(f,i),&children,error);
+        if(ok && children.events) {
+            ok=frontend_unified_events_assets_read(children.events,&part,&size,error) && append(out,count,part,size,error);
+            free(part); part=NULL; size=0;
+        }
+        for(size_t group=0;ok && group<frontend_unified_q1_group_count(children.q1);++group)
+            for(size_t n=0;ok && n<frontend_unified_q1_static_count(children.q1,group);++n) {
+                uint64_t key=0; const qa_audio_asset *asset=NULL; qa_audio_mixer *mixer=NULL;
+                ok=frontend_unified_q1_static_at(children.q1,group,n,&key,&asset,&mixer) && asset;
+                qa_audio_asset *held=(qa_audio_asset *)asset;
+                if(ok) ok=append(out,count,&held,1,error);
+            }
+    }
+    size_t media_count=0;
+    if(ok) ok=frontend_unified_media_inventory_count(f,&media_count,error);
+    for(size_t i=0;ok && i<media_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(f,i,&media,error);
+        for(size_t n=0;ok && media && n<frontend_unified_media_bank_count(media);++n) {
+            frontend_unified_bank_view bank;
+            ok=frontend_unified_media_bank_read(media,n,&bank);
+            if(ok && bank.q3_assets) {
+                ok=qa_q3_presentation_audio_assets_read(bank.q3_assets,&part,&size,error) && append(out,count,part,size,error);
+                free(part); part=NULL; size=0;
+            }
+        }
+    }
+    for(size_t i=0;ok && i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        ok=frontend_component_scene_metadata_read(f,i,&row,error) && row.assets &&
+            qa_q3_presentation_audio_assets_read(row.assets,&part,&size,error) && append(out,count,part,size,error);
+        free(part); part=NULL; size=0;
+    }
     ok=ok && frontend_ui_features_assets_read(f,&part,&size,error) && append(out,count,part,size,error);
     free(part); return ok;
 }

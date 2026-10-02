@@ -93,7 +93,11 @@ static bool continuation_valid(const application_unified_server *owner,
     bool obsolete = application_unified_save_source_obsolete(source, &owner->offered);
     return owner->bound && !owner->entered && !owner->closed && owner->epoch &&
         peer_valid(owner, peer) && offer_valid(owner, peer, e) &&
-        (!owner->admitted || (owner->player_attached && owner->admitted_receipt && owner->inputs && owner->components)) &&
+        (!owner->source_dropped || (player && !obsolete && owner->admitted == owner->player_attached &&
+            !owner->pending.frame && !owner->pending_capture &&
+            application_unified_server_source_drop_current(owner, e))) &&
+        (owner->source_dropped || !owner->admitted ||
+            (owner->player_attached && owner->admitted_receipt && owner->inputs && owner->components)) &&
         (!(owner->admitted_receipt || owner->inputs || owner->components) || player) &&
         (!owner->preparing_frame || owner->admitted) &&
         (obsolete || (owner->frame_before <= source->frame.number && owner->published_frame <= source->frame.number)) &&
@@ -112,6 +116,8 @@ static bool receipts_valid(const application_unified_server *owner, const qa_uni
         !owner->pending_capture && !owner->pending.frame && !owner->preparing_frame;
     if (!session || !qa_unified_session_idle(session) ||
         (wire_epoch != owner->epoch && !prepared) ||
+        (owner->source_dropped && (!qa_unified_session_source_close_pending(session) || wire_epoch != owner->epoch ||
+            !application_unified_server_source_drop_current(owner, e))) ||
         (owner->inputs && qa_network_epoch(owner->runtime, owner->client) != owner->inputs->runtime_epoch)) return false;
     const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->runtime), owner->client);
     if (!peer_valid(owner, peer)) return false;
@@ -139,9 +145,9 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     bool player_present = owner->admitted_receipt || owner->inputs || owner->components || owner->pending_capture;
     uint64_t seat_owner = owner->seat.owner;
     uint32_t seat_index = owner->seat.index;
-    char magic[4] = {'Q','U','S','B'}; uint32_t version = 3;
+    char magic[4] = {'Q','U','S','B'}; uint32_t version = 4;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUSB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !application_unified_save_source(io, owner->application, source, &current, false) ||
         !application_unified_save_retained_source(io, owner->application, source, &owner->offered) ||
         !application_unified_save_client(io, peer->id) ||
@@ -153,13 +159,17 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
         !application_unified_save_document(io, &owner->offer, QA_UNIFIED_CONTROL_DOCUMENT) || !owner->offer ||
         !qa_source_save_bool(io, &owner->bound) || !qa_source_save_bool(io, &owner->admitted) ||
         !qa_source_save_bool(io, &owner->player_attached) || !qa_source_save_bool(io, &owner->preparing_frame) ||
+        !qa_source_save_bool(io, &owner->source_dropped) ||
         !qa_source_save_bool(io, &player_present)) return false;
     qa_unified_session_player player = {0};
     obsolete = application_unified_save_source_obsolete(source, &owner->offered);
-    if (player_present && !obsolete && !application_unified_save_player_read(owner->application, peer->id,
+    bool historical_player = obsolete || owner->source_dropped;
+    if (player_present && !historical_player && !application_unified_save_player_read(owner->application, peer->id,
         owner->seat, &player, io->error)) return false;
-    if (!player_receipt(io, owner, player_present && !obsolete ? &player : NULL)) return false;
-    if (obsolete && owner->admitted_receipt) player = owner->admitted_player;
+    if (!player_receipt(io, owner, player_present && !historical_player ? &player : NULL)) return false;
+    if (historical_player && owner->admitted_receipt) player = owner->admitted_player;
+    if (owner->source_dropped && (!player_present || obsolete ||
+        !application_unified_server_source_drop_current(owner, io->error))) return false;
     if (player_present != (owner->admitted_receipt || owner->inputs ||
         owner->components || owner->pending_capture)) {
         /* Input and publisher presence follow below on read. A historical
@@ -176,11 +186,16 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     if (components) {
         if (!player_present) return false;
         qa_buffer bytes = {0};
-        bool okay = !writing || application_unified_components_checkpoint_retained(owner->components,
-            source, recipient_source, &player, &bytes, io->error);
+        bool okay = !writing || (owner->source_dropped ?
+            application_unified_components_checkpoint_dropped(owner->components, owner, &bytes, io->error) :
+            application_unified_components_checkpoint_retained(owner->components,
+                source, recipient_source, &player, &bytes, io->error));
         if (okay) okay = application_unified_save_blob(io, &bytes) && bytes.size;
-        if (okay && !writing) okay = application_unified_components_restore_retained((qa_bytes){bytes.data, bytes.size},
-            owner->application, source, recipient_source, peer->id, &player, &owner->components, io->error);
+        if (okay && !writing) okay = owner->source_dropped ?
+            application_unified_components_restore_dropped((qa_bytes){bytes.data, bytes.size}, owner,
+                &owner->components, io->error) :
+            application_unified_components_restore_retained((qa_bytes){bytes.data, bytes.size},
+                owner->application, source, recipient_source, peer->id, &player, &owner->components, io->error);
         qa_buffer_free(&bytes);
         if (!okay) return false;
     }
@@ -193,7 +208,7 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     bool capture = owner->pending_capture != NULL;
     if (!qa_source_save_bool(io, &capture) || capture != (owner->pending.frame != NULL)) return false;
     if (capture) {
-        if (obsolete) return false;
+        if (historical_player) return false;
         if (!player_present) return false;
         qa_buffer bytes = {0};
         bool okay = !writing || application_unified_output_capture_checkpoint(owner->pending_capture, &bytes, io->error);
@@ -272,8 +287,9 @@ bool application_unified_server_restore_bind(application_unified_server *owner,
     const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->runtime), owner->client);
     bool needs_player = owner->admitted_receipt || owner->inputs || owner->components || owner->pending_capture;
     bool obsolete = application_unified_save_source_obsolete(&source, &owner->offered);
-    if (obsolete) player = owner->admitted_player;
-    if ((needs_player && !obsolete && !application_unified_save_player_read(owner->application, owner->client, owner->seat, &player, e)) ||
+    bool historical_player = obsolete || owner->source_dropped;
+    if (historical_player) player = owner->admitted_player;
+    if ((needs_player && !historical_player && !application_unified_save_player_read(owner->application, owner->client, owner->seat, &player, e)) ||
         !continuation_valid(owner, &source, needs_player ? &player : NULL, peer, e))
         return bad(e, "Source import binding changed its retained physical player or output");
     owner->session = session; owner->restore_pending = false;

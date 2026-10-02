@@ -30,6 +30,7 @@ static bool cpu_surface_idle(const qa_cpu_renderer *renderer, qa_error *error) {
   qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU renderer has a retained settings ticket");
   return false;
 }
+static cpu_source_image *cpu_source_object(qa_cpu_renderer *,const qa_scene_image *);
 
 qa_render_controls *qa_cpu_render_controls(qa_cpu_renderer *renderer) {
   return renderer ? &renderer->controls : NULL;
@@ -147,8 +148,14 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
     return;
   if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
   material_source_release(&renderer->controls.source);
+  qa_render_source_texture_release(&renderer->controls.zero_texture);
   for (size_t i = 0; i < 2; ++i)
     qa_scene_image_release(renderer->bound[i]);
+  for (uint32_t i=0;i<renderer->source_image_count;++i) {
+    qa_render_source_texture_release(&renderer->source_images[i].texture);
+    qa_scene_image_release(renderer->source_images[i].image);
+    qa_scene_resources_destroy(renderer->source_images[i].owner);
+  }
   while (renderer->targets) {
     cpu_target *target = renderer->targets;
     renderer->targets = target->next;
@@ -305,6 +312,7 @@ static bool update_image(qa_cpu_renderer *renderer, const qa_scene_image *image,
   }
   if (!cpu_image_valid(image, error))
     return false;
+  if (image->source_q3 && cpu_source_object(renderer,image)) return true;
   for (cpu_target *target = renderer->targets; target; target = target->next)
     if (target->image->identity == image->identity &&
         target->image->revision != image->revision &&
@@ -500,6 +508,7 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
              renderer->display.width, renderer->display.height, error);
   renderer->presenting=false;
   if (ok) {
+    renderer->source_frame = false;
     renderer->controls.source.projection_2d = false;
     renderer->controls.source.entity_count = renderer->controls.source.first_scene_entity = 0;
     renderer->controls.source.submitted_light_count = renderer->controls.source.first_scene_light = 0;
@@ -511,9 +520,9 @@ bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   if (!cpu_surface_idle(renderer,error)) return false;
   qa_scene_frame frame;
   qa_scene_frame_init(&frame,renderer->options.owner);
-  frame.source_backend=true;
+  frame.source_backend=renderer->source_frame;
   bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
-  bool skip=frame.source_skip_backend;
+  bool skip=frame.source_backend && frame.source_skip_backend;
   qa_scene_frame_destroy(&frame);
   return ok && (skip || cpu_present_frame(renderer,error));
 }
@@ -578,6 +587,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
                  "Invalid CPU frame or renderer owner");
     return false;
   }
+  if (frame->source_backend) renderer->source_frame=true;
   if (frame->source_backend && frame->source_skip_backend) return true;
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;
@@ -778,6 +788,386 @@ bool qa_cpu_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error
   controls->owner.cpu->pipeline.cull=cull;
   return true;
 }
+static cpu_source_image *cpu_source_object(qa_cpu_renderer *,const qa_scene_image *);
+static void cpu_source_bind(qa_cpu_renderer *renderer,const qa_scene_image *image)
+{
+  cpu_source_image *object=cpu_source_object(renderer,image);
+  if (object) image=object->image;
+  uint32_t unit=renderer->controls.attributes.texture_unit;
+  const qa_scene_image **binding=renderer->bound+unit;
+  if (*binding!=image) {
+    qa_scene_image_retain(image); qa_scene_image_release(*binding); *binding=image;
+    renderer->controls.attributes.actual_empty[unit]=image==NULL;
+  }
+}
+size_t qa_cpu_source_images_metadata_count(const qa_render_controls *controls)
+{ return controls->owner.cpu->source_image_count; }
+const qa_scene_image *qa_cpu_source_image_metadata_at(const qa_render_controls *controls,size_t ordinal)
+{ return controls->owner.cpu->source_images[ordinal].image; }
+size_t qa_cpu_source_texture_metadata_count(const qa_render_controls *controls)
+{
+  size_t count=controls->zero_texture.count;
+  const qa_cpu_renderer *renderer=controls->owner.cpu;
+  for (uint32_t i=0;i<renderer->source_image_count;++i) count+=renderer->source_images[i].texture.count;
+  return count;
+}
+const qa_scene_image *qa_cpu_source_texture_metadata_at(const qa_render_controls *controls,size_t ordinal)
+{
+  if (ordinal<controls->zero_texture.count) return controls->zero_texture.images[ordinal];
+  ordinal-=controls->zero_texture.count;
+  const qa_cpu_renderer *renderer=controls->owner.cpu;
+  for (uint32_t i=0;i<renderer->source_image_count;++i) {
+    const qa_render_source_texture *texture=&renderer->source_images[i].texture;
+    if (ordinal<texture->count) return texture->images[ordinal];
+    ordinal-=texture->count;
+  }
+  return NULL;
+}
+qa_scene_filter qa_cpu_source_image_filter(const qa_render_controls *controls,const qa_scene_image *image)
+{
+  const qa_cpu_renderer *renderer=controls->owner.cpu;
+  if (image==&controls->zero_texture.view) return image->filter;
+  for (uint32_t i=0;i<renderer->source_image_count;++i)
+    if (image==&renderer->source_images[i].texture.view) return image->filter;
+    else if (renderer->source_images[i].image==image) return renderer->source_images[i].texture.filter;
+  return image->source_mipmap?controls->source_filter:image->filter;
+}
+bool qa_cpu_source_image_magnification_linear(const qa_render_controls *controls,const qa_scene_image *image)
+{
+  const qa_cpu_renderer *renderer=controls->owner.cpu;
+  if (image==&controls->zero_texture.view) return controls->zero_texture.magnification_linear;
+  for (uint32_t i=0;i<renderer->source_image_count;++i)
+    if (image==&renderer->source_images[i].texture.view || renderer->source_images[i].image==image)
+      return renderer->source_images[i].texture.magnification_linear;
+  return image->filter==QA_SCENE_LINEAR || image->filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
+      image->filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
+}
+static cpu_source_image *cpu_source_object(qa_cpu_renderer *renderer,const qa_scene_image *image)
+{
+  for (uint32_t i=0;i<renderer->source_image_count;++i)
+    if (renderer->source_images[i].image==image) return renderer->source_images+i;
+  qa_scene_resources *owner=image && image->source_q3?qa_scene_image_resource_owner(image):NULL;
+  if (owner) for (uint32_t i=renderer->source_image_count;i>0;--i)
+    if (renderer->source_images[i-1].owner==owner && renderer->source_images[i-1].image->identity==image->identity)
+      return renderer->source_images+i-1;
+  return NULL;
+}
+bool qa_cpu_source_texture_upload(qa_render_controls *controls,const qa_scene_image *slot,
+    const qa_scene_image *image,const qa_scene_image *binding,bool redefine,bool dirty,qa_error *error)
+{
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  cpu_source_image *registered=cpu_source_object(renderer,slot),*selected=cpu_source_object(renderer,binding);
+  qa_scene_resources *owner=qa_scene_image_resource_owner(image);
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || controls->image_ticket ||
+      !registered || registered->image!=slot || !selected || !image || !owner || owner!=registered->owner ||
+      image->identity!=slot->identity || (image->kind!=QA_SCENE_RGBA8 && image->kind!=QA_SCENE_RGB8) || image->level_count!=1 ||
+      !cpu_image_valid(image,error)) {
+    if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source cinematic upload lost its actual CPU scratch object");
+    return false;
+  }
+  cpu_source_bind(renderer,selected->image);
+  if (!dirty && !redefine) return true;
+  uint32_t unit=controls->attributes.texture_unit;
+  qa_render_source_texture *texture=controls->attributes.actual_empty[unit]?&controls->zero_texture:&selected->texture;
+  if (redefine) {
+    if (!qa_render_source_texture_level(texture,0,image,owner,QA_SCENE_RGB8,QA_Q3_TEXTURE_RGB8,error)) return false;
+    qa_render_source_texture_filter(texture,QA_SCENE_LINEAR); texture->wrap=QA_SCENE_CLAMP;
+  } else {
+    bool updated=false;
+    if (!qa_render_source_texture_subimage(texture,image,&updated,error)) return false;
+  }
+  if (texture==&selected->texture) selected->filter=texture->filter;
+  return true;
+}
+const qa_scene_image *qa_cpu_source_texture_image(qa_render_controls *controls,uint32_t unit,const qa_scene_image *image)
+{
+  if (controls->attributes.actual_empty[unit]) return qa_render_source_texture_view(&controls->zero_texture);
+  cpu_source_image *row=cpu_source_object(controls->owner.cpu,image);
+  return row?qa_render_source_texture_view(&row->texture):image;
+}
+bool qa_cpu_source_texture_filter_apply(qa_render_controls *controls,bool no_bind,qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || controls->source.entered) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source filter lost its real idle CPU image owner"); return false;
+  }
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  const qa_scene_image *dlight=NULL;
+  if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
+  uint32_t unit=controls->attributes.texture_unit;
+  for (uint32_t i=0;i<renderer->source_image_count;++i) {
+    cpu_source_image *row=renderer->source_images+i;
+    if (row->image->source_mipmap) {
+      cpu_source_image *selected=dlight?cpu_source_object(renderer,dlight):row;
+      cpu_source_bind(renderer,selected->image);
+      if (!controls->attributes.actual_empty[unit]) {
+        selected->filter=controls->source_filter;
+        qa_render_source_texture_filter(&selected->texture,controls->source_filter);
+      } else qa_render_source_texture_filter(&controls->zero_texture,controls->source_filter);
+    }
+  }
+  return true;
+}
+bool qa_cpu_source_image_admit(qa_render_controls *controls,const qa_scene_image *image,const qa_scene_image *binding,
+    uint32_t unit,qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !image || !image->source_q3 || unit>1 ||
+      !cpu_image_valid(image,error)) {
+    if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image admission lost its actual CPU recipient");
+    return false;
+  }
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  for (uint32_t i=0;i<renderer->source_image_count;++i)
+    if (renderer->source_images[i].image==image) return true;
+  if (renderer->source_image_count>=CPU_SOURCE_IMAGES_QA) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"MAX_DRAWIMAGES hit in actual Source CPU image admission"); return false;
+  }
+  qa_scene_resources *owner=qa_scene_image_resource_owner(image);
+  if (!owner || !qa_scene_resources_retain(owner,error)) {
+    if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source CPU image lost its actual bank owner");
+    return false;
+  }
+  if (binding!=image && !cpu_source_object(renderer,binding)) {
+    qa_scene_resources_destroy(owner);
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source no-bind upload lost its genuinely admitted CPU target"); return false;
+  }
+  qa_scene_image_retain(image);
+  cpu_source_image *requested=renderer->source_images+renderer->source_image_count++;
+  *requested=(cpu_source_image){.image=image,.owner=owner,
+      .filter=image->source_mipmap?controls->source_filter:image->filter};
+  qa_render_source_texture_init(&requested->texture);
+  controls->attributes.texture_unit=unit;
+  cpu_source_bind(renderer,binding);
+  cpu_source_image *selected=cpu_source_object(renderer,binding);
+  qa_render_source_texture *texture=controls->attributes.actual_empty[unit]?&controls->zero_texture:&selected->texture;
+  if (!qa_render_source_texture_upload(texture,image,owner,requested->filter,error)) return false;
+  if (texture==&selected->texture) selected->filter=texture->filter;
+  controls->attributes.actual_empty[unit]=true;
+  if (unit==1) controls->attributes.texture_unit=0;
+  return true;
+}
+typedef struct cpu_source_prepared_image {
+  cpu_source_image row;
+  const qa_scene_resource_policy *policy;
+  qa_scene_resources *destination;
+  uint64_t creation;
+  size_t policy_ordinal;
+  uint32_t unit;
+} cpu_source_prepared_image;
+typedef struct cpu_source_prepared_bank {
+  const qa_scene_resource_policy *policy;
+  size_t count;
+} cpu_source_prepared_bank;
+typedef struct cpu_source_prepared_update {
+  cpu_source_image *original;
+  qa_render_source_texture texture;
+} cpu_source_prepared_update;
+struct qa_cpu_source_images_ticket {
+  qa_cpu_renderer *renderer;
+  cpu_source_prepared_image *rows;
+  size_t count;
+  cpu_source_prepared_bank *banks;
+  size_t bank_count;
+  const qa_scene_image *bound[2];
+  qa_render_source_attributes attributes;
+  qa_scene_filter filter;
+  qa_render_source_texture zero_texture;
+  cpu_source_prepared_update *updates;
+  size_t update_count;
+  const qa_scene_image *final_bound[2];
+  qa_render_source_attributes final_attributes;
+  uint32_t original_count;
+  bool prepared,published,restart;
+};
+static int cpu_source_prepared_order(const void *a,const void *b)
+{
+  const cpu_source_prepared_image *first=a,*second=b;
+  return first->creation<second->creation?-1:first->creation>second->creation;
+}
+bool qa_cpu_source_images_prepare(qa_render_controls *controls,qa_scene_resource_policy *const *banks,size_t count,
+    bool no_bind,const qa_render_source_restart_values *restart_values,
+    qa_cpu_source_images_ticket **out,qa_error *error)
+{
+  bool restart=restart_values!=NULL;
+  qa_scene_filter filter=restart?restart_values->filter:controls->source_filter;
+  if (!out || *out || !qa_cpu_render_controls_current(controls) || controls->source.entered) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared Source images require their actual idle CPU owner"); return false;
+  }
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  qa_cpu_source_images_ticket *ticket=calloc(1,sizeof(*ticket));
+  if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining prepared Source CPU images"); return false; }
+  *out=ticket; ticket->renderer=renderer; ticket->original_count=renderer->source_image_count;
+  ticket->restart=restart;
+  ticket->bound[0]=renderer->bound[0]; ticket->bound[1]=renderer->bound[1];
+  ticket->attributes=controls->attributes; ticket->filter=controls->source_filter;
+  ticket->final_bound[0]=restart?NULL:renderer->bound[0]; ticket->final_bound[1]=restart?NULL:renderer->bound[1];
+  if (restart) {
+    qa_render_source_attributes_init(&ticket->final_attributes);
+    qa_render_source_texture_init(&ticket->zero_texture);
+  } else {
+    ticket->final_attributes=controls->attributes;
+    if (!qa_render_source_texture_clone(&ticket->zero_texture,&controls->zero_texture,error)) return false;
+  }
+  ticket->banks=count?calloc(count,sizeof(*ticket->banks)):NULL;
+  if (count && !ticket->banks) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining Source CPU image bank children"); return false; }
+  ticket->bank_count=count;
+  size_t total=0;
+  for (size_t i=0;i<count;++i) {
+    size_t images=0;
+    if (!qa_scene_resource_policy_source_image_count(banks[i],&images,error)) return false;
+    ticket->banks[i]=(cpu_source_prepared_bank){banks[i],images};
+    if (images>CPU_SOURCE_IMAGES_QA-total || total+images>CPU_SOURCE_IMAGES_QA-(restart?0:ticket->original_count)) {
+      qa_error_set(error,QA_ERROR_ARGUMENT,0,"MAX_DRAWIMAGES hit preparing actual Source CPU images"); return false;
+    }
+    total+=images;
+  }
+  ticket->rows=total?calloc(total,sizeof(*ticket->rows)):NULL;
+  ticket->updates=total?calloc(total,sizeof(*ticket->updates)):NULL;
+  if (total && (!ticket->rows || !ticket->updates)) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining Source CPU image creation order"); return false; }
+  for (size_t i=0;i<count;++i) for (size_t ordinal=0;ordinal<ticket->banks[i].count;++ordinal) {
+    cpu_source_prepared_image *row=ticket->rows+ticket->count;
+    const qa_scene_image *image=NULL;
+    row->policy=banks[i]; row->policy_ordinal=ordinal;
+    row->destination=qa_scene_resource_policy_destination(banks[i]);
+    qa_scene_resources *owner=qa_scene_resource_policy_source(banks[i]);
+    if (!qa_scene_resource_policy_source_image_at(banks[i],ordinal,&image,&row->creation,error) ||
+        !owner || !row->destination || !image || !image->source_q3 || image->source_texture_unit>1 ||
+        qa_scene_image_resource_owner(image)!=row->destination || !cpu_image_valid(image,error) ||
+        !qa_scene_resources_retain(owner,error)) return false;
+    qa_scene_image_retain(image);
+    row->row=(cpu_source_image){.image=image,.owner=owner,.filter=image->source_mipmap?filter:image->filter};
+    qa_render_source_texture_init(&row->row.texture);
+    row->unit=image->source_texture_unit; ++ticket->count;
+  }
+  if (ticket->count>1) qsort(ticket->rows,ticket->count,sizeof(*ticket->rows),cpu_source_prepared_order);
+  for (size_t i=1;i<ticket->count;++i)
+    if (ticket->rows[i-1].creation==ticket->rows[i].creation) {
+      qa_error_set(error,QA_ERROR_ARGUMENT,i,"Source CPU image roster duplicates an actual constructor"); return false;
+    }
+  for (size_t i=0;i<ticket->count;++i) {
+    cpu_source_prepared_image *row=ticket->rows+i;
+    cpu_source_image *selected=&row->row;
+    bool old=false;
+    if (no_bind) {
+      for (size_t j=i;j>0;--j)
+        if (ticket->rows[j-1].row.image->source_dlight) {
+          selected=&ticket->rows[j-1].row; break;
+        }
+      if (selected==&row->row && !restart)
+        for (uint32_t j=renderer->source_image_count;j>0;--j)
+          if (renderer->source_images[j-1].image->source_dlight) {
+            selected=renderer->source_images+j-1; old=true; break;
+          }
+    }
+    uint32_t unit=row->unit;
+    if (ticket->final_bound[unit]!=selected->image) {
+      ticket->final_bound[unit]=selected->image; ticket->final_attributes.actual_empty[unit]=false;
+    }
+    qa_render_source_texture *texture=&ticket->zero_texture;
+    if (!ticket->final_attributes.actual_empty[unit]) {
+      texture=&selected->texture;
+      if (old) {
+        size_t j=0;
+        for (;j<ticket->update_count;++j) if (ticket->updates[j].original==selected) break;
+        if (j==ticket->update_count) {
+          ticket->updates[j].original=selected;
+          if (!qa_render_source_texture_clone(&ticket->updates[j].texture,&selected->texture,error)) return false;
+          ++ticket->update_count;
+        }
+        texture=&ticket->updates[j].texture;
+      }
+    }
+    if (!qa_render_source_texture_upload(texture,row->row.image,row->row.owner,row->row.filter,error)) return false;
+    ticket->final_attributes.actual_empty[unit]=true;
+    ticket->final_attributes.texture_unit=unit==1?0:unit;
+    if (row->row.image->source_after_upload_border)
+      ticket->zero_texture.border=ticket->final_attributes.zero_border=row->row.image->source_upload_border;
+  }
+  ticket->prepared=true; return true;
+}
+bool qa_cpu_source_images_ready_is(const qa_cpu_source_images_ticket *ticket)
+{
+  const qa_cpu_renderer *renderer=ticket?ticket->renderer:NULL;
+  if (!renderer || !ticket->prepared || ticket->published || !qa_cpu_render_controls_current(&renderer->controls) ||
+      renderer->source_image_count!=ticket->original_count || renderer->bound[0]!=ticket->bound[0] ||
+      renderer->bound[1]!=ticket->bound[1] || renderer->controls.source_filter!=ticket->filter ||
+      memcmp(&renderer->controls.attributes,&ticket->attributes,sizeof(ticket->attributes))) return false;
+  for (size_t i=0;i<ticket->bank_count;++i) {
+    size_t count=0;
+    if (!qa_scene_resource_policy_source_image_count(ticket->banks[i].policy,&count,NULL) || count!=ticket->banks[i].count) return false;
+  }
+  for (size_t i=0;i<ticket->count;++i) {
+    const cpu_source_prepared_image *row=ticket->rows+i;
+    const qa_scene_image *image=NULL; uint64_t creation=0;
+    if (!qa_scene_resource_policy_source_image_at(row->policy,row->policy_ordinal,&image,&creation,NULL) ||
+        image!=row->row.image || creation!=row->creation || image->source_texture_unit!=row->unit ||
+        qa_scene_image_resource_owner(image)!=row->destination || qa_scene_resource_policy_source(row->policy)!=row->row.owner) return false;
+  }
+  return true;
+}
+void qa_cpu_source_images_publish(qa_cpu_source_images_ticket *ticket)
+{
+  if (!ticket || !ticket->prepared || ticket->published) return;
+  qa_cpu_renderer *renderer=ticket->renderer;
+  if (ticket->restart) {
+    for (uint32_t i=0;i<renderer->source_image_count;++i) {
+      qa_render_source_texture_release(&renderer->source_images[i].texture);
+      qa_scene_image_release(renderer->source_images[i].image); qa_scene_resources_destroy(renderer->source_images[i].owner);
+      renderer->source_images[i]=(cpu_source_image){0};
+    }
+    renderer->source_image_count=0;
+    renderer->pipeline.blend_source=QA_BLEND_ONE;
+    renderer->pipeline.blend_destination=QA_BLEND_ZERO;
+    renderer->pipeline.depth_test=QA_DEPTH_DISABLED;
+    renderer->pipeline.depth_write=true;
+    renderer->pipeline.cull=QA_CULL_NONE;
+    renderer->controls.source_cull_type=QA_CULL_FRONT;
+    renderer->controls.source_cull_valid=true;
+    renderer->pipeline.wireframe=false;
+    renderer->clear_depth=1;
+    renderer->view=(qa_scene_view){.viewport=renderer->view.viewport,.depth=1};
+    renderer->preblend_gamma=renderer->source_frame=false;
+  }
+  for (size_t i=0;i<ticket->update_count;++i) {
+    cpu_source_prepared_update *update=ticket->updates+i;
+    qa_render_source_texture_release(&update->original->texture);
+    update->original->texture=update->texture; update->original->filter=update->texture.filter;
+    qa_render_source_texture_init(&update->texture);
+  }
+  for (size_t i=0;i<ticket->count;++i) {
+    cpu_source_prepared_image *row=ticket->rows+i;
+    renderer->source_images[renderer->source_image_count++]=row->row;
+    row->row=(cpu_source_image){0};
+  }
+  for (uint32_t unit=0;unit<2;++unit) {
+    qa_scene_image_retain(ticket->final_bound[unit]); qa_scene_image_release(renderer->bound[unit]);
+    renderer->bound[unit]=ticket->final_bound[unit];
+  }
+  qa_render_source_texture_release(&renderer->controls.zero_texture);
+  renderer->controls.zero_texture=ticket->zero_texture; qa_render_source_texture_init(&ticket->zero_texture);
+  renderer->controls.attributes=ticket->final_attributes;
+  ticket->published=true;
+}
+bool qa_cpu_source_images_finish(qa_cpu_source_images_ticket **out,qa_error *error)
+{
+  if (!out || !*out) return true;
+  qa_cpu_source_images_ticket *ticket=*out;
+  if (!ticket->published) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source CPU image finish requires publication"); return false; }
+  free(ticket->updates); free(ticket->rows); free(ticket->banks); free(ticket); *out=NULL; return true;
+}
+bool qa_cpu_source_images_abort(qa_cpu_source_images_ticket **out,qa_error *error)
+{
+  if (!out || !*out) return true;
+  qa_cpu_source_images_ticket *ticket=*out;
+  if (ticket->published) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source CPU image abort requires an unpublished child"); return false; }
+  for (size_t i=0;i<ticket->count;++i) {
+    qa_render_source_texture_release(&ticket->rows[i].row.texture);
+    qa_scene_image_release(ticket->rows[i].row.image);
+    qa_scene_resources_destroy(ticket->rows[i].row.owner);
+  }
+  for (size_t i=0;i<ticket->update_count;++i) qa_render_source_texture_release(&ticket->updates[i].texture);
+  qa_render_source_texture_release(&ticket->zero_texture);
+  free(ticket->updates); free(ticket->rows); free(ticket->banks); free(ticket); *out=NULL; return true;
+}
 bool qa_cpu_source_texture_bind(qa_render_controls *controls,const qa_scene_image *image,qa_error *error)
 {
   if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
@@ -785,12 +1175,7 @@ bool qa_cpu_source_texture_bind(qa_render_controls *controls,const qa_scene_imag
     if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source texture binding lost its actual CPU issue owner");
     return false;
   }
-  const qa_scene_image **binding=controls->owner.cpu->bound+controls->attributes.texture_unit;
-  if (*binding!=image) {
-    qa_scene_image_retain(image);
-    qa_scene_image_release(*binding);
-    *binding=image;
-  }
+  cpu_source_bind(controls->owner.cpu,image);
   return true;
 }
 bool qa_cpu_source_stage_state(qa_render_controls *controls,const qa_scene_state *state,qa_error *error)
@@ -840,7 +1225,12 @@ bool qa_cpu_checkpoint_resources(const qa_cpu_renderer *renderer,qa_render_resou
   for (const cpu_target *target=renderer->targets;target;target=target->next,++ordinal)
     if (!visit(context,target->image,NULL,ordinal,error)) return false;
   if (renderer->controls.source.lightmap &&
-      !visit(context,renderer->controls.source.lightmap,NULL,ordinal,error)) return false;
+      !visit(context,renderer->controls.source.lightmap,NULL,ordinal++,error)) return false;
+  for (uint32_t i=0;i<renderer->source_image_count;++i,++ordinal)
+    if (!visit(context,renderer->source_images[i].image,NULL,ordinal,error)) return false;
+  size_t texture_levels=qa_cpu_source_texture_metadata_count(&renderer->controls);
+  for (size_t i=0;i<texture_levels;++i,++ordinal)
+    if (!visit(context,qa_cpu_source_texture_metadata_at(&renderer->controls,i),NULL,ordinal,error)) return false;
   return true;
 }
 static bool cpu_saved_buffer(qa_source_save_io *io,qa_cpu_renderer *renderer,cpu_framebuffer *buffer)
@@ -866,14 +1256,40 @@ static bool cpu_saved_buffer(qa_source_save_io *io,qa_cpu_renderer *renderer,cpu
     if (!qa_source_save_u32(io,buffer->stencil+i) || buffer->stencil[i]>renderer->stencil_maximum) return false;
   return true;
 }
+static bool cpu_saved_source_images(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,uint32_t version)
+{
+  bool reading=io->direction==QA_SOURCE_SAVE_READ;
+  uint32_t count=renderer->source_image_count;
+  if (!qa_source_save_u32(io,&count) || count>CPU_SOURCE_IMAGES_QA) return false;
+  if (reading) renderer->source_image_count=count;
+  for (uint32_t i=0;i<renderer->source_image_count;++i) {
+    cpu_source_image *row=renderer->source_images+i;
+    uint32_t filter=row->filter;
+    if (!render_save_image(io,refs,&row->image) || !row->image || !row->image->source_q3 ||
+        row->image->source_texture_unit>1 || !cpu_image_valid(row->image,io->error) ||
+        !qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR) return false;
+    for (uint32_t prior=0;prior<i;++prior)
+      if (renderer->source_images[prior].image==row->image) return false;
+    qa_scene_resources *owner=qa_scene_image_resource_owner(row->image);
+    if (reading) {
+      if (!owner || !qa_scene_resources_retain(owner,io->error)) return false;
+      row->owner=owner; row->filter=(qa_scene_filter)filter;
+      qa_render_source_texture_init(&row->texture);
+    } else if (!owner || owner!=row->owner) return false;
+    if (version>=17) {
+      if (!qa_render_source_texture_saved_fields(io,&row->texture,version,refs)) return false;
+    } else if (reading && !qa_render_source_texture_upload(&row->texture,row->image,owner,row->filter,io->error)) return false;
+  }
+  return true;
+}
 static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,
     const qa_cpu_options *installed)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
-  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=12;
+  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=20;
   bool presenter=reading?false:renderer->options.present!=NULL;
   if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
-      !qa_source_save_u32(io,&version) || version<4 || version>12 ||
+      !qa_source_save_u32(io,&version) || version<4 || version>20 ||
       !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
       !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
       !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
@@ -906,6 +1322,9 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
   if (version>=11) {
     if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
   } else if (reading) renderer->preblend_gamma=false;
+  if (version>=14) {
+    if (!qa_source_save_bool(io,&renderer->source_frame)) return false;
+  } else if (reading) renderer->source_frame=false;
   size_t count=0; uint64_t current=0;
   if (!reading) {
     if (renderer->current==&renderer->display) current=1;
@@ -942,6 +1361,7 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
       !qa_source_save_bool(io,&renderer->overdraw) || !qa_source_save_bytes(io,renderer->gamma,256) ||
       !qa_source_save_count(io,&renderer->vertex_capacity,SIZE_MAX/sizeof(cpu_vertex))) return false;
   for (size_t i=0;i<2;++i) if (!render_save_image(io,refs,renderer->bound+i)) return false;
+  if (version>=15 && !cpu_saved_source_images(io,renderer,refs,version)) return false;
   if (reading) {
     size_t pixels=(size_t)renderer->options.width*renderer->options.height;
     renderer->output=malloc(pixels*4);
@@ -955,10 +1375,13 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
 bool qa_cpu_checkpoint(const qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
   if (!out || out->data || out->size || !cpu_checkpoint_idle(renderer,error)) return false;
-  qa_cpu_renderer state=*renderer; qa_source_save_io io={0};
-  if (renderer->current==&renderer->display) state.current=&state.display;
+  qa_cpu_renderer *state=malloc(sizeof(*state)); qa_source_save_io io={0};
+  if (!state) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual CPU checkpoint fields"); return false; }
+  *state=*renderer;
+  if (renderer->current==&renderer->display) state->current=&state->display;
   ((qa_cpu_renderer *)renderer)->capturing=true;
-  bool ok=qa_source_save_writer(&io,NULL,error) && cpu_saved_fields(&io,&state,refs,NULL) && qa_source_save_finish(&io,out);
+  bool ok=qa_source_save_writer(&io,NULL,error) && cpu_saved_fields(&io,state,refs,NULL) && qa_source_save_finish(&io,out);
+  free(state);
   qa_source_save_dispose(&io); ((qa_cpu_renderer *)renderer)->capturing=false;
   if (!ok && (!error || error->code==QA_OK)) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid actual CPU renderer continuation");
   return ok;

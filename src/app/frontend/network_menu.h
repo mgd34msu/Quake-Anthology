@@ -75,10 +75,10 @@ typedef struct frontend_network_menu_download_policy {
     size_t handle;
     uint64_t modification;
     int32_t integer;
-    bool allowed;
+    double number;
+    bool numeric_permission, allowed;
 } frontend_network_menu_download_policy;
-/* Current Q3 automatic-transfer permission comes from its physical CLIENT
- * registry, including connecting UI. No Source server permission is edited. */
+/* Automatic-transfer permission comes from the actual physical CLIENT registry. */
 bool frontend_network_menu_download_policy_read(const qa_frontend *, const frontend_network_menu_view *,
     frontend_network_menu_download_policy *, bool *present, qa_error *);
 bool frontend_network_menu_download_policy_current(const qa_frontend *, const frontend_network_menu_view *,

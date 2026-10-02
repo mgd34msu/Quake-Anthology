@@ -4,12 +4,12 @@
 typedef struct bot_checkpoint_record {
     bot_ai_state state;
     uint8_t source_bytes[QA_BOT_STATE_SOURCE_BYTES];
-    qa_bot_move_state movement;
-    qa_bot_input actions;
     qa_bot_character *character;
 } bot_checkpoint_record;
 struct qa_bots_checkpoint {
     qa_bot_memory_checkpoint *memory;
+    bot_move_history *movement;
+    bot_action_snapshot actions;
     bot_fuzzy_history *fuzzy;
     bot_weapon_pointer_history *weapons;
     bot_source_assets_history *assets;
@@ -43,6 +43,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
         free(record->state.admitted_name);
     }
     bot_goal_history_destroy(checkpoint->goals);
+    bot_move_history_destroy(checkpoint->movement);
     bot_chat_history_destroy(checkpoint->chat);
     bot_weapon_pointer_history_destroy(checkpoint->weapons);
     bot_source_assets_history_destroy(checkpoint->assets);
@@ -73,11 +74,13 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     checkpoint->source_match=b->source_match;
     checkpoint->bot_count=b->count;
     if(!qa_bot_memory_checkpoint_capture(qa_bot_runtime_memory(b->runtime),&checkpoint->memory,e) ||
+       !bot_move_history_capture(qa_bot_runtime_moves(b->runtime),&checkpoint->movement,e) ||
        !bot_fuzzy_history_capture(qa_bot_runtime_library(b->runtime),&checkpoint->fuzzy,e) ||
        !bot_runtime_weapons_capture(b->runtime,checkpoint->fuzzy,&checkpoint->weapons,e) ||
        !bot_source_assets_capture(b->runtime,&checkpoint->assets,e) ||
        !bot_goal_history_capture(qa_bot_runtime_goals(b->runtime),checkpoint->fuzzy,&checkpoint->goals,e) ||
-       !bot_chat_history_capture(b->runtime,&checkpoint->chat,e)) goto failed;
+       !bot_chat_history_capture(b->runtime,&checkpoint->chat,e) ||
+       !bot_action_snapshot_capture(qa_bot_runtime_actions(b->runtime),&checkpoint->actions,e)) goto failed;
     for(uint32_t i=0;i<64;++i) {
         bot_ai_state *s=b->source_cells[i];
         if(!s) continue;
@@ -109,8 +112,6 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         record->character=(qa_bot_character *)qa_bot_runtime_character(b->runtime,s->character);
         if(s->character && !record->character) {bot_ai_fail(e,"bot checkpoint character is absent");goto failed;}
         if(record->character) qa_bot_character_retain(record->character);
-        if((s->movement && !qa_bot_moves_capture(qa_bot_runtime_moves(b->runtime),s->movement,&record->movement,e)) ||
-           (s->view.actor.registry && !qa_bot_actions_read(qa_bot_runtime_actions(b->runtime),s->view.client,&record->actions,e))) goto failed;
     }
     *out=checkpoint;return true;
 failed:
@@ -167,7 +168,6 @@ bool qa_bots_checkpoint_validate(qa_bots *b,const qa_bots_checkpoint *checkpoint
     return bot_ai_mutable(b,e) && validate(b,checkpoint,e);
 }
 typedef struct bot_prepared_record {
-    qa_bot_input *actions;
     qa_bot_source_span source_span;
     char *character_request;
     char *admission_name;
@@ -216,29 +216,26 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     bot_weapon_pointer_restore *weapons=NULL;
     bot_source_assets_restore *assets=NULL;
     bot_goal_history_restore *goals=NULL;
+    bot_move_history_restore *movement=NULL;
+    bot_action_snapshot actions={0};
     bool ok=!count || prepared;
     if(!ok) qa_error_set(e,QA_ERROR_MEMORY,0,"preparing native bot checkpoint population");
+    if(ok) ok=bot_move_history_validate(qa_bot_runtime_moves(b->runtime),checkpoint->movement,e);
     for(uint32_t i=0;ok && i<count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
-        if(record->state.view.actor.registry) {
-            prepared[i].actions=bot_action_restore_input(qa_bot_runtime_actions(b->runtime),record->state.view.client,e);
-            ok=prepared[i].actions!=NULL;
-        }
-    }
-    for(uint32_t i=0;ok && i<count;++i) {
-        const bot_checkpoint_record *record=&checkpoint->records[i];
-        ok=!record->state.movement || bot_move_restore_validate(qa_bot_runtime_moves(b->runtime),record->state.movement,&record->movement,e);
         if(ok && (checkpoint->destroy_pending ||
            (record->state.view.actor.registry && !bot_ai_live(b,record->state.view.actor))))
             ok=bot_ai_fail(e,"bot checkpoint or actor retired during navigation validation");
     }
     if(ok) ok=validate(b,checkpoint,e) && prepare(b,checkpoint,prepared,e);
     if(ok) ok=qa_bot_memory_checkpoint_prepare(qa_bot_runtime_memory(b->runtime),checkpoint->memory,&memory,e) &&
+        bot_move_history_prepare(qa_bot_runtime_moves(b->runtime),checkpoint->movement,memory,&movement,e) &&
         bot_fuzzy_history_prepare(qa_bot_runtime_library(b->runtime),checkpoint->fuzzy,memory,&fuzzy,e) &&
         bot_runtime_weapons_prepare(b->runtime,checkpoint->weapons,memory,&weapons,e) &&
         bot_source_assets_prepare(b->runtime,checkpoint->assets,memory,&assets,e) &&
         bot_goal_history_prepare(qa_bot_runtime_goals(b->runtime),checkpoint->goals,memory,&goals,e) &&
-        bot_chat_history_prepare(b->runtime,checkpoint->chat,memory,&chat,e);
+        bot_chat_history_prepare(b->runtime,checkpoint->chat,memory,&chat,e) &&
+        bot_action_snapshot_prepare(qa_bot_runtime_actions(b->runtime),&checkpoint->actions,memory,&actions,e);
     if(ok) ok=validate(b,checkpoint,e);
     /* All aliases are qualified before writing the actual retained GAME bytes.
      * Read/write callbacks have no source setup or allocation effects. */
@@ -250,6 +247,8 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         ok=qa_bot_source_record_write(&b->services.memory,checkpoint->records[i].state.source_record,
             checkpoint->records[i].source_bytes,e);
     qa_bot_memory_checkpoint_finish(memory,ok);
+    bot_action_snapshot_finish(qa_bot_runtime_actions(b->runtime),&actions,ok);
+    bot_move_history_finish(movement,ok);
     bot_fuzzy_history_finish(fuzzy,ok);
     bot_weapon_pointer_finish(weapons,ok);
     bot_source_assets_finish(assets,ok);
@@ -257,8 +256,6 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     for(uint32_t i=0;prepared && i<count;++i) {
         if(ok) {
             const bot_checkpoint_record *record=&checkpoint->records[i];
-            if(record->state.movement) bot_move_restore_commit(qa_bot_runtime_moves(b->runtime),record->state.movement,&record->movement);
-            if(prepared[i].actions) *prepared[i].actions=record->actions;
             bot_ai_state *state=b->source_cells[record->state.acquired_source_client];
             free(state->admitted_character);free(state->admitted_name);*state=record->state;
             state->source_span=prepared[i].source_span;

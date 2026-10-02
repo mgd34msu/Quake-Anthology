@@ -22,6 +22,19 @@ struct application_q3_native_catalog {
     size_t weapon_count;
 };
 
+static bool opening_current(const q3g_role *role)
+{
+    const q3g_artifact *a = role ? role->artifact : NULL;
+    const qa_launch_instance *descriptor = a ? qa_launch_instance_lease_view(a->descriptor) : NULL;
+    if (!a || !a->view || !a->descriptor || !a->items_resource ||
+        !a->items_acquisition.path || strcmp(a->items_acquisition.path, "native-q3-items.json") ||
+        !descriptor || descriptor->content != a->view ||
+        qa_resource_id(a->items_resource) != a->items_acquisition.resource_id ||
+        qa_resource_pool_find(qa_vfs_resources(a->view), a->items_acquisition.resource_id) != a->items_resource ||
+        !qa_vfs_acquisition_retained(a->view, &a->items_acquisition, NULL)) return false;
+    return true;
+}
+
 static bool fail(qa_error *error, qa_status status, const char *message)
 { return application_fail(error, status, message); }
 
@@ -82,12 +95,18 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     application_q3_native_catalog **out, qa_error *error)
 {
     if (!role || !out || *out || role->kind != QA_QVM_GAME || role->vm || !role->module ||
-        !role->artifact || role->artifact->module != role->module || !bytes.size || !bytes.data)
+        !role->artifact || role->artifact->module != role->module || !bytes.size || !bytes.data ||
+        !opening_current(role))
         return fail(error, QA_ERROR_ARGUMENT, "Native catalog requires its actual GAME module and retained declaration");
     application_q3_native_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(error, QA_ERROR_MEMORY, "Retaining declared native Q3 catalog");
     c->role = role; c->module = role->module; qa_native_module_retain(c->module);
     c->info = qa_native_module_describe(c->module); qa_sha256(bytes, &c->declaration_digest);
+    if (!qa_sha256_equal(&c->declaration_digest, qa_resource_digest(role->artifact->items_resource)) ||
+        !qa_sha256_equal(&c->info.image.digest, qa_resource_digest(role->artifact->resource))) {
+        application_q3_native_catalog_destroy(c);
+        return fail(error, QA_ERROR_FORMAT, "Native catalog bytes differ from their actual source openings");
+    }
     if (c->info.profile != QA_NATIVE_Q3_VMMAIN ||
         (c->info.image.target.pointer_bytes != 4 && c->info.image.target.pointer_bytes != 8)) {
         application_q3_native_catalog_destroy(c);
@@ -124,6 +143,11 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     if (ok) ok = u32(doc, qa_json_get(doc, items, "weaponType"), &weapon_type, error) && weapon_type <= INT32_MAX &&
         u32(doc, qa_json_get(doc, items, "ammoType"), &ammo_type, error) && ammo_type <= INT32_MAX && weapon_type != ammo_type;
     c->weapon_type = (int32_t)weapon_type; c->ammo_type = (int32_t)ammo_type;
+    if (ok && !c->address.global && !c->count.global) {
+        uint64_t extent = c->count.value * c->stride;
+        ok = c->address.value <= c->info.image.image_bytes &&
+            extent <= c->info.image.image_bytes - c->address.value;
+    }
     qa_buffer_free(&path); qa_buffer_free(&digest); qa_json_destroy(doc);
     if (!ok) {
         if (!error || !error->code) fail(error, QA_ERROR_FORMAT, "Native item declaration differs from its actual artifact and pointer layout");
@@ -132,20 +156,29 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     *out = c; return true;
 }
 
-bool application_q3_native_catalog_current(const application_q3_native_catalog *c, const q3g_role *role)
+static bool retained_current(const application_q3_native_catalog *c, const q3g_role *role, bool restoring)
 {
     if (!c || !role || c->role != role || role->kind != QA_QVM_GAME || role->vm ||
-        role->retired || !role->ready || !role->host || !role->native || role->source_cleared ||
-        !role->engine || role->engine->game != role || role->engine->restore_pending ||
+        role->retired || !role->ready ||
+        !role->host || !role->native || role->source_cleared ||
+        !role->engine || role->engine->game != role ||
         role->module != c->module || !role->artifact || role->artifact->module != c->module ||
-        !role->artifact->items_resource ||
+        !opening_current(role) ||
         !qa_sha256_equal(qa_resource_digest(role->artifact->items_resource), &c->declaration_digest)) return false;
     application_provider *provider = role->engine->provider;
     qa_native_instance *instance = qa_native_host_instance(role->native);
-    return provider && provider->constructed && !provider->close_pending &&
+    if (restoring) {
+        if (!role->engine->restore_pending || !role->engine->restoration || !provider ||
+            provider->application->operation != APPLICATION_PERSISTING ||
+            qa_native_process_restore_pending(instance)) return false;
+    } else if (role->engine->restore_pending || !role->initialized || !role->init_succeeded) return false;
+    return provider && provider->constructed && provider->attached && !provider->close_pending &&
         instance && qa_native_get_module(instance) == c->module && !qa_native_terminal(instance) &&
         !qa_native_active(instance) && qa_native_get_lifecycle(instance) == QA_NATIVE_INITIALIZED;
 }
+
+bool application_q3_native_catalog_current(const application_q3_native_catalog *c, const q3g_role *role)
+{ return retained_current(c, role, false); }
 
 static uint64_t little(const uint8_t *p, size_t count)
 {
@@ -217,15 +250,16 @@ static bool identity(application_q3_native_catalog *c, const application_q3_cata
     free(text); return ok;
 }
 
-static bool refresh(application_q3_native_catalog *c, qa_error *error)
+static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_error *error)
 {
-    if (!application_q3_native_catalog_current(c, c ? c->role : NULL))
+    if (!retained_current(c, c ? c->role : NULL, restoring))
         return fail(error, QA_ERROR_ARGUMENT, "Native catalog lost its actual initialized returned GAME module");
     qa_native_instance *instance = qa_native_host_instance(c->role->native);
     uint64_t address; uint32_t count;
     if (!table(c, instance, &address, &count, error)) return false;
-    if (count > SIZE_MAX / sizeof(application_q3_catalog_record) ||
-        count > SIZE_MAX / sizeof(application_q3_catalog_weapon))
+    size_t rows = count;
+    if (rows > SIZE_MAX / sizeof(application_q3_catalog_record) ||
+        rows > SIZE_MAX / sizeof(application_q3_catalog_weapon))
         return fail(error, QA_ERROR_MEMORY, "Native item table exceeds owned catalog storage");
     application_q3_catalog_record *records = count ? calloc(count, sizeof(*records)) : NULL;
     application_q3_catalog_weapon *weapons = count ? calloc(count, sizeof(*weapons)) : NULL;
@@ -239,8 +273,9 @@ static bool refresh(application_q3_native_catalog *c, qa_error *error)
             ok = scalar(instance, at + c->fields[j], j == 1 ? c->info.image.target.pointer_bytes : 4, values + j, error);
         if (!ok) break;
         application_q3_catalog_record *record = records + used++;
-        *record = (application_q3_catalog_record){.index = i, .address = at,
-            .type = (int32_t)(uint32_t)values[2], .tag = (int32_t)(uint32_t)values[3]};
+        uint32_t type = (uint32_t)values[2], tag = (uint32_t)values[3];
+        *record = (application_q3_catalog_record){.index = i, .address = at};
+        memcpy(&record->type, &type, sizeof(type)); memcpy(&record->tag, &tag, sizeof(tag));
         ok = string(instance, values[0], c->string_limit, &record->class_name, error);
         if (ok && values[1]) ok = string(instance, values[1], c->string_limit, &record->pickup_name, error);
         if (ok && !record->pickup_name && (record->type == c->weapon_type || record->type == c->ammo_type))
@@ -266,7 +301,7 @@ static bool refresh(application_q3_native_catalog *c, qa_error *error)
         if (ok) ++weapon_count;
     }
     uint64_t current_address = 0; uint32_t current_count = 0;
-    if (ok) ok = application_q3_native_catalog_current(c, c->role) &&
+    if (ok) ok = retained_current(c, c->role, restoring) &&
         table(c, instance, &current_address, &current_count, error) &&
         current_address == address && current_count == count;
     if (!ok) {
@@ -274,29 +309,55 @@ static bool refresh(application_q3_native_catalog *c, qa_error *error)
         if (!error || !error->code) fail(error, QA_ERROR_ARGUMENT, "Native catalog changed its actual source table during read");
         return false;
     }
+    bool same = used == c->record_count && weapon_count == c->weapon_count;
+    for (size_t i = 0; same && i < used; ++i) {
+        const application_q3_catalog_record *a = records + i, *b = c->records + i;
+        same = a->index == b->index && a->address == b->address && a->type == b->type &&
+            a->tag == b->tag && !strcmp(a->class_name, b->class_name) &&
+            ((a->pickup_name && b->pickup_name && !strcmp(a->pickup_name, b->pickup_name)) ||
+             (!a->pickup_name && !b->pickup_name));
+    }
+    for (size_t i = 0; same && i < weapon_count; ++i)
+        same = weapons[i].weapon == c->weapons[i].weapon && weapons[i].item == c->weapons[i].item &&
+            weapons[i].ammo == c->weapons[i].ammo;
+    if (same) { records_free(records, used); free(weapons); return true; }
     records_free(c->records, c->record_count); free(c->weapons);
     c->records = records; c->record_count = used; c->weapons = weapons; c->weapon_count = weapon_count;
     return true;
 }
 
+bool application_q3_native_catalog_restore_validate(application_q3_native_catalog *c,
+    const q3g_role *role, qa_error *error)
+{
+    if (!retained_current(c, role, true))
+        return fail(error, QA_ERROR_ARGUMENT, "Native catalog validation requires its real imported process and unpublished role");
+    return refresh_held(c, true, error);
+}
+
+static bool refresh(application_q3_native_catalog *c, qa_error *error)
+{ return refresh_held(c, false, error); }
+
 bool application_q3_native_catalog_records(application_q3_native_catalog *c,
     const application_q3_catalog_record **out, size_t *count, qa_error *error)
 {
-    if (!out || !count || !refresh(c, error)) return false;
+    if (!out || !count) return fail(error, QA_ERROR_ARGUMENT, "Native catalog records require their output slots");
+    if (!refresh(c, error)) return false;
     *out = c->records; *count = c->record_count; return true;
 }
 
 bool application_q3_native_catalog_weapons(application_q3_native_catalog *c,
     const application_q3_catalog_weapon **out, size_t *count, qa_error *error)
 {
-    if (!out || !count || !refresh(c, error)) return false;
+    if (!out || !count) return fail(error, QA_ERROR_ARGUMENT, "Native catalog weapons require their output slots");
+    if (!refresh(c, error)) return false;
     *out = c->weapons; *count = c->weapon_count; return true;
 }
 
 bool application_q3_native_catalog_ammo_label(application_q3_native_catalog *c,
     qa_item_id item, const char **out, qa_error *error)
 {
-    if (!item || !out || !refresh(c, error)) return false;
+    if (!item || !out) return fail(error, QA_ERROR_ARGUMENT, "Native ammo label requires its actual item and output");
+    if (!refresh(c, error)) return false;
     for (size_t i = 0; i < c->record_count; ++i) if (c->records[i].type == c->ammo_type) {
         qa_item_id actual;
         if (!identity(c, c->records + i, false, &actual, error)) return false;

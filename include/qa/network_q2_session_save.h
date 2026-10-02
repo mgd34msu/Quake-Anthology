@@ -1,6 +1,12 @@
 #ifndef QA_NETWORK_Q2_SESSION_SAVE_H
 #define QA_NETWORK_Q2_SESSION_SAVE_H
 #include "qa/network_q2_session.h"
+#include "qa/source_save.h"
+
+/* Pure recipe fields. Optional admits only a literal allzero pending policy;
+ * selected policies have genuine CLIENT channel and command extents. This
+ * nominal boundary rejects process reader/context pointers. */
+bool qa_network_q2_save_client_policy(qa_source_save_io *, qa_network_q2_client_policy *, bool optional);
 
 /* Actual graph identities, independent of host pointers and socket owners.
  * Decode borrows the isolated candidate graph; the session retains only its

@@ -1,6 +1,7 @@
 #include "commands_private.h"
 #include "save_fields.h"
 #include "qa/console_save.h"
+#include "qa/console_release.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -346,4 +347,196 @@ bool qa_console_save_restore(qa_console *console, qa_session *session,
     qa_source_save_dispose(&io); qa_buffer_free(&before); qa_buffer_free(&after);
     if (!ok && (!error || error->code == QA_OK)) invalid(error, "Invalid saved console continuation");
     return ok;
+}
+
+static bool fault_fields(qa_source_save_io *io,qa_error *fault)
+{
+    uint32_t code=(uint32_t)fault->code;
+    size_t length=io->direction==QA_SOURCE_SAVE_READ?0:strlen(fault->message);
+    if (!qa_source_save_u32(io,&code) || code>QA_ERROR_NOT_FOUND ||
+        !qa_source_save_count(io,&fault->offset,SIZE_MAX) ||
+        !qa_source_save_count(io,&length,sizeof(fault->message)-1) ||
+        !qa_source_save_bytes(io,fault->message,length) || memchr(fault->message,0,length)) return false;
+    fault->message[length]=0; fault->code=(qa_status)code;
+    return code!=QA_OK || (!fault->offset && !length);
+}
+static bool release_context_equal(const qa_command_context *a,const qa_command_context *b)
+{
+    return a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
+        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct &&
+        a->console_text==b->console_text && a->registry==b->registry && a->generation==b->generation &&
+        qa_actor_id_equal(a->actor,b->actor) && ((!a->script && !b->script) ||
+            (a->script && b->script && !strcmp(a->script,b->script)));
+}
+static bool releases_fields(qa_source_save_io *io,qa_console *state,
+    const qa_console_save_resolvers *resolve)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=state->release_leases,active=0;
+    uint64_t registry=qa_actors_identity(qa_session_actors(io->session));
+    if (!qa_source_save_u64(io,&registry) || !registry ||
+        !qa_source_save_count(io,&count,reading?io->input.size/16:SIZE_MAX) || !count) return false;
+    qa_console_release **link=&state->release_first;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            *link=calloc(1,sizeof(**link));
+            if (!*link) return qac_fail(io->error,QA_ERROR_MEMORY,"Retaining imported release programme");
+            (*link)->console=state; (*link)->imported=true; ++state->release_leases;
+        }
+        qa_console_release *owner=*link;
+        if (!owner || (reading?owner->console!=state:
+                owner->console->release_first!=state->release_first) ||
+            !context_fields(io,&owner->context,resolve,registry) ||
+            !qa_source_save_bool(io,&owner->started) || !qa_source_save_bool(io,&owner->entered) ||
+            !qa_source_save_bool(io,&owner->complete) || !fault_fields(io,&owner->fault) ||
+            owner->context.session!=state->options.context.session ||
+            is_retired(state->owners,owner->context.owner) ||
+            (owner->context.client && is_retired(state->clients,owner->context.client)) ||
+            (owner->entered && !owner->started) || (owner->complete && !owner->started) ||
+            (!owner->started && owner->fault.code!=QA_OK)) return false;
+        size_t prepared_bytes=owner->prepared?owner->prepared->length-owner->prepared->offset:0;
+        command_chunk *last=NULL;
+        if (!chunks_fields(io,&owner->prepared,&last,&prepared_bytes,resolve,registry) ||
+            (owner->started && owner->prepared) || (owner->prepared && owner->prepared->next) ||
+            !queue_valid(state,owner->prepared,prepared_bytes,io->error)) return false;
+        if (owner->prepared) {
+            qa_command_context empty={0};
+            if (owner->prepared->offset || owner->prepared->completion || owner->prepared->success ||
+                !release_context_equal(&owner->prepared->context,&owner->context) ||
+                !release_context_equal(&owner->prepared->caller,&empty)) return false;
+        }
+        if (owner->started && !owner->complete) {
+            if (++active!=1 || !qa_console_pending(state) ||
+                !chunks_fields(io,&owner->head,&owner->tail,&owner->queued_bytes,resolve,registry) ||
+                !chunks_fields(io,&owner->deferred,&owner->deferred_tail,&owner->deferred_bytes,resolve,registry) ||
+                !qa_source_save_i32(io,&owner->wait) ||
+                !context_fields(io,&owner->wait_context,resolve,registry) ||
+                !qa_source_save_count(io,&owner->alias_count,SIZE_MAX) ||
+                !qa_source_save_bool(io,&owner->drain_yielded) ||
+                !queue_valid(state,owner->head,owner->queued_bytes,io->error) ||
+                !queue_valid(state,owner->deferred,owner->deferred_bytes,io->error) ||
+                (owner->wait && (owner->wait_context.session!=state->options.context.session ||
+                    is_retired(state->owners,owner->wait_context.owner) ||
+                    (owner->wait_context.client && is_retired(state->clients,owner->wait_context.client))))) return false;
+            if (reading) state->release_owner=owner;
+            else if (state->release_owner!=owner) return false;
+        }
+        link=&owner->next;
+    }
+    return !*link && (active!=0)==(state->release_owner!=NULL);
+}
+static void release_chunks_free(command_chunk *chunk)
+{
+    while (chunk) {
+        command_chunk *next=chunk->next;
+        free((char *)chunk->context.script); free((char *)chunk->caller.script);
+        free(chunk->text); free(chunk); chunk=next;
+    }
+}
+static void imported_storage_free(qa_console *console)
+{
+    while (console->release_first) {
+        qa_console_release *owner=console->release_first;
+        console->release_first=owner->next;
+        release_chunks_free(owner->prepared);
+        release_chunks_free(owner->head); release_chunks_free(owner->deferred);
+        free((char *)owner->context.script); free((char *)owner->wait_context.script); free(owner);
+    }
+    console->release_leases=0; console->release_owner=NULL;
+}
+bool qa_console_release_save_capture(const qa_console *console,qa_session *session,qa_buffer *out,qa_error *error)
+{
+    if (!console || !session || !out || !qa_console_idle(console) || !console->release_leases ||
+        console->release_advancing || console->program_leases || console->program_unpublished || console->pending_program)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Release capture requires the returned actual programme roster");
+    qa_source_save_io io={0}; qa_console copy=*console;
+    char magic[4]={'Q','A','C','R'}; uint32_t version=1;
+    bool ok=qa_source_save_writer(&io,session,error) && qa_source_save_bytes(&io,magic,4) &&
+        qa_source_save_u32(&io,&version) && fields(&io,&copy,(qa_console *)console,NULL) &&
+        qa_source_save_bool(&io,&copy.drain_yielded) &&
+        releases_fields(&io,&copy,NULL) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);
+    if (!ok && (!error || error->code==QA_OK)) invalid(error,"Invalid retained console release roster");
+    return ok;
+}
+bool qa_console_release_save_present(const qa_console *console)
+{ return console && console->release_first && console->release_leases; }
+bool qa_console_release_save_restore(qa_console *console,qa_session *session,
+    const qa_console_save_resolvers *resolve,qa_bytes bytes,qa_error *error)
+{
+    if (!console || !session || !resolve || !qa_console_idle(console) || console->program_leases ||
+        console->release_leases || console->program_unpublished || console->pending_program)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Release import requires the unleased candidate console");
+    qa_buffer before={0},after={0};
+    if (!qa_console_save_capture(console,session,&before,error)) return false;
+    qa_console *scratch=calloc(1,sizeof(*scratch));
+    if (!scratch) { qa_buffer_free(&before); return qac_fail(error,QA_ERROR_MEMORY,"Allocating release import"); }
+    scratch->options=console->options; scratch->options.context=(qa_command_context){0};
+    scratch->options.startup_commands=NULL;
+    qa_source_save_io io={0}; char magic[4]; uint32_t version=0;
+    bool ok=qa_source_save_reader(&io,session,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
+        !memcmp(magic,"QACR",4) && qa_source_save_u32(&io,&version) && version==1 &&
+        fields(&io,scratch,console,resolve) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
+        releases_fields(&io,scratch,resolve) &&
+        qa_source_save_finish(&io,NULL) && qa_console_save_capture(console,session,&after,error);
+    scratch->startup=(char *)scratch->options.startup_commands;
+    if (ok && (before.size!=after.size || memcmp(before.data,after.data,before.size)))
+        ok=invalid(error,"Candidate console changed during release resolution");
+    if (ok) {
+        qa_console old=*console; *console=*scratch; *scratch=old;
+        for (qa_console_release *at=console->release_first;at;at=at->next) at->console=console;
+    }
+    imported_storage_free(scratch); qa_console_destroy(scratch);
+    qa_source_save_dispose(&io); qa_buffer_free(&before); qa_buffer_free(&after);
+    if (!ok && (!error || error->code==QA_OK)) invalid(error,"Invalid saved console release");
+    return ok;
+}
+bool qa_console_release_save_reference(const qa_console *console,const qa_console_release *owner,uint64_t *out)
+{
+    if (!console || !owner || !out || !qa_console_idle(console) || console->release_advancing) return false;
+    uint64_t id=1;
+    for (const qa_console_release *at=console->release_first;at;at=at->next,++id)
+        if (at==owner && at->console==console) { *out=id; return true; }
+    return false;
+}
+qa_console_release *qa_console_release_restore_reference(qa_console *console,uint64_t id)
+{
+    if (!console || !id || !qa_console_idle(console) || console->release_advancing) return NULL;
+    qa_console_release *at=console->release_first;
+    while (at && --id) at=at->next;
+    return at && at->imported && !at->claimed?at:NULL;
+}
+bool qa_console_release_restore_claim(qa_console_release *owner,qa_error *error)
+{
+    if (!owner || !owner->imported || owner->claimed || !qa_console_idle(owner->console))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Release import has no unclaimed actual programme");
+    owner->claimed=true; return true;
+}
+bool qa_console_release_restore_finish(const qa_console *console,qa_error *error)
+{
+    if (!console || !qa_console_idle(console)) return qac_fail(error,QA_ERROR_ARGUMENT,"Release import has not returned");
+    for (const qa_console_release *at=console->release_first;at;at=at->next)
+        if (at->imported && !at->claimed) return invalid(error,"Imported programme has no physical input owner");
+    return true;
+}
+bool qa_console_release_restore_unclaimed(const qa_console *console)
+{
+    if (!console || !console->release_first || !console->release_leases ||
+        !qa_console_idle(console) || console->release_advancing) return false;
+    size_t count=0;
+    for (const qa_console_release *at=console->release_first;at;at=at->next) {
+        if (at->console!=console || !at->imported || at->claimed) return false;
+        ++count;
+    }
+    return count==console->release_leases;
+}
+bool qa_console_release_restore_abort(qa_console *console,qa_error *error)
+{
+    if (!console || !qa_console_idle(console) || console->release_advancing)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Release import cleanup has not returned");
+    for (const qa_console_release *at=console->release_first;at;at=at->next)
+        if (!at->imported || at->claimed) return qac_fail(error,QA_ERROR_ARGUMENT,"Release cleanup belongs to its retained input owner");
+    if (console->release_owner) qa_console_release_retirement_publish(console->release_owner);
+    while (console->release_first) qa_console_release_retirement_publish(console->release_first);
+    return true;
 }

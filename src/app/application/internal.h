@@ -256,6 +256,7 @@ struct qa_application {
     char *ranking_game_key;
     struct application_rankings *ranked_source;
     qa_application_native_q2_services_fn native_q2_services;
+    qa_application_model_admission_fn model_admission;
     qa_application_world_hook_fn world_change_ready;
     qa_application_world_hook_fn before_world_change;
     qa_application_world_hook_fn world_retired;
@@ -582,7 +583,7 @@ bool application_provider_construct(qa_application *, application_provider *,
                                     qa_world *, qa_catalog *, const qa_product *,
                                     const qa_launch_choices *, qa_error *);
 struct qa_save_record;
-bool application_provider_construct_qvm_restored(qa_application *, application_provider *,
+bool application_provider_construct_q3_restored(qa_application *, application_provider *,
     qa_world *, qa_catalog *, const qa_product *, const qa_launch_choices *,
     const struct qa_save_record *, qa_error *);
 bool application_provider_deconstruct(application_provider *, qa_error *);

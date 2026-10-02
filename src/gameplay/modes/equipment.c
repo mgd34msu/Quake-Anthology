@@ -21,6 +21,7 @@ struct qa_equipment {
     qa_weapon_slot **slots;
 };
 static bool equipment_slot_ensure(qa_equipment *,qa_actor_id,qa_error *);
+static bool equipment_slot_sync_grapple(qa_equipment *,equipment_actor *,qa_error *);
 bool qa_equipment_idle(const qa_equipment *g) {
     if (!g || g->operation_depth)
         return false;
@@ -262,6 +263,7 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
         return mode_fail(e, "invalid equipment admission");
     if (equipment_get(g, actor))
         return qa_equipment_configure_sources(g, actor, selection, sources, e);
+    if(!qa_weapon_slot_destroy(&g->slots[actor.slot],e))return false;
     qa_equipment_selection wanted = *selection;
     qa_equipment_source_selection selected_sources = *sources;
     selection = &wanted;
@@ -327,6 +329,7 @@ static bool equipment_configure(qa_equipment *g, qa_actor_id actor,
     p->state.selection = *selection;
     p->state.sources = *sources;
     p->grapple = admission.grapple; p->grenades = admission.grenades; p->items = admission.items;
+    if(g->slots[actor.slot]&&!equipment_slot_sync_grapple(g,p,e))goto finished;
     ok = true;
 finished: {
         qa_error cleanup = {0};
@@ -355,6 +358,7 @@ static bool equipment_respawn(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     if (!p) return okay;
     p->configuring = false;
     if (!okay) return false;
+    if(g->slots[actor.slot]&&!qa_weapon_slot_reset_primary(g->slots[actor.slot],e))return false;
     p->state.slot_requested = p->state.slot_active = p->state.slot_holstering = p->state.slot_lowering = false;
     p->state.primary_request_owner=0; p->state.primary_request_item=0;
     if (!equipment_configure(g, actor, &wanted, &sources, e)) return false;
@@ -447,6 +451,143 @@ static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipme
     return true;
 }
 static bool equipment_select_grapple(qa_equipment *, qa_actor_id, bool, qa_error *);
+static qa_item_id slot_grapple_item(qa_equipment *g,equipment_actor *p) {
+    switch(p->state.selection.grapple) {
+    case QA_GRAPPLE_THREEWAVE: case QA_GRAPPLE_ROGUE:
+        return qa_q1_weapon_item(p->grapple.q1,p->state.selection.grapple==QA_GRAPPLE_THREEWAVE?QA_Q1_CTF_GRAPPLE:QA_Q1_ROGUE_GRAPPLE);
+    case QA_GRAPPLE_Q2_CTF: case QA_GRAPPLE_LMCTF: {
+        const qa_q2_weapon_definition *d=qa_q2_weapon_definition_at(p->grapple.q2,
+            p->state.selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_GRAPPLE:QA_Q2_LMCTF_HOOK);
+        return d&&d->item?qa_strings_find(qa_session_strings(g->options.services.session),
+            (qa_bytes){(const uint8_t *)d->item,strlen(d->item)}):0;
+    }
+    case QA_GRAPPLE_Q3:return p->grapple.q3?qa_q3_weapon_item(p->grapple.q3,QA_Q3_W_GRAPPLE,false):p->grapple.weapon_item;
+    case QA_GRAPPLE_DISABLED:return 0;
+    }
+    return 0;
+}
+static bool slot_primary_current(void *context,qa_actor_id actor) {
+    equipment_slot_context *c=context;qa_actor_owner owner=0;
+    return equipment_get(c->equipment,actor)&&c->equipment->options.primary_owner&&
+        c->equipment->options.primary_owner(c->equipment->options.context,actor,&owner,NULL)&&owner==c->owner;
+}
+static bool slot_primary_accepts(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;
+    return g->options.primary_accepts(g->options.context,actor,c->owner,item,out,e);
+}
+static bool slot_primary_select(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;
+    return g->options.primary_select(g->options.context,actor,c->owner,item,out,e);
+}
+static bool slot_primary_holster(void *context,qa_actor_id actor,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;equipment_actor *p=equipment_get(g,actor);
+    if(!p)return false;
+    p->state.slot_holstering=true;
+    return g->options.primary_holster(g->options.context,actor,e);
+}
+static bool slot_primary_holstered(void *context,qa_actor_id actor,bool *out,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;
+    if(g->options.primary_holstered_read)return g->options.primary_holstered_read(g->options.context,actor,out,e);
+    *out=g->options.primary_holstered(g->options.context,actor);return true;
+}
+static bool slot_primary_resume(void *context,qa_actor_id actor,qa_item_id item,bool *out,uint64_t *request,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;*request=0;*out=false;
+    if(!g->options.primary_resume(g->options.context,actor,e))return false;
+    equipment_actor *p=equipment_get(g,actor);if(!p)return true;
+    p->state.slot_holstering=p->state.slot_lowering=p->state.slot_active=p->state.slot_requested=false;
+    if(item)return slot_primary_select(context,actor,item,out,e);
+    *out=true;return true;
+}
+static bool slot_grapple_current(void *context,qa_actor_id actor) {
+    equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);
+    return p&&p->state.sources.grapple==c->owner&&p->state.selection.binding==QA_EQUIPMENT_WEAPON_SLOT&&
+        p->state.selection.grapple!=QA_GRAPPLE_DISABLED&&(!p->grapple.current||p->grapple.current(p->grapple.context));
+}
+static bool slot_grapple_accepts(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
+    equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);(void)e;
+    *out=p&&item&&slot_grapple_current(context,actor)&&slot_grapple_item(c->equipment,p)==item;return true;
+}
+static bool slot_grapple_select(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
+    return slot_grapple_accepts(context,actor,item,out,e);
+}
+static bool slot_grapple_read(void *context,qa_actor_id actor,qa_weapon_presentation *out,qa_error *e) {
+    equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);
+    if(!p||!slot_grapple_current(context,actor))return mode_fail(e,"Grapple presentation lost its actual bound source");
+    *out=(qa_weapon_presentation){.provider=c->owner,.active=slot_grapple_item(c->equipment,p),.context=p};return out->active!=0;
+}
+static bool slot_grapple_holster(void *context,qa_actor_id actor,qa_error *e) {
+    equipment_slot_context *c=context;qa_equipment *g=c->equipment;equipment_actor *p=equipment_get(g,actor);
+    if(!p)return false;
+    if(!p->state.selection.retain_on_weapon_change&&!release_grapple(g,actor,true,e))return false;
+    p=equipment_get(g,actor);if(!p)return true;
+    qa_grapple_mechanic mechanic=p->state.selection.grapple;
+    p->state.slot_active=p->state.slot_requested=false;
+    if(mechanic==QA_GRAPPLE_Q2_CTF||mechanic==QA_GRAPPLE_LMCTF) {
+        p->state.slot_lowering=true;
+        return qa_q2_grapple_equipment_holster(p->grapple.q2,actor,mechanic==QA_GRAPPLE_Q2_CTF?QA_Q2_CTF_GRAPPLE:QA_Q2_LMCTF_GRAPPLE,e);
+    }
+    return mechanic!=QA_GRAPPLE_THREEWAVE||qa_q1_grapple_weapon_holster(p->grapple.q1,actor,e);
+}
+static bool slot_grapple_holstered(void *context,qa_actor_id actor,bool *out,qa_error *e) {
+    equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);
+    if(!p)return false;
+    if(p->state.selection.grapple==QA_GRAPPLE_Q2_CTF||p->state.selection.grapple==QA_GRAPPLE_LMCTF) {
+        qa_q2_grapple_state reached;
+        if(!qa_q2_grapple_read(p->grapple.q2,actor,p->state.selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_CTF_GRAPPLE:QA_Q2_LMCTF_GRAPPLE,&reached,e))return false;
+        *out=reached.equipment.handoff==QA_Q2_PRIMARY_HOLSTERED;
+        if(*out)p->state.slot_lowering=false;
+    } else *out=true;
+    return true;
+}
+static bool slot_grapple_resume(void *context,qa_actor_id actor,qa_item_id item,bool *out,uint64_t *request,qa_error *e) {
+    equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);*request=0;*out=false;
+    if(!p)return false;
+    if(item&&!slot_grapple_accepts(context,actor,item,out,e))return false;
+    if(item&&!*out)return true;
+    p->state.slot_active=p->state.slot_requested=true;p->state.slot_holstering=p->state.slot_lowering=false;
+    qa_grapple_mechanic m=p->state.selection.grapple;
+    bool ok=m==QA_GRAPPLE_Q2_CTF||m==QA_GRAPPLE_LMCTF?
+        qa_q2_grapple_equipment_resume(p->grapple.q2,actor,m==QA_GRAPPLE_Q2_CTF?QA_Q2_CTF_GRAPPLE:QA_Q2_LMCTF_GRAPPLE,e):
+        m!=QA_GRAPPLE_THREEWAVE||qa_q1_grapple_weapon_resume(p->grapple.q1,actor,e);
+    *out=ok;return ok;
+}
+static bool equipment_slot_ensure(qa_equipment *g,qa_actor_id actor,qa_error *e) {
+    equipment_actor *p=equipment_get(g,actor);
+    if(!p||!g->options.primary_owner||!g->options.primary_accepts||!g->options.primary_select||
+        !g->options.primary_holster||(!g->options.primary_holstered&&!g->options.primary_holstered_read)||!g->options.primary_resume)
+        return mode_fail(e,"Source weapon registry requires its genuine admitted primary handoff");
+    if(g->slots[actor.slot])return true;
+    qa_actor_owner owner=0;if(!g->options.primary_owner(g->options.context,actor,&owner,e)||!owner)return false;
+    if(p->state.weapon_slot_present&&p->state.primary_weapon_owner!=owner)
+        return mode_fail(e,"Saved weapon slot changed its actual primary provider");
+    p->primary_slot=(equipment_slot_context){g,owner};p->grapple_slot=(equipment_slot_context){g,p->state.sources.grapple};
+    qa_equipment_weapon_binding primary={.provider=owner,.context=&p->primary_slot,.current=slot_primary_current,
+        .accepts=slot_primary_accepts,.select=slot_primary_select,.holster=slot_primary_holster,
+        .holstered=slot_primary_holstered,.resume=slot_primary_resume};
+    if(!qa_weapon_slot_create(qa_session_actors(g->options.services.session),actor,&primary,
+        p->state.weapon_slot_present?&p->state.weapon_slot:NULL,&g->slots[actor.slot],e))return false;
+    if(!equipment_slot_sync_grapple(g,p,e)) {
+        qa_weapon_slot_destroy(&g->slots[actor.slot],NULL);return false;
+    }
+    p->state.weapon_slot_present=true;p->state.primary_weapon_owner=owner;
+    return qa_weapon_slot_snapshot(g->slots[actor.slot],&p->state.weapon_slot);
+}
+static bool equipment_slot_sync_grapple(qa_equipment *g,equipment_actor *p,qa_error *e) {
+    qa_actor_id actor=p->state.actor;
+    bool wanted=p->state.selection.binding==QA_EQUIPMENT_WEAPON_SLOT&&p->state.selection.grapple!=QA_GRAPPLE_DISABLED;
+    qa_actor_owner previous=p->grapple_slot.owner,next=wanted?p->state.sources.grapple:0;
+    if(previous&&qa_weapon_slot_binding_is(g->slots[actor.slot],previous,&p->grapple_slot)) {
+        if(previous==next)return true;
+        if(!qa_weapon_slot_unbind(g->slots[actor.slot],previous,&p->grapple_slot,e))return false;
+    }
+    p->grapple_slot=(equipment_slot_context){g,next};
+    if(!next)return true;
+    qa_equipment_weapon_binding grapple={.provider=next,.context=&p->grapple_slot,
+        .current=slot_grapple_current,.read=slot_grapple_read,.declares=slot_grapple_accepts,
+        .accepts=slot_grapple_accepts,.select=slot_grapple_select,
+        .holster=slot_grapple_holster,.holstered=slot_grapple_holstered,.resume=slot_grapple_resume};
+    return qa_weapon_slot_bind(g->slots[actor.slot],&grapple,e);
+}
 static bool primary_holstered_read(qa_equipment *g,qa_actor_id actor,bool *out,qa_error *e) {
     if(g->options.primary_holstered_read)
         return g->options.primary_holstered_read(g->options.context,actor,out,e);
@@ -471,6 +612,12 @@ static bool equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool se
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
         return mode_fail(e, "unknown equipment player");
+    if(g->options.primary_owner) {
+        if(!equipment_slot_ensure(g,actor,e))return false;
+        if(selected){bool accepted=false;return qa_weapon_slot_request(g->slots[actor.slot],p->state.sources.grapple,slot_grapple_item(g,p),&accepted,e)&&
+            qa_weapon_slot_reconcile(g->slots[actor.slot],e)&&accepted;}
+        return qa_weapon_slot_return_primary(g->slots[actor.slot],e)&&qa_weapon_slot_reconcile(g->slots[actor.slot],e);
+    }
     qa_equipment_state *s = &p->state;
     if (selected && (s->selection.grapple == QA_GRAPPLE_DISABLED ||
                      s->selection.binding != QA_EQUIPMENT_WEAPON_SLOT))
@@ -517,6 +664,10 @@ static bool equipment_request_primary(qa_equipment *g,qa_actor_id actor,qa_actor
     if(!p||!owner||!item||!accepted||!g->options.primary_accepts||!g->options.primary_select)
         return mode_fail(e,"primary weapon request has no actual admitted source");
     *accepted=false;
+    if(g->options.primary_owner) {
+        if(!equipment_slot_ensure(g,actor,e))return false;
+        return qa_weapon_slot_request(g->slots[actor.slot],owner,item,accepted,e)&&qa_weapon_slot_reconcile(g->slots[actor.slot],e);
+    }
     if(!g->options.primary_accepts(g->options.context,actor,owner,item,accepted,e)) return false;
     if(!*accepted) return true;
     p=equipment_get(g,actor);
@@ -529,6 +680,16 @@ static bool equipment_request_primary(qa_equipment *g,qa_actor_id actor,qa_actor
 static bool equipment_reconcile(qa_equipment *g,qa_actor_id actor,qa_error *e) {
     equipment_actor *p=equipment_get(g,actor);
     if(!p) return true;
+    if(g->slots[actor.slot]) {
+        if(!qa_weapon_slot_reconcile(g->slots[actor.slot],e))return false;
+        p=equipment_get(g,actor);if(!p)return true;
+        if(p->state.configuration_pending&&qa_weapon_slot_primary_selected(g->slots[actor.slot])) {
+            qa_equipment_selection selection=p->state.pending_selection;
+            qa_equipment_source_selection sources=p->state.pending_sources;
+            return equipment_configure(g,actor,&selection,&sources,e);
+        }
+        return true;
+    }
     if(p->state.slot_lowering) {
         qa_q2_grapple_kind kind=p->state.selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_CTF_GRAPPLE:QA_Q2_LMCTF_GRAPPLE;
         qa_q2_grapple_state reached;
@@ -602,6 +763,7 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
     bool grenade_pressed = s->grenade_pressed, grenade_released = s->grenade_released;
     s->grapple_pressed = s->grapple_released = s->grenade_pressed = s->grenade_released = false;
     if (p->grapple.frame && !p->grapple.frame(p->grapple.context, now, elapsed, e)) return false;
+    if(g->slots[actor.slot]&&!equipment_reconcile(g,actor,e))return false;
     p = equipment_get(g, actor);
     if (!p) return true;
     s = &p->state; c = &s->controls;
@@ -633,7 +795,15 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
         }
         return qa_equipment_release_grapple(g, actor, e);
     }
-    if (s->slot_lowering) {
+    if (g->slots[actor.slot]&&s->slot_lowering) {
+        qa_q2_weapon_input input=q2_input(s);input.latched_attack=false;
+        if(s->selection.retain_on_weapon_change)input.attack=true;
+        if(!qa_q2_grapple_equipment_tick(p->grapple.q2,actor,
+            s->selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_CTF_GRAPPLE:QA_Q2_LMCTF_GRAPPLE,&input,now,elapsed,e))return false;
+        if(!equipment_reconcile(g,actor,e))return false;
+        p=equipment_get(g,actor);if(!p)return true;s=&p->state;c=&s->controls;
+    }
+    if (!g->slots[actor.slot]&&s->slot_lowering) {
         qa_q2_grapple_kind kind =
             s->selection.grapple == QA_GRAPPLE_Q2_CTF ? QA_Q2_CTF_GRAPPLE : QA_Q2_LMCTF_GRAPPLE;
         qa_q2_weapon_input input = q2_input(s);
@@ -664,7 +834,7 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
         s->slot_holstering = true;
     }
     bool holstered = false;
-    if(s->slot_holstering&&!primary_holstered_read(g,actor,&holstered,e)) return false;
+    if(!g->slots[actor.slot]&&s->slot_holstering&&!primary_holstered_read(g,actor,&holstered,e)) return false;
     p = equipment_get(g, actor);
     if (!p) return true;
     s = &p->state; c = &s->controls;
@@ -865,6 +1035,7 @@ bool qa_equipment_read(qa_equipment *g, qa_actor_id actor, qa_equipment_state *o
     if (!p || !out)
         return false;
     *out = p->state;
+    if(g->slots[actor.slot]&&!qa_weapon_slot_snapshot(g->slots[actor.slot],&out->weapon_slot))return false;
     return true;
 }
 bool qa_equipment_weapon_view_read(qa_equipment *g, qa_actor_id actor,
@@ -926,6 +1097,10 @@ static bool state_valid(qa_equipment *g, const qa_equipment_state *state, qa_err
         !isfinite(state->controls.view_height) || !isfinite(state->controls.teleport_until) ||
         state->controls.hand < QA_Q2_RIGHT_HAND || state->controls.hand > QA_Q2_CENTER_HAND ||
         state->controls.water_level > 3 ||
+        (state->weapon_slot_present&&(state->primary_request_owner||state->primary_request_item)) ||
+        (!state->weapon_slot_present&&state->primary_weapon_owner) ||
+        (state->weapon_slot_present&&(!state->primary_weapon_owner||!g->options.primary_owner||
+            !state->weapon_slot.provider||state->weapon_slot.phase>QA_WEAPON_SLOT_ACTIVATING)) ||
         (!!state->primary_request_owner!=!!state->primary_request_item) ||
         (state->primary_request_item&&(state->slot_requested||
             (!state->slot_holstering&&!state->slot_lowering)||!g->options.primary_select||!g->options.primary_accepts)))
@@ -945,6 +1120,8 @@ bool qa_equipment_restore(qa_equipment *g, const qa_equipment_state *state, qa_e
     if (p->state.sources.grapple != state->sources.grapple ||
         p->state.sources.grenades != state->sources.grenades || p->state.sources.items != state->sources.items)
         return mode_fail(e, "equipment state restore cannot change its admitted source owners");
+    if(g->slots[state->actor.slot]&&(!state->weapon_slot_present||
+        !qa_weapon_slot_restore(g->slots[state->actor.slot],&state->weapon_slot,e)))return false;
     p->state = *state;
     return true;
 }
@@ -952,8 +1129,10 @@ void qa_equipment_actor_released(qa_equipment *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
     equipment_actor *p = &g->actors[actor.id.slot];
-    if ((p->active || p->configuring) && qa_actor_id_equal(p->state.actor, actor.id))
+    if ((p->active || p->configuring) && qa_actor_id_equal(p->state.actor, actor.id)) {
+        if(!qa_weapon_slot_destroy(&g->slots[actor.id.slot],NULL))return;
         *p = (equipment_actor){0};
+    }
 }
 
 #define EQUIP_FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -997,16 +1176,19 @@ static bool save_state(qa_source_save_io *io, qa_equipment_state *p) {
     EQUIP_FIELD(bool, p->slot_lowering); EQUIP_FIELD(bool, p->configuration_pending);
     EQUIP_FIELD(bool, p->previous_jump); EQUIP_FIELD(bool, p->teleport_seen); EQUIP_FIELD(u32, p->teleport_sequence);
     EQUIP_FIELD(string, p->primary_request_owner); EQUIP_FIELD(string, p->primary_request_item);
+    EQUIP_FIELD(bool, p->weapon_slot_present);
+    EQUIP_FIELD(string, p->primary_weapon_owner);
+    if(p->weapon_slot_present&&!qa_weapon_slot_state_fields(io,&p->weapon_slot))return false;
     return true;
 }
 static bool save_header(qa_source_save_io *io) {
     uint8_t signature[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
     static const uint8_t expected[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
-    uint32_t version = 4;
+    uint32_t version = 5;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return mode_fail(io->error, "invalid equipment save signature");
     EQUIP_FIELD(u32, version);
-    return version == 4 || mode_fail(io->error, "unsupported equipment save version");
+    return version == 5 || mode_fail(io->error, "unsupported equipment save version");
 }
 static bool save_boundary(qa_equipment *g, bool empty, qa_error *e) {
     if (!qa_equipment_idle(g) || !qa_session_safe(g->options.services.session) || !qa_world_idle(g->options.services.world))
@@ -1063,9 +1245,18 @@ bool qa_equipment_reconnect(qa_equipment *g, qa_error *e) {
     }
     return true;
 }
+bool qa_equipment_weapons_reconnect(qa_equipment *g,qa_error *e) {
+    if(!save_boundary(g,false,e))return false;
+    for(uint32_t i=0;i<g->capacity;++i) {
+        equipment_actor *actor=equipment_get(g,g->actors[i].state.actor);
+        if(actor&&actor->state.weapon_slot_present&&(!equipment_slot_ensure(g,actor->state.actor,e)||
+            !qa_weapon_slot_validate_restore(g->slots[i],e)))return false;
+    }
+    return true;
+}
 bool qa_equipment_capture(qa_equipment *g, qa_buffer *out, qa_error *e) {
     if (!out) return mode_fail(e, "equipment capture requires output");
-    if (!qa_equipment_reconnect(g, e)) return false;
+    if (!qa_equipment_reconnect(g, e)||!qa_equipment_weapons_reconnect(g,e)) return false;
     qa_buffer source = {0};
     if (g->options.source_capture && !g->options.source_capture(g->options.source_context, &source, e)) {
         qa_buffer_free(&source);
@@ -1084,6 +1275,7 @@ bool qa_equipment_capture(qa_equipment *g, qa_buffer *out, qa_error *e) {
         equipment_actor *actor = equipment_get(g, g->actors[i].state.actor);
         if (!actor) continue;
         qa_equipment_state state = actor->state;
+        if(g->slots[i]&&!qa_weapon_slot_snapshot(g->slots[i],&state.weapon_slot)) {okay=false;break;}
         okay = state_valid(g, &state, e) && save_native_state(g, &state, e) && save_state(io, &state);
     }
     if (okay) okay = qa_source_save_finish(io, out);
@@ -1177,6 +1369,51 @@ bool qa_equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool select
 bool qa_equipment_request_primary(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,
     qa_item_id item,bool *accepted,qa_error *e) {
     EQUIPMENT_CALL(equipment_request_primary(g,actor,owner,item,accepted,e));
+}
+static bool equipment_weapon_bind(qa_equipment *g,qa_actor_id actor,const qa_equipment_weapon_binding *b,qa_error *e) {
+    return equipment_slot_ensure(g,actor,e)&&qa_weapon_slot_bind(g->slots[actor.slot],b,e);
+}
+bool qa_equipment_weapon_bind(qa_equipment *g,qa_actor_id actor,const qa_equipment_weapon_binding *b,qa_error *e) {
+    EQUIPMENT_CALL(equipment_weapon_bind(g,actor,b,e));
+}
+static bool equipment_weapon_unbind(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,void *context,qa_error *e) {
+    equipment_actor *p=equipment_get(g,actor);
+    return !p||!g->slots[actor.slot]||qa_weapon_slot_unbind(g->slots[actor.slot],owner,context,e);
+}
+bool qa_equipment_weapon_unbind(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,void *context,qa_error *e) {
+    EQUIPMENT_CALL(equipment_weapon_unbind(g,actor,owner,context,e));
+}
+static bool equipment_weapon_request(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,qa_item_id item,bool *accepted,qa_error *e) {
+    return equipment_slot_ensure(g,actor,e)&&qa_weapon_slot_request(g->slots[actor.slot],owner,item,accepted,e)&&
+        qa_weapon_slot_reconcile(g->slots[actor.slot],e);
+}
+bool qa_equipment_weapon_request(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,qa_item_id item,bool *accepted,qa_error *e) {
+    EQUIPMENT_CALL(equipment_weapon_request(g,actor,owner,item,accepted,e));
+}
+bool qa_equipment_weapon_selected(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner) {
+    return equipment_get(g,actor)&&g->slots[actor.slot]&&qa_weapon_slot_selected(g->slots[actor.slot],owner);
+}
+bool qa_equipment_weapon_presented(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner) {
+    return equipment_get(g,actor)&&g->slots[actor.slot]&&qa_weapon_slot_presented(g->slots[actor.slot],owner);
+}
+bool qa_equipment_weapon_binding_is(qa_equipment *g,qa_actor_id actor,qa_actor_owner owner,const void *context) {
+    return equipment_get(g,actor)&&g->slots[actor.slot]&&qa_weapon_slot_binding_is(g->slots[actor.slot],owner,context);
+}
+bool qa_equipment_primary_selected(qa_equipment *g,qa_actor_id actor) {
+    equipment_actor *p=equipment_get(g,actor);
+    return !p||(!g->slots[actor.slot]?!p->state.weapon_slot_present&&!p->state.slot_active&&!p->state.slot_holstering&&!p->state.slot_lowering:
+        qa_weapon_slot_primary_selected(g->slots[actor.slot]));
+}
+size_t qa_equipment_weapon_presentation_count(qa_equipment *g,qa_actor_id actor) {
+    return equipment_get(g,actor)&&g->slots[actor.slot]?qa_weapon_slot_binding_count(g->slots[actor.slot]):0;
+}
+bool qa_equipment_weapon_presentation_read(qa_equipment *g,qa_actor_id actor,size_t index,qa_weapon_presentation *out,bool *found,qa_error *e) {
+    EQUIPMENT_CALL(equipment_get(g,actor)&&g->slots[actor.slot]&&
+        qa_weapon_slot_presentation(g->slots[actor.slot],index,out,found,e));
+}
+bool qa_equipment_weapon_presentation_current(qa_equipment *g,const qa_weapon_presentation *view) {
+    return view&&equipment_get(g,view->actor)&&g->slots[view->actor.slot]&&
+        qa_weapon_slot_presentation_current(g->slots[view->actor.slot],view);
 }
 bool qa_equipment_reconcile(qa_equipment *g,qa_actor_id actor,qa_error *e) {
     EQUIPMENT_CALL(equipment_reconcile(g,actor,e));

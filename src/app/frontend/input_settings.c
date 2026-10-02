@@ -444,12 +444,16 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
     if (client && (!values || !qa_application_client_prepare_associated(owner->application,client) ||
         !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CLEANUP)))
         return fail(error,"CLIENT input retirement lost its exact entered cancellation loan");
+    const qa_application_client_source *client_source=client?qa_application_client_prepare_source(client):NULL;
+    if (client && (!client_source || !qa_application_client_associated(owner->application,client_source)))
+        return fail(error,"CLIENT input retirement lost its retained physical namespace");
     if (values) {
         if (!qa_cvars_edit_abort_is(values,cvars))
             return fail(error,"Input retirement lost its actual returned canonical cancellation ticket");
         for (unsigned slot=0;slot<owner->seat_count;++slot)
             if (!(owner->all_scopes&(1u<<slot)) &&
-                (!owner->release[slot] || qa_input_release_console(owner->release[slot])!=console ||
+                (!owner->release[slot] || (qa_input_release_console(owner->release[slot])!=console &&
+                    (!client_source || qa_input_release_console(owner->release[slot])!=client_source->context.console)) ||
                  !qa_input_release_reserved_retirement_ready(owner->release[slot],
                     QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error))) return false;
         for (unsigned slot=0;slot<owner->seat_count;++slot)
@@ -465,7 +469,8 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
         int keys[528]; qa_input_release_scope scope;
         if (owner->all_scopes&(1u<<slot)) scope=(qa_input_release_scope){.all=true,.controller=-1};
         else if (!qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error)) return false;
-        if (qa_input_release_console(owner->release[slot])!=console ||
+        if ((qa_input_release_console(owner->release[slot])!=console &&
+                (!client_source || qa_input_release_console(owner->release[slot])!=client_source->context.console)) ||
             !qa_input_release_retirement_scope_ready(owner->release[slot],owner->physical[slot],&scope,
                 QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error)) return false;
     }

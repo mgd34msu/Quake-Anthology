@@ -20,7 +20,7 @@ static bool shape_fields(const q3n_compiled_source_basis *b)
         b->content && b->assets && b->publication && b->serial &&
         b->viewer.registry==qa_actors_identity(b->registry) &&
         (b->product == QA_Q3_ARENA || b->product == QA_Q3_TEAM_ARENA) &&
-        b->max_clients > 0 && b->max_clients <= 64 && b->game_type >= 0 && b->game_type <= 7 &&
+        b->max_clients > 0 && b->max_clients <= 64 &&
         b->client_number >= -1 && b->client_number < b->max_clients &&
         b->initial_command>=0 && b->reached_command>=b->initial_command && !(b->snapshot_bit&~4u);
 }

@@ -40,6 +40,7 @@ bool guest_abi_plan_native(const qa_native_signature *, const guest_abi_layout *
     size_t, guest_abi_plan **, qa_error *);
 void guest_abi_plan_destroy(guest_abi_plan *);
 size_t guest_abi_argument_count(const guest_abi_plan *);
+size_t guest_abi_argument_bytes(const guest_abi_plan *);
 size_t guest_abi_result_bytes(const guest_abi_plan *);
 
 /* CPU and stack belong to the same lower guest. The caller supplies its actual

@@ -49,13 +49,12 @@ typedef struct bot_ai_state {
     float admitted_skill;
     char *admitted_character;
     char *admitted_name;
-    float respawn_time, respawn_chat_time, chase_time, enemy_visible_time, enemy_sight_time;
-    float check_time, attack_crouch_time, attack_jump_time, attack_strafe_time, fire_wait_time;
-    float fire_until, weapon_change_time, enemy_death_time, state_time, chase_until;
-    float teleport_time;
-    float last_air_time, last_chat_time, blocked_time, not_blocked_time;
+    float chase_time;
+    float check_time;
+    float state_time, chase_until;
+    float blocked_time, not_blocked_time;
     uint32_t last_enemy_area;
-    bool respawn_wait, suicidal, strafe_right, team_arena, retired, attacked;
+    bool team_arena, retired;
     uint64_t command_sequence;
     uint32_t activation_count;
     struct {

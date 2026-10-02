@@ -40,6 +40,8 @@ void frontend_unified_events_frame_abort(frontend_unified_events *);
  * records advance their own cursor immediately; refusal retains the remainder. */
 bool frontend_unified_events_enter(frontend_unified_events *, qa_error *);
 bool frontend_unified_events_draw(frontend_unified_events *, const qa_scene_view *, qa_scene_frame *, qa_error *);
+bool frontend_unified_events_center_print(frontend_unified_events *, const char *,
+    double source_milliseconds, double duration_milliseconds, qa_error *);
 bool frontend_unified_events_idle(const frontend_unified_events *);
 bool frontend_unified_events_destroy(frontend_unified_events **, qa_error *);
 bool frontend_unified_events_assets_read(const frontend_unified_events *, qa_audio_asset ***, size_t *, qa_error *);
@@ -48,6 +50,9 @@ bool frontend_unified_events_checkpoint(frontend_unified_events *, const fronten
  * restores pending documents, delivery cursors and HUD without event replay. */
 bool frontend_unified_events_restore(qa_frontend *, frontend_remote_unified *, frontend_unified_media *,
     const frontend_unified_event_options *, const frontend_unified_event_refs *, qa_bytes, frontend_unified_events **, qa_error *);
+/* Family owners import after this ledger. Their pure record validators must
+ * qualify every retained delivery before the enclosing CLIENT publishes. */
+bool frontend_unified_events_restore_finish(frontend_unified_events *,qa_error *);
 /* Transfer actual engine route custody only when the enclosing candidate is
  * published. Rejected cold candidates never stop a previous owner's voices. */
 void frontend_unified_events_adopt(frontend_unified_events *);

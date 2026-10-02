@@ -4,6 +4,7 @@
 #include "source_goal.h"
 #include "source_orders.h"
 #include "source_player.h"
+#include "source_timers.h"
 
 enum {
     SOURCE_CHAT_INSULT=24, SOURCE_CHAT_MISC=25, SOURCE_CHAT_START_END=26,
@@ -213,7 +214,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
 }
 static bool unavailable(qa_bots *b,bot_ai_state *s) {
     volatile float before=b->time-25.0f;
-    return b->controls.no_chat || s->last_chat_time>before;
+    return b->controls.no_chat || bot_ai_last_chat_time(s)>before;
 }
 static bool characteristic(qa_bots *b,bot_ai_state *s,uint32_t index,float *out,qa_error *e) {
     return bot_ai_character_float(b,s,index,0,1,out,e);
@@ -223,7 +224,7 @@ static bool refused(qa_bots *b,bot_ai_state *s,float probability,bool *out,qa_er
     float random;CHAT_CALL(bot_ai_random(b,&random,e));*out=random>probability;return true;
 }
 static void all_chat(qa_bots *b,bot_ai_state *s,bool *out) {
-    s->last_chat_time=b->time;s->source_chat.chat_to=QA_BOT_CHAT_ALL;*out=true;
+    bot_ai_last_chat_time_set(s,b->time);s->source_chat.chat_to=QA_BOT_CHAT_ALL;*out=true;
 }
 static bool taunt(qa_bots *b,bot_ai_state *s,qa_error *e) {
     return qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,
@@ -256,7 +257,7 @@ bool bot_ai_source_chat_exit_game(qa_bots *b,bot_ai_state *s,bool *out,qa_error 
 static bool level_available(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;if(b->controls.no_chat) return true;
     bool watching;CHAT_CALL(observer(b,s,&watching,e));if(watching) return true;
-    volatile float before=b->time-25.0f;*out=!(s->last_chat_time>before);return true;
+    volatile float before=b->time-25.0f;*out=!(bot_ai_last_chat_time(s)>before);return true;
 }
 bool bot_ai_source_chat_start_level(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;bool available;CHAT_CALL(level_available(b,s,&available,e));if(!available) return true;
@@ -335,7 +336,7 @@ bool bot_ai_source_chat_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
         const char *variables[8]={first,second,NULL,NULL,NULL,NULL,NULL,NULL};
         CHAT_CALL(bot_ai_source_initial_chat(b,s,type,variables,e));s->source_chat.chat_to=QA_BOT_CHAT_ALL;
     }
-    s->last_chat_time=b->time;*out=true;return true;
+    bot_ai_last_chat_time_set(s,b->time);*out=true;return true;
 }
 bool bot_ai_source_chat_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;if(unavailable(b,s)) return true;
@@ -368,7 +369,7 @@ bool bot_ai_source_chat_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     const char *variables[8]={name,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
     CHAT_CALL(bot_ai_source_initial_chat(b,s,type,variables,e));
     if(same) s->source_chat.chat_to=QA_BOT_CHAT_TEAM;
-    s->last_chat_time=b->time;*out=true;return true;
+    bot_ai_last_chat_time_set(s,b->time);*out=true;return true;
 }
 bool bot_ai_source_chat_enemy_suicide(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;if(unavailable(b,s)) return true;

@@ -61,7 +61,11 @@ static bool reached(const q3n_server_commands *o, qa_error *e)
 }
 static bool identity(qa_source_save_io *io, const q3n_server_command_options *options)
 {
-    if(options->compiled_source)return q3n_compiled_source_fields(io,options->compiled_source);
+    if(options->compiled_source) {
+        bool scene_only=options->compiled_scene_only;
+        return q3n_compiled_source_fields(io,options->compiled_source) &&
+            qa_source_save_bool(io,&scene_only) && scene_only==options->compiled_scene_only;
+    }
     if (options->remote_source) {
         q3n_remote_source_view source;
         if (!q3n_remote_source_read(options->remote_source, &source, io->error)) return false;
@@ -115,12 +119,14 @@ static bool score(qa_source_save_io *io, q3n_command_score *s)
 }
 static bool fields(qa_source_save_io *io, q3n_server_commands *o)
 {
-    uint8_t magic[4] = {'Q', '3', 'S', 'C'}; uint32_t version = 1, product = o->options.product;
+    uint8_t magic[4] = {'Q', '3', 'S', 'C'};
+    uint32_t expected_version=o->options.compiled_source?2u:1u;
+    uint32_t version = expected_version, product = o->options.product;
     q3n_command_state *s = &o->state;
     const char *expected = o->options.compiled_source?"Q3SU":o->options.remote_source ? "Q3SR" : "Q3SC";
     memcpy(magic, expected, 4);
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != expected_version ||
         !qa_source_save_u32(io, &product) || product != (uint32_t)o->options.product ||
         !identity(io, &o->options) || !qa_source_save_bool(io, &o->initialized) || !qa_source_save_bool(io, &o->closed) ||
         !qa_source_save_i32(io, &s->server_command_sequence) || s->server_command_sequence < 0 ||

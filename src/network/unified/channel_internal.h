@@ -38,6 +38,15 @@ struct qa_unified_channel {
     bool cumulative_pending, closed, busy;
 };
 bool qa_unified_channel_valid(const qa_unified_channel *, qa_error *);
+typedef bool (*qa_unified_admit_delivery_fn)(void *, const qa_unified_delivery *);
+/* Declining a delivery retains its complete assembly without advancing the
+ * cumulative receive receipt. ACK and outgoing transport still progress. */
+bool qa_unified_channel_receive_buffered(qa_unified_channel *, qa_bytes, uint64_t,
+    qa_unified_admit_delivery_fn, qa_unified_deliver_fn, void *, qa_error *);
+bool qa_unified_channel_resume(qa_unified_channel *, qa_unified_admit_delivery_fn,
+    qa_unified_deliver_fn, void *, qa_error *);
+bool qa_unified_channel_reliable_ready(const qa_unified_channel *, const qa_bytes *, size_t,
+    bool *, qa_error *);
 bool qa_unified_channel_reliable_batch(qa_unified_channel *, const qa_bytes *, size_t,
     uint32_t *first, uint32_t *last, qa_error *);
 #endif

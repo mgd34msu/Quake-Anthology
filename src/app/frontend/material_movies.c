@@ -38,16 +38,149 @@ bool frontend_material_movie_source_valid(const frontend_material_movie_source *
         qa_media_library_resource_owner(source->media) == source->images &&
         source->current(source->context, source);
 }
-bool frontend_material_movies_current(const frontend_material_movies *owner)
+static bool movie_structure(const frontend_material_movies *owner)
 {
-    return member(owner) && frontend_material_movie_source_valid(&owner->source) &&
+    return member(owner) && owner->source.frontend->application &&
+        !owner->source.frontend->options.dedicated && owner->source.files && owner->source.images &&
+        owner->source.materials && owner->source.media && owner->source.current &&
+        qa_scene_resources_files(owner->source.images)==owner->source.files &&
+        qa_material_library_resource_owner(owner->source.materials)==owner->source.images &&
+        qa_media_library_resource_owner(owner->source.media)==owner->source.images &&
         qa_material_movies_resource_owner(owner->registry) == owner->source.images &&
         qa_material_movies_count(owner->registry) == frontend_material_movie_live_count(owner) &&
         qa_material_library_video_start_is(owner->source.materials,
             frontend_material_movies_start, owner);
 }
+bool frontend_material_movies_current(const frontend_material_movies *owner)
+{ return movie_structure(owner) && owner->source.current(owner->source.context,&owner->source); }
 bool frontend_material_movies_idle(const frontend_material_movies *owner)
 { return owner && !owner->busy && !owner->pending; }
+static uint64_t cinematic_bus(void *context)
+{ return ((const frontend_material_movies *)context)->cinematic_bus; }
+static double cinematic_clock_value(const frontend_material_movies *owner)
+{
+    const qa_cvar_view *timescale=qa_cvars_find(qa_application_cvars(owner->source.frontend->application),"timescale");
+    if (!timescale || !isfinite(timescale->number)) return NAN;
+    float wall=(float)((double)owner->source.frontend->wall_time_ns/1000000.0);
+    float scaled=wall*timescale->number;
+    if (!isfinite(scaled) || scaled < -2147483648.0f || scaled >= 2147483648.0f) return NAN;
+    float value=(float)(int32_t)scaled*timescale->number;
+    return isfinite(value) && value>=0 && value<2147483648.0f ? (double)value : NAN;
+}
+static double cinematic_clock(void *context)
+{ return cinematic_clock_value(context); }
+static bool cinematic_in_game_video(void *context, int32_t *out, qa_error *error)
+{
+    const frontend_material_movies *owner=context;
+    if (!out || !frontend_material_movies_current(owner))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original cinematic video control lost its actual provider");
+    const qa_cvar_view *row=qa_cvars_find(qa_application_cvars(owner->source.frontend->application),"r_inGameVideo");
+    if (!row || !isfinite(row->number))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original cinematic lacks its physical r_inGameVideo row");
+    *out=row->integer; return true;
+}
+static bool cinematic_current(void *context, const qa_q3_cinematic_source_options *options)
+{
+    const frontend_material_movies *owner=context;
+    return options && frontend_material_movies_current(owner) &&
+        options->files==owner->source.files && options->media==owner->source.media &&
+        options->clock.context==owner && options->clock.sample==cinematic_clock &&
+        options->audio==owner->source.frontend->audio && options->seat==owner->cinematic_seat &&
+        options->context==owner && options->audio_bus==cinematic_bus &&
+        options->in_game_video==cinematic_in_game_video &&
+        !options->print && options->current==cinematic_current;
+}
+bool frontend_material_movies_cinematic_attach(frontend_material_movies *owner,
+    qa_q3_cinematic_handles *pool, uint32_t seat, uint64_t bus, qa_error *error)
+{
+    if (!frontend_material_movies_idle(owner) || !frontend_material_movies_current(owner) ||
+        owner->cinematic_source || owner->count || qa_material_movies_count(owner->registry) ||
+        !qa_q3_cinematic_handles_idle(pool) || pool!=owner->source.frontend->source_cinematics || seat==QA_AUDIO_WORLD)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric shader movies require their genuine unregistered provider and cinematic pool");
+    if (!owner->restore_pending) for (size_t i=0;i<qa_material_library_record_count(owner->source.materials);++i) {
+        qa_material_library_record_view record;
+        if (!qa_material_library_record_read(owner->source.materials,i,&record) ||
+            (record.kind!=QA_MATERIAL_DEFAULT && record.kind!=QA_MATERIAL_STENCIL_SHADOW))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric cinematic binding must precede reached shader registration");
+    }
+    owner->cinematic_seat=seat; owner->cinematic_bus=bus;
+    qa_q3_cinematic_source_options options={.files=owner->source.files,.media=owner->source.media,
+        .clock={owner,cinematic_clock},.audio=owner->source.frontend->audio,
+        .seat=seat,.context=owner,.audio_bus=cinematic_bus,.in_game_video=cinematic_in_game_video,.current=cinematic_current};
+    if (!qa_q3_cinematic_source_create(pool,&options,&owner->cinematic_source,error)) return false;
+    owner->cinematic_mode=true; return true;
+}
+bool frontend_material_movies_cinematic_read(const frontend_material_movies *owner,
+    qa_q3_cinematic_source **out, qa_error *error)
+{
+    if (!out || !frontend_material_movies_current(owner))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric cinematic read lost its actual movie provider");
+    if (owner->cinematic_source) {
+        qa_q3_cinematic_source_options options;
+        if (!qa_q3_cinematic_source_read(owner->cinematic_source,&options) ||
+            options.context!=owner || !cinematic_current(options.context,&options))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric cinematic source leaves its stable shader movie owner");
+    }
+    *out=owner->cinematic_source; return true;
+}
+bool frontend_material_movies_cinematic_retained(const frontend_material_movies *owner)
+{ return owner && owner->cinematic_source && qa_q3_cinematic_source_retained(owner->cinematic_source); }
+bool frontend_material_movies_cinematic_parameters(const frontend_material_movies *owner,
+    uint32_t *seat, uint64_t *bus, qa_error *error)
+{
+    qa_q3_cinematic_source *source=NULL;
+    if (!seat || !bus || !frontend_material_movies_cinematic_read(owner,&source,error) || !source)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric cinematic parameters require their actual bound movie source");
+    *seat=owner->cinematic_seat; *bus=owner->cinematic_bus; return true;
+}
+bool frontend_material_movies_cinematic_namespace_read(const frontend_material_movies *owner,
+    uint32_t *seat, uint64_t *bus, bool *present, qa_error *error)
+{
+    if (!seat || !bus || !present || !movie_structure(owner) ||
+        owner->cinematic_mode!=(owner->cinematic_source!=NULL))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic namespace read lost its stable physical movie owner");
+    *present=owner->cinematic_mode;
+    *seat=owner->cinematic_seat; *bus=owner->cinematic_bus; return true;
+}
+bool frontend_material_movies_cinematic_clock_read(const frontend_material_movies *owner,
+    double *out, qa_error *error)
+{
+    qa_q3_cinematic_source_options source;
+    if (!out || !movie_structure(owner) || !owner->cinematic_mode || !owner->cinematic_source ||
+        !qa_q3_cinematic_source_read(owner->cinematic_source,&source) ||
+        source.context!=owner || source.clock.context!=owner || source.clock.sample!=cinematic_clock)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic clock receipt lost its stable actual owner");
+    double value=cinematic_clock_value(owner);
+    if (!isfinite(value) || value<0 || value>=2147483648.0)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source cinematic clock exceeds its original signed domain");
+    *out=value; return true;
+}
+bool frontend_material_movie_cinematic_reserve(frontend_material_movie_cinematic_receipt **rows,
+    size_t *capacity, size_t needed, qa_error *error)
+{
+    if (needed<=*capacity) return true;
+    if (needed>SIZE_MAX/sizeof(**rows)) return frontend_fail(error,QA_ERROR_MEMORY,"Numeric shader receipt extent overflow");
+    size_t next=*capacity?*capacity:8;
+    while (next<needed) {
+        if (next>SIZE_MAX/sizeof(**rows)/2) { next=needed; break; }
+        next*=2;
+    }
+    frontend_material_movie_cinematic_receipt *grown=realloc(*rows,next*sizeof(*grown));
+    if (!grown) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual numeric shader receipts");
+    *rows=grown; *capacity=next; return true;
+}
+bool frontend_material_movie_cinematic_receipt_make(const char *path,
+    frontend_material_movie_cinematic_receipt *out, qa_error *error)
+{
+    if (!path || !path[0] || !out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric shader receipt lacks its authored path");
+    size_t length=strlen(path);
+    if (length==SIZE_MAX) return frontend_fail(error,QA_ERROR_MEMORY,"Numeric shader receipt path overflow");
+    *out=(frontend_material_movie_cinematic_receipt){.path=malloc(length+1),.handle=-1};
+    if (!out->path) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining numeric shader registration path");
+    memcpy(out->path,path,length+1); return true;
+}
+void frontend_material_movie_cinematic_receipt_free(frontend_material_movie_cinematic_receipt *receipt)
+{ if (receipt) { free(receipt->path); qa_scene_image_release(receipt->image); *receipt=(frontend_material_movie_cinematic_receipt){0}; } }
 bool frontend_material_movies_roster_count(const qa_frontend *frontend, size_t *out, qa_error *error)
 {
     if (!frontend || !frontend->application || !out)
@@ -129,7 +262,7 @@ bool frontend_material_movies_library_owner(const qa_material_library *library,
         start != frontend_material_movies_start || !context)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Material library has no genuine frontend movie producer");
     frontend_material_movies *owner = context;
-    if (owner->source.materials != library || !frontend_material_movies_current(owner))
+    if (!member(owner) || owner->source.materials != library || !frontend_material_movies_current(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Material movie callback leaves its actual provider library");
     *out = owner; return true;
 }
@@ -261,6 +394,20 @@ const qa_scene_image *frontend_material_movies_start(void *context, const char *
         !frontend_material_movies_current(owner)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie registration lost its real provider"); return NULL;
     }
+    if (owner->cinematic_source) {
+        frontend_material_movie_cinematic_receipt receipt={0};
+        if (owner->cinematic_count==SIZE_MAX ||
+            !frontend_material_movie_cinematic_reserve(&owner->cinematic_receipts,&owner->cinematic_capacity,
+                owner->cinematic_count+1,error) ||
+            !frontend_material_movie_cinematic_receipt_make(name,&receipt,error)) return NULL;
+        owner->busy=true;
+        bool ok=qa_q3_cinematic_shader_play(owner->cinematic_source,name,&receipt.handle,&receipt.image,error);
+        owner->busy=false;
+        if (!ok) { free(receipt.path); return NULL; }
+        qa_scene_image_retain(receipt.image);
+        owner->cinematic_receipts[owner->cinematic_count++]=receipt;
+        return receipt.image;
+    }
     char *path = frontend_material_movie_path(name, error);
     if (!path) return NULL;
     for (size_t i = 0; i < owner->count; ++i)
@@ -292,12 +439,15 @@ bool frontend_material_movies_destroy(frontend_material_movies **out, qa_error *
     if (!qa_material_library_idle(owner->source.materials) || !qa_material_movies_idle(owner->registry) ||
         !qa_media_library_idle(owner->source.media))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie teardown retains a held resource owner");
+    if (owner->cinematic_source && !qa_q3_cinematic_source_destroy(&owner->cinematic_source,error)) return false;
     if (!frontend_material_movie_unlink(owner, error)) return false;
     if (qa_material_library_video_start_is(owner->source.materials, frontend_material_movies_start, owner))
         qa_material_library_set_video_start(owner->source.materials, NULL, NULL);
     owner->busy = true;
     qa_material_movies_destroy(owner->registry);
     for (size_t i = 0; i < owner->count; ++i) frontend_material_movie_row_free(owner->rows[i]);
+    for (size_t i=0;i<owner->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(owner->cinematic_receipts+i);
+    free(owner->cinematic_receipts);
     free(owner->rows); free(owner); *out = NULL; return true;
 }
 size_t frontend_material_movies_count(const frontend_material_movies *owner)
@@ -328,7 +478,14 @@ const qa_scene_image *frontend_material_movies_resolve(void *context, uint64_t i
     }
     owner->busy = true;
     const qa_scene_image *image = NULL;
-    if (qa_material_movies_prepare(owner->registry, &owner->source.frontend->frame, error))
+    if (owner->cinematic_source) {
+        size_t index=0;
+        while (index<owner->cinematic_count && (!owner->cinematic_receipts[index].image ||
+            owner->cinematic_receipts[index].image->identity!=initial)) ++index;
+        if (index==owner->cinematic_count) frontend_fail(error,QA_ERROR_NOT_FOUND,"Reached numeric image has no actual shader registration receipt");
+        else image=qa_q3_cinematic_shader_resolve(owner->cinematic_source,initial,&owner->source.frontend->frame,error);
+    }
+    else if (qa_material_movies_prepare(owner->registry, &owner->source.frontend->frame, error))
         image = qa_material_movies_resolve(owner->registry, initial, seconds, error);
     owner->busy = false; return image;
 }
@@ -340,9 +497,23 @@ const qa_scene_image *frontend_material_movies_frontend_resolve(void *context, u
         frontend_fail(error, QA_ERROR_ARGUMENT, "Reached shader movie requires its actual submitted frontend"); return NULL;
     }
     frontend_material_movies *selected = NULL;
+    qa_q3_cinematic_handles *selected_pool=NULL;
+    int32_t selected_handle=-1;
     for (frontend_material_movies *owner = frontend->material_movie_owners; owner; owner = owner->next) {
         if (!owner->linked || owner->source.frontend != frontend) {
             frontend_fail(error, QA_ERROR_ARGUMENT, "Reached shader movie roster leaves its actual frontend"); return NULL;
+        }
+        if (owner->cinematic_source) {
+            qa_q3_cinematic_handles *pool=qa_q3_cinematic_source_handles(owner->cinematic_source);
+            for (size_t i=0;i<owner->cinematic_count;++i) {
+                const frontend_material_movie_cinematic_receipt *receipt=owner->cinematic_receipts+i;
+                if (receipt->handle<0 || !receipt->image || receipt->image->identity!=initial) continue;
+                if (pool!=frontend->source_cinematics ||
+                    (selected && (selected_pool!=pool || selected_handle!=receipt->handle))) {
+                    frontend_fail(error,QA_ERROR_FORMAT,"Reached scratch registration leaves its actual global numeric handle"); return NULL;
+                }
+                if (!selected) { selected=owner; selected_pool=pool; selected_handle=receipt->handle; }
+            }
         }
         for (size_t i = 0; i < owner->count; ++i) {
             const frontend_material_movie_row *row = owner->rows[i];

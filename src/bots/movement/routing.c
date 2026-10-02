@@ -20,19 +20,23 @@ bool bot_travel_ready(const qa_bot_moves *moves, qa_error *e) {
             return bot_move_fail(e, "source bot movement requires setup");
     return true;
 }
-bool bot_travel_begin(qa_bot_moves *moves, qa_bot_move_state *state, bot_travel *out, qa_error *e) {
+bool bot_travel_begin_client(qa_bot_moves *moves, int32_t client, bot_travel *out, qa_error *e) {
     qa_bot_navigation *navigation =
-        moves->services.navigation(moves->services.context, state->input.client);
+        moves->services.navigation(moves->services.context, client);
     if (!navigation)
         return bot_move_fail(e, "bot client has no selected navigation");
     qa_navigation *runtime = qa_bot_navigation_runtime(navigation);
     *out = (bot_travel){.moves = moves,
-                        .state = state,
+                        .state = NULL,
                         .navigation = navigation,
                         .runtime = runtime,
                         .graph = qa_navigation_graph(runtime),
                         .actor = qa_bot_navigation_actor(navigation)};
     return true;
+}
+bool bot_travel_begin(qa_bot_moves *moves,bot_move_record *state,bot_travel *out,qa_error *e) {
+    if(!bot_travel_begin_client(moves,bot_move_integer(state,BM_CLIENT),out,e)) return false;
+    out->state=state;return true;
 }
 static uint32_t source_type(const qa_nav_edge *edge) {
     if (edge->source.kind == QA_NAV_ORIGIN_AAS)
@@ -114,7 +118,7 @@ static float line_distance_squared(qa_vec3 point, qa_vec3 start, qa_vec3 end) {
             return distance_squared(point, fabsf(p[i] - a[i]) < fabsf(p[i] - b[i]) ? start : end);
     return distance_squared(point, projection);
 }
-static bool avoid_spots(const qa_bot_move_state *state, const bot_reach *reach) {
+static bool avoid_spots(const bot_move_record *state, const bot_reach *reach) {
     bool continuous;
     switch (reach->type & BOT_TRAVEL_MASK) {
     case BOT_DROP:
@@ -133,11 +137,12 @@ static bool avoid_spots(const qa_bot_move_state *state, const bot_reach *reach) 
         break;
     }
     int32_t result = 0;
-    for (size_t i = 0; i < state->avoid_count; ++i) {
-        const qa_bot_avoid_spot *spot = &state->avoid_spots[i];
+    for (int32_t i = 0; i < bot_move_integer(state,BM_AVOID_COUNT); ++i) {
+        qa_bot_avoid_spot value=bot_move_spot(state,i);
+        const qa_bot_avoid_spot *spot = &value;
         float radius = spot->radius * spot->radius;
-        float distance = line_distance_squared(spot->origin, state->input.origin, reach->start);
-        if (distance < radius && distance_squared(spot->origin, state->input.origin) > distance)
+        float distance = line_distance_squared(spot->origin, bot_move_vector(state,BM_ORIGIN), reach->start);
+        if (distance < radius && distance_squared(spot->origin, bot_move_vector(state,BM_ORIGIN)) > distance)
             result = spot->type;
         else {
             if (continuous)
@@ -158,19 +163,19 @@ static int candidate_compare(const void *first, const void *second) {
 }
 bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t travel_flags,
                       uint32_t move_flags, uint32_t *number, uint32_t *result_flags, qa_error *e) {
-    qa_bot_move_state *s = t->state;
+    bot_move_record *s = t->state;
     qa_bot_moves *m = t->moves;
     *number = *result_flags = 0;
     uint32_t goal_area;
     if (qa_nav_asset_aas(t->graph->asset)) {
         if (!bot_goal_area(goal, &goal_area, e)) return false;
-        if ((qa_bot_navigation_area(t->navigation, s->area).contents |
+        if ((qa_bot_navigation_area(t->navigation, bot_move_word(s,BM_AREA)).contents |
              qa_bot_navigation_area(t->navigation, goal_area).contents) & 256) {
             travel_flags |= 0x800000;
             move_flags |= 0x800000;
         }
     }
-    uint32_t node = qa_bot_navigation_node(t->navigation, s->area);
+    uint32_t node = qa_bot_navigation_node(t->navigation, bot_move_word(s,BM_AREA));
     size_t count = qa_navigation_outgoing_count(t->runtime, node), candidates = 0;
     if (!reserve((void **)&m->candidates, &m->candidate_capacity, count, sizeof(*m->candidates), e))
         return false;
@@ -182,10 +187,10 @@ bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32
         uint32_t flag = qa_nav_aas_travel_flag(reach.type);
         if (!(flag & travel_flags) || !(flag & move_flags))
             continue;
-        if (s->avoid_reachability == reach.number && s->avoid_time >= m->time && s->avoid_tries > 4)
+        if (bot_move_word(s,BM_AVOID_REACHABILITY) == reach.number && bot_move_float(s,BM_AVOID_TIME) >= m->time && bot_move_integer(s,BM_AVOID_TRIES) > 4)
             continue;
         if (!bot_goal_area(goal, &goal_area, e)) return false;
-        if (s->last_goal_area == goal_area && reach.area == s->last_area)
+        if (bot_move_word(s,BM_LAST_GOAL_AREA) == goal_area && reach.area == bot_move_word(s,BM_LAST_AREA))
             continue;
         if (!bot_goal_area(goal, &goal_area, e)) return false;
         qa_bot_nav_route_query query = {.area = reach.area,
@@ -211,7 +216,7 @@ bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32
         qsort(m->candidates, candidates, sizeof(*m->candidates), candidate_compare);
     for (size_t i = 0; i < candidates; ++i) {
         const qa_nav_edge *edge = m->candidates[i].edge;
-        if (!qa_navigation_admit_edge(t->runtime, t->actor, edge->id, s->input.origin,
+        if (!qa_navigation_admit_edge(t->runtime, t->actor, edge->id, bot_move_vector(s,BM_ORIGIN),
                                       &m->trajectory, e))
             return false;
         if (m->trajectory.found) {

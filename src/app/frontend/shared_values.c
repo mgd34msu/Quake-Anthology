@@ -275,7 +275,8 @@ bool frontend_shared_values_source_color_register(frontend_shared_values *owner,
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Source color registration requires its owned returned canonical edit");
     const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
-        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_overBrightBits","r_mapOverBrightBits"};
+        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_texturebits","r_ext_compressed_textures",
+        "r_overBrightBits","r_mapOverBrightBits"};
     for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
         const qa_cvar_view *row=qa_cvars_edit_canonical_record(owner->edit,names[i]);
         if (!row || row->console_created) return fail(error,"Source color registration lost its physical declaration");

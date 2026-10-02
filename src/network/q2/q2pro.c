@@ -26,6 +26,8 @@ static bool read_serverdata(qa_q2_codec *c,qa_net_reader *r,qa_q2_serverdata *ou
         if (qa_net_read_u8(r)) d.wire_flags|=4;
     }
     if (r->failed) return false;
+    if ((d.wire_flags&16u) && !(d.wire_flags&8u))
+        return qa_net_reader_fail(r,"Q2PRO extensions v2 require actual protocol extensions");
     d.strafejump_hack=(d.wire_flags&1u)!=0; d.qw_mode=(d.wire_flags&2u)!=0; d.waterjump_hack=(d.wire_flags&4u)!=0;
     d.client_count=1; d.clientnums[0]=d.clientnum;
     c->protocol.revision=d.protocol_revision; c->wire_flags=d.wire_flags; c->protocol.flags=d.wire_flags;
@@ -180,6 +182,7 @@ static bool read_player_body(qa_q2_codec *c,qa_net_reader *r,const qa_q2_player 
     if ((flags&~UINT32_C(0x1ffff)) || (extra&~UINT32_C(0x7f)) || ((flags&MORE_FLAGS) && c->protocol.revision<1026))
         return qa_net_reader_fail(r,"Unnegotiated Q2PRO player flags");
     qa_q2_player t=*f; t.pmove.float_delta_angles=false;
+    t.clientnum_present=(extra&CLIENT_NUMBER)!=0;
     if (flags&M_TYPE) t.pmove.type=qa_net_read_u8(r);
     if (flags&M_ORIGIN) for (unsigned i=0;i<2;++i) if (!read_movement(r,f->pmove.origin[i],v2,&t.pmove.origin[i])) return false;
     if ((extra&ORIGIN_Z) && !read_movement(r,f->pmove.origin[2],v2,&t.pmove.origin[2])) return false;
@@ -251,6 +254,7 @@ static bool write_frame(qa_q2_codec *c,qa_net_writer *w,const qa_q2_frame_header
     if (h->deltaframe< -1 || offset<0 || offset>31 || (h->deltaframe!=-1 && offset==31))
         return qa_net_writer_fail(w,"Q2PRO delta frame exceeds window");
     qa_q2_player zero={0}; player_encoding e;
+    if (c->has_server_clientnum) zero.clientnum=c->server_clientnum;
     if (!f) f=&zero;
     if (!encode_player(c,w,f,t,&e)) return false;
     qa_net_write_u8(w,(uint8_t)(20u|((e.extra&0x70u)<<1)));

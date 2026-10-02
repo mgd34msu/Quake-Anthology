@@ -118,6 +118,7 @@ static bool inventory_entry(qa_application *app, application_unified_json *j,
 {
     const char *policy = entry->policy == QA_COUNT_STACK ? "{\"kind\":\"stack\"}" :
         entry->policy == QA_COUNT_SOURCE_FLOAT ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary32\"}" :
+        entry->policy == QA_COUNT_SOURCE_DOUBLE ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary64\"}" :
         entry->policy == QA_COUNT_SOURCE_INT32 ? "{\"kind\":\"source-counter\",\"arithmetic\":\"int32\"}" : NULL;
     if (!policy) return application_fail(error, QA_ERROR_FORMAT, "Unified inventory has an unknown arithmetic owner");
     return text(j, "{\"item\":", error) &&

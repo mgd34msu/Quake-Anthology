@@ -17,6 +17,8 @@ typedef struct qa_application_client_state {
 } qa_application_client_state;
 bool qa_application_client_capture(qa_application *, const qa_application_client_source *,
     qa_application_client_state *, qa_error *);
+bool qa_application_client_capture_retired(qa_application *, const qa_application_client_source *,
+    qa_application_client_state *, qa_error *);
 void qa_application_client_state_free(qa_application_client_state *);
 /* No network attach, source entity allocation, command dispatch or registry
  * replay. Every observer resolves through the genuine imported actor domain. */

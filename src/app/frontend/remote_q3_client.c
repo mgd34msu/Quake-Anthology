@@ -1,3 +1,4 @@
+#include "source_cinematics.h"
 #include "renderer_materials.h"
 #include "q3_color_policy.h"
 #include "remote_q3_private.h"
@@ -97,9 +98,12 @@ bool frontend_remote_q3_movie_source_read(frontend_remote_q3 *row,frontend_mater
 bool frontend_remote_q3_movies_restore(frontend_remote_q3 *row,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
 {
     frontend_material_movie_source view;
-    return row && row->importing && frontend_remote_q3_movie_source_read(row,&view,error) ?
-        frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,error) :
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual remote candidate");
+    if (!row || !row->importing || !frontend_remote_q3_movie_source_read(row,&view,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual remote candidate");
+    qa_q3_cinematic_source *cinematics=NULL;
+    return frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,error) &&
+        frontend_material_movies_cinematic_read(row->shader_movies,&cinematics,error) &&
+        (!cinematics || !row->runtime || frontend_remote_q3_runtime_cinematics_restore(row->runtime,cinematics,error));
 }
 static bool build_resources(frontend_remote_q3 *,frontend_remote_config *,qa_error *);
 bool frontend_remote_q3_resources_prepare_restored(qa_frontend *f,const frontend_network_client_domain *domain,
@@ -235,13 +239,16 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
         if (!frontend_remote_q3_movie_source_read(row,&movie,error) ||
             !frontend_q3_material_profile_initialize(f,v->materials,error) ||
             !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,error) ||
-            !frontend_material_movies_create(&movie,&row->shader_movies,error)) return false;
+            !frontend_material_movies_create(&movie,&row->shader_movies,error) ||
+            !frontend_source_cinematics_ensure(f,v->images,error) ||
+            !frontend_material_movies_cinematic_attach(row->shader_movies,f->source_cinematics,v->physical_seat,v->identity,error)) return false;
     }
     qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
     qa_bsp_view bsp;
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||
+        !qa_material_library_source_shaders_initialize(v->materials,&images,error) ||
         !frontend_material_remaps(f,v->materials,error) || !qa_audio_bank_create(v->mounts,&v->sounds,error) ||
         !qa_bsp_open(qa_resource_bytes(row->map),&bsp,error)) return false;
     if(bsp.family!=QA_BSP_Q3)

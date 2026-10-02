@@ -4,10 +4,37 @@
 #include "qa/scene_model_save.h"
 #include "qa/scene_world_save.h"
 #include "qa/q3_assets_custody.h"
+#include "qa/q3_cinematic_handles.h"
 
 bool qa_q3_presentation_idle(const qa_q3_presentation *p)
 {
-    return p && !p->busy && (!p->frame || !p->frame->source_pending) && qa_q3_assets_idle(p->options.assets);
+    return p && !p->busy && (!p->frame || !p->frame->source_pending) && qa_q3_assets_idle(p->options.assets) &&
+        (!p->options.cinematics || qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(p->options.cinematics)));
+}
+bool qa_q3_presentation_cinematics_bind(qa_q3_presentation *p,
+    qa_q3_cinematic_source *source,qa_error *error)
+{
+    qa_q3_cinematic_source_options options;
+    if (!qa_q3_presentation_idle(p) || !source || !qa_q3_cinematic_source_read(source,&options) ||
+        !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(source)) ||
+        options.files!=p->options.assets->options.provider.mounts ||
+        options.media!=p->options.assets->options.movies || options.audio!=p->options.audio ||
+        options.seat!=p->options.seat || p->movie_sources)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Cinematic binding requires the idle presentation's actual provider and seat");
+    for (size_t i=0;i<16;++i) if (p->movies[i].kind!=Q3P_MOVIE_EMPTY)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Cinematic binding retains legacy movie slots");
+    if (p->options.cinematics==source) return true;
+    if (p->options.cinematics)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Cinematic binding cannot replace an admitted source");
+    if (!qa_q3_cinematic_source_retain(source,error)) return false;
+    p->options.cinematics=source; return true;
+}
+bool qa_q3_presentation_renderer_parameters_set(qa_q3_presentation *p,float near_clip,float identity_light,qa_error *error)
+{
+    if (!qa_q3_presentation_idle(p) || !isfinite(near_clip) || near_clip<=0 || near_clip>=p->options.far_clip ||
+        !isfinite(identity_light) || identity_light<0)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Renderer parameters require the actual idle presentation and finite admitted values");
+    p->options.near_clip=near_clip; p->options.identity_light=identity_light; return true;
 }
 static bool binding_observable(const qa_q3_presentation *p)
 {
@@ -75,7 +102,8 @@ bool q3p_reserve(void **data, size_t *capacity, size_t count, size_t width, qa_e
 bool q3p_begin(qa_q3_presentation *p, qa_error *error)
 {
     if (!p || p->busy || !p->options.assets || p->options.assets->busy || p->options.assets->retired ||
-        !q3p_assets_children_idle(p->options.assets))
+        !q3p_assets_children_idle(p->options.assets) || (p->options.cinematics &&
+        !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(p->options.cinematics))))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation or retained asset owner is absent or executing");
     ++p->busy; ++p->options.assets->busy; return true;
 }
@@ -103,6 +131,7 @@ bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *p, const
         (p->frame && p->frame != current) ||
         (p->options.audio != NULL) != (audio != NULL))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation exchange requires idle matching frame/audio owners");
+    if (p->options.cinematics && !qa_q3_cinematic_source_audio_rebind_ready(p->options.cinematics,audio,bus,error)) return false;
     for (size_t i = 0; i < 16; ++i) {
         if (p->movies[i].kind != Q3P_MOVIE_LOCAL) continue;
         qa_cinematic *movie = p->movies[i].local;
@@ -118,6 +147,7 @@ void qa_q3_presentation_frontend_rebind(qa_q3_presentation *p, const qa_scene_fr
     if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets)) return;
     if (p->frame) p->frame = destination;
     p->options.audio = audio;
+    if (p->options.cinematics) qa_q3_cinematic_source_audio_rebind(p->options.cinematics,audio,bus);
     for (size_t i = 0; i < 16; ++i) {
         if (p->movies[i].kind != Q3P_MOVIE_LOCAL) continue;
         qa_cinematic_frame_rebind(p->movies[i].local, current, destination);
@@ -141,9 +171,20 @@ bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 presentation owner options");
     qa_q3_presentation *p = calloc(1, sizeof(*p));
     if (!p) return q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 presentation owner");
+    if (options->cinematics) {
+        qa_q3_cinematic_source_options source;
+        if (!qa_q3_cinematic_source_read(options->cinematics,&source) ||
+            source.files!=options->assets->options.provider.mounts || source.media!=options->assets->options.movies ||
+            source.audio!=options->audio || source.seat!=options->seat) {
+            free(p); return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 presentation cinematic source differs from its actual provider/seat");
+        }
+    }
     p->options = *options; p->color = (qa_scene_vec4){1, 1, 1, 1};
     ++options->assets->users;
     if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) {
+        --options->assets->users; free(p); return false;
+    }
+    if (options->cinematics && !qa_q3_cinematic_source_retain(options->cinematics,error)) {
         --options->assets->users; free(p); return false;
     }
     *out = p; return true;
@@ -152,6 +193,8 @@ bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
 bool qa_q3_presentation_destroy(qa_q3_presentation *p, qa_error *error)
 {
     if (!p) return true;
+    if (p->supplements)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation retains admitted supplemental view receipts");
     if (p->frame && p->frame->source_pending)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation retains unfinished Source draw work");
     if (!q3p_begin(p, error)) return false;
@@ -178,6 +221,7 @@ bool qa_q3_presentation_destroy(qa_q3_presentation *p, qa_error *error)
         free(source->path); free(source);
     }
     q3p_end(p, true);
+    qa_q3_cinematic_source_release(p->options.cinematics);
     qa_q3_presentation_assets_destroy(p->options.assets);
     free(p->entities); free(p->polygons); free(p->vertices); free(p->lights); free(p->portals); free(p);
     return ok;

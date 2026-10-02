@@ -47,7 +47,7 @@ bool application_q3_component_source_create(const application_q3_component_sourc
     application_q3_component_source **out,qa_error *e)
 {
     if(!options||!out||*out||!options->session||!options->owner||!options->generation||
-        !options->image||!options->current||!options->visibility.point||!options->visibility.area_bits||
+        !options->image||!options->current||!options->information||!options->visibility.point||!options->visibility.area_bits||
         !options->visibility.areas_connected||!options->visibility.cluster_visible)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication requires its physical GAME and shared world visibility");
     application_q3_component_source *s=calloc(1,sizeof(*s));
@@ -206,6 +206,14 @@ bool application_q3_component_source_publish(application_q3_component_source *s,
 {
     if(!current(s)||!application_q3_component_source_idle(s)||time<0||time<s->time_ms||s->revision==INT64_MAX)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication requires its actual completed GAME interval");
+    const uint32_t flags[]={QA_CVAR_SERVERINFO,QA_CVAR_SYSTEMINFO};
+    for(uint32_t i=0;i<2;++i) {
+        qa_buffer text={0};
+        bool okay=s->options.information(s->options.context,flags[i],&text,e)&&current(s)&&
+            application_q3_component_source_set_configstring(s,i,(const char *)text.data,e);
+        qa_buffer_free(&text);
+        if(!okay) return false;
+    }
     if(!s->dirty&&s->current.game_state&&s->current.time_ms==time&&!baseline) return true;
     component_source_publication p={0};
     if(!publication(s,time,&p,e)) return false;

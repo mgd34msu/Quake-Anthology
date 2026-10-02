@@ -4,7 +4,9 @@
 #include "legacy_render_policy.h"
 #include "remote_unified_render_save.h"
 #include "remote_unified_save.h"
+#include "remote_unified_material_movies_bridge.h"
 #include "save_private.h"
+#include "material_movies.h"
 
 #include <float.h>
 #include <math.h>
@@ -21,6 +23,13 @@ typedef struct unified_render_model {
     qa_vec3 previous_origin;
     float scale;
     bool visible, has_previous_origin;
+    bool source_client,submitted;
+    uint32_t source_provider;
+    char *source_instance;
+    uint64_t submitted_cycle;
+    bool equipment,equipment_slot;
+    uint32_t equipment_provider;
+    char *equipment_instance;
 } unified_render_model;
 struct frontend_unified_render {
     qa_frontend *frontend;
@@ -34,9 +43,11 @@ struct frontend_unified_render {
     qa_hud_value vitals[3];
     char *ammo_label;
     qa_vec3 origin, angles, kick;
+    qa_scene_vec4 blend,damage_blend;
     float height;
     double seconds, field_of_view;
     bool explicit_fov, source_view_offset, busy;
+    bool has_blend,has_damage_blend;
 };
 static qa_json_id field(const qa_json_document *j, qa_json_id id, const char *name)
 { return qa_json_get(j, id, name); }
@@ -75,6 +86,49 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         .crosshair_visible=true,.crosshair_color={1,1,1,1}};
     return true;
 }
+static bool model_source_read(frontend_unified_render *r,qa_json_id id,unified_render_model *m,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    m->source_client=qa_json_string_equal(j,field(j,id,"renderOwner"),"source-client");
+    qa_json_id source=field(j,id,"renderSource");
+    if (!m->source_client || source==QA_JSON_NONE) return true;
+    qa_buffer instance={0};
+    bool okay=word(r->frame,field(j,source,"provider"),&m->source_provider,e) && m->source_provider &&
+        qa_json_string(j,field(j,source,"instance"),&instance,e) && instance.data &&
+        strlen((const char *)instance.data)==instance.size;
+    if (okay) { m->source_instance=(char *)instance.data; instance=(qa_buffer){0}; }
+    qa_buffer_free(&instance); return okay;
+}
+static bool model_equipment_read(frontend_unified_render *r,qa_json_id id,unified_render_model *m,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    qa_json_id equipment=field(j,id,"renderEquipment");
+    if (equipment==QA_JSON_NONE) return true;
+    qa_buffer instance={0}; bool view_weapon=false;
+    bool okay=qa_json_bool(j,field(j,id,"viewWeapon"),&view_weapon,e) && view_weapon &&
+        word(r->frame,field(j,equipment,"provider"),&m->equipment_provider,e) && m->equipment_provider &&
+        qa_json_bool(j,field(j,equipment,"slot"),&m->equipment_slot,e) &&
+        qa_json_string(j,field(j,equipment,"instance"),&instance,e) && instance.data &&
+        strlen((const char *)instance.data)==instance.size;
+    if (okay) { m->equipment=true; m->equipment_instance=(char *)instance.data; instance=(qa_buffer){0}; }
+    qa_buffer_free(&instance); return okay;
+}
+static bool player_blend_read(frontend_unified_render *r,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    qa_json_id view=field(j,field(j,qa_unified_document_root(r->frame),"player"),"view");
+    qa_scene_vec4 *colors[2]={&r->blend,&r->damage_blend};
+    bool *present[2]={&r->has_blend,&r->has_damage_blend};
+    const char *names[2]={"blend","damageBlend"};
+    for (size_t i=0;i<2;++i) {
+        qa_json_id color=field(j,view,names[i]);
+        *present[i]=color!=QA_JSON_NONE && qa_json_type(j,color)!=QA_JSON_NULL;
+        if (*present[i] && !(real(r->frame,field(j,color,"x"),&colors[i]->x,e) &&
+            real(r->frame,field(j,color,"y"),&colors[i]->y,e) && real(r->frame,field(j,color,"z"),&colors[i]->z,e) &&
+            real(r->frame,field(j,color,"w"),&colors[i]->w,e))) return false;
+    }
+    return true;
+}
 static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render_model *m, qa_error *e)
 {
     const qa_unified_document *d=r->frame;
@@ -87,7 +141,8 @@ static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render
     else if (qa_json_string_equal(j,family,"q2")) kind=QA_SCENE_Q2;
     else if (qa_json_string_equal(j,family,"q3")) kind=QA_SCENE_Q3;
     else return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified model has no admitted rendering family");
-    bool okay=qa_json_string(j,field(j,id,"content"),&content,e) && qa_json_string(j,field(j,id,"path"),&path,e) &&
+    bool okay=model_source_read(r,id,m,e) && model_equipment_read(r,id,m,e) &&
+        qa_json_string(j,field(j,id,"content"),&content,e) && qa_json_string(j,field(j,id,"path"),&path,e) &&
         qa_json_u64(j,field(j,wire,"slot"),&slot,e) && slot<=UINT32_MAX &&
         qa_json_u64(j,field(j,wire,"generation"),&generation,e) &&
         frontend_remote_unified_actor(r->replica,(uint32_t)slot,generation,&m->actor,e) &&
@@ -170,6 +225,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     qa_json_id kick=field(j,view,"kickAngles"),fov=field(j,view,"fieldOfView");
     if (okay && kick!=QA_JSON_NONE) okay=vector(frame,kick,&r->kick,e);
     if (okay && fov!=QA_JSON_NONE) { okay=scalar(frame,fov,&r->field_of_view,e); r->explicit_fov=true; }
+    if (okay) okay=player_blend_read(r,e);
     if (okay) okay=scalar(frame,field(j,ui,"health"),&r->vitals[0].value,e);
     r->vitals[0].label="Health"; r->vitals[0].warning=r->vitals[0].value<=25;
     r->vitals[1].label="Armor";
@@ -196,11 +252,146 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     if (!okay) { (void)frontend_unified_render_destroy(&r,NULL); return false; }
     *out=r; return true;
 }
+typedef struct unified_scene_context {
+    frontend_unified_render *renderer;
+    const frontend_unified_prediction_view *predicted;
+    const frontend_unified_render_children *children;
+    qa_actor_id player;
+    bool predicting;
+} unified_scene_context;
+static bool render_frame_current(const frontend_unified_render *);
+static bool unified_scene_current(void *context)
+{
+    unified_scene_context *c=context; frontend_unified_render *r=c->renderer;
+    return r->busy && frontend_unified_media_current(r->media) &&
+        frontend_remote_unified_current(r->replica,NULL) && render_frame_current(r);
+}
+static bool unified_scene_visuals(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+{
+    unified_scene_context *c=context; frontend_unified_render *r=c->renderer;
+    const frontend_unified_render_children *children=c->children;
+    const frontend_unified_prediction_view *predicted=c->predicted;
+    qa_actor_id player=c->player; bool predicting=c->predicting,okay=true;
+    if(frame!=&r->frontend->frame || !unified_scene_current(c))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified visuals lost their actual received frame");
+    bool reflected=qa_scene_world_q1_mirror_scope(frontend_unified_media_world(r->media),world,frame);
+    for (size_t i=0;okay && i<r->model_count;++i) {
+        unified_render_model *m=r->models+i;
+        float scale=m->input.family==QA_SCENE_Q2 && m->scale==0?1:m->scale;
+        if (!m->visible || m->input.color.w<=0 || scale==0 ||
+            (reflected && m->input.view_model) ||
+            (qa_actor_id_equal(m->actor,player) && !m->input.view_model && !reflected)) continue;
+        if (m->source_client && m->source_instance && children && children->source_model) {
+            bool owned=false;
+            if (!children->source_model(children->context,m->actor,m->source_provider,m->source_instance,&owned,e)) return false;
+            if (!unified_scene_current(c)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified model lost its completed Source receipt");
+            if (owned) continue;
+        }
+        qa_scene_model_input input=m->input; input.view=world->view;
+        qa_vec3 position=m->origin,previous=m->has_previous_origin?m->previous_origin:position;
+        if (predicting && qa_actor_id_equal(m->actor,player)) {
+            position=qa_vec_add(position,predicted->origin_shift); previous=qa_vec_add(previous,predicted->origin_shift);
+        }
+        if (input.view_model && input.family==QA_SCENE_Q1) { position.z+=2; previous.z+=2; }
+        qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; frontend_camera_axes(m->angles,axes);
+        input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
+        for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;
+            input.transform.axes[a][2]=axes[a].z; input.transform.scale[a]=scale; }
+        input.previous_origin=previous; input.ambient=qa_v3(1,1,1); input.identity_light=world->identity_light;
+        input.video_frame=frontend_material_movies_frontend_resolve; input.video_context=r->frontend;
+        if (m->media.brush_world) okay=qa_scene_world_submit_model(m->media.brush_world,m->media.inline_model,
+            &input.transform,world,m->actor.slot,input.color,&r->frontend->frame,e);
+        else {
+            okay=qa_scene_world_sample_light_input(frontend_unified_media_world(r->media),world,position,
+                &input.ambient,&input.directed,&input.light_direction,e) &&
+                frontend_legacy_model_input_product(r->frontend,m->product,frontend_unified_media_world(r->media),world,&input,e);
+            if (okay && children && children->model)
+                okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
+            if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
+            if (okay && children && children->model_after)
+                okay=children->model_after(children->context,m->actor,m->product->identity,m->path,&input,&r->frontend->frame,e);
+        }
+        if (okay && input.view_model && !reflected) {
+            m->submitted=true; m->submitted_cycle=frame->sequence;
+        }
+    }
+    if (okay && children && children->world_models)
+        okay=children->world_models(children->context,world,frame,e);
+    return okay && unified_scene_current(c);
+}
+static bool unified_scene_particles(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+{
+    unified_scene_context *c=context;
+    const frontend_unified_render_children *children=c->children;
+    if (frame!=&c->renderer->frontend->frame || !unified_scene_current(c))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified effects lost their entered received frame");
+    if (children && children->particles && !children->particles(children->context,world,frame,e)) return false;
+    if (children) {
+        if (world->view.mirror) {
+            if (children->world && !children->reflected_world)
+                return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified mirror requires its retained supplemental projection");
+            if (children->reflected_world && !children->reflected_world(children->context,world,frame,e)) return false;
+        } else if (children->world && !children->world(children->context,&world->view,world,frame,e)) return false;
+    }
+    return unified_scene_current(c);
+}
+static bool unified_scene_blend(void *context,const qa_scene_world_input *world,qa_scene_vec4 blend,qa_error *e)
+{
+    unified_scene_context *c=context;
+    const frontend_unified_render_children *children=c->children;
+    return (!children || !children->blend || children->blend(children->context,world,blend,&c->renderer->frontend->frame,e)) &&
+        unified_scene_current(c);
+}
+static bool unified_scene_dlights(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_scene_vec4 *blend,qa_error *e)
+{
+    unified_scene_context *c=context;
+    const frontend_unified_render_children *children=c->children;
+    return frame==&c->renderer->frontend->frame && unified_scene_current(c) &&
+        (!children || !children->dlights || children->dlights(children->context,world,frame,blend,e)) &&
+        unified_scene_current(c);
+}
+static bool unified_scene_reflected_lights(void *context,qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+{
+    unified_scene_context *c=context;
+    const frontend_unified_render_children *children=c->children;
+    qa_scene_world *actual=frontend_unified_media_world(c->renderer->media);
+    if(frame!=&c->renderer->frontend->frame || !unified_scene_current(c) ||
+        !qa_scene_world_q1_mirror_scope(actual,world,frame))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified reflected lights lost their actual captured mirror");
+    return (!children || !children->reflected_lights || children->reflected_lights(children->context,world,frame,e)) &&
+        unified_scene_current(c) && qa_scene_world_q1_mirror_scope(actual,world,frame);
+}
+static bool unified_scene_policy(void *context,const qa_product *product,frontend_legacy_render_policy *out,qa_error *e)
+{
+    unified_scene_context *c=context;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(c->renderer->replica);
+    return domain && unified_scene_current(c) &&
+        frontend_legacy_render_policy_read_registry(domain->cvars,product,out,e) && unified_scene_current(c);
+}
+static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_world_input *world,
+    qa_scene_q1_sky_environment *out,qa_error *e)
+{
+    const qa_cvars *registry=qa_application_cvars(r->frontend->application);
+    const qa_cvar_view *fast=qa_cvars_find(registry,"r_fastsky"),*quality=qa_cvars_find(registry,"r_sky_quality"),
+        *alpha=qa_cvars_find(registry,"r_skyalpha"),*fog=qa_cvars_find(registry,"r_skyfog"),
+        *far_clip=qa_cvars_find(registry,"gl_farclip");
+    if (!fast || !quality || !alpha || !fog || !far_clip || !isfinite(fast->number) ||
+        !isfinite(quality->number) || !isfinite(alpha->number) || !isfinite(fog->number) ||
+        !isfinite(far_clip->number) || far_clip->number<=4)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q1 sky lost its actual canonical controls");
+    *out=(qa_scene_q1_sky_environment){.boxed=world->override_sky,.fast=fast->number!=0,
+        .quality=fmaxf(1,truncf(quality->number)),.alpha=fminf(1,fmaxf(0,alpha->number)),
+        .fog=fog->number,.far_clip=far_clip->number};
+    if (out->boxed) memcpy(out->images,world->sky_images,sizeof(out->images));
+    return true;
+}
 bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unified_prediction_view *predicted,
     const frontend_unified_render_children *children,float stereo,qa_audio_listener *listener,qa_error *e)
 {
     if (!r || r->busy || !listener || !isfinite(stereo) || !frontend_unified_media_current(r->media))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified draw lost its actual received frame");
+    for(size_t i=0;i<r->model_count;++i) { r->models[i].submitted=false; r->models[i].submitted_cycle=0; }
+    if (!frontend_unified_material_movies_frame(r->media,&r->frontend->frame,e)) return false;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r->replica);
     qa_actor_id player; uint32_t source;
     if (!d || !frontend_remote_unified_player(r->replica,&player,&source)) return false;
@@ -217,18 +408,32 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         view.origin=qa_vec_add(view.origin,predicted->origin_shift); angles=predicted->view_angles;
         if (!r->source_view_offset) height=predicted->view_height;
     }
+    if (!(fov>0 && fov<180))
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received camera has no finite field of view");
+    if (children && children->view_origin &&
+        !children->view_origin(children->context,player,view.origin,(float)fov,e)) return false;
     view.origin.z+=height;
     frontend_camera_axes(angles,view.axis); qa_vec3 local[3],basis[3]; memcpy(basis,view.axis,sizeof(basis));
     frontend_camera_axes(r->kick,local);
     for (unsigned i=0;i<3;++i) view.axis[i]=qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],local[i].x),
         qa_vec_scale(basis[1],local[i].y)),qa_vec_scale(basis[2],local[i].z));
-    view.origin=qa_vec_add(view.origin,qa_vec_scale(view.axis[1],stereo));
     if (!(fov>0 && fov<180) || !view.viewport.width || !view.viewport.height)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received camera has no finite projection");
     float vertical=2*atanf(tanf((float)fov*.008726646259971648f)*(float)view.viewport.height/(float)view.viewport.width)*57.29577951308232f;
     view.projection=qa_scene_projection((float)fov,vertical,4,16384);
+    if (children && children->camera) {
+        float source_fov=(float)fov; bool owned=false;
+        if (!children->camera(children->context,&view,&source_fov,&owned,e)) return false;
+        if (owned) fov=source_fov;
+        if (!(fov>0 && fov<180) || view.seat!=d->physical_seat ||
+            !view.viewport.width || !view.viewport.height || !qa_vec_finite(view.origin) ||
+            !qa_vec_finite(view.axis[0]) || !qa_vec_finite(view.axis[1]) || !qa_vec_finite(view.axis[2]))
+            return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified compiled camera lost its actual physical view");
+    }
+    view.origin=qa_vec_add(view.origin,qa_vec_scale(view.axis[1],stereo));
     r->busy=true;
     qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=(int64_t)(r->seconds*1000),.identity_light=1};
+    world.video_frame=frontend_material_movies_frontend_resolve; world.video_context=r->frontend;
     world.visible_areas=r->area_bits.data; world.visible_area_bytes=r->area_bits.size;
     float q1[256]; qa_vec3 q2[256]; for (size_t i=0;i<256;++i) { q1[i]=256; q2[i]=qa_v3(1,1,1); }
     const qa_json_document *j=qa_unified_document_json(r->frame); qa_json_id root=qa_unified_document_root(r->frame);
@@ -241,47 +446,41 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     world.q1_styles=q1; world.q2_styles=q2; world.style_count=256;
     if (okay && children && children->world_input)
         okay=children->world_input(children->context,&world,e);
+    qa_executable_recipe *recipe=frontend_unified_media_recipe(r->media);
+    const qa_recipe_choices *choices=qa_executable_recipe_choices(recipe);
+    const qa_product *product=choices ? qa_catalog_product(qa_executable_recipe_catalog(recipe),choices->world.presentation) : NULL;
+    qa_scene_q1_sky_environment sky;
+    if (okay && !product) okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified world lost its selected presentation product");
+    if (okay && product->family==QA_GAME_Q1) {
+        okay=unified_sky_environment(r,&world,&sky,e);
+        if (okay) {
+            world.q1_sky_environment=&sky;
+            float depth=sky.far_clip-4;
+            world.view.projection.m[10]=-(sky.far_clip+4)/depth;
+            world.view.projection.m[14]=-2*sky.far_clip*4/depth;
+        }
+    }
     if (okay) view=world.view;
     if (okay && children && children->lights)
         okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
-    if (okay) okay=qa_scene_frame_emit(&r->frontend->frame,&(qa_scene_command){.kind=QA_SCENE_COMMAND_VIEW,.data.view=view},e) &&
-        qa_scene_world_submit(frontend_unified_media_world(r->media),&world,&r->frontend->frame,e);
-    for (size_t i=0;okay && i<r->model_count;++i) {
-        unified_render_model *m=r->models+i;
-        float scale=m->input.family==QA_SCENE_Q2 && m->scale==0?1:m->scale;
-        if (!m->visible || m->input.color.w<=0 || scale==0 || (qa_actor_id_equal(m->actor,player) && !m->input.view_model)) continue;
-        qa_scene_model_input input=m->input; input.view=view;
-        qa_vec3 position=m->origin,previous=m->has_previous_origin?m->previous_origin:position;
-        if (predicting && qa_actor_id_equal(m->actor,player)) {
-            position=qa_vec_add(position,predicted->origin_shift); previous=qa_vec_add(previous,predicted->origin_shift);
-        }
-        if (input.view_model && input.family==QA_SCENE_Q1) { position.z+=2; previous.z+=2; }
-        qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; frontend_camera_axes(m->angles,axes);
-        input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
-        for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;
-            input.transform.axes[a][2]=axes[a].z; input.transform.scale[a]=scale; }
-        input.previous_origin=previous; input.ambient=qa_v3(1,1,1); input.identity_light=1;
-        if (m->media.brush_world) okay=qa_scene_world_submit_model(m->media.brush_world,m->media.inline_model,
-            &input.transform,&world,m->actor.slot,input.color,&r->frontend->frame,e);
-        else {
-            qa_scene_world_sample_light(frontend_unified_media_world(r->media),position,&input.ambient,&input.directed,&input.light_direction);
-            okay=frontend_legacy_model_input(r->frontend,m->product->id,frontend_unified_media_world(r->media),&world,&input,e);
-            if (okay && children && children->model)
-                okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
-            if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
-            if (okay && children && children->model_after)
-                okay=children->model_after(children->context,m->actor,m->product->identity,m->path,&input,&r->frontend->frame,e);
-        }
-    }
-    if (okay && children && children->world)
-        okay=children->world(children->context,&view,&world,&r->frontend->frame,e);
-    if (okay) okay=qa_scene_frame_finish(&r->frontend->frame,&view,&world.fog,e);
+    unified_scene_context context={.renderer=r,.predicted=predicted,.children=children,.player=player,.predicting=predicting};
+    frontend_legacy_scene_services services={.context=&context,.current=unified_scene_current,
+        .visuals=unified_scene_visuals,.particles=unified_scene_particles,.dlights=unified_scene_dlights,
+        .reflected_lights=unified_scene_reflected_lights,.blend=unified_scene_blend,.policy=unified_scene_policy};
+    if (okay) okay=frontend_legacy_scene_submit_product(r->frontend,frontend_unified_media_world(r->media),
+        product,&world,&r->frontend->frame,&services,e);
+    if (okay && children && children->player_blend)
+        okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
+            r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&
+            unified_scene_current(&context);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
         .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=view.viewport,.scale=1,.visible=true},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};
         memcpy(listener->axis,view.axis,sizeof(view.axis)); }
+    if (!okay)
+        for(size_t i=0;i<r->model_count;++i) { r->models[i].submitted=false; r->models[i].submitted_cycle=0; }
     r->busy=false; return okay;
 }
 bool frontend_unified_render_idle(const frontend_unified_render *r)
@@ -293,7 +492,9 @@ bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
     if (r->busy || (r->hud && !qa_hud_idle(r->hud)))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified received render frame still has callbacks");
     if (r->hud && !qa_hud_destroy(r->hud,e)) return false;
-    for (size_t i=0;i<r->model_count;++i) free(r->models[i].path);
+    for (size_t i=0;i<r->model_count;++i) {
+        free(r->models[i].path); free(r->models[i].source_instance); free(r->models[i].equipment_instance);
+    }
     free(r->models); free(r->ammo_label); qa_buffer_free(&r->area_bits);
     qa_unified_document_destroy(r->frame); free(r); *slot=NULL; return true;
 }
@@ -399,7 +600,7 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
     if (okay && reading) {
         const qa_json_document *j=qa_unified_document_json(r->frame);
         qa_json_id rows=qa_json_get(j,qa_unified_document_root(r->frame),"models");
-        okay=count==qa_json_size(j,rows) && qa_vec_finite(r->origin) && qa_vec_finite(r->angles) &&
+        okay=player_blend_read(r,io->error) && count==qa_json_size(j,rows) && qa_vec_finite(r->origin) && qa_vec_finite(r->angles) &&
             qa_vec_finite(r->kick) && isfinite(r->height) && isfinite(r->seconds) && r->seconds>=0 &&
             r->seconds*1e9<18446744073709551616.0 && isfinite(r->field_of_view) &&
             (!r->explicit_fov || (r->field_of_view>0 && r->field_of_view<180));
@@ -412,7 +613,8 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
                 qa_json_u64(j,qa_json_get(j,actor_id,"slot"),&slot,io->error) && slot==wire.slot &&
                 qa_json_u64(j,qa_json_get(j,actor_id,"generation"),&generation,io->error) && generation==wire.generation &&
                 qa_json_string_equal(j,qa_json_get(j,row,"content"),m->product->identity) &&
-                qa_json_string_equal(j,qa_json_get(j,row,"path"),m->path);
+                qa_json_string_equal(j,qa_json_get(j,row,"path"),m->path) &&
+                model_source_read(r,row,m,io->error) && model_equipment_read(r,row,m,io->error);
         }
     }
     return okay && render_blob(io,hud);
@@ -424,6 +626,48 @@ static bool render_frame_current(const frontend_unified_render *r)
     qa_bytes actual=qa_json_source(qa_unified_document_json(published),qa_unified_document_root(published));
     qa_bytes saved=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
     return actual.size==saved.size && (!actual.size || !memcmp(actual.data,saved.data,actual.size));
+}
+bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_actor_id actor,
+    frontend_unified_render_equipment *out,bool *present,qa_error *error)
+{
+    qa_actor_id viewer; uint32_t source_entity;
+    if (!r || !out || !present || !frontend_remote_unified_current(r->replica,error) ||
+        !frontend_unified_media_current(r->media) || !render_frame_current(r) ||
+        !frontend_remote_unified_player(r->replica,&viewer,&source_entity) || !qa_actor_id_equal(actor,viewer))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Equipment receipt has no current published renderer and full viewer");
+    const unified_render_model *selected=NULL;
+    for (size_t i=0;i<r->model_count;++i) {
+        const unified_render_model *model=r->models+i;
+        if (!model->equipment || !model->input.view_model || !qa_actor_id_equal(model->actor,actor)) continue;
+        if (selected)
+            return frontend_unified_fail(error,QA_ERROR_FORMAT,"Published viewer has multiple selected equipment model rows");
+        selected=model;
+    }
+    if (!selected) { *present=false; return true; }
+    bool registered=false;
+    if (selected->media.is_inline) {
+        registered=selected->media.brush_world==frontend_unified_media_world(r->media) &&
+            selected->media.inline_model<qa_collision_model_count(frontend_remote_unified_geometry(r->replica));
+    } else for (size_t i=0;i<frontend_unified_media_model_count(r->media);++i) {
+        frontend_unified_model_view model; frontend_unified_bank_view bank;
+        if (!frontend_unified_media_model_read(r->media,i,&model) ||
+            !frontend_unified_media_bank_read(r->media,model.bank,&bank))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Equipment registry lost an actual model binding");
+        if (model.resource==selected->media.resource && model.opening==selected->media.opening &&
+            model.model==selected->media.model && model.scene==selected->media.scene &&
+            model.world==selected->media.brush_world && model.family==selected->input.family &&
+            bank.product==selected->product && bank.materials==selected->input.material_library &&
+            !strcmp(model.path,selected->path)) { registered=true; break; }
+    }
+    if (!registered)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Equipment receipt lost its registered immutable resource tuple");
+    *out=(frontend_unified_render_equipment){.actor=actor,.provider=selected->equipment_provider,
+        .instance=selected->equipment_instance,.content=selected->product->identity,.path=selected->path,
+        .slot=selected->equipment_slot,.visible=selected->visible && selected->input.color.w>0 &&
+            (selected->scale!=0 || selected->input.family==QA_SCENE_Q2),
+        .binding=selected->media,.input=&selected->input,.source_frame=r->replica->frame_number,
+        .scene_sequence=r->frontend->frame.sequence};
+    *present=true; return true;
 }
 bool frontend_unified_render_checkpoint(frontend_unified_render *r,
     const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)

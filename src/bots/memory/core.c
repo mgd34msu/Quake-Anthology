@@ -141,6 +141,14 @@ bool qa_bot_memory_bytes(const qa_bot_memory *memory,qa_bot_memory_allocation al
         return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot allocation is unowned, freed or disposed");
     *out=(qa_bot_memory_span){record->backing+PREFIX_BYTES,record->size};return true;
 }
+bool qa_bot_memory_kind_read(const qa_bot_memory *memory,qa_bot_memory_allocation allocation,
+    qa_bot_memory_kind *out,qa_error *error)
+{
+    bot_memory_record *record=bot_memory_record_get(memory,allocation);
+    if(!memory || memory->disposed || !record || !out)
+        return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot allocation kind requires its actual live owner/output");
+    *out=record->kind;return true;
+}
 bool bot_memory_release(qa_bot_memory *memory,qa_bot_memory_allocation allocation,bool force,qa_error *error)
 {
     bot_memory_record *record=bot_memory_record_get(memory,allocation);

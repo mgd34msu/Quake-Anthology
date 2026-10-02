@@ -2,6 +2,7 @@
 #include "network_unified_save.h"
 #include "internal.h"
 #include "remote_unified_presentation.h"
+#include "remote_unified_private.h"
 #include "network_unified_client.h"
 #include "qc_messages.h"
 #include "../application/network_unified_private.h"
@@ -83,7 +84,34 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
     if (!parent(owner)) return fail(error, "Unified admission lost its installed Network owner");
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         const unified_peer *peer = owner->peers + i;
-        if (!peer->occupied || !peer->staging || request != &peer->request) continue;
+        if (!peer->occupied) continue;
+        if (!peer->staging) {
+            const qa_net_client *client = qa_net_connections_get(qa_network_connections(owner->options.runtime), peer->client);
+            if (!client || request->seats != client->seats) continue;
+            const qa_unified_document *offer = NULL;
+            if (owner->options.server) {
+                application_unified_server *source_peer = peer->server;
+                application_unified_source source;
+                if (!owner->traveling || i != owner->travel_cursor || !peer->travel_prepared || !source_peer ||
+                    source_peer->runtime != owner->options.runtime || source_peer->application != owner->options.frontend->application ||
+                    source_peer->session != peer->session || !source_peer->bound || source_peer->closed || source_peer->entered ||
+                    !application_unified_source_read(source_peer->application, &source, error) ||
+                    !same_source(&source, &source_peer->offered))
+                    return fail(error, "Unified restart admission lost its genuine prepared Source travel offer");
+                offer = source_peer->offer;
+            } else {
+                const frontend_remote_unified *remote = peer->remote;
+                if (!remote || !remote->bound || !remote->busy || remote->retired || remote->session != peer->session ||
+                    remote->options.domain.runtime != owner->options.runtime ||
+                    !qa_net_client_id_equal(remote->options.domain.client, peer->client) || !remote->recipe ||
+                    remote->epoch != qa_executable_recipe_epoch(remote->recipe) || remote->transport_restarted ||
+                    !qa_sha256_equal(&request->composition, qa_executable_recipe_digest(remote->recipe)))
+                    return fail(error, "Unified restart admission lost its genuine received CLIENT recipe publication");
+                offer = remote->offer;
+            }
+            return qa_unified_session_restart_admit(peer->session, owner->options.runtime, request, offer, error);
+        }
+        if (request != &peer->request) continue;
         if (request->protocol.revision || request->protocol.flags || request->attachment != QA_NET_REMOTE ||
             request->seat_count != 1 || request->seats != &peer->binding || peer->binding.remote_index ||
             peer->binding.seat.owner != owner->options.seat_owner)
@@ -193,8 +221,12 @@ bool frontend_network_unified_tick(frontend_network_unified *owner, uint64_t now
 {
     if (!waiting || !parent(owner) || !frontend_network_unified_idle(owner))
         return fail(error, "Unified processing requires its returned Network and Source owners");
+    bool source_ready = false;
+    if (!frontend_network_unified_step_ready(owner, &source_ready, error)) return false;
+    if (!source_ready) { *waiting = true; return true; }
     if (owner->options.server && !frontend_network_unified_travel(owner,
         owner->options.sidecars, owner->options.sidecar_count, error)) return false;
+    if (owner->traveling) { *waiting = true; return true; }
     ++owner->calls;
     bool okay = prune(owner, error);
     if (okay && owner->options.server) {
@@ -210,40 +242,68 @@ bool frontend_network_unified_pre_frame(frontend_network_unified *owner, qa_erro
 {
     if (!parent(owner) || !frontend_network_unified_idle(owner)) return fail(error, "Unified Source input boundary is busy");
     if (!owner->options.server) return true;
+    if (owner->traveling) return true;
     application_unified_source source;
     if (!application_unified_source_read(owner->options.frontend->application, &source, error) ||
-        !same_source(&source, &owner->source) || owner->traveling)
+        !same_source(&source, &owner->source))
         return fail(error, "Unified input precedes its actual Source travel publication");
     if (owner->frame_boundary && source.frame.number > owner->frame_before)
         return fail(error, "Unified retained output must finish before another Source frame");
     ++owner->calls; bool okay = prune(owner, error);
     for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i)
-        if (owner->peers[i].server) {
+        if (owner->peers[i].server && !qa_unified_session_retiring(owner->peers[i].session)) {
             okay = application_unified_server_pre_frame(owner->peers[i].server, error);
             if (okay) owner->peers[i].frame_published = false;
         }
     if (okay) { owner->frame_before = source.frame.number; owner->frame_boundary = true; }
     --owner->calls; return okay;
 }
+bool frontend_network_unified_step_ready(frontend_network_unified *owner, bool *ready, qa_error *error)
+{
+    if (!ready || !parent(owner) || !frontend_network_unified_idle(owner))
+        return fail(error, "Unified Source step admission requires its returned Network and publication owners");
+    *ready = true;
+    if (owner->options.server) {
+        ++owner->calls;
+        bool okay = true;
+        for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i)
+            if (owner->peers[i].server)
+                okay = application_unified_server_source_drop_finish(owner->peers[i].server, error);
+        --owner->calls;
+        if (!okay) return false;
+    }
+    if (!owner->options.server || owner->traveling || !owner->frame_boundary) return true;
+    application_unified_source source;
+    if (!application_unified_source_read(owner->options.frontend->application, &source, error)) return false;
+    if (source.frame.number <= owner->frame_before) return true;
+    if (!frontend_network_unified_publish(owner, NULL, error)) return false;
+    *ready = !owner->frame_boundary;
+    return true;
+}
 bool frontend_network_unified_publish(frontend_network_unified *owner,
     const application_unified_output_external *external, qa_error *error)
 {
     if (!parent(owner) || !frontend_network_unified_idle(owner)) return fail(error, "Unified publication requires returned actual Source output");
     if (!owner->options.server) return true;
+    if (owner->traveling) return true;
     application_unified_source source;
     if (!application_unified_source_read(owner->options.frontend->application, &source, error) ||
-        !same_source(&source, &owner->source) || owner->traveling)
+        !same_source(&source, &owner->source))
         return fail(error, "Unified output precedes its actual Source travel publication");
     if (!owner->frame_boundary || source.frame.phase != QA_FRAME_EXIT || source.frame.number <= owner->frame_before) return true;
-    ++owner->calls; bool okay = prune(owner, error);
+    ++owner->calls; bool okay = prune(owner, error), complete = true;
     for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
+        if (peer->server && qa_unified_session_retiring(peer->session) &&
+            application_unified_server_publication_complete(peer->server)) {
+            continue;
+        }
         if (peer->server && !peer->frame_published) {
             frontend_qc_unified_player_receipt receipt = {0};
             unified_output_receipts receipts = {.base = external, .qc = &receipt};
             application_unified_output_external observed = external ? *external : (application_unified_output_external){0};
             const application_unified_output_external *actual_external = external;
-            if (peer->server->admitted && !peer->server->pending_capture) {
+            if (peer->server->admitted && peer->server->preparing_frame && !peer->server->pending_capture) {
                 qa_application_qc_message_source qc; bool found = false;
                 okay = qa_application_qc_message_source_read(owner->options.frontend->application,
                     source.owner, &qc, &found, error);
@@ -263,10 +323,11 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
                 }
             }
             if (okay) okay = application_unified_server_publish(peer->server, actual_external, error);
-            if (okay) peer->frame_published = true;
+            if (okay) peer->frame_published = application_unified_server_publication_complete(peer->server);
+            if (okay && !peer->frame_published) complete = false;
         }
     }
-    if (okay) owner->frame_boundary = false;
+    if (okay && complete) owner->frame_boundary = false;
     --owner->calls; return okay;
 }
 bool frontend_network_unified_travel(frontend_network_unified *owner,
@@ -291,20 +352,33 @@ bool frontend_network_unified_travel(frontend_network_unified *owner,
     while (okay && owner->travel_cursor < UNIFIED_PEERS) {
         unified_peer *peer = owner->peers + owner->travel_cursor;
         if (!peer->server) { ++owner->travel_cursor; continue; }
+        bool ready = false, retiring = false;
+        okay = qa_unified_session_restart_prepare(peer->session, &ready, &retiring, error);
+        if (!okay || !ready) break;
+        if (retiring) { peer->travel_prepared = false; ++owner->travel_cursor; continue; }
         if (!peer->travel_prepared) {
             qa_unified_document *offer = NULL;
             uint32_t next = qa_unified_session_epoch(peer->session);
             if (next == UINT32_MAX) { okay = fail(error, "Unified peer wire epoch is exhausted"); break; }
-            okay = application_unified_server_offer(peer->server, next + 1, sidecars, count, &offer, error);
+            qa_error prepared = {0};
+            okay = application_unified_server_offer(peer->server, next + 1, sidecars, count, &offer, &prepared);
             qa_unified_document_destroy(offer);
+            if (!okay && prepared.code == QA_ERROR_MEMORY) { okay = true; break; }
+            if (!okay && error) *error = prepared;
             if (okay) peer->travel_prepared = true;
         }
+        if (okay) okay = qa_unified_session_offer_ready(peer->session, peer->server->offer, &ready, error);
+        if (!okay || !ready) break;
+        qa_error queued = {0};
         if (okay) okay = qa_network_restart(owner->options.runtime, peer->client,
-            application_unified_server_composition(peer->server), error);
+            application_unified_server_composition(peer->server), &queued);
+        if (!okay && queued.code == QA_ERROR_MEMORY) { okay = true; break; }
+        if (!okay && error) *error = queued;
         if (okay) { peer->travel_prepared = false; ++owner->travel_cursor; }
     }
-    if (okay) okay = qa_unified_bootstrap_current_limits(owner->bootstrap, source.max_clients, error);
-    if (okay) { owner->source = owner->travel_source; owner->travel_source = (application_unified_source){0};
+    bool complete = owner->travel_cursor == UNIFIED_PEERS;
+    if (okay && complete) okay = qa_unified_bootstrap_current_limits(owner->bootstrap, source.max_clients, error);
+    if (okay && complete) { owner->source = owner->travel_source; owner->travel_source = (application_unified_source){0};
         owner->traveling = false; owner->travel_cursor = 0; }
     --owner->calls; return okay;
 }
@@ -352,4 +426,35 @@ bool frontend_network_unified_close(frontend_network_unified *owner, qa_net_clie
             return qa_unified_session_close(peer->session, reason, error);
     }
     return fail(error, "Unified Source close has no installed callback owner");
+}
+bool frontend_network_unified_source_drop(frontend_network_unified *owner, qa_actor_owner source,
+    uint32_t slot, const char *reason, bool *matched, qa_error *error)
+{
+    if (!matched || !reason || !source || !parent(owner) || !owner->options.server ||
+        owner->restore_pending || !frontend_network_unified_idle(owner))
+        return fail(error, "Unified Source DROP requires its actual returned transport controller");
+    *matched = false;
+    unified_peer *recipient = NULL;
+    for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+        unified_peer *peer = owner->peers + i;
+        application_unified_server *server = peer->server;
+        if (!server || !server->admitted_receipt || server->admitted_player.source_owner != source ||
+            server->admitted_player.source_slot != slot) continue;
+        if (recipient) return fail(error, "Unified Source DROP aliases two retained physical recipients");
+        qa_unified_session *installed = NULL;
+        const qa_net_client *client = qa_net_connections_get(qa_network_connections(owner->options.runtime), peer->client);
+        if (!peer->occupied || peer->staging || !client || client->seat_count != 1 || !client->seats ||
+            client->seats[0].seat.owner != peer->binding.seat.owner ||
+            client->seats[0].seat.index != peer->binding.seat.index ||
+            server->application != owner->options.frontend->application || server->runtime != owner->options.runtime ||
+            !qa_net_client_id_equal(server->client, peer->client) || server->session != peer->session ||
+            !qa_unified_session_find(owner->options.runtime, peer->client, &installed, error) || installed != peer->session)
+            return fail(error, "Unified Source DROP lost its installed full recipient and seat");
+        recipient = peer;
+    }
+    if (!recipient) return true;
+    ++owner->calls;
+    bool okay = application_unified_server_source_drop(recipient->server, source, slot, reason, matched, error);
+    --owner->calls;
+    return okay;
 }

@@ -2,29 +2,12 @@
 #include "qa/input_release.h"
 #include "qa/console_release.h"
 
-typedef struct release_record {
-    qa_held_binding held;
-    qa_console_release *program;
-    bool action, complete;
-} release_record;
-struct qa_input_release {
-    qa_input_seat *seat;
-    qa_input_release_scope scope;
-    int *keys;
-    qa_held_binding *snapshot;
-    size_t held_count;
-    release_record *records;
-    size_t count, cursor;
-    release_record *reserved;
-    size_t reserved_first, reserved_count;
-    double time_ms;
-    bool advancing, entered, complete, metadata_entered, all_reserved;
-    qa_error fault;
-};
 static bool fail(qa_error *error,const char *text)
 { qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",text); return false; }
 bool qa_input_release_idle(const qa_input_seat *seat)
 { return !seat || !seat->release; }
+qa_input_release *qa_input_seat_release_read(const qa_input_seat *seat)
+{ return seat ? seat->release : NULL; }
 const qa_console *qa_input_release_console(const qa_input_release *owner)
 { return owner ? owner->seat->options.console : NULL; }
 bool qa_input_release_context_current(const qa_input_release *owner,const qa_console *console,

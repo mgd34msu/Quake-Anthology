@@ -241,13 +241,16 @@ bool qa_vfs_acquisition_opening_codec(struct qa_source_save_io *, const qa_vfs *
 /* Match the complete actual opening recipe to its genuine journal resource and
  * mounted native identity. No admission, byte read or journal mutation. */
 bool qa_vfs_acquisition_valid(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
-/* Match a held immutable acquisition to its complete retained journal opening
- * without reopening a loose path. Immutable checkpoint capture/restore uses
+/* Match a held immutable acquisition to its complete historical recipe and
+ * resource origin, including after clear/unmount, without reopening a path.
+ * Immutable checkpoint capture/restore uses
  * this recipe; live native-file admission uses acquisition_valid. */
 bool qa_vfs_acquisition_retained(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
 /* Ordinary lookup and policy admission without producing a read reference. */
 bool qa_vfs_probe(qa_vfs *, const char *, bool *found, uint64_t *size, qa_error *);
 typedef bool (*qa_vfs_accept_mount)(qa_mount_id mount, void *context);
+bool qa_vfs_acquire_filtered_receipt(qa_vfs *, const char *, qa_vfs_accept_mount,
+    void *context, qa_resource **, qa_vfs_acquisition *empty_receipt, qa_error *);
 /* The filter must not mutate this VFS during acquisition. A rejected link
  * destination counts as a miss without falling through to ordinary mounts. */
 bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,

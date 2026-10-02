@@ -81,10 +81,16 @@ bool q3component_call(application_q3_component *c,uint32_t entry,const int32_t *
     if(result) *result=raw;
     return true;
 }
-static bool hook_body(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
+static bool source_body(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
 {
     component_hook *binding=context;
     return binding->frame?q3component_frame_proceed(binding->owner,call,result,e):qa_qvm_proceed(call,result,e);
+}
+static bool hook_body(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
+{
+    component_hook *binding=context;
+    return binding->items?application_q3_mod_items_hook_run(binding->owner->items,call,source_body,binding,result,e):
+        source_body(binding,call,result,e);
 }
 static bool hook(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
 {
@@ -123,9 +129,16 @@ static bool hook_add(application_q3_component *c,uint32_t entry,bool middleware,
 bool q3component_bind_hooks(application_q3_component *c,qa_error *e)
 {
     size_t entries=application_q3_mod_entry_count(c->mod);
-    c->hooks=calloc(entries+(c->has_source?2:0)+(c->has_actor_frame?1:0)+1,sizeof(*c->hooks));
-    if((entries||c->has_source||c->has_actor_frame)&&!c->hooks) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining complete component function union");
+    size_t items=application_q3_mod_items_entry_count(c->items);
+    if(entries>SIZE_MAX-items-4) return q3records_fail(e,QA_ERROR_MEMORY,"Component function union exceeds native extent");
+    c->hooks=calloc(entries+items+(c->has_source?2:0)+(c->has_actor_frame?1:0)+1,sizeof(*c->hooks));
+    if((entries||items||c->has_source||c->has_actor_frame)&&!c->hooks) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining complete component function union");
     for(size_t i=0;i<entries;++i) { uint32_t entry; if(!application_q3_mod_entry_instruction(c->mod,i,&entry)||!hook_add(c,entry,true,false,false,e)) return false; }
+    for(size_t i=0;i<items;++i) {
+        uint32_t entry;
+        if(!application_q3_mod_items_entry_instruction(c->items,i,&entry)||!hook_add(c,entry,false,false,false,e)) return false;
+        for(size_t j=0;j<c->hook_count;++j) if(c->hooks[j].entry==entry) c->hooks[j].items=true;
+    }
     if(c->has_source&&(!hook_add(c,c->allocate_entry,false,true,false,e)||!hook_add(c,c->release_entry,false,false,true,e))) return false;
     if(c->has_actor_frame) {
         if(!hook_add(c,c->frame_entry,false,false,false,e)) return false;
@@ -152,6 +165,7 @@ bool q3component_descriptors(application_q3_component *c,qa_qvm_saved_function *
 bool application_q3_component_actor_released(application_q3_component *c,qa_actor_record record,qa_error *e)
 {
     if(!c||!c->records) return true;
+    if(c->items&&!application_q3_mod_items_release(c->items,record.id,e)) return false;
     if(!application_q3_mod_actors_release(c->actor_semantics,record.id,e)) return false;
     if(c->mod&&!application_q3_mod_release_actor(c->mod,record.id,e)) return false;
     if(!application_q3_component_records_release(c->records,record.id,e)) return false;
@@ -166,6 +180,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component lifetime has active source or presentation users");
     /* Returned refused mod scopes retry while their real RAM and canonical
      * bindings still exist. Their false idle bit is not an execution lock. */
+    if(!application_q3_mod_items_destroy(&c->items,e)) return false;
     if(!application_q3_mod_actors_destroy(&c->actor_semantics,e)) return false;
     if(c->mod&&!application_q3_mod_idle(c->mod)&&!application_q3_mod_destroy(&c->mod,e)) return false;
     for(size_t i=0;c->records&&i<c->records->actor_count;) {
@@ -189,6 +204,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
     if(c->vm) { if(!qa_qvm_destroy(c->vm,e)) return false; c->vm=NULL; qa_q3_host_qvm_consumed(c->host); }
     if(c->host) { if(!qa_q3_host_destroy(c->host,e)) return false; c->host=NULL; }
     qa_console_destroy(c->console); qa_cvars_destroy(c->cvars); free(c->hooks); free(c->frame_branches); free(c->frame_locals); free(c->initial_stores);
+    application_q3_mod_items_profile_destroy(c->items_profile);
     application_q3_mod_profile_destroy(c->profile); qa_qvm_image_release(c->options.image);
     qa_resource_release(c->options.program); qa_resource_release(c->options.declaration);
     free(c); *slot=NULL; return true;

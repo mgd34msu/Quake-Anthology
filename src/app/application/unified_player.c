@@ -5,6 +5,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_catalog.h"
 #include "guest_q3_weapons.h"
+#include "guest_q3_components.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
 #include "native_q2_inventory_scanner.h"
@@ -193,6 +194,8 @@ static bool q3_catalog_read(player_observation *o, application_provider *p,
     size_t length;
     if (!engine->game->catalog)
         return application_fail(e, QA_ERROR_NOT_FOUND, "Original Q3 UI lacks its real complete source catalog");
+    if (!application_q3_catalog_role_current(engine->game->catalog,engine->game))
+        return application_fail(e, QA_ERROR_ARGUMENT, "Original Q3 UI catalog left its actual source role");
     if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &length, e) || !current(o, e)) return false;
     q3_catalog_clear(o);
     if (length > SIZE_MAX / sizeof(*o->q3_weapons))
@@ -339,7 +342,8 @@ static bool inventory(application_unified_json *j, player_observation *o, qa_err
             !text(j, ",\"count\":", e) || !number(j, value.count, e) ||
             !text(j, ",\"capacity\":", e) || !number(j, value.capacity, e)) return false;
         if (value.policy != QA_COUNT_STACK && (!text(j, ",\"countPolicy\":{\"kind\":\"source-counter\",\"arithmetic\":", e) ||
-            !string(j, value.policy == QA_COUNT_SOURCE_INT32 ? "int32" : "binary32", e) || !text(j, "}", e))) return false;
+            !string(j, value.policy == QA_COUNT_SOURCE_INT32 ? "int32" :
+                value.policy == QA_COUNT_SOURCE_DOUBLE ? "binary64" : "binary32", e) || !text(j, "}", e))) return false;
         if (!text(j, "}", e)) return false;
     }
     return text(j, "]", e);
@@ -585,7 +589,18 @@ static bool native_inventory_presentation(application_unified_json *j,player_obs
     if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_NONE) return true;
     application_provider *owner=NULL;
     for(size_t i=0;i<o->app->provider_count;++i) if(o->app->providers[i]->owner==p->source) { owner=o->app->providers[i]; break; }
-    if(!text(j,",\"presentation\":{\"source\":",e)||!provider(j,owner,e)||!text(j,",\"kind\":",e)) return false;
+    application_q3_component_publication component = {0};
+    const qa_product *product = owner ? owner->product : NULL;
+    if (!owner) {
+        if (!application_q3_components_event_source_read(o->app,p->source,&component,e) ||
+            !component.descriptor || !component.product || !component.content || !current(o,e)) return false;
+        product = component.product;
+    }
+    if(!text(j,",\"presentation\":{\"source\":",e)) return false;
+    if (owner) { if (!provider(j,owner,e)) return false; }
+    else if (!text(j,"{\"provider\":",e) || !string(j,component.descriptor->selection.instance,e) ||
+        !text(j,",\"content\":",e) || !string(j,product->identity,e) || !text(j,"}",e)) return false;
+    if(!text(j,",\"kind\":",e)) return false;
     if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON||p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION)
         return string(j,p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON?"weapon":"ammunition",e)&&
             text(j,",\"weapon\":",e)&&item(j,o,p->weapon,e)&&text(j,"}",e);
@@ -593,14 +608,14 @@ static bool native_inventory_presentation(application_unified_json *j,player_obs
         return application_fail(e,QA_ERROR_FORMAT,"Native inventory presentation lost its declared kind");
     if(!string(j,"item",e)||!text(j,",\"icon\":",e)) return false;
     if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_NONE) return text(j,"null}",e);
-    if(!p->icon||!owner||!owner->product) return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its retained source metadata");
+    if(!p->icon||!product) return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its retained source metadata");
     if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_SHADER)
-        return text(j,"{\"kind\":\"shader\",\"content\":",e)&&string(j,owner->product->identity,e)&&
+        return text(j,"{\"kind\":\"shader\",\"content\":",e)&&string(j,product->identity,e)&&
             text(j,",\"name\":",e)&&string(j,p->icon,e)&&text(j,"}}",e);
     if(p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_IMAGE&&p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE)
         return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its actual resource kind");
     if(!text(j,"{\"kind\":",e)||!string(j,p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_IMAGE?"image":"wad-picture",e)||
-        !text(j,",\"resource\":{\"content\":",e)||!string(j,owner->product->identity,e)||
+        !text(j,",\"resource\":{\"content\":",e)||!string(j,product->identity,e)||
         !text(j,",\"path\":",e)||!string(j,p->icon,e)||!text(j,"}",e)) return false;
     if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE&&
         (!p->lump||!text(j,",\"lump\":",e)||!string(j,p->lump,e))) return false;
@@ -731,6 +746,7 @@ static bool ui_items(application_unified_json *j, player_observation *o, qa_erro
                 const application_q3_catalog_weapon *weapons;
                 size_t length;
                 if (!engine || !engine->game || !engine->game->catalog ||
+                    !application_q3_catalog_role_current(engine->game->catalog,engine->game) ||
                     !application_q3_catalog_weapons(engine->game->catalog, &weapons, &length, e) || !current(o, e)) return false;
                 bool found = false;
                 for (size_t n = 0; n < length; ++n)
@@ -916,7 +932,7 @@ static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
             }
             application_native_q2_inventory_readout_free(&mixed);
             if(!ok) return false;
-        } else {
+        } else if(o->primary->state.native.q2_engine->primary_inventory) {
         application_native_q2_ui_inventory native = {0};
         if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, &native, e) || !current(o, e)) {
             application_native_q2_inventory_ui_free(&native); return false;
@@ -1153,6 +1169,7 @@ bool application_unified_player_selection_read(qa_application *app, qa_actor_id 
             !application_q3_guest_actor_client(arsenal, actor, &slot))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Original Q3 selected UI lacks its genuine source catalogue");
         if (!qa_q3_host_source_player(engine->game->host, slot, &player, e) ||
+            !application_q3_catalog_role_current(engine->game->catalog,engine->game) ||
             !application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, e)) return false;
         if (engine->game->weapons && !application_q3_weapons_active(engine->game->weapons, actor, &value.item, e)) return false;
         bool matched = false;

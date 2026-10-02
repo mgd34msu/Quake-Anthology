@@ -2,6 +2,8 @@
 #include "particle_delivery.h"
 #include "q1_sky.h"
 #include "config_store.h"
+#include "remote_unified_private.h"
+#include "remote_unified_presentation.h"
 #include "qa/scene_effects.h"
 #include "qa/ui_preferences.h"
 #include <string.h>
@@ -21,13 +23,7 @@ bool frontend_legacy_render_policy_read(const qa_frontend *frontend, const qa_pr
     if (!frontend || !frontend->application || !product || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy rendering requires its actual selected product");
     const qa_cvars *registry = qa_application_cvars(frontend->application);
-    if (!frontend_legacy_render_policy_read_registry(registry, product, out, error)) return false;
-    if (out->family == QA_SCENE_Q2) {
-        float flash;
-        if (!number(registry, "gl_flashblend", &flash, error)) return false;
-        out->flashblend = flash != 0;
-    }
-    return true;
+    return frontend_legacy_render_policy_read_registry(registry, product, out, error);
 }
 
 bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const qa_product *product,
@@ -41,9 +37,9 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
         value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD;
         float flash = 0, eyes = 1, shadows, mirror = 1, texture_sort = 0;
         if (!number(registry, value.family == QA_SCENE_Q1 ? "r_shadows" : "gl_shadows", &shadows, error)) return false;
+        if (!number(registry, "gl_flashblend", &flash, error)) return false;
         if (value.family == QA_SCENE_Q1 &&
-            (!number(registry, "gl_flashblend", &flash, error) ||
-             (!value.quakeworld && !number(registry, "gl_doubleeys", &eyes, error)) ||
+            ((!value.quakeworld && !number(registry, "gl_doubleeys", &eyes, error)) ||
              !number(registry, "r_mirroralpha", &mirror, error) ||
              !number(registry, "gl_texsort", &texture_sort, error))) return false;
         value.flashblend = flash != 0;
@@ -97,7 +93,8 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
         {"r_mirroralpha", "1", 0}, {"gl_texsort", "1", 0}, {"gl_flashblend", "1", 0}};
     static const struct { const char *name, *value; uint32_t flags; } quake2[] = {
         {"gl_lightmap", "0", 0}, {"gl_dynamic", "1", 0}, {"gl_shadows", "0", 0},
-        {"gl_modulate", "1", QA_CVAR_ARCHIVE}, {"gl_monolightmap", "0", 0}, {"gl_saturatelighting", "0", 0}};
+        {"gl_modulate", "1", QA_CVAR_ARCHIVE}, {"gl_monolightmap", "0", 0}, {"gl_saturatelighting", "0", 0},
+        {"gl_flashblend", "0", 0}};
     for (size_t i = 0; i < sizeof(shared) / sizeof(*shared); ++i)
         if (!qa_cvars_register(registry, shared[i].name, shared[i].value, shared[i].flags,
             owner, "", error)) return false;
@@ -127,7 +124,7 @@ bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
     if (!row || !row->owner || row->console_created) return false;
     const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
     const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys"};
-    const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares"};
+    const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares", "gl_flashblend"};
     for (size_t i = 0; i < sizeof(shared) / sizeof(*shared); ++i)
         if (!strcmp(name, shared[i])) return true;
     if (q1) {
@@ -227,6 +224,8 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
         (opaque.q1_sky && !qa_scene_world_q1_sky_finish(opaque.q1_sky, frame, error))) return false;
     if (policy->flashblend && !qa_scene_legacy_dlights(frame, &input->view, policy->family,
         policy->quakeworld, input->lights, input->light_count, blend, error)) return false;
+    if (services->dlights && (!scene_current(services, error) ||
+        !services->dlights(services->context, input, frame, blend, error))) return false;
     if (!scene_current(services, error) || !services->particles(services->context, input, frame, error) ||
         !scene_current(services, error)) return false;
     if (policy->family == QA_SCENE_Q1) {
@@ -298,6 +297,36 @@ bool frontend_legacy_local_policy_read(const qa_frontend *frontend, uint32_t sea
     if (!frontend_seat_launch_id_read(frontend, seat, &authored) ||
         !frontend_config_store_primary_legacy_read(frontend->config_store, authored, &source, &present, error)) return false;
     return local_policy(frontend, product, present ? &source : NULL, out, error);
+}
+
+bool frontend_remote_unified_initial_clear(qa_frontend *frontend, uint32_t seat,
+    bool *active, bool *clear, qa_error *error)
+{
+    if (!frontend || !active || !clear || seat >= frontend->options.seats) return false;
+    *active = false; *clear = true;
+    frontend_remote_unified *selected = NULL;
+    for (frontend_remote_unified *row = frontend->remote_unified; row; row = row->next) {
+        if (row->retired || row->options.domain.physical_seat != seat) continue;
+        if (selected) return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy clear has multiple actual Unified receivers");
+        selected = row;
+    }
+    if (!selected || !selected->frame || !selected->admitted) return true;
+    if (selected->busy || !frontend_remote_unified_current(selected, error)) return false;
+    frontend_unified_presentation_children children;
+    if (!frontend_remote_unified_presentation_children_read(selected, &children, error)) return false;
+    if (!children.media || !children.render || !frontend_unified_media_world(children.media)) return true;
+    if (!frontend_unified_media_current(children.media) || !frontend_unified_render_idle(children.render))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy clear lost its actual received world and frame");
+    qa_executable_recipe *recipe = frontend_remote_unified_recipe(selected);
+    const qa_recipe_choices *choices = qa_executable_recipe_choices(recipe);
+    const qa_product *product = choices ? qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.presentation) : NULL;
+    const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(selected);
+    frontend_legacy_render_policy policy;
+    if (!domain || frontend_unified_media_recipe(children.media) != recipe ||
+        !frontend_legacy_render_policy_read_registry(domain->cvars, product, &policy, error) ||
+        !frontend_remote_unified_current(selected, error)) return false;
+    if (policy.lighting.present) { *active = true; *clear = policy.lighting.clear; }
+    return true;
 }
 
 static bool native_policy(void *context, const qa_product *product,
@@ -411,6 +440,9 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
          * active. Only frustum traversal changes for the mirror scene. */
         child.use_pvs_origin = true;
         child.pvs_origin = input.use_pvs_origin ? input.pvs_origin : input.view.origin;
+        if (services->reflected_lights && (!scene_current(services,error) ||
+            !services->reflected_lights(services->context,&child,frame,error) ||
+            !scene_current(services,error))) return false;
         first = frame->command_count;
         blend = (qa_scene_vec4){0};
         if (!scene(actual_world, services, &child, &policy, frame, &blend, error)) return false;
@@ -419,7 +451,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
             policy.mirror_alpha, frame, error) ||
             !qa_scene_frame_finish(frame, &input.view, NULL, error)) return false;
     }
-    if (policy.lighting.polyblend && (blend.w > 0 || services->blend)) {
+    if ((policy.lighting.polyblend || !policy.lighting.present) && (blend.w > 0 || services->blend)) {
         qa_ui_preferences preferences;
         if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), world->view.seat, &preferences, error)) return false;
         if (preferences.reduced_flashes) blend = (qa_scene_vec4){0};

@@ -38,14 +38,14 @@ static bool fuel_entry(qa_combat *combat, qa_combat_record *entry, qa_inventory_
     if (!ok) return false;
     if (record(combat, actor) != entry || entry->serial != serial)
         return qa_combat_argument(error, "combat owner changed during power fuel read");
-    if (!isfinite((float)out->count))
-        return qa_combat_argument(error, "power fuel exceeds its float representation");
+    if (!isfinite(out->count))
+        return qa_combat_argument(error, "power fuel must be finite");
     return true;
 }
-static bool fuel_write(qa_combat *combat, qa_combat_record *entry, float count, qa_error *error) {
+static bool fuel_write(qa_combat *combat, qa_combat_record *entry, double count, qa_error *error) {
     qa_inventory_entry fuel;
     if (!fuel_entry(combat, entry, &fuel, error)) return false;
-    if (fuel.count == count) return true;
+    if (fuel.count == count && (count != 0 || signbit(fuel.count) == signbit(count))) return true;
     qa_actor_id actor = entry->actor;
     uint64_t serial = entry->serial;
     fuel.count = count;
@@ -73,7 +73,7 @@ static bool read_state(qa_combat *combat, qa_combat_record *entry, qa_combat_sta
     if (entry->power_inventory && !entry->protection[QA_PROTECTION_POWERED].reserved && out->armor.powered.kind != QA_POWER_NONE) {
         qa_inventory_entry fuel;
         if (!fuel_entry(combat, entry, &fuel, error)) return false;
-        out->armor.powered.cells = (float)fuel.count;
+        out->armor.powered.cells = fuel.count;
     }
     for (unsigned channel = 0; channel != 2; ++channel) {
         qa_combat_protection *slot = &entry->protection[channel];
@@ -137,7 +137,7 @@ bool qa_combat_primary_read(qa_combat *combat, qa_actor_id actor, qa_combat_stat
     if (entry->power_inventory && state.armor.powered.kind != QA_POWER_NONE) {
         qa_inventory_entry fuel;
         if (!fuel_entry(combat, entry, &fuel, error)) return false;
-        state.armor.powered.cells = (float)fuel.count;
+        state.armor.powered.cells = fuel.count;
     }
     if (!state_valid(&state, error)) return false;
     *out = state; *local = !entry->external; return true;
@@ -559,7 +559,7 @@ bool qa_combat_set_powered_armor(qa_combat *combat, qa_actor_id actor, const qa_
     state.armor.powered = *powered;
     return qa_combat_set_armor(combat, actor, &state.armor, error);
 }
-bool qa_combat_set_regular_points(qa_combat *combat, qa_actor_id actor, float points, const qa_regular_armor *initial, qa_error *error) {
+bool qa_combat_set_regular_points(qa_combat *combat, qa_actor_id actor, double points, const qa_regular_armor *initial, qa_error *error) {
     qa_combat_record *entry; qa_combat_state state;
     if (!isfinite(points)) return qa_combat_argument(error, "armor points must be finite");
     if (!require_record(combat, actor, &entry, error) || !read_state(combat, entry, &state, error)) return false;

@@ -15,6 +15,15 @@ static bool current(local_peer *peer,qa_error *error)
         qa_actor_id_equal(actual.actor,peer->player.actor) && actual.source_owner==peer->player.source_owner &&
         actual.source_slot==peer->player.source_slot;
 }
+static bool retained(local_peer *peer,qa_error *error)
+{
+    qa_network_local_player actual;
+    bool ok=peer && (peer->hooks.retained_player ?
+        peer->hooks.retained_player(peer->hooks.context,peer->seat,&actual,error) :
+        peer->hooks.player(peer->hooks.context,peer->seat,&actual,error));
+    return ok && qa_actor_id_equal(actual.actor,peer->player.actor) &&
+        actual.source_owner==peer->player.source_owner && actual.source_slot==peer->player.source_slot;
+}
 static bool receive(void *context,qa_network_runtime *runtime,qa_net_client_id client,
     const qa_net_datagram *packet,qa_error *error)
 {
@@ -81,10 +90,19 @@ bool qa_network_local_player_refresh(qa_network_runtime *runtime,qa_net_client_i
     if(!ok || !actual.actor.registry || !actual.source_owner || !actual.source_slot) return false;
     peer->player=actual; return true;
 }
+bool qa_network_local_player_retained_read(const qa_network_runtime *runtime,qa_net_client_id id,
+    qa_network_local_player *out,qa_error *error)
+{
+    if(!runtime || !out || !qa_net_connections_get(runtime->connections,id) || id.slot>=runtime->options.clients ||
+        !qa_network_local_peer(&runtime->peers[id.slot])) return qa_network_fail(error,"Missing retained local Source connection");
+    local_peer *peer=runtime->peers[id.slot].state;
+    if(peer->runtime!=runtime || !retained(peer,error)) return false;
+    *out=peer->player; return true;
+}
 bool qa_network_local_checkpoint_peer(const qa_network_peer *peer,const qa_network_checkpoint_refs *refs,
     qa_buffer *out,qa_error *error)
 {
-    if(!qa_network_local_peer(peer) || !refs || !refs->save_actor || !out || !current(peer->state,error)) return false;
+    if(!qa_network_local_peer(peer) || !refs || !refs->save_actor || !out || !retained(peer->state,error)) return false;
     local_peer *local=peer->state; qa_saved_actor_id actor;
     if(!refs->save_actor(refs->context,local->player.actor,&actor,error)) return false;
     uint8_t *bytes=malloc(32); if(!bytes) { qa_error_set(error,QA_ERROR_MEMORY,0,"Saving local Source connection"); return false; }
@@ -105,11 +123,13 @@ bool qa_network_local_restore_peer(qa_network_runtime *runtime,const qa_net_clie
     qa_saved_actor_id saved={.generation=qa_net_read_u64(&reader),.slot=qa_net_read_u32(&reader)};
     uint32_t slot=qa_net_read_u32(&reader); qa_actor_id actor; qa_network_local_hooks hooks;
     if(reader.failed || qa_net_reader_remaining(&reader) || !refs->restore_actor(refs->context,saved,&actor,error) ||
-        !refs->source_local(refs->context,client,&hooks,error) || !hooks.player) return false;
+        !refs->source_local(refs->context,runtime,client,&hooks,error) || !hooks.player) return false;
     local_peer *local=calloc(1,sizeof(*local));
     if(!local) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring local Source connection"); return false; }
     local->runtime=runtime; local->seat=client->seats[0].seat; local->hooks=hooks;
-    if(!hooks.player(hooks.context,local->seat,&local->player,error) || !qa_actor_id_equal(actor,local->player.actor) ||
+    bool custody=hooks.retained_player ? hooks.retained_player(hooks.context,local->seat,&local->player,error) :
+        hooks.player(hooks.context,local->seat,&local->player,error);
+    if(!custody || !qa_actor_id_equal(actor,local->player.actor) ||
         slot!=local->player.source_slot || !local->player.source_owner) { free(local); return false; }
     out->ops=ops; out->state=local; return true;
 }

@@ -335,6 +335,183 @@ static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, flo
 static const char *flag_status(uint32_t bits) {
     return bits & 4 ? "dropped" : bits & 2 ? "carried" : "home";
 }
+static bool weapon_layout(qa_hud *hud, qa_scene_frame *scene, const char *value,
+    float scale, float width, qa_scene_vec4 color, qa_font_layout *out, qa_error *error)
+{
+    qa_font_layout_options options = {.text = {(const uint8_t *)value, strlen(value)},
+        .scale = scale, .max_width = width, .color = color, .color_codes = QA_FONT_COLOR_Q3,
+        .force_color = true, .alignment = QA_FONT_ALIGN_LEFT};
+    return qa_font_layout_build(&hud->options.ui->options.fonts, &options, &scene->storage, out, error);
+}
+static bool weapon_text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
+    const char *value, float x, float y, float scale, float width, float height,
+    float cap_height, qa_scene_vec4 color, bool ellipsis, qa_error *error)
+{
+    qa_font_layout layout;
+    if (!weapon_layout(hud, scene, value, scale, width, color, &layout, error)) return false;
+    size_t visible = 0;
+    while (visible < layout.line_count && layout.lines[visible].y + cap_height * scale <= height)
+        ++visible;
+    if (!visible) return true;
+    bool truncated = ellipsis && visible < layout.line_count;
+    qa_font_layout suffix = {0}; float suffix_x = 0, suffix_y = 0;
+    if (truncated) {
+        if (!weapon_layout(hud, scene, "…", scale, 0, color, &suffix, error)) return false;
+        qa_font_line *lines = qa_arena_alloc(&scene->storage, visible * sizeof(*lines), _Alignof(qa_font_line), error);
+        if (!lines) return false;
+        memcpy(lines, layout.lines, visible * sizeof(*lines)); layout.lines = lines;
+        qa_font_line *last = lines + visible - 1;
+        while (last->glyph_count) {
+            const qa_scene_rect_f *glyph = &layout.glyphs[last->first_glyph + last->glyph_count - 1].rect;
+            suffix_x = glyph->x + glyph->width;
+            if (suffix_x + suffix.width <= width) break;
+            --last->glyph_count; suffix_x = 0;
+        }
+        suffix_y = last->y;
+    }
+    const qa_font_line *last = layout.lines + visible - 1;
+    layout.line_count = visible; layout.glyph_count = last->first_glyph + last->glyph_count;
+    qa_font_draw_options draw = {.seat = hud->options.seat, .target = target,
+        .space = QA_FONT_PIXELS, .origin = {x - (float)target.x, y - (float)target.y},
+        .shadow_offset = hud->options.ui->scale};
+    if (!qa_font_draw_layout(scene, &layout, &draw, error)) return false;
+    if (!truncated) return true;
+    draw.origin.x += suffix_x; draw.origin.y += suffix_y;
+    return qa_font_draw_layout(scene, &suffix, &draw, error);
+}
+static bool weapon_picture(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
+    const qa_material *material, qa_scene_rect_f rect, uint64_t time_ns, qa_error *error)
+{
+    qa_scene_mesh mesh;
+    qa_scene_vec4 white = {1, 1, 1, 1};
+    if (!qa_scene_picture_geometry(scene, target, rect, (qa_scene_vec4){0, 0, 1, 1}, white, &mesh, error)) return false;
+    if (!mesh.vertex_count) return true;
+    qa_material_context context = {.entity_color = white, .identity_light = 1,
+        .seconds = (double)time_ns / 1e9, .source_primitives = true,
+        .source_writer = QA_SOURCE_WRITE_PICTURE, .video_frame = hud->options.video_frame,
+        .video_context = hud->options.video_context};
+    context.view.viewport = target; context.view.seat = hud->options.seat;
+    context.view.axis[0] = qa_v3(1, 0, 0); context.view.axis[1] = qa_v3(0, 1, 0);
+    context.view.axis[2] = qa_v3(0, 0, 1); qa_scene_matrix_identity(&context.model);
+    size_t first = scene->command_count;
+    qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = context.view};
+    if (!qa_scene_frame_emit(scene, &view, error) || !qa_material_submit(material, &mesh, &context, scene, error)) {
+        scene->command_count = first; return false;
+    }
+    qa_scene_matrix projection = {.m = {2.0f / (float)target.width, 0, 0, 0,
+        0, -2.0f / (float)target.height, 0, 0, 0, 0, 0, 0,
+        -1 - 2.0f * (float)target.x / (float)target.width,
+        1 + 2.0f * (float)target.y / (float)target.height, 0, 1}};
+    for (size_t i = first; i < scene->command_count; ++i) {
+        qa_scene_command *command = scene->commands + i;
+        if (command->kind != QA_SCENE_COMMAND_DRAW) continue;
+        command->data.draw.mvp = projection;
+        command->data.draw.state.depth_test = QA_DEPTH_ALWAYS;
+        command->data.draw.state.depth_write = false;
+        command->data.draw.state.cull = QA_CULL_NONE;
+    }
+    return true;
+}
+static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
+    qa_scene_frame *scene, qa_error *error)
+{
+    const qa_hud_weapon *weapon = &data->weapon;
+    if (!weapon->present) return true;
+    if (!weapon->label || (weapon->finite_ammo && !isfinite(weapon->ammo_count)))
+        return ui_fail(error, "Weapon HUD lost its actual source status");
+    qa_ui *ui = hud->options.ui; qa_font_info font;
+    if (!qa_font_describe(ui->options.fonts.primary ? ui->options.fonts.primary : ui->options.fonts.classic, &font))
+        return ui_fail(error, "Weapon HUD lost its retained font metrics");
+    float cap = font.has_cap_ink ? font.cap_height : 8, top = font.has_cap_ink ? font.cap_top : 0;
+    if (!isfinite(cap) || cap <= 0 || !isfinite(top))
+        return ui_fail(error, "Weapon HUD has invalid retained cap metrics");
+    float text_scale = ui->text_scale * 1.5f, group = frame->scale;
+    float fit = ui->scale / group, label_top = fmaxf(25, 8 + cap * text_scale * 1.5f);
+    float panel_height = fmaxf(42, ceilf(label_top + cap * text_scale * .9f + 4));
+    size_t vitals = data->source_vitals ? data->vital_count : 2;
+    float count = (float)vitals + 1, width = fminf(600 / group / count, 160);
+    float x = 320 - width * count * .5f + (float)vitals * width;
+    qa_scene_rect_f rect = {x, 476 - panel_height, width - 4, panel_height};
+    float scale = ui->scale;
+    float bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f + 320 * fit * (1 - group);
+    float bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * fit) * .5f + 480 * fit * (1 - group);
+    bool compact = !weapon->native_status && scale * text_scale * cap < 8;
+    if (weapon->native_status) {
+        rect = (qa_scene_rect_f){8, 476 - panel_height, 152, panel_height};
+        bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f;
+    }
+    if (compact) {
+        width = fminf(180, ((float)frame->safe_area.width - 8) / count);
+        rect = (qa_scene_rect_f){(float)frame->safe_area.x + ((float)frame->safe_area.width - width * count) * .5f + (float)vitals * width,
+            (float)frame->safe_area.y + (float)frame->safe_area.height - 36, width - 4, 32};
+        scale = 1; bias_x = bias_y = 0; text_scale = 8 / cap;
+    }
+    qa_scene_rect_f pixels = {bias_x + rect.x * scale, bias_y + rect.y * scale, rect.width * scale, rect.height * scale};
+    if (rect.width <= 8 || rect.height <= 8) return true;
+    if (!qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area, pixels,
+        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.05f, .05f, .05f, .85f}, error)) return false;
+    bool unavailable = weapon->finite_ammo && !weapon->has_ammo_to_start;
+    const char *warning = weapon->aggregate_empty ? "OUT OF AMMO" : weapon->aggregate_low ? "LOW AMMO WARNING" :
+        weapon->suppress_active_warning ? NULL : unavailable ? "NO AMMO" : weapon->finite_ammo && weapon->low_ammo ? "LOW AMMO" : NULL;
+    qa_scene_vec4 color = warning || unavailable ? (qa_scene_vec4){.9f, .7f, .3f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+    char numeric[32] = "";
+    if (weapon->finite_ammo && !qa_format_number(weapon->ammo_count, numeric, error)) return false;
+    qa_font_layout measured;
+    if (!weapon_layout(hud, scene, numeric, 1, 0, color, &measured, error)) return false;
+    bool stacked = weapon->icon && measured.width * text_scale * 1.5f > rect.width - 66;
+    float aspect = 1;
+    if (weapon->icon) {
+        for (size_t i = 0; i < weapon->icon->stage_count; ++i) {
+            const qa_material_stage *stage = weapon->icon->stages + i;
+            if (!stage->image_count || !stage->images[0] || !stage->images[0]->level_count) continue;
+            const qa_scene_image *image = stage->images[0];
+            uint32_t w = image->logical_width ? image->logical_width : image->levels[0].width;
+            uint32_t h = image->logical_height ? image->logical_height : image->levels[0].height;
+            if (w && h) aspect = (float)w / (float)h;
+            break;
+        }
+        float max_width = compact || stacked ? 24 : warning ? 30 : 48;
+        float max_height = compact ? 24 : stacked ? fminf(24, rect.height - label_top - 4) : warning ? 20 : 32;
+        float icon_width = fminf(max_width, max_height * aspect);
+        float column = compact || stacked ? 24 : 48;
+        qa_scene_rect_f icon_rect = {pixels.x + (4 + (column - icon_width) * .5f) * scale,
+            pixels.y + (compact ? 4 : stacked ? label_top : 5) * scale, icon_width * scale, icon_width / aspect * scale};
+        if (!weapon_picture(hud, scene, frame->safe_area, weapon->icon, icon_rect, frame->time_ns, error)) return false;
+    }
+    float left = compact ? weapon->icon ? 32 : 4 : !weapon->icon || stacked ? 8 : 58;
+    float available = rect.width - left - (compact ? 4 : 8);
+    if (weapon->finite_ammo) {
+        float number_scale = compact ? text_scale : fminf(text_scale * 1.5f, available / fmaxf(1, measured.width));
+        if (!weapon_text(hud, scene, frame->safe_area, numeric, pixels.x + left * scale,
+            pixels.y + (4 - top * number_scale) * scale, number_scale * scale, available * scale,
+            rect.height * scale, cap, color, false, error)) return false;
+    }
+    if (compact) {
+        if (!weapon->finite_ammo && !weapon->icon &&
+            !weapon_text(hud, scene, frame->safe_area, weapon->label, pixels.x + left,
+                pixels.y + 4 - top * text_scale, text_scale, available, 10, cap, color, false, error)) return false;
+        const char *compact_warning = weapon->aggregate_low ? "LOW AMMO" : warning;
+        return !compact_warning || weapon_text(hud, scene, frame->safe_area, compact_warning,
+            pixels.x + left, pixels.y + 18 - top * text_scale, text_scale, available, 10, cap, color, false, error);
+    }
+    if (warning || !weapon->icon) {
+        const char *label = warning ? warning : weapon->label;
+        float label_left = compact ? left : stacked ? 32 : warning ? 4 : left;
+        float label_available = rect.width - label_left - 4;
+        if (!weapon_layout(hud, scene, label, 1, 0, color, &measured, error)) return false;
+        float minimum = weapon->native_status ? 0 : 8 / cap / scale;
+        if (weapon->aggregate_low && measured.width * minimum > label_available) {
+            label = "LOW AMMO";
+            if (!weapon_layout(hud, scene, label, 1, 0, color, &measured, error)) return false;
+        }
+        float label_scale = compact ? text_scale : fmaxf(minimum, fminf(text_scale * .9f, label_available / fmaxf(1, measured.width)));
+        float label_y = compact ? 18 : label_top;
+        if (!weapon_text(hud, scene, frame->safe_area, label, pixels.x + label_left * scale,
+            pixels.y + (label_y - top * label_scale) * scale, label_scale * scale,
+            label_available * scale, (rect.height - label_y - 4) * scale, cap, color, true, error)) return false;
+    }
+    return true;
+}
 static bool ctf_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
     qa_error *error) {
     if (!hud->ctf_present || !qa_actor_id_equal(frame->actor, hud->ctf_actor) ||
@@ -452,6 +629,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
         (data.help_count && !data.help_lines) || (data.caption_count && !data.captions))
         return ui_fail(error, "HUD source returned invalid spans");
     qa_scene_rect target = frame->safe_area;
+    if (frame->weapon_only) return weapon_draw(hud, frame, &data, scene, error);
     if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
         frame, scene, error)) return false;
     qa_combat_state combat;
@@ -481,7 +659,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             }
         }
     }
-    if (frame->actor.registry && data.selected_weapon && !data.source_vitals) {
+    if (frame->actor.registry && data.selected_weapon && !data.source_vitals && !data.weapon.present) {
         for (size_t i = 0; i < definition_count; ++i) {
             const qa_item_definition *weapon = &definitions[i];
             if (weapon->item != data.selected_weapon || !weapon->ammo) continue;
@@ -491,6 +669,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             break;
         }
     }
+    if (!weapon_draw(hud, frame, &data, scene, error)) return false;
     for (size_t i = 0; i < data.vital_count; ++i) {
         float x = 80 + (float)i * 110;
         if (!icon(hud, scene, target, data.vitals[i].icon, (qa_scene_rect_f){x - 12, 374, 24, 24},

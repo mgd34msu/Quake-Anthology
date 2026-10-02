@@ -7,6 +7,13 @@
  * exact source floats, inactive fields and physical history slots survive. */
 bool qa_q2_save_protocol(qa_source_save_io *, qa_net_protocol_id *);
 bool qa_q2_save_channel_options(qa_source_save_io *, qa_q2_channel_options *);
+/* Optional admits the real unselected bootstrap request, retaining every
+ * fixed request field without creating admission or process ownership. */
+bool qa_q2_save_connect_request(qa_source_save_io *, qa_q2_connect_request *, bool optional);
+/* Decoder-owned options have expanded nonzero extents. Constructor policies
+ * retain their literal zero defaults. Reader bindings are supplied by the
+ * actual candidate and are represented only by a presence discriminator. */
+bool qa_q2_save_message_options(qa_source_save_io *, qa_q2_message_options *, bool decoder_owned);
 bool qa_q2_save_codec(qa_source_save_io *, qa_q2_codec *);
 bool qa_q2_save_usercmd(qa_source_save_io *, qa_q2_usercmd *);
 bool qa_q2_save_entity(qa_source_save_io *, qa_q2_entity *);

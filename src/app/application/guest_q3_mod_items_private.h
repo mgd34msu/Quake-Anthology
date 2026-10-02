@@ -62,21 +62,22 @@ typedef struct item_actor {
     application_q3_item_request request;
     application_q3_item_request_status status;
     unsigned references;
-    bool attempted,weapon_bound,releasing,admitting;
+    bool attempted,weapon_bound,restore_weapon_bound,restore_inventory,releasing,admitting;
 } item_actor;
 struct application_q3_mod_items_application {
     application_q3_mod_items *owner;
     struct application_q3_mod_items_application *previous;
     application_q3_mod_application *source;
     qa_actor_id actor;
-    bool applied;
+    bool applied,entered;
 };
 struct application_q3_mod_items_entry {
     application_q3_mod_items *owner;
     struct application_q3_mod_items_entry *previous;
     qa_qvm_call call;
+    application_q3_mod_items_application *application;
     qa_actor_id actor;
-    bool dispatcher,request,continuation,input,accepted,continued;
+    bool dispatcher,request,continuation,input,accepted,continued,cancelled;
     int32_t requested;
     uint32_t movement;
     qa_qvm_branch_binding *branches;
@@ -106,4 +107,5 @@ bool q3items_active(item_actor *,qa_item_id *,qa_error *);
 bool q3items_tests(item_actor *,const item_test *,size_t,bool *,qa_error *);
 bool q3items_binding(item_actor *,qa_inventory_items *,qa_error *);
 bool q3items_watch_create(item_actor *,qa_error *);
+bool q3items_watch_read(item_actor *,qa_qvm_saved_write_watch *,qa_error *);
 #endif

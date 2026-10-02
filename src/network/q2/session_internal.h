@@ -38,7 +38,7 @@ typedef struct q2_server {
     int32_t wire_frame;
     bool has_source_frame;
     char *drop_reason;
-    bool drop_queued, drop_sent, drop_hook_done;
+    bool drop_notice, drop_queued, drop_sent, drop_hook_done;
     qa_resource *download;
     const qa_vfs *download_view;
     qa_vfs_acquisition download_opening;
@@ -60,10 +60,18 @@ typedef struct q2_client {
     qa_q2_usercmd oldest[QA_NETWORK_MAX_SEATS], previous[QA_NETWORK_MAX_SEATS];
     q2_command_group *commands;
     size_t command_count, command_capacity;
+    q2_command_group sent;
+    uint32_t sent_sequence;
+    uint64_t sent_ns;
+    size_t sent_cursor;
+    bool sent_pending;
     uint64_t loading_generation, command_number;
     uint32_t acknowledged;
     size_t command_offset;
     int32_t last_frame;
+    char *drop_reason;
+    bool drop_canceled, drop_hook_done;
+    bool drop_notice, drop_queued, drop_sent, drop_notify, drop_records_needed, drop_records_done;
     bool has_server_data, preparing_game_state, selecting_server_data, receive_held, acknowledgement_held, preparation_held;
 } q2_client;
 typedef struct q2_session {
@@ -111,6 +119,10 @@ bool q2_server_hooks_valid(const qa_network_q2_server_hooks *);
 bool q2_client_hooks_valid(const qa_network_q2_client_hooks *);
 bool qa_network_q2_peer(const qa_network_peer *);
 bool qa_network_q2_retirement_pending(const qa_network_peer *);
+bool qa_network_q2_delivery_pending(const qa_network_peer *);
+bool qa_network_q2_timeout(qa_network_peer *, const char *, qa_error *);
+bool q2_server_drop_request(q2_session *, const char *, qa_error *);
+bool q2_client_drop_progress(q2_session *, const char *, qa_error *);
 bool qa_network_q2_peer_matches(const qa_network_peer *, const qa_net_datagram *);
 
 #endif

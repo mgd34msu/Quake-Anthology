@@ -10,7 +10,9 @@ static bool pointer(application_q3_mod_items *o,const mod_pointer *p,const qa_qv
     else {if(!qa_qvm_read(o->mod->vm,p->root,bytes,4,e))return false;word=qa_load_i32le(bytes);}
     int64_t address=word;
     for(size_t i=0;i<p->count;++i){int64_t at=address+p->indirections[i];if(at<0||at>UINT32_MAX||!qa_qvm_read(o->mod->vm,(uint32_t)at,bytes,4,e))return false;address=qa_load_i32le(bytes);}
-    address+=p->offset;if(address<0||address>UINT32_MAX)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon pointer leaves actual source memory");*out=(uint32_t)address;return true;
+    address+=p->offset;
+    if(address<0||address>UINT32_MAX)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon pointer leaves actual source memory");
+    *out=(uint32_t)address;return true;
 }
 static bool source_actor(application_q3_mod_items *o,const item_actor_pointer *p,const qa_qvm_call *call,item_actor **out,qa_error *e)
 {
@@ -24,10 +26,14 @@ static bool source_actor(application_q3_mod_items *o,const item_actor_pointer *p
 }
 static bool cancel(application_q3_mod_items_entry *entry,const qa_qvm_call *current,qa_error *e)
 {
-    const qa_qvm_call *scope=&entry->call;
-    for(application_q3_mod_items_entry *p=entry;p;p=p->previous)if(p->input&&qa_actor_id_equal(p->actor,entry->actor)){scope=&p->call;break;}
+    application_q3_mod_items_entry *target=entry;
+    for(application_q3_mod_items_entry *p=entry;p;p=p->previous)
+        if(p->input&&qa_actor_id_equal(p->actor,entry->actor)){target=p;break;}
     bool cancelled=false;if(!qa_qvm_call_cancelled(current,&cancelled,e))return false;
-    return cancelled||qa_qvm_cancel(scope,e);
+    if(cancelled)return true;
+    bool ok=qa_qvm_cancel(&target->call,e);
+    if(ok){target->cancelled=true;entry->cancelled=true;}
+    return ok;
 }
 static bool decision(void *context,const qa_qvm_call *call,bool original,bool *taken,qa_error *e)
 {
@@ -51,14 +57,19 @@ bool application_q3_mod_items_open(application_q3_mod_items *o,qa_actor_id actor
 }
 bool application_q3_mod_items_close(application_q3_mod_items_application **in,qa_error *e)
 {
-    if(!in)return false;application_q3_mod_items_application *a=*in;if(!a)return true;
-    if(a->owner->application!=a||a->owner->entries)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon application retains a nested original call");
+    if(!in)return false;
+    application_q3_mod_items_application *a=*in;
+    if(!a)return true;
+    if(a->owner->application!=a)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon application retains a nested application");
+    for(application_q3_mod_items_entry *entry=a->owner->entries;entry;entry=entry->previous)
+        if(entry->application==a)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon application retains its original call");
     a->owner->application=a->previous;free(a);*in=NULL;return true;
 }
 bool application_q3_mod_items_apply(application_q3_mod_items_application *a,uint32_t entry,
     const application_q3_mod_inputs *values,qa_error *e)
 {
-    if(!a||!values)return false;item_stage *s=a->owner->profile->stage;
+    if(!a||!values)return false;
+    item_stage *s=a->owner->profile->stage;
     if(!s||entry!=s->input_entry)return true;
     if(a->applied||a->owner->application!=a||!application_q3_mod_application_current(a->owner->mod,a->source,a->actor)||!q3items_current(q3items_actor(a->owner,a->actor),e))return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon input must consume its real movement slice once");
     a->applied=true;
@@ -67,27 +78,34 @@ bool application_q3_mod_items_apply(application_q3_mod_items_application *a,uint
         !isfinite(elapsed->as.scalar)||elapsed->as.scalar<0||!isfinite(time->as.scalar*1000)||!isfinite(elapsed->as.scalar*1000))return false;
     return word_write(q3items_actor(a->owner,a->actor),s->clock,wrapped(trunc(time->as.scalar*1000)-trunc(elapsed->as.scalar*1000)),e);
 }
+bool application_q3_mod_items_applies(const application_q3_mod_items *o,uint32_t entry)
+{return o&&o->profile->stage&&entry==o->profile->stage->input_entry;}
 size_t application_q3_mod_items_entry_count(const application_q3_mod_items *o){return o&&o->profile->stage?4:0;}
 bool application_q3_mod_items_entry_instruction(const application_q3_mod_items *o,size_t i,uint32_t *out)
 {if(!o||!o->profile->stage||!out||i>=4)return false;item_stage *s=o->profile->stage;uint32_t values[]={s->input_entry,s->dispatch_entry,s->request_entry,s->continue_entry};*out=values[i];return true;}
 bool application_q3_mod_items_entry_begin(application_q3_mod_items *o,const qa_qvm_call *call,application_q3_mod_items_entry **out,qa_error *e)
 {
     if(!o||!call||!out||*out||call->vm!=o->mod->vm||!q3mod_current(o->mod,e))return false;
-    item_stage *s=o->profile->stage;if(!s)return true;item_actor *a=NULL;
+    item_stage *s=o->profile->stage;
+    if(!s)return true;
+    item_actor *a=NULL;
     bool dispatch=call->instruction==s->dispatch_entry,continuation=call->instruction==s->continue_entry,
         request=call->instruction==s->request_entry,input=call->instruction==s->input_entry;
     if(dispatch){if(!source_actor(o,&s->dispatcher,call,&a,e))return false;}
     else if(continuation){if(!source_actor(o,&s->continuation,call,&a,e))return false;}
-    else if(input&&o->application)a=q3items_actor(o,o->application->actor);
+    else if(input&&o->application&&o->application->applied&&!o->application->entered){
+        o->application->entered=true;a=q3items_actor(o,o->application->actor);
+    }
     else if(request){for(application_q3_mod_items_entry *p=o->entries;p;p=p->previous)if(p->dispatcher){a=q3items_actor(o,p->actor);break;}}
     if(!a)return true;
     application_q3_mod_items_entry *entry=calloc(1,sizeof(*entry));if(!entry)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original source weapon entry");
-    entry->owner=o;entry->call=*call;entry->actor=a->actor;entry->dispatcher=dispatch;entry->continuation=continuation;entry->request=request;entry->input=input;
+    entry->owner=o;entry->call=*call;entry->application=o->application;entry->actor=a->actor;entry->dispatcher=dispatch;entry->continuation=continuation;entry->request=request;entry->input=input;
     entry->previous=o->entries;o->entries=entry;*out=entry;
     if(!q3items_current(a,e))return cancel(entry,call,e);
     if(request){if(!q3items_tests(a,s->accepted,s->accepted_count,&entry->accepted,e)||!qa_qvm_call_argument(call,s->request_argument,&entry->requested,e))return false;
         if(!entry->accepted&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){int32_t value;bool present;
-            if(!application_q3_mod_items_requested(o,a->actor,&value,&present,e))return false;if(present&&value==entry->requested)a->attempted=true;}
+            if(!application_q3_mod_items_requested(o,a->actor,&value,&present,e))return false;
+            if(present&&value==entry->requested)a->attempted=true;}
     }
     if(continuation){uint8_t last;
         if(!pointer(o,&s->movement,call,&entry->movement,e)||(uint64_t)entry->movement+s->movement_length>UINT32_MAX||
@@ -104,10 +122,18 @@ static bool vector_write(application_q3_mod_items_entry *entry,uint32_t offset,q
 {uint8_t bytes[12];qa_store_f32le(bytes,value.x);qa_store_f32le(bytes+4,value.y);qa_store_f32le(bytes+8,value.z);return qa_vec_finite(value)&&qa_qvm_write(entry->owner->mod->vm,entry->movement+offset,(qa_bytes){bytes,12},e);}
 bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **in,bool succeeded,qa_error *e)
 {
-    if(!in)return false;application_q3_mod_items_entry *entry=*in;if(!entry)return true;application_q3_mod_items *o=entry->owner;
+    if(!in)return false;
+    application_q3_mod_items_entry *entry=*in;
+    if(!entry)return true;
+    application_q3_mod_items *o=entry->owner;
     if(o->entries!=entry)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon entry cleanup is outside its source nesting");
     item_actor *a=q3items_actor(o,entry->actor);item_stage *s=o->profile->stage;bool ok=true;
-    if(succeeded&&a&&q3items_current(a,e)){
+    bool cancelled=false;
+    if(succeeded)ok=qa_qvm_call_cancelled(&entry->call,&cancelled,e);
+    if(ok&&succeeded&&entry->input&&(!a||!q3items_current(a,NULL))&&!cancelled){
+        ok=cancel(entry,&entry->call,e);cancelled=ok;
+    }
+    if(ok&&succeeded&&!cancelled&&a&&q3items_current(a,NULL)){
         if(entry->request&&!entry->accepted){bool accepted;ok=q3items_tests(a,s->accepted,s->accepted_count,&accepted,e);
             if(ok&&accepted&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){int32_t value;bool present;ok=application_q3_mod_items_requested(o,a->actor,&value,&present,e);if(ok&&present&&value==entry->requested)a->status=Q3_ITEM_REQUEST_ACCEPTED;}}
         if(ok&&entry->dispatcher&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){qa_item_id active;ok=q3items_active(a,&active,e);if(ok){if(active==a->request.item)a->status=Q3_ITEM_REQUEST_ACCEPTED;else if(a->attempted)a->status=Q3_ITEM_REQUEST_REFUSED;}}
@@ -126,7 +152,8 @@ bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **in,bool
 bool application_q3_mod_items_hook_run(application_q3_mod_items *o,const qa_qvm_call *call,
     application_q3_mod_items_proceed proceed,void *context,int32_t *result,qa_error *e)
 {
-    if(!proceed)return false;application_q3_mod_items_entry *entry=NULL;
+    if(!proceed)return false;
+    application_q3_mod_items_entry *entry=NULL;
     bool ok=application_q3_mod_items_entry_begin(o,call,&entry,e);
     if(ok)ok=proceed(context,call,result,e);
     qa_error cleanup={0};bool ended=application_q3_mod_items_entry_end(&entry,ok,ok?e:&cleanup);
@@ -141,6 +168,38 @@ bool application_q3_mod_items_weapon_read(application_q3_mod_items *o,qa_actor_i
 }
 static bool value_for(application_q3_mod_items *o,qa_item_id item,int32_t *out)
 {if(!item)return false;item_stage *s=o->profile->stage;for(size_t i=0;s&&i<s->value_count;++i)if(s->values[i].item==item){*out=s->values[i].value;return true;}return false;}
+bool application_q3_mod_items_weapon_declares(application_q3_mod_items *o,qa_actor_id actor,
+    qa_item_id item,bool *out,qa_error *e)
+{
+    item_actor *a=q3items_actor(o,actor);int32_t value;
+    if(!out||!a||!o->profile->stage||!q3items_current(a,e))return false;
+    *out=value_for(o,item,&value);return true;
+}
+bool application_q3_mod_items_weapon_accepts(application_q3_mod_items *o,qa_actor_id actor,
+    qa_item_id item,bool *out,qa_error *e)
+{
+    item_actor *a=q3items_actor(o,actor);int32_t value;
+    if(!out||!a||!o->profile->stage||!q3items_current(a,e))return false;
+    *out=false;if(!value_for(o,item,&value))return true;
+    double count;if(!qa_inventory_count_read(o->inventory,actor,item,&count,e)||!q3items_current(a,e))return false;
+    *out=count>0;return true;
+}
+bool application_q3_mod_items_weapon_holster(application_q3_mod_items *o,qa_actor_id actor,qa_error *e)
+{return o&&o->profile->stage&&q3items_current(q3items_actor(o,actor),e);}
+bool application_q3_mod_items_weapon_holstered(application_q3_mod_items *o,qa_actor_id actor,bool *out,qa_error *e)
+{
+    item_actor *a=q3items_actor(o,actor);
+    return out&&a&&o->profile->stage&&q3items_current(a,e)&&
+        q3items_tests(a,o->profile->stage->settled,o->profile->stage->settled_count,out,e);
+}
+bool application_q3_mod_items_request_restore(application_q3_mod_items *o,qa_actor_id actor,
+    uint64_t id,qa_item_id item,application_q3_item_request *out,qa_error *e)
+{
+    item_actor *a=q3items_actor(o,actor);
+    if(!out||!a||!q3items_current(a,e)||!id||a->request.id!=id||a->request.item!=item)
+        return q3mod_fail(e,QA_ERROR_FORMAT,"Saved weapon request differs from its actual item owner");
+    *out=a->request;return true;
+}
 bool application_q3_mod_items_request(application_q3_mod_items *o,qa_actor_id actor,qa_item_id item,application_q3_item_request *out,qa_error *e)
 {
     item_actor *a=q3items_actor(o,actor);if(!a||!out||!o->profile->stage||!q3items_current(a,e)||o->next_request==UINT64_MAX)return false;

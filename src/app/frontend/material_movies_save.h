@@ -9,6 +9,11 @@ typedef struct frontend_material_movies_refs {
     /* Returns a borrowed asset from this real provider's imported cache and
      * qualified retained path/content binding; it never opens the path. */
     bool (*asset_decode)(void *, uint64_t, const char *, const qa_cinematic_asset **, qa_error *);
+    /* The aggregate has already recreated the exact saved global scratch
+     * bank/pool and the physical audio namespace. No provider replay occurs. */
+    bool (*cinematic_encode)(void *, uint64_t audio_bus, qa_buffer *descriptor, qa_error *);
+    bool (*cinematic_decode)(void *, uint32_t saved_seat, qa_bytes bus_descriptor,
+        qa_q3_cinematic_handles **, uint32_t *actual_seat, uint64_t *actual_bus, qa_error *);
     qa_cinematic_image_checkpoint_refs images;
     qa_scene_frame_checkpoint_refs frames;
 } frontend_material_movies_refs;

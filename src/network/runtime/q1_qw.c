@@ -390,6 +390,15 @@ bool qa_network_qw_retirement_pending(const qa_network_peer *peer)
     const qw_server *source = peer->state;
     return source->retiring && !source->retirement.marked;
 }
+bool qa_network_qw_timeout(qa_network_peer *owner,const char *reason,qa_error *error)
+{
+    if (!qa_network_qw_peer(owner) || !reason)
+        return qa_network_fail(error,"QuakeWorld timeout requires its actual source peer and reason");
+    qw_server *peer=owner->state;
+    if (!peer->runtime->pumping || !peer->runtime->callback || peer->signon_active)
+        return qa_network_fail(error,"QuakeWorld timeout requires its genuine returned pump callback");
+    return retire(peer,reason,true,error);
+}
 bool qa_network_qw_peer_matches(const qa_network_peer *owner, const qa_net_datagram *packet)
 {
     if (!qa_network_qw_peer(owner) || !packet || !packet->payload.data || packet->payload.size < 10) return false;

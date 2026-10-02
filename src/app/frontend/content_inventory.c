@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "component_scene.h"
+#include "equipment_media.h"
 #include "content_inventory.h"
 #include "qa/scene_resource_save.h"
 #include "qa/vfs_view_save.h"
@@ -116,6 +117,11 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if(!frontend_component_scene_metadata_read(frontend,i,&row,error) ||
             !visit_catalog(visitor,row.catalog,error) || !visit_view(visitor,row.files,error) ||
             (row.descriptor && !visit_view(visitor,row.descriptor->content,error))) return false;
+    }
+    for(size_t i=0;i<frontend_equipment_media_count(frontend);++i) {
+        frontend_equipment_media_view row;
+        if(!frontend_equipment_media_at(frontend,i,&row) ||
+            (row.source_slot && !visit_view(visitor,row.owner.mounts,error))) return false;
     }
     if (!frontend_native_q3_content_visit(frontend,visitor,error) ||
         !frontend_client_sources_visit(frontend,visitor,error) ||

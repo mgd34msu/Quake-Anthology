@@ -142,8 +142,11 @@ bool application_q3_mod_input_current(application_q3_mod *,qa_actor_id,
 size_t application_q3_mod_input_binding_count(const application_q3_mod *);
 bool application_q3_mod_input_binding(const application_q3_mod *, size_t,
     bool *movement_slice, bool *before);
+/* Runs once immediately before each declared call in the actual application. */
+typedef bool (*application_q3_mod_input_prepare_fn)(void *,uint32_t entry,qa_error *);
 bool application_q3_mod_input_run(application_q3_mod *, size_t binding,
-    application_q3_mod_application *, application_q3_mod_output **owned_outputs,
+    application_q3_mod_application *,application_q3_mod_input_prepare_fn,void *,
+    application_q3_mod_output **owned_outputs,
     size_t *output_count, qa_error *);
 /* Reservation precedes real source client admission; bind follows it. */
 bool application_q3_mod_reserve(application_q3_mod *, qa_actor_id, qa_error *);

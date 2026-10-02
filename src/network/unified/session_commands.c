@@ -1,11 +1,51 @@
 #include "session_internal.h"
+#include "value_internal.h"
 
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static bool bytes_equal(qa_bytes a, qa_bytes b)
 {
     return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
+}
+
+static bool command_text(qa_unified_builder *json, const char *text, qa_error *e)
+{
+    if (!text) return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Compiled Source command contains an absent lexical token");
+    qa_buffer quoted = {0};
+    bool okay = qa_json_quote((qa_bytes){(const uint8_t *)text, strlen(text)}, &quoted, e) &&
+        qa_unified_append(json, quoted.data, quoted.size, e);
+    qa_buffer_free(&quoted); return okay;
+}
+bool qa_unified_session_source_command(qa_unified_session *s, const qa_unified_source_command *command, qa_error *e)
+{
+    if (!qa_unified_session_idle(s) || !s->bound_source || s->server || !s->admitted ||
+        !s->epoch || s->timeout_pending || s->closing || s->disconnected || !command || !command->instance ||
+        !command->publication || command->publication > QA_UNIFIED_SAFE_INTEGER ||
+        command->map_revision > QA_UNIFIED_SAFE_INTEGER || !command->arguments ||
+        !command->argument_count || command->argument_count > 128)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Compiled Source command lacks its admitted CLIENT and received activation");
+    const qa_net_client *client = qa_net_connections_get(qa_network_connections(s->runtime), s->id);
+    if (!client || client->phase != QA_NET_ACTIVE)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Compiled Source command precedes its actual prepared frame");
+    char head[160];
+    int length = snprintf(head, sizeof(head),
+        "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"source-command\",\"epoch\":%" PRIu32 ",\"instance\":", s->epoch);
+    qa_unified_builder json = {.maximum = s->limits.message_bytes};
+    qa_unified_document *document = NULL;
+    bool okay = length > 0 && (size_t)length < sizeof(head) &&
+        qa_unified_append(&json, head, (size_t)length, e) && command_text(&json, command->instance, e);
+    length = snprintf(head, sizeof(head), ",\"activation\":{\"publication\":%" PRIu64 ",\"mapRevision\":%" PRIu64 "},\"args\":[",
+        command->publication, command->map_revision);
+    if (okay) okay = length > 0 && (size_t)length < sizeof(head) && qa_unified_append(&json, head, (size_t)length, e);
+    for (size_t i = 0; okay && i < command->argument_count; ++i)
+        okay = (!i || qa_unified_append(&json, ",", 1, e)) && command_text(&json, command->arguments[i], e);
+    if (okay) okay = qa_unified_append(&json, "]}}", 3, e) &&
+        qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT, (qa_bytes){json.data, json.size}, &document, e) &&
+        qa_unified_session_control(s, document, e);
+    qa_unified_document_destroy(document); free(json.data); return okay;
 }
 
 bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_session_player *out, qa_error *e)

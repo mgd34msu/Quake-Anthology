@@ -24,7 +24,8 @@ bool frontend_unified_q3_runtime_video_current(const frontend_unified_q3_runtime
         !frontend_video_guests_parent_is(f,t->aggregate) || f->time_ns!=t->time_ns ||
         f->frame_number!=t->frame_number || o->video_generation!=t->generation ||
         a->replica!=b->replica || a->client!=b->client || a->media!=b->media || a->clients!=b->clients ||
-        a->context!=b->context || a->current!=b->current || !a->current(a->context,a) ||
+        a->context!=b->context || a->current!=b->current || a->video_shutdown!=b->video_shutdown ||
+        !a->current(a->context,a) ||
         !frontend_remote_unified_current(a->replica,e) || !frontend_unified_q3_runtime_idle(o) ||
         !frontend_unified_q3_client_video_current(t->client))
         return fail(e,"Unified CG video lost its actual retained Source, CLIENT or returned frame");
@@ -53,6 +54,7 @@ bool frontend_unified_q3_runtime_video_close(frontend_unified_q3_runtime_video *
     if(!frontend_unified_q3_runtime_video_current(t,e))return false;
     frontend_unified_q3_runtime *o=t->owner;
     if(!frontend_unified_q3_runtime_close_children(o,e))return false;
+    if(o->options.video_shutdown&&!o->options.video_shutdown(o->options.context,e))return false;
     q3n_compiled_source_view source;
     if(!q3n_compiled_source_read(frontend_unified_q3_client_source(o->options.client),&source,e) ||
         !q3n_clients_compiled_reset(o->options.clients,&source,e) ||

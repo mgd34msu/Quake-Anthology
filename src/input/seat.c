@@ -134,6 +134,11 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     free(s->ui);
     free(s->catchers);
     free(s->scratch);
+    free(s->recipient_pending);
+    while (s->recipient_retired) {
+        qa_input_recipient_handoff *next=s->recipient_retired->next;
+        free(s->recipient_retired); s->recipient_retired=next;
+    }
     free(s);
 }
 qa_command_context qa_input_seat_context(const qa_input_seat *s) { return s->options.context; }
@@ -154,31 +159,111 @@ bool qa_input_seat_recipient_read(const qa_input_seat *s,qa_console **console,qa
     if (!s || !console || !cvars || !command) return false;
     *console=s->options.console; *cvars=s->options.cvars; *command=s->options.context; return true;
 }
-bool qa_input_seat_recipient_ready_is(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+bool qa_input_recipient_command_equal(const qa_command_context *a,const qa_command_context *b) {
+    return a && b && !a->script && !b->script && a->owner==b->owner && a->session==b->session &&
+        a->client==b->client && a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
+        a->direct==b->direct && a->console_text==b->console_text && a->registry==b->registry &&
+        a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor);
+}
+static bool recipient_endpoints_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
     const qa_command_context *command) {
     if (!s || !console || !cvars || !command || !qa_console_idle(s->options.console) ||
         !qa_console_idle(console) || qa_console_cvars(console)!=cvars ||
         command->origin!=QA_COMMAND_SEAT || command->script || command->console_text ||
         command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3) return false;
+    return true;
+}
+static bool recipient_release_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command) {
+    if (!recipient_endpoints_ready(s,console,cvars,command)) return false;
     qa_input_release_scope all={.all=true,.controller=-1};
     qa_input_release_scope empty={.controller=-1};
     return s->release?(qa_input_release_completed_is(s->release,s,&all) ||
         (!qa_input_seat_has_held(s) && qa_input_release_completed_empty_is(s->release,s,&empty))):
         !qa_input_seat_has_held(s);
 }
-bool qa_input_seat_recipient_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+static bool recipient_changes_owner(const qa_input_seat *s,qa_console *console,qa_cvars *cvars) {
+    return s->options.context.owner && (s->options.console!=console || s->options.cvars!=cvars);
+}
+bool qa_input_seat_recipient_ready_is(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command) {
+    if (!recipient_release_ready(s,console,cvars,command)) return false;
+    const qa_input_recipient_handoff *pending=s->recipient_pending;
+    return !recipient_changes_owner(s,console,cvars) || (pending &&
+        pending->former.console==s->options.console && pending->former.cvars==s->options.cvars &&
+        qa_input_recipient_command_equal(&pending->former.context,&s->options.context) &&
+        pending->destination_console==console && pending->destination_cvars==cvars &&
+        qa_input_recipient_command_equal(&pending->destination,command));
+}
+static bool recipient_stage(qa_input_seat *s,qa_console *console,qa_cvars *cvars,
     const qa_command_context *command,qa_error *error) {
-    if (!qa_input_seat_recipient_ready_is(s,console,cvars,command)) {
+    qa_input_seat_options options=s->options;
+    options.console=console; options.cvars=cvars; options.context=*command;
+    if (!context_ready(&options,command,error)) return false;
+    if (!recipient_changes_owner(s,console,cvars)) {
+        free(s->recipient_pending); s->recipient_pending=NULL; return true;
+    }
+    if (!s->recipient_pending) s->recipient_pending=calloc(1,sizeof(*s->recipient_pending));
+    if (!s->recipient_pending) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining the former physical input recipient"); return false;
+    }
+    *s->recipient_pending=(qa_input_recipient_handoff){.former=s->options,
+        .destination_console=console,.destination_cvars=cvars,.destination=*command};
+    return true;
+}
+bool qa_input_seat_recipient_ready(qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command,qa_error *error) {
+    if (!recipient_release_ready(s,console,cvars,command)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input recipient requires its returned consoles and completed ALL release");
         return false;
     }
-    qa_input_seat_options options=s->options;
-    options.console=console; options.cvars=cvars; options.context=*command;
-    return context_ready(&options,command,error);
+    return recipient_stage(s,console,cvars,command,error);
+}
+bool qa_input_seat_recipient_retirement_ready(qa_input_seat *s,const qa_input_release *release,
+    qa_console *console,qa_cvars *cvars,const qa_command_context *command,
+    qa_console_release_disposition disposition,qa_console_release_retirement_fn guard,void *context,qa_error *error) {
+    qa_input_release_scope all={.all=true,.controller=-1};
+    if (!recipient_endpoints_ready(s,console,cvars,command) || !release || s->release!=release ||
+        !qa_input_release_retirement_scope_ready(release,s,&all,disposition,guard,context,error)) {
+        if (!error || error->code==QA_OK)
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input handoff lost its exact qualified ALL retirement history");
+        return false;
+    }
+    return recipient_stage(s,console,cvars,command,error);
 }
 void qa_input_seat_recipient_publish(qa_input_seat *s,qa_console *console,qa_cvars *cvars,
     const qa_command_context *command) {
+    if (!qa_input_seat_recipient_ready_is(s,console,cvars,command)) return;
+    if (recipient_changes_owner(s,console,cvars)) {
+        qa_input_recipient_handoff *receipt=s->recipient_pending; s->recipient_pending=NULL;
+        receipt->next=s->recipient_retired; s->recipient_retired=receipt;
+    }
+    for (qa_input_recipient_handoff **at=&s->recipient_retired;*at;) {
+        if ((*at)->former.console==console && (*at)->former.cvars==cvars) {
+            qa_input_recipient_handoff *receipt=*at; *at=receipt->next; free(receipt);
+        } else at=&(*at)->next;
+    }
     s->options.console=console; s->options.cvars=cvars; s->options.context=*command;
+}
+bool qa_input_seat_recipient_retired_is(const qa_input_seat *s,const qa_console *console,const qa_cvars *cvars,
+    const qa_command_context *command) {
+    if (!s || !console || !cvars || !command) return false;
+    for (const qa_input_recipient_handoff *at=s->recipient_retired;at;at=at->next)
+        if (at->former.console==console && at->former.cvars==cvars &&
+            qa_input_recipient_command_equal(&at->former.context,command)) return true;
+    return false;
+}
+bool qa_input_seat_recipient_retired_consume(qa_input_seat *s,const qa_console *console,const qa_cvars *cvars,
+    const qa_command_context *command,qa_error *error) {
+    if (!s || !qa_console_idle(console)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Former input recipient still has an entered command"); return false;
+    }
+    for (qa_input_recipient_handoff **at=&s->recipient_retired;*at;at=&(*at)->next)
+        if ((*at)->former.console==console && (*at)->former.cvars==cvars &&
+            qa_input_recipient_command_equal(&(*at)->former.context,command)) {
+            qa_input_recipient_handoff *receipt=*at; *at=receipt->next; free(receipt); return true;
+        }
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Former input recipient has no completed physical handoff"); return false;
 }
 qa_input_focus qa_input_seat_focus(const qa_input_seat *s) { return s->focus; }
 bool qa_input_seat_focused(const qa_input_seat *s) { return s->focused; }

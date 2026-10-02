@@ -96,18 +96,29 @@ static bool source(application_provider *provider, qa_actor_id actor,
     qa_application *app = provider ? provider->application : NULL;
     if (!app || app->destroy_requested || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
-        !app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
+        ((!app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)&&
+         !application_native_q3_source_command_entered(provider)) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 client source has retired");
     return qa_q3_native_client_slot(provider->state.q3, actor, slot, error);
 }
 
-static bool native_rules(application_provider *provider, qa_mode_view *out, qa_error *error)
+static bool client_mode(application_provider *provider,qa_mode_id *out,qa_error *error)
+{
+    bool found;
+    return application_native_q3_source_mode(provider,out,&found,error)&&
+        (found||application_fail(error,QA_ERROR_NOT_FOUND,"Native Q3 client has no actual associated mode"));
+}
+
+static bool native_rules(application_provider *provider,qa_mode_id mode,qa_mode_view *out,
+    bool *native,qa_error *error)
 {
     qa_application *app = provider->application;
-    application_provider *chosen = application_mode_provider(app, app->primary_mode);
-    if (!chosen || chosen->kind != APPLICATION_PROVIDER_Q3) return false;
-    return qa_modes_read(app->modes, app->primary_mode, out, error) && out->rules.source >= QA_MODE_Q3;
+    application_provider *chosen = application_mode_provider(app,mode);
+    *native=false;
+    if (!chosen || chosen->kind != APPLICATION_PROVIDER_Q3) return true;
+    if(!qa_modes_read(app->modes,mode,out,error)) return false;
+    *native=out->rules.source>=QA_MODE_Q3; return true;
 }
 
 application_provider *application_native_q3_mode_source_provider(qa_application *app, qa_mode_id mode)
@@ -159,12 +170,14 @@ bool application_native_q3_mode_source(void *opaque, qa_mode_id mode, qa_actor_o
     qa_application *app = opaque;
     application_provider *provider = application_native_q3_mode_source_provider(app, mode);
     qa_mode_view view;
-    if (!owner || !provider || !app->primary_mode_ready ||
-        mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation ||
+    bool associated=provider&&application_native_q3_source_command_entered(provider)&&
+        application_native_q3_source_mode_current(provider,mode,NULL);
+    if (!owner || !provider || ((!app->primary_mode_ready ||
+        mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation)&&!associated) ||
         !qa_modes_read(app->modes, mode, &view, NULL) || view.rules.source < QA_MODE_Q3 ||
         provider->kind != APPLICATION_PROVIDER_Q3 ||
         !provider->state.q3 || !provider->constructed || provider->close_pending ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider) return false;
+        (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider&&!associated)) return false;
     *owner = provider->owner;
     return true;
 }
@@ -174,10 +187,14 @@ bool application_native_q3_source_score_bound(void *opaque, qa_mode_id mode,
 {
     qa_application *app = opaque;
     if (!app || !owner || app->destroy_requested || !app->modes ||
-        !app->primary_mode_ready || mode.slot != app->primary_mode.slot ||
-        mode.generation != app->primary_mode.generation ||
         !qa_actors_get(qa_session_actors(app->session), actor)) return false;
-    application_provider *provider = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    application_provider *candidate=application_native_q3_mode_source_provider(app,mode);
+    bool associated=candidate&&application_native_q3_source_command_entered(candidate);
+    if(associated&&!application_native_q3_source_mode_current(candidate,mode,NULL)) return false;
+    application_provider *provider=associated?candidate:application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if(!associated&&(!app->primary_mode_ready||mode.slot!=app->primary_mode.slot||
+        mode.generation!=app->primary_mode.generation||
+        application_world_provider(app,QA_ROLE_ENTITIES,"")!=provider)) return false;
     uint32_t slot;
     qa_q3_source_binding binding;
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
@@ -253,7 +270,8 @@ static bool team_counts(application_provider *provider, qa_mode_id mode,
     uint32_t maximum;
     if (!app || app->destroy_requested || provider->kind != APPLICATION_PROVIDER_Q3 ||
         !provider->state.q3 || !provider->constructed || provider->close_pending ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
+        (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider&&
+         !application_native_q3_source_command_entered(provider)) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error)) return false;
     counts[0] = counts[1] = 0;
     for (uint32_t slot = 0; slot < maximum; ++slot) {
@@ -284,8 +302,8 @@ static bool pick_team(application_provider *provider, qa_mode_id mode,
 bool application_native_q3_client_pick_team(application_provider *provider,
     int32_t ignore_slot, int32_t *out, qa_error *error)
 {
-    if (!provider || !provider->application->primary_mode_ready) return false;
-    return pick_team(provider, provider->application->primary_mode, ignore_slot, out, error);
+    qa_mode_id mode;
+    return client_mode(provider,&mode,error)&&pick_team(provider,mode,ignore_slot,out,error);
 }
 
 bool application_native_q3_mode_choose_team(void *opaque, qa_mode_id mode,
@@ -367,9 +385,10 @@ static bool connection(application_provider *provider, qa_actor_id actor,
     qa_application *app = provider->application;
     qa_mode_player_view member;
     qa_q3_native_client client;
+    qa_mode_id mode;
     uint32_t slot, flags;
     if (!source(provider, actor, &slot, error) ||
-        !qa_modes_player_read(app->modes, app->primary_mode, actor, &member, error) ||
+        !client_mode(provider,&mode,error)||!qa_modes_player_read(app->modes,mode,actor,&member,error)||
         !qa_q3_client_read(provider->state.q3, actor, &client, error) ||
         !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error)) return false;
     member.connection.connected = state != QA_Q3_CLIENT_DISCONNECTED;
@@ -389,7 +408,8 @@ static bool slot_source(application_provider *provider, uint32_t slot,
     if (!app || app->destroy_requested || !actor ||
         provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
-        !app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
+        ((!app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)&&
+         !application_native_q3_source_command_entered(provider)) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error) || slot >= maximum ||
         !qa_q3_source_binding_read(provider->state.q3, slot, &binding, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 fixed client source has retired");
@@ -577,9 +597,10 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
     qa_q3_client_session sess;
     qa_q3_usercmd accepted;
     qa_body_state body;
+    qa_mode_id mode;
     qa_application *app = provider ? provider->application : NULL;
     if (!source(provider, actor, &slot, error) ||
-        !qa_modes_player_read(app->modes, app->primary_mode, actor, &member, error) ||
+        !client_mode(provider,&mode,error)||!qa_modes_player_read(app->modes,mode,actor,&member,error)||
         !session(provider, actor, &sess, error)) return false;
     bool spectator = sess.team == 3;
     if (spawn) body = *spawn;
@@ -651,14 +672,16 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
     const qa_body_state *spawn, const qa_q3_usercmd *command, qa_error *error)
 {
     uint32_t slot;
+    qa_mode_id mode;
+    qa_mode_view rules;
+    bool q3_rules;
     if (!source(provider, actor, &slot, error) ||
+        !client_mode(provider,&mode,error)||!native_rules(provider,mode,&rules,&q3_rules,error)||
         !application_native_q3_console_borrow(provider, error)) return false;
     qa_application *app = provider->application;
-    qa_mode_view rules;
-    bool q3_rules = native_rules(provider, &rules, error);
     bool ok = qa_world_unlink(app->world, actor, error) &&
         qa_q3_client_begin_state(provider->state.q3, actor, error) &&
-        (!q3_rules || qa_modes_q3_client_begin_state(app->modes, app->primary_mode, actor, error)) &&
+        (!q3_rules || qa_modes_q3_client_begin_state(app->modes,mode,actor,error)) &&
         connection(provider, actor, QA_Q3_CLIENT_CONNECTED, error) &&
         application_native_q3_client_spawn(provider, actor, spawn, command, error);
     qa_q3_client_session sess;
@@ -694,7 +717,8 @@ bool application_native_q3_client_respawn(void *opaque, qa_actor_id actor, qa_er
 {
     application_provider *provider = opaque;
     if (provider && provider->application &&
-        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider&&
+        !application_native_q3_source_command_entered(provider))
         return application_players_selected_character_respawn(provider, actor, error);
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
@@ -730,7 +754,8 @@ bool application_native_q3_client_death_items(void *opaque, qa_actor_id actor,
 {
     application_provider *provider = opaque;
     if (provider && provider->application &&
-        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider&&
+        !application_native_q3_source_command_entered(provider))
         return true;
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
@@ -957,8 +982,12 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
     qa_q3_player_state player;
     qa_q3_source_client_counts ranks;
     qa_q3_native_client persistent;
+    qa_mode_id mode;
+    qa_mode_view rules;
+    bool q3_rules;
     int32_t game_type, balance, max_players, time;
     if (!request || !source(provider, actor, &slot, error) ||
+        !client_mode(provider,&mode,error)||!native_rules(provider,mode,&rules,&q3_rules,error)||
         !session(provider, actor, &sess, error) ||
         !qa_q3_player_read(provider->state.q3, actor, &player) ||
         !qa_q3_source_client_counts_read(provider->state.q3, &ranks, error) ||
@@ -981,7 +1010,7 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         else if (!application_native_q3_client_pick_team(provider, (int32_t)slot, &team, error)) return false;
         if (balance) {
             int32_t counts[2];
-            if (!team_counts(provider, app->primary_mode, player.client_number, counts, error)) return false;
+            if (!team_counts(provider,mode,player.client_number,counts,error)) return false;
             if (counts[team - 1] - counts[2 - team] > 1) {
                 const char *text = team == 1 ? "cp \"Red team has too many players.\\n\"" :
                     "cp \"Blue team has too many players.\\n\"";
@@ -1018,9 +1047,8 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         QA_Q3_CLIENT_SESSION_CLIENT | QA_Q3_CLIENT_SESSION_LEADER |
         (team == 3 ? QA_Q3_CLIENT_SESSION_TIME : 0);
     if (!qa_q3_client_session_slot_write(provider->state.q3, slot, fields, &sess, error)) return false;
-    qa_mode_view rules;
-    if (native_rules(provider, &rules, error) &&
-        (!qa_modes_join(app->modes, app->primary_mode, actor,
+    if (q3_rules &&
+        (!qa_modes_join(app->modes,mode,actor,
              team == 1 ? rules.rules.teams[0] : team == 2 ? rules.rules.teams[1] : 0, team == 3, error) ||
          !source(provider, actor, &slot, error))) return false;
     if (team == 1 || team == 2) {
@@ -1340,8 +1368,12 @@ bool application_native_q3_client_command(application_provider *provider, qa_act
         else {
             bool source_handled = false;
             ok = qa_q3_game_console_command(provider->state.q3, actor, command, &source_handled, error);
-            if (ok && !source_handled)
-                ok = qa_modes_console_command(app->modes, app->primary_mode, actor, command, &source_handled, error);
+            if (ok && !source_handled) {
+                qa_mode_id mode;
+                bool found;
+                ok=application_native_q3_source_mode(provider,&mode,&found,error);
+                if(ok&&found) ok=qa_modes_console_command(app->modes,mode,actor,command,&source_handled,error);
+            }
             if (ok && !source_handled) {
                 char text[1056];
                 snprintf(text, sizeof(text), "unknown cmd %.1023s\n", name);
@@ -1352,6 +1384,20 @@ bool application_native_q3_client_command(application_provider *provider, qa_act
     if (ok) ok = source(provider, actor, &slot, error);
     application_native_q3_console_release(provider);
     return ok;
+}
+
+bool application_native_q3_source_client_command(application_provider *provider,qa_actor_id actor,
+    const qa_command_invocation *command,bool *handled,qa_error *error)
+{
+    if(!handled) return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command requires its dispatch result");
+    *handled=false;
+    application_native_q3_source_command_scope scope={0};
+    if(!application_native_q3_source_command_begin(provider,actor,command,&scope,error)) return false;
+    bool ok=application_native_q3_client_command(provider,actor,command,handled,error);
+    qa_error cleanup={0};
+    bool returned=application_native_q3_source_command_end(&scope,&cleanup);
+    if(ok&&!returned&&error) *error=cleanup;
+    return ok&&returned;
 }
 
 bool application_native_q3_client_text(application_provider *provider, qa_actor_id actor,

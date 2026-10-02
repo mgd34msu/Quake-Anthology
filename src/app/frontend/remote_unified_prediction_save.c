@@ -11,6 +11,7 @@ typedef struct saved_prediction {
     uint32_t epoch;
     bool received;
     int64_t discarded;
+    uint64_t authoritative_frame;
     qa_unified_document *snapshot;
     qa_unified_input_batch commands;
     double times[64];
@@ -31,13 +32,14 @@ static bool document(qa_source_save_io *io,qa_unified_document_kind kind,qa_unif
 }
 static bool fields(qa_source_save_io *io,saved_prediction *s)
 {
-    uint8_t tag[8]={'Q','U','P','R',1,0,0,0};
-    const uint8_t expected[8]={'Q','U','P','R',1,0,0,0};
+    uint8_t tag[8]={'Q','U','P','R',2,0,0,0};
+    const uint8_t expected[8]={'Q','U','P','R',2,0,0,0};
     if(!qa_source_save_bytes(io,tag,8) || memcmp(tag,expected,8) ||
         !qa_source_save_u32(io,&s->epoch) || !s->epoch ||
         !qa_source_save_bool(io,&s->received) || !qa_source_save_i64(io,&s->discarded) ||
         s->discarded < -1 || s->discarded>(int64_t)QA_UNIFIED_SAFE_INTEGER) return false;
     if(!s->received) return s->discarded==-1;
+    if(!qa_source_save_u64(io,&s->authoritative_frame)||s->authoritative_frame>QA_UNIFIED_SAFE_INTEGER) return false;
     if(!document(io,QA_UNIFIED_PREDICTION_DOCUMENT,&s->snapshot)) return false;
     qa_unified_document *commands=NULL;
     bool read=io->direction==QA_SOURCE_SAVE_READ;
@@ -59,7 +61,8 @@ bool frontend_remote_unified_prediction_checkpoint(const frontend_remote_unified
     if(!p || !out || out->data || !frontend_remote_unified_prediction_idle(p) ||
         p->importing || !frontend_remote_unified_checkpoint_current(p->replica,e) ||
         p->epoch!=frontend_remote_unified_epoch(p->replica) || (p->received && !p->snapshot_document)) return false;
-    saved_prediction s={.epoch=p->epoch,.received=p->received,.discarded=p->discarded,.snapshot=p->snapshot_document};
+    saved_prediction s={.epoch=p->epoch,.received=p->received,.discarded=p->discarded,.snapshot=p->snapshot_document,
+        .authoritative_frame=p->authoritative_frame};
     s.commands.epoch=p->epoch;s.commands.count=p->command_count;
     for(size_t i=0;i<p->command_count;++i) {
         s.commands.commands[i]=(qa_unified_input){.sequence=p->commands[i].sequence,.command=p->commands[i].raw};
@@ -80,6 +83,7 @@ bool frontend_remote_unified_prediction_restore(frontend_remote_unified *replica
     frontend_remote_unified_prediction *p=NULL;
     if(ok) ok=frontend_prediction_import_create(replica,&p,e);
     if(ok && s.received) ok=frontend_remote_unified_prediction_receive(p,s.snapshot,e);
+    if(ok&&s.received) ok=p->authoritative_frame==s.authoritative_frame;
     for(size_t i=0;ok && i<s.commands.count;++i) {
         ok=(int64_t)s.commands.commands[i].sequence>p->snapshot.sequence &&
             frontend_remote_unified_prediction_input(p,&s.commands.commands[i],s.times[i],e);

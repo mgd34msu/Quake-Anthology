@@ -11,7 +11,8 @@ typedef struct application_equipment_gear_presentation {
     application_q3_gear_view gear;
 } application_equipment_gear_presentation;
 
-/* Only the controller's actual active QVM grapple weapon slot is selected.
+/* The controller's actual presented QVM grapple source includes its outgoing
+ * handoff while a different source is activating.
  * The immutable profile supplies weapon/model/anchor declarations; the copied
  * player remains the real source PS, including its original weapon word.
  * Pointers borrow the retained runtime until mutation/retirement. */

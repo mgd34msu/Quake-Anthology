@@ -2,6 +2,7 @@
 #define QA_INPUT_INTERNAL_H
 #include "qa/input.h"
 #include "qa/strings.h"
+#include "qa/input_release.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,6 +15,25 @@ typedef struct qa_held_binding {
     qa_physical_input input;
     qa_binding_record *binding;
 } qa_held_binding;
+typedef struct release_record {
+    qa_held_binding held;
+    qa_console_release *program;
+    bool action, complete;
+} release_record;
+struct qa_input_release {
+    qa_input_seat *seat;
+    qa_input_release_scope scope;
+    int *keys;
+    qa_held_binding *snapshot;
+    size_t held_count;
+    release_record *records;
+    size_t count, cursor;
+    release_record *reserved;
+    size_t reserved_first, reserved_count;
+    double time_ms;
+    bool advancing, entered, complete, metadata_entered, all_reserved;
+    qa_error fault;
+};
 typedef struct qa_ui_record {
     qa_input_ui_token id;
     qa_input_ui_handler handler;
@@ -21,8 +41,16 @@ typedef struct qa_ui_record {
     qa_input_focus focus;
     bool active;
 } qa_ui_record;
+typedef struct qa_input_recipient_handoff {
+    struct qa_input_recipient_handoff *next;
+    qa_input_seat_options former;
+    qa_console *destination_console;
+    qa_cvars *destination_cvars;
+    qa_command_context destination;
+} qa_input_recipient_handoff;
 struct qa_input_seat {
     struct qa_input_release *release;
+    qa_input_recipient_handoff *recipient_pending, *recipient_retired;
     qa_input_seat_options options;
     qa_input_button buttons[QA_INPUT_ACTION_COUNT];
     qa_gamepad_input gamepad;
@@ -54,4 +82,5 @@ uint64_t qa_input_physical_source(qa_physical_input);
 bool qa_input_command_source(qa_input_seat *, const char *, uint64_t *, qa_error *);
 void qa_input_binding_record_release(qa_binding_record *);
 bool qa_input_ascii_equal(const char *, const char *);
+bool qa_input_recipient_command_equal(const qa_command_context *,const qa_command_context *);
 #endif

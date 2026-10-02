@@ -8,6 +8,7 @@
 #include "qa/game_q2_items.h"
 #include "guest_q3_private.h"
 #include "guest_q3_catalog.h"
+#include "guest_q3_components.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/text.h"
 #include <stdlib.h>
@@ -291,7 +292,8 @@ static bool ammo_label(qa_application *app, application_provider *arsenal,
         for (size_t i = 0; i < count; ++i)
             if (items[i].kind == QA_Q3_ITEM_AMMO && qa_q3_item_identity(arsenal->state.q3, (uint32_t)i) == item)
                 { *out = items[i].name; return true; }
-    } else if (arsenal->kind == APPLICATION_PROVIDER_QVM) {
+    } else if (arsenal->kind == APPLICATION_PROVIDER_QVM ||
+        (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
         struct application_q3_guest *engine = q3g_engine(arsenal);
         if (engine && engine->game && engine->game->catalog)
             return application_q3_catalog_ammo_label(engine->game->catalog, item, out, error);
@@ -331,7 +333,8 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
         return qa_application_qc_message_player_ui_current(app, &view) ||
             application_fail(error, QA_ERROR_ARGUMENT, "Selected QC catalog changed during inventory observation");
     }
-    if (arsenal->kind == APPLICATION_PROVIDER_QVM) {
+    if (arsenal->kind == APPLICATION_PROVIDER_QVM ||
+        (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
         struct application_q3_guest *engine = q3g_engine(arsenal);
         uint32_t slot;
         const application_q3_catalog_weapon *weapons; size_t count;
@@ -347,7 +350,7 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
         }
         uint32_t current_slot;
         return engine->game == game && application_q3_guest_actor_client(arsenal, actor, &current_slot) &&
-            current_slot == slot && application_q3_catalog_current(game->catalog, game->image, game->vm, game->abi) ? true :
+            current_slot == slot && application_q3_catalog_role_current(game->catalog, game) ? true :
             application_fail(error, QA_ERROR_ARGUMENT, "Selected GAME catalog changed during inventory observation");
     }
     for (size_t g = 0; g < snapshot->group_count; ++g) {
@@ -367,6 +370,58 @@ static bool row_count(application_native_q2_inventory_rows *owner,
     qa_application *app = owner->engine->provider->application;
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
         player_current(owner, source, arsenal, map_revision, config_revision, error) && append(out, row, error);
+}
+
+static bool component_icon(const application_q3_component_item_metadata *metadata,
+    application_native_q2_inventory_presentation *out, qa_buffer *path, qa_buffer *lump,
+    qa_error *error) {
+    if (!metadata->icon.size) return true;
+    qa_json_document *document = NULL;
+    if (!qa_json_parse(metadata->icon, &document, error)) return false;
+    qa_json_id root = qa_json_root(document);
+    bool okay = true;
+    if (qa_json_type(document, root) != QA_JSON_NULL) {
+        qa_json_id kind = qa_json_get(document, root, "kind");
+        bool shader = qa_json_string_equal(document, kind, "shader");
+        bool wad = qa_json_string_equal(document, kind, "wad-picture");
+        if (!shader && !wad && !qa_json_string_equal(document, kind, "image"))
+            okay = application_fail(error, QA_ERROR_FORMAT,
+                "Component inventory icon has no authored resource kind");
+        if (okay) okay = qa_json_string(document,
+            qa_json_get(document, root, shader ? "name" : "path"), path, error);
+        if (okay && wad) okay = qa_json_string(document,
+            qa_json_get(document, root, "lump"), lump, error);
+        if (okay && (!path->size || memchr(path->data, 0, path->size) ||
+            (wad && (!lump->size || memchr(lump->data, 0, lump->size)))))
+            okay = application_fail(error, QA_ERROR_FORMAT,
+                "Component inventory icon lost its literal source declaration");
+        if (okay) {
+            out->icon_kind = shader ? APPLICATION_NATIVE_INVENTORY_ICON_SHADER :
+                wad ? APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE : APPLICATION_NATIVE_INVENTORY_ICON_IMAGE;
+            out->icon = (const char *)path->data;
+            out->lump = wad ? (const char *)lump->data : NULL;
+        }
+    }
+    qa_json_destroy(document);
+    return okay;
+}
+
+static bool component_current(qa_application *app, qa_actor_id actor,
+    const application_q3_component_item_metadata *before, qa_error *error) {
+    application_q3_component_item_metadata actual;
+    bool found;
+    qa_actor_owner owner;
+    const qa_item_definition *definition = &before->admission.definition;
+    if (!application_q3_components_item_read(app, actor, before->source.owner,
+        definition->item, &actual, &found, error)) return false;
+    return (found && actual.source.game == before->source.game &&
+        actual.source.generation == before->source.generation &&
+        actual.source.descriptor == before->source.descriptor &&
+        actual.admission.definition.item == definition->item &&
+        actual.admission.definition.owner == definition->owner &&
+        qa_inventory_item_owner(app->inventory, actor, definition->item, &owner, NULL) &&
+        owner == definition->owner) || application_fail(error, QA_ERROR_ARGUMENT,
+            "Component inventory row changed its actual source item owner");
 }
 
 static bool rows(void *context, qa_actor_id actor,
@@ -497,6 +552,9 @@ static bool rows(void *context, qa_actor_id actor,
                 application_native_q2_inventory_row row = {.item = definition->item, .label = definition->label,
                     .source_index = prototype, .selected = true, .presence_only = component,
                     .presentation = {.source = group->owner, .kind = APPLICATION_NATIVE_INVENTORY_PRESENTATION_ITEM}};
+                application_q3_component_item_metadata metadata = {0};
+                bool metadata_found = false;
+                qa_buffer icon = {0}, lump = {0};
                 if (equipment) {
                     size_t item_count;
                     const qa_q3_item *items = qa_q3_game_items(arsenal->state.q3, &item_count);
@@ -512,7 +570,23 @@ static bool rows(void *context, qa_actor_id actor,
                     if (!declared) { okay = application_fail(error, QA_ERROR_NOT_FOUND,
                         "Selected equipment lacks its real source item declaration"); break; }
                 }
-                okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+                if (component) {
+                    okay = application_q3_components_item_read(app, actor, group->owner,
+                        definition->item, &metadata, &metadata_found, error);
+                    if (okay && metadata_found) {
+                        const qa_item_definition *actual = &metadata.admission.definition;
+                        okay = actual->item == definition->item && actual->owner == group->owner &&
+                            actual->weapon == definition->weapon && actual->ammo == definition->ammo &&
+                            actual->actions == definition->actions;
+                        if (!okay) application_fail(error, QA_ERROR_ARGUMENT,
+                            "Component inventory snapshot differs from its admitted item definition");
+                        if (okay) okay = component_icon(&metadata, &row.presentation, &icon, &lump, error);
+                    }
+                }
+                if (okay) okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+                if (okay && metadata_found) okay = component_current(app, actor, &metadata, error);
+                qa_buffer_free(&icon);
+                qa_buffer_free(&lump);
             }
         }
     }
@@ -545,7 +619,8 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
     bool weapon = has_component && component.weapon;
     selected_catalog catalog = {0};
     if (okay && !weapon && arsenal != owner->engine->provider) {
-        if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM) {
+        if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM ||
+            (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
             qa_inventory_source_snapshot empty = {0};
             okay = catalog_read(app, arsenal, actor, &empty, &catalog, error);
             for (size_t i = 0; okay && i < catalog.count; ++i)

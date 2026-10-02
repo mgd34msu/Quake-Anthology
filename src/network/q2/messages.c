@@ -49,13 +49,14 @@ static void download_reset(qa_q2_messages *m) {
 
 void qa_q2_messages_reset(qa_q2_messages *m) {
     if (!m) return;
-    for (size_t i = 0; i < m->options.config_strings; ++i) { free(m->configs[i]); m->configs[i] = NULL; }
+    for (size_t i = 0; i < m->config_capacity; ++i) { free(m->configs[i]); m->configs[i] = NULL; }
     for (size_t i = 0; i < QA_Q2_MAX_SEATS; ++i) qa_q2_frame_history_clear(m->histories[i]);
     m->baseline_count = 0;
     m->seat = 0;
     m->stream = STREAM_NONE;
     m->codec.demo26 = false;
     m->codec.frame_player_pending = false;
+    m->codec.has_server_clientnum = false; m->codec.server_clientnum = 0;
     download_reset(m);
 }
 
@@ -81,6 +82,7 @@ bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_opti
     if (!m->options.history_capacity) m->options.history_capacity = 16;
     if (!m->options.max_inflated_bytes) m->options.max_inflated_bytes = 64u * 1024u * 1024u;
     m->configs = calloc(options->config_strings, sizeof(*m->configs));
+    m->config_capacity = options->config_strings;
     if (!m->configs || !qa_q2_codec_init(&m->codec, protocol, error)) {
         if (!m->configs) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 config strings");
         free(m->configs); free(m); return false;
@@ -91,7 +93,7 @@ bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_opti
 
 qa_q2_codec *qa_q2_messages_codec(qa_q2_messages *m) { return m ? &m->codec : NULL; }
 const char *qa_q2_messages_config(const qa_q2_messages *m, uint16_t index) {
-    return m && index < m->options.config_strings ? m->configs[index] : NULL;
+    return m && index < m->config_capacity ? m->configs[index] : NULL;
 }
 static size_t baseline_slot(const qa_q2_messages *m, uint32_t number) {
     size_t lo = 0, hi = m->baseline_count;
@@ -112,7 +114,7 @@ const qa_q2_wire_frame *qa_q2_messages_latest(const qa_q2_messages *m, uint8_t s
 }
 
 static bool set_config(qa_q2_messages *m, uint16_t index, const char *value, qa_error *error) {
-    if (index >= m->options.config_strings || !value) {
+    if (index >= m->config_capacity || !value) {
         qa_error_set(error, QA_ERROR_FORMAT, index, "Invalid Q2 config string"); return false;
     }
     size_t length = strlen(value);
@@ -150,13 +152,32 @@ static qa_q2_frame_history *history(qa_q2_messages *m, uint8_t seat, qa_error *e
     return m->histories[seat];
 }
 
+static bool serverdata_layout(qa_q2_messages *m, qa_error *error) {
+    qa_q2_config_layout layout;
+    if (!qa_q2_config_layout_read(&m->codec, &layout, error)) return false;
+    if (m->config_capacity == layout.max_configs) return true;
+    char **values = calloc(layout.max_configs, sizeof(*values));
+    if (!values) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining genuine SERVERDATA config namespace"); return false; }
+    free(m->configs); m->configs = values; m->config_capacity = layout.max_configs; return true;
+}
+
 bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record, qa_error *error) {
     if (!m || !record || record->seat > QA_Q2_MAX_SEATS ||
         (record->seat == QA_Q2_MAX_SEATS && !is_kex(&m->codec)) || m->reading) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid decoded Q2 record"); return false;
     }
     const qa_q2_server_event *e = &record->event;
-    if (e->kind == QA_Q2_SVC_SERVERDATA) qa_q2_messages_reset(m);
+    if (e->kind == QA_Q2_SVC_SERVERDATA) {
+        qa_q2_messages_reset(m);
+        m->codec.server_clientnum = e->data.serverdata.clientnum;
+        m->codec.has_server_clientnum = true;
+        if (m->codec.protocol.kind == QA_NET_Q2PRO_36) {
+            if (e->data.serverdata.protocol_revision)
+                m->codec.protocol.revision = e->data.serverdata.protocol_revision;
+            m->codec.protocol.flags = m->codec.wire_flags = e->data.serverdata.wire_flags;
+        }
+        if (!serverdata_layout(m, error)) return false;
+    }
     m->seat = record->seat;
     if (e->kind == QA_Q2_SVC_CONFIGSTRING) return set_config(m, e->data.config.index, e->data.config.value, error);
     if (e->kind == QA_Q2_SVC_BASELINE) return set_baseline(m, &e->data.baseline, error);
@@ -179,7 +200,7 @@ static bool emit_record(qa_q2_messages *m, qa_net_reader *r, size_t start, uint8
 
 static bool read_config(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_event *event, bool *end) {
     uint16_t index = qa_net_read_u16(r);
-    *end = index == m->options.config_strings;
+    *end = index == m->config_capacity;
     if (r->failed || *end) return !r->failed;
     const char *value = read_text(r);
     if (!value || !set_config(m, index, value, r->error)) return qa_net_reader_fail(r, "Invalid Q2 config stream");
@@ -387,6 +408,9 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
             event.kind = QA_Q2_SVC_SERVERDATA;
             if (!qa_q2_read_serverdata(&m->codec, r, &event.data.serverdata)) { ok = false; break; }
             qa_q2_messages_reset(m); m->codec.demo26 = demo26;
+            m->codec.server_clientnum = event.data.serverdata.clientnum;
+            m->codec.has_server_clientnum = true;
+            ok = serverdata_layout(m, r->error);
             break;
         }
         case 13: ok = read_config(m, r, &event, &end) && !end; break;
@@ -582,7 +606,7 @@ bool qa_q2_server_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_serv
     case QA_Q2_SVC_MUZZLEFLASH: {
         uint32_t entity = e->data.muzzle.entity, flash = e->data.muzzle.flash;
         if (entity > UINT16_MAX) return qa_net_writer_fail(w, "Invalid Q2 muzzleflash entity");
-        if (e->data.muzzle.monster && flash > UINT8_MAX) {
+        if (e->data.muzzle.monster && (flash > UINT8_MAX || (rerelease && entity > 8191))) {
             if (kex || rerelease) {
                 if (flash > UINT16_MAX) return qa_net_writer_fail(w, "Invalid Q2 muzzleflash index");
                 return qa_net_write_u8(w, 32) && qa_net_write_u16(w, (uint16_t)entity) && qa_net_write_u16(w, (uint16_t)flash);

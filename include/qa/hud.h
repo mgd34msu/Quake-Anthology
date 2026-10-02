@@ -2,6 +2,7 @@
 #define QA_HUD_H
 #include "qa/ui.h"
 #include "qa/captions.h"
+#include "qa/material.h"
 
 typedef struct qa_hud qa_hud;
 typedef struct qa_hud_value {
@@ -26,8 +27,15 @@ typedef struct qa_hud_frame {
     uint64_t time_ns;
     qa_scene_rect viewport, safe_area;
     float scale;
-    bool show_scores, show_inventory, visible;
+    bool show_scores, show_inventory, visible, weapon_only, source_status_native;
 } qa_hud_frame;
+typedef struct qa_hud_weapon {
+    const char *label;
+    const qa_material *icon;
+    double ammo_count;
+    bool present, finite_ammo, has_ammo_to_start, low_ammo;
+    bool native_status, suppress_active_warning, aggregate_low, aggregate_empty;
+} qa_hud_weapon;
 /* Providers return borrowed source data for this draw only. Canonical health,
  * armor and inventory are read by the common HUD unless source_vitals is set.
  * Providers and source draws may inspect but must not mutate the application,
@@ -45,6 +53,7 @@ typedef struct qa_hud_data {
     float crosshair_size; /* Zero retains the source default. */
     bool crosshair_visible, source_vitals;
     qa_item_id selected_weapon;
+    qa_hud_weapon weapon;
     const char *help_title;
     const char *const *help_lines;
     size_t help_count;
@@ -58,6 +67,8 @@ typedef struct qa_hud_options {
     void *context;
     bool (*read)(void *, const qa_hud_frame *, qa_hud_data *, qa_error *);
     bool (*source_draw)(void *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
+    const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
+    void *video_context;
 } qa_hud_options;
 typedef struct qa_hud_checkpoint_refs {
     void *context;

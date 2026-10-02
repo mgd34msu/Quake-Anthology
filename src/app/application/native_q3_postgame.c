@@ -4,6 +4,7 @@
 #include "native_q3_postgame.h"
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
+#include "native_q3_match.h"
 #include "native_q3_settings.h"
 #include "unified_q3_events.h"
 #include "qa/game_q3_clients.h"
@@ -33,17 +34,15 @@ static bool live(const postgame_scope *scope, qa_error *error)
     if (provider->application != app || provider->kind != APPLICATION_PROVIDER_Q3 ||
         provider->state.q3 != scope->game || provider->owner != scope->owner ||
         !provider->constructed || !provider->attached || provider->close_pending ||
-        app->destroy_requested || app->modes != scope->modes || !app->primary_mode_ready ||
-        app->primary_mode.slot != scope->mode.slot ||
-        app->primary_mode.generation != scope->mode.generation ||
+        app->destroy_requested || app->modes != scope->modes ||
         app->publication_generation != scope->publication_generation ||
         app->command_generation != scope->command_generation ||
-        app->map_revision != scope->map_revision ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)
+        app->map_revision != scope->map_revision)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "native Q3 postgame source changed during its callback");
     int32_t time;
-    return qa_q3_source_clock(scope->game, &time, error) &&
+    return application_native_q3_source_mode_current(provider, scope->mode, error) &&
+        qa_q3_source_clock(scope->game, &time, error) &&
         (time == scope->time || application_fail(error, QA_ERROR_ARGUMENT,
             "native Q3 postgame callback advanced the actual source clock"));
 }
@@ -52,14 +51,19 @@ static bool begin(application_provider *provider, postgame_scope *scope, qa_erro
 {
     qa_application *app = provider ? provider->application : NULL;
     if (!app || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
-        !app->modes || !app->primary_mode_ready)
+        !app->modes)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "postgame requires its native GAME and actual selected score owner");
     *scope = (postgame_scope){.provider = provider, .application = app,
-        .game = provider->state.q3, .modes = app->modes, .mode = app->primary_mode,
+        .game = provider->state.q3, .modes = app->modes,
         .owner = provider->owner, .publication_generation = app->publication_generation,
         .command_generation = app->command_generation, .map_revision = app->map_revision};
     int32_t start;
+    bool associated;
+    if (!application_native_q3_source_mode(provider, &scope->mode, &associated, error)) return false;
+    if (!associated)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Q3 postgame has no actual provider-associated score owner");
     if (!qa_q3_source_clock(scope->game, &scope->time, error) || !live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
         !qa_q3_source_match_context_read(scope->game, &scope->product, &start, error) ||

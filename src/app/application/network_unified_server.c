@@ -5,6 +5,8 @@
 #include "unified_events.h"
 #include "qa/network_unified_save.h"
 #include "unified_output_json.h"
+#include "native_q3_wire_state.h"
+#include "qa/game_q3_clients.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -178,6 +180,9 @@ static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_ne
     }
     if (!qa_sha256_equal(&peer->composition,&owner->composition))
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody changed its admitted composition");
+    if (owner->source_dropped)
+        return current && qa_unified_session_source_close_pending(owner->session) &&
+            application_unified_server_source_drop_current(owner,error);
     if (current) {
         if (!owner->admitted) return true;
         qa_unified_session_player actual_player;
@@ -225,10 +230,17 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
     uint32_t epoch, const qa_unified_document *document, qa_unified_session_commit *commit, qa_error *error)
 {
     application_unified_server *owner = context;
-    if (!peer_is(owner, runtime, client) || epoch != owner->epoch || !commit)
+    if (!peer_is(owner, runtime, client) || !commit)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified control lost its actual Source peer");
     const qa_json_document *json = qa_unified_document_json(document);
     qa_json_id value = control_value(document), kind = qa_json_get(json, value, "kind");
+    qa_unified_session *installed = NULL;
+    if (epoch != owner->epoch && !(epoch != UINT32_MAX && owner->epoch == epoch + 1 &&
+        qa_json_string_equal(json, kind, "disconnect") && !owner->admitted && !owner->inputs &&
+        !owner->components && !owner->pending_capture && !owner->pending.frame &&
+        !owner->admitted_receipt && offered_current(owner) && owner->session &&
+        qa_unified_session_find(runtime,client,&installed,error) && installed==owner->session))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified control changes its authentic Source epoch");
     if (qa_json_string_equal(json, kind, "ready")) {
         char digest[72] = "sha256:"; qa_sha256_hex(&owner->composition, digest + 7);
         if (!qa_json_string_equal(json, qa_json_get(json, value, "composition"), digest) ||
@@ -294,6 +306,25 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             (const char *)name.data, words, count, error);
         for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
         qa_buffer_free(&name); commit->applied = okay; return okay;
+    }
+    if (qa_json_string_equal(json,kind,"source-command")) {
+        qa_json_id arguments=qa_json_get(json,value,"args"), activation=qa_json_get(json,value,"activation");
+        size_t count=qa_json_size(json,arguments);
+        if (!owner->admitted || !count || count>128)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Source command has no admitted physical recipient");
+        qa_buffer instance={0}, retained[128]={0}; const char *words[128];
+        qa_unified_source_command command={.argument_count=count,.arguments=words};
+        bool okay=qa_json_string(json,qa_json_get(json,value,"instance"),&instance,error) &&
+            qa_json_u64(json,qa_json_get(json,activation,"publication"),&command.publication,error) &&
+            qa_json_u64(json,qa_json_get(json,activation,"mapRevision"),&command.map_revision,error);
+        command.instance=(const char *)instance.data;
+        for (size_t i=0;okay && i<count;++i) {
+            okay=qa_json_string(json,qa_json_at(json,arguments,i),retained+i,error);
+            if (okay) words[i]=(const char *)retained[i].data;
+        }
+        if (okay) okay=application_unified_source_command(owner->application,client,owner->seat,&command,error);
+        for (size_t i=0;i<count;++i) qa_buffer_free(retained+i);
+        qa_buffer_free(&instance); commit->applied=okay; return okay;
     }
     if (qa_json_string_equal(json, kind, "component-command")) {
         qa_json_id arguments = qa_json_get(json, value, "args");
@@ -387,15 +418,86 @@ bool application_unified_server_pre_frame(application_unified_server *owner, qa_
         !owner->session || !qa_unified_session_idle(owner->session) ||
         !application_unified_source_read(owner->application, &source, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified pre-frame requires its returned physical Source peer");
-    if (!owner->admitted) return true;
+    if (!owner->admitted || !qa_unified_session_active(owner->session)) return true;
     if (!application_unified_inputs_flush(owner->inputs, error)) return false;
     owner->frame_before = source.frame.number; owner->preparing_frame = true; return true;
+}
+
+bool application_unified_server_source_drop(application_unified_server *owner,qa_actor_owner source_owner,
+    uint32_t slot,const char *reason,bool *matched,qa_error *error)
+{
+    if (!owner || !matched || !reason)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified Source DROP has no actual transport recipient");
+    *matched=false;
+    if (!owner->bound || owner->closed || !owner->session || !owner->admitted_receipt ||
+        owner->admitted_player.source_owner!=source_owner || owner->admitted_player.source_slot!=slot) return true;
+    qa_application *app=owner->application;
+    application_provider *source=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    qa_actor_id actor; const char *actual_reason=NULL; bool pending=false;
+    if (!app || !app->players || !source || !source->launch || !owner->offered.launch ||
+        source->kind!=APPLICATION_PROVIDER_Q3 || source->owner!=source_owner ||
+        app->players->map_provider!=source || app->publication_generation!=owner->offered.publication ||
+        app->map_revision!=owner->offered.map_revision || source->launch!=qa_launch_snapshot_find(owner->offered.launch,source->launch->selection.instance) ||
+        !application_native_q3_wire_drop_client_read(source,slot,&actor,&actual_reason,&pending,error) ||
+        !pending || !actual_reason || strcmp(actual_reason,reason) ||
+        !qa_actor_id_equal(actor,owner->admitted_player.actor) || !owner->admitted || !owner->player_attached)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP differs from its actual native Source request");
+    if (owner->pending.frame || owner->pending_capture || owner->control_cursor)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP reached an already sealed output publication");
+    if (!qa_unified_session_close(owner->session,actual_reason,error)) return false;
+    owner->source_dropped=true; *matched=true; return true;
+}
+bool application_unified_server_source_drop_current(const application_unified_server *owner,qa_error *error)
+{
+    application_unified_source current;
+    bool checkpoint=owner && owner->application && owner->application->operation==APPLICATION_PERSISTING;
+    if (!owner || !owner->source_dropped || owner->entered || owner->pending.frame ||
+        owner->pending_capture || owner->control_cursor ||
+        !(checkpoint?application_unified_source_checkpoint_read(owner->application,&current,error):
+            application_unified_source_read(owner->application,&current,error)) ||
+        current.owner!=owner->offered.owner || current.publication!=owner->offered.publication ||
+        current.map_revision!=owner->offered.map_revision || current.launch!=owner->offered.launch ||
+        current.session!=owner->offered.session || current.world!=owner->offered.world ||
+        !owner->admitted_receipt || owner->admitted_player.seat.owner!=owner->seat.owner ||
+        owner->admitted_player.seat.index!=owner->seat.index ||
+        owner->admitted_player.arsenal.data!=owner->admitted_arsenal.data ||
+        owner->admitted_player.arsenal.size!=owner->admitted_arsenal.size)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP cleanup lacks its returned actual Source request");
+    application_provider *source=application_world_provider(owner->application,QA_ROLE_ENTITIES,"");
+    qa_q3_native_client player; application_native_q3_wire_client_view wire; bool admitted=false;
+    qa_saved_actor_id saved;
+    const qa_unified_session_player *receipt=&owner->admitted_player;
+    if (!source || source->kind!=APPLICATION_PROVIDER_Q3 || source->owner!=receipt->source_owner ||
+        receipt->source_slot>=current.max_clients ||
+        !qa_q3_client_slot_read(source->state.q3,receipt->source_slot,&player,error) ||
+        player.connected!=QA_Q3_CLIENT_DISCONNECTED ||
+        !application_native_q3_wire_client_admission_read(source,receipt->source_slot,&wire,&admitted,error) || admitted ||
+        qa_actors_get(qa_session_actors(current.session),receipt->actor) ||
+        !qa_actors_save_reference(qa_session_actors(current.session),receipt->actor,&saved,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP precedes actual native client and actor retirement");
+    return checkpoint?application_unified_source_checkpoint_current(owner->application,&current):
+        application_unified_source_current(owner->application,&current);
+}
+bool application_unified_server_source_drop_finish(application_unified_server *owner,qa_error *error)
+{
+    if (!owner || !owner->source_dropped) return owner!=NULL;
+    if ((!owner->session && !owner->closed) ||
+        (owner->session && !qa_unified_session_source_close_pending(owner->session)) ||
+        !application_unified_server_source_drop_current(owner,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP has not reached actual transport retirement");
+    owner->admitted=false; owner->player_attached=false; owner->preparing_frame=false;
+    if (!application_unified_components_destroy(&owner->components,error) ||
+        !application_unified_inputs_destroy(owner->inputs,error)) return false;
+    owner->inputs=NULL; player_receipt_clear(owner); owner->source_dropped=false; return true;
 }
 
 bool application_unified_server_publish(application_unified_server *owner,
     const application_unified_output_external *external, qa_error *error)
 {
+    if (owner && owner->source_dropped && !application_unified_server_source_drop_finish(owner,error)) return false;
     if (owner && owner->bound && !owner->closed && !owner->admitted) return true;
+    if (owner && owner->bound && !owner->closed && owner->session && !owner->preparing_frame &&
+        !owner->pending.frame && !qa_unified_session_active(owner->session)) return true;
     application_unified_source source;
     qa_unified_session_player actual;
     if (!owner || owner->closed || owner->entered || !owner->admitted || !owner->session ||
@@ -434,6 +536,10 @@ bool application_unified_server_publish(application_unified_server *owner,
     owner->entered = true;
     bool okay = true;
     while (okay && owner->control_cursor < owner->pending.control_count) {
+        bool ready = false;
+        okay = qa_unified_session_control_ready(owner->session,
+            owner->pending.controls[owner->control_cursor], &ready, error);
+        if (!okay || !ready) { owner->entered = false; return okay; }
         okay = qa_unified_session_control(owner->session, owner->pending.controls[owner->control_cursor], error);
         if (okay) {
             uint32_t receipt=qa_unified_session_required(owner->session);
@@ -453,6 +559,12 @@ bool application_unified_server_publish(application_unified_server *owner,
         owner->preparing_frame = false;
     }
     return okay;
+}
+
+bool application_unified_server_publication_complete(const application_unified_server *owner)
+{
+    return owner && !owner->entered && !owner->pending.frame && !owner->pending_capture &&
+        !owner->preparing_frame && !owner->control_cursor;
 }
 
 bool application_unified_server_destroy(application_unified_server *owner, qa_error *error)
@@ -481,5 +593,6 @@ bool application_unified_server_transport_retired(application_unified_server *ow
     /* The physical Source roster belongs to the successful custody transfer.
      * This old bridge never tears down that transferred player. */
     owner->player_attached = owner->admitted = false;
+    owner->source_dropped=false;
     return true;
 }

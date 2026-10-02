@@ -10,6 +10,10 @@
 #include "qa/input.h"
 
 typedef struct frontend_remote_unified frontend_remote_unified;
+typedef struct frontend_unified_recipient_clock {
+    double milliseconds,source_elapsed_ms;
+    uint64_t begin_generation,physical_frame,wall_time_ns,wall_elapsed_ns;
+} frontend_unified_recipient_clock;
 typedef enum frontend_unified_frame_preparation {
     FRONTEND_UNIFIED_FRAME_WAIT,
     FRONTEND_UNIFIED_FRAME_READY,
@@ -44,6 +48,9 @@ typedef struct frontend_remote_unified_consumers {
         bool *sample_needed, qa_error *);
     bool (*physical_input)(void *, frontend_remote_unified *, const qa_seat_input_sample *,
         uint64_t sequence, double source_elapsed_ms, qa_error *);
+    bool (*begin_frame)(void *,frontend_remote_unified *,uint64_t wall_now_ns,
+        uint64_t wall_elapsed_ns,qa_error *);
+    bool (*clock_read)(void *,const frontend_remote_unified *,frontend_unified_recipient_clock *,qa_error *);
     bool (*sample)(void *, frontend_remote_unified *, uint64_t, qa_error *);
     bool (*draw)(void *, frontend_remote_unified *, float, qa_audio_listener *, qa_error *);
     bool (*idle)(void *, const frontend_remote_unified *);
@@ -58,6 +65,12 @@ typedef struct frontend_remote_unified_options {
     bool (*current)(void *, const frontend_remote_unified_domain *, qa_error *);
     bool (*userinfo)(void *, const frontend_remote_unified_domain *, const char **, qa_error *);
     bool (*disconnected)(void *, const frontend_remote_unified_domain *, const char *, qa_error *);
+    bool (*retirement)(void *,const frontend_remote_unified_domain *,qa_error *);
+    bool (*command_text)(void *, const frontend_remote_unified_domain *, const char *, qa_error *);
+    bool (*source_command)(void *,const frontend_remote_unified_domain *,const char *instance,
+        uint64_t publication,uint64_t map_revision,
+        const qa_command_context *,const qa_command_tokens *,qa_error *);
+    bool (*transport_restart)(void *,const frontend_remote_unified_domain *,uint64_t runtime_epoch,qa_error *);
     frontend_remote_unified_consumers consumers;
     uint32_t identity_capacity;
 } frontend_remote_unified_options;
@@ -70,10 +83,12 @@ bool frontend_remote_unified_bind(frontend_remote_unified *, qa_net_client_id,
     qa_unified_session *, qa_error *);
 qa_unified_session_hooks frontend_remote_unified_hooks(frontend_remote_unified *);
 bool frontend_remote_unified_current(const frontend_remote_unified *, qa_error *);
+bool frontend_remote_unified_retired(const frontend_remote_unified *);
 qa_executable_recipe *frontend_remote_unified_recipe(const frontend_remote_unified *);
 qa_actor_registry *frontend_remote_unified_registry(const frontend_remote_unified *);
 const qa_collision_geometry *frontend_remote_unified_geometry(const frontend_remote_unified *);
 const qa_unified_document *frontend_remote_unified_frame(const frontend_remote_unified *);
+const qa_unified_document *frontend_remote_unified_frame_prepared(const frontend_remote_unified *);
 const frontend_remote_unified_domain *frontend_remote_unified_domain_read(const frontend_remote_unified *);
 uint32_t frontend_remote_unified_epoch(const frontend_remote_unified *);
 /* Resolves the real received player's configuration against the admitted
@@ -105,9 +120,13 @@ bool frontend_remote_unified_submit(frontend_remote_unified *, const qa_unified_
     double command_time_ms, qa_error *);
 bool frontend_remote_unified_command(frontend_remote_unified *, const char *,
     const char *const *, size_t, qa_error *);
+bool frontend_remote_unified_command_text(frontend_remote_unified *,const char *,qa_error *);
+bool frontend_remote_unified_source_disconnect(frontend_remote_unified *,const char *,qa_error *);
 bool frontend_remote_unified_component_command(frontend_remote_unified *,
     const qa_unified_document *owner, uint64_t generation, const char *const *, size_t, qa_error *);
 bool frontend_remote_unified_sample(qa_frontend *, uint64_t now_ns, qa_error *);
+bool frontend_remote_unified_begin_frame(qa_frontend *,uint64_t wall_now_ns,uint64_t wall_elapsed_ns,qa_error *);
+bool frontend_remote_unified_clock_read(const frontend_remote_unified *,frontend_unified_recipient_clock *,qa_error *);
 bool frontend_remote_unified_draw(qa_frontend *, uint32_t physical_seat, float stereo,
     qa_audio_listener *, bool *rendered, qa_error *);
 bool frontend_remote_unified_idle(const qa_frontend *);

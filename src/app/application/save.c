@@ -29,6 +29,7 @@
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
 #include "native_q2_checkpoint.h"
+#include "native_q2_callbacks.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_team_status.h"
@@ -103,6 +104,36 @@ static bool commands_scope(qa_source_save_io *io, qa_application_console_scope *
         scope->provider && (scope->kind == QA_APPLICATION_CONSOLE_CLIENT ||
                             (scope->kind >= QA_APPLICATION_CONSOLE_Q3_CGAME &&
                              scope->kind <= QA_APPLICATION_CONSOLE_Q3_UI) || !scope->seat);
+}
+
+bool application_save_console_context_from_image(qa_application *app, const qa_save_image *image,
+    application_save_console_context *out, qa_error *error)
+{
+    const qa_save_record *record = image ? qa_save_image_find(image, QA_SAVE_COMMANDS, "") : NULL;
+    if (!app || !out || app->operation != APPLICATION_PERSISTING || !app->session ||
+        !app->command_generation || !record)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Early console restore requires its application persistence foundation");
+    qa_source_save_io io = {0}; uint64_t generation = 0; size_t count = 0;
+    bool ok = qa_source_save_reader(&io, app->session, record->payload, error) &&
+        commands_header(&io, &generation, &count, record->payload.size) && count &&
+        generation == app->command_generation;
+    application_saved_console previous = {0};
+    for (size_t i = 0; ok && i < count; ++i) {
+        application_saved_console saved = {0}; size_t length = 0;
+        ok = commands_scope(&io, &saved.scope) &&
+            (i ? console_order(&previous, &saved) < 0 : saved.scope.kind == QA_APPLICATION_CONSOLE_ENGINE) &&
+            qa_source_save_count(&io, &length, SIZE_MAX) && length && io.offset <= io.input.size &&
+            length <= io.input.size - io.offset;
+        if (ok) { io.offset += length; previous = saved; }
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (!ok) {
+        if (!error || error->code == QA_OK)
+            application_fail(error, QA_ERROR_FORMAT, "Saved command generation or complete scope inventory differs from its foundation");
+        return false;
+    }
+    *out = (application_save_console_context){app, generation}; return true;
 }
 
 static bool application_commands_capture(qa_application *app,
@@ -1641,7 +1672,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
         }
         return ok;
     }
-    case QA_SAVE_EQUIPMENT: return qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
+    case QA_SAVE_EQUIPMENT: return application_native_q2_callbacks_equipment_restore_prepare(candidate,error)&&
+        qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
     case QA_SAVE_COMMANDS: return application_commands_restore(candidate, operation->ops, record->payload,
         &operation->restored_command_generation, error);
     case QA_SAVE_EVENTS: return application_events_save_restore(candidate, record->payload, error);
@@ -1802,6 +1834,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             ok = application_guest_q3_save_finish(provider, error);
     }
     if (ok) ok = application_q3_components_finish_restore(candidate->components, error);
+    if (ok) ok = qa_equipment_weapons_reconnect(candidate->equipment, error);
     if (ok) ok = application_events_save_validate(candidate, error);
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");

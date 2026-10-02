@@ -45,7 +45,7 @@ static bool armor(void *context, const qa_armor *value, qa_error *error)
 { return application_q3_combat_armor_write(&((combat_actor *)context)->source, value, error); }
 static bool armor_valid(void *context, const qa_armor *value, qa_error *error)
 { return application_q3_combat_armor_validate(&((combat_actor *)context)->source, value, error); }
-static bool empty_armor(void *context, float value, qa_regular_armor *out, bool *present, qa_error *error)
+static bool empty_armor(void *context, double value, qa_regular_armor *out, bool *present, qa_error *error)
 { return application_q3_combat_empty_armor(&((combat_actor *)context)->source, value, out, present, error); }
 static bool invoke_damage(void *context, const int32_t *words, size_t count, qa_error *error)
 {

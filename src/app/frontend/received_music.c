@@ -44,14 +44,16 @@ bool frontend_received_music_create(qa_frontend *f,const frontend_music_origin *
         declaration->kind!=FRONTEND_MUSIC_REMOTE || !out || *out || f->capture || f->source_restoring)
         return fail(e,"Received music requires its actual private CLIENT content declaration");
     const qa_product *product=qa_catalog_product(declaration->catalog,declaration->product);
-    if(!product || product->family!=QA_GAME_Q1)return fail(e,"Received Q1 music has a foreign product");
+    if(!product || (product->family!=QA_GAME_Q1 && product->family!=QA_GAME_Q2))
+        return fail(e,"Received music has no actual Q1 or Q2 product declaration");
+    qa_audio_family family=product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q1;
     frontend_received_music *o=calloc(1,sizeof(*o));
-    if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 music player");
+    if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining received music player");
     o->frontend=f;o->engine=f->audio;o->slot=out;
     const qa_cvar_view *gain=qa_cvars_find(qa_application_cvars(f->application),"bgmvolume");
     if(!gain || !isfinite(gain->number) || gain->number<0 || gain->number>FLT_MAX){free(o);return fail(e,"Received music lacks its published canonical volume");}
     bool ok=frontend_source_identity_allocate(f,&o->bus,e) &&
-        qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q1,true,&o->player,e) &&
+        qa_audio_music_create(qa_audio_engine_rate(f->audio),family,true,&o->player,e) &&
         qa_audio_music_controls_bind(o->player,frontend_music_sources_controls(f->music_sources),e) &&
         qa_audio_music_volume(o->player,(float)gain->number,e);
     if(!ok){qa_audio_music_destroy(o->player);free(o);return false;}
@@ -121,11 +123,14 @@ bool frontend_received_music_fields(qa_frontend *f,frontend_received_music **slo
     if(!f || !f->audio || !refs || (reading?!refs->decode:!refs->encode) ||
         (reading?*slot!=NULL:!frontend_received_music_idle(*slot)))return fail(e,"Received music cold state lacks its actual audio graph");
     if(reading){*slot=calloc(1,sizeof(**slot));if(!*slot)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining imported received music");
-        (*slot)->frontend=f;(*slot)->engine=f->audio;(*slot)->slot=slot;(*slot)->importing=true;}
+        (*slot)->frontend=f;(*slot)->engine=f->audio;(*slot)->slot=slot;(*slot)->importing=true;
+        if(!frontend_source_identity_allocate(f,&(*slot)->bus,e))return false;}
     frontend_received_music *o=*slot;qa_buffer encoded={0};qa_bytes receipt={0};bool ok=true;
     if(!reading){ok=current(o,&o->origin) && refs->encode(refs->context,QA_AUDIO_REFERENCE_BUS,o->bus,&encoded,e);receipt=(qa_bytes){encoded.data,encoded.size};}
     if(ok)ok=bytes(io,&receipt) && receipt.size;
-    if(ok && reading)ok=refs->decode(refs->context,QA_AUDIO_REFERENCE_BUS,receipt,&o->bus,e) && o->bus;
+    if(ok && reading){uint64_t resolved=0;
+        ok=refs->decode(refs->context,QA_AUDIO_REFERENCE_BUS,receipt,&resolved,e) && resolved==o->bus;
+        if(!ok && (!e || e->code==QA_OK))fail(e,"Received music bus receipt differs from its actual imported group owner");}
     qa_buffer_free(&encoded);
     bool attached=!reading && qa_audio_engine_bus_music(o->engine,o->bus)==o->player;
     bool selected=!reading && frontend_music_sources_explicit_selected(f->music_sources,&o->origin);
@@ -153,7 +158,11 @@ bool frontend_received_music_restore_finish(frontend_received_music *o,const fro
     if(o->saved_attached){o->player=qa_audio_engine_bus_music(o->engine,o->bus);
         if(!o->player || !qa_audio_music_retain(o->player,e))return fail(e,"Received music import lost its actual attached audio player");
         o->saved_attached=false;}
-    if(!qa_audio_music_profile_is(o->player,qa_audio_engine_rate(o->engine),QA_AUDIO_Q1,true) ||
+    const qa_product *product=qa_catalog_product(declaration->catalog,declaration->product);
+    if(!product || (product->family!=QA_GAME_Q1 && product->family!=QA_GAME_Q2))
+        return fail(e,"Received music import has no actual Q1 or Q2 product declaration");
+    qa_audio_family family=product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q1;
+    if(!qa_audio_music_profile_is(o->player,qa_audio_engine_rate(o->engine),family,true) ||
         !qa_audio_music_controls_bind(o->player,frontend_music_sources_controls(o->frontend->music_sources),e))return false;
     if(declaration->descriptor && !o->metadata && !qa_launch_instance_retain_metadata(declaration->descriptor,&o->metadata,e))return false;
     frontend_music_origin held=*declaration;

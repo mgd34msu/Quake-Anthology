@@ -68,6 +68,9 @@ typedef struct qa_network_q2_server_hooks {
         qa_network_q2_download_source *, qa_error *);
     /* Records retirement for the enclosing owner. Never detaches in a hook. */
     bool (*drop)(void *, qa_net_client_id, const char *, qa_error *);
+    /* Commits already allocated beforeimages after complete signon queue
+     * acceptance. This hook performs no fallible Source work or allocation. */
+    void (*game_state_accepted)(void *, qa_net_client_id);
 } qa_network_q2_server_hooks;
 typedef struct qa_network_q2_server_policy {
     qa_q2_channel_options channel;
@@ -128,6 +131,8 @@ typedef struct qa_network_q2_client_hooks {
         const qa_q2_server_event *, bool *complete, qa_error *);
     bool (*cancel_loading)(void *, qa_net_client_id, qa_error *);
     bool (*acknowledged)(void *, qa_net_client_id, uint32_t, uint64_t, qa_error *);
+    /* A failed notification retains this accepted packet/command receipt for
+     * retry. The callback must accept the same receipt without replaying input. */
     bool (*sent)(void *, qa_net_client_id, qa_net_seat_id, uint32_t packet_sequence, uint64_t command_number,
         const qa_q2_usercmd *, uint64_t, qa_error *);
     bool (*command)(void *, const qa_network_command *, qa_q2_usercmd *, qa_error *);
@@ -163,6 +168,9 @@ bool qa_network_q2_server_frame(qa_network_runtime *, qa_net_client_id,
     const qa_q2_wire_frame *, const qa_q2_source_motion *, uint64_t now_ns, qa_error *);
 bool qa_network_q2_server_drop(qa_network_runtime *, qa_net_client_id,
     const char *, uint64_t now_ns, qa_error *);
+/* Retains the reason and starts retirement; the sole pump sends the notice. */
+bool qa_network_q2_server_request_drop(qa_network_runtime *, qa_net_client_id,
+    const char *, qa_error *);
 bool qa_network_q2_server_command(qa_network_runtime *, qa_net_client_id,
     uint8_t wire_seat, const char *, qa_error *);
 bool qa_network_q2_server_userinfo(qa_network_runtime *, qa_net_client_id,

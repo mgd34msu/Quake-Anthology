@@ -1,6 +1,7 @@
 #include "library_internal.h"
 #include "qa/media_resource.h"
 #include "qa/media_library_prepare.h"
+#include "qa/binary.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -134,7 +135,11 @@ bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_ci
     case QA_CINEMATIC_ROQ:
         qa_media_input_retain(input);
         asset->source.data.roq = input;
-        ok = roq_info(asset, error);
+        if (asset->source_roq) {
+            qa_bytes bytes=qa_resource_bytes(resource);
+            ok=bytes.size>=2 && qa_load_u16le(bytes.data)==UINT16_C(0x1084);
+            if (!ok) cinematic_fail(error,"Original cinematic requires its retained RoQ header magic");
+        } else ok = roq_info(asset, error);
         break;
     case QA_CINEMATIC_OGV:
         ok = qa_ogv_asset_load(input, &asset->source.data.ogv, error);
@@ -169,11 +174,11 @@ bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_ci
     qa_media_input_release(input);
     return ok;
 }
-static bool library_asset(qa_media_library *library, const char *path, qa_cinematic_format kind,
+static bool library_asset(qa_media_library *library, const char *path, qa_cinematic_format kind, bool source_roq,
     qa_resource *resource, qa_cinematic_asset **out, qa_error *error) {
     const qa_sha256_digest *digest = qa_resource_digest(resource);
     for (qa_cinematic_asset *asset = library->assets; asset; asset = asset->next)
-        if (asset->source.format == kind && qa_sha256_equal(&asset->digest, digest)) {
+        if (asset->source.format == kind && asset->source_roq==source_roq && qa_sha256_equal(&asset->digest, digest)) {
             qa_cinematic_asset_retain(asset);
             qa_resource_release(resource);
             *out = asset;
@@ -181,7 +186,7 @@ static bool library_asset(qa_media_library *library, const char *path, qa_cinema
         }
     for (const qa_media_library *parent = library->parent; parent; parent = parent->parent)
         for (qa_cinematic_asset *asset = parent->assets; asset; asset = asset->next)
-            if (asset->source.format == kind && qa_sha256_equal(&asset->digest, digest)) {
+            if (asset->source.format == kind && asset->source_roq==source_roq && qa_sha256_equal(&asset->digest, digest)) {
                 qa_cinematic_asset_retain(asset); qa_resource_release(resource);
                 *out = asset; return true;
             }
@@ -194,6 +199,7 @@ static bool library_asset(qa_media_library *library, const char *path, qa_cinema
     asset->references = 1;
     asset->source.asset = asset;
     asset->source.format = kind;
+    asset->source_roq = source_roq;
     asset->digest = *digest;
     size_t length = strlen(path);
     asset->name = malloc(length + 1);
@@ -227,7 +233,7 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     if (!qa_media_asset_format(path, &kind, error)) return false;
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(view, path, &resource, NULL, error)) return false;
-    return library_asset(library, path, kind, resource, out, error);
+    return library_asset(library, path, kind, false, resource, out, error);
 }
 bool qa_media_library_load_shader(qa_media_library *library, qa_vfs *view, const char *path,
     qa_cinematic_asset **out, qa_error *error)
@@ -242,9 +248,30 @@ bool qa_media_library_load_shader(qa_media_library *library, qa_vfs *view, const
         if (error && error->code == QA_OK) cinematic_fail(error, "Shader movie requires RoQ, CIN or OGV content");
         return false;
     }
-    return library_asset(library, path, kind, resource, out, error);
+    return library_asset(library, path, kind, false, resource, out, error);
 }
 
+bool qa_media_library_load_source_roq(qa_media_library *library, qa_vfs *view, const char *path,
+    qa_cinematic_asset **out, qa_error *error)
+{
+    if (!library || !view || !path || !out || !qa_media_library_idle(library))
+    {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid original cinematic library request");
+        return false;
+    }
+    qa_resource *resource=NULL;
+    if (!qa_vfs_acquire(view,path,&resource,NULL,error)) return false;
+    qa_bytes bytes=qa_resource_bytes(resource);
+    if (!bytes.size) {
+        qa_resource_release(resource);
+        qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Original cinematic file is empty: %s",path); return false;
+    }
+    if (bytes.size<2 || qa_load_u16le(bytes.data)!=UINT16_C(0x1084)) {
+        qa_resource_release(resource);
+        return cinematic_fail(error,"Original cinematic requires the actual RoQ header magic");
+    }
+    return library_asset(library,path,QA_CINEMATIC_ROQ,true,resource,out,error);
+}
 const qa_resource *qa_cinematic_asset_resource(const qa_cinematic_asset *asset)
 {
     return asset ? asset->source_record : NULL;

@@ -9,6 +9,7 @@ bool qa_media_library_idle(const qa_media_library *);
 bool qa_media_library_stage_prepare(qa_media_library *, qa_scene_resource_policy *,
     qa_media_library_stage **, qa_error *);
 qa_media_library *qa_media_library_stage_destination(const qa_media_library_stage *);
+qa_media_library *qa_media_library_stage_source(const qa_media_library_stage *);
 bool qa_media_library_stage_ready(qa_media_library_stage *, qa_error *);
 bool qa_media_library_stage_ready_is(const qa_media_library_stage *);
 void qa_media_library_stage_publish(qa_media_library_stage *);

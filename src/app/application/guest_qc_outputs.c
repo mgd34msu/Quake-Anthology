@@ -1,5 +1,7 @@
 #include "guest_qc_profile.h"
 #include "map_players_private.h"
+#include "native_q2_client_outputs.h"
+#include "native_q2_client_stages.h"
 
 static bool client_binding(const struct application_qc_state *engine, uint32_t slot,
     bool canonical, int32_t *reference, qa_error *error)
@@ -32,13 +34,7 @@ bool application_qc_output_claim_available(const struct application_qc_state *en
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
     if (channels && (!profile || channels != profile->client_output_channels))
         return application_fail(error, QA_ERROR_FORMAT, "QC output lease differs from its qualified declaration");
-    for (const application_provider *owner = engine->provider->application->live_providers;
-         channels && owner; owner = owner->next_live) {
-        if (owner == engine->provider || owner->kind != APPLICATION_PROVIDER_QC || !owner->state.qc.engine) continue;
-        if (owner->state.qc.engine->output_channels & channels)
-            return application_fail(error, QA_ERROR_ARGUMENT, "QC client output channel already has a retained source owner");
-    }
-    return true;
+    return !channels || application_client_output_claim_available(engine->provider,channels,error);
 }
 
 static bool read_outputs(struct application_qc_state *engine, uint32_t slot,
@@ -195,7 +191,11 @@ bool application_qc_control_outputs(const qa_application *application, qa_actor_
     for (size_t i = 0; application->players && i < application->players->count; ++i)
         if (qa_actor_id_equal(application->players->records[i].actor, actor)) { canonical = true; break; }
     if (!canonical) return true;
+    if(!application_native_q2_control_outputs(application,actor,out,error))return false;
     uint8_t claimed = 0;
+    for(size_t i=0;i<application->provider_count;++i){const application_provider *p=application->providers[i];
+        if(p&&p->constructed&&p->attached&&!p->close_pending&&p->kind==APPLICATION_PROVIDER_NATIVE&&p->state.native.q2_engine)
+            claimed|=application_native_q2_client_outputs_claimed(application_native_q2_stages_outputs(p->state.native.q2_engine));}
     for (size_t i = 0; i < application->provider_count; ++i) {
         const application_provider *provider = application->providers[i];
         if (!provider->attached || !provider->constructed || provider->kind != APPLICATION_PROVIDER_QC ||

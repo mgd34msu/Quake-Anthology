@@ -15,6 +15,7 @@ typedef struct layout_context {
     float x, y, width, height;
     int32_t images, items, skins, max_images, max_strings, max_clients;
     bool rerelease, failed;
+    qa_hud_q2_stat_references *references;
 } layout_context;
 static const qa_scene_vec4 white = {1, 1, 1, 1}, black = {0, 0, 0, 1};
 static void fail(layout_context *c, const char *message) {
@@ -58,6 +59,12 @@ static int32_t decimal(const char *p) {
     return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
 }
 static int32_t integer(layout_context *c) { return decimal(argument(c)); }
+static void stat_reference(layout_context *c, int32_t index, bool image) {
+    if (!c->references) return;
+    if (index < 0 || index >= QA_Q2_MAX_STATS) { fail(c, "HUD stat outside playerstate"); return; }
+    uint64_t *mask = image ? &c->references->images : &c->references->configstrings;
+    *mask |= UINT64_C(1) << (unsigned)index;
+}
 static double stat(layout_context *c, int32_t index) {
     if (index < 0 || (size_t)index >= c->frame->stat_count) { fail(c, "HUD stat outside playerstate"); return 0; }
     const qa_hud_q2_arsenal *a = c->frame->arsenal;
@@ -300,14 +307,13 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
         frame->protocol.kind != QA_NET_Q2PRIVATE_4038) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD requires a Q2 protocol"); return false;
     }
-    c->rerelease = frame->protocol.kind == QA_NET_Q2REPRO_1038 || frame->protocol.kind == QA_NET_Q2KEX_2023 ||
+    c->rerelease = frame->protocol.kind == QA_NET_Q2REPRO_1038 || frame->protocol.kind == QA_NET_Q2PRIVATE_4038 || frame->protocol.kind == QA_NET_Q2KEX_2023 ||
                    frame->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
-    c->images = c->rerelease ? 10302 : 544;
-    c->items = c->rerelease ? 11326 : 1056;
-    c->skins = c->rerelease ? 11582 : 1312;
-    c->max_clients = c->rerelease ? 60 : 30;
-    c->max_images = c->rerelease ? 512 : 256;
-    c->max_strings = c->rerelease ? 12448 : 2080;
+    qa_q2_codec codec; qa_q2_config_layout layout;
+    if (!qa_q2_codec_init(&codec, frame->protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    c->images = (int32_t)layout.images; c->items = (int32_t)layout.items;
+    c->skins = (int32_t)layout.player_skins; c->max_clients = (int32_t)layout.max_clients;
+    c->max_images = (int32_t)layout.max_images; c->max_strings = (int32_t)layout.max_configs;
     return true;
 }
 static void table_cell(layout_context *c, char out[70], const char *value) {
@@ -394,9 +400,10 @@ static bool execute(layout_context *c, const char *source) {
         bool found;
         const char *command = next(c, &found);
         if (c->failed || !found) break;
-        bool draw = !depth || conditions[depth - 1];
+        bool draw = !c->references && (!depth || conditions[depth - 1]);
         if (!strcmp(command, "if") || (c->rerelease && !strcmp(command, "ifgef"))) {
             int32_t value = integer(c);
+            if (c->references) continue;
             if (!c->rerelease) {
                 if (stat(c, value) == 0)
                     do { command = next(c, &found); } while (!c->failed && found && strcmp(command, "endif"));
@@ -411,6 +418,7 @@ static bool execute(layout_context *c, const char *source) {
             }
             conditions[depth++] = enabled;
         } else if (!strcmp(command, "endif")) {
+            if (c->references) continue;
             if (c->rerelease) { if (!depth) fail(c, "HUD endif without matching if"); else --depth; }
         } else if (!strcmp(command, "xl") || !strcmp(command, "xr") || !strcmp(command, "xv")) {
             int32_t value = integer(c);
@@ -419,7 +427,7 @@ static bool execute(layout_context *c, const char *source) {
             int32_t value = integer(c);
             if (draw) c->y = (float)value + (command[1] == 'b' ? c->height : command[1] == 'v' ? truncf(c->height / 2) - 120 : 0);
         } else if (!strcmp(command, "pic")) {
-            int32_t index = integer(c); if (draw) item_picture(c, index);
+            int32_t index = integer(c); stat_reference(c, index, true); if (draw) item_picture(c, index);
         } else if (!strcmp(command, "picn")) {
             const char *value = argument(c); if (draw) picture(c, value, c->x, c->y, 0, 0, false);
         } else if (!strcmp(command, "num")) {
@@ -446,7 +454,7 @@ static bool execute(layout_context *c, const char *source) {
         } else if (!strcmp(command, "stat_string") || (c->rerelease && !strncmp(command, "loc_stat_", 9))) {
             if (strcmp(command, "stat_string") && strcmp(command, "loc_stat_string") && strcmp(command, "loc_stat_rstring") &&
                 strcmp(command, "loc_stat_cstring") && strcmp(command, "loc_stat_cstring2")) continue;
-            int32_t index = integer(c); if (!draw) continue;
+            int32_t index = integer(c); stat_reference(c, index, false); if (!draw) continue;
             const qa_hud_q2_arsenal *a = c->frame->arsenal;
             bool selected = c->rerelease && index == 51 && stat(c, index) != 0 && a && a->has_selected_item;
             const char *raw = selected && a->selected_label ? a->selected_label : config_stat(c, index);
@@ -552,7 +560,7 @@ static bool execute(layout_context *c, const char *source) {
             int32_t index = integer(c); if (draw) text(c, client_name(c, stat_int(c, index) - 1), false, c->x, c->y, false);
         } else if (c->rerelease && !strcmp(command, "health_bars")) {
             if (!draw) continue;
-            centered(c, localized(c, config(c, 12104), NULL, 0), false, truncf(c->width / 2) - 160, c->y);
+            centered(c, localized(c, config(c, c->skins + 256 + 266), NULL, 0), false, truncf(c->width / 2) - 160, c->y);
             c->y += c->options->font_line_height;
             uint32_t value = (uint32_t)stat_int(c, 52);
             float w = c->width / 2, left = c->width / 4;
@@ -565,8 +573,9 @@ static bool execute(layout_context *c, const char *source) {
                 c->y += 12;
             }
         } else if (c->rerelease && !strcmp(command, "story")) {
+            if (c->references) continue;
             /* Source story deliberately ignores the conditional draw flag. */
-            const char *raw = config(c, 12105); if (!*raw) continue;
+            const char *raw = config(c, c->skins + 256 + 267); if (!*raw) continue;
             const char *value = localized(c, raw, NULL, 0);
             qa_font_layout block; if (!font_layout(c, value, &block)) break;
             const char *line = value; size_t index = 0;
@@ -583,6 +592,17 @@ static bool execute(layout_context *c, const char *source) {
     }
     if (c->rerelease && depth && !c->failed) fail(c, "HUD if without matching endif");
     return !c->failed;
+}
+bool qa_hud_q2_layout_stat_references(const char *source, bool rerelease,
+    qa_hud_q2_stat_references *out, qa_error *error) {
+    if (!source || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 layout reference input"); return false; }
+    qa_scene_frame scratch = {0};
+    qa_hud_q2_stat_references value = {0};
+    layout_context c = {.scene = &scratch, .error = error, .rerelease = rerelease, .references = &value};
+    bool ok = execute(&c, source);
+    qa_arena_destroy(&scratch.storage);
+    if (ok) *out = value;
+    return ok;
 }
 static bool inventory_draw(layout_context *c) {
     const qa_hud_q2_arsenal *a = c->frame->arsenal;

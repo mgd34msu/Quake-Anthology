@@ -7,6 +7,10 @@ typedef struct owned_image owned_image;
 typedef struct qa_scene_resources_capture qa_scene_resources_capture;
 typedef struct scene_names { qa_strings *strings; size_t references; owned_image *images; size_t image_count; qa_scene_resources *owner; } scene_names;
 typedef struct image_lineage { uint64_t revision; size_t references; } image_lineage;
+typedef struct recipient_image_binding {
+    struct recipient_image_binding *next;
+    const qa_scene_image *source;
+} recipient_image_binding;
 struct owned_image {
     qa_scene_image image;
     scene_names *names;
@@ -16,6 +20,10 @@ struct owned_image {
     const qa_scene_image *sampling_source;
     bool sampling_mipmap;
     const qa_scene_image *source_variant_source;
+    bool generic_variant, generic_variant_mipmap;
+    bool recipient_first_upload;
+    recipient_image_binding *recipient_bindings;
+    qa_image recipient_source;
     qa_scene_resources *source_variant_owner;
     qa_q3_image_upload_options source_variant_upload;
     owned_image *variant_next;
@@ -26,24 +34,43 @@ typedef struct image_cache {
     uint64_t source, logical_source;
     qa_resource *source_record, *logical_record;
     qa_mount_id source_mount, logical_mount;
+    char *logical_path;
+    qa_vfs_acquisition source_opening, logical_opening;
+    qa_resource *palette_source;
+    qa_vfs_acquisition palette_opening;
+    bool palette_attempted;
+    qa_status palette_error;
     qa_string_id name;
     qa_scene_image_options options;
     bool exact_file;
     uint8_t palette[768], translation[256];
     qa_scene_image *image;
 } image_cache;
+typedef struct image_alias {
+    struct image_alias *next;
+    char *name, *request, *source_path, *logical_path;
+    qa_resource *source, *logical_source, *palette_source;
+    qa_vfs_acquisition source_opening, logical_opening, palette_opening;
+    qa_scene_image_options decode_options;
+    uint8_t palette[768], translation[256];
+    qa_status source_error;
+    bool palette_attempted;
+    qa_status palette_error;
+} image_alias;
 struct qa_scene_resources {
     size_t references;
     qa_vfs *vfs;
     scene_names *names;
     qa_scene_image *white, *missing;
     qa_scene_image *source_white, *source_missing, *source_identity;
+    qa_scene_image *source_scratch[32], *source_dlight, *source_fog;
     qa_q3_image_upload_options source_builtins_upload;
     bool source_builtins;
     qa_scene_source_image_admit_fn source_admit;
     void *source_admit_context;
     owned_image *variants;
     image_cache *cache;
+    image_alias *aliases;
     size_t cache_count, cache_capacity;
     qa_buffer palettes[3];
     qa_resource *palette_resources[3];
@@ -58,4 +85,6 @@ struct qa_scene_resources {
 };
 bool scene_resource_variant_parent_retain(qa_scene_resources *, const qa_scene_image *,
                                           qa_scene_resources **, qa_error *);
+void scene_resource_alias_free(image_alias *);
+qa_scene_image_alias_source scene_resource_alias_source(const image_alias *);
 #endif

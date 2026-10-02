@@ -178,7 +178,7 @@ static qa_bot_move_services movement_services(qa_bot_runtime *r) {
 }
 bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     qa_bot_action_services actions = {.context = r, .command = command};
-    if (!qa_bot_actions_create(0, &actions, &r->actions, e)) return false;
+    if (!qa_bot_actions_create_source(r->memory, &actions, &r->actions, e)) return false;
     qa_bot_chat_options options = {.debug = r->options.debug, .console_unavailable = true};
     qa_bot_chat_services chat = {.context = r, .command = command, .diagnostic = diagnostic,
         .report=chat_print_source,.time=chat_time_source,.developer=chat_developer_source,
@@ -199,7 +199,7 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     if(!bot_goal_memory_bind(r->goals,r->memory,e)) return false;
     if (!qa_bot_goals_reconfigure(r->goals, NULL, 0, 0, e)) return false;
     qa_bot_move_services movement = movement_services(r);
-    return qa_bot_moves_create(r->options.maximum_states, r->library, r->actions,
+    return qa_bot_moves_create(r->options.observations==QA_BOT_OBSERVATION_MODULE?64:r->options.maximum_states, r->library, r->actions,
                                  &movement, &r->moves, e);
 }
 static bool source_failure(qa_bot_runtime *r, const qa_error *e) {
@@ -329,8 +329,8 @@ static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
         clients = (int32_t)r->options.minimum_clients;
     }
     qa_bot_action_services actions = {.context = r, .command = command};
-    if (r->actions ? !qa_bot_actions_setup(r->actions, (uint32_t)clients, e) :
-        !qa_bot_actions_create((uint32_t)clients, &actions, &r->actions, e)) return false;
+    if (!r->actions && !qa_bot_actions_create_source(r->memory,&actions,&r->actions,e)) return false;
+    if (!qa_bot_actions_setup(r->actions,(uint32_t)clients,e)) return false;
     if (r->options.observations == QA_BOT_OBSERVATION_NATIVE &&
         !bot_runtime_observations_resize(r, (size_t)entities, e)) return false;
     if (!bot_runtime_weapon_setup(r, result, e)) return false;
@@ -340,7 +340,7 @@ static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
     if (!setup_chat(r, e)) return false;
     if (!r->moves) {
         qa_bot_move_services movement = movement_services(r);
-        if (!qa_bot_moves_create(r->options.maximum_states, r->library, r->actions,
+        if (!qa_bot_moves_create(r->options.observations==QA_BOT_OBSERVATION_MODULE?64:r->options.maximum_states, r->library, r->actions,
                                 &movement, &r->moves, e)) return false;
     }
     if (!qa_bot_moves_setup(r->moves, e)) return false;

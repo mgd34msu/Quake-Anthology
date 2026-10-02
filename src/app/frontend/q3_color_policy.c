@@ -94,6 +94,22 @@ static bool profile_read(frontend_q3_color *owner, const qa_cvars_edit *edit,
     next.color.requested_overbright_bits = rows[2]->integer;
     next.picmip = rows[3]->integer; next.round_down = rows[4]->integer != 0;
     next.simple_mips = rows[5]->integer != 0; next.color_mips = rows[6]->integer != 0;
+    const qa_cvar_view *bits;
+    if (!record(owner->frontend,edit,"r_texturebits",&bits,error)) return false;
+    next.texture_bits=bits->integer;
+    if (owner->initialized) next.s3tc=owner->upload.s3tc;
+    else {
+        const qa_cvar_view *compression,*extensions;
+        if (!record(owner->frontend,edit,"r_ext_compressed_textures",&compression,error) ||
+            !record(owner->frontend,edit,"r_allowExtensions",&extensions,error)) return false;
+        const qa_gl_capabilities *caps=owner->gl?qa_gl_capabilities_get(owner->gl):NULL;
+#ifdef _WIN32
+        bool enabled=compression->integer!=0;
+#else
+        bool enabled=compression->number!=0;
+#endif
+        next.s3tc=caps && caps->s3tc && extensions->integer!=0 && enabled;
+    }
     if (!qa_q3_image_upload_options_valid(&next, error)) return false;
     *out = next;
     return true;
@@ -177,6 +193,8 @@ static bool profile_device_current(frontend_q3_color *owner,qa_display *display,
         device.color_bits!=profile->color.device.color_bits || maximum!=profile->maximum_texture_size ||
         (device.hardware_gamma && !qa_display_gamma_applied_is(display)))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Source output capability changed and requires an actual renderer restart");
+    if (profile->s3tc && (!owner->gl || !qa_gl_capabilities_get(owner->gl)->s3tc))
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Source compression lost its actual initialized native capability");
     return true;
 }
 
@@ -190,8 +208,12 @@ bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipma
     bool candidate=ticket && ticket->prepared && !ticket->published;
     const qa_q3_image_upload_options *profile=candidate?&ticket->upload:&f->source_color->upload;
     if (!profile_device_current(f->source_color,candidate?ticket->target:f->display,profile,error)) return false;
-    *out = *profile;
-    out->allow_picmip = allow_picmip; out->mipmap = mipmap;
+    qa_q3_image_upload_options next=*profile;
+    const qa_cvar_view *bits;
+    if (!record(f,candidate?ticket->edit:NULL,"r_texturebits",&bits,error)) return false;
+    next.texture_bits=bits->integer;
+    next.allow_picmip = allow_picmip; next.mipmap = mipmap;
+    *out=next;
     return true;
 }
 
@@ -261,7 +283,8 @@ static bool recipient_image(void *context, const qa_scene_image *source,
         if (!upload.mipmap) upload.allow_picmip = false;
     }
     qa_scene_image *mapped = NULL;
-    if (!qa_scene_image_source_q3_variant(bank, source, &upload, &mapped, error)) return false;
+    if (!qa_scene_image_source_q3_recipient_variant(bank, source, &upload,
+        frontend_q3_source_image_admit, f, &mapped, error)) return false;
     /* The bank owns the retained correspondence; the eventual draw pins this
      * borrowed immutable version independently until frame reset. */
     *out = mapped;
@@ -276,6 +299,32 @@ bool frontend_q3_source_recipient(qa_frontend *f, qa_scene_world_input *input, q
         !profile_device_current(f->source_color, f->display, &f->source_color->upload, error)) return false;
     input->source_recipient_image = recipient_image;
     input->source_recipient_context = f;
+    return true;
+}
+
+static bool generic_recipient_image(void *context,const qa_scene_image *source,
+    bool allow_picmip,bool mipmap,const qa_scene_image **out,qa_error *error)
+{
+    qa_frontend *f=context;
+    (void)allow_picmip;
+    if(!f || !f->application || !source || !out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic recipient requires its actual reached image");
+    if(!source->source_q3 || source->kind==QA_SCENE_DEPTH32F) { *out=source; return true; }
+    qa_scene_resources *bank=qa_scene_image_resource_owner(source);
+    if(!bank)return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic recipient lost the admitted Source image owner");
+    qa_scene_image *mapped=NULL;
+    if(!qa_scene_image_generic_variant(bank,source,mipmap,&mapped,error))return false;
+    *out=mapped;
+    qa_scene_image_release(mapped);
+    return true;
+}
+
+bool frontend_q3_generic_recipient(qa_frontend *f,qa_scene_world_input *input,qa_error *error)
+{
+    if(!f || !f->application || !input || input->view.seat>=f->options.seats)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic recipient requires its actual physical viewport");
+    input->source_recipient_image=generic_recipient_image;
+    input->source_recipient_context=f;
     return true;
 }
 
@@ -444,10 +493,11 @@ bool frontend_q3_source_color_publication_finish(qa_frontend *f,qa_error *error)
 
 static bool saved_fields(qa_source_save_io *io, bool *present, qa_q3_image_upload_options *upload)
 {
-    uint8_t magic[4]={'Q','F','C','G'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','F','C','G'}; uint32_t version=2;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCG",4) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_bool(io,present) &&
-        (!*present || qa_q3_image_upload_options_codec(io,upload));
+        qa_source_save_u32(io,&version) && version>=1 && version<=2 && qa_source_save_bool(io,present) &&
+        (!*present || (version>=2?qa_q3_image_upload_options_precision_codec(io,upload):
+            qa_q3_image_upload_options_codec(io,upload))) && (!*present || !upload->lightmap);
 }
 bool frontend_q3_source_color_checkpoint(const qa_frontend *f,qa_buffer *out,qa_error *error)
 {
@@ -487,7 +537,8 @@ bool frontend_q3_source_color_restore(qa_frontend *f,const qa_display_restore_gu
         if (!qa_cpu_capabilities_read(f->cpu,&actual,error)) return false;
         color=actual.color_bits; maximum=0;
     }
-    if (color>INT32_MAX || upload.color.device.color_bits!=(int32_t)color ||
+    if ((upload.s3tc && (!f->gl || !qa_gl_capabilities_get(f->gl)->s3tc)) ||
+        color>INT32_MAX || upload.color.device.color_bits!=(int32_t)color ||
         upload.maximum_texture_size!=maximum || upload.color.device.hardware_gamma!=(cap.kind==QA_DISPLAY_GAMMA_ACCEPTED) ||
         upload.color.device.fullscreen!=(info.fullscreen!=QA_DISPLAY_WINDOWED) ||
         info.backend!=(f->gl?QA_DISPLAY_OPENGL:QA_DISPLAY_CPU))

@@ -12,11 +12,23 @@ static bool diagnostics(void *context,qa_scene_source_diagnostics *out,qa_error 
 }
 static bool frame_policy(void *context,qa_scene_frame *reached,qa_error *error)
 {
+    if (reached && !reached->source_backend) return true;
     qa_frontend *f=context;
     const qa_cvar_view *row=f && f->application && reached && (f->cpu || f->gl) && !(f->cpu && f->gl)?
         frontend_render_control_record(qa_application_cvars(f->application),"r_skipBackEnd"):NULL;
     if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source swap lost its actual physical ENGINE skip row");
-    reached->source_skip_backend=row->integer!=0; return true;
+    const qa_cvar_view *buffer=frontend_render_control_record(qa_application_cvars(f->application),"r_drawBuffer");
+    if (!buffer) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source swap lost its actual physical ENGINE draw buffer");
+    const unsigned char *a=(const unsigned char *)buffer->value,*b=(const unsigned char *)"GL_FRONT";
+    while (*a && *b) {
+        unsigned char c=*a;
+        if (c>='a' && c<='z') c-='a'-'A';
+        if (c!=*b) break;
+        ++a; ++b;
+    }
+    reached->source_skip_backend=row->integer!=0;
+    reached->source_front_buffer=!*a && !*b;
+    return true;
 }
 bool frontend_source_renderer_runtime_bind(qa_frontend *f,qa_error *error)
 {

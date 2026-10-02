@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/q3_cinematic_handles.h"
 
 bool q3p_movie_close(qa_q3_presentation *p, uint32_t index, qa_cinematic_end reason, qa_error *error)
 {
@@ -81,7 +82,7 @@ static bool play_system(qa_q3_presentation *p, const char *path, uint32_t flags,
     if (slot == 16) return q3p_fail(error, QA_ERROR_FORMAT, "CIN_HandleForVideo: none free");
     p->movies[slot].kind = Q3P_MOVIE_PENDING;
     qa_q3_system_movie movie = {0};
-    qa_q3_movie_request request = {path, (flags & 2u) != 0, (flags & 4u) != 0, (flags & 8u) != 0};
+    qa_q3_movie_request request = {.path=path,.loop=(flags&2u)!=0,.hold=(flags&4u)!=0,.silent=(flags&8u)!=0};
     bool ok = open(context, &request, &movie, error);
     if (ok && (!movie.status || !movie.end || !movie.release)) {
         p->movies[slot]=(q3p_movie){.kind=Q3P_MOVIE_PENDING,.system=movie,.flags=flags};
@@ -98,6 +99,8 @@ bool qa_q3_presentation_movie_play_system(qa_q3_presentation *p,const char *path
     void *context,int32_t *out,qa_error *error)
 {
     if (!path || !out || !(flags&1u) || !open || !q3p_begin(p,error)) return false;
+    if (p->options.cinematics)
+        return q3p_end(p,qa_q3_cinematic_play(p->options.cinematics,path,(qa_scene_rect_f){0},flags,open,context,out,error));
     return q3p_end(p,play_system(p,path,flags,open,context,out,error));
 }
 
@@ -105,6 +108,9 @@ bool qa_q3_presentation_movie_play(qa_q3_presentation *p, const char *path, qa_s
                                    uint32_t flags, int32_t *out, qa_error *error)
 {
     if (!path || !out || !q3p_begin(p, error)) return false;
+    if (p->options.cinematics)
+        return q3p_end(p,qa_q3_cinematic_play(p->options.cinematics,path,rect,flags,
+            p->options.system_movie,p->options.context,out,error));
     if (flags & 1u) return q3p_end(p, play_system(p, path, flags,
         p->options.system_movie,p->options.context,out,error));
     qa_q3_presentation_assets *assets = p->options.assets;
@@ -153,6 +159,8 @@ bool qa_q3_presentation_movie_run(qa_q3_presentation *p, int32_t handle,
                                   int32_t *out, qa_error *error)
 {
     if (!out || !q3p_begin(p, error)) return false;
+    if (p->options.cinematics)
+        return q3p_end(p,qa_q3_cinematic_run(p->options.cinematics,handle,out,error));
     if (handle < 0 || handle >= 16) { *out = 2; return q3p_end(p, true); }
     q3p_movie *movie = &p->movies[handle];
     qa_media_tick tick = {.status = QA_MEDIA_STOPPED};
@@ -171,6 +179,8 @@ bool qa_q3_presentation_movie_run(qa_q3_presentation *p, int32_t handle,
 bool qa_q3_presentation_movie_stop(qa_q3_presentation *p, int32_t handle, bool skip, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
+    if (p->options.cinematics)
+        return q3p_end(p,qa_q3_cinematic_stop(p->options.cinematics,handle,skip,error));
     return q3p_end(p, handle < 0 || handle >= 16 ||
         q3p_movie_close(p, (uint32_t)handle, skip ? QA_CINEMATIC_SKIPPED : QA_CINEMATIC_STOPPED, error));
 }
@@ -178,6 +188,27 @@ bool qa_q3_presentation_movie_stop(qa_q3_presentation *p, int32_t handle, bool s
 bool qa_q3_presentation_movie_draw(qa_q3_presentation *p, int32_t handle, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
+    if (p->options.cinematics) {
+        if (p->frame && p->frame->source_pending &&
+            !qa_material_source_frame_end(p->frame->source_pending,p->frame,true,error)) return q3p_end(p,false);
+        const qa_scene_image *image=NULL; qa_scene_rect_f source={0},rect={0};
+        bool ok=qa_q3_cinematic_image(p->options.cinematics,handle,p->frame,&image,&source,error);
+        if (ok && image) ok=qa_cinematic_pixel_rect(source,p->options.viewport,&rect,error);
+        if (ok && image) rect=(qa_scene_rect_f){truncf(rect.x),truncf(rect.y),truncf(rect.width),truncf(rect.height)};
+        qa_scene_vec4 uv={0,0,1,1},color={p->options.identity_light,p->options.identity_light,p->options.identity_light,1};
+        if (ok && image) {
+            float u=0.5f/(float)image->logical_width,v=0.5f/(float)image->logical_height;
+            uv=(qa_scene_vec4){u,v,1-u,1-v};
+        }
+        if (ok && image && p->options.picture_capture) {
+            qa_q3_picture_receipt receipt={.source_raw=true,.assets=p->options.assets,.image=image,.rect=rect,.uv=uv,
+                .color=color,.viewport=p->options.viewport,.seat=p->options.seat,.identity_light=p->options.identity_light,
+                .milliseconds=p->options.milliseconds?p->options.milliseconds(p->options.context):p->render_milliseconds};
+            ok=p->options.picture_capture(p->options.context,&receipt,error);
+        } else if (ok && image) ok=q3p_source_raw_picture(p,image,rect,uv,color,error);
+        if (ok && image) ok=qa_q3_cinematic_draw_complete(p->options.cinematics,handle,error);
+        return q3p_end(p,ok);
+    }
     if (handle < 0 || handle >= 16 || p->movies[handle].kind != Q3P_MOVIE_LOCAL)
         return q3p_end(p, true);
     q3p_movie *movie = &p->movies[handle];
@@ -186,9 +217,15 @@ bool qa_q3_presentation_movie_draw(qa_q3_presentation *p, int32_t handle, qa_err
     const qa_scene_image *image; qa_scene_rect_f rect;
     bool ok = qa_cinematic_image(movie->local, p->options.assets->options.provider.images,
                                    p->frame, &image, error) &&
-              qa_cinematic_pixel_rect(movie->rect, p->options.viewport, &rect, error) &&
-              qa_scene_frame_picture_f(p->frame, image, p->options.viewport, rect,
-                                         (qa_scene_vec4){0, 0, 1, 1}, p->color, error);
+              qa_cinematic_pixel_rect(movie->rect, p->options.viewport, &rect, error);
+    if (ok && p->options.picture_capture) {
+        qa_q3_picture_receipt receipt = {.assets = p->options.assets, .image = image,
+            .rect = rect, .uv = {0, 0, 1, 1}, .color = p->color, .viewport = p->options.viewport,
+            .seat = p->options.seat, .identity_light = p->options.identity_light,
+            .milliseconds = p->options.milliseconds ? p->options.milliseconds(p->options.context) : p->render_milliseconds};
+        ok = p->options.picture_capture(p->options.context, &receipt, error);
+    } else if (ok) ok = qa_scene_frame_picture_f(p->frame, image, p->options.viewport, rect,
+        (qa_scene_vec4){0, 0, 1, 1}, p->color, error);
     return q3p_end(p, ok);
 }
 
@@ -196,6 +233,10 @@ void qa_q3_presentation_movie_extents(qa_q3_presentation *p, int32_t handle, qa_
 {
     qa_error ignored = {0};
     if (!q3p_begin(p, &ignored)) return;
+    if (p->options.cinematics) {
+        (void)qa_q3_cinematic_extents(p->options.cinematics,handle,rect,&ignored);
+        q3p_end(p,true); return;
+    }
     if (handle >= 0 && handle < 16 && p->movies[handle].kind == Q3P_MOVIE_LOCAL)
         p->movies[handle].rect = rect;
     q3p_end(p, true);

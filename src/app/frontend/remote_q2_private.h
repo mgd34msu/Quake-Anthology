@@ -11,6 +11,8 @@ typedef struct remote_q2_model {
     char *path;
     qa_resource *resource;
     qa_vfs_acquisition opening;
+    qa_resource *scope, *palette;
+    qa_vfs_acquisition scope_opening, palette_opening;
     qa_model decoded;
     const qa_model *source;
     frontend_model_lease *source_lease;
@@ -28,9 +30,11 @@ typedef struct remote_q2_missing_model {
     char *path;
 } remote_q2_missing_model;
 typedef struct remote_q2_layout {
-    uint16_t models, sounds, images, lights, items, players, checksum;
+    uint16_t models, sounds, images, lights, items, players, checksum, max_clients, air_accelerate;
     size_t max_models, max_sounds, max_images, max_configs;
 } remote_q2_layout;
+bool remote_q2_model_scope_required(const char *, qa_bytes);
+bool remote_q2_model_scope_current(const frontend_remote_q2 *, const remote_q2_model *, qa_error *);
 struct frontend_remote_q2_image_policy;
 struct frontend_remote_q2_effects;
 struct remote_q2_footsteps;
@@ -63,7 +67,7 @@ struct frontend_remote_q2 {
     qa_movement_ground prediction_ground;
     qa_collision_plane prediction_plane;
     unsigned busy;
-    bool bound, selected, content_admitted, media_ready, retired, importing, restore_media_ready;
+    bool bound, selected, content_admitted, media_ready, retired, retiring, importing, restore_media_ready;
     qa_q2_serverdata data;
     remote_q2_layout layout;
     frontend_remote_q2_content content;
@@ -124,6 +128,7 @@ struct frontend_remote_q2 {
 bool remote_q2_fail(qa_error *, qa_status, const char *);
 bool remote_q2_live(const frontend_remote_q2 *, qa_error *);
 bool remote_q2_capture_owned(const frontend_remote_q2 *);
+bool remote_q2_retirement_current(const frontend_remote_q2 *, qa_error *);
 bool remote_q2_domain_equal(const frontend_remote_q2_domain *, const frontend_remote_q2_domain *);
 bool remote_q2_config_set(frontend_remote_q2 *, uint16_t, const char *, qa_error *);
 bool remote_q2_media_clear(frontend_remote_q2 *, qa_error *);
@@ -135,6 +140,8 @@ void remote_q2_prediction_receive(frontend_remote_q2 *);
 bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
 const qa_scene_image *remote_q2_picture_read(void *, const char *, qa_error *);
+const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *, const char *, qa_error *);
+bool remote_q2_image_direct(const frontend_remote_q2 *, const char *);
 bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_error *);
 bool remote_q2_download_receive(frontend_remote_q2 *, const qa_q2_server_event *, bool *, qa_error *);
 bool remote_q2_download_path_valid(const char *);
@@ -143,4 +150,7 @@ void remote_q2_download_clear(frontend_remote_q2 *);
 bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
 bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 remote_q2_layout remote_q2_layout_read(qa_net_protocol_id);
+bool remote_q2_layout_adopt(frontend_remote_q2 *, const qa_q2_serverdata *, qa_error *);
+bool remote_q2_float_movement(const frontend_remote_q2 *);
+bool remote_q2_rerelease_presentation(const frontend_remote_q2 *);
 #endif

@@ -53,6 +53,20 @@ static const qa_q2_codec_ops *ops(const qa_q2_codec *c) {
         default: return NULL;
     }
 }
+bool qa_q2_config_layout_read(const qa_q2_codec *c, qa_q2_config_layout *out, qa_error *error) {
+    if (!c || !out || !qa_q2_protocol_version(c->protocol)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 config layout lost its actual codec"); return false;
+    }
+    if (c->protocol.kind == QA_NET_Q2PRO_36 && c->protocol.revision >= 1024 && (c->wire_flags & 8u)) {
+        *out = (qa_q2_config_layout){62,8254,10302,12350,12606,12862,61,60,59,8192,2048,2048,13630,true,8192};
+    } else if (c->protocol.kind == QA_NET_Q2REPRO_1038 || c->protocol.kind == QA_NET_Q2KEX_2023 ||
+        c->protocol.kind == QA_NET_Q2KEX_DEMO_2022) {
+        *out = (qa_q2_config_layout){62,8254,10302,10814,11326,11582,61,60,59,8192,2048,512,12448,true,8192};
+    } else {
+        *out = (qa_q2_config_layout){32,288,544,800,1056,1312,31,30,29,256,256,256,2080,false,1024};
+    }
+    return true;
+}
 bool qa_q2_codec_init(qa_q2_codec *c, qa_net_protocol_id p, qa_error *error) {
     if(!c || !qa_q2_protocol_version(p)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q2 codec identity");

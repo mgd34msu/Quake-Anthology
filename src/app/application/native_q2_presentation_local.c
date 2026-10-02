@@ -55,3 +55,44 @@ bool qa_application_native_q2_presentation_local(qa_application *app,
     if (present) { *out = client; *found = true; }
     return true;
 }
+
+bool qa_application_native_q2_presentation_player(qa_application *app,
+    const qa_application_native_q2_presentation *source,
+    const qa_application_native_q2_client *client,
+    qa_application_native_q2_player_sample *out,qa_error *error)
+{
+    qa_application_native_q2_client actual;
+    bool found;
+    if (!client || !out ||
+        !qa_application_native_q2_presentation_local(app,source,client->seat,&actual,&found,error) ||
+        !found || actual.client_slot!=client->client_slot || !qa_actor_id_equal(actual.actor,client->actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 player sample lost its physical local client");
+    qa_application_native_q2_player_sample value={0};
+    if (source->kind==QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
+        qa_q2_player player;
+        if (!qa_native_host_q2_wire_player((qa_native_host *)source->source.original.host,
+                client->client_slot+1,client->actor,&player,error)) return false;
+        value=(qa_application_native_q2_player_sample){
+            .origin={player.pmove.origin_f[0],player.pmove.origin_f[1],player.pmove.origin_f[2]},
+            .view_angles={player.viewangles[0],player.viewangles[1],player.viewangles[2]},
+            .view_offset={player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]},
+            .gun_offset={player.gunoffset[0],player.gunoffset[1],player.gunoffset[2]},.present=true};
+    } else {
+        qa_q2_wire_view view;
+        if (!qa_q2_wire_view_read(source->source.game,client->actor,&view,error)) return false;
+        if (view.present) {
+            qa_q2_wire_movement movement;
+            if (!qa_q2_wire_movement_read(source->source.game,client->actor,&movement,error)) return false;
+            value=(qa_application_native_q2_player_sample){.origin=qa_movement_origin(&movement.state),
+                .view_angles=view.view.angles,.view_offset=view.view.offset,
+                .gun_offset=view.view.gun_offset,.present=true};
+        }
+    }
+    if (!qa_vec_finite(value.origin) || !qa_vec_finite(value.view_angles) ||
+        !qa_vec_finite(value.view_offset) || !qa_vec_finite(value.gun_offset) ||
+        !qa_application_native_q2_presentation_local(app,source,client->seat,&actual,&found,error) ||
+        !found || actual.client_slot!=client->client_slot || !qa_actor_id_equal(actual.actor,client->actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 player sample changed its Source receipt");
+    *out=value;
+    return true;
+}

@@ -362,7 +362,11 @@ bool qa_input_seat_recipient_read(const qa_input_seat *,qa_console **,qa_cvars *
 /* A recipient change follows completed ALL release, or an empty physical
  * seat. The old console remains installed until publication. */
 bool qa_input_seat_recipient_ready_is(const qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *);
-bool qa_input_seat_recipient_ready(const qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *,qa_error *);
+bool qa_input_seat_recipient_ready(qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *,qa_error *);
+/* A completed transfer retains the former namespace until its physical Source
+ * consumes this exact receipt. Neither operation dispatches release commands. */
+bool qa_input_seat_recipient_retired_is(const qa_input_seat *,const qa_console *,const qa_cvars *,const qa_command_context *);
+bool qa_input_seat_recipient_retired_consume(qa_input_seat *,const qa_console *,const qa_cvars *,const qa_command_context *,qa_error *);
 void qa_input_seat_recipient_publish(qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *);
 qa_input_focus qa_input_seat_focus(const qa_input_seat *);
 bool qa_input_seat_focused(const qa_input_seat *);

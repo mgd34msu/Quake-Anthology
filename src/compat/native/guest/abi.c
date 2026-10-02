@@ -90,6 +90,9 @@ void guest_abi_plan_destroy(guest_abi_plan *plan)
 size_t guest_abi_argument_count(const guest_abi_plan *plan)
 { return plan ? plan->count : 0; }
 
+size_t guest_abi_argument_bytes(const guest_abi_plan *plan)
+{ return plan ? plan->stack_bytes - plan->word : 0; }
+
 /* Classes are empty, integer, SSE. Explicit POD scalar fields require no
  * inferred C++/vector/long-double class. */
 static bool system_classes(const guest_abi_layout *layout, unsigned classes[2])
@@ -558,7 +561,7 @@ bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
         cpu.registers[QA_NATIVE_RSP] = sp + pop; cpu.instruction = instruction;
         effected = true; okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
-    if (!okay && effected) guest->failed = true;
+    if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
     free(data); return okay;
 }
 
@@ -632,7 +635,10 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     }
     qa_native_guest_cpu enclosing;
     if (okay) okay = qa_native_guest_cpu_read(guest, &enclosing, error);
-    bool nested = guest->run != NULL;
+    guest_callback_recovery *recovery=guest->recovery;
+    bool recovery_owner=okay&&recovery&&!recovery->invocation&&!native;
+    if(recovery_owner) recovery->invocation=&enclosing;
+    bool nested = guest->run != NULL || guest->stopped_write_calls != 0;
     guest_host_x86_64_state hardware = {0};
     if (okay && native && nested) okay = guest_host_child_cpu_read(guest->child, &hardware, error);
     uint64_t original_sp = okay ? enclosing.registers[QA_NATIVE_RSP] : 0, sp = 0;
@@ -704,7 +710,14 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
             result->type = QA_NATIVE_BYTES; result->as.bytes.size = layout->bytes;
         } else decode_value(layout, data, result);
     }
-    if (!okay && effected) guest->failed = true;
+    if(!okay&&recovery_owner&&guest_callback_cancelled(guest,error)&&layout->kind==QA_NATIVE_VOID) {
+        okay=qa_native_guest_cpu_write(guest,&enclosing,error);
+        if(okay) {
+            recovery->restored=true; *result=(qa_native_value){.type=QA_NATIVE_VOID};
+            if(error) *error=(qa_error){0};
+        }
+    }
+    if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
     guest_host_x86_64_state_free(&hardware);
     free(arguments); free(data); return okay;
 }

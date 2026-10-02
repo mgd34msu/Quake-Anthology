@@ -38,6 +38,12 @@ bool frontend_equipment_source_scene_actors(const frontend_equipment_source *,
     size_t entity_count, qa_actor_id *out, qa_error *);
 bool frontend_equipment_source_scene_views(const frontend_equipment_source *,
     size_t entity_count, bool *out, qa_error *);
+bool frontend_equipment_source_scene_polygons(const frontend_equipment_source *,
+    size_t polygon_count, qa_actor_id *actors, bool *views, qa_error *);
+bool frontend_equipment_source_scene_lights(const frontend_equipment_source *,
+    size_t light_count, qa_actor_id *actors, bool *views, qa_error *);
+bool frontend_equipment_source_scene_weapons(const frontend_equipment_source *,
+    const qa_application_q3_equipment_source_weapon **rows, size_t *count, qa_error *);
 bool frontend_equipment_source_rebind_ready(const frontend_equipment_source *,
     const qa_frontend *owned, qa_error *);
 void frontend_equipment_source_rebind(frontend_equipment_source *, qa_frontend *destination);

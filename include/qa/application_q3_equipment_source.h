@@ -10,6 +10,11 @@ typedef struct qa_application_q3_equipment_draw {
     bool selected, view_visible;
 } qa_application_q3_equipment_draw;
 
+typedef struct qa_application_q3_equipment_source_weapon {
+    qa_actor_id actor;
+    bool view;
+} qa_application_q3_equipment_source_weapon;
+
 /* The real client frontend lease owns the callback context. Preparation fills
  * this output before host construction; the role retains it through teardown. */
 typedef struct qa_application_q3_equipment_services {
@@ -27,7 +32,12 @@ typedef struct qa_application_q3_equipment_services {
     void (*held_release)(void *, void *token);
     /* Observes refs emitted inside the real declared weapon function while
      * Source proceeds unchanged. View is its actual player-state argument. */
-    bool (*held_source)(void *, qa_actor_id, bool view, const qa_q3_ref_entity *, qa_error *);
+    bool (*held_source)(void *, qa_actor_id, bool view, const qa_q3_ref_entity *,
+        size_t *ordinal, bool *observed, qa_error *);
+    bool (*held_source_cancel)(void *, qa_actor_id, bool view, size_t ordinal, qa_error *);
+    bool (*held_source_poly)(void *, qa_actor_id, bool view, size_t vertices, qa_error *);
+    bool (*held_source_light)(void *, qa_actor_id, bool view, qa_error *);
+    bool (*held_source_completed)(void *, qa_actor_id, bool view, qa_error *);
 } qa_application_q3_equipment_services;
 
 /* Pure requests from the current actual CGAME owner, during RenderScene or

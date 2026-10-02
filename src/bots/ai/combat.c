@@ -3,6 +3,8 @@
 #include "source_player.h"
 #include "source_view.h"
 #include "source_combat_vectors.h"
+#include "source_timers.h"
+#include "source_flags.h"
 #include "source_storage.h"
 #include "qa/bot_movement_source.h"
 
@@ -174,7 +176,7 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
             bot_ai_inventory(s), b->inventory_scratch, &choice, e);
     b->services.arsenal_end(b->services.context, lease);
     if (ok && !s->retired && bot_ai_live(b, s->view.actor)) {
-        if (s->view.weapon != choice) s->weapon_change_time = b->time;
+        if (s->view.weapon != choice) bot_ai_weapon_change_time_set(s,b->time);
         s->view.weapon = choice;
     }
     return ok;
@@ -240,8 +242,8 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
         if(!b->services.entity(b->services.context,actor,&source_enemy,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,actor)) return true;
         s->source_enemy=source_enemy.number;s->source_events.enemy_suicide=false;
-        s->view.enemy = actor; s->enemy_sight_time = b->time-(previous ? 2 : 0);
-        s->enemy_visible_time = b->time; s->enemy_death_time = 0;
+        s->view.enemy = actor; bot_ai_enemy_sight_time_set(s,b->time-(previous ? 2 : 0));
+        bot_ai_enemy_visible_time_set(s,b->time); bot_ai_enemy_death_time_set(s,0);
         bot_ai_enemy_origin_set(s,player.origin);bot_ai_enemy_velocity_set(s,player.velocity);
         *found = true;
         return true;
@@ -321,18 +323,18 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     float distance=qa_vec_length(toward);
     qa_vec3 forward=qa_vec_normalize(toward),backward=qa_vec_scale(forward,-1);
     uint32_t type=QA_BOT_DIRECTION_WALK;
-    if (s->attack_crouch_time < b->time-1) {
+    if (bot_ai_attack_crouch_time(s) < b->time-1) {
         float random;if(!bot_ai_random(b,&random,e)) return false;
         if (random<jumper) type=QA_BOT_DIRECTION_JUMP;
         else {
             if(!bot_ai_random(b,&random,e)) return false;
-            if(random<croucher) s->attack_crouch_time=b->time+croucher*5;
+            if(random<croucher) bot_ai_attack_crouch_time_set(s,b->time+croucher*5);
         }
     }
-    if (s->attack_crouch_time>b->time) type=QA_BOT_DIRECTION_CROUCH;
+    if (bot_ai_attack_crouch_time(s)>b->time) type=QA_BOT_DIRECTION_CROUCH;
     if (type==QA_BOT_DIRECTION_JUMP) {
-        if (s->attack_jump_time>b->time) type=QA_BOT_DIRECTION_WALK;
-        else s->attack_jump_time=b->time+1;
+        if (bot_ai_attack_jump_time(s)>b->time) type=QA_BOT_DIRECTION_WALK;
+        else bot_ai_attack_jump_time_set(s,b->time+1);
     }
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if (!arsenal(b,s,&weapons,&count,&lease,e)) return false;
@@ -346,28 +348,28 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(distance<desired-range) return qa_bot_moves_direction(moves,s->movement,backward,400,type,&moved,e);
         return true;
     }
-    s->attack_strafe_time+=s->view.think_time;
+    bot_ai_attack_strafe_time_set(s,bot_ai_attack_strafe_time(s)+s->view.think_time);
     float change=.4f+(1-skill)*.2f;
     float random;
     if(skill>.7f) {
         if(!bot_ai_random(b,&random,e)) return false;
         change+=(random*2-1)*.2f;
     }
-    if(s->attack_strafe_time>change) {
+    if(bot_ai_attack_strafe_time(s)>change) {
         if(!bot_ai_random(b,&random,e)) return false;
-        if(random>.935f) {s->strafe_right=!s->strafe_right;s->attack_strafe_time=0;}
+        if(random>.935f) {bot_ai_flag_toggle(s,BOT_AI_STRAFE_RIGHT);bot_ai_attack_strafe_time_set(s,0);}
     }
     for(unsigned attempt=0;attempt<2;++attempt) {
         qa_vec3 horizontal=qa_vec_normalize(qa_v3(forward.x,forward.y,0));
         qa_vec3 side=qa_vec_cross(horizontal,qa_v3(0,0,1));
-        if(s->strafe_right) side=qa_vec_scale(side,-1);
+        if(bot_ai_flag(s,BOT_AI_STRAFE_RIGHT)) side=qa_vec_scale(side,-1);
         if(!bot_ai_random(b,&random,e)) return false;
         if(random>.9f) side=qa_vec_add(side,backward);
         else if(distance>desired+range) side=qa_vec_add(side,forward);
         else if(distance<desired-range) side=qa_vec_add(side,backward);
         if(!qa_bot_moves_direction(moves,s->movement,side,400,type,&moved,e)) return false;
         if(moved) break;
-        s->strafe_right=!s->strafe_right;s->attack_strafe_time=0;
+        bot_ai_flag_toggle(s,BOT_AI_STRAFE_RIGHT);bot_ai_attack_strafe_time_set(s,0);
     }
     return true;
 }
@@ -400,7 +402,7 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
        !bot_ai_character_float(b,s,tactics.skill_characteristic<0?BOT_C_AIM_SKILL:(uint32_t)tactics.skill_characteristic,0,1,&skill,e) ||
        !bot_ai_character_float(b,s,BOT_C_REACTION,0,5,&reaction,e) ||
        !bot_ai_character_float(b,s,BOT_C_FIRE_THROTTLE,0,1,&throttle,e)) return false;
-    if(skill>.95f && s->enemy_sight_time>b->time-reaction*.5f) return true;
+    if(skill>.95f && bot_ai_enemy_sight_time(s)>b->time-reaction*.5f) return true;
     float random;
     if(target.invisible) {
         if(!bot_ai_random(b,&random,e)) return false;
@@ -466,17 +468,17 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(!bot_ai_random(b,&random,e)) return false;
     ideal.y=qa_builtin_angle_mod(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
     bot_ai_view_ideal_set(s,ideal);
-    if(b->controls.challenge && accuracy>.9f && s->enemy_sight_time<b->time-1) {
+    if(b->controls.challenge && accuracy>.9f && bot_ai_enemy_sight_time(s)<b->time-1) {
         bot_ai_view_prepare(s);
         bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
         if(!qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e)) return false;
     }
-    if(s->enemy_sight_time>b->time-reaction || s->teleport_time>b->time-reaction ||
-       s->weapon_change_time>b->time-.1f || s->fire_wait_time>b->time) return true;
-    if(s->fire_until<b->time) {
+    if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction ||
+       bot_ai_weapon_change_time(s)>b->time-.1f || bot_ai_fire_wait_time(s)>b->time) return true;
+    if(bot_ai_fire_shoot_time(s)<b->time) {
         if(!bot_ai_random(b,&random,e)) return false;
-        if(random>throttle) {s->fire_wait_time=b->time+throttle;s->fire_until=0;}
-        else {s->fire_until=b->time+1-throttle;s->fire_wait_time=0;}
+        if(random>throttle) {bot_ai_fire_wait_time_set(s,b->time+throttle);bot_ai_fire_shoot_time_set(s,0);}
+        else {bot_ai_fire_shoot_time_set(s,b->time+1-throttle);bot_ai_fire_wait_time_set(s,0);}
     }
     qa_vec3 to_enemy=qa_vec_sub(target.origin,s->player.origin);
     if(tactics.ranged_limit && qa_vec_dot(to_enemy,to_enemy)>tactics.maximum_range*tactics.maximum_range) return true;
@@ -501,8 +503,8 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     } else if(!hit.actor.registry && hit.fraction<1 && (selected.projectile.damage_type&BOT_RADIAL) &&
               hit.fraction*1000<selected.projectile.radius &&
               (selected.selected_projectile_damage-.5f*hit.fraction*1000)*.5f>0) return true;
-    bool fire=!(selected.weapon.flags&BOT_FIRE_RELEASED)||s->attacked;
-    s->attacked=!s->attacked;
+    bool fire=!(selected.weapon.flags&BOT_FIRE_RELEASED)||bot_ai_flag(s,BOT_AI_ATTACKED);
     if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
-    return !fire || qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e);
+    if(fire && !qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e)) return false;
+    bot_ai_flag_toggle(s,BOT_AI_ATTACKED);return true;
 }

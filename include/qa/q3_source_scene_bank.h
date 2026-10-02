@@ -34,6 +34,9 @@ bool qa_q3_source_scene_bank_create(uint32_t max_polygons, uint32_t max_vertices
 void qa_q3_source_scene_bank_destroy(qa_q3_source_scene_bank *);
 /* Rollover resets membership; retained physical cells survive until overwrite. */
 void qa_q3_source_scene_bank_frame(qa_q3_source_scene_bank *);
+/* ClearScene preserves this cycle; physical frame rollover invalidates ranges.
+ * Exhausted cycles remain unavailable rather than aliasing an earlier frame. */
+bool qa_q3_source_scene_bank_cycle(const qa_q3_source_scene_bank *, uint64_t *);
 void qa_q3_source_scene_bank_clear(qa_q3_source_scene_bank *);
 bool qa_q3_source_scene_bank_membership(const qa_q3_source_scene_bank *,
     qa_q3_source_scene_membership *);

@@ -4,6 +4,7 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/application_client_prepare.h"
 #include <stdlib.h>
+#include <string.h>
 
 struct qa_application_engine_shutdown {
     qa_application *application;
@@ -164,7 +165,20 @@ bool qa_application_engine_shutdown_retiring(const qa_application *app,
     const qa_console *console, const qa_command_context *command)
 {
     const qa_application_engine_shutdown *loan = app ? app->engine_shutdown : NULL;
-    return retained(loan) && console == loan->console && command && !command->owner &&
+    if (!retained(loan) || !command) return false;
+    if (loan->client && app->client_preparation==loan->client &&
+        qa_application_client_prepare_entered(loan->client,QA_CLIENT_PREPARE_CLEANUP)) {
+        const qa_application_client_source *source=qa_application_client_prepare_source(loan->client);
+        const qa_command_context *held=source?&source->context.command:NULL;
+        if (source && console==source->context.console && qa_application_client_associated(app,source) &&
+            command->origin==QA_COMMAND_SEAT && command->script && !strcmp(command->script,"key-binding") &&
+            !command->direct && !command->console_text &&
+            command->session==held->session && command->owner==held->owner && command->client==held->client &&
+            command->seat==held->seat && command->dialect==held->dialect &&
+            command->registry==held->registry && command->generation==held->generation &&
+            qa_actor_id_equal(command->actor,held->actor)) return true;
+    }
+    return console == loan->console && !command->owner &&
         loan->registry && command->registry == loan->registry && command->generation &&
         command->generation <= loan->generation;
 }

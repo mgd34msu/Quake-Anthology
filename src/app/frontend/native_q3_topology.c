@@ -215,7 +215,7 @@ void frontend_native_q3_topology_destroy(frontend_native_q3_topology *topology)
 bool frontend_native_q3_topology_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
 {
     if(!f || !f->application || !f->capture || f->source_restoring || f->stepping || f->preparing || f->round ||
-        !frontend_seat_callbacks_idle(f) || !out || out->data || out->size)
+        !frontend_seat_callbacks_checkpoint_ready(f,error) || !out || out->data || out->size)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native topology needs its real capture leases");
     frontend_native_q3_topology *topology=calloc(1,sizeof(*topology));
     if(!topology) return frontend_fail(error,QA_ERROR_MEMORY,"Collecting native source topology");

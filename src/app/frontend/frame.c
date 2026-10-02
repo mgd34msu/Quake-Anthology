@@ -100,6 +100,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     double wall_duration=(double)wall_elapsed_ns/1000000.0;
     if (wall_duration<=0) return true;
     bool remote=frontend_network_remote(frontend);
+    bool client_only=frontend_network_client_only(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
         bool unified_owned=false,sample_needed=false;
@@ -130,6 +131,8 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             continue;
         }
         bool q2_owned=false,q1_owned=false;
+        bool q2_input_retained=frontend_network_q2_input_owned(frontend,i);
+        bool q1_input_retained=frontend_network_q1_input_owned(frontend,i);
         for (size_t row=0;row<frontend_remote_q1_count(frontend);++row) {
             frontend_remote_q1_view view;
             if (!frontend_remote_q1_metadata_read(frontend_remote_q1_at(frontend,row),&view,error)) return false;
@@ -146,6 +149,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 q2_owned=true;
             }
         }
+        if ((q2_input_retained && !q2_owned) || (q1_input_retained && !q1_owned)) continue;
         if (q1_owned && q2_owned)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Two remote protocols own the same physical input");
         if (q1_owned || q2_owned) {
@@ -174,6 +178,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             seat->sequence=sequence;
             continue;
         }
+        if (client_only && !remote) continue;
         qa_actor_id actor; uint32_t launch_seat;
         if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
             !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
@@ -426,10 +431,11 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         !frontend_source_publish_music(frontend,error) ||
         !frontend_view_bindings_finish_restore(frontend,error) ||
         !frontend_startup_replay(frontend,error)) return false;
+    bool client_only=frontend_network_client_only(frontend);
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
         pending.target.kind==QA_TRAVEL_MAP;
-    if (!qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
+    if (!client_only && !qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
         !retiring_map && !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
         qa_application_world(frontend->application)) {
         frontend->preparing = true;
@@ -437,7 +443,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         frontend->preparing = false;
         if (!prepared) return false;
     }
-    if (!frontend->options.dedicated && !frontend_network_remote(frontend) &&
+    if (!frontend->options.dedicated && !client_only &&
         !qa_application_should_stop(frontend->application) && !retiring_map &&
         !qa_application_startup_pending(frontend->application) && !selected_bindings(frontend,error)) return false;
     frontend->stepping = true;
@@ -484,10 +490,16 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     const qa_cvars *time_owner;
     if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,error) &&
         frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
-    bool paused=!frontend_network_remote(frontend) && qa_application_q1_paused(frontend->application);
+    bool paused=!client_only && qa_application_q1_paused(frontend->application);
     if (ok && !paused && adjusted>UINT64_MAX-frontend->time_ns)
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
     if (ok) { elapsed_ns=adjusted; if (!paused) frontend->time_ns+=elapsed_ns; }
+    if (ok && frontend->recipient_begin_generation==UINT64_MAX)
+        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
+    if (ok) {
+        ++frontend->recipient_begin_generation;
+        ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
+    }
     if (ok) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
     if (ok) ok=frontend_network_client_frame(frontend,error);
     retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
@@ -498,10 +510,13 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             if (ok) ok = phase_end(profiler, controls(frontend,elapsed_ns,raw_elapsed,error), error);
         }
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
-            qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
-            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, error) &&
-                qa_profiler_push(profiler, "application", error);
-            if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
+            (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
+            bool source_ready=false;
+            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
+            if (ok && source_ready && !client_only) {
+                ok=qa_profiler_push(profiler, "application", error);
+                if (ok) ok=phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
+            }
         }
         if (ok) ok = frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
             frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&

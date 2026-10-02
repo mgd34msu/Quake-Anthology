@@ -50,7 +50,9 @@ static bool predicates(application_q3_mod_items_profile *p,const qa_json_documen
 }
 bool q3items_stage_parse(application_q3_mod_items_profile *p,const qa_json_document *d,qa_json_id root,qa_strings *strings,qa_error *e)
 {
-    item_stage *s=calloc(1,sizeof(*s));if(!s)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original weapon stage");p->stage=s;
+    item_stage *s=calloc(1,sizeof(*s));
+    if(!s)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original weapon stage");
+    p->stage=s;
     qa_json_id input=qa_json_get(d,root,"input"),stage=qa_json_get(d,root,"stage"),dispatch=qa_json_get(d,stage,"dispatcher"),
         selection=qa_json_get(d,stage,"selection"),request=qa_json_get(d,stage,"request"),continuation=qa_json_get(d,stage,"continuation"),projection=qa_json_get(d,continuation,"projection");
     if(!entry(p,d,qa_json_get(d,input,"entry"),&s->input_entry,e)||!q3items_field_parse(p,d,qa_json_get(d,input,"clock"),&s->clock,false,false,e)||
@@ -70,6 +72,9 @@ bool q3items_stage_parse(application_q3_mod_items_profile *p,const qa_json_docum
         !tests(p,d,qa_json_get(d,continuation,"when"),&s->when,&s->when_count,e)||
         !predicates(p,d,qa_json_get(d,continuation,"predicates"),s->continue_entry,&s->continue_predicates,&s->continue_predicate_count,e)||
         !u32(d,qa_json_get(d,continuation,"instruction"),&s->continue_branch,e)||!qa_json_bool(d,qa_json_get(d,continuation,"originalTaken"),&s->original_taken,e))return false;
+    uint32_t entries[]={s->input_entry,s->dispatch_entry,s->request_entry,s->continue_entry};
+    for(size_t i=0;i<4;++i)for(size_t j=0;j<i;++j)if(entries[i]==entries[j])
+        return q3mod_fail(e,QA_ERROR_FORMAT,"Weapon stage repeats an original invocation binding");
     size_t matched=0;for(size_t i=0;i<p->source->input_count;++i)for(size_t j=0;j<p->source->inputs[i].call_count;++j)
         if(p->source->inputs[i].calls[j].entry==s->input_entry){if(!p->source->inputs[i].slice||p->source->inputs[i].before)return false;++matched;}
     if(matched!=1)return q3mod_fail(e,QA_ERROR_FORMAT,"Weapon input requires exactly one movement-slice after callback");
@@ -78,7 +83,9 @@ bool q3items_stage_parse(application_q3_mod_items_profile *p,const qa_json_docum
         code[s->continue_branch].opcode>QA_QVM_GEF||code[s->continue_branch].operand_width!=4)return false;
     for(size_t i=0;i<s->continue_predicate_count;++i)if(s->continue_predicates[i].instruction==s->continue_branch)return false;
     uint32_t pc=s->original_taken?s->continue_branch+1:(uint32_t)code[s->continue_branch].operand;
-    bool *seen=calloc(n,sizeof(*seen));if(!seen)return false;bool returned=false;
+    bool *seen=calloc(n,sizeof(*seen));
+    if(!seen)return q3mod_fail(e,QA_ERROR_MEMORY,"Qualifying the original weapon return edge");
+    bool returned=false;
     while(pc>s->continue_entry&&pc<end&&!seen[pc]){seen[pc]=true;
         if(code[pc].opcode==QA_QVM_LEAVE){returned=true;break;}
         if(code[pc].opcode==QA_QVM_PUSH){++pc;continue;}
@@ -91,7 +98,8 @@ bool q3items_stage_parse(application_q3_mod_items_profile *p,const qa_json_docum
         if(!i32(d,qa_json_get(d,at,"value"),&s->values[i].value,e)||s->values[i].value<1||!qa_json_string(d,qa_json_get(d,at,"item"),&item,e))return false;
         bool ok=!memchr(item.data,0,item.size)&&qa_strings_intern(strings,(qa_bytes){item.data,item.size},&s->values[i].item,e);qa_buffer_free(&item);
         bool declared=false;for(size_t j=0;j<p->definition_count;++j)declared|=p->definitions[j].admission.definition.weapon&&p->definitions[j].admission.definition.item==s->values[i].item;
-        if(!ok||!declared)return false;for(size_t j=0;j<i;++j)if(s->values[j].item==s->values[i].item||s->values[j].value==s->values[i].value)return false;
+        if(!ok||!declared)return false;
+        for(size_t j=0;j<i;++j)if(s->values[j].item==s->values[i].item||s->values[j].value==s->values[i].value)return false;
     }
     qa_json_id calls=qa_json_get(d,continuation,"calls");if(!array(d,calls,sizeof(*s->calls),(void **)&s->calls,&s->call_count,e))return false;
     uint32_t previous=s->continue_branch;bool dispatcher=false;

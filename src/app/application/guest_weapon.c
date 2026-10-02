@@ -62,13 +62,18 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     qa_q3_player player;
     if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
     if (player.weapon == 0) { *out = 0; return true; }
-    if (provider->kind == APPLICATION_PROVIDER_QVM) {
+    if (provider->kind == APPLICATION_PROVIDER_QVM ||
+        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
         const application_q3_catalog_weapon *weapons; size_t count;
-        if (!engine->game->catalog ||
-            !application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error))
-            return false;
+        if (!engine->game->catalog || !application_q3_catalog_role_current(engine->game->catalog, engine->game))
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Original GAME has no current declared Source weapon catalog");
+        if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error)) return false;
         for (size_t i = 0; i < count; ++i)
-            if (weapons[i].weapon == player.weapon) { *out = weapons[i].item; return true; }
+            if (weapons[i].weapon == player.weapon) {
+                if (!application_q3_catalog_role_current(engine->game->catalog, engine->game))
+                    return application_fail(error, QA_ERROR_ARGUMENT, "Source selected weapon replaced its real catalog");
+                *out = weapons[i].item; return true;
+            }
         return application_fail(error, QA_ERROR_FORMAT,
             "Original GAME selected a weapon outside its retained catalog");
     }

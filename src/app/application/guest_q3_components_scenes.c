@@ -239,6 +239,39 @@ bool qa_application_q3_component_draw_current(const qa_application *app,const qa
     }
     return false;
 }
+static component_scene_row *hud_row(const qa_application *app,uint64_t identity,uint32_t seat,
+    qa_actor_id viewer,uint64_t sequence,qa_error *e)
+{
+    application_q3_components *owner=app?app->components:NULL;
+    if(!owner||owner->closing||!identity||!viewer.registry)
+        { application_fail(e,QA_ERROR_ARGUMENT,"Component HUD has no actual installed viewer roster"); return NULL; }
+    for(size_t i=0;i<owner->count;++i) {
+        component_game_row *game=owner->rows[i];
+        for(component_scene_row *row=game->scenes;row;row=row->next) {
+            if(row->frontend_identity!=identity) continue;
+            if(row->seat!=seat||!qa_actor_id_equal(row->viewer,viewer)||!game->attached||!game->initialized||
+                !q3components_current(game)||!row->initialized||!row->advanced||row->sequence!=sequence||
+                !row->scene||!row->profile||!row->frontend.idle(row->frontend.owner))
+                { application_fail(e,QA_ERROR_ARGUMENT,"Component HUD lost its actual completed scene and viewer"); return NULL; }
+            return row;
+        }
+    }
+    application_fail(e,QA_ERROR_NOT_FOUND,"Component HUD identity has no actual admitted scene"); return NULL;
+}
+bool qa_application_q3_component_scene_hud(qa_application *app,uint64_t identity,uint32_t seat,
+    qa_actor_id viewer,uint64_t sequence,qa_error *e)
+{
+    component_scene_row *row=hud_row(app,identity,seat,viewer,sequence,e);
+    return row&&(!row->profile->has_hud||application_q3_scene_hud(row->scene,sequence,e));
+}
+bool qa_application_q3_component_scene_hud_read(const qa_application *app,uint64_t identity,uint32_t seat,
+    qa_actor_id viewer,uint64_t sequence,bool *replace_status,qa_error *e)
+{
+    if(!replace_status) return application_fail(e,QA_ERROR_ARGUMENT,"Component HUD policy requires its output");
+    component_scene_row *row=hud_row(app,identity,seat,viewer,sequence,e);
+    if(!row) return false;
+    *replace_status=row->profile->has_hud&&row->profile->replace_status; return true;
+}
 bool qa_application_q3_component_scene_association_read(const qa_application *app,uint64_t identity,
     qa_application_q3_component_scene_association *out)
 {
@@ -250,7 +283,7 @@ bool qa_application_q3_component_scene_association_read(const qa_application *ap
                 if(row->frontend_identity!=identity||!row->frontend.owner||!row->assets) continue;
                 *out=(qa_application_q3_component_scene_association){.owner=game->publication.owner,
                     .service_owner=row->services,.generation=game->publication.generation,.frontend_identity=identity,
-                    .physical_seat=row->seat,.viewer=row->viewer,.descriptor=game->publication.descriptor,
+                    .physical_seat=row->seat,.time_ms=row->view.time_ms,.viewer=row->viewer,.descriptor=game->publication.descriptor,
                     .frontend_owner=row->frontend.owner,.scene=row->scene,.assets=row->assets};
                 return true;
             }

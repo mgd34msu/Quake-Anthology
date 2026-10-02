@@ -11,7 +11,7 @@ static void texel(const qa_scene_image *image,
     out[0] = image->border.x;
     out[1] = image->border.y;
     out[2] = image->border.z;
-    out[3] = image->kind == QA_SCENE_RGBA8 ? image->border.w : 1;
+    out[3] = qa_render_source_texture_alpha(image) ? image->border.w : 1;
     return;
   }
   size_t index = (size_t)y * level->width + (size_t)x;
@@ -24,7 +24,7 @@ static void texel(const qa_scene_image *image,
     } else {
       for (size_t c = 0; c < 3; ++c)
         out[c] = target->color[index * 4 + c] / 255.0;
-      out[3] = image->kind == QA_SCENE_RGBA8
+      out[3] = qa_render_source_texture_alpha(image)
                    ? target->color[index * 4 + 3] / 255.0
                    : 1;
     }
@@ -37,8 +37,9 @@ static void texel(const qa_scene_image *image,
   } else {
     const uint8_t *pixel = (const uint8_t *)level->pixels + index * 4;
     for (size_t c = 0; c < 3; ++c)
-      out[c] = pixel[c] / 255.0;
-    out[3] = image->kind == QA_SCENE_RGBA8 ? pixel[3] / 255.0 : 1;
+      out[c] = image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[c]) : pixel[c] / 255.0;
+    out[3] = qa_render_source_texture_alpha(image) ?
+        (image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[3]) : pixel[3] / 255.0) : 1;
   }
 }
 static void sample_level(const qa_cpu_renderer *renderer,
@@ -85,6 +86,11 @@ void cpu_sample_texture(const qa_cpu_renderer *renderer,
                 filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
   bool mipmap =
       filter != QA_SCENE_NEAREST && filter != QA_SCENE_LINEAR;
+  bool magnification_linear=image->source_q3?
+      qa_cpu_source_image_magnification_linear(&renderer->controls,image):linear;
+  double magnification_limit=magnification_linear &&
+      (filter==QA_SCENE_NEAREST_MIPMAP_NEAREST || filter==QA_SCENE_NEAREST_MIPMAP_LINEAR)?
+      1.4142135623730951:1;
   size_t count = 1;
   if (mipmap) {
     uint32_t width = image->levels[0].width, height = image->levels[0].height;
@@ -96,8 +102,10 @@ void cpu_sample_texture(const qa_cpu_renderer *renderer,
         return;
     }
   }
-  if (!(rho > 1) || !mipmap || count == 1) {
-    sample_level(renderer, image, 0, u, v, linear, out);
+  if (!(rho > magnification_limit) || !mipmap || count == 1) {
+    bool magnification=!(rho>magnification_limit);
+    bool sample_linear=magnification?magnification_linear:linear;
+    sample_level(renderer, image, 0, u, v, sample_linear, out);
     return;
   }
   double lod = fmin((double)(count - 1), log2(rho));

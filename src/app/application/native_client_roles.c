@@ -142,6 +142,14 @@ static bool connection_current(struct application_native_client_role *r, const q
     bool current = r->options.owner.connection_current(r->options.owner.context, s);
     --r->calls; return current;
 }
+static bool retirement_current(struct application_native_client_role *r,const qa_application_client_source *s)
+{
+    if(!s->client.owner||!s->client.generation||!s->network_seat.owner||!s->connection_epoch||
+        !r->options.owner.retirement_current||r->calls==UINT_MAX) return false;
+    ++r->calls;
+    bool held=r->options.owner.retirement_current(r->options.owner.context,s);
+    --r->calls; return held;
+}
 static bool create(qa_application *app, const qa_application_client_options *o,
     const qa_application_client_state *saved, qa_application_client_source *out, qa_error *error)
 {
@@ -227,7 +235,7 @@ static bool create(qa_application *app, const qa_application_client_options *o,
         r->source.client = saved->client; r->source.network_seat = saved->network_seat;
         r->source.connection_epoch = saved->connection_epoch; r->entity_generation = saved->entity_generation;
     }
-    if (!connection_current(r, &r->source)) {
+    if (!connection_current(r, &r->source) && !(saved && retirement_current(r, &r->source))) {
         qa_launch_instance_lease_release(r->metadata); free(r->actors); free(r);
         return application_fail(error, QA_ERROR_ARGUMENT, "Saved CLIENT connection lost its genuine imported owner");
     }
@@ -267,6 +275,11 @@ bool qa_application_client_current(qa_application *app, const qa_application_cli
 {
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
     return r && source_equal(source, &r->source) && physical_current(r) && connection_current(r, source);
+}
+bool qa_application_client_retirement_current(qa_application *app,const qa_application_client_source *source)
+{
+    struct application_native_client_role *r=source?row_read(provider_read(app,source->context.receiver),source->context.seat):NULL;
+    return r&&source_equal(source,&r->source)&&physical_current(r)&&retirement_current(r,source);
 }
 bool application_native_client_source_associated(const qa_application *app,const qa_application_client_source *source)
 {
@@ -452,17 +465,32 @@ static bool row_idle(const struct application_native_client_role *r)
     return r && !r->calls && !r->entity_mutating && qa_console_idle(r->source.context.console) &&
         qa_cvars_observer_idle(r->source.context.cvars) && r->options.owner.idle(r->options.owner.context);
 }
+bool qa_application_client_epoch_adopt(qa_application *app,const qa_application_client_source *retained,
+    uint64_t epoch,qa_application_client_source *out,qa_error *error)
+{
+    struct application_native_client_role *r=retained?row_read(provider_read(app,retained->context.receiver),retained->context.seat):NULL;
+    if(!r||!out||!epoch||!r->source.client.owner||!r->source.client.generation||
+        !r->source.network_seat.owner||r->retiring||!source_equal(retained,&r->source)||
+        !row_idle(r)||qa_application_client_prepare_holds(app,retained)||!physical_current(r))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT epoch adoption requires its actual returned physical namespace");
+    qa_application_client_source next=r->source;
+    next.connection_epoch=epoch;
+    if(!connection_current(r,&next)||!physical_current(r))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT epoch adoption lost its genuine restarted transport receipt");
+    r->source=next; *out=next; return true;
+}
 bool qa_application_client_idle(qa_application *app, const qa_application_client_source *source)
 {
     const struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
     return r && source_equal(source, &r->source) && row_idle(r);
 }
-bool qa_application_client_capture(qa_application *app, const qa_application_client_source *source,
-    qa_application_client_state *out, qa_error *error)
+static bool client_capture(qa_application *app, const qa_application_client_source *source,
+    qa_application_client_state *out, bool retired, qa_error *error)
 {
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
     if (!r || !out || out->actors || app->client_preparation ||
-        !source_equal(source, &r->source) || r->retiring || !row_idle(r))
+        !source_equal(source, &r->source) || r->retiring || !row_idle(r) ||
+        !(retired?qa_application_client_retirement_current(app,source):qa_application_client_current(app,source)))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT capture requires its returned physical namespace");
     qa_application_client_state state = {.descriptor_identity = source->descriptor->identity,
         .receiver = source->context.receiver, .entity_owner = source->context.entity_owner,
@@ -480,6 +508,12 @@ bool qa_application_client_capture(qa_application *app, const qa_application_cli
     }
     *out = state; return true;
 }
+bool qa_application_client_capture(qa_application *app,const qa_application_client_source *source,
+    qa_application_client_state *out,qa_error *error)
+{ return client_capture(app,source,out,false,error); }
+bool qa_application_client_capture_retired(qa_application *app,const qa_application_client_source *source,
+    qa_application_client_state *out,qa_error *error)
+{ return client_capture(app,source,out,true,error); }
 void qa_application_client_state_free(qa_application_client_state *state)
 { if (state) { free(state->actors); *state = (qa_application_client_state){0}; } }
 static bool retire(struct application_native_client_role *r, qa_error *error)

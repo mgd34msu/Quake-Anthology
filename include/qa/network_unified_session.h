@@ -70,7 +70,38 @@ bool qa_unified_session_find(qa_network_runtime *, qa_net_client_id,
 /* Held decoded documents stay owned until actual preparation and publication
  * finish. Process only outside runtime pumping and callbacks. */
 bool qa_unified_session_process(qa_unified_session *, bool *waiting, qa_error *);
+/* Queues only replies from already completed Source controls before replacing
+ * their epoch. Unfinished controls remain held; retiring peers need no offer.
+ * ready is false while the reliable queue lacks space for the retained batch. */
+bool qa_unified_session_restart_prepare(qa_unified_session *, bool *ready,
+    bool *retiring, qa_error *);
+bool qa_unified_session_offer_ready(const qa_unified_session *, const qa_unified_document *,
+    bool *ready, qa_error *);
+/* Checks a real immutable outgoing control without consuming its reliable
+ * sequence. Queue pressure or allocation failure leaves ready false. */
+bool qa_unified_session_control_ready(const qa_unified_session *, const qa_unified_document *,
+    bool *ready, qa_error *);
+/* Admission runs inside the actual generic restart callback. It joins the
+ * canonical table's seat storage to the true pending offer and its digest;
+ * CLIENT offers must be the exact unfinished receive head being committed. */
+bool qa_unified_session_restart_admit(const qa_unified_session *, const qa_network_runtime *,
+    const qa_net_connect *, const qa_unified_document *actual_offer, qa_error *);
+/* A local timeout/close may retire the exact unfinished CLIENT offer after
+ * its Source published a newer recipe but before the lower epoch committed.
+ * This proof is available only inside that actual disconnect callback. */
+bool qa_unified_session_client_disconnect_pending(const qa_unified_session *, qa_network_runtime *,
+    qa_net_client_id, uint32_t callback_epoch, const qa_unified_document *disconnect,
+    const qa_unified_document *actual_offer, qa_error *);
 bool qa_unified_session_control(qa_unified_session *, const qa_unified_document *, qa_error *);
+/* Native compiled Source commands preserve their received activation and
+ * lexical tokens; the server resolves that actual provider instance. */
+typedef struct qa_unified_source_command {
+    const char *instance;
+    uint64_t publication, map_revision;
+    const char *const *arguments;
+    size_t argument_count;
+} qa_unified_source_command;
+bool qa_unified_session_source_command(qa_unified_session *, const qa_unified_source_command *, qa_error *);
 bool qa_unified_session_frame(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_input(qa_unified_session *, const qa_unified_input *, qa_error *);
 /* Retains a real local close request, including from the actual Source
@@ -80,6 +111,10 @@ bool qa_unified_session_close(qa_unified_session *, const char *reason, qa_error
 bool qa_unified_session_flush(qa_unified_session *, uint64_t now_ns, qa_error *);
 bool qa_unified_session_idle(const qa_unified_session *);
 bool qa_unified_session_disconnected(const qa_unified_session *);
+bool qa_unified_session_retiring(const qa_unified_session *);
+/* True only after real admission/first-frame phase commit on the published
+ * physical transport. A Source-finished but unqueued reply is not active. */
+bool qa_unified_session_active(const qa_unified_session *);
 uint32_t qa_unified_session_epoch(const qa_unified_session *);
 int64_t qa_unified_session_acknowledged(const qa_unified_session *);
 

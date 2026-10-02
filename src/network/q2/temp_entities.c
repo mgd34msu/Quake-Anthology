@@ -115,6 +115,7 @@ bool qa_q2_temp_entity_read(qa_q2_codec *c, qa_net_reader *r, bool extended, qa_
     t.field_count = s->count;
     for (size_t i = 0; i < t.field_count; ++i) {
         qa_q2_temp_field *f = &t.fields[i];
+        f->offset = r->bit / 8 - start;
         f->name = s->fields[i];
         f->kind = f->name >= QA_Q2_TEMP_POSITION1 ? QA_Q2_TEMP_VECTOR : QA_Q2_TEMP_INTEGER;
         if (f->kind == QA_Q2_TEMP_VECTOR) {

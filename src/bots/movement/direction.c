@@ -2,11 +2,11 @@
 
 static bool direction(bot_travel *t, const qa_bot_vector_source *direction, float speed, uint32_t type, bool *moved,
                       qa_error *e) {
-    qa_bot_move_input *s = &t->state->input;
+    bot_move_record *s = t->state;
     uint32_t caps = t->graph->profile.capabilities;
     *moved = false;
     bool swimming;
-    if (!qa_bot_navigation_swimming(t->navigation, s->origin, &swimming, e))
+    if (!qa_bot_navigation_swimming(t->navigation, bot_move_vector(s,BM_ORIGIN), &swimming, e))
         return false;
     if (swimming) {
         if (!(caps & QA_NAV_CAPABILITY(QA_NAV_SWIM)))
@@ -22,8 +22,8 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
     if (!bot_on_ground(t, &grounded, e))
         return false;
     if (grounded)
-        s->flags |= QA_BOT_MOVE_ON_GROUND;
-    if (s->flags & QA_BOT_MOVE_ON_GROUND) {
+        bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) | (QA_BOT_MOVE_ON_GROUND));
+    if (bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_ON_GROUND) {
         bool barrier;
         if (!bot_barrier_jump_from(t, direction, speed, &barrier, e))
             return false;
@@ -31,7 +31,7 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
             *moved = true;
             return true;
         }
-        s->flags &= ~(uint32_t)QA_BOT_MOVE_BARRIER_JUMP;
+        bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) & (~(uint32_t)QA_BOT_MOVE_BARRIER_JUMP));
         uint32_t presence =
             (type & QA_BOT_DIRECTION_CROUCH) && !(type & QA_BOT_DIRECTION_JUMP) ? 4 : 2;
         qa_vec3 horizontal = {0};
@@ -40,7 +40,7 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
         horizontal = qa_vec_normalize(horizontal);
         float gap;
         if (!(type & QA_BOT_DIRECTION_JUMP)) {
-            if (!bot_gap_distance(t, s->origin, horizontal, &gap, e))
+            if (!bot_gap_distance_state(t, horizontal, &gap, e))
                 return false;
             if (gap > 0)
                 type |= QA_BOT_DIRECTION_JUMP;
@@ -50,8 +50,8 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
         if ((jumping && !(caps & QA_NAV_CAPABILITY(QA_NAV_JUMP))) ||
             (crouching && !(caps & QA_NAV_CAPABILITY(QA_NAV_CROUCH))))
             return true;
-        qa_nav_prediction_query q = {.origin = s->origin,
-                                     .velocity = s->velocity,
+        qa_nav_prediction_query q = {.origin = bot_move_vector(s,BM_ORIGIN),
+                                     .velocity = bot_move_vector(s,BM_VELOCITY),
                                      .presence = presence,
                                      .on_ground = true,
                                      .command_move = qa_vec_scale(horizontal, speed),
@@ -79,8 +79,8 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
             if (gap > 0)
                 return true;
         }
-        if (qa_vec_length(bot_horizontal(s->origin, prediction->end)) <
-            (speed * s->think_time) * .5f)
+        if (qa_vec_length(bot_horizontal(bot_move_vector(s,BM_ORIGIN), prediction->end)) <
+            (speed * bot_move_float(s,BM_THINK_TIME)) * .5f)
             return true;
         if (jumping && !bot_jump_action(t, false, e))
             return false;
@@ -88,7 +88,7 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
             return false;
         if (!bot_move_action(t, horizontal, speed, e))
             return false;
-    } else if ((s->flags & QA_BOT_MOVE_BARRIER_JUMP) && s->velocity.z < 50) {
+    } else if ((bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_BARRIER_JUMP) && bot_move_vector(s,BM_VELOCITY).z < 50) {
         qa_vec3 vector;
         if (!qa_bot_vector_read(direction, &vector, e) || !bot_move_action(t, vector, speed, e))
             return false;
@@ -103,13 +103,13 @@ bool qa_bot_moves_direction(qa_bot_moves *m, uint32_t handle, qa_vec3 vector, fl
     qa_bot_vector_source source = {.value = &vector};
     return qa_bot_moves_direction_from(m, handle, &source, speed, type, moved, e);
 }
-bool qa_bot_moves_direction_from(qa_bot_moves *m, uint32_t handle,
+static bool qa_bot_moves_direction_from_operation(qa_bot_moves *m, uint32_t handle,
                                  const qa_bot_vector_source *source, float speed,
                                  uint32_t type, bool *moved, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
     if(!moved) return bot_move_fail(e,"missing bot direction result");
-    qa_bot_move_state *state = bot_move_source_state(m, handle);
+    bot_move_record *state = bot_move_source_state(m, handle);
     if (!state) {*moved=false;return true;}
     if (!source || (!source->value && !source->read))
         return bot_move_fail(e, "missing bot movement direction fields");
@@ -119,4 +119,8 @@ bool qa_bot_moves_direction_from(qa_bot_moves *m, uint32_t handle,
         direction(&t, source, speed, type, moved, e);
     m->busy = false;
     return ok;
+}
+
+bool qa_bot_moves_direction_from(qa_bot_moves *m, uint32_t handle, const qa_bot_vector_source *source, float speed, uint32_t type, bool *moved, qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,qa_bot_moves_direction_from_operation(m,handle,source,speed,type,moved,e));
 }

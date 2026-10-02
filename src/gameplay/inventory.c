@@ -128,6 +128,8 @@ static bool counter(qa_inventory_count_policy policy, double value, double *out,
         *out = wrapped >= 2147483648.0 ? wrapped - 4294967296.0 : wrapped;
         return true;
     }
+    case QA_COUNT_SOURCE_DOUBLE:
+        *out=value; return true;
     }
     return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory count policy");
 }
@@ -1102,13 +1104,21 @@ typedef struct source_publication {
     item_group *group;
     qa_inventory_entry after;
     bool published;
+    bool *retired_token;
 } source_publication;
+
+static bool source_current(source_publication *publication, qa_error *e)
+{
+    if (current(publication->table, publication->store, publication->group)) return true;
+    *publication->retired_token = true;
+    return fail(e, QA_ERROR_NOT_FOUND, "Inventory storage lease retired");
+}
 
 static bool publish_source(void *context, const void *request, void *result, qa_error *e)
 {
     source_publication *publication = context;
     const qa_inventory_request *input = request;
-    if (!require_current(publication->table, publication->store, publication->group, e)) return false;
+    if (!source_current(publication, e)) return false;
     if (!qa_actor_id_equal(input->actor, publication->store->actor) || !entry_equal(input->entry, publication->after))
         return fail(e, QA_ERROR_ARGUMENT, "Committed source inventory publication was changed");
     publication->published = true;
@@ -1122,14 +1132,27 @@ static bool source_published(void *context, qa_error *e)
 bool qa_inventory_source_stored(qa_inventory *table, qa_inventory_lease lease,
     const qa_inventory_change *changes, size_t count, qa_error *e)
 {
+    bool retired_token;
+    return qa_inventory_source_stored_ex(table, lease, changes, count, &retired_token, e);
+}
+
+bool qa_inventory_source_stored_ex(qa_inventory *table, qa_inventory_lease lease,
+    const qa_inventory_change *changes, size_t count, bool *retired_token, qa_error *e)
+{
+    if (!retired_token) return fail(e, QA_ERROR_ARGUMENT, "Missing source inventory retirement result");
+    *retired_token = false;
     if ((count && !changes) || count > SIZE_MAX / sizeof(*changes)) return fail(e, QA_ERROR_ARGUMENT, "Invalid source inventory changes");
     inventory_store *store = acquire(table, lease.actor);
-    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
+    if (!store) {
+        *retired_token = table != NULL;
+        return fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
+    }
     store_changed(store);
     item_group *group = lease_group(store, lease.serial);
+    if (!group) *retired_token = true;
     bool ok = group ? group_validate(table, store, group, e) : fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
-    qa_inventory_change *snapshots = count ? calloc(count, sizeof(*snapshots)) : NULL;
-    if (count && !snapshots) ok = fail(e, QA_ERROR_MEMORY, "Cannot snapshot source inventory publication");
+    qa_inventory_change *snapshots = ok && count ? calloc(count, sizeof(*snapshots)) : NULL;
+    if (ok && count && !snapshots) ok = fail(e, QA_ERROR_MEMORY, "Cannot snapshot source inventory publication");
     for (size_t i = 0; ok && i < count; ++i) {
         qa_inventory_entry actual; bool found;
         snapshots[i] = changes[i];
@@ -1147,11 +1170,12 @@ bool qa_inventory_source_stored(qa_inventory *table, qa_inventory_lease lease,
         if (ok && (!found || !entry_equal(actual, snapshots[i].after))) ok = fail(e, QA_ERROR_ARGUMENT, "Committed inventory differs from source storage");
     }
     for (size_t i = 0; ok && i < count; ++i) {
-        source_publication publication = {table, store, group, snapshots[i].after, false};
+        source_publication publication = {.table = table, .store = store, .group = group,
+            .after = snapshots[i].after, .retired_token = retired_token};
         qa_inventory_request request = {.actor = lease.actor, .item = snapshots[i].after.item, .entry = snapshots[i].after};
         qa_inventory_result result;
-        ok = require_current(table, store, group, e) && qa_operation_dispatch(table->operations[QA_INVENTORY_CONFIGURE],
-            &request, &result, publish_source, &publication, source_published, &publication, e) && require_current(table, store, group, e);
+        ok = source_current(&publication, e) && qa_operation_dispatch(table->operations[QA_INVENTORY_CONFIGURE],
+            &request, &result, publish_source, &publication, source_published, &publication, e) && source_current(&publication, e);
     }
     free(snapshots); release_store(table, store); return ok;
 }
@@ -1184,6 +1208,20 @@ bool qa_inventory_pickup_current(qa_inventory *table, qa_actor_id actor, qa_item
     for (pickup_claim *claim = store->pickups; claim; claim = claim->next)
         if (claim->item == item && claim->token == token) { found = true; break; }
     release_store(table, store); return found;
+}
+
+bool qa_inventory_pickup_storage_current(const qa_inventory *table,qa_actor_id actor,
+    qa_item_id item,const void *token,uint64_t serial,qa_actor_owner owner)
+{
+    if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor)) return false;
+    inventory_store *store = table->stores[actor.slot];
+    if (!store || !store->attached || !qa_actor_id_equal(store->actor, actor)) return false;
+    bool claimed = false;
+    for (const pickup_claim *claim = store->pickups; claim; claim = claim->next)
+        if (claim->item == item && claim->token == token) { claimed = true; break; }
+    if (!claimed) return false;
+    const item_group *group = group_for(store, item);
+    return group ? group->serial == serial && group->owner == owner : store->serial == serial;
 }
 
 void qa_inventory_pickup_release(qa_inventory *table, qa_actor_id actor, const void *token)

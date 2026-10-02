@@ -1,5 +1,6 @@
 #include "image_inventory.h"
 #include "component_scene.h"
+#include "equipment_media.h"
 #include "save_private.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
@@ -29,7 +30,7 @@ static bool add(image_inventory *inventory, qa_application_content_graph *graph,
     if (!view) return frontend_fail(error, QA_ERROR_FORMAT, "image owner view is outside the actual content graph");
     for (size_t i = 0; i < inventory->count; ++i)
         if (inventory->entries[i].images == images)
-            return frontend_fail(error, QA_ERROR_FORMAT, "frontend image owner has duplicate destructor authority");
+            return inventory->entries[i].view==view;
     if (inventory->count == SIZE_MAX / sizeof(*inventory->entries) || inventory->count == SIZE_MAX / sizeof(*inventory->owners))
         return frontend_fail(error, QA_ERROR_MEMORY, "image owner inventory overflows storage");
     image_owner *entries = realloc(inventory->entries, (inventory->count + 1) * sizeof(*entries));
@@ -90,10 +91,14 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
             frontend_remote_q2_metadata_read(row,&owner,error)) &&
             add(inventory,graph,owner.images,10,i,owner.identity,error);
     }
-    frontend_renderer_materials_view retained; bool present=false;
-    if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
-    if(ok && present) ok=add(inventory,graph,retained.images,11,0,0,error);
-    if(ok && present) ok=add(inventory,graph,retained.lightmap_images,12,0,0,error);
+    size_t retained_count=0;
+    if(ok) ok=frontend_renderer_materials_count(f,&retained_count,error);
+    for(size_t i=0;ok && i<retained_count;++i) {
+        frontend_renderer_materials_view retained;
+        ok=frontend_renderer_materials_read_at(f,i,&retained,error) &&
+            add(inventory,graph,retained.images,11,i,0,error) &&
+            add(inventory,graph,retained.lightmap_images,12,i,0,error);
+    }
     frontend_renderer_worlds_view world; bool has_world=false;
     if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
     if(ok && has_world && world.private_heaps) ok=add(inventory,graph,world.images,13,0,0,error);
@@ -112,6 +117,11 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
         frontend_component_scene_view row;
         ok=frontend_component_scene_metadata_read(f,i,&row,error) &&
             add(inventory,graph,row.images,15,i,row.identity,error);
+    }
+    for(size_t i=0;ok && i<frontend_equipment_media_count(f);++i) {
+        frontend_equipment_media_view row;
+        ok=frontend_equipment_media_at(f,i,&row);
+        if(ok && row.source_slot) ok=add(inventory,graph,row.owner.images,16,i,row.source_generation,error);
     }
     return ok;
 }

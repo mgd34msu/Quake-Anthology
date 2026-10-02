@@ -13,7 +13,7 @@ static bool current(void *context,const qa_command_context *command,qa_error *er
 static bool stage_input(void *context,const qa_command_invocation *command,bool *staged,qa_error *error)
 {
     qa_frontend *f=context;
-    return frontend_config_store_stage_input(f->config_store,qa_application_console(f->application),command,staged,error);
+    return frontend_config_store_stage_input(f->config_store,command->console,command,staged,error);
 }
 static bool command_fields(void *context,qa_source_save_io *io,qa_command_context *command)
 {

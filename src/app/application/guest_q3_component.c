@@ -16,6 +16,11 @@ bool q3component_current(void *context,qa_error *e)
 }
 static bool publication_current(void *context)
 { qa_error e={0}; return q3component_current(context,&e); }
+static bool information(void *context,uint32_t flags,qa_buffer *out,qa_error *e)
+{
+    application_q3_component *c=context;
+    return q3component_current(c,e)&&qa_cvars_info(c->cvars,flags,1024,out,e);
+}
 static bool bound(void *context,qa_actor_id actor,uint32_t slot,bool owned,bool client,qa_error *e)
 {
     application_q3_component *c=context;
@@ -86,7 +91,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     if(!qa_json_parse(application_q3_mod_declaration(c->profile),&declaration,e)) return false;
     c->scene=qa_json_string_equal(declaration,qa_json_get(declaration,qa_json_get(declaration,qa_json_root(declaration),"presentation"),"runtime"),"qvm-scene");
     qa_json_destroy(declaration);
-    application_q3_component_source_options source={.session=o->host.session,.owner=o->host.owner,.generation=o->generation,.image=o->image,.abi=o->abi,.context=c,.current=publication_current,.visibility=o->visibility,.scene=c->scene};
+    application_q3_component_source_options source={.session=o->host.session,.owner=o->host.owner,.generation=o->generation,.image=o->image,.abi=o->abi,.context=c,.current=publication_current,.information=information,.visibility=o->visibility,.scene=c->scene};
     if(!application_q3_component_source_create(&source,&c->source,e)||!q3component_services(c,e)) return false;
     c->lower=qa_q3_host_qvm_options(c->host,QA_QVM_INTERPRETED);
     qa_qvm_options vm=c->lower; vm.context=c;
@@ -115,7 +120,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
         .client_slot=client_slot,.player_state=player,.time=time_read,.source_prepare=prepare,.source_enter=enter,.source_leave=leave};
     memcpy(services.operations,o->operations,sizeof(services.operations));
     if(!application_q3_mod_create(c->profile,c->vm,o->host.session,o->host.owner,o->combat,&services,restoring,&c->mod,e)||
-        !q3component_actors_create(c,e)||!q3component_bind_hooks(c,e)||
+        !q3component_actors_create(c,e)||!q3component_items_create(c,e)||!q3component_bind_hooks(c,e)||
         !qa_qvm_bind_resolver(c->vm,q3component_actor_resolve,c,&c->actor_resolver,e)) return false;
     /* Restored publication attaches once executable activation is qualified. */
     if(!restoring&&!application_q3_component_source_attach(c->source,c->vm,c->host,e)) return false;
@@ -123,7 +128,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
 }
 bool application_q3_component_idle(const application_q3_component *c)
 { return c&&!c->busy&&!c->calls&&!c->draining&&(!c->vm||qa_qvm_can_destroy(c->vm))&&(!c->records||application_q3_component_records_idle(c->records))&&
-    (!c->mod||application_q3_mod_idle(c->mod))&&application_q3_mod_actors_idle(c->actor_semantics)&&(!c->source||application_q3_component_source_idle(c->source))&&qa_console_idle(c->console); }
+    (!c->mod||application_q3_mod_idle(c->mod))&&application_q3_mod_items_idle(c->items)&&application_q3_mod_actors_idle(c->actor_semantics)&&(!c->source||application_q3_component_source_idle(c->source))&&qa_console_idle(c->console); }
 bool application_q3_component_initialize(application_q3_component *c,qa_error *e)
 {
     if(!c||!q3component_current(c,e)||c->initialized||!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component Initialize requires its fresh actual executor");

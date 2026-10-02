@@ -279,7 +279,7 @@ static bool image_bind(material_parser *parser, qa_material_stage *stage, size_t
             options.mipmap, options.wrap, &image, &error) :
             qa_scene_image_load(parser->library->resources, source_name, &options, &image, &error);
         if (!loaded) {
-            if (error.code == QA_ERROR_MEMORY) {
+            if (error.code == QA_ERROR_MEMORY || (parser->library->source_profile && error.code == QA_ERROR_ARGUMENT)) {
                 if (parser->lexer.error) *parser->lexer.error = error;
                 parser->lexer.failed = true;
             } else parser->rejected = true;
@@ -695,7 +695,7 @@ static bool sky_images(material_parser *parser, const char *base, bool outer)
     options.mipmap = true;
     if (options.source_q3) {
         options.source_upload.mipmap = true;
-        options.source_upload.allow_picmip = !parser->material->no_picmip;
+        options.source_upload.allow_picmip = true;
     }
     options.usage = QA_IMAGE_USAGE_SKY;
     options.wrap = outer ? QA_SCENE_CLAMP : QA_SCENE_REPEAT;
@@ -714,13 +714,21 @@ static bool sky_images(material_parser *parser, const char *base, bool outer)
         qa_scene_image *image = NULL;
         qa_error error = {0};
         if (!qa_scene_image_load(parser->library->resources, path, &options, &image, &error)) {
-            if (error.code == QA_ERROR_MEMORY) {
+            if (error.code == QA_ERROR_MEMORY || (parser->library->source_profile && error.code == QA_ERROR_ARGUMENT)) {
                 free(path);
                 parser->lexer.failed = true;
                 if (parser->lexer.error) *parser->lexer.error = error;
                 return false;
             }
-            image = (qa_scene_image *)qa_scene_missing(parser->library->resources);
+            image = (qa_scene_image *)(parser->library->source_profile ?
+                qa_scene_source_q3_missing(parser->library->resources) :
+                qa_scene_missing(parser->library->resources));
+            if (!image) {
+                free(path);
+                parser->lexer.failed = true;
+                qa_error_set(parser->lexer.error, QA_ERROR_ARGUMENT, 0, "Source sky lost its retained default image");
+                return false;
+            }
             qa_scene_image_retain(image);
         }
         qa_scene_image_release(images[i]);

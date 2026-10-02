@@ -38,6 +38,8 @@ typedef struct gl_native_cut {
 } gl_native_cut;
 struct gl_restore_storage {
     gl_saved_texture *textures;
+    gl_saved_texture zero_texture;
+    GLuint zero_prepared;
     gl_saved_mesh *meshes;
     gl_saved_surface native[4],output[4],opacity[2];
     gl_saved_level gamma;
@@ -56,6 +58,23 @@ static const GLenum gl_pack_names[4]={GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PA
 static const GLenum gl_unpack_names[4]={GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS};
 static const GLenum gl_texture_parameters[6]={GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER,GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,GL_TEXTURE_MAX_LEVEL,GL_TEXTURE_COMPARE_MODE};
+static bool gl_saved_filter(GLint minimum,GLint magnification,qa_scene_filter *out,bool *linear_magnification)
+{
+    static const GLint minima[]={GL_NEAREST,GL_LINEAR,GL_NEAREST_MIPMAP_NEAREST,
+        GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR};
+    if (magnification!=GL_NEAREST && magnification!=GL_LINEAR) return false;
+    for (size_t i=0;i<sizeof(minima)/sizeof(*minima);++i)
+        if (minimum==minima[i]) {
+            *out=(qa_scene_filter)i; *linear_magnification=magnification==GL_LINEAR; return true;
+        }
+    return false;
+}
+static void gl_saved_zero_defaults(gl_saved_texture *zero)
+{
+    zero->parameters[0]=GL_NEAREST_MIPMAP_LINEAR; zero->parameters[1]=GL_LINEAR;
+    zero->parameters[2]=GL_REPEAT; zero->parameters[3]=GL_REPEAT;
+    zero->parameters[4]=1000; zero->parameters[5]=GL_NONE;
+}
 static void gl_cut_read(qa_gl_renderer *renderer,gl_native_cut *cut)
 {
     gl_api *gl=&renderer->gl;
@@ -160,6 +179,10 @@ static void gl_surface_free(qa_gl_renderer *renderer,gl_saved_surface *saved)
 static void gl_saved_dispose(gl_restore_storage *guard,qa_gl_renderer *renderer)
 {
     if (!guard) return;
+    for (size_t i=0;i<guard->zero_texture.count;++i) qa_buffer_free(&guard->zero_texture.levels[i].pixels);
+    free(guard->zero_texture.levels);
+    if (renderer && renderer->gl.DeleteTextures && guard->zero_prepared)
+        renderer->gl.DeleteTextures(1,&guard->zero_prepared);
     while (guard->textures) {
         gl_saved_texture *row=guard->textures; guard->textures=row->next;
         if (row->levels) for (size_t i=0;i<row->count;++i) qa_buffer_free(&row->levels[i].pixels);
@@ -180,12 +203,13 @@ void gl_restore_storage_destroy(qa_gl_renderer *renderer)
 }
 static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bool full,qa_error *error)
 {
-    if (!renderer || renderer->closed || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered ||
+    if (!renderer || renderer->closed || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered || renderer->controls.image_ticket ||
         !qa_display_make_current(renderer->options.display,error)) return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU capture requires its completed actual renderer owner");
     if (renderer->capabilities.color_bits>24 || renderer->capabilities.alpha_bits>8)
         return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native GPU color visual exceeds this exact RGBA8 continuation capture");
     if (!gl_dimensions(renderer,&saved->width,&saved->height,error)) return false;
     gl_native_cut cut={0}; gl_cut_read(renderer,&cut); renderer->capturing=true;
+    if (!full) gl_saved_zero_defaults(&saved->zero_texture);
     GLint native_read_buffer=0;
     renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read_buffer);
     GLuint read_framebuffer=0;
@@ -215,15 +239,30 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
         ok=gl_surface_capture(renderer,read_framebuffer,GL_COLOR_ATTACHMENT0,renderer->opacity.width,renderer->opacity.height,true,i==1,saved->opacity+i,error);
     }
     gl_saved_texture **texture_tail=&saved->textures;
+    if (full && ok) {
+        gl_saved_texture *row=&saved->zero_texture;
+        row->count=renderer->controls.zero_texture.count;
+        row->levels=row->count?calloc(row->count,sizeof(*row->levels)):NULL;
+        if (row->count && !row->levels) ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining actual default texture mip levels");
+        for (size_t i=0;ok && i<row->count;++i)
+            ok=gl_level_capture(renderer,0,i,renderer->controls.zero_texture.kinds[i]==QA_SCENE_DEPTH32F,
+                row->levels+i,error);
+        renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+        for (size_t i=0;ok && i<6;++i)
+            renderer->gl.GetTexParameteriv(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters+i);
+    }
     for (gl_texture_entry *entry=renderer->textures;full && ok && entry;entry=entry->next) {
         gl_saved_texture *row=calloc(1,sizeof(*row));
         if (!row) { ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining genuine GPU texture continuation row"); break; }
-        *texture_tail=row; texture_tail=&row->next; row->entry=entry; row->count=entry->image->level_count;
-        if (row->count>SIZE_MAX/sizeof(*row->levels) || !(row->levels=calloc(row->count,sizeof(*row->levels)))) {
+        *texture_tail=row; texture_tail=&row->next; row->entry=entry;
+        row->count=entry->source_admitted?entry->source_texture.count:entry->image->level_count;
+        if (row->count>SIZE_MAX/sizeof(*row->levels) || (row->count && !(row->levels=calloc(row->count,sizeof(*row->levels))))) {
             ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining actual GPU texture mip-level roster"); break;
         }
         for (size_t i=0;ok && i<row->count;++i)
-            ok=gl_level_capture(renderer,entry->name,i,entry->image->kind==QA_SCENE_DEPTH32F,row->levels+i,error);
+            ok=gl_level_capture(renderer,entry->name,i,(entry->source_admitted?entry->source_texture.kinds[i]:
+                entry->image->kind)==QA_SCENE_DEPTH32F,row->levels+i,error);
+        renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
         for (size_t i=0;ok && i<6;++i)
             renderer->gl.GetTexParameteriv(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters+i);
     }
@@ -292,7 +331,7 @@ static bool gl_saved_surface_fields(qa_source_save_io *io,gl_saved_surface *surf
         (!(expected&4) && surface->stencil.size))) return false;
     return true;
 }
-static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps)
+static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps,uint32_t version)
 {
     uint32_t color=caps->color_bits,alpha=caps->alpha_bits,depth=caps->depth_bits,stencil=caps->stencil_bits;
     if (!qa_source_save_u32(io,&color) || color>128 || !qa_source_save_u32(io,&alpha) || alpha>32 ||
@@ -302,6 +341,7 @@ static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps)
         !qa_source_save_u32(io,&caps->vertex_attributes) || caps->vertex_attributes<5 ||
         !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_bool(io,&caps->floating_depth) ||
         !qa_source_save_bool(io,&caps->compiled_vertex_arrays)) return false;
+    if (version>=17 && !qa_source_save_bool(io,&caps->s3tc)) return false;
     caps->color_bits=color; caps->alpha_bits=alpha; caps->depth_bits=depth; caps->stencil_bits=stencil;
     char *strings[4]={caps->vendor,caps->renderer,caps->version,caps->shading_language};
     for (size_t i=0;i<4;++i)
@@ -314,7 +354,7 @@ static bool gl_caps_equal(const qa_gl_capabilities *a,const qa_gl_capabilities *
         a->stencil_bits==b->stencil_bits && a->maximum_texture_size==b->maximum_texture_size &&
         a->texture_units==b->texture_units && a->vertex_attributes==b->vertex_attributes &&
         a->stereo==b->stereo && a->floating_depth==b->floating_depth &&
-        a->compiled_vertex_arrays==b->compiled_vertex_arrays &&
+        a->compiled_vertex_arrays==b->compiled_vertex_arrays && a->s3tc==b->s3tc &&
         !strcmp(a->vendor,b->vendor) && !strcmp(a->renderer,b->renderer) && !strcmp(a->version,b->version) &&
         !strcmp(a->shading_language,b->shading_language);
 }
@@ -377,11 +417,11 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     const qa_render_checkpoint_refs *refs,const qa_gl_options *installed,const qa_gl_renderer *active)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=13,draw=renderer->draw_buffer;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>13 ||
+    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=20,draw=renderer->draw_buffer;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>20 ||
         !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
         !qa_source_save_u64(io,&renderer->options.owner) || !qa_source_save_u32(io,&saved->width) ||
-        !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities) ||
+        !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities,version) ||
         !qa_source_save_u32(io,&draw) || draw>QA_DRAW_BACK_RIGHT ||
         (draw==QA_DRAW_BACK_RIGHT && !renderer->capabilities.stereo) ||
         !qa_source_save_f32(io,&renderer->gamma) || !isfinite(renderer->gamma) || renderer->gamma<=0 ||
@@ -403,9 +443,13 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     if (version>=11) {
         if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
     } else if (reading) renderer->preblend_gamma=false;
+    if (version>=14) {
+        if (!qa_source_save_bool(io,&renderer->source_frame)) return false;
+    } else if (reading) renderer->source_frame=false;
     if (version>=12 && (!qa_source_save_u32(io,&renderer->source_image_count) ||
         renderer->source_image_count>GL_SOURCE_IMAGES_QA)) return false;
     if (reading) {
+        if (version<17 && active) renderer->capabilities.s3tc=active->capabilities.s3tc;
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
         renderer->options.display=installed->display;
@@ -485,24 +529,70 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
                     entry->source_owner!=qa_scene_image_resource_owner(entry->image)) return false;
             } else if (entry->source_ordinal) return false;
         }
-        if (!qa_source_save_count(io,&texture->count,(size_t)INT_MAX) || !texture->count ||
-            texture->count!=texture->entry->image->level_count || texture->count>SIZE_MAX/sizeof(gl_saved_level)) return false;
+        if (version>=17 && texture->entry->source_admitted &&
+            !qa_render_source_texture_saved_fields(io,&texture->entry->source_texture,version,refs)) return false;
+        size_t expected_count=version>=17 && texture->entry->source_admitted?
+            texture->entry->source_texture.count:texture->entry->image->level_count;
+        if (!qa_source_save_count(io,&texture->count,(size_t)INT_MAX) || texture->count!=expected_count ||
+            (!texture->count && (version<17 || !texture->entry->source_admitted)) ||
+            texture->count>SIZE_MAX/sizeof(gl_saved_level)) return false;
         if (reading) {
-            texture->levels=calloc(texture->count,sizeof(*texture->levels));
-            if (!texture->levels) return gl_save_error(io->error,QA_ERROR_MEMORY,"Restoring GPU image mip-level continuation");
+            texture->levels=texture->count?calloc(texture->count,sizeof(*texture->levels)):NULL;
+            if (texture->count && !texture->levels) return gl_save_error(io->error,QA_ERROR_MEMORY,"Restoring GPU image mip-level continuation");
         }
         for (size_t j=0;j<texture->count;++j) {
-            const qa_scene_image_level *image=texture->entry->image->levels+j;
+            const qa_scene_image *descriptor=version>=17 && texture->entry->source_admitted?
+                texture->entry->source_texture.images[j]:texture->entry->image;
+            const qa_scene_image_level *image=version>=17 && texture->entry->source_admitted?
+                texture->entry->source_texture.levels+j:descriptor->levels+j;
             if (!gl_saved_level_fields(io,texture->levels+j) || texture->levels[j].width!=image->width ||
-                texture->levels[j].height!=image->height || texture->levels[j].depth!=(texture->entry->image->kind==QA_SCENE_DEPTH32F)) return false;
+                texture->levels[j].height!=image->height || texture->levels[j].depth!=
+                    ((version>=17 && texture->entry->source_admitted?texture->entry->source_texture.kinds[j]:
+                        descriptor->kind)==QA_SCENE_DEPTH32F)) return false;
         }
         for (size_t j=0;j<6;++j) if (!qa_source_save_i32(io,texture->parameters+j)) return false;
+        qa_scene_filter actual_filter; bool linear_magnification;
+        if (!gl_saved_filter(texture->parameters[0],texture->parameters[1],&actual_filter,&linear_magnification)) return false;
+        if (reading) texture->entry->source_filter=actual_filter;
+        if (version>=17 && texture->entry->source_admitted) {
+            qa_render_source_texture *actual=&texture->entry->source_texture;
+            if (actual->filter!=actual_filter || (version>=19 && actual->magnification_linear!=linear_magnification)) return false;
+            if (reading && version<19) actual->magnification_linear=linear_magnification;
+        }
+        if (reading && version<17 && texture->entry->source_admitted &&
+            !qa_render_source_texture_upload(&texture->entry->source_texture,texture->entry->image,
+                texture->entry->source_owner,texture->entry->source_filter,io->error)) return false;
         for (gl_saved_texture *prior=saved->textures;prior!=texture;prior=prior->next)
             if (prior->entry->image==texture->entry->image ||
                 (prior->entry->image->identity==texture->entry->image->identity && prior->entry->image->revision==texture->entry->image->revision)) return false;
         texture=texture->next;
     }
     for (uint32_t i=0;i<renderer->source_image_count;++i) if (!renderer->source_images[i]) return false;
+    if (version>=17) {
+        gl_saved_texture *zero=&saved->zero_texture;
+        if (!qa_source_save_count(io,&zero->count,QA_SOURCE_TEXTURE_LEVELS) ||
+            zero->count!=renderer->controls.zero_texture.count) return false;
+        if (reading) {
+            zero->levels=zero->count?calloc(zero->count,sizeof(*zero->levels)):NULL;
+            if (zero->count && !zero->levels) return gl_save_error(io->error,QA_ERROR_MEMORY,"Restoring actual default texture storage");
+        }
+        for (size_t i=0;i<zero->count;++i) {
+            const qa_scene_image_level *actual=renderer->controls.zero_texture.levels+i;
+            if (!gl_saved_level_fields(io,zero->levels+i) || zero->levels[i].width!=actual->width ||
+                zero->levels[i].height!=actual->height || zero->levels[i].depth!=
+                    (renderer->controls.zero_texture.kinds[i]==QA_SCENE_DEPTH32F)) return false;
+        }
+        for (size_t i=0;i<6;++i) if (!qa_source_save_i32(io,zero->parameters+i)) return false;
+        qa_scene_filter actual_filter; bool linear_magnification;
+        if (!gl_saved_filter(zero->parameters[0],zero->parameters[1],&actual_filter,&linear_magnification) ||
+            actual_filter!=renderer->controls.zero_texture.filter ||
+            (version>=19 && linear_magnification!=renderer->controls.zero_texture.magnification_linear) ||
+            zero->parameters[2]!=(renderer->controls.zero_texture.wrap==QA_SCENE_REPEAT?GL_REPEAT:GL_CLAMP) ||
+            zero->parameters[3]!=zero->parameters[2] || zero->parameters[4]!=1000 || zero->parameters[5]!=GL_NONE) return false;
+        if (reading && version<19) renderer->controls.zero_texture.magnification_linear=linear_magnification;
+    } else if (reading) {
+        gl_saved_zero_defaults(&saved->zero_texture);
+    }
     count=0; gl_saved_mesh *mesh=saved->meshes,**mesh_tail=&saved->meshes;
     if (!reading) for (;mesh;mesh=mesh->next) ++count;
     if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(gl_saved_mesh))) return false;
@@ -526,6 +616,11 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
         !qa_source_save_bool(io,&saved->target_allocated) || !qa_source_save_bool(io,&saved->fog_allocated) ||
         !render_save_image(io,refs,&renderer->target)) return false;
     if (renderer->target && (renderer->target->kind!=QA_SCENE_DEPTH32F || !saved->target_allocated)) return false;
+    uint32_t viewport_height=renderer->target?renderer->target->levels[0].height:saved->height;
+    int64_t bottom=(int64_t)viewport_height-renderer->view.viewport.y-renderer->view.viewport.height;
+    if (!renderer->view.viewport.width || !renderer->view.viewport.height ||
+        renderer->view.viewport.width>INT_MAX || renderer->view.viewport.height>INT_MAX || bottom<INT_MIN || bottom>INT_MAX)
+        return false;
     for (size_t i=0;i<2;++i) if (!render_save_image(io,refs,renderer->bound+i)) return false;
     return true;
 }
@@ -542,7 +637,7 @@ static bool gl_saved_write(qa_gl_renderer *renderer,gl_restore_storage *saved,
 }
 bool qa_gl_checkpoint(qa_gl_renderer *renderer,const qa_render_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!out || out->data || out->size || !renderer || renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered)
+    if (!out || out->data || out->size || !renderer || renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU checkpoint requires empty output and an owner without retained surface settings");
     gl_restore_storage *saved=calloc(1,sizeof(*saved));
     if (!saved) return gl_save_error(error,QA_ERROR_MEMORY,"Retaining completed GPU owner continuation");
@@ -559,7 +654,7 @@ bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_render
     qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
     if (!out || !guard_out || !options || !options->display || !active || active->surface_ticket ||
-        active->controls.ticket || active->controls.source.entered || !isfinite(gamma) || gamma<0.5f || gamma>3)
+        active->controls.ticket || active->controls.image_ticket || active->controls.source.entered || !isfinite(gamma) || gamma<0.5f || gamma>3)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires a real display, renderer cut, and supported gamma");
     *out=NULL; *guard_out=NULL;
     qa_display_info info={0};
@@ -614,7 +709,7 @@ bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_c
 {
     if (!out || !guard_out || !options || !options->display || !active || active->closed || active->detached ||
         active->executing || active->capturing || active->preparing || active->surface_ticket ||
-        active->controls.ticket || active->controls.source.entered || active->opacity.active)
+        active->controls.ticket || active->controls.image_ticket || active->controls.source.entered || active->opacity.active)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU restore requires its actual idle enclosing renderer/display");
     *out=NULL; *guard_out=NULL;
     qa_gl_renderer *candidate=calloc(1,sizeof(*candidate));
@@ -782,9 +877,9 @@ static bool gl_saved_guard_current(const qa_gl_restore_guard *guard,qa_error *er
 {
     if (!guard || guard->transferred || !guard->active || !guard->candidate || !guard->saved ||
         guard->active->closed || guard->active->detached || guard->active->executing || guard->active->capturing ||
-        guard->active->preparing || guard->active->controls.ticket || guard->active->surface_ticket ||
+        guard->active->preparing || guard->active->controls.ticket || guard->active->controls.image_ticket || guard->active->surface_ticket ||
         guard->active->opacity.active || guard->active->controls.source.entered ||
-        guard->candidate->closed || guard->candidate->controls.ticket || guard->candidate->controls.source.entered ||
+        guard->candidate->closed || guard->candidate->controls.ticket || guard->candidate->controls.image_ticket || guard->candidate->controls.source.entered ||
         !guard->candidate->detached || guard->candidate->restore!=guard->saved ||
         !gl_caps_equal(&guard->active->capabilities,&guard->candidate->capabilities))
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU publication lost its actual completed renderer owners");
@@ -817,11 +912,16 @@ bool qa_gl_handoff_prepare(qa_gl_restore_guard *guard,qa_error *error)
         ok=gl_saved_level_upload(renderer,&row->entry->name,row->levels,row->count,error);
         if (ok) {
             for (size_t i=0;i<6;++i) renderer->gl.TexParameteri(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters[i]);
-            const qa_scene_image *image=row->entry->image;
-            GLfloat border[4]={image->border.x,image->border.y,image->border.z,image->border.w};
+            qa_scene_vec4 color=row->entry->source_admitted?row->entry->source_texture.border:row->entry->image->border;
+            GLfloat border[4]={color.x,color.y,color.z,color.w};
             renderer->gl.TexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,border);
             ok=gl_check(renderer,"Preparing actual retained GPU image sampler",error);
         }
+    }
+    if (ok && saved->zero_texture.count) {
+        ok=gl_saved_level_upload(renderer,&saved->zero_prepared,saved->zero_texture.levels,saved->zero_texture.count,error);
+        if (ok) for (size_t i=0;i<6;++i)
+            renderer->gl.TexParameteri(GL_TEXTURE_2D,gl_texture_parameters[i],saved->zero_texture.parameters[i]);
     }
     for (gl_saved_mesh *row=saved->meshes;ok && row;row=row->next)
         ok=gl_saved_buffer_upload(renderer,GL_ARRAY_BUFFER,&row->entry->vertex_buffer,row->vertices.size,row->vertices.data,GL_STATIC_DRAW,error) &&
@@ -881,6 +981,17 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
 {
     if (!guard || !guard->prepared || guard->transferred) return;
     qa_gl_renderer *renderer=guard->candidate; gl_restore_storage *saved=guard->saved; gl_api *gl=&renderer->gl;
+    gl->ActiveTexture(GL_TEXTURE0); gl->BindTexture(GL_TEXTURE_2D,0);
+    gl_tight_pixels(renderer);
+    uint32_t old_zero_levels=guard->active->controls.zero_texture.count;
+    for (size_t i=0;i<saved->zero_texture.count;++i) {
+        const gl_saved_level *level=saved->zero_texture.levels+i;
+        gl->TexImage2D(GL_TEXTURE_2D,(GLint)i,level->internal,(GLsizei)level->width,(GLsizei)level->height,0,
+            level->depth?GL_DEPTH_COMPONENT:GL_RGBA,level->depth?GL_FLOAT:GL_UNSIGNED_BYTE,level->pixels.data);
+    }
+    for (size_t i=saved->zero_texture.count;i<old_zero_levels;++i)
+        gl->TexImage2D(GL_TEXTURE_2D,(GLint)i,GL_RGBA8,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    for (size_t i=0;i<6;++i) gl->TexParameteri(GL_TEXTURE_2D,gl_texture_parameters[i],saved->zero_texture.parameters[i]);
     gl->Disable(GL_SCISSOR_TEST);
     for (size_t i=0;i<saved->native_count;++i) {
         gl->BindFramebuffer(GL_READ_FRAMEBUFFER,saved->native[i].framebuffer); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -924,7 +1035,7 @@ static const GLenum gl_presentation_enables[6]={GL_DEPTH_TEST,GL_STENCIL_TEST,GL
 bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot **out,qa_error *error)
 {
     if (!out || *out || !renderer || renderer->closed || renderer->detached || renderer->executing ||
-        renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered || renderer->target ||
+        renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered || renderer->controls.image_ticket || renderer->target ||
         (renderer->capabilities.stencil_bits && renderer->capabilities.stencil_bits!=8) ||
         !qa_display_make_current(renderer->options.display,error))
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation capture requires a completed exact renderer");

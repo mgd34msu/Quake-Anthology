@@ -34,6 +34,7 @@ typedef struct qa_q2_player_fog {
 } qa_q2_player_fog;
 typedef struct qa_q2_player {
     int32_t clientnum;
+    bool clientnum_present; /* This decoded delta carried CLIENT_NUMBER, including zero. */
     qa_q2_player_fog fog;
     qa_q2_pmove pmove;
     float viewangles[3], viewoffset[3], kick_angles[3], gunangles[3], gunoffset[3];
@@ -63,11 +64,22 @@ typedef struct qa_q2_codec {
     qa_net_protocol_id protocol;
     uint32_t wire_flags, frame_extra;
     bool demo26, frame_player_pending;
+    int32_t server_clientnum;
+    bool has_server_clientnum;
     size_t split_players;
     uint8_t kex_nonzero_solid[8192];
 } qa_q2_codec;
 typedef bool (*qa_q2_write_entities_fn)(void *, qa_net_writer *, qa_error *);
 bool qa_q2_codec_init(qa_q2_codec *, qa_net_protocol_id, qa_error *);
+typedef struct qa_q2_config_layout {
+    uint32_t models, sounds, images, lights, items, player_skins;
+    uint32_t map_checksum, max_clients, air_accelerate;
+    uint32_t max_models, max_sounds, max_images, max_configs;
+    bool extended;
+    uint32_t max_entities;
+} qa_q2_config_layout;
+/* Decoded SERVERDATA flags authorize Q2PRO extensions; kind alone does not. */
+bool qa_q2_config_layout_read(const qa_q2_codec *, qa_q2_config_layout *, qa_error *);
 uint32_t qa_q2_protocol_version(qa_net_protocol_id);
 /* Negotiates native connect offers, including Q2PRO minor 1016 -> 1015.
  * codec_init instead requires an exact supported identity. */

@@ -170,7 +170,9 @@ bool qa_q2_frame_history_read(qa_q2_frame_history *history, qa_q2_codec *c, qa_n
     frame.player_count = kex ? c->split_players : 1;
     if (!frame.player_count || frame.player_count > QA_Q2_MAX_SEATS)
         return qa_net_reader_fail(r, "Invalid Q2 split-player count");
-    static const qa_q2_player zero_player;
+    qa_q2_player zero_player = {0};
+    if (c->protocol.kind == QA_NET_Q2PRO_36 && c->has_server_clientnum)
+        zero_player.clientnum = c->server_clientnum;
     for (size_t i = 0; i < frame.player_count; ++i) {
         size_t length = i == 0 ? header.areabytes : qa_net_read_u8(r);
         uint8_t *area = length ? malloc(length) : NULL;
@@ -271,7 +273,9 @@ bool qa_q2_frame_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_wire_frame 
             return qa_net_writer_fail(w, "Q2 frame area bits exceed wire range");
     frame_entities entities = {c, {old ? old->entities : NULL, old ? old->entity_count : 0},
                                 {frame->entities, frame->entity_count}, baselines, max_clients};
-    static const qa_q2_player zero;
+    qa_q2_player zero = {0};
+    if (c->protocol.kind == QA_NET_Q2PRO_36 && c->has_server_clientnum)
+        zero.clientnum = c->server_clientnum;
     if (kex && frame->player_count > 1) {
         qa_net_write_u8(w, 20);
         qa_net_write_i32(w, frame->server_frame);

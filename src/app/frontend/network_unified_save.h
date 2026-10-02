@@ -13,6 +13,10 @@ bool frontend_network_unified_restore_client_service(frontend_network_unified *,
 /* Binds only the authentic lower graph. CLIENT dictionaries and presentation
  * children still restore before final finish grants the imported marker. */
 bool frontend_network_unified_restore_lower(frontend_network_unified *, qa_network_runtime *, qa_error *);
+/* Borrows the one restored replica prefix while the genuine presentation
+ * dictionaries and children are still being imported. */
+bool frontend_network_unified_restore_client(frontend_network_unified *, qa_network_runtime *,
+    qa_net_client_id *, frontend_remote_unified **, bool *present, qa_error *);
 bool frontend_network_unified_restore_finish(frontend_network_unified *, qa_network_runtime *, qa_error *);
 bool frontend_network_unified_restore_dispose(frontend_network_unified **, qa_error *);
 

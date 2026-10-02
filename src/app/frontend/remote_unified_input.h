@@ -14,7 +14,10 @@ bool frontend_unified_input_retry(frontend_unified_input *, bool *completed,
     uint64_t *sequence, qa_error *);
 bool frontend_unified_input_view_angles(frontend_unified_input *,
     const qa_unified_vec3 *,qa_error *);
+bool frontend_unified_input_command_values(frontend_unified_input *,int32_t weapon,float sensitivity,qa_error *);
+bool frontend_unified_input_oldest_q3(const frontend_unified_input *,qa_movement_command *,bool *available,qa_error *);
 bool frontend_unified_input_idle(const frontend_unified_input *);
+bool frontend_unified_input_pending(const frontend_unified_input *);
 bool frontend_unified_input_destroy(frontend_unified_input **, qa_error *);
 
 /* The frame owner calls prepare before sampling. A retry may advance the

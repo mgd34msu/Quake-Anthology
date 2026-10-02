@@ -51,6 +51,8 @@ bool frontend_remote_unified_current(const frontend_remote_unified *owner, qa_er
     return !owner->recipe || qa_executable_recipe_current(owner->recipe, owner->options.domain.catalog) ||
         frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified replica changed its retained executable recipe");
 }
+bool frontend_remote_unified_retired(const frontend_remote_unified *owner)
+{ return owner && owner->retired; }
 
 bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote_unified_options *options,
     frontend_remote_unified **out, qa_error *error)
@@ -61,8 +63,9 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
         frontend->resource_inventory || !d->runtime || !d->catalog || !d->resources || !d->console || !d->cvars ||
         !d->seat.owner || d->client.owner || d->client.generation || d->client.slot ||
         d->physical_seat >= frontend->options.seats || !frontend->seats || !frontend->seats[d->physical_seat].input ||
-        !options->identity_capacity || !options->current || !options->userinfo || !options->disconnected ||
+        !options->identity_capacity || !options->current || !options->userinfo || !options->disconnected || !options->retirement || !options->transport_restart ||
         !c->prepare || !c->offer_publish || !c->offer_ready || !c->control || !c->frame || !c->publish || !c->input ||
+        !c->begin_frame || !c->clock_read || !c->physical_ready || !c->physical_input ||
         !c->sample || !c->draw || !c->idle || !c->close || !c->content_visit ||
         !options->current(options->context, d, error))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified construction requires its actual CLIENT and presentation consumers");
@@ -139,6 +142,8 @@ static const qa_recipe_provider *frame_provider(const frontend_remote_unified *o
     }
     return NULL;
 }
+const qa_unified_document *frontend_remote_unified_frame_prepared(const frontend_remote_unified *owner)
+{ return owner?owner->prepared_frame:NULL; }
 
 const qa_recipe_provider *frontend_remote_unified_provider(const frontend_remote_unified *owner,
     qa_launch_role role,const char *selector)
@@ -343,11 +348,30 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
     *ready=state!=FRONTEND_UNIFIED_FRAME_WAIT; return true;
 }
 
+static bool transport_continue(frontend_remote_unified *owner,const qa_unified_document *document,qa_error *error)
+{
+    if (!owner || !owner->transport_restarted || !owner->offer) return true;
+    const qa_json_document *json=qa_unified_document_json(document);
+    uint64_t wire_epoch;
+    if (!same_document(owner->offer,document)) return true;
+    if (!qa_json_u64(json,qa_json_get(json,value(document),"epoch"),&wire_epoch,error)) return false;
+    if (wire_epoch!=owner->epoch) return true;
+    if (!owner->recipe || !same_document(owner->offer,document) ||
+        !qa_json_string_equal(json,qa_json_get(json,value(document),"kind"),"offer") ||
+        owner->epoch!=qa_executable_recipe_epoch(owner->recipe) || !linked(owner) || owner->retired ||
+        !owner->options.transport_restart)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified restart lost its retained CLIENT epoch continuation");
+    uint64_t runtime_epoch=qa_network_epoch(owner->options.domain.runtime,owner->options.domain.client);
+    if (!runtime_epoch) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified restart lost its actual runtime epoch");
+    return owner->options.transport_restart(owner->options.context,&owner->options.domain,runtime_epoch,error);
+}
+
 static bool prepare(void *context, qa_net_client_id client, const qa_unified_document *document,
     bool *ready, qa_error *error)
 {
     frontend_remote_unified *owner = context;
     if (!owner || owner->busy || !ready || !qa_net_client_id_equal(client, owner->options.domain.client) ||
+        !transport_continue(owner,document,error) ||
         !frontend_remote_unified_current(owner, error)) return false;
     *ready = true; owner->busy = true;
     bool okay = true;
@@ -400,10 +424,17 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
 {
     frontend_remote_unified *owner = context;
     if (!owner || owner->busy || runtime != owner->options.domain.runtime ||
-        !qa_net_client_id_equal(client, owner->options.domain.client) || !commit ||
-        !frontend_remote_unified_current(owner, error)) return false;
+        !qa_net_client_id_equal(client, owner->options.domain.client) || !commit) return false;
     const qa_json_document *json = qa_unified_document_json(document);
     qa_json_id v = value(document), kind = qa_json_get(json, v, "kind");
+    bool pending_disconnect=false;
+    if (epoch!=owner->epoch && owner->offer &&
+        qa_json_string_equal(json,kind,"disconnect")) {
+        if (!qa_unified_session_client_disconnect_pending(owner->session,runtime,client,epoch,
+            document,owner->offer,error) || !transport_continue(owner,owner->offer,error)) return false;
+        pending_disconnect=true;
+    }
+    if (!transport_continue(owner,document,error) || !frontend_remote_unified_current(owner,error)) return false;
     owner->busy = true; bool okay = true;
     if (qa_json_string_equal(json, kind, "offer")) {
         if (owner->epoch != epoch) {
@@ -431,9 +462,10 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
             okay = qa_network_restart(runtime, client, qa_executable_recipe_digest(owner->recipe), error);
             if (okay) owner->transport_restarted = true;
         }
+        if (okay) okay=transport_continue(owner,document,error);
         if (okay) okay = ready_document(owner, &commit->reply, error);
         if (okay) { qa_unified_document_destroy(owner->offer); owner->offer = NULL; commit->applied = true; }
-    } else if (epoch != owner->epoch) okay = true;
+    } else if (epoch != owner->epoch && !pending_disconnect) okay = true;
     else if (qa_json_string_equal(json, kind, "admitted")) {
         qa_saved_actor_id actor, wire_client; uint64_t source;
         okay = wire_actor(json, qa_json_get(json, v, "actor"), &actor, error) &&
@@ -494,7 +526,12 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
 static void closed(void *context, qa_net_client_id client)
 {
     frontend_remote_unified *owner = context;
-    if (owner && qa_net_client_id_equal(client, owner->options.domain.client)) { owner->retired = true; owner->session = NULL; }
+    if (owner && qa_net_client_id_equal(client, owner->options.domain.client)) {
+        owner->retired=true; owner->session=NULL; owner->retirement_pending=true;
+        qa_error error={0};
+        if (owner->options.retirement &&
+            owner->options.retirement(owner->options.context,&owner->options.domain,&error)) owner->retirement_pending=false;
+    }
 }
 static bool transport_player(void *context, qa_net_client_id client,
     qa_unified_session_player *out, qa_error *error)
@@ -503,8 +540,8 @@ static bool transport_player(void *context, qa_net_client_id client,
     if (!owner || !out || !owner->admitted || !owner->frame || owner->retired ||
         !qa_net_client_id_equal(client, owner->options.domain.client))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified player awaits its actual admitted frame");
-    const qa_recipe_provider *movement = frontend_remote_unified_provider(owner, QA_ROLE_MOVEMENT, "");
-    const qa_recipe_provider *arsenal = frontend_remote_unified_provider(owner, QA_ROLE_ARSENAL, "");
+    const qa_recipe_provider *movement = frontend_remote_unified_provider_published(owner, QA_ROLE_MOVEMENT, "");
+    const qa_recipe_provider *arsenal = frontend_remote_unified_provider_published(owner, QA_ROLE_ARSENAL, "");
     if (!movement || !movement->source_owner || !arsenal || !arsenal->selection.instance ||
         !qa_actors_get(owner->actors, owner->player))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified player lacks its received selected providers");
@@ -557,6 +594,21 @@ static bool command_document(frontend_remote_unified *owner, const char *name,
         (qa_bytes){json.bytes.data, json.bytes.size}, &document, error) && qa_unified_session_control(owner->session, document, error);
     qa_unified_document_destroy(document); application_unified_json_dispose(&json); return okay;
 }
+bool frontend_remote_unified_source_disconnect(frontend_remote_unified *owner,const char *reason,qa_error *error)
+{
+    if (!owner || !reason || !frontend_remote_unified_current(owner,error)) return false;
+    if (!owner->options.disconnected(owner->options.context,&owner->options.domain,reason,error)) return false;
+    owner->retired=true;
+    return true;
+}
+
+bool frontend_remote_unified_command_text(frontend_remote_unified *owner,const char *text,qa_error *error)
+{
+    if (!owner || !text || !owner->options.command_text || !frontend_remote_unified_current(owner,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified command text lacks its actual CLIENT interpreter");
+    return owner->options.command_text(owner->options.context,&owner->options.domain,text,error);
+}
+
 bool frontend_remote_unified_command(frontend_remote_unified *owner, const char *name,
     const char *const *args, size_t count, qa_error *error)
 { return command_document(owner, name, NULL, 0, args, count, error); }
@@ -564,6 +616,25 @@ bool frontend_remote_unified_component_command(frontend_remote_unified *owner,
     const qa_unified_document *component, uint64_t generation, const char *const *args, size_t count, qa_error *error)
 { return component && command_document(owner, NULL, component, generation, args, count, error); }
 
+bool frontend_remote_unified_begin_frame(qa_frontend *frontend,uint64_t now,uint64_t elapsed,qa_error *error)
+{
+    if (!frontend || now!=frontend->wall_time_ns || elapsed>now) return false;
+    for (frontend_remote_unified *owner=frontend->remote_unified;owner;owner=owner->next) {
+        if (owner->retired) continue;
+        if (owner->busy || !frontend_remote_unified_current(owner,error) ||
+            !owner->options.consumers.begin_frame)
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock lacks its actual frame owner");
+        if (!owner->options.consumers.begin_frame(owner->options.consumers.context,owner,now,elapsed,error)) return false;
+    }
+    return true;
+}
+bool frontend_remote_unified_clock_read(const frontend_remote_unified *owner,
+    frontend_unified_recipient_clock *out,qa_error *error)
+{
+    if (!owner || !out || !owner->options.consumers.clock_read)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock has no retained producer");
+    return owner->options.consumers.clock_read(owner->options.consumers.context,owner,out,error);
+}
 bool frontend_remote_unified_sample(qa_frontend *frontend, uint64_t now, qa_error *error)
 {
     if (!frontend) return false;
@@ -621,6 +692,11 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
         (owner->frontend->resource_inventory && !owner->frontend->source_restoring) || owner->session ||
         (owner->bound && !owner->retired))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified cleanup requires its actually retired returned session");
+    if (owner->retirement_pending) {
+        if (!owner->options.retirement ||
+            !owner->options.retirement(owner->options.context,&owner->options.domain,error)) return false;
+        owner->retirement_pending=false;
+    }
     if (owner->consumers_live && !owner->options.consumers.close(owner->options.consumers.context, owner, error)) return false;
     owner->consumers_live = false;
     if (owner->retiring_recipe) { if (!qa_executable_recipe_close(owner->retiring_recipe, error)) return false; owner->retiring_recipe = NULL; }
@@ -645,7 +721,7 @@ bool frontend_remote_unified_transport_retired(frontend_remote_unified *owner,
     if (!owner || !linked(owner) || owner->busy || owner->session != session ||
         !session || !qa_unified_session_source_retired(session))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified retirement still owns physical transport callbacks");
-    owner->session = NULL; owner->retired = true;
+    owner->session = NULL; owner->retired = true; owner->retirement_pending=false;
     return true;
 }
 bool frontend_remote_unified_destroy_all(qa_frontend *frontend, qa_error *error)

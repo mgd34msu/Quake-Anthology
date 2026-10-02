@@ -79,7 +79,8 @@ bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
 bool qa_q3_assets_prepare_restored_map(qa_q3_presentation_assets *a,
     qa_scene_world *world, qa_collision_geometry *geometry, qa_error *error)
 {
-    if (!a || !a->users || a->busy || a->codec_busy || a->world || a->geometry ||
+    if (!a || !a->users || a->busy || a->codec_busy ||
+        ((a->world || a->geometry) && (a->world != world || a->geometry != geometry)) ||
         a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
         a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity ||
         a->sound_count || a->sound_capacity || (!world != !geometry) ||
@@ -851,19 +852,48 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
         a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity || a->sound_count || a->sound_capacity)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset import requires a qualified empty candidate");
     if (!codec_begin(a, &own_lease, error)) return false;
+    qa_q3_presentation_assets *candidate = NULL;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, session, bytes, error) && asset_fields(&io, a, r) && qa_source_save_finish(&io, NULL);
-    if (ok) ok = qa_q3_assets_custody_restore(a, error);
-    if (ok) for (size_t i = 0; ok && i < a->model_count; ++i) if (a->models[i] && !q3p_model_shared(a, a->models[i])) {
-        q3p_model *m = a->models[i];
-        for (unsigned x = 0; ok && x < 3; ++x) {
-            bool shared = false;
-            for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
-            if (m->scene[x] && !shared) ok = r->scene_owned_ready(r->context, m->scene_ordinals[x], i, error);
+    bool ok = qa_q3_presentation_assets_create(&a->options, &candidate, error);
+    if (ok) {
+        candidate->world = a->world; candidate->geometry = a->geometry;
+        for (size_t i = 0, count = qa_q3_assets_provider_count(a); ok && i < count; ++i) {
+            qa_q3_presentation_provider provider;
+            ok = qa_q3_assets_provider_at(a, i, &provider) &&
+                qa_q3_assets_provider_hold(candidate, &provider, error);
         }
-        if (ok && m->source_md4_scene)
-            ok = r->scene_owned_ready(r->context, m->source_md4_scene_ordinal, i, error);
-        if (ok && m->owns_world) ok = r->world_owned_ready(r->context, m->world_ordinal, i, error);
+        for (size_t i = 0, count = qa_q3_assets_map_count(a); ok && i < count; ++i) {
+            qa_q3_asset_map_custody map;
+            ok = qa_q3_assets_map_at(a, i, &map) &&
+                qa_q3_assets_map_hold(candidate, map.world, map.geometry, error);
+        }
+    }
+    if (ok) ok = qa_source_save_reader(&io, session, bytes, error) &&
+        asset_fields(&io, candidate, r) && qa_source_save_finish(&io, NULL);
+    if (ok && a->parent && candidate->parent != a->parent) ok = false;
+    if (ok) for (const qa_q3_presentation_assets *parent = candidate->parent; parent; parent = parent->parent)
+        if (parent == a) { ok = false; break; }
+    if (ok) ok = qa_q3_assets_custody_restore(candidate, error);
+    if (ok) for (size_t i = 0; ok && i < candidate->model_count; ++i)
+        if (candidate->models[i] && !q3p_model_shared(candidate, candidate->models[i])) {
+            q3p_model *m = candidate->models[i];
+            for (unsigned x = 0; ok && x < 3; ++x) {
+                bool shared = false;
+                for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
+                if (m->scene[x] && !shared) ok = r->scene_owned_ready(r->context, m->scene_ordinals[x], i, error);
+            }
+            if (ok && m->source_md4_scene)
+                ok = r->scene_owned_ready(r->context, m->source_md4_scene_ordinal, i, error);
+            if (ok && m->owns_world) ok = r->world_owned_ready(r->context, m->world_ordinal, i, error);
+        }
+    if (ok) {
+        qa_q3_presentation_assets previous = *a;
+        *a = *candidate;
+        a->users = previous.users; a->busy = previous.busy;
+        a->capturing = previous.capturing; a->codec_busy = previous.codec_busy;
+        *candidate = previous;
+        candidate->users = 1; candidate->busy = 0;
+        candidate->capturing = candidate->codec_busy = false;
     }
     if (ok) for (size_t i = 0; i < a->model_count; ++i) if (a->models[i] && !q3p_model_shared(a, a->models[i])) {
         q3p_model *m = a->models[i];
@@ -877,5 +907,6 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
         m->borrowed_scenes = m->borrowed_world = false;
     }
     if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_FORMAT, "Saved Q3 asset identity or content differs");
-    qa_source_save_dispose(&io); codec_end(a, own_lease); return ok;
+    qa_source_save_dispose(&io); q3p_assets_dispose_borrowed(candidate);
+    codec_end(a, own_lease); return ok;
 }

@@ -225,7 +225,7 @@ void application_unified_events_resources_dispose(qa_application *app)
         qa_resource_release(row->resource);
         qa_launch_instance_lease_release(row->descriptor);
         qa_vfs_acquisition_dispose(&row->opening); qa_vfs_destroy(row->view);
-        for (size_t j = 0; j < row->custody_count; ++j) {
+        for (size_t j = 0; row->custodies && j < row->custody_count; ++j) {
             application_unified_event_resource_custody *held = row->custodies + j;
             qa_resource_release(held->resource); qa_vfs_acquisition_dispose(&held->opening);
             qa_vfs_destroy(held->view); qa_resource_pool_destroy(held->pool);
@@ -1278,6 +1278,87 @@ static bool world_text_read(qa_application *app, const application_unified_sourc
     return ok;
 }
 
+static bool presentation_kind(const qa_json_document *json,qa_json_id object,const char *kind)
+{ return qa_json_string_equal(json,qa_json_get(json,object,"kind"),kind); }
+
+static qa_json_id presentation_target(const qa_json_document *json,qa_json_id object,const char *key,bool *targeted)
+{ *targeted=true; return qa_json_get(json,object,key); }
+
+static bool presentation_own(qa_application *app,const application_unified_event_record *row,
+    const qa_json_document *json,qa_json_id value,qa_actor_id player,bool *allowed,qa_error *error)
+{
+    if (qa_json_type(json,value)==QA_JSON_NULL) { *allowed=true; return true; }
+    uint64_t slot,generation; qa_actor_id actor;
+    if (qa_json_type(json,value)!=QA_JSON_OBJECT || qa_json_size(json,value)!=2 ||
+        !qa_json_u64(json,qa_json_get(json,value,"slot"),&slot,error) || slot>UINT32_MAX ||
+        !qa_json_u64(json,qa_json_get(json,value,"generation"),&generation,error) ||
+        !qa_actors_reference_saved(qa_session_actors(app->session),(qa_saved_actor_id){generation,(uint32_t)slot},
+            row->payload_checkpoint,&actor,error)) {
+        if (!error || error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Private Source presentation lost its full actor");
+        return false;
+    }
+    *allowed=qa_actor_id_equal(actor,player); return true;
+}
+
+static bool presentation_for(qa_application *app,const application_unified_event_record *row,
+    qa_net_client_id client,qa_actor_id player,bool *allowed,qa_error *error)
+{
+    qa_json_document *json=NULL;
+    if (!qa_json_parse(row->presentation,&json,error)) return false;
+    qa_json_id root=qa_json_root(json),event=qa_json_get(json,root,"event"),target=QA_JSON_NONE;
+    bool ok=true,targeted=false; *allowed=true;
+    if (presentation_kind(json,root,"view-reset")) target=presentation_target(json,root,"actor",&targeted);
+    else if (presentation_kind(json,root,"q1-fog")) target=presentation_target(json,event,"player",&targeted);
+    else if (presentation_kind(json,root,"q1")) {
+        if (presentation_kind(json,event,"server-command")) *allowed=false;
+        else if (qa_json_get(json,event,"player")!=QA_JSON_NONE) target=presentation_target(json,event,"player",&targeted);
+    } else if (presentation_kind(json,root,"q1-composition")) {
+        if (presentation_kind(json,event,"source-log") || presentation_kind(json,event,"developer-message")) *allowed=false;
+        else if (presentation_kind(json,event,"addon")) {
+            qa_json_id nested=qa_json_get(json,event,"event");
+            if (qa_json_get(json,nested,"player")!=QA_JSON_NONE) target=presentation_target(json,nested,"player",&targeted);
+            else if (presentation_kind(json,nested,"developer-message")) *allowed=false;
+        } else if (presentation_kind(json,event,"ctf-status") || presentation_kind(json,event,"prompt") ||
+            presentation_kind(json,event,"clear-prompt")) target=presentation_target(json,event,"actor",&targeted);
+    } else if (presentation_kind(json,root,"q2")) {
+        if (presentation_kind(json,event,"pickup")) target=presentation_target(json,event,"player",&targeted);
+        else if (presentation_kind(json,event,"centerprint") || presentation_kind(json,event,"print") ||
+            presentation_kind(json,event,"damage-indicator")) target=presentation_target(json,event,"actor",&targeted);
+    } else if (presentation_kind(json,root,"q2-player")) {
+        if (presentation_kind(json,event,"stufftext") || presentation_kind(json,event,"load-menu") ||
+            presentation_kind(json,event,"trail")) *allowed=false;
+        else if (!presentation_kind(json,event,"userinfo"))
+            target=presentation_target(json,event,presentation_kind(json,event,"print")?"target":"actor",&targeted);
+    } else if (presentation_kind(json,root,"q2-composition")) {
+        qa_json_id nested=qa_json_get(json,event,"event");
+        if (presentation_kind(json,event,"kick")) *allowed=false;
+        else if (presentation_kind(json,event,"missionpack-entity")) *allowed=true;
+        else if (presentation_kind(json,event,"missionpack-player")) target=presentation_target(json,nested,"actor",&targeted);
+        else if (presentation_kind(json,event,"grapple-prediction")) target=presentation_target(json,event,"actor",&targeted);
+        else if (presentation_kind(json,nested,"score-log")) *allowed=false;
+        else if (!presentation_kind(json,nested,"grapple-cable") && !presentation_kind(json,nested,"match-status"))
+            target=presentation_target(json,nested,"actor",&targeted);
+    } else if (presentation_kind(json,root,"q2-rerelease")) {
+        if (presentation_kind(json,event,"autosave") || presentation_kind(json,event,"restart-level")) *allowed=false;
+        else if (!presentation_kind(json,event,"alpha") && !presentation_kind(json,event,"dynamic-light") &&
+            !presentation_kind(json,event,"player-dogtag") && !presentation_kind(json,event,"flashlight") &&
+            qa_json_get(json,event,"actor")!=QA_JSON_NONE) target=presentation_target(json,event,"actor",&targeted);
+    } else if (presentation_kind(json,root,"q3-source")) {
+        if (presentation_kind(json,event,"console-command") || presentation_kind(json,event,"drop-client") ||
+            presentation_kind(json,event,"log")) *allowed=false;
+        else if (presentation_kind(json,event,"server-command")) {
+            int64_t addressed;
+            ok=qa_json_i64(json,qa_json_get(json,event,"client"),&addressed,error);
+            if (ok) *allowed=addressed<0 || (uint64_t)addressed==client.slot;
+        }
+    } else if (presentation_kind(json,root,"q3-ballistics") && presentation_kind(json,event,"rail-award"))
+        target=presentation_target(json,event,"actor",&targeted);
+    else if (presentation_kind(json,root,"q2-weapon") && presentation_kind(json,event,"view-weapon"))
+        target=presentation_target(json,event,"actor",&targeted);
+    if (ok && *allowed && targeted) ok=presentation_own(app,row,json,target,player,allowed,error);
+    qa_json_destroy(json); return ok;
+}
+
 static bool events_project(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
     uint64_t after, bool initial, application_unified_events *out, qa_error *error)
@@ -1306,7 +1387,10 @@ static bool events_project(qa_application *app, const application_unified_source
         qa_actor_id presentation_recipient, simulation_recipient;
         ok = application_unified_event_recipient(app, row, false, &presentation_recipient, error) &&
             application_unified_event_recipient(app, row, true, &simulation_recipient, error);
-        if (ok && row->presentation.size && (!presentation_recipient.registry || qa_actor_id_equal(presentation_recipient, player->actor))) {
+        bool presentation_allowed=false;
+        if (ok && row->presentation.size && (!presentation_recipient.registry || qa_actor_id_equal(presentation_recipient, player->actor)))
+            ok=presentation_for(app,row,recipient,player->actor,&presentation_allowed,error);
+        if (ok && presentation_allowed) {
             ok = (!presentations || application_unified_json_text(&presentation, ",", error)) &&
                 presentation_write(&presentation, app, row, error);
             ++presentations;

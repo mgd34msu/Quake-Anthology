@@ -349,16 +349,24 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
     guest_abi_plan *plan = NULL;
     if (!guest_abi_plan_native(signature, NULL, 0, &plan, error)) return false;
     bool enclosing_busy = owner->busy;
-    bool nested = enclosing_busy && owner->guest && owner->guest->run &&
-        owner->guest->callback_depth && !owner->guest->publication_depth;
+    bool nested = owner->guest &&
+        ((enclosing_busy&&owner->guest->run&&owner->guest->callback_depth)||
+         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
+        (!owner->guest->publication_depth || owner->guest->stopped_write_calls);
     bool okay;
     if (nested) {
         okay = !owner->failed && !owner->disposing && !owner->provisional &&
             guest_mutable(owner->guest, error) && sysv_process_current(owner, error);
         if (!okay && error && error->code == QA_OK)
             guest_fail(error, QA_ERROR_ARGUMENT, target, "System V nested invocation has no actual stopped process scope");
+    } else if(!enclosing_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
+        guest_call_prepared(owner->guest)&&guest_sysv_idle(owner->runtime)&&
+        guest_runtime_resources_idle(owner->resources)) {
+        okay=sysv_process_current(owner,error);
+        if(okay)owner->busy=true;
     } else okay = begin(owner, error);
     if (okay) {
+        owner->busy=true;
         bool invoked = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->returned,
                 arguments, count, result, error) :

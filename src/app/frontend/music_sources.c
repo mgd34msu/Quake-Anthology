@@ -23,13 +23,24 @@ static bool recipe_origin(const frontend_music_origin *origin) {
     }
     return false;
 }
-static bool origin_current(const frontend_music_sources *owner) {
+static bool origin_caller_current(const frontend_music_origin *origin, bool checkpoint) {
+    return origin && origin->current && (checkpoint && origin->checkpoint_current ?
+        origin->checkpoint_current(origin->context, origin) : origin->current(origin->context, origin));
+}
+static bool origin_bound_current(const frontend_music_sources *owner, bool checkpoint) {
     const frontend_music_origin *origin = &owner->origin;
     const qa_launch_instance *held = qa_launch_instance_lease_view(owner->origin_metadata);
-    return owner->has_origin && owner->origin_bound && origin->current &&
-        origin->current(origin->context, origin) && frontend_music_sources_current(owner) &&
+    return owner->has_origin && owner->origin_bound && origin_caller_current(origin, checkpoint) &&
+        frontend_music_sources_current(owner) &&
         (owner->origin_recipe ? !held && recipe_origin(origin) : held && origin->descriptor &&
             !origin->recipe && !origin->recipe_provider && !origin->recipe_content && held->storage == origin->descriptor->storage);
+}
+static bool origin_current(const frontend_music_sources *owner) {
+    return origin_bound_current(owner, false);
+}
+bool frontend_music_sources_origin_checkpoint_current(const frontend_music_sources *owner) {
+    return frontend_music_sources_current(owner) &&
+        (owner->frontend->capture || owner->frontend->source_restoring) && origin_bound_current(owner, true);
 }
 static void origin_dispose(frontend_music_sources *owner) {
     qa_launch_instance_lease_release(owner->origin_metadata); owner->origin_metadata = NULL;
@@ -42,7 +53,7 @@ static bool origin_admit(frontend_music_sources *owner, const frontend_music_ori
         !origin->bus || !origin->receiver ||
         !row || row->availability != QA_CONTENT_INSTALLED || !origin->files || !origin->music ||
         !origin->context || !origin->current || !origin->stop || origin->physical_seat >= owner->frontend->options.seats ||
-        !origin->current(origin->context, origin) ||
+        !origin_caller_current(origin, owner->restoring && owner->frontend->source_restoring) ||
         (origin->recipe ? !recipe_origin(origin) : !origin->descriptor || !origin->descriptor->storage ||
             origin->recipe_provider || origin->recipe_content ||
             (origin->kind == FRONTEND_MUSIC_REMOTE ? !qa_catalog_product_view_current(origin->catalog,origin->product,origin->files) :
@@ -219,7 +230,9 @@ bool frontend_music_sources_parent_is(const frontend_music_sources *owner, const
         if (attached && !qa_audio_engine_music_source_is(owner->engine, owner->buses[i], attached,
             i == FRONTEND_MUSIC_MENU ? QA_AUDIO_MUSIC_MENU : QA_AUDIO_MUSIC_WORLD, owner->output == (frontend_music_slot)i)) return false;
     }
-    return owner->has_origin ? origin_current(owner) : !owner->policies[FRONTEND_MUSIC_WORLD] || frontend_music_world_current(owner);
+    return owner->has_origin ?
+        ((f->capture || f->source_restoring) ? frontend_music_sources_origin_checkpoint_current(owner) : origin_current(owner)) :
+        !owner->policies[FRONTEND_MUSIC_WORLD] || frontend_music_world_current(owner);
 }
 qa_audio_music_controls *frontend_music_sources_controls(const frontend_music_sources *owner) {
     return frontend_music_sources_current(owner) && (!owner->restoring || owner->frontend->source_restoring) ? owner->controls : NULL;
@@ -356,7 +369,8 @@ bool frontend_music_sources_explicit_retire(frontend_music_sources *owner, const
     return retire_world(owner, false, e);
 }
 bool frontend_music_sources_restore_origin_matches(const frontend_music_sources *owner, const frontend_music_origin *origin) {
-    if (!origin || !origin->current || !origin->current(origin->context, origin)) return false;
+    if (!frontend_music_sources_current(owner) || !owner->restoring || !owner->frontend->source_restoring ||
+        !origin_caller_current(origin, true)) return false;
     const qa_product *product = origin && origin->catalog ? qa_catalog_product(origin->catalog, origin->product) : NULL;
     const char *instance = origin && origin->descriptor ? origin->descriptor->selection.instance :
         origin && origin->recipe_provider ? origin->recipe_provider->selection.instance :
@@ -390,7 +404,7 @@ bool frontend_music_sources_restore_origin(frontend_music_sources *owner, const 
         qa_launch_instance_lease_release(metadata); return false;
     }
     owner->origin = *origin; owner->origin_metadata = metadata; owner->origin_bound = true;
-    return origin_current(owner) || fail(e, "Restored explicit music lost its actual constructed source");
+    return frontend_music_sources_origin_checkpoint_current(owner) || fail(e, "Restored explicit music lost its actual constructed source");
 }
 bool frontend_music_sources_world(frontend_music_sources *owner, qa_error *e) {
     if (!owner || !frontend_music_sources_idle(owner) || owner->restoring || owner->frontend->capture || owner->frontend->source_restoring)

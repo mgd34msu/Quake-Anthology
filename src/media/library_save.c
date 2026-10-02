@@ -3,6 +3,7 @@
 #include "qa/media_library_save.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
+#include "qa/binary.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -60,20 +61,25 @@ static bool image_owner(const qa_media_library *library, const qa_scene_image *i
     return image && qa_scene_image_owner_index(owners,1,image,&owner);
 }
 static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinematic_asset *asset,
-                   const qa_media_library_checkpoint_refs *refs)
+                   const qa_media_library_checkpoint_refs *refs, uint32_t schema)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     uint32_t kind=asset->source.format;
     if (!qa_source_save_u32(io,&kind) || kind>QA_CINEMATIC_IMAGE || !text(io,&asset->name)) return false;
-    qa_cinematic_format extension;
-    if (!qa_media_asset_format(asset->name,&extension,io->error) || extension!=(qa_cinematic_format)kind) return false;
+    if (schema>=2 && !qa_source_save_bool(io,&asset->source_roq)) return false;
+    if (asset->source_roq && kind!=QA_CINEMATIC_ROQ) return false;
+    if (kind!=QA_CINEMATIC_ROQ) {
+        qa_cinematic_format extension;
+        if (!qa_media_asset_format(asset->name,&extension,io->error) || extension!=(qa_cinematic_format)kind) return false;
+    }
     if (reading) { asset->source.format=(qa_cinematic_format)kind; asset->source.name=asset->name; asset->source.asset=asset; }
     uint32_t width=asset->width, height=asset->height;
     uint64_t resource_key=0;
     if (!reading && (!asset->references || !asset->source_record || asset->source.asset!=asset ||
         asset->source.name!=asset->name || !qa_sha256_equal(&asset->digest,qa_resource_digest(asset->source_record)) ||
         !refs->resource_encode(refs->context,asset->source_record,&resource_key,io->error))) return false;
-    if (!qa_source_save_u32(io,&width) || !qa_source_save_u32(io,&height) || !width || !height ||
+    if (!qa_source_save_u32(io,&width) || !qa_source_save_u32(io,&height) ||
+        (asset->source_roq ? width || height : !width || !height) ||
         !qa_source_save_u64(io,&resource_key)) return false;
     if (reading) {
         const qa_resource *resource=NULL;
@@ -82,6 +88,10 @@ static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinemati
         asset->digest=*qa_resource_digest(resource);
     }
     if (!provenance(io,asset->source_record)) return false;
+    if (kind==QA_CINEMATIC_ROQ) {
+        qa_bytes source=qa_resource_bytes(asset->source_record);
+        if (source.size<2 || qa_load_u16le(source.data)!=UINT16_C(0x1084)) return false;
+    }
     if (kind==QA_CINEMATIC_IMAGE) {
         uint64_t image_key=0;
         if (!reading && (!image_owner(library,asset->source.data.image) ||
@@ -101,13 +111,13 @@ static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinemati
     return asset->width==width && asset->height==height;
 }
 static bool same_identity(const qa_cinematic_asset *a, const qa_cinematic_asset *b)
-{ return a->source.format==b->source.format && qa_sha256_equal(&a->digest,&b->digest); }
+{ return a->source.format==b->source.format && a->source_roq==b->source_roq && qa_sha256_equal(&a->digest,&b->digest); }
 
 bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media_library_checkpoint_refs *refs,
                                  qa_buffer *out, qa_error *error)
 {
     if (!qa_media_library_idle(library) || !out || !refs_ready(refs)) return cinematic_fail(error,"Media capture requires an idle owner and resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','M','L','B'}; uint32_t schema=1;
+    qa_source_save_io io; uint8_t magic[4]={'Q','M','L','B'}; uint32_t schema=2;
     size_t count=qa_media_library_record_count(library);
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_u32(&io,&schema) && qa_source_save_count(&io,&count,SIZE_MAX);
@@ -118,7 +128,7 @@ bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media
             qa_cinematic_asset saved=*asset;
             /* record checks the real asset self-pointer before writing fields. */
             saved.source.asset=&saved;
-            ok=asset->source.asset==asset && record(&io,(qa_media_library *)library,&saved,refs);
+            ok=asset->source.asset==asset && record(&io,(qa_media_library *)library,&saved,refs,schema);
         }
     }
     if (ok) ok=qa_source_save_finish(&io,out);
@@ -132,7 +142,7 @@ bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const q
     qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0; size_t count=0;
     qa_cinematic_asset **saved=NULL, **installed=NULL;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QMLB",4) && qa_source_save_u32(&io,&schema) && schema==1 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QMLB",4) && qa_source_save_u32(&io,&schema) && (schema==1 || schema==2) &&
         qa_source_save_count(&io,&count,bytes.size/60) && count<=SIZE_MAX/sizeof(*saved);
     if (ok && count) {
         saved=calloc(count,sizeof(*saved)); installed=calloc(count,sizeof(*installed));
@@ -142,7 +152,7 @@ bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const q
         saved[i]=calloc(1,sizeof(*saved[i]));
         if (!saved[i]) { qa_error_set(error,QA_ERROR_MEMORY,i,"Allocating restored media asset"); ok=false; break; }
         saved[i]->references=1;
-        ok=record(&io,library,saved[i],refs);
+        ok=record(&io,library,saved[i],refs,schema);
         for (size_t j=0;ok && j<i;++j) if (same_identity(saved[j],saved[i])) ok=false;
     }
     for (qa_cinematic_asset *current=library->assets;ok && current;current=current->next) {

@@ -14,6 +14,9 @@ typedef struct frontend_unified_q3_runtime_services_options {
     uint64_t receiver, audio_owner;
     void *audio_context;
     bool (*audio_actor)(void *, qa_actor_id, uint64_t *, qa_error *);
+    /* The stable factory row returns its runtime's actual lexical frame.
+     * This cannot be replaced by the newest transport snapshot. */
+    const q3n_compiled_frame *(*entered_frame)(void *);
     /* These concrete factory services retain their own contexts. The builder
      * supplies resource/cvar/collision callbacks, preserving these input,
      * predictor, console-registration and music/movie owners. */
@@ -22,8 +25,24 @@ typedef struct frontend_unified_q3_runtime_services_options {
 
 bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runtime_services_options *,
     frontend_unified_q3_runtime_services **, qa_error *);
+/* Borrow only already imported CLIENT and bank resources. No registration or
+ * Source initialization is performed by these cold constructors/readers. */
+bool frontend_unified_q3_runtime_services_create_restored(const frontend_unified_q3_runtime_services_options *,
+    frontend_unified_q3_runtime_services **, qa_error *);
 bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_services *,
     frontend_unified_q3_runtime_options *, qa_error *);
+bool frontend_unified_q3_runtime_services_read_restored(frontend_unified_q3_runtime_services *,
+    frontend_unified_q3_runtime_options *, qa_error *);
 bool frontend_unified_q3_runtime_services_current(const frontend_unified_q3_runtime_services *);
+/* Literal constructor-owned caches; they outlive the runtime borrowing them. */
+bool frontend_unified_q3_runtime_services_caches(const frontend_unified_q3_runtime_services *,
+    q3n_media **, q3n_clients **, qa_error *);
+bool frontend_unified_q3_runtime_services_checkpoint(frontend_unified_q3_runtime_services *,
+    const q3n_client_refs *, qa_buffer *, qa_error *);
+/* Retries keep the exact payload and resource resolver, resuming after each
+ * successfully imported child. Cleanup retains ownership of that prefix. */
+bool frontend_unified_q3_runtime_services_restore(frontend_unified_q3_runtime_services *,
+    const q3n_client_refs *, qa_bytes, qa_error *);
+/* Destroy after the runtime and all of its borrowed callbacks retire. */
 bool frontend_unified_q3_runtime_services_destroy(frontend_unified_q3_runtime_services **, qa_error *);
 #endif

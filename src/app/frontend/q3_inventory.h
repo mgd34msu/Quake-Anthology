@@ -32,6 +32,12 @@ bool frontend_q3_inventory_restore_roster(qa_frontend *,const frontend_q3_refs *
  * inventory-owned; SystemCIN resolves the actual wrapper's retained role lease. */
 bool frontend_q3_module_movie_refs(frontend_q3_inventory *,const frontend_remote_q3_module_topology *,
     qa_q3_movie_checkpoint_refs *,qa_error *);
+/* Global numeric slots import under the exact CIN-role structural receipt,
+ * before the role music continuation has been adopted. */
+bool frontend_q3_module_cinematic_refs(frontend_q3_inventory *,const frontend_remote_q3_module_topology *,
+    qa_q3_movie_checkpoint_refs *,qa_error *);
+bool frontend_q3_component_movie_refs(frontend_q3_inventory *,uint64_t frontend_identity,
+    qa_q3_movie_checkpoint_refs *,qa_error *);
 /* Validate the entire envelope before importing source media-cache prefixes.
  * Stable empty source heaps, restored images and the shared content namespace
  * precede preparation. Input bytes and every referenced owner remain borrowed
@@ -52,4 +58,7 @@ void frontend_q3_inventory_destroy(frontend_q3_inventory *);
 /* Physical unique registry ordinals belong to the retained QFQ3 roster. */
 bool frontend_q3_assets_encode(void *,const qa_q3_presentation_assets *,uint64_t *,qa_error *);
 bool frontend_q3_assets_decode(void *,uint64_t,qa_q3_presentation_assets **,qa_error *);
+bool frontend_q3_registry_alias(frontend_q3_inventory *,const qa_q3_presentation_assets *,uint64_t *,bool *,qa_error *);
+bool frontend_q3_registry_services_key(frontend_q3_inventory *,const qa_q3_presentation_asset_options *,uint64_t *,qa_error *);
+bool frontend_q3_registry_services_read(frontend_q3_inventory *,uint64_t,qa_q3_presentation_asset_options *,qa_error *);
 #endif

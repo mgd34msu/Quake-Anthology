@@ -280,7 +280,8 @@ static void free_allocations(qa_native_instance *instance) {
 
 bool qa_native_can_destroy(const qa_native_instance *instance) {
     return instance && !instance->active_depth && !instance->callback_depth &&
-        !instance->checkpointing && !instance->destroying;
+        !instance->checkpointing && !instance->destroying && !instance->region_scopes &&
+        !instance->write_scope && !instance->call_scope;
 }
 
 static bool instrumented_image(const qa_native_instance *instance, uint64_t *generation,
@@ -301,10 +302,11 @@ bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error
          (instance->module->info.profile != QA_NATIVE_Q3_VMMAIN || instance->options.q3_role != QA_QVM_GAME)) ||
         (instance->lifecycle != QA_NATIVE_INITIALIZED && instance->lifecycle != QA_NATIVE_RESTART_READY) ||
         instance->active_depth || instance->callback_depth || instance->region_depth ||
-        instance->region_service_depth || instance->write_depth || instance->checkpointing ||
+        instance->region_service_depth || instance->write_depth || instance->write_scope ||
+        instance->call_scope || instance->checkpointing ||
         instance->destroying || instance->unloading || instance->failed ||
         instance->pending_shutdown || instance->pending_initialize || instance->pending_restart ||
-        instance->entry_observers || instance->write_observers || qa_native_terminal(instance))
+        instance->entry_observers || instance->write_observers || instance->region_scopes || qa_native_terminal(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
             "native Q3 restart requires an idle source owner without raw-address observers");
     uint64_t generation;
@@ -720,9 +722,11 @@ bool qa_native_entry_address(const qa_native_instance *instance, const char *nam
 
 bool qa_native_restore_ready(const qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->active_depth ||
-        instance->callback_depth || instance->region_depth || instance->write_depth ||
+        instance->callback_depth || instance->region_depth || instance->write_depth || instance->write_scope ||
+        instance->call_scope ||
         instance->checkpointing || instance->destroying || instance->unloading ||
-        instance->failed || instance->pending_shutdown || instance->entry_observers || instance->write_observers)
+        instance->failed || instance->pending_shutdown || instance->entry_observers || instance->write_observers ||
+        instance->region_scopes)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native private restore requires idle detached source observers");
     for (size_t i = 0; i < instance->region_count; ++i)
         if (instance->regions[i].first)
@@ -753,10 +757,14 @@ bool qa_native_invoke_receipt(qa_native_instance *instance, qa_native_address en
     size_t argument_count, qa_native_value *result, bool *entered, qa_error *error) {
     if (!entered) return native_fail(error, QA_ERROR_ARGUMENT, 0, "native invocation requires its entered receipt");
     *entered = false;
+    bool write_call=instance&&instance->write_scope&&
+        instance->write_scope->event==instance->active_write_event&&
+        instance->write_scope->depth==instance->write_depth&&
+        instance->write_scope->invocation_depth==instance->active_depth;
     if (!instance || !entry || !signature || instance->lifecycle != QA_NATIVE_INITIALIZED ||
         instance->checkpointing || instance->destroying ||
-        instance->region_depth ||
-        instance->write_depth)
+        (instance->region_depth && !write_call) ||
+        (instance->write_depth && !write_call))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance and declared entry are required");
     bool *previous = instance->invoke_entered;

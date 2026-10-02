@@ -30,6 +30,15 @@ bool qa_native_host_q2_wire_entity(qa_native_host *, uint32_t,
  * New Source rows can be observed before the completed table count advances. */
 bool qa_native_host_q2_wire_entity_import(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
+/* Pure observation during this Source's actual end-frame stage, after its
+ * module has returned. Other Source turns and active imports are excluded. */
+bool qa_native_host_q2_wire_entity_stage(qa_native_host *, uint32_t,
+    qa_native_host_q2_entity *, qa_error *);
+/* Invokes the real API2023 visibility export during that end-frame stage.
+ * Both slots must still name the supplied full Source actors after the call. */
+bool qa_native_host_q2_entity_visible(qa_native_host *, uint32_t entity_source_slot,
+    qa_actor_id entity, uint32_t viewer_source_slot, qa_actor_id viewer,
+    bool *, qa_error *);
 /* The selected Source has returned even when another GAME owns the current
  * session turn. Read only its actual signed public animation frame. */
 bool qa_native_host_q2_character_frame(qa_native_host *, uint32_t source_slot,

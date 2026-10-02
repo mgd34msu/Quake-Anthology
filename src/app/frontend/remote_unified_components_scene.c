@@ -1,10 +1,30 @@
 #include "remote_unified_components_private.h"
 #include "component_scene.h"
 #include <math.h>
+#include <limits.h>
 #include "qa/console.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool frontend_unified_components_scene_association_read(const qa_frontend *frontend,const void *context,
+    uint64_t identity,frontend_unified_component_scene_association *out)
+{
+    const remote_component *row=context;
+    const frontend_unified_components *owner=row?row->parent:NULL;
+    if(!frontend||!identity||!out||!owner||owner->frontend!=frontend||!owner->recipe||owner->failed) return false;
+    bool linked=false;
+    for(size_t i=0;i<q3remote_component_physical_count(owner);++i) if(q3remote_component_physical_at(owner,i)==row) { linked=true; break; }
+    if(!linked||row->frontend_identity!=identity||!row->frontend.owner||!row->assets||(!row->scene&&!row->retired)||!row->frame||!row->state.provider_row)
+        return false;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(owner->replica);
+    if(!domain) return false;
+    *out=(frontend_unified_component_scene_association){.owner=row->owner,.service_owner=row->services,
+        .generation=row->state.generation,.frontend_identity=identity,.physical_seat=domain->physical_seat,.time_ms=row->renderer_time,
+        .viewer=row->frame->viewer,.recipe=owner->recipe,.provider=row->state.provider_row,
+        .frontend_owner=row->frontend.owner,.scene=row->scene,.assets=row->assets};
+    return true;
+}
 
 static bool retained(void *context)
 {
@@ -15,7 +35,7 @@ static bool retained(void *context)
 static bool published(void *context)
 {
     remote_component *r=context;
-    if(!retained(r)||(!r->parent->restoring&&!frontend_unified_components_current(r->parent))) return false;
+    if(!retained(r)||r->retired||(!r->parent->restoring&&!frontend_unified_components_current(r->parent))) return false;
     for(size_t i=0;i<r->parent->count;++i) if(r->parent->rows[i]==r) return true;
     return false;
 }
@@ -25,13 +45,32 @@ static bool source_current(void *context,const application_q3_scene_context *vie
     if(!published(r)||!r->frame||!view||view->generation!=r->state.generation) return false;
     remote_component_frame *frame=view->baseline?r->baseline:r->frame;
     if(!frame||view->revision!=frame->context.revision||view->game_state_revision!=frame->context.game_state_revision||
-        view->time_ms!=frame->context.time_ms||view->client_number!=frame->context.client_number||
+        view->client_number!=frame->context.client_number||
         !qa_actors_get(frontend_remote_unified_registry(r->parent->replica),frame->viewer)) return false;
-    if(view->snapshot==&frame->snapshot&&view->game_state==&frame->source.game_state&&view->actors==frame->actors) return true;
+    if(view->baseline&&(view->time_ms!=frame->context.time_ms||view->frame_ms)) return false;
+    if(r->acquired&&view->time_ms==r->entered.time_ms&&view->frame_ms==r->entered.frame_ms&&
+        view->snapshot==&frame->snapshot&&view->game_state==&frame->source.game_state&&view->actors==frame->actors) return true;
     application_q3_scene_context held;
     return application_q3_scene_retained_context(r->scene,&held)&&view->snapshot==held.snapshot&&
         view->game_state==held.game_state&&view->actors==held.actors&&view->actor_count==held.actor_count&&
         view->revision==held.revision&&view->time_ms==held.time_ms&&view->generation==held.generation;
+}
+static bool presentation_time(remote_component *r,int32_t *time,int32_t *elapsed,qa_error *e)
+{
+    frontend_unified_recipient_clock clock;
+    if(!r->frame||!frontend_remote_unified_clock_read(r->parent->replica,&clock,e)||!isfinite(clock.milliseconds)) return false;
+    int32_t server_time=r->frame->snapshot.server_time;
+    if(!r->scene_time_present) {
+        r->scene_time_offset=(double)server_time-clock.milliseconds;
+        r->scene_time_present=true;
+    }
+    double value=trunc(fmax((double)server_time,fmax(r->previous_frame_present?(double)r->previous_frame_time:(double)server_time,
+        clock.milliseconds+r->scene_time_offset)));
+    if(!isfinite(value)||value<0||value>INT32_MAX)
+        return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component presentation time exceeds its real Source word range");
+    *time=(int32_t)value;
+    *elapsed=r->previous_frame_present?*time-r->previous_frame_time:0;
+    return true;
 }
 static bool acquire(void *context,bool baseline,application_q3_scene_context *out,qa_error *e)
 {
@@ -39,8 +78,15 @@ static bool acquire(void *context,bool baseline,application_q3_scene_context *ou
     if(!published(r)||r->acquired||!f||!out)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component has no entered received Source frame");
     *out=f->context; out->baseline=baseline;
-    if(!source_current(r,out)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component snapshot viewer is stale");
-    r->entered=*out; r->acquired=true; return true;
+    int32_t time=0,elapsed=0;
+    if(!presentation_time(r,&time,&elapsed,e)) return false;
+    out->time_ms=baseline?f->snapshot.server_time:time; out->frame_ms=baseline?0:elapsed;
+    r->entered=*out; r->acquired=true;
+    if(!source_current(r,out)) {
+        r->acquired=false; memset(&r->entered,0,sizeof(r->entered));
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component snapshot viewer is stale");
+    }
+    r->renderer_time=out->time_ms; return true;
 }
 static void release(void *context,const application_q3_scene_context *view)
 {
@@ -162,7 +208,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         .common={.context=r,.print=print}};
     application_q3_scene_source source={r,acquire,source_current,source_actor,source_live,release,weapon_presented};
     application_q3_component_scene_preparation request={.origin=APPLICATION_Q3_COMPONENT_SCENE_REMOTE,.component=r->state.mod,
-        .restoring=r->restore_pending,.frontend_identity=r->frontend_identity,
+        .restoring=r->restore_pending,.retired=r->retired,.frontend_identity=r->frontend_identity,
         .recipe=o->recipe,.recipe_provider=r->state.provider_row,.catalog=qa_executable_recipe_catalog(o->recipe),
         .owner=r->owner,.generation=r->state.generation,.service_owner=r->services,.physical_seat=domain->physical_seat,.viewer=r->frame->viewer,
         .content=files,.artifact=r->artifact,.acquisition=&r->acquisition,.profile=r->profile,.source=source,.host=&r->host,.assets=&r->assets,
@@ -170,6 +216,12 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
     if(!frontend_component_scene_prepare(o->frontend,&request,e)) return false;
     if(!r->frontend.identity_read||!r->frontend.identity_read(r->frontend.owner,&r->frontend_identity))
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote CG renderer has no real physical identity");
+    if(r->retired) {
+        if(r->host.frontend_lifetime&&r->host.release_frontend) {
+            r->host.release_frontend(r->host.frontend_lifetime); r->host.frontend_lifetime=NULL;
+        }
+        return true;
+    }
     application_q3_scene_options create={.profile=r->profile,.host=r->host,.assets=r->assets,.viewer=r->frame->viewer,.source=source,
         .output_context=r->frontend.owner,.finish_output=r->frontend.finish,.actor_codec_context=r,.actor_encode=actor_encode,.actor_decode=actor_decode};
     bool created=application_q3_scene_create(&create,r->restore_pending,&r->scene,e); r->host_entered=r->scene!=NULL;
@@ -177,6 +229,19 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
     if(r->restore_pending) return true;
     if(!r->frontend.begin(r->frontend.owner,0,e)||!application_q3_scene_initialize(r->scene,e)) return false;
     r->initialized=true; return true;
+}
+bool q3remote_component_retire(remote_component *row,qa_error *error)
+{
+    if(row->acquired||(row->scene&&!application_q3_scene_idle(row->scene)))
+        return q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component retirement retains real execution or body leases");
+    if(!application_q3_scene_destroy(&row->scene,error)) return false;
+    if(!row->host_entered&&row->host.frontend_lifetime&&row->host.release_frontend) {
+        row->host.release_frontend(row->host.frontend_lifetime); row->host.frontend_lifetime=NULL;
+    }
+    row->retired=true; row->initialized=false; row->host_entered=false;
+    if(row->frontend.owner&&(!row->frontend.retire||!row->frontend.retire(row->frontend.owner,error)))
+        return error&&error->code!=QA_OK?false:q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component registry lacks its real service retirement owner");
+    q3remote_component_admissions_clear(row); return true;
 }
 bool q3remote_component_close(remote_component **slot,qa_error *e)
 {
@@ -194,13 +259,19 @@ bool q3remote_component_close(remote_component **slot,qa_error *e)
     if(r->frame!=r->baseline) q3remote_component_frame_free(r->frame);
     q3remote_component_frame_free(r->baseline); q3remote_component_state_free(&r->state);
     qa_buffer_free(&r->saved_scene); qa_buffer_free(&r->saved_cvars); qa_buffer_free(&r->saved_console);
-    qa_buffer_free(&r->saved_frontend);
+    q3remote_component_admissions_clear(r);
     free(r); *slot=NULL; return true;
 }
-bool frontend_unified_components_prepare_draw(frontend_unified_components *o,const qa_scene_view *view,uint64_t sequence,qa_error *e)
+bool frontend_unified_components_prepare_draw(frontend_unified_components *o,const qa_scene_view *view,uint64_t sequence,
+    const frontend_unified_recipient_clock *clock,qa_error *e)
 {
-    if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!view)
+    if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!view||!clock)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component draw requires its authentic recipient view");
+    frontend_unified_recipient_clock actual;
+    if(!frontend_remote_unified_clock_read(o->replica,&actual,e)) return false;
+    if(actual.milliseconds!=clock->milliseconds||actual.source_elapsed_ms!=clock->source_elapsed_ms||
+        actual.physical_frame!=clock->physical_frame||actual.wall_time_ns!=clock->wall_time_ns||actual.wall_elapsed_ns!=clock->wall_elapsed_ns)
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component draw clock changed its actual recipient receipt");
     o->busy=true; bool ok=true;
     for(size_t i=0;ok&&i<o->count;++i) {
         remote_component *r=o->rows[i]; if(!r->frame) continue;
@@ -209,7 +280,10 @@ bool frontend_unified_components_prepare_draw(frontend_unified_components *o,con
         ok=q3remote_component_open(r,e);
         if(ok&&(!r->advanced||r->draw_sequence!=sequence)) {
             ok=r->frontend.begin(r->frontend.owner,sequence,e)&&application_q3_scene_advance(r->scene,sequence,e);
-            if(ok) { r->draw_sequence=sequence; r->advanced=true; r->submitted=false; }
+            if(ok) {
+                q3remote_component_admissions_clear(r); r->draw_sequence=sequence; r->advanced=true; r->submitted=false;
+                if(!r->profile->has_hud) { r->previous_frame_time=r->renderer_time; r->previous_frame_present=true; }
+            }
         }
     }
     o->busy=false; return ok;
@@ -221,94 +295,20 @@ static bool packets(remote_component *r,size_t *count,qa_error *e)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component packet lost its actual completed renderer");
     return frontend_component_scene_packet_count(r->parent->frontend,identity,r->draw_sequence,count,e);
 }
-static bool packet_read(remote_component *r,size_t ordinal,frontend_component_scene_packet *out,qa_error *e)
+bool q3remote_component_packet_read(remote_component *r,size_t ordinal,frontend_component_scene_packet *out,qa_error *e)
 {
     uint64_t identity=0;
     if(!r->frontend.identity_read(r->frontend.owner,&identity))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component packet lost its actual registry identity");
     return frontend_component_scene_packet_read(r->parent->frontend,identity,r->draw_sequence,ordinal,out,e);
 }
-bool frontend_unified_components_lights(frontend_unified_components *o,const qa_scene_light **out,size_t *count,qa_error *e)
-{
-    if(!out||!count||!frontend_unified_components_current(o)||!frontend_unified_components_idle(o))
-        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote lights require completed component scenes");
-    size_t total=0;
-    for(size_t i=0;i<o->count;++i) {
-        remote_component *r=o->rows[i]; if(!r->frame) continue; size_t n;
-        if(!packets(r,&n,e)) return false;
-        for(size_t j=0;j<n;++j) {
-            frontend_component_scene_packet packet;
-            if(!packet_read(r,j,&packet,e)) return false;
-            if(packet.light_count>SIZE_MAX/sizeof(*o->lights)-total) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Remote component light extent overflow");
-            total+=packet.light_count;
-        }
-    }
-    qa_scene_light *joined=total?malloc(total*sizeof(*joined)):NULL;
-    if(total&&!joined) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real component light pool");
-    size_t used=0;
-    for(size_t i=0;i<o->count;++i) {
-        remote_component *r=o->rows[i]; if(!r->frame) continue; size_t n;
-        if(!packets(r,&n,e)) { free(joined); return false; }
-        for(size_t j=0;j<n;++j) {
-            frontend_component_scene_packet packet;
-            if(!packet_read(r,j,&packet,e)) { free(joined); return false; }
-            if(packet.light_count) memcpy(joined+used,packet.lights,packet.light_count*sizeof(*joined));
-            used+=packet.light_count;
-        }
-    }
-    free(o->lights); o->lights=joined; o->light_count=total; *out=joined; *count=total; return true;
-}
-bool frontend_unified_components_submit(frontend_unified_components *o,qa_q3_presentation *recipient,
-    qa_q3_source_scene_bank *bank,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
-{
-    if(!recipient||!bank||!options||!frame||!frontend_unified_components_current(o)||!frontend_unified_components_idle(o))
-        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component output requires its entered recipient submission");
-    for(size_t i=0;i<o->count;++i) {
-        remote_component *r=o->rows[i]; if(!r->frame) continue; size_t n;
-        if(r->submitted) continue;
-        if(r->draw_sequence!=frame->sequence||!packets(r,&n,e)) return false;
-        for(size_t j=0;j<n;++j) {
-            frontend_component_scene_packet packet;
-            if(!packet_read(r,j,&packet,e)) return false;
-            uint32_t first=0; size_t admitted=0;
-            if(!qa_q3_source_scene_bank_entity_range(bank,r->assets,packet.entities,packet.entity_count,&first,&admitted,e)) return false;
-            for(size_t k=0;k<admitted;++k)
-                if(!qa_q3_presentation_source_component_entity(recipient,r->assets,packet.entities+k,r->frame->context.time_ms,options,
-                    first+(uint32_t)k,frame,e)) return false;
-            for(size_t k=0;k<packet.polygon_count;++k) {
-                const qa_q3_scene_polygon *polygon=packet.polygons+k;
-                if(polygon->first>packet.vertex_count||polygon->count>packet.vertex_count-polygon->first)
-                    return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component polygon leaves its actual vertices");
-                if(!qa_q3_source_scene_bank_poly_capacity(bank,polygon->count)) continue;
-                if(polygon->count>SIZE_MAX/sizeof(qa_q3_poly_vertex))
-                    return q3remote_component_fail(e,QA_ERROR_MEMORY,"Component polygon exceeds native Source vertex extent");
-                qa_q3_poly_vertex *raw=polygon->count?malloc(polygon->count*sizeof(*raw)):NULL;
-                if(polygon->count&&!raw) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Recovering actual component Source vertices");
-                for(size_t v=0;v<polygon->count;++v) {
-                    const qa_scene_vertex *vertex=packet.vertices+polygon->first+v;
-                    raw[v]=(qa_q3_poly_vertex){.position=vertex->position,.texcoord=vertex->texcoord,
-                        .color={(uint8_t)lroundf(vertex->color.x*255.0f),(uint8_t)lroundf(vertex->color.y*255.0f),
-                            (uint8_t)lroundf(vertex->color.z*255.0f),(uint8_t)lroundf(vertex->color.w*255.0f)}};
-                }
-                bool included=false;
-                bool stored=qa_q3_source_scene_bank_poly(bank,r->assets,polygon->shader,raw,
-                    polygon->count,&polygon->fog,&included,e);
-                free(raw);
-                if(!stored) return false;
-                if(!included) continue;
-                if(!qa_q3_presentation_source_component_poly(recipient,r->assets,polygon->shader,packet.vertices+polygon->first,
-                    polygon->count,&polygon->fog,r->frame->context.time_ms,options,frame,e)) return false;
-            }
-        }
-        r->submitted=true;
-    }
-    return true;
-}
 bool frontend_unified_components_world(frontend_unified_components *o,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
 {
     if(!world||!frame) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component world requires its recipient frame");
-    if(!frontend_unified_components_prepare_draw(o,view,frame->sequence,e)) return false;
+    frontend_unified_recipient_clock clock;
+    if(!frontend_remote_unified_clock_read(o->replica,&clock,e)||
+        !frontend_unified_components_prepare_draw(o,view,frame->sequence,&clock,e)) return false;
     for(size_t i=0;i<o->count;++i) {
         remote_component *r=o->rows[i]; if(!r->frame) continue; size_t count;
         if(!packets(r,&count,e)) return false;
@@ -322,7 +322,33 @@ bool frontend_unified_components_hud(frontend_unified_components *o,qa_ui *ui,qa
     if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!frame)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component HUD requires its real returned scene owners");
     o->busy=true; bool ok=true;
-    for(size_t i=0;ok&&i<o->count;++i) if(o->rows[i]->scene&&o->rows[i]->profile->has_hud)
-        ok=application_q3_scene_hud(o->rows[i]->scene,frame->sequence,e);
+    for(size_t i=0;ok&&i<o->count;++i) if(o->rows[i]->scene&&o->rows[i]->profile->has_hud) {
+        remote_component *r=o->rows[i];
+        ok=application_q3_scene_hud(r->scene,frame->sequence,e);
+        if(ok) { r->previous_frame_time=r->renderer_time; r->previous_frame_present=true; }
+    }
     o->busy=false; return ok;
+}
+bool frontend_unified_components_pictures(frontend_unified_components *o,qa_q3_presentation *recipient,qa_scene_frame *frame,qa_error *e)
+{
+    if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!frame)
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component pictures require their returned recipient frame");
+    for(size_t i=0;i<o->count;++i) {
+        remote_component *r=o->rows[i]; if(!r->scene||!r->frame||!r->advanced) continue;
+        size_t count=0;
+        if(!frontend_component_scene_picture_count(o->frontend,r->frontend_identity,r->draw_sequence,&count,e)) return false;
+        if(!r->pictures_present||r->picture_sequence!=frame->sequence) {
+            r->pictures_present=true; r->picture_sequence=frame->sequence; r->pictures_submitted=0;
+        }
+        if(r->pictures_submitted>count)
+            return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component picture continuation moved backwards");
+        while(r->pictures_submitted<count) {
+            qa_q3_picture_receipt picture;
+            if(!recipient) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component picture has no actual primary HUD recipient");
+            if(!frontend_component_scene_picture_read(o->frontend,r->frontend_identity,r->draw_sequence,r->pictures_submitted,&picture,e)||
+                !qa_q3_presentation_completed_picture(recipient,&picture,frame,e)) return false;
+            ++r->pictures_submitted;
+        }
+    }
+    return true;
 }

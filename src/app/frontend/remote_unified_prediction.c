@@ -375,7 +375,13 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
     qa_json_id root=qa_unified_document_root(document);
     prediction_snapshot s={0}; qa_actor_id admitted; uint32_t source_entity; int rounding=0;
     qa_world *scene=NULL; qa_unified_document *copy=NULL;
+    uint64_t authoritative_frame=0;
+    const qa_unified_document *frame=p->importing?NULL:frontend_remote_unified_frame_prepared(p->replica);
+    if(!frame) frame=frontend_remote_unified_frame(p->replica);
+    const qa_json_document *frame_json=qa_unified_document_json(frame);
+    qa_json_id frame_snapshot=qa_json_get(frame_json,qa_json_get(frame_json,qa_unified_document_root(frame),"output"),"snapshot");
     bool ok=frontend_remote_unified_player(p->replica,&admitted,&source_entity) && actor(&r,get(&r,root,"actor"),&s.input.actor,e) &&
+        frame&&qa_json_u64(frame_json,qa_json_get(frame_json,qa_json_get(frame_json,frame_snapshot,"frame"),"frame"),&authoritative_frame,e)&&
         qa_actor_id_equal(admitted,s.input.actor) && integer(&r,get(&r,root,"sequence"),-1,QA_UNIFIED_SAFE_INTEGER,&s.sequence,e) &&
         number(&r,get(&r,root,"commandTimeMilliseconds"),&s.time_ms,e) && state_read(&r,get(&r,root,"state"),&s.input.state,e) &&
         profile_read(&r,get(&r,root,"profile"),&s.input.profile,&rounding,e) && s.input.profile.kind==s.input.state.kind &&
@@ -399,6 +405,7 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
         s.input.shape=(qa_trace_shape){QA_SHAPE_BOX,s.input.standing.bounds}; s.input.q1_solid=QA_Q1_SOLID_SLIDEBOX;
         s.input.view_offset=s.offset;
         p->scene=scene; scene=NULL; p->snapshot_document=copy; copy=NULL; p->snapshot=s; p->received=true; p->rounding=rounding;
+        p->authoritative_frame=authoritative_frame;
         size_t retired=0;
         while(retired<p->command_count && (int64_t)p->commands[retired].sequence<=s.sequence) ++retired;
         memmove(p->commands,p->commands+retired,(p->command_count-retired)*sizeof(*p->commands)); p->command_count-=retired;
@@ -470,8 +477,9 @@ static bool brush(void *context, const qa_trace_result *hit, bool *out, qa_error
     *out=c.inline_model; return true;
 }
 static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s,
-    frontend_unified_prediction_status *status, qa_error *e)
+    frontend_unified_prediction_status *status,const int32_t *prior_command_time,bool *matched,qa_error *e)
 {
+    if(matched) *matched=false;
     *s=p->snapshot;
     *status=FRONTEND_UNIFIED_PREDICTION_UNCHANGED;
     bool disabled=(s->input.state.kind==QA_MOVEMENT_Q2_CLASSIC && (s->input.state.data.q2.flags&64u)) ||
@@ -514,9 +522,14 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
         if(in.state.kind==QA_MOVEMENT_Q2_CLASSIC) in.profile.data.q2.snap_initial=false;
         if(in.state.kind==QA_MOVEMENT_Q3) in.environment.gravity_multiplier=1;
         if(in.state.kind==QA_MOVEMENT_QUAKEWORLD && in.environment.has_stance) { in.profile.data.qw.shared_controls=true; in.shape.bounds=in.current_bounds; }
+        bool boundary=prior_command_time&&in.state.kind==QA_MOVEMENT_Q3&&
+            in.state.data.q3.command_time_ms==*prior_command_time&&
+            in.command.server_time_ms>in.state.data.q3.command_time_ms;
         ok=qa_movement_move(&in,&services,&result,e);
         if(ok && result.status!=QA_MOVEMENT_ACTIVE) ok=fail(e,QA_ERROR_FORMAT,"Private movement cannot retire an authoritative actor");
         if(ok) {
+            if(boundary&&result.state.kind==QA_MOVEMENT_Q3&&
+                result.state.data.q3.command_time_ms!=in.state.data.q3.command_time_ms&&matched) *matched=true;
             s->input.state=result.state; s->input.current_bounds=result.bounds;
             s->angles=result.view_angles; s->height=result.view_height;
             s->ground=result.ground; s->water_level=result.water_level; s->water_type=result.water_type;
@@ -527,18 +540,29 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
     qa_movement_result_free(&result);
     return ok;
 }
-bool frontend_remote_unified_prediction_read(frontend_remote_unified_prediction *p,
-    frontend_unified_prediction_view *out, qa_error *e)
+static bool read_prediction(frontend_remote_unified_prediction *p,frontend_unified_prediction_view *out,
+    const int32_t *prior_command_time,bool *matched,qa_error *e)
 {
     if(!p || p->busy || !p->received || !out || !current(p,e)) return false;
     p->busy=true;
     prediction_snapshot s; frontend_unified_prediction_status status;
-    bool ok=replay(p,&s,&status,e) && current(p,e);
+    bool ok=replay(p,&s,&status,prior_command_time,matched,e) && current(p,e);
     if(ok) *out=(frontend_unified_prediction_view){.actor=s.input.actor,.state=s.input.state,
         .origin_shift=qa_vec_sub(qa_movement_origin(&s.input.state),qa_movement_origin(&p->snapshot.input.state)),
-        .view_angles=s.angles,.view_offset=s.offset,.bounds=s.input.current_bounds,.view_height=s.height,
-        .command_time_ms=s.time_ms,.sequence=s.sequence,.status=status};
+        .view_angles=s.angles,.view_offset=s.offset,.bounds=s.input.current_bounds,.ground=s.ground,.view_height=s.height,
+        .command_time_ms=s.time_ms,.sequence=s.sequence,.authoritative_frame=p->authoritative_frame,.status=status};
     p->busy=false; return ok;
+}
+bool frontend_remote_unified_prediction_read(frontend_remote_unified_prediction *p,
+    frontend_unified_prediction_view *out,qa_error *e)
+{ return read_prediction(p,out,NULL,NULL,e); }
+bool frontend_remote_unified_prediction_read_command_boundary(frontend_remote_unified_prediction *p,
+    int32_t prior_command_time,frontend_unified_prediction_view *out,bool *matched,qa_error *e)
+{
+    if(!matched) return fail(e,QA_ERROR_ARGUMENT,"Q3 replay boundary requires its output receipt");
+    bool actual=false;
+    if(!read_prediction(p,out,&prior_command_time,&actual,e)) return false;
+    *matched=actual; return true;
 }
 bool frontend_remote_unified_prediction_time(const frontend_remote_unified_prediction *p, double *out, qa_error *e)
 {
@@ -550,8 +574,8 @@ static void snapshot_read(const frontend_remote_unified_prediction *p,frontend_u
 {
     const prediction_snapshot *s=&p->snapshot;
     *out=(frontend_unified_prediction_view){.actor=s->input.actor,.state=s->input.state,
-        .view_angles=s->angles,.view_offset=s->offset,.bounds=s->input.current_bounds,
-        .view_height=s->height,.command_time_ms=s->time_ms,.sequence=s->sequence,
+        .view_angles=s->angles,.view_offset=s->offset,.bounds=s->input.current_bounds,.ground=s->ground,
+        .view_height=s->height,.command_time_ms=s->time_ms,.sequence=s->sequence,.authoritative_frame=p->authoritative_frame,
         .status=FRONTEND_UNIFIED_PREDICTION_UNCHANGED};
 }
 bool frontend_remote_unified_prediction_snapshot(const frontend_remote_unified_prediction *p,
@@ -577,7 +601,7 @@ static bool received_actor(const frontend_remote_unified_prediction *p,qa_actor_
 {
     qa_saved_actor_id wire;
     return qa_actors_get(p->registry,actor_id) && frontend_remote_unified_wire_actor(p->replica,actor_id,&wire) &&
-        frontend_remote_unified_actor_present(p->replica,wire.slot,wire.generation);
+        frontend_remote_unified_actor_published(p->replica,wire.slot,wire.generation);
 }
 bool frontend_remote_unified_prediction_trace(frontend_remote_unified_prediction *p,
     const qa_trace_query *query,qa_trace_result *out,qa_error *e)
@@ -604,11 +628,85 @@ bool frontend_remote_unified_prediction_body_read(const frontend_remote_unified_
     if (!qa_world_body_read(p->scene,actor_id,&body,e) || !current(p,e)) return false;
     *out=body; return true;
 }
+bool frontend_remote_unified_prediction_player_origin(frontend_remote_unified_prediction *p,qa_vec3 *out,qa_error *e)
+{
+    frontend_unified_prediction_view view; qa_body_state body;
+    if(!out||!frontend_remote_unified_prediction_read(p,&view,e)||
+        !frontend_remote_unified_prediction_body_read(p,view.actor,&body,e)||!current(p,e)) return false;
+    *out=qa_vec_add(body.origin,view.origin_shift); return true;
+}
+bool frontend_remote_unified_prediction_point_contents(frontend_remote_unified_prediction *p,
+    const qa_point_query *query,qa_point_contents *out,qa_error *e)
+{
+    if(!p||!query||!out||!p->received||!p->scene||!frontend_remote_unified_prediction_idle(p)||
+        !current(p,e)||(query->pass_actor.registry&&!received_actor(p,query->pass_actor)))
+        return fail(e,QA_ERROR_ARGUMENT,"Unified contents requires its returned received world and actual actor namespace");
+    qa_point_contents result;
+    p->busy=true;
+    bool ok=qa_world_point_contents(p->scene,query,&result,e);
+    p->busy=false;
+    if(ok) ok=current(p,e);
+    if(ok) *out=result;
+    return ok;
+}
 const qa_unified_document *frontend_remote_unified_prediction_document(
     const frontend_remote_unified_prediction *p)
 {
     qa_error e={0};
     return p && !p->busy && p->received && current(p,&e)?p->snapshot_document:NULL;
+}
+static int32_t q3_integer(double value)
+{
+    double word=fmod(trunc(value),4294967296.0);
+    if(word<0) word+=4294967296.0;
+    return (int32_t)(word>=2147483648.0?word-4294967296.0:word);
+}
+static bool q3_ground_number(const frontend_unified_q3_prediction_source *source,
+    qa_movement_ground ground,int32_t *out,qa_error *e)
+{
+    if(ground.hit==QA_TRACE_HIT_WORLD) {*out=1022;return true;}
+    if(ground.hit==QA_TRACE_HIT_NONE) {*out=1023;return true;}
+    if(ground.hit!=QA_TRACE_HIT_ACTOR) return fail(e,QA_ERROR_FORMAT,"Q3 prediction ground has no actual collision role");
+    uint32_t number=0;bool found=false;
+    if(!source->number(source->context,ground.actor,&number,&found,e)) return false;
+    if(found&&number>=1022) return fail(e,QA_ERROR_FORMAT,"Q3 actor ground maps outside actual Source entities");
+    *out=found?(int32_t)number:1023;return true;
+}
+bool frontend_remote_unified_prediction_merged_q3(frontend_remote_unified_prediction *p,
+    const qa_q3_player *baseline,qa_actor_id viewer,const frontend_unified_q3_prediction_source *source,
+    qa_q3_player *out,frontend_unified_prediction_view *view,qa_error *e)
+{
+    if(!baseline||!out||!view||!source||!source->current||!source->number||
+        !source->current(source->context,e)) return fail(e,QA_ERROR_ARGUMENT,"Q3 prediction merge requires its actual retained Source receipt");
+    uint32_t viewer_number=0;bool found=false;
+    frontend_unified_prediction_view predicted;
+    if(!source->number(source->context,viewer,&viewer_number,&found,e)||!found||viewer_number>=1022||
+        baseline->clientNum!=(int32_t)viewer_number||!frontend_remote_unified_prediction_read(p,&predicted,e)||
+        !qa_actor_id_equal(viewer,predicted.actor)) return fail(e,QA_ERROR_ARGUMENT,"Q3 prediction merge changed its full Source viewer");
+    qa_q3_player merged=*baseline;
+    qa_vec3 origin=qa_movement_origin(&predicted.state),velocity=qa_movement_velocity(&predicted.state);
+    merged.origin[0]=origin.x;merged.origin[1]=origin.y;merged.origin[2]=origin.z;
+    merged.velocity[0]=velocity.x;merged.velocity[1]=velocity.y;merged.velocity[2]=velocity.z;
+    merged.viewangles[0]=predicted.view_angles.x;merged.viewangles[1]=predicted.view_angles.y;merged.viewangles[2]=predicted.view_angles.z;
+    merged.viewheight=q3_integer(predicted.view_height);merged.commandTime=q3_integer(predicted.command_time_ms);
+    if(!q3_ground_number(source,predicted.ground,&merged.groundEntityNum,e)) return false;
+    if(predicted.state.kind==QA_MOVEMENT_Q3) {
+        const qa_q3_movement_state *state=&predicted.state.data.q3;
+        merged.commandTime=state->command_time_ms;merged.pmType=state->movement_type;
+        merged.pmFlags=q3_integer(state->movement_flags);merged.pmTime=state->movement_time_ms;merged.bobCycle=state->bob_cycle;
+        for(unsigned i=0;i<3;++i) merged.deltaAngles[i]=state->delta_angle_words[i];
+        if(!q3_ground_number(source,state->ground,&merged.groundEntityNum,e)) return false;
+        merged.movementDir=state->movement_direction;merged.eFlags=q3_integer(state->flags);
+        merged.pmoveFramecount=state->movement_frame;merged.jumppadFrame=state->jump_pad_frame;merged.jumppadEnt=0;
+        if(state->jump_pad.registry) {
+            uint32_t number=0;bool present=false;
+            if(!source->number(source->context,state->jump_pad,&number,&present,e)) return false;
+            if(present&&number>=1022) return fail(e,QA_ERROR_FORMAT,"Q3 jump pad maps outside actual Source entities");
+            if(present) merged.jumppadEnt=(int32_t)number;
+        }
+    }
+    if(!current(p,e)||!source->current(source->context,e)) return false;
+    *out=merged;*view=predicted;return true;
 }
 bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_prediction **owned, qa_error *e)
 {

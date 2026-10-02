@@ -64,17 +64,13 @@ static bool capture_entities(resource_capture *capture, const qa_q2_server_recor
     }
     if (event->kind != QA_Q2_SVC_TEMP_ENTITY) return true;
     const qa_q2_temp_entity *temporary = &event->data.temporary;
-    offset += 2;
     for (size_t i = 0; i < temporary->field_count; ++i) {
         const qa_q2_temp_field *field = temporary->fields + i;
         bool entity = field->name == QA_Q2_TEMP_ENTITY1 || field->name == QA_Q2_TEMP_ENTITY2;
         bool actor_field = entity && temporary->type != QA_Q2_TE_STEAM && temporary->type != QA_Q2_TE_WIDOWBEAMOUT;
-        if (actor_field && field->value.integer >= 0 &&
-            !retain_entity(capture, offset, (uint32_t)field->value.integer, false, error)) return false;
-        if (field->kind == QA_Q2_TEMP_VECTOR)
-            offset += field->name == QA_Q2_TEMP_DIRECTION ? 1u :
-                capture->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 6u : 12u;
-        else offset += entity ? 2u : field->name == QA_Q2_TEMP_TIME ? 4u : 1u;
+        if (actor_field && field->kind == QA_Q2_TEMP_INTEGER && field->value.integer >= 0 &&
+            !retain_entity(capture, offset + 1u + field->offset,
+                (uint32_t)field->value.integer, false, error)) return false;
     }
     return true;
 }

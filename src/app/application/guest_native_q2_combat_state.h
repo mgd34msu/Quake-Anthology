@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NATIVE_Q2_COMBAT_STATE_H
 #include "guest_native_q2_calls.h"
 #include "qa/gameplay.h"
+#include "qa/game_q2.h"
 struct application_native_q2;
 typedef struct application_q2_armor_row {
     uint32_t index;
@@ -53,10 +54,14 @@ bool application_q2_combat_health_write(void *, float, qa_error *);
 bool application_q2_combat_armor_read(application_q2_combat_actor *, qa_armor *, qa_error *);
 bool application_q2_combat_armor_validate(void *, const qa_armor *, qa_error *);
 bool application_q2_combat_armor_write(void *, const qa_armor *, qa_error *);
-bool application_q2_combat_empty_armor(void *, float, qa_regular_armor *, bool *, qa_error *);
+bool application_q2_combat_empty_armor(void *, double, qa_regular_armor *, bool *, qa_error *);
 bool application_q2_combat_normalize_armor(void *, const qa_armor *, qa_armor *, qa_error *);
 bool application_q2_combat_cause_read(const application_q2_combat_profile *,
     const qa_native_value *, uint32_t flags, qa_damage_cause *, qa_error *);
 bool application_q2_combat_cause_lower(const application_q2_combat_profile *,
     const qa_damage_cause *, uint8_t mod[3], qa_native_value *, qa_error *);
+bool application_q2_native_cause_read(bool rerelease,qa_q2_classic_cause_profile,
+    const qa_native_value *,uint32_t flags,qa_damage_cause *,qa_error *);
+bool application_q2_native_cause_lower(bool rerelease,qa_q2_classic_cause_profile,
+    const qa_damage_cause *,uint8_t mod[3],qa_native_value *,qa_error *);
 #endif

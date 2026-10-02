@@ -26,7 +26,8 @@ typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_UNIFIED_MAP,
     FRONTEND_SCENE_OWNER_UNIFIED_MODEL,
     FRONTEND_SCENE_OWNER_UNIFIED_Q3,
-    FRONTEND_SCENE_OWNER_COMPONENT
+    FRONTEND_SCENE_OWNER_COMPONENT,
+    FRONTEND_SCENE_OWNER_REGISTRY
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;

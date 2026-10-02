@@ -21,13 +21,47 @@ const char *const q2fx_model_paths[Q2FX_MODEL_COUNT] = {
 };
 bool q2fx_fail(qa_error *error, qa_status code, const char *message)
 { if (error) { error->code = code; snprintf(error->message, sizeof(error->message), "%s", message); } return false; }
+static int color_hex(char c)
+{
+    if (c>='0' && c<='9') return c-'0';
+    if (c>='a' && c<='f') return c-'a'+10;
+    if (c>='A' && c<='F') return c-'A'+10;
+    return -1;
+}
+bool frontend_remote_q2_effects_color(const char *text, uint32_t *out)
+{
+    if (!text || !*text || !out) return false;
+    if (*text=='#') {
+        size_t length=strlen(++text);
+        if (length!=3 && length!=6 && length!=8) return false;
+        uint32_t lanes[4]={0,0,0,255};
+        for (size_t i=0;i<(length==8?4:3);++i) {
+            int high=color_hex(text[length==3?i:i*2]);
+            int low=length==3?high:color_hex(text[i*2+1]);
+            if (high<0 || low<0) return false;
+            lanes[i]=(uint32_t)(high*16+low);
+        }
+        *out=lanes[0]|lanes[1]<<8|lanes[2]<<16|lanes[3]<<24;
+        return true;
+    }
+    static const char *const names[] = {"black","red","green","yellow","blue","cyan","magenta","white"};
+    static const uint32_t values[] = {0xff000000,0xff0000ff,0xff00ff00,0xff00ffff,0xffff0000,0xffffff00,0xffff00ff,0xffffffff};
+    for (size_t i=0;i<8;++i) if (!strcmp(text,names[i])) { *out=values[i]; return true; }
+    uint32_t index=0;
+    for (const char *p=text;*p;++p) {
+        if (*p<'0' || *p>'9') return false;
+        index=index*10+(uint32_t)(*p-'0');
+        if (index>=8) return false;
+    }
+    *out=values[index]; return true;
+}
 bool q2fx_source_valid(const frontend_remote_q2_effects_source *s)
 {
     const qa_scene_image *(*start)(void *, const char *, qa_error *) = NULL;
     void *context = NULL;
     return s && s->identity && s->content_generation && s->map && s->files &&
         (s->profile==FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC || s->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) &&
-        s->images && s->materials && s->world && s->white && s->current && s->actor && s->model && s->sound && s->render_clock &&
+        s->images && s->materials && s->world && s->white && s->current && s->actor && s->model && s->sound && s->controls && s->render_clock &&
         (!s->video_context || s->video_frame) &&
         qa_material_library_video_start_read(s->materials,&start,&context) && (!start || s->video_frame) &&
         (s->profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || (s->controls && s->viewer && s->frame_milliseconds && s->render_clock));
@@ -48,7 +82,7 @@ bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *owner,
         a->map == s->map && a->files == s->files && a->images == s->images && a->materials == s->materials && a->world == s->world &&
         a->white == s->white && a->video_frame == s->video_frame && a->video_context == s->video_context &&
         a->context == s->context && a->current == s->current && a->actor == s->actor &&
-        a->actor_pose == s->actor_pose && a->viewer == s->viewer && a->model == s->model && a->sound == s->sound &&
+        a->actor_pose == s->actor_pose && a->actor_live == s->actor_live && a->viewer == s->viewer && a->model == s->model && a->sound == s->sound &&
         a->hit_marker == s->hit_marker && a->controls == s->controls && a->frame_milliseconds == s->frame_milliseconds &&
         a->render_clock == s->render_clock &&
         a->footstep == s->footstep && a->trace == s->trace && q2fx_source_current(owner, error);
@@ -76,6 +110,9 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
             owner->particles.angular[i]=qa_v3(x,y,z);
         }
     *out = owner;
+    owner->sampled_lights=calloc(Q2FX_LIGHT_CAPACITY,sizeof(*owner->sampled_lights));
+    if (!owner->sampled_lights) return q2fx_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 sampled light rows");
+    owner->light_capacity=Q2FX_LIGHT_CAPACITY;
     qa_scene_image *image = NULL; qa_bytes palette;
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_SCENE_Q2, &image, error)) return false;
     owner->particle_image = image;
@@ -91,7 +128,9 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     frontend_remote_q2_effects *owner = *slot;
     if (!owner) return true;
     if (!frontend_remote_q2_effects_idle(owner)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects still own an active source callback or policy");
-    qa_scene_image_release(owner->particle_image); free(owner->trails); free(owner->draws); free(owner); *slot = NULL; return true;
+    qa_scene_image_release(owner->particle_image); free(owner->trails); free(owner->draws);
+    free(owner->sampled_lights); free(owner->source_beams); free(owner->source_lights); free(owner->flashlights);
+    free(owner); *slot = NULL; return true;
 }
 static uint32_t random_word(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }
 static double random_unit(frontend_remote_q2_effects *o) { return (double)(random_word(o) & 32767) / 32767; }
@@ -196,9 +235,11 @@ static q2fx_beam *beam(frontend_remote_q2_effects *o, qa_actor_id actor, qa_acto
 }
 static void laser(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time)
 {
-    for (size_t i = 0; i < Q2FX_POOL; ++i) if (!o->lasers[i].active || o->lasers[i].die < time) {
+    size_t capacity=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_LASER_CAPACITY:Q2FX_POOL;
+    for (size_t i = 0; i < capacity; ++i) if (!o->lasers[i].active ||
+        (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?o->lasers[i].die<=time:o->lasers[i].die<time)) {
         uint32_t color = (UINT32_C(0xd0d1d2d3) >> ((random_word(o) % 4) * 8)) & 255;
-        o->lasers[i] = (q2fx_laser){true, start, end, time + 100, color, 4}; return;
+        o->lasers[i] = (q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=time+100,.color=color,.width=4}; return;
     }
 }
 static void radial_particles(frontend_remote_q2_effects *o, qa_vec3 origin, double time,
@@ -233,6 +274,21 @@ static void special_trail(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 
 }
 static void bfg_explosion(frontend_remote_q2_effects *o, qa_vec3 origin, double server, double interval)
 { explosion(o, 3, Q2FX_BFG, origin, server - interval, 4, 0, 8 | 32, 0, 350, qa_v3(0,1,0), qa_v3(0,0,0), 1); }
+static void rail(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time,
+    bool modern, const frontend_remote_q2_effects_controls *controls)
+{
+    if (!controls->rail_type && !modern) { frontend_fx_q2_rail(&o->particles,&o->random,start,end,time*.001); return; }
+    if (controls->rail_width>0) for (size_t i=0;i<Q2FX_LASER_CAPACITY;++i) {
+        q2fx_laser *row=&o->lasers[i];
+        if (row->active && row->die>time) continue;
+        double duration=(int32_t)((float)controls->rail_seconds*1000);
+        *row=(q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=time+duration,
+            .color=UINT32_MAX,.rgba=controls->rail_core_rgba,.width=(float)controls->rail_width};
+        break;
+    }
+    if (controls->rail_type>1) frontend_fx_q2_rail_spiral(&o->particles,&o->random,start,end,time*.001,
+        controls->rail_seconds,controls->rail_radius,controls->rail_spiral_rgba);
+}
 static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     const qa_actor_id actors[7], double time, double server, qa_error *e)
 {
@@ -268,7 +324,11 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         return sound(o,"weapons/lashit.wav",pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_SPLASH: {
         const uint32_t colors[] = {0,0xe0,0xb0,0x50,0xd0,0xe0,0xe8};
-        frontend_fx_q2_impact_particles(p,r,pos,dir,color >= 0 && color <= 6 ? colors[color] : 0,count,seconds,FRONTEND_FX_Q2_NORMAL);
+        if (rerelease && color==7) {
+            frontend_fx_q2_impact_particles(p,r,pos,dir,0x6c,count/2,seconds,FRONTEND_FX_Q2_NORMAL);
+            frontend_fx_q2_impact_particles(p,r,pos,dir,0xb0,count/2+count%2,seconds,FRONTEND_FX_Q2_NORMAL);
+            color=1;
+        } else frontend_fx_q2_impact_particles(p,r,pos,dir,color >= 0 && color <= 6 ? colors[color] : 0,count,seconds,FRONTEND_FX_Q2_NORMAL);
         if (color == 1) { uint32_t n = random_word(o) & 3; const char *paths[] = {"world/spark5.wav","world/spark6.wav","world/spark7.wav"}; return sound(o,paths[n < 2 ? n : 2],pos,actor,time,0,1,3,0,e); } break;
     }
     case QA_Q2_TE_LASER_SPARKS: case QA_Q2_TE_WELDING_SPARKS: case QA_Q2_TE_TUNNEL_SPARKS:
@@ -286,7 +346,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         return sound(o,"weapons/lashit.wav",pos,actor,time,0,1,1,0,e);
     }
     case QA_Q2_TE_RAILTRAIL: case QA_Q2_TE_RAILTRAIL2:
-        frontend_fx_q2_rail(p,r,pos,end,seconds); return sound(o,"weapons/railgf1a.wav",end,actor,time,0,1,1,0,e);
+        rail(o,pos,end,time,t->type==QA_Q2_TE_RAILTRAIL2,&controls); return sound(o,"weapons/railgf1a.wav",end,actor,time,0,1,1,0,e);
     case QA_Q2_TE_BUBBLETRAIL: frontend_fx_q2_bubbles(p,r,pos,end,seconds); break;
     case QA_Q2_TE_BUBBLETRAIL2: special_trail(o,pos,end,time,true); return sound(o,"weapons/lashit.wav",pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_DEBUGTRAIL: special_trail(o,pos,end,time,false); break;
@@ -331,7 +391,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         } else if (!o->source.actor(o->source.context,(uint32_t)id,&pose,e)) return false;
         if (!q2fx_source_current(o,e)) return false;
         if (!pose.bounds_present || !qa_vec_finite(pose.bounds.mins) || !qa_vec_finite(pose.bounds.maxs) || !isfinite(pose.radius))
-            return q2fx_fail(e,QA_ERROR_ARGUMENT,"Power splash requires its received model bounds");
+            return q2fx_fail(e,QA_ERROR_ARGUMENT,"Power splash requires its actual received collision bounds");
         radial_particles(o,qa_vec_add(pose.origin,qa_vec_scale(qa_vec_add(pose.bounds.mins,pose.bounds.maxs),.5f)),time,256,pose.radius,40,208,false); break;
     }
     case QA_Q2_TE_Q2PRO_DAMAGE_DEALT:
@@ -441,12 +501,16 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
     if (!isfinite(die)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam lifetime exceeds its source clock");
     double interval;
     if (!q2fx_frame_milliseconds(o,&interval,e)) return false;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
     ++o->busy; bool ok=true;
-    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) frontend_fx_q2_rail(&o->particles,&o->random,start,end,time*.001);
+    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) rail(o,start,end,time,false,&controls);
     else if (!strcmp(name,"bubble-trail")) frontend_fx_q2_bubbles(&o->particles,&o->random,start,end,time*.001);
     else if (!strcmp(name,"bfg-laser") || !strcmp(name,"bfg-zap")) {
-        for (size_t i=0;i<Q2FX_POOL;++i) if (!o->lasers[i].active || o->lasers[i].die<time) {
-            o->lasers[i]=(q2fx_laser){true,start,end,die,0xd0+(random_word(o)&3),4}; break;
+        size_t capacity=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_LASER_CAPACITY:Q2FX_POOL;
+        for (size_t i=0;i<capacity;++i) if (!o->lasers[i].active ||
+            (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?o->lasers[i].die<=time:o->lasers[i].die<time)) {
+            o->lasers[i]=(q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=die,.color=0xd0+(random_word(o)&3),.width=4}; break;
         }
         if (!strcmp(name,"bfg-zap")) bfg_explosion(o,end,time,interval);
     } else if (!strcmp(name,"bfg-lightning")) {
@@ -473,8 +537,9 @@ static bool soldier_flash(uint32_t flash, unsigned kind)
 bool q2fx_controls(frontend_remote_q2_effects *o, frontend_remote_q2_effects_controls *out, qa_error *e)
 {
     *out=(frontend_remote_q2_effects_controls){0};
-    if (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) return true;
     if (!o->source.controls || !o->source.controls(o->source.context,out,e) || !q2fx_source_current(o,e)) return false;
+    if (!isfinite(out->gun_fov) || !isfinite(out->rail_seconds) || out->rail_seconds<0 || out->rail_seconds>2073600 ||
+        !isfinite(out->rail_radius)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effects have no finite qualified CLIENT gun or rail controls");
     if (out->muzzlelight_milliseconds<0) out->muzzlelight_milliseconds=0;
     if (out->muzzlelight_milliseconds>1000) out->muzzlelight_milliseconds=1000;
     return true;
@@ -854,23 +919,45 @@ static void heat_particles(frontend_remote_q2_effects *o, qa_vec3 origin, qa_vec
         move=qa_vec_add(move,qa_vec_scale(direction,32));
     }
 }
-static bool prepare_beams(frontend_remote_q2_effects *o, q2fx_beam pool[Q2FX_POOL],
-    const frontend_remote_q2_effects_sample *s, bool advance, qa_error *e)
+static qa_vec3 beam_angles(const frontend_remote_q2_effects *o, qa_vec3 delta)
 {
-    for (size_t i=0;i<Q2FX_POOL;++i) {
+    float horizontal=hypotf(delta.x,delta.y), yaw=horizontal==0?0:atan2f(delta.y,delta.x)*57.29577951308232f;
+    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    float pitch=horizontal==0?(delta.z>0?90:270):atan2f(delta.z,horizontal)*(rerelease?57.29577951308232f:-57.29577951308232f);
+    if (yaw<0) yaw+=360;
+    if (pitch<0) pitch+=360;
+    return qa_v3(rerelease?-pitch:pitch,yaw,0);
+}
+bool q2fx_prepare_beams(frontend_remote_q2_effects *o, q2fx_beam *pool, size_t count,
+    const frontend_remote_q2_effects_sample *s, const frontend_remote_q2_effects_controls *controls,
+    bool advance, qa_error *e)
+{
+    for (size_t i=0;i<count;++i) {
         q2fx_beam *b=&pool[i];
         if (!b->active) continue;
         if (b->die<s->milliseconds) { b->active=false; continue; }
         if (!o->models[b->model]) continue;
         qa_vec3 start=b->start, offset=b->offset, delta;
-        bool local=qa_actor_id_equal(b->actor,s->viewer), heat=b->model==Q2FX_HEAT, lightning=b->model==Q2FX_LIGHTNING;
+        bool local=!b->unkeyed && b->actor.registry && s->viewer.registry && qa_actor_id_equal(b->actor,s->viewer);
+        bool heat=b->model==Q2FX_HEAT, lightning=b->model==Q2FX_LIGHTNING;
+        bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
         float hand=s->hand==2?0:s->hand==1?-1:1;
+        if (rerelease && controls->gun==3) hand=-1;
+        else if (rerelease && controls->gun==2) hand=1;
         if (b->player && local) {
+            if (rerelease && controls->gun_fov>0) {
+                float tangent=tanf(fminf(160,fmaxf(30,controls->gun_fov))*.008726646259971648f);
+                if (!isfinite(s->player_fov) || s->player_fov<=0 || s->player_fov>=180)
+                    return q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 player beam lost its actual player field of view");
+                float ratio=tanf(s->player_fov*.008726646259971648f)/tangent;
+                offset.x*=ratio;
+                offset.z*=ratio;
+            }
             start=qa_vec_add(s->view.origin,s->gun_offset);
             start=qa_vec_add(start,qa_vec_scale(s->view.axis[1],-hand*offset.x));
             start=qa_vec_add(start,qa_vec_scale(s->view.axis[0],offset.y));
             start=qa_vec_add(start,qa_vec_scale(s->view.axis[2],offset.z));
-            if (s->hand==2) start=qa_vec_sub(start,s->view.axis[2]);
+            if (hand==0) start=qa_vec_sub(start,s->view.axis[2]);
         } else if (!b->player && local) {
             if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
                 if (!s->viewer_origin_present || !qa_vec_finite(s->viewer_origin))
@@ -878,25 +965,35 @@ static bool prepare_beams(frontend_remote_q2_effects *o, q2fx_beam pool[Q2FX_POO
                 start=qa_vec_add(s->viewer_origin,offset);
             } else { start=s->view.origin; start.z-=22; start=qa_vec_add(start,offset); }
         }
-        else start=qa_vec_add(start,offset);
+        else if (!(rerelease && b->player)) start=qa_vec_add(start,offset);
         delta=qa_vec_sub(b->end,start);
-        if (heat && local) {
+        if (rerelease && b->player && !local) {
+            if (offset.x!=0 || offset.y!=0 || offset.z!=0) {
+                qa_vec3 rotation=beam_angles(o,delta), axis[3];
+                axes(qa_v3(-rotation.x,rotation.y+180,0),axis);
+                start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
+                start=qa_vec_sub(start,qa_vec_scale(axis[0],offset.y));
+                start=qa_vec_add(start,qa_vec_scale(axis[2],-offset.z-10));
+            } else if (heat && advance) radial_particles(o,b->start,s->milliseconds,40,10,0,0xe0,true);
+            delta=qa_vec_sub(b->end,start);
+        }
+        if (rerelease && b->player && local && b->model!=Q2FX_CABLE)
+            delta=qa_vec_scale(s->view.axis[0],qa_vec_length(delta));
+        else if (!rerelease && heat && local) {
             delta=qa_vec_scale(s->view.axis[0],qa_vec_length(delta));
             delta=qa_vec_sub(delta,qa_vec_scale(s->view.axis[1],hand*offset.x));
             delta=qa_vec_add(delta,qa_vec_scale(s->view.axis[0],offset.y));
             delta=qa_vec_add(delta,qa_vec_scale(s->view.axis[2],offset.z));
             if (s->hand==2) start=qa_vec_sub(start,s->view.axis[2]);
         }
-        float horizontal=hypotf(delta.x,delta.y), yaw=horizontal==0?0:atan2f(delta.y,delta.x)*57.29577951308232f;
-        float pitch=horizontal==0?(delta.z>0?90:270):atan2f(delta.z,horizontal)*-57.29577951308232f;
-        if (yaw<0) yaw+=360;
-        if (pitch<0) pitch+=360;
+        qa_vec3 rotation=beam_angles(o,delta);
+        float yaw=rotation.y,pitch=rotation.x;
         if (!b->player && o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
             if (!rerelease_regular_beam(o,b,start,delta,qa_v3(pitch,yaw,0),e)) return false;
             continue;
         }
         qa_vec3 direction=qa_vec_normalize(delta);
-        if (heat && !local) {
+        if (!rerelease && heat && !local) {
             if (!b->monster) {
                 qa_vec3 axis[3]; axes(qa_v3(-pitch,yaw+180,0),axis);
                 start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
@@ -906,6 +1003,10 @@ static bool prepare_beams(frontend_remote_q2_effects *o, q2fx_beam pool[Q2FX_POO
         }
         if (heat && local && advance) heat_particles(o,start,direction,s);
         float length=qa_vec_length(delta)-(lightning?20:0), segment=heat?32:lightning?35:30;
+        if (rerelease && b->player && local && b->model==Q2FX_CABLE && hand!=0) {
+            start=qa_vec_add(start,qa_vec_scale(direction,segment*.5f));
+            length-=segment*.5f;
+        }
         bool short_lightning=lightning && length<=segment;
         if (length<=0 && !short_lightning) continue;
         double steps=short_lightning?1:ceil((double)length/segment);
@@ -918,7 +1019,7 @@ static bool prepare_beams(frontend_remote_q2_effects *o, q2fx_beam pool[Q2FX_POO
             qa_vec3 angles=qa_v3(short_lightning || (!lightning && !heat)?pitch:-pitch,
                 short_lightning || (!lightning && !heat)?yaw:yaw+180,heat?(float)fmod(s->milliseconds,360):(float)roll);
             int32_t frame=heat?(local?1:2):0;
-            if (!model_draw(o,(q2fx_model)b->model,origin,angles,frame,frame,0,0,heat || lightning?8:0,1,1,e)) return false;
+            if (!model_draw(o,(q2fx_model)b->model,origin,angles,frame,frame,0,0,heat || lightning?8:rerelease?8192:0,1,1,e)) return false;
         }
     }
     return true;
@@ -940,7 +1041,8 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     bool advance=!o->sampled || s->milliseconds>o->time, events=!o->sampled || s->frame_sequence!=o->frame_sequence;
     frontend_remote_q2_effects_controls controls;
     if (!q2fx_controls(o,&controls,e)) return false;
-    bool policy_changed=o->sampled_dlight_hacks!=controls.dlight_hacks || o->sampled_disable_particles!=controls.disable_particles;
+    bool policy_changed=o->sampled_dlight_hacks!=controls.dlight_hacks || o->sampled_disable_particles!=controls.disable_particles ||
+        o->sampled_gun!=controls.gun || o->sampled_gun_fov!=controls.gun_fov;
     if (advance || events || o->dirty || policy_changed || o->render_frame!=render_frame) {
         q2fx_trail *trails=s->entity_count?calloc(s->entity_count,sizeof(*trails)):NULL;
         if (s->entity_count && !trails) return q2fx_fail(e,QA_ERROR_MEMORY,"Retaining received Q2 entity trails");
@@ -975,8 +1077,9 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
             else radius=(float)(row->radius-(s->milliseconds-row->born)*.001*row->decay);
             q2fx_sampled_light(o,row->origin,radius,row->color,row->minimum);
         }
-        bool ok=q2fx_entities(o,s,trails,advance,e) && prepare_beams(o,o->beams,s,advance,e) &&
-            prepare_beams(o,o->player_beams,s,advance,e);
+        bool ok=q2fx_entities(o,s,trails,advance,e) && q2fx_prepare_beams(o,o->beams,Q2FX_POOL,s,&controls,advance,e) &&
+            q2fx_prepare_beams(o,o->player_beams,Q2FX_POOL,s,&controls,advance,e) &&
+            q2fx_semantic_prepare(o,s,&controls,advance,e);
         for (size_t i=0;ok && i<Q2FX_POOL;++i) {
             q2fx_explosion *row=&o->explosions[i]; if (!row->active) continue;
             if (row->kind==4) {
@@ -998,6 +1101,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
             if (!(flags&128) && row->kind!=5) ok=model_draw(o,(q2fx_model)row->model,row->origin,row->angles,row->base+frame+1,row->base+frame,
                 o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?(float)(1-(fraction-frame)):1-s->fraction,skin,flags,alpha,row->scale,e);
         }
+        o->transient_light_count=o->light_count;
         --o->busy;
         if (!ok) { free(trails); return false; }
         free(o->trails); o->trails=trails; o->trail_count=s->entity_count;
@@ -1005,8 +1109,9 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
         o->frame_sequence=s->frame_sequence; o->sampled=true; o->dirty=false;
         o->render_frame=render_frame;
         o->sampled_dlight_hacks=controls.dlight_hacks; o->sampled_disable_particles=controls.disable_particles;
+        o->sampled_gun=controls.gun; o->sampled_gun_fov=controls.gun_fov;
     }
-    *lights_out=o->sampled_lights; *count_out=o->light_count; return q2fx_source_current(o,e);
+    return frontend_remote_q2_effects_view_lights(o,s,lights_out,count_out,e);
 }
 bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_sample *s, bool particles, bool entities, qa_scene_frame *frame, qa_error *e)
@@ -1034,15 +1139,25 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
     }
     qa_bytes palette={0};
     if (ok && (particles || entities)) ok=qa_scene_resources_palette_read(o->source.images,QA_SCENE_Q2,&palette) && palette.size>=768;
-    if (entities) for (size_t i=0;ok && i<Q2FX_POOL;++i) {
-        const q2fx_laser *row=&o->lasers[i]; if (!row->active || row->die<s->milliseconds) continue;
-        uint32_t index=row->color&255; qa_scene_vec4 color={palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,.3f};
+    if (entities) for (size_t i=0;ok && i<Q2FX_LASER_CAPACITY;++i) {
+        const q2fx_laser *row=&o->lasers[i]; if (!row->active || row->die<=s->milliseconds) continue;
+        uint32_t index=row->color&255; qa_scene_vec4 color;
+        if (row->color==UINT32_MAX) {
+            if (row->die<=row->born) continue;
+            float alpha=(float)((row->die-s->milliseconds)/(row->die-row->born));
+            color=(qa_scene_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,(float)((row->rgba>>16)&255)/255.f,
+                floorf((float)(row->rgba>>24)*alpha)/255.f};
+        } else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,.3f};
         ok=qa_scene_beam(frame,&s->view,row->start,row->end,row->width,color,o->source.white,e);
     }
+    if (entities && ok) ok=q2fx_semantic_draw(o,s,frame,e);
     if (particles) for (size_t i=o->particles.count;ok && i>0;--i) {
         const frontend_fx_q2_particle *row=&o->particles.values.q2[i-1]; qa_vec3 origin; float alpha;
         if (!frontend_fx_q2_sample(row,s->milliseconds,&origin,&alpha)) continue;
-        uint32_t index=row->color&255; qa_scene_vec4 color={palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,alpha};
+        uint32_t index=row->color&255; qa_scene_vec4 color;
+        if (row->color==UINT32_MAX) color=(qa_scene_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,
+            (float)((row->rgba>>16)&255)/255.f,floorf((float)(row->rgba>>24)*alpha)/255.f};
+        else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,alpha};
         ok=qa_scene_indexed_particle(frame,&s->view,QA_SCENE_Q2,origin,1,color,o->particle_image,e);
     }
     --o->busy; return ok && q2fx_source_current(o,e);

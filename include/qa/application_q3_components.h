@@ -22,10 +22,15 @@ bool qa_application_q3_component_draw_prepare(qa_application *,size_t,uint32_t p
     qa_actor_id viewer,const qa_vec3 *origin,const qa_vec3 axis[3],int32_t time_ms,
     int32_t elapsed_ms,uint64_t sequence,qa_application_q3_component_draw *,qa_error *);
 bool qa_application_q3_component_draw_current(const qa_application *,const qa_application_q3_component_draw *);
+bool qa_application_q3_component_scene_hud(qa_application *,uint64_t frontend_identity,
+    uint32_t physical_seat,qa_actor_id viewer,uint64_t sequence,qa_error *);
+bool qa_application_q3_component_scene_hud_read(const qa_application *,uint64_t frontend_identity,
+    uint32_t physical_seat,qa_actor_id viewer,uint64_t sequence,bool *replace_status,qa_error *);
 typedef struct qa_application_q3_component_scene_association {
     qa_actor_owner owner,service_owner;
     uint64_t generation,frontend_identity;
     uint32_t physical_seat;
+    int32_t time_ms;
     qa_actor_id viewer;
     const qa_launch_instance *descriptor;
     void *frontend_owner;

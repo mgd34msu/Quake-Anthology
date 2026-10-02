@@ -1,3 +1,4 @@
+#include "source_cinematics.h"
 #include "renderer_materials.h"
 #include "qa/material_source_scratch.h"
 #include "q3_color_policy.h"
@@ -408,6 +409,7 @@ bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentati
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=row->frontend,
         .milliseconds=milliseconds,.audio_bus=audio_bus,.prepare_view=prepare_view,.submit_view=submit_view,
         .scene_cleared=scene_cleared,.prepare_picture=prepare_picture,.remap=remap,.print=print_row};
+    if (row->shader_movies && !frontend_material_movies_cinematic_read(row->shader_movies,&out->cinematics,e)) return false;
     if (!row->restoring && !frontend_q3_renderer_options_read(f,out,e)) return false;
     if(row->restoring && !row->view.cvars)return true;
     if(row->view.cvars && !qa_cvars_find(row->view.cvars,"cg_shadows")) {
@@ -861,9 +863,12 @@ bool frontend_native_q3_movie_source_read(qa_frontend *f,size_t index,frontend_m
 bool frontend_native_q3_movies_restore(qa_frontend *f,size_t index,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *e)
 {
     frontend_native_q3 *row=row_at(f,index); frontend_material_movie_source view;
-    return row && f->source_restoring && frontend_native_q3_movie_source_read(f,index,&view,e) ?
-        frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,e) :
-        frontend_fail(e,QA_ERROR_ARGUMENT,"Movie import requires its actual native candidate");
+    if (!row || !f->source_restoring || !frontend_native_q3_movie_source_read(f,index,&view,e))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Movie import requires its actual native candidate");
+    qa_q3_cinematic_source *cinematics=NULL;
+    return frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,e) &&
+        frontend_material_movies_cinematic_read(row->shader_movies,&cinematics,e) &&
+        (!cinematics || qa_q3_presentation_cinematics_bind(row->view.presentation,cinematics,e));
 }
 static bool make_media(frontend_native_q3 *row,qa_error *e)
 {
@@ -879,12 +884,15 @@ static bool make_media(frontend_native_q3 *row,qa_error *e)
             .materials=v->materials,.media=v->movies,.context=row,.current=shader_movies_current};
         if (!frontend_q3_material_profile_initialize(f,v->materials,e) ||
             !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,e) ||
-            !frontend_material_movies_create(&movie,&row->shader_movies,e)) return false;
+            !frontend_material_movies_create(&movie,&row->shader_movies,e) ||
+            !frontend_source_cinematics_ensure(f,v->images,e) ||
+            !frontend_material_movies_cinematic_attach(row->shader_movies,f->source_cinematics,v->seat,v->identity,e)) return false;
     }
     qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap=true,.transparent_index=-1};
     bool ok=v->mounts && v->images && v->materials && v->fonts && v->movies &&
         qa_material_library_load_scripts(v->materials,v->mounts,&images,e) &&
+        qa_material_library_source_shaders_initialize(v->materials,&images,e) &&
         frontend_material_remaps(f,v->materials,e) && qa_audio_bank_create(v->mounts,&v->sounds,e);
     qa_q3_presentation_asset_options assets; qa_q3_presentation_options backend;
     if(ok)ok=frontend_native_q3_asset_options(row,&assets,e) && qa_q3_presentation_assets_create(&assets,&v->assets,e) &&

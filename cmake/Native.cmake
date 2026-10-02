@@ -37,6 +37,7 @@ add_library(qa_native STATIC
     src/compat/native/process.c
     src/compat/native/protocol.c
     src/compat/native/region.c
+    src/compat/native/region_scope.c
     src/compat/native/runner_child.c
     src/compat/native/runner_host.c
     src/compat/native/variadic.c)

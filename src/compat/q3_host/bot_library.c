@@ -3,6 +3,40 @@
 
 #include <stdio.h>
 
+static bool sources_shutdown(void *context,qa_error *error)
+{
+    qa_q3_host *host=context;
+    if(host->script_generation==UINT64_MAX)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 script lifetime counter exhausted");
+    host->scripts_reporting=true;
+    qa_script_defines_clear(host->options.script_globals);
+    for(size_t i=1;i<64;++i) {
+        q3_script *script=host->scripts[i];
+        if(!script) continue;
+        if(host->options.common.print) {
+            qa_script_location position=qa_script_position(script->reader);
+            const char *path=position.path?position.path:"";
+            size_t length=strlen(path);
+            if(length>SIZE_MAX-40) {
+                host->scripts_reporting=false;
+                return q3_fail(error,QA_ERROR_MEMORY,0,"Open PC source filename exceeds reporting extent");
+            }
+            char *message=qa_arena_alloc(&host->scratch,length+40,1,error);
+            if(!message) { host->scripts_reporting=false; return false; }
+            snprintf(message,length+40,"file %s still open in precompiler\n",path);
+            host->options.common.print(host->options.common.context,message);
+        }
+    }
+    ++host->script_generation;
+    host->scripts_reporting=false;
+    for(size_t i=1;i<64;++i) {
+        q3_script *script=host->scripts[i];
+        host->scripts[i]=NULL;
+        q3_script_close(script);
+    }
+    return true;
+}
+
 static bool update(q3_call *call, qa_bot_runtime *runtime, qa_error *error)
 {
     int32_t number;
@@ -152,33 +186,9 @@ q3_service_result q3_bot_library(q3_call *call, int32_t *result, qa_error *error
         if (call->host->script_generation == UINT64_MAX) {
             q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 script lifetime counter exhausted"); return Q3_FAILED;
         }
-        call->host->scripts_reporting = true;
-        if (!call->host->options.shared_bot_lifetime && !qa_bot_runtime_shutdown(runtime, error)) {
-            call->host->scripts_reporting = false; return Q3_FAILED;
-        }
-        qa_script_defines_clear(call->host->options.script_globals);
-        bool reported = true;
-        for (size_t i = 1; i < 64; ++i) {
-            q3_script *script = call->host->scripts[i];
-            if (reported && script && call->host->options.common.print) {
-                qa_script_location position = qa_script_position(script->reader);
-                const char *path = position.path ? position.path : "";
-                size_t size = strlen(path) + 40;
-                char *message = qa_arena_alloc(&call->host->scratch, size, 1, error);
-                if (!message) reported = false;
-                else {
-                    snprintf(message, size, "file %s still open in precompiler\n", path);
-                    call->host->options.common.print(call->host->options.common.context, message);
-                }
-            }
-        }
-        ++call->host->script_generation;
-        call->host->scripts_reporting = false;
-        for (size_t i = 1; i < 64; ++i) {
-            q3_script *script = call->host->scripts[i];
-            call->host->scripts[i] = NULL;
-            q3_script_close(script);
-        }
+        bool reported=call->host->options.shared_bot_lifetime?sources_shutdown(call->host,error):
+            qa_bot_runtime_shutdown_with_sources(runtime,sources_shutdown,call->host,error);
+        if(!reported) return Q3_FAILED;
         call->host->bots_shutdown=true;
         return reported ? Q3_COMPLETED : Q3_FAILED;
     }

@@ -10,5 +10,7 @@ bool qa_equipment_restore_bytes(qa_equipment *, qa_bytes, qa_error *);
 /* Qualify the genuine selected native item groups after shared inventory
  * restore without publishing or replacing their source-owned groups. */
 bool qa_equipment_reconnect(qa_equipment *, qa_error *);
+/* After actual component item owners bind their restored callbacks and requests. */
+bool qa_equipment_weapons_reconnect(qa_equipment *, qa_error *);
 
 #endif

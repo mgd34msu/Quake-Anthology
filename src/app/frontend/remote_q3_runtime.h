@@ -60,6 +60,8 @@ bool frontend_remote_q3_runtime_unbind_frames(frontend_remote_q3_runtime *, fron
 frontend_remote_q3_frame *frontend_remote_q3_runtime_frames(const frontend_remote_q3_runtime *);
 bool frontend_remote_q3_runtime_owners_read(const frontend_remote_q3_runtime *,
     frontend_remote_q3_runtime_owners *, qa_error *);
+bool frontend_remote_q3_runtime_cinematics_restore(frontend_remote_q3_runtime *,
+    struct qa_q3_cinematic_source *, qa_error *);
 /* Command projection borrows an entered lexical frame. It neither replays
  * prediction nor changes the last camera and frame-time continuations. */
 bool frontend_remote_q3_runtime_command_frame(frontend_remote_q3_runtime *,

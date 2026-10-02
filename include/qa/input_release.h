@@ -5,6 +5,9 @@
 #include "qa/console_release.h"
 
 typedef struct qa_input_release qa_input_release;
+/* Borrow the exact retained physical ticket, including returned WAIT/failed
+ * histories. This does not dispatch or qualify a source lifetime. */
+qa_input_release *qa_input_seat_release_read(const qa_input_seat *);
 typedef struct qa_input_release_scope {
     bool all;
     bool clear_gamepad;
@@ -107,6 +110,11 @@ bool qa_input_release_retirement_ready(const qa_input_release *, qa_console_rele
 bool qa_input_release_retirement_scope_ready(const qa_input_release *, const qa_input_seat *,
     const qa_input_release_scope *, qa_console_release_disposition,
     qa_console_release_retirement_fn, void *, qa_error *);
+/* Preflight a replacement namespace while this exact ALL history still owns
+ * the seat. It retains the handoff receipt but consumes no history or input. */
+bool qa_input_seat_recipient_retirement_ready(qa_input_seat *,const qa_input_release *,
+    qa_console *,qa_cvars *,const qa_command_context *,qa_console_release_disposition,
+    qa_console_release_retirement_fn,void *,qa_error *);
 /* The complete parent may preflight every retained history before consuming
  * any. Publication requires that admission and runs no source callbacks. */
 void qa_input_release_retirement_publish(qa_input_release *);

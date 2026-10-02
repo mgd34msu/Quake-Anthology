@@ -28,14 +28,15 @@ struct frontend_unified_q3_snapshots {
     qa_q3_player predicted_player;
     qa_q3_entity predicted_state, predicted_next;
     q3n_entity predicted_entity;
-    qa_q3_player previous_player;
+    qa_q3_player previous_player, previous_prediction;
     qa_vec3 correction;
     int32_t correction_time;
-    uint64_t revision, scope, command_receipt;
+    uint64_t revision, scope, baseline_revision;
+    int64_t command_receipt;
     int32_t time, processed, commands, constructor_message, constructor_command;
     q3n_compiled_stage stage;
-    bool has_snap, has_next, has_prediction, hyperspace, this_teleport, next_teleport;
-    bool busy, callback, faulted, transition_alias;
+    bool has_snap, has_next, has_prediction, has_prediction_receipt, hyperspace, this_teleport, next_teleport;
+    bool busy, callback, faulted, transition_alias, predicted_transition;
 };
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e,code,0,"%s",message); return false; }
@@ -64,7 +65,8 @@ static bool frame(frontend_unified_q3_snapshots *s, q3n_compiled_frame *out, qa_
     out->predicted_player = &s->predicted_player; out->predicted_state = &s->predicted_state;
     out->predicted_next_state = &s->predicted_next; out->predicted_entity = &s->predicted_entity;
     if (s->callback && s->stage == Q3N_COMPILED_PLAYER_TRANSITION) {
-        out->transition_player = &s->snap.value.player; out->previous_player = &s->previous_player;
+        out->transition_player = s->predicted_transition ? &s->predicted_player : &s->snap.value.player;
+        out->previous_player = s->predicted_transition ? &s->previous_prediction : &s->previous_player;
     }
     return q3n_compiled_frame_current(out) || fail(e,QA_ERROR_ARGUMENT,"Compiled CG frame lost its actual entered cache scope");
 }
@@ -79,8 +81,10 @@ static bool frame_current(void *context, const q3n_compiled_frame *f)
         f->next_snapshot == next_view(s) && f->entities == s->entities &&
         f->predicted_player == &s->predicted_player && f->predicted_state == &s->predicted_state &&
         f->predicted_next_state == &s->predicted_next && f->predicted_entity == &s->predicted_entity &&
-        f->transition_player == (s->callback && s->stage == Q3N_COMPILED_PLAYER_TRANSITION ? &s->snap.value.player : NULL) &&
-        f->previous_player == (s->callback && s->stage == Q3N_COMPILED_PLAYER_TRANSITION ? &s->previous_player : NULL) &&
+        f->transition_player == (s->callback && s->stage == Q3N_COMPILED_PLAYER_TRANSITION ?
+            (s->predicted_transition ? &s->predicted_player : &s->snap.value.player) : NULL) &&
+        f->previous_player == (s->callback && s->stage == Q3N_COMPILED_PLAYER_TRANSITION ?
+            (s->predicted_transition ? &s->previous_prediction : &s->previous_player) : NULL) &&
         frontend_unified_q3_client_current(s->options.client);
 }
 static bool entity_read(void *context,const q3n_compiled_frame *f,uint32_t number,q3n_compiled_entity *out,qa_error *e)
@@ -131,7 +135,8 @@ static bool create(const frontend_unified_q3_snapshots_options *o,bool restoring
     frontend_unified_q3_snapshots **out,qa_error *e)
 {
     if (!o || !o->client || !o->context || !o->reached || !o->respawn || !o->reset_player || !o->event ||
-        !o->transition_player || !o->lagometer || !o->warning || !o->trace_number || !out || *out ||
+        !o->transition_player || !o->transition_teleport || !o->prediction_finished || !o->lagometer || !o->warning ||
+        !o->trace_number || !out || *out ||
         !(restoring ? frontend_unified_q3_client_checkpoint_current(o->client) : frontend_unified_q3_client_current(o->client)))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled cache requires its real CLIENT and source consumers");
     frontend_unified_q3_snapshots *s = calloc(1,sizeof(*s));
@@ -178,6 +183,17 @@ static bool begin(frontend_unified_q3_snapshots *s,q3n_compiled_stage stage,q3n_
 }
 static bool end(frontend_unified_q3_snapshots *s,const q3n_compiled_frame *f,bool ok)
 { bool current = frame_current(s,f) && q3n_compiled_source_current(&f->source); s->callback = false; return ok && current; }
+static bool player_transition(frontend_unified_q3_snapshots *s,const q3n_compiled_frame *f,
+    const qa_q3_player *player,const qa_q3_player *previous,qa_error *e)
+{
+    bool teleport = false;
+    if (!s->options.transition_player(s->options.context,f,player,previous,e) ||
+        !frame_current(s,f) || !q3n_compiled_source_current(&f->source) ||
+        !s->options.transition_teleport(s->options.context,f,&teleport,e) ||
+        !frame_current(s,f) || !q3n_compiled_source_current(&f->source)) return false;
+    if (teleport) s->this_teleport = true;
+    return true;
+}
 bool frontend_unified_q3_snapshots_initialize(frontend_unified_q3_snapshots *s,
     bool (*initialize)(void *,const q3n_compiled_frame *,qa_error *),void *context,qa_error *e)
 {
@@ -316,7 +332,7 @@ static bool transition(frontend_unified_q3_snapshots *s,bool no_predict,bool syn
     if (!(no_predict || synchronous || (s->snap.value.player.pmFlags&4096))) return true;
     q3n_compiled_frame f;
     if (!begin(s,Q3N_COMPILED_PLAYER_TRANSITION,&f,e)) return false;
-    return end(s,&f,s->options.transition_player(s->options.context,&f,&s->snap.value.player,&s->previous_player,e));
+    return end(s,&f,player_transition(s,&f,&s->snap.value.player,&s->previous_player,e));
 }
 static bool read_next(frontend_unified_q3_snapshots *s,int32_t latest,cached_snapshot *out,bool *found,qa_error *e)
 {
@@ -365,36 +381,101 @@ bool frontend_unified_q3_snapshots_read(const frontend_unified_q3_snapshots *s,q
     if (!s || !out || s->busy || s->faulted || !s->has_snap) return fail(e,QA_ERROR_ARGUMENT,"Compiled CG draw requires its genuine completed snapshot cache");
     return frame((frontend_unified_q3_snapshots *)s,out,e);
 }
-bool frontend_unified_q3_snapshots_entered_draw(frontend_unified_q3_snapshots *s,q3n_compiled_stage stage,
+bool frontend_unified_q3_snapshots_has_snapshot(const frontend_unified_q3_snapshots *s,bool *out,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if (!s || !out || s->busy || s->faulted ||
+        !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
+        !source.basis.initialized)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled snapshot status requires its returned initialized CG cache");
+    *out = s->has_snap; return true;
+}
+bool frontend_unified_q3_snapshots_entered_draw(frontend_unified_q3_snapshots *s,q3n_compiled_stage stage,int32_t time,
     bool (*execute)(void *,const q3n_compiled_frame *,qa_error *),void *context,qa_error *e)
 {
     q3n_compiled_source_view source;
-    if (!s || !execute || !context || s->busy || s->faulted || !s->options.draw_reason ||
+    if (!s || !execute || !context || s->busy || s->faulted || s->revision == UINT64_MAX || !s->options.draw_reason ||
         (stage != Q3N_COMPILED_AWAITING_SNAPSHOT && stage != Q3N_COMPILED_LOADING_INFORMATION) ||
         !s->options.draw_reason(s->options.context,stage) ||
         !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
         !source.basis.initialized)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled special draw requires its actual runtime branch and returned CG constructor");
+    if (s->time != time) { s->time = time; ++s->revision; }
     s->busy = true; q3n_compiled_frame f;
     bool ok = begin(s,stage,&f,e);
     if (ok) ok = end(s,&f,execute(context,&f,e)) && s->options.draw_reason(s->options.context,stage);
     s->busy = false; return ok;
 }
-bool frontend_unified_q3_snapshots_prediction(frontend_unified_q3_snapshots *s,const qa_q3_player *player,
-    uint64_t receipt,qa_vec3 correction,int32_t correction_time,bool hyperspace,qa_error *e)
+bool frontend_unified_q3_snapshots_previous_command_time(const frontend_unified_q3_snapshots *s,int32_t *out,qa_error *e)
+{
+    bool present;
+    if (!out || !frontend_unified_q3_snapshots_has_snapshot(s,&present,e) || !present)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled prediction baseline requires its actual current snapshot");
+    *out = s->has_prediction ? s->predicted_player.commandTime : s->snap.value.player.commandTime;
+    return true;
+}
+bool frontend_unified_q3_snapshots_scene_player(frontend_unified_q3_snapshots *s,qa_error *e)
+{
+    bool present; q3n_compiled_source_view source;
+    if (!frontend_unified_q3_snapshots_has_snapshot(s,&present,e) || !present || s->revision == UINT64_MAX ||
+        !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled scene-only PPS requires its real returned active snapshot");
+    s->predicted_player = s->snap.value.player; s->has_prediction = true;
+    s->predicted_entity.actor = source.basis.viewer;
+    s->predicted_entity.physical = (uint32_t)s->predicted_player.clientNum;
+    ++s->revision; return true;
+}
+bool frontend_unified_q3_snapshots_console(frontend_unified_q3_snapshots *s,
+    bool (*execute)(void *,const q3n_compiled_frame *,qa_error *),void *context,qa_error *e)
 {
     q3n_compiled_source_view source;
-    if (!s || !player || s->busy || s->faulted || !s->has_snap || s->revision == UINT64_MAX || !qa_vec_finite(correction) ||
+    if (!s || !execute || !context || s->busy || s->faulted ||
+        !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
+        !source.basis.initialized)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled console requires its returned initialized CG owner");
+    s->busy = true; q3n_compiled_frame f;
+    bool ok = begin(s,Q3N_COMPILED_CONSOLE,&f,e);
+    if (ok) ok = end(s,&f,execute(context,&f,e));
+    s->busy = false; return ok;
+}
+bool frontend_unified_q3_snapshots_prediction(frontend_unified_q3_snapshots *s,const qa_q3_player *player,
+    const frontend_unified_q3_prediction_receipt *receipt,qa_vec3 correction,int32_t correction_time,bool hyperspace,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if (!s || !player || !receipt || receipt->command_receipt < -1 || receipt->outcome < FRONTEND_UNIFIED_Q3_INTERPOLATED ||
+        (receipt->teleport_consumed && receipt->outcome != FRONTEND_UNIFIED_Q3_MOVED) ||
+        receipt->outcome > FRONTEND_UNIFIED_Q3_MOVED || s->busy || s->faulted || !s->has_snap ||
+        s->revision == UINT64_MAX || !qa_vec_finite(correction) ||
         !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
         player->product != source.basis.product || player->clientNum != s->snap.value.player.clientNum)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled predicted PS requires its actual merged predictor receipt");
-    if (s->has_prediction && receipt < s->command_receipt) return fail(e,QA_ERROR_ARGUMENT,"Compiled prediction receipt rewound");
-    if (!s->has_prediction || receipt != s->command_receipt) {
-        s->predicted_player = *player; s->command_receipt = receipt; s->has_prediction = true;
-        s->predicted_entity.actor = source.basis.viewer;
-        s->predicted_entity.physical = (uint32_t)player->clientNum; s->predicted_entity.loop_stopped = false;
+    if (s->has_prediction_receipt && (receipt->baseline_revision < s->baseline_revision ||
+        (receipt->baseline_revision == s->baseline_revision && receipt->command_receipt < s->command_receipt)))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled paired prediction receipt rewound");
+    if (!s->has_prediction) s->predicted_player = s->snap.value.player;
+    s->previous_prediction = s->predicted_player;
+    if (receipt->teleport_consumed) s->this_teleport = false;
+    if (receipt->outcome != FRONTEND_UNIFIED_Q3_EXHAUSTED) s->predicted_player = *player;
+    s->command_receipt = receipt->command_receipt; s->baseline_revision = receipt->baseline_revision;
+    s->has_prediction_receipt = true;
+    s->has_prediction = true; s->predicted_entity.actor = source.basis.viewer;
+    s->predicted_entity.physical = (uint32_t)s->predicted_player.clientNum;
+    s->correction = correction; s->correction_time = correction_time; s->hyperspace = hyperspace; ++s->revision;
+    bool ok = true;
+    if (receipt->outcome == FRONTEND_UNIFIED_Q3_UNMOVED || receipt->outcome == FRONTEND_UNIFIED_Q3_MOVED) {
+        s->busy = true; s->predicted_transition = true; q3n_compiled_frame f;
+        ok = begin(s,Q3N_COMPILED_PLAYER_TRANSITION,&f,e);
+        if (ok) {
+            ok = player_transition(s,&f,&s->predicted_player,&s->previous_prediction,e);
+            if (ok) ok = frame_current(s,&f) && q3n_compiled_source_current(&f.source);
+            if (ok && receipt->outcome == FRONTEND_UNIFIED_Q3_MOVED)
+                ok = frame(s,&f,e) && s->options.prediction_finished(s->options.context,&f,e);
+            ok = end(s,&f,ok);
+        }
+        s->predicted_transition = false; s->busy = false;
     }
-    s->correction = correction; s->correction_time = correction_time; s->hyperspace = hyperspace; ++s->revision; return true;
+    if (!ok) s->faulted = true;
+    return ok;
 }
 
 static bool actor_fields(void *context,qa_source_save_io *io,qa_actor_id *actor)
@@ -439,8 +520,8 @@ static bool fields(frontend_unified_q3_snapshots *s,qa_source_save_io *io)
 {
     q3n_compiled_source_view source;
     if (!q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(s->options.client),&source,io->error)) return false;
-    char magic[4] = {'Q','3','C','G'}; uint32_t version = 1;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CG",4) && qa_source_save_u32(io,&version) && version == 1 &&
+    char magic[4] = {'Q','3','C','G'}; uint32_t version = 3;
+    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CG",4) && qa_source_save_u32(io,&version) && version == 3 &&
         q3n_compiled_source_fields(io,source.owner) && qa_source_save_u64(io,&s->revision) && s->revision &&
         qa_source_save_i32(io,&s->constructor_message) && s->constructor_message >= 0 &&
         qa_source_save_i32(io,&s->constructor_command) && s->constructor_command >= source.basis.initial_command &&
@@ -449,9 +530,10 @@ static bool fields(frontend_unified_q3_snapshots *s,qa_source_save_io *io)
         s->commands >= s->constructor_command && s->commands == source.basis.reached_command &&
         qa_source_save_bool(io,&s->has_snap) && qa_source_save_bool(io,&s->has_next) && (!s->has_next || s->has_snap) &&
         qa_source_save_bool(io,&s->has_prediction) && (!s->has_prediction || s->has_snap) &&
+        qa_source_save_bool(io,&s->has_prediction_receipt) && (!s->has_prediction_receipt || s->has_prediction) &&
         qa_source_save_bool(io,&s->hyperspace) && qa_source_save_bool(io,&s->this_teleport) && qa_source_save_bool(io,&s->next_teleport) &&
         qa_source_save_vec3(io,&s->correction) && qa_vec_finite(s->correction) && qa_source_save_i32(io,&s->correction_time) &&
-        qa_source_save_u64(io,&s->command_receipt);
+        qa_source_save_i64(io,&s->command_receipt) && s->command_receipt >= -1 && qa_source_save_u64(io,&s->baseline_revision);
     if (ok && s->has_snap) ok = snapshot_fields(s,io,&s->snap,source.basis.product) && s->snap.value.message_number > s->constructor_message;
     if (ok && s->has_next) ok = snapshot_fields(s,io,&s->next,source.basis.product) && s->next.value.message_number > s->snap.value.message_number &&
         s->next.value.server_time > s->time;

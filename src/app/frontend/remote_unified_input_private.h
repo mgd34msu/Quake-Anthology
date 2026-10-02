@@ -13,12 +13,17 @@ struct frontend_unified_input {
     qa_executable_recipe *recipe;
     const qa_recipe_provider *movement, *arsenal;
     frontend_unified_command_builder builder, pending_builder;
+    qa_movement_command q3_commands[64];
+    size_t q3_command_count;
     qa_unified_input pending;
     qa_seat_input_sample retained_sample;
     uint64_t retained_sequence, last_sequence;
     double command_time, pending_time, retained_elapsed;
+    int32_t q3_weapon;
+    float q3_sensitivity;
     uint32_t epoch;
     bool submitted, has_sample, has_pending, busy;
+    bool has_q3_values;
 };
 bool frontend_input_import_create(qa_frontend *,frontend_remote_unified *,frontend_remote_unified_prediction *,
     frontend_unified_input **,qa_error *);

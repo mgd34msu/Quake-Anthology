@@ -22,6 +22,7 @@ typedef struct application_q3_components_options {
     size_t provider_count;
     application_provider *world_source;
     qa_world *world;
+    qa_equipment *equipment;
     qa_bytes entity_text;
     application_q3_component_clients clients;
     void *context;
@@ -46,6 +47,13 @@ typedef struct application_q3_component_publication {
     const char *presentation_runtime;
     const qa_unified_document *identity;
 } application_q3_component_publication;
+typedef struct application_q3_component_item_metadata {
+    application_q3_component_publication source;
+    qa_item_admission admission;
+    qa_bytes icon,held;
+} application_q3_component_item_metadata;
+bool application_q3_components_item_read(qa_application *,qa_actor_id,qa_actor_owner,qa_item_id,
+    application_q3_component_item_metadata *,bool *found,qa_error *);
 
 /* The actual launch selection creates this roster before any Init. Every
  * entry owns a separate physical GAME executor and admitted SOURCE clock. */

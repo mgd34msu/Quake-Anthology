@@ -1,14 +1,33 @@
 #include "guest_q3_component_input.h"
+#include "guest_q3_mod_items.h"
 #include <stdlib.h>
 
 struct application_q3_component_input {
     application_q3_mod *mod;
     application_q3_mod_application *application;
+    application_q3_mod_items *items;
+    application_q3_mod_items_application *item_application;
     qa_actor_id actor;
     bool slice,finishing,running;
 };
 static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_ARGUMENT,0,"%s",text); return false; }
+typedef struct input_preparation {
+    application_q3_component_input *scope;
+    application_q3_component_input_values values;
+    void *context;
+} input_preparation;
+static bool prepare(void *context,uint32_t entry,qa_error *e)
+{
+    input_preparation *p=context;
+    application_q3_component_input *scope=p->scope;
+    application_q3_mod_inputs current={0};
+    if(!p->values(p->context,&current,e)||
+        !application_q3_mod_input_update(scope->application,&current,e)) return false;
+    if(!scope->items||!application_q3_mod_items_applies(scope->items,entry)) return true;
+    if(!scope->slice) return fail(e,"Weapon input requires its actual movement slice");
+    return application_q3_mod_items_apply(scope->item_application,entry,&current,e);
+}
 static bool bindings(application_q3_component_input *scope,bool before,
     application_q3_component_input_values values,
     application_q3_component_input_output output,void *context,qa_error *e)
@@ -23,7 +42,8 @@ static bool bindings(application_q3_component_input *scope,bool before,
         if(!values||!values(context,&current,e)||
             !application_q3_mod_input_update(scope->application,&current,e)) return false;
         application_q3_mod_output *outputs=NULL; size_t written=0;
-        bool ok=application_q3_mod_input_run(scope->mod,i,scope->application,&outputs,&written,e);
+        input_preparation preparation={scope,values,context};
+        bool ok=application_q3_mod_input_run(scope->mod,i,scope->application,prepare,&preparation,&outputs,&written,e);
         for(size_t j=0;ok&&j<written&&application_q3_mod_client_live(scope->mod,scope->actor);++j)
             ok=output&&output(context,outputs+j,e);
         free(outputs);
@@ -56,9 +76,12 @@ bool application_q3_component_input_begin(application_q3_component *component,qa
     application_q3_component_input *scope=calloc(1,sizeof(*scope));
     if(!scope) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining actual component input application"); return false; }
     scope->mod=mod; scope->actor=actor; scope->slice=slice;
+    scope->items=application_q3_component_items(component);
     if(!application_q3_mod_open(mod,actor,&current,&scope->application,e)) { free(scope); return false; }
     *out=scope;
     if(!application_q3_mod_input_source(scope->application,values,context,e)) return false;
+    if(scope->items&&!application_q3_mod_items_open(scope->items,actor,scope->application,
+        &scope->item_application,e)) return false;
     scope->running=true;
     bool ok=bindings(scope,true,values,output,context,e);
     scope->running=false; return ok;
@@ -69,6 +92,7 @@ bool application_q3_component_input_abort(application_q3_component_input **in,qa
     application_q3_component_input *scope=*in;
     if(!scope) return true;
     if(scope->running) return fail(e,"Component input retains an executing boundary callback");
+    if(!application_q3_mod_items_close(&scope->item_application,e)) return false;
     if(!application_q3_mod_close(&scope->application,e)) {
         if(!scope->application) { free(scope); *in=NULL; }
         return false;

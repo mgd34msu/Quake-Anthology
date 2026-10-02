@@ -17,6 +17,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
+#include "guest_q3_save.h"
 
 static bool process_current(void *context, const qa_launch_instance *descriptor,
     qa_actor_owner receiver, uint64_t service_owner, qa_error *error)
@@ -35,8 +36,9 @@ bool q3g_role_catalog_refresh(q3g_role *role, qa_error *error)
     if (!role || !role->catalog) return true;
     const application_q3_catalog_weapon *borrowed;
     size_t count;
-    if (!application_q3_catalog_role_current(role->catalog, role) ||
-        !application_q3_catalog_weapons(role->catalog, &borrowed, &count, error)) return false;
+    if (!application_q3_catalog_role_current(role->catalog, role))
+        return application_fail(error, QA_ERROR_ARGUMENT, "GAME catalog lost its real executor namespace");
+    if (!application_q3_catalog_weapons(role->catalog, &borrowed, &count, error)) return false;
     if (!role->weapons) return true;
     if (!count && !role->initialized && !role->engine->restore_pending) return true;
     if (count > SIZE_MAX / sizeof(application_q3_weapon_catalog_entry))
@@ -56,8 +58,24 @@ static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t poi
     if (!role->equipment)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source entity submission lost its actual equipment owner");
     if (!application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error)) return false;
-    return *suppress || !role->body ||
-        application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error);
+    if (*suppress || !role->body) return true;
+    if (!application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error)) return false;
+    return !*suppress || application_q3_equipment_source_entity_cancel(role->equipment, call, error);
+}
+
+static bool equipment_poly(void *context, const qa_qvm_call *call, size_t vertices, qa_error *error)
+{
+    q3g_role *role = context;
+    return role && role->equipment ?
+        application_q3_equipment_source_poly(role->equipment, call, vertices, error) :
+        application_fail(error, QA_ERROR_ARGUMENT, "Source polygon lost its actual equipment scope");
+}
+
+static bool equipment_light(void *context, const qa_qvm_call *call, qa_error *error)
+{
+    q3g_role *role = context;
+    return role && role->equipment ? application_q3_equipment_source_light(role->equipment, call, error) :
+        application_fail(error, QA_ERROR_ARGUMENT, "Source light lost its actual equipment scope");
 }
 
 static bool qvm_path(const char *path)
@@ -508,6 +526,10 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     if (role->image && kind == QA_QVM_CGAME) {
         options.source_entity = equipment_entity;
         options.source_entity_context = role;
+        options.source_poly = equipment_poly;
+        options.source_poly_context = role;
+        options.source_light = equipment_light;
+        options.source_light_context = role;
     }
     if (!qa_q3_host_create(&options, &role->host, error)) goto failed;
     options.frontend_lifetime=NULL;options.release_frontend=NULL;
@@ -547,12 +569,32 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         qa_native_module_info module = qa_native_module_describe(role->module);
         qa_native_process_resource_artifact artifact = {.resource = role->artifact->resource,
             .acquisition = &role->artifact->acquisition, .path = role->path};
+        qa_bytes restored_executor = {0};
+        if (engine->restore_pending) {
+            const qa_native_process_resources *capture = NULL;
+            qa_bytes recipe = {0};
+            if (!application_guest_q3_native_restore_recipe(role, &capture, &recipe, &restored_executor, error) ||
+                !application_native_process_rebind(descriptor, provider->owner, role->service_owner,
+                    process_current, role, capture, recipe, &role->process, error)) goto failed;
+        }
         if (!application_native_process_prepare(app, descriptor, provider->owner,
             role->service_owner, &artifact, 1, 0, &module.image,
             native.instance.observe || qa_native_declaration_region_count(role->declaration) != 0,
             process_current, role, &role->process, error)) goto failed;
+        if (restored_executor.size) {
+            if (!qa_native_process_resources_restore_read(role->process.resources,
+                restored_executor, NULL, &role->process.process, error)) goto failed;
+            role->process.process.defer_host_restore = true;
+        }
         native.instance.process = &role->process.process;
         role->native_options = native;
+        if (restored_executor.size) {
+            /* CPU/RAM construction is inert. The actual HOST capsule is decoded
+             * only after the canonical world and source state have been restored. */
+            if (!qa_native_host_create_q3(role->module, &role->native_options, &role->native, error) ||
+                !qa_q3_host_attach_native(role->host, role->native, error)) goto failed;
+            role->committed = true;
+        }
     }
     if (kind == QA_QVM_GAME && role->vm) {
         qa_bytes primary_bytes = role->artifact->image ?

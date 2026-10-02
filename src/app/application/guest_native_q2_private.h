@@ -38,8 +38,11 @@ struct application_native_q2 {
     qa_native_declaration *declaration;
     struct application_native_q2_callbacks *callbacks;
     struct application_native_q2_stages *stages;
+    struct application_native_q2_source_actors *source_actors;
+    struct application_native_q2_source_invocation *source_invocation;
     struct application_native_q2_publication *publication;
     struct application_native_q2_wire_engine *wire_engine;
+    struct application_native_q2_visibility *visibility;
     application_native_process_owner process;
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_inventory_rows *inventory_rows;
@@ -72,8 +75,10 @@ struct application_native_q2 {
         struct qa_application_network_q2_recipient_view *, bool *, qa_error *);
     bool (*network_unicast)(void *, const struct qa_q2_unicast_claim *, bool, bool *, qa_error *);
     size_t network_recipient_users;
+    struct application_q2_recipient_binding *network_recipient_binding;
     qa_actor_owner hud_source_owner;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
+    bool host_constructing;
     qa_error activation_error;
 };
 
@@ -86,6 +91,7 @@ bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_native_q2_retire_map(application_provider *, qa_error *);
 bool application_native_q2_deconstruct(application_provider *, qa_error *);
+void application_network_q2_retire_bindings(struct application_native_q2 *);
 bool application_native_q2_idle(const application_provider *);
 bool application_native_q2_activate(struct application_native_q2 *, qa_error *);
 bool application_native_q2_client_admit(application_provider *, uint32_t, qa_actor_id,
@@ -100,6 +106,8 @@ bool application_native_q2_console_command(application_provider *, qa_actor_id, 
 bool application_native_q2_client_command(application_provider *, qa_actor_id,
     const qa_command_invocation *, bool *, qa_error *);
 bool application_native_q2_weapon_request(application_provider *, qa_actor_id,
+    qa_item_id, bool *admitted, qa_error *);
+bool application_native_q2_weapon_accepts(application_provider *, qa_actor_id,
     qa_item_id, bool *admitted, qa_error *);
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *);
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);

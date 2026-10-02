@@ -5,7 +5,11 @@
 #include "qa/network.h"
 #include "native_q2_publication.h"
 #include "native_q2_wire_engine.h"
+#include "native_q2_visibility.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_client_stages.h"
+#include "native_q2_client_outputs.h"
+#include "native_q2_source_actors.h"
 #include "native_q2_inventory_scanner.h"
 #include "native_q2_inventory_rows.h"
 #include <limits.h>
@@ -15,19 +19,23 @@ static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors,
 {
     qa_saved_actor_id saved = {0};
     if (actor.registry && !qa_actors_save_reference(actors, actor, &saved, error)) return false;
-    return qa_net_write_u64(writer, saved.generation) && qa_net_write_u32(writer, saved.slot);
+    return qa_net_write_u8(writer, actor.registry ? 1 : 0) &&
+        qa_net_write_u64(writer, saved.generation) && qa_net_write_u32(writer, saved.slot);
 }
 
 static bool read_actor(qa_net_reader *reader, const qa_actor_registry *actors,
     qa_actor_id *out, qa_error *error)
 {
+    uint8_t present = qa_net_read_u8(reader);
     qa_saved_actor_id saved;
     saved.generation = qa_net_read_u64(reader);
     saved.slot = qa_net_read_u32(reader);
     *out = (qa_actor_id){0};
     if (reader->failed) return false;
-    if (!saved.generation)
-        return !saved.slot || application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation has an invalid empty actor reference");
+    if (present > 1)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation has an invalid actor presence");
+    if (!present)
+        return (!saved.slot && !saved.generation) || application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation has an invalid empty actor reference");
     const qa_actor_record *actor = qa_actors_resolve_saved(actors, saved);
     if (!actor) return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 continuation actor is not restored");
     *out = actor->id;
@@ -64,6 +72,8 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     if (!application_q2_control_suspend(engine, error)) return false;
     if (!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     if (!application_native_q2_callbacks_suspend(engine,error)) return false;
+    if (!application_native_q2_source_actors_suspend(engine,error)) return false;
+    if (!application_native_q2_stages_close(engine,error)) return false;
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (!application_native_q2_inventory_detach(engine, i, error)) return false;
@@ -82,6 +92,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
     if (engine->initialized && engine->map_ready &&
         !application_q2_control_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;
+    if (!application_native_q2_visibility_validate(engine, error)) return false;
     if(!application_native_q2_callbacks_finish_restore(engine,error)) return false;
     if(engine->inventory_rows&&engine->map_ready&&
         (!application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)||
@@ -89,6 +100,8 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
          !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error))) return false;
     return application_native_q2_inventory_finish(provider, error) &&
         (!engine->map_ready || (application_native_q2_callbacks_validate(engine,error) &&
+        application_native_q2_stages_prepare(engine,error) &&
+        application_native_q2_client_outputs_finish_restore(engine,error) &&
         application_native_q2_callbacks_register(engine,error)));
 }
 
@@ -147,24 +160,26 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         return application_fail(error, QA_ERROR_MEMORY, "Original Q2 Engine namespace exceeds the cold budget");
     }
     size += 4u + wire.size;
-    qa_buffer callbacks={0},scanner={0};
+    qa_buffer callbacks={0},scanner={0},stages={0},visibility={0};
     bool children=application_native_q2_callbacks_capture(engine,&callbacks,error)&&
-        (!engine->inventory_scanner||application_native_q2_inventory_scanner_capture(engine->inventory_scanner,&scanner,error));
-    qa_buffer *additional[]={&callbacks,&scanner};
-    for(size_t i=0;children&&i<2;++i) {
+        (!engine->inventory_scanner||application_native_q2_inventory_scanner_capture(engine->inventory_scanner,&scanner,error))&&
+        application_native_q2_stages_capture(engine,&stages,error)&&
+        application_native_q2_visibility_capture(engine,&visibility,error);
+    qa_buffer *additional[]={&callbacks,&scanner,&stages,&visibility};
+    for(size_t i=0;children&&i<4;++i) {
         if(size>64u*1024u*1024u-4u||additional[i]->size>64u*1024u*1024u-size-4u)
             children=application_fail(error,QA_ERROR_MEMORY,"Native callback/scanner continuation exceeds its engine budget");
         else size+=4u+additional[i]->size;
     }
     if(!children) {
         qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire);
-        qa_buffer_free(&callbacks); qa_buffer_free(&scanner); return false;
+        qa_buffer_free(&callbacks); qa_buffer_free(&scanner); qa_buffer_free(&stages); qa_buffer_free(&visibility); return false;
     }
     qa_buffer buffer = {.data = malloc(size), .size = size};
-    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); qa_buffer_free(&callbacks); qa_buffer_free(&scanner); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
+    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); qa_buffer_free(&callbacks); qa_buffer_free(&scanner); qa_buffer_free(&stages); qa_buffer_free(&visibility); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 8) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 11) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -203,12 +218,12 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)combat.size) && qa_net_write_data(&writer, combat.data, combat.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)publication.size) && qa_net_write_data(&writer, publication.data, publication.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)wire.size) && qa_net_write_data(&writer, wire.data, wire.size);
-    for(size_t i=0;ok&&i<2;++i)
+    for(size_t i=0;ok&&i<4;++i)
         ok=qa_net_write_u32(&writer,(uint32_t)additional[i]->size)&&qa_net_write_data(&writer,additional[i]->data,additional[i]->size);
     qa_buffer_free(&attack); qa_buffer_free(&combat);
     qa_buffer_free(&publication);
     qa_buffer_free(&wire);
-    qa_buffer_free(&callbacks); qa_buffer_free(&scanner);
+    qa_buffer_free(&callbacks); qa_buffer_free(&scanner); qa_buffer_free(&stages); qa_buffer_free(&visibility);
     if (!ok) { qa_buffer_free(&buffer); return false; }
     buffer.size = qa_net_writer_size(&writer); *out = buffer;
     return true;
@@ -224,7 +239,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 8 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 11 ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
@@ -318,14 +333,23 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (ok && ((map_ready && engine->profile != QA_NATIVE_Q2_CGAME_API2023) != (wire != NULL)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine namespace differs from its real map lifecycle");
     }
-    qa_bytes callbacks_state={0},scanner_state={0};
+    qa_bytes callbacks_state={0},scanner_state={0},stages_state={0};
+    application_native_q2_visibility *visibility = NULL;
     if(ok) {
         uint32_t extent=qa_net_read_u32(&reader);
         ok=!reader.failed&&qa_net_read_bytes(&reader,extent,&callbacks_state)&&
             ((callbacks_state.size!=0)==(engine->callbacks!=NULL));
         if(ok) { extent=qa_net_read_u32(&reader); ok=!reader.failed&&qa_net_read_bytes(&reader,extent,&scanner_state)&&
             ((scanner_state.size!=0)==(engine->inventory_scanner!=NULL)); }
+        if(ok) { extent=qa_net_read_u32(&reader); ok=!reader.failed&&qa_net_read_bytes(&reader,extent,&stages_state)&&
+            ((stages_state.size!=0)==(engine->callbacks!=NULL)); }
         if(!ok&&!reader.failed) application_fail(error,QA_ERROR_FORMAT,"Native saved callback/scanner owner differs from its acquired declaration");
+    }
+    if (ok) {
+        uint32_t extent = qa_net_read_u32(&reader); qa_bytes state;
+        ok = !reader.failed && qa_net_read_bytes(&reader, extent, &state) &&
+            application_native_q2_visibility_restore(engine, state, &frame, clients,
+                map_ready != 0, &visibility, error);
     }
     qa_string_id map_id = 0, spawn_id = 0;
     if (ok) ok = qa_net_reader_finish(&reader) &&
@@ -335,13 +359,16 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
      * every engine field and owned allocation has been validated. */
     if (ok) ok = application_native_q2_combat_restore_prepare(engine, combat_state, &combat, error);
     if(ok) ok=application_native_q2_callbacks_restore(engine,callbacks_state,error)&&
-        (!engine->inventory_scanner||application_native_q2_inventory_scanner_restore(engine->inventory_scanner,scanner_state,error));
+        (!engine->inventory_scanner||application_native_q2_inventory_scanner_restore(engine->inventory_scanner,scanner_state,error))&&
+        application_native_q2_stages_restore(engine,stages_state,error);
     if (ok) {
         application_native_q2_attack_restore_commit(engine, attack); attack = NULL;
         application_native_q2_combat_restore_commit(engine, combat); combat = NULL;
         application_native_q2_publication_restore_commit(publication); publication = NULL;
         application_native_q2_wire_destroy(&engine->wire_engine);
         engine->wire_engine = wire; wire = NULL;
+        application_native_q2_visibility_destroy(&engine->visibility);
+        engine->visibility = visibility; visibility = NULL;
         for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
@@ -358,5 +385,6 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     application_native_q2_combat_restore_abort(combat);
     application_native_q2_publication_restore_abort(publication);
     application_native_q2_wire_destroy(&wire);
+    application_native_q2_visibility_destroy(&visibility);
     return ok;
 }

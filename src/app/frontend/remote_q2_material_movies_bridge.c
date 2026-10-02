@@ -27,6 +27,14 @@ static bool shader_movies_current(void *context, const frontend_material_movie_s
         qa_media_library_resource_owner(row->media) != view.images)
         return false;
     if (row->importing) return row->frontend->source_restoring;
+    if (row->retiring) {
+        if (row->busy || row->image_policy || !row->shader_movies ||
+            !frontend_material_movies_idle(row->shader_movies) || !qa_media_library_idle(row->media) ||
+            !qa_material_library_idle(row->materials)) return false;
+        if (row->frontend->capture) return remote_q2_capture_owned(row);
+        if (row->frontend->resource_inventory) return false;
+        return true;
+    }
     if (!row->bound || row->retired) return row->retired;
     const frontend_remote_q2_domain *domain = &view.domain;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(domain->runtime), domain->client);

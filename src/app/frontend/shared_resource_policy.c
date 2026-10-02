@@ -18,6 +18,7 @@
 #include "qa/font_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/render_controls.h"
+#include "qa/q3_cinematic_handles.h"
 
 static bool policy_fail(qa_error *error, const char *text)
 { return frontend_fail(error, QA_ERROR_ARGUMENT, text); }
@@ -207,6 +208,10 @@ struct frontend_shared_resource_policy {
     frontend_q1_sky_policy *sky;
     qa_render_controls *image_controls;
     qa_render_source_images_ticket *image_admissions;
+    qa_q3_cinematic_handles *cinematic_owner;
+    qa_q3_cinematic_handles_stage *cinematics;
+    bool image_no_bind;
+    qa_render_source_restart_values image_restart;
     policy_scalar scalars[sizeof(policy_names) / sizeof(policy_names[0])];
     size_t scalar_count;
     bool begun, source_profile, source_restart, children_entered, children_prepared, sealed, published, render_published;
@@ -215,6 +220,7 @@ static bool scalar_current(const frontend_shared_resource_policy *ticket, bool s
 {
     if (!ticket || ticket->frontend->application != ticket->application ||
         ticket->frontend->q1_sky != ticket->sky_owner ||
+        ticket->frontend->source_cinematics != ticket->cinematic_owner ||
         (ticket->client && !qa_application_client_prepare_associated(ticket->application, ticket->client)) ||
         (ticket->video ? (!frontend_video_guests_parent_is(ticket->frontend, ticket->video) ||
             qa_application_cvars(ticket->application) != ticket->registry ||
@@ -303,6 +309,9 @@ static bool policy_cleanup(frontend_shared_resource_policy **address, bool publi
     for (size_t i = ticket->materials ? ticket->material_count : 0; i > 0; --i)
         if (ticket->materials[i - 1].ticket && !(published ? qa_scene_material_image_policy_finish(&ticket->materials[i - 1].ticket, error) :
             qa_scene_material_image_policy_abort(&ticket->materials[i - 1].ticket, error))) return false;
+    if (ticket->cinematics && !(published ? qa_q3_cinematic_handles_stage_finish(&ticket->cinematics, error) :
+        qa_q3_cinematic_handles_stage_abort(&ticket->cinematics, error))) return false;
+    if (ticket->inventory && !frontend_resource_inventory_cinematics(ticket->inventory, NULL, error)) return false;
     for (size_t i = ticket->materials ? ticket->material_count : 0; i > 0; --i)
         if (ticket->materials[i - 1].movie_ticket && !(published ?
             frontend_material_movies_policy_finish(&ticket->materials[i - 1].movie_ticket, error) :
@@ -371,7 +380,7 @@ static bool policy_begin(qa_frontend *f, const qa_launch_snapshot *candidate,
     ticket->frontend = f; ticket->application = f->application;
     ticket->registry = qa_cvars_edit_registry(edit); ticket->edit = edit;
     ticket->client = client;
-    ticket->sky_owner = f->q1_sky;
+    ticket->sky_owner = f->q1_sky; ticket->cinematic_owner = f->source_cinematics;
     ticket->scalar_count = BASE_POLICY_VALUES;
     *out = ticket;
     qa_scene_image_policy images[3]; frontend_model_policy models;
@@ -428,6 +437,7 @@ bool frontend_shared_resource_policy_restart_prepare(qa_frontend *f, const front
     if (!ticket) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining renderer restart resources");
     ticket->frontend = f; ticket->application = f->application;
     ticket->registry = qa_application_cvars(f->application); ticket->sky_owner = f->q1_sky;
+    ticket->cinematic_owner = f->source_cinematics;
     ticket->video = video; ticket->display = f->display; ticket->cpu = f->cpu; ticket->gl = f->gl;
     ticket->color = f->source_color; ticket->scalar_count = BASE_POLICY_VALUES;
     *out = ticket;
@@ -488,6 +498,15 @@ bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_p
                 images, &ticket->banks[i], error);
     for (size_t i = 0; ok && i < ticket->bank_count; ++i)
         ok = qa_scene_resource_policy_dependencies(ticket->banks[i], ticket->banks, ticket->bank_count, error);
+    if (ok && ticket->cinematic_owner) {
+        qa_q3_cinematic_handles_options options;
+        ok = qa_q3_cinematic_handles_read(ticket->cinematic_owner, &options) &&
+            qa_q3_cinematic_handles_stage_prepare(ticket->cinematic_owner,
+                frontend_shared_resource_policy_images(ticket, options.images), &ticket->cinematics, error) &&
+            frontend_resource_inventory_cinematics(ticket->inventory, ticket->cinematics, error);
+        if (!ok && error && error->code == QA_OK)
+            policy_fail(error, "Cinematic preparation lost its actual global scratch bank");
+    }
     for (size_t i = 0; ok && i < ticket->font_count; ++i) {
         policy_font *font = ticket->fonts + i;
         font->owner = (qa_font_library *)frontend_resource_inventory_fonts_at(ticket->inventory, i);
@@ -517,9 +536,14 @@ bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_p
         const qa_scene_image *(*start)(void *, const char *, qa_error *) = NULL;
         void *context = NULL;
         ok = qa_material_library_video_start_read(material->owner, &start, &context);
-        if (ok && start) ok = frontend_material_movies_library_owner(material->owner, &material->movies, error) &&
-            frontend_material_movies_policy_prepare(material->movies, frontend_shared_resource_policy_images(ticket,
-                qa_material_library_resource_owner(material->owner)), material->ticket, &material->movie_ticket, error);
+        if (ok && start) {
+            qa_q3_cinematic_source *cinematic_source = NULL;
+            ok = frontend_material_movies_library_owner(material->owner, &material->movies, error) &&
+                frontend_material_movies_cinematic_read(material->movies, &cinematic_source, error) &&
+                frontend_material_movies_policy_prepare(material->movies, frontend_shared_resource_policy_images(ticket,
+                    qa_material_library_resource_owner(material->owner)), material->ticket,
+                    cinematic_source ? ticket->cinematics : NULL, &material->movie_ticket, error);
+        }
     }
     for (size_t i = 0; ok && i < ticket->world_count; ++i)
         ticket->worlds[i].materials = policy_library(ticket, qa_scene_world_material_owner(ticket->worlds[i].owner));
@@ -565,6 +589,7 @@ bool frontend_shared_resource_policy_ready(frontend_shared_resource_policy *tick
     for (size_t i = 0; i < ticket->material_count; ++i)
         if (ticket->materials[i].movie_ticket &&
             !frontend_material_movies_policy_ready(ticket->materials[i].movie_ticket, error)) return false;
+    if (ticket->cinematics && !qa_q3_cinematic_handles_stage_ready(ticket->cinematics, error)) return false;
     for (size_t i = 0; i < ticket->material_count; ++i)
         if (!qa_scene_material_image_policy_ready(ticket->materials[i].ticket, error)) return false;
     for (size_t i = 0; i < ticket->order_count; ++i)
@@ -587,11 +612,24 @@ bool frontend_shared_resource_policy_ready(frontend_shared_resource_policy *tick
         if (!qa_scene_resource_policy_source_image_count(ticket->banks[i], &count, error)) return false;
         if (count) new_source_images = true;
     }
-    if (new_source_images) {
+    if (new_source_images || (ticket->video && ticket->source_restart)) {
         ticket->image_controls = ticket->frontend->gl ? qa_gl_render_controls(ticket->frontend->gl) :
             qa_cpu_render_controls(ticket->frontend->cpu);
+        bool no_bind = false;
+        if (!frontend_q3_source_no_bind_read(ticket->frontend, ticket->edit, &no_bind, error)) return false;
+        if (ticket->image_admissions && ticket->image_no_bind != no_bind)
+            return policy_fail(error, "Prepared image admission lost its actual candidate bind policy");
+        qa_render_source_restart_values restart = {0};
+        if (ticket->video && !frontend_q3_source_restart_read(ticket->frontend, ticket->edit, &restart, error)) return false;
+        if (ticket->image_admissions && ticket->video &&
+            (ticket->image_restart.max_polys != restart.max_polys ||
+             ticket->image_restart.max_polyverts != restart.max_polyverts || ticket->image_restart.filter != restart.filter))
+            return policy_fail(error, "Prepared image restart lost its actual signed limits or filter");
+        ticket->image_no_bind = no_bind;
+        ticket->image_restart = restart;
         if ((!ticket->image_admissions && !qa_render_controls_source_images_prepare(ticket->image_controls,
-                ticket->banks, ticket->bank_count, &ticket->image_admissions, error)) ||
+                ticket->banks, ticket->bank_count, no_bind, ticket->video ? &ticket->image_restart : NULL,
+                &ticket->image_admissions, error)) ||
             !qa_render_controls_source_images_ready(ticket->image_admissions, error)) return false;
     }
     if (!frontend_resource_inventory_seal(ticket->inventory, error)) return false;
@@ -606,6 +644,19 @@ static bool policy_ready_is(const frontend_shared_resource_policy *ticket, bool 
         ((ticket->frontend->gl ? qa_gl_render_controls(ticket->frontend->gl) :
             qa_cpu_render_controls(ticket->frontend->cpu)) != ticket->image_controls ||
          !qa_render_controls_source_images_ready_is(ticket->image_admissions))) return false;
+    if (ticket->cinematics && !qa_q3_cinematic_handles_stage_ready_is(ticket->cinematics)) return false;
+    if (ticket->image_admissions) {
+        bool no_bind = false;
+        if (!frontend_q3_source_no_bind_read(ticket->frontend, ticket->edit, &no_bind, NULL) ||
+            no_bind != ticket->image_no_bind) return false;
+        if (ticket->video) {
+            qa_render_source_restart_values restart = {0};
+            if (!frontend_q3_source_restart_read(ticket->frontend, ticket->edit, &restart, NULL) ||
+                ticket->image_restart.max_polys != restart.max_polys ||
+                ticket->image_restart.max_polyverts != restart.max_polyverts ||
+                ticket->image_restart.filter != restart.filter) return false;
+        }
+    }
     for (size_t i = 0; i < ticket->bank_count; ++i) if (!qa_scene_resource_policy_ready_is(ticket->banks[i])) return false;
     for (size_t i = 0; i < ticket->order_count; ++i) if (!qa_material_order_image_policy_ready_is(ticket->orders[i])) return false;
     for (size_t i = 0; i < ticket->font_count; ++i) if (!qa_font_resource_policy_ready_is(ticket->fonts[i].ticket)) return false;
@@ -636,6 +687,7 @@ static void policy_publish(frontend_shared_resource_policy *ticket)
     for (size_t i = 0; i < ticket->material_count; ++i)
         if (ticket->materials[i].movie_ticket)
             frontend_material_movies_policy_publish(ticket->materials[i].movie_ticket);
+    if (ticket->cinematics) qa_q3_cinematic_handles_stage_publish(ticket->cinematics);
     for (size_t i = 0; i < ticket->world_count; ++i) qa_scene_world_image_policy_publish(ticket->worlds[i].ticket);
     for (size_t i = 0; i < ticket->model_count; ++i) qa_scene_model_image_policy_publish(ticket->models[i].ticket);
     for (size_t i = 0; i < ticket->font_count; ++i) qa_font_resource_policy_publish(ticket->fonts[i].ticket);

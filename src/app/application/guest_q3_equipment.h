@@ -39,6 +39,10 @@ bool application_q3_equipment_hud(const application_q3_equipment *);
 bool application_q3_equipment_view(const application_q3_equipment *);
 bool application_q3_equipment_source_entity(void *, const qa_qvm_call *, int32_t,
     const qa_q3_ref_entity *, bool *suppress, qa_error *);
+bool application_q3_equipment_source_entity_cancel(application_q3_equipment *,
+    const qa_qvm_call *, qa_error *);
+bool application_q3_equipment_source_poly(void *, const qa_qvm_call *, size_t vertices, qa_error *);
+bool application_q3_equipment_source_light(void *, const qa_qvm_call *, qa_error *);
 size_t application_q3_equipment_descriptor_count(const application_q3_equipment *);
 bool application_q3_equipment_descriptors(const application_q3_equipment *,
     qa_qvm_saved_function *, size_t, qa_error *);

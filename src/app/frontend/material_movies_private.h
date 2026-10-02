@@ -19,6 +19,11 @@ typedef struct frontend_material_movie_row {
     bool failed;
     qa_error failure;
 } frontend_material_movie_row;
+typedef struct frontend_material_movie_cinematic_receipt {
+    char *path;
+    const qa_scene_image *image;
+    int32_t handle;
+} frontend_material_movie_cinematic_receipt;
 struct frontend_material_movies {
     frontend_material_movie_source source;
     struct frontend_material_movies *next;
@@ -26,8 +31,13 @@ struct frontend_material_movies {
     size_t count, capacity;
     uint64_t next_target;
     qa_material_movies *registry;
+    qa_q3_cinematic_source *cinematic_source;
+    uint32_t cinematic_seat;
+    uint64_t cinematic_bus;
+    frontend_material_movie_cinematic_receipt *cinematic_receipts;
+    size_t cinematic_count, cinematic_capacity;
     struct frontend_material_movies_policy *pending;
-    bool busy, restore_pending, linked;
+    bool busy, restore_pending, linked, cinematic_mode;
 };
 bool frontend_material_movie_source_valid(const frontend_material_movie_source *);
 bool frontend_material_movie_link(frontend_material_movies *, qa_error *);
@@ -42,4 +52,9 @@ bool frontend_material_movie_row_create(frontend_material_movies *, qa_media_lib
     qa_material_movies *, const char *, uint64_t, frontend_material_movie_row **, qa_error *);
 void frontend_material_movie_row_free(frontend_material_movie_row *);
 bool frontend_material_movie_rows_reserve(frontend_material_movie_row ***, size_t *, size_t, qa_error *);
+bool frontend_material_movie_cinematic_reserve(frontend_material_movie_cinematic_receipt **,
+    size_t *, size_t, qa_error *);
+bool frontend_material_movie_cinematic_receipt_make(const char *,
+    frontend_material_movie_cinematic_receipt *, qa_error *);
+void frontend_material_movie_cinematic_receipt_free(frontend_material_movie_cinematic_receipt *);
 #endif

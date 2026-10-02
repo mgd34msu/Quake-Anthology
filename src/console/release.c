@@ -3,18 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct qa_console_release {
-    qa_console *console;
-    qa_command_context context;
-    command_chunk *prepared;
-    command_chunk *head, *tail, *deferred, *deferred_tail;
-    size_t queued_bytes, deferred_bytes;
-    int32_t wait;
-    qa_command_context wait_context;
-    size_t alias_count;
-    bool drain_yielded, started, entered, complete;
-    qa_error fault;
-};
 static void chunk_free(command_chunk *chunk)
 {
     if (!chunk) return;
@@ -23,6 +11,9 @@ static void chunk_free(command_chunk *chunk)
 }
 static void release_free(qa_console_release *owner)
 {
+    qa_console_release **link=&owner->console->release_first;
+    while (*link && *link!=owner) link=&(*link)->next;
+    if (*link) *link=owner->next;
     chunk_free(owner->prepared);
     free((char *)owner->context.script);
     --owner->console->release_leases; free(owner);
@@ -77,7 +68,9 @@ static bool prepare(qa_console *console,const qa_console_release *parent,
         }
     }
     if (!ok) { chunk_free(owner->prepared); free((char *)owner->context.script); free(owner); return false; }
-    ++console->release_leases; *out=owner; return true;
+    qa_console_release **tail=&console->release_first;
+    while (*tail) tail=&(*tail)->next;
+    *tail=owner; ++console->release_leases; *out=owner; return true;
 }
 bool qa_console_release_prepare(qa_console *console,const qa_command_context *context,
     const char *text,qa_console_release **out,qa_error *error)
@@ -95,6 +88,8 @@ static void restore_program(qa_console_release *owner)
     console->head=owner->head; console->tail=owner->tail;
     console->deferred=owner->deferred; console->deferred_tail=owner->deferred_tail;
     console->queued_bytes=owner->queued_bytes; console->deferred_bytes=owner->deferred_bytes;
+    owner->head=owner->tail=owner->deferred=owner->deferred_tail=NULL;
+    owner->queued_bytes=owner->deferred_bytes=0;
     console->wait=owner->wait; console->wait_context=owner->wait_context;
     owner->wait_context=(qa_command_context){0};
     console->alias_count=owner->alias_count; console->drain_yielded=owner->drain_yielded;
@@ -181,6 +176,17 @@ bool qa_console_release_context_current(const qa_console_release *owner,const qa
 }
 bool qa_console_release_entered(const qa_console_release *owner)
 { return owner && owner->entered; }
+bool qa_console_release_state_read(const qa_console_release *owner,const qa_console *console,
+    const qa_command_context *command,bool *complete,bool *entered,qa_status *fault)
+{
+    if (!owner || !console || !command || !complete || !entered || !fault || owner->console!=console ||
+        !console->release_leases || !qa_console_idle(console) || console->release_advancing ||
+        !same_source(&owner->context,command) || owner->context.dialect!=command->dialect ||
+        owner->context.direct!=command->direct || owner->context.console_text!=command->console_text ||
+        ((!owner->context.script)!=(!command->script)) ||
+        (command->script && strcmp(command->script,owner->context.script))) return false;
+    *complete=owner->complete; *entered=owner->entered; *fault=owner->fault.code; return true;
+}
 bool qa_console_release_abort(qa_console_release *owner,qa_console_release_outcome *out,qa_error *error)
 {
     if (!owner || !out || !qa_console_idle(owner->console) ||

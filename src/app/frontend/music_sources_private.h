@@ -36,6 +36,7 @@ struct frontend_music_sources {
     bool busy, restoring;
 };
 bool frontend_music_sources_current(const frontend_music_sources *);
+bool frontend_music_sources_origin_checkpoint_current(const frontend_music_sources *);
 bool frontend_music_world_current(const frontend_music_sources *);
 void frontend_music_world_dispose(frontend_music_world *);
 bool frontend_music_world_capture(frontend_music_sources *, qa_error *);

@@ -65,7 +65,7 @@ static bool state(qa_source_save_io *io, qa_scene_state *s)
 {
     ENUM(s->blend_source, qa_scene_blend, QA_BLEND_SRC_ALPHA_SATURATE);
     ENUM(s->blend_destination, qa_scene_blend, QA_BLEND_SRC_ALPHA_SATURATE);
-    ENUM(s->depth_test, qa_scene_depth, QA_DEPTH_GEQUAL); ENUM(s->alpha_test, qa_scene_alpha, QA_ALPHA_GE128);
+    ENUM(s->depth_test, qa_scene_depth, QA_DEPTH_DISABLED); ENUM(s->alpha_test, qa_scene_alpha, QA_ALPHA_GE128);
     ENUM(s->cull, qa_scene_cull, QA_CULL_BACK);
     BOOL(s->depth_write); BOOL(s->color_write); BOOL(s->polygon_offset); BOOL(s->wireframe);
     FLOAT(s->depth_near); FLOAT(s->depth_far); FLOAT(s->offset_factor); FLOAT(s->offset_units); FLOAT(s->line_width);
@@ -84,7 +84,7 @@ static bool fog(qa_source_save_io *io, qa_scene_fog *f)
     FLOAT(f->height_start); FLOAT(f->height_end); FLOAT(f->height_falloff); FLOAT(f->far_depth);
     BOOL(f->sky_drawn); return true;
 }
-static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs, qa_material_stage *s)
+static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs, qa_material_stage *s, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, bundle = s->images != NULL;
     if (!state(io, &s->state) || !qa_source_save_count(io, &s->image_count, QA_MATERIAL_MAX_ANIMATION) ||
@@ -108,6 +108,8 @@ static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_re
     FLOAT(s->animation_frequency);
     if (!qa_material_saved_text(io, &s->video_name) || !qa_material_saved_identity(io, refs, &s->video_identity, false)) return false;
     BOOL(s->lightmap); BOOL(s->is_lightmap); BOOL(s->clamp); BOOL(s->detail); BOOL(s->video); BOOL(s->retain_texture); BOOL(s->invalid_blend);
+    if (schema >= 9) { BOOL(s->vertex_lightmap); }
+    else if (reading) s->vertex_lightmap = false;
     ENUM(s->fog_adjustment, qa_scene_fog_effect, QA_FOG_NO_EFFECT);
     ENUM(s->rgb, qa_material_color_kind, QA_COLOR_BAD); ENUM(s->alpha, qa_material_color_kind, QA_COLOR_BAD);
     FLOAT(s->constant.x); FLOAT(s->constant.y); FLOAT(s->constant.z); FLOAT(s->constant.w);
@@ -149,7 +151,8 @@ static bool options(qa_source_save_io *io, qa_material_record *record, uint32_t 
     }
     return (!palette || o->palette_rgb.data) && (!translation || o->translation.data) &&
         qa_source_save_bytes(io, (void *)o->palette_rgb.data, palette) && qa_source_save_bytes(io, (void *)o->translation.data, translation) &&
-        (schema < 7 || qa_scene_source_upload_fields(io, o));
+        (schema >= 10 ? qa_scene_source_upload_precision_fields(io, o) :
+            (schema < 7 || qa_scene_source_upload_fields(io, o)));
 }
 bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs,
     uint32_t schema, qa_material_record *record)
@@ -176,7 +179,7 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
         if (!m->stages) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating retained material stages"); return false; }
     }
     if (reading) m->stage_count = count;
-    for (size_t i = 0; i < count; ++i) if (!stage(io, refs, &m->stages[i])) return false;
+    for (size_t i = 0; i < count; ++i) if (!stage(io, refs, &m->stages[i], schema)) return false;
     count = m->deform_count;
     if (!qa_source_save_count(io, &count, QA_MATERIAL_MAX_DEFORMS)) return false;
     if (reading && count) {

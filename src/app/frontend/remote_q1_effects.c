@@ -561,7 +561,7 @@ bool remote_q1_effects_fields(frontend_remote_q1 *row,qa_source_save_io *io,
     for(size_t i=0;i<LIGHTS;++i) {
         remote_light *value=fx->lights+i;
         uint64_t identity=value->identity;
-        frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?refs->owner:0};
+        frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?(refs->effects_owner?refs->effects_owner:refs->owner):0};
         if(io->direction==QA_SOURCE_SAVE_WRITE && identity &&
             (!frontend_scene_light_owner_ready(&scope,i,identity,error) ||
              !frontend_scene_light_saved(&scope,i,identity,&identity,error))) return false;
@@ -603,7 +603,7 @@ bool remote_q1_effects_fields(frontend_remote_q1 *row,qa_source_save_io *io,
         if(count && !fx->ambient) return remote_q1_fail(error,QA_ERROR_MEMORY,"Restoring Q1 static audio recipes");
         fx->ambient_count=fx->ambient_capacity=count;
     }
-    frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?refs->owner:0};
+    frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?(refs->effects_owner?refs->effects_owner:refs->owner):0};
     for(size_t i=0;i<count;++i) {
         remote_ambient *value=fx->ambient+i;
         uint64_t identity=value->identity,resource=value->saved_resource;
@@ -666,7 +666,7 @@ bool remote_q1_effects_restore_finish(frontend_remote_q1 *row,
         if(!qa_scene_image_owner_index(owners,1,image,&index)) return false;
         qa_scene_image_retain(image); fx->image=(qa_scene_image *)image;
     }
-    frontend_scene_identity_scope scope={refs->scene,refs->owner};
+    frontend_scene_identity_scope scope={refs->scene,refs->effects_owner?refs->effects_owner:refs->owner};
     for(size_t i=0;i<LIGHTS;++i) if(fx->lights[i].identity &&
         !frontend_scene_light_install(&scope,i,fx->lights[i].identity,&fx->lights[i].identity,error)) return false;
     for(size_t i=0;i<fx->ambient_count;++i) {

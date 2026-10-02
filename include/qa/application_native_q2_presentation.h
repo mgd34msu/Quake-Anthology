@@ -4,6 +4,8 @@
 #include "qa/application.h"
 #include "qa/game_q2.h"
 #include "qa/native_host.h"
+#include "qa/game_q2_wire.h"
+#include "qa/native_host_q2_wire.h"
 
 typedef enum qa_application_native_q2_source_kind {
     QA_APPLICATION_NATIVE_Q2_BUILTIN,
@@ -32,6 +34,36 @@ typedef struct qa_application_native_q2_presentation {
     uint64_t publication_generation, map_revision;
     bool retained;
 } qa_application_native_q2_presentation;
+
+typedef struct qa_application_native_q2_entity_prefix {
+    qa_actor_id actor;
+    uint32_t source_slot;
+    union {
+        qa_q2_wire_source_entity builtin;
+        qa_native_host_q2_entity original;
+    } source;
+} qa_application_native_q2_entity_prefix;
+
+typedef struct qa_application_native_q2_entity_sample {
+    qa_actor_id actor;
+    uint32_t source_slot;
+    qa_vec3 origin, angles;
+    qa_bounds solid_bounds;
+    float solid_radius;
+} qa_application_native_q2_entity_sample;
+
+/* Actual completed GAME table observation. These prefixes grant no received
+ * CLIENT frame or model bounds; the local CLIENT captures those separately. */
+bool qa_application_native_q2_presentation_extent(qa_application *,
+    const qa_application_native_q2_presentation *, uint32_t *, qa_error *);
+bool qa_application_native_q2_presentation_entity(qa_application *,
+    const qa_application_native_q2_presentation *, uint32_t source_slot,
+    qa_application_native_q2_entity_prefix *, bool *found, qa_error *);
+/* Local Source dictionary sample, independent of a HOST transport frame.
+ * Solid bounds decode the actual API's packed solid, never model bounds. */
+bool qa_application_native_q2_presentation_sample(qa_application *,
+    const qa_application_native_q2_presentation *, uint32_t source_slot,
+    qa_application_native_q2_entity_sample *, bool *found, qa_error *);
 
 /* Borrows the completed physical ENTITIES source. These server timestamps
  * grant no client sample time, recipient visibility, or source execution.

@@ -19,6 +19,7 @@ typedef struct frontend_network_q2_host_options {
     qa_q2_random_fn random;
     qa_kex_lan *lobby;
     qa_kex_transport *transport;
+    bool local_only;
 } frontend_network_q2_host_options;
 bool frontend_network_q2_host_create(const frontend_network_q2_host_options *,frontend_network_q2_host **,qa_error *);
 bool frontend_network_q2_host_receive(frontend_network_q2_host *,const qa_net_datagram *,bool *,qa_error *);
@@ -27,6 +28,10 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *,uint64_t,qa_error 
 bool frontend_network_q2_host_publish(frontend_network_q2_host *,uint64_t,qa_error *);
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *,qa_net_client_id);
 bool frontend_network_q2_host_idle(const frontend_network_q2_host *);
+bool frontend_network_q2_host_capture_current(const frontend_network_q2_host *,qa_error *);
+bool frontend_network_q2_host_import_retirement_idle(const frontend_network_q2_host *);
+bool frontend_network_q2_host_local_only(const frontend_network_q2_host *);
+void frontend_network_q2_host_admin_rebind(frontend_network_q2_host *,qa_server_admin *);
 bool frontend_network_q2_host_content_visit(const frontend_network_q2_host *,
     const qa_application_content_visitor *,qa_error *);
 bool frontend_network_q2_host_destroy(frontend_network_q2_host **,qa_error *);

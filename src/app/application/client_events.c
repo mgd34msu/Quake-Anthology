@@ -179,10 +179,10 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
         ok = application_q3_components_at(app, i, &component, error);
         if (ok && application_q3_mod_clients(application_q3_component_profile(component),
                 &maximum, &entity, &client)) {
-            ok = application_q3_component_client_current(component, actor);
-            if (ok) rows[count++] = (client_listener){.kind = CLIENT_LISTENER_COMPONENT,
+            bool bound = false;
+            ok = application_q3_component_client_bound(component, actor, &bound, error);
+            if (ok && bound) rows[count++] = (client_listener){.kind = CLIENT_LISTENER_COMPONENT,
                 .component = component, .component_index = i};
-            else ok = application_fail(error, QA_ERROR_ARGUMENT, "Component listener lacks its actual admitted client");
         }
     }
     for (size_t i = 0; ok && i < gears; ++i) {

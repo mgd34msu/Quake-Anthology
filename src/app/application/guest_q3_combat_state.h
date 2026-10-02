@@ -23,7 +23,7 @@ bool application_q3_combat_health_write(void *, float, qa_error *);
 bool application_q3_combat_armor_read(const application_q3_combat_actor *, qa_armor *, qa_error *);
 bool application_q3_combat_armor_validate(void *, const qa_armor *, qa_error *);
 bool application_q3_combat_armor_write(void *, const qa_armor *, qa_error *);
-bool application_q3_combat_empty_armor(void *, float, qa_regular_armor *, bool *, qa_error *);
+bool application_q3_combat_empty_armor(void *, double, qa_regular_armor *, bool *, qa_error *);
 bool application_q3_combat_notarget(const application_q3_combat_actor *, bool *, qa_error *);
 bool application_q3_combat_velocity(const application_q3_combat_actor *, qa_vec3 *, qa_error *);
 bool application_q3_combat_word_read(const application_q3_combat_actor *, uint32_t, int32_t *, qa_error *);

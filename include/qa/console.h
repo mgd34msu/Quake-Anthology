@@ -297,6 +297,10 @@ bool qa_console_register_owned(qa_console *, const char *name, const char *descr
  * name and dispatch owner. The output remains unchanged when absent. */
 bool qa_console_registration_owner(const qa_console *, const char *exact_name,
                                    uint64_t dispatch_owner, uint64_t *out);
+/* Pure exact ordinary registration receipt, including entries without handlers.
+ * Outputs remain unchanged when that registration is absent. */
+bool qa_console_registration_read(const qa_console *, const char *exact_name,
+    uint64_t dispatch_owner, uint64_t *lifetime_owner, qa_command_handler *, void **user);
 /* A shared dispatch entry retains independent role lifetime contributions.
  * Repeated contributions are idempotent. Removing the dispatch owner retires
  * the entry; removing a lifetime owner retires only its contributions. */

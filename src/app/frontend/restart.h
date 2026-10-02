@@ -3,8 +3,10 @@
 #include "internal.h"
 #include "qa/settings.h"
 #include "qa/source_save.h"
+#include "qa/application_client.h"
 
 typedef struct frontend_restart frontend_restart;
+typedef struct frontend_restart_client_binding frontend_restart_client_binding;
 typedef struct frontend_restart_options {
     qa_frontend *frontend;
     /* The actual physical client/device settings owner. Source GAME cvars do
@@ -28,6 +30,9 @@ typedef struct frontend_restart_options {
 frontend_restart *frontend_restart_create(const frontend_restart_options *,qa_error *);
 bool frontend_restart_destroy(frontend_restart *,qa_error *);
 bool frontend_restart_register(frontend_restart *,qa_console *,qa_error *);
+bool frontend_restart_client_bind(frontend_restart *,const qa_application_client_source *,
+    frontend_restart_client_binding **,qa_error *);
+bool frontend_restart_client_unbind(frontend_restart_client_binding **,qa_error *);
 /* Call only after callbacks/source frames and native presentation have
  * returned. Resource preparation finishes before window publication. */
 bool frontend_restart_drain(frontend_restart *,qa_error *);

@@ -289,6 +289,8 @@ bool qa_native_host_terminal_retired(const qa_native_host *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
+bool qa_native_host_source_public_bytes(qa_native_host *, uint32_t source_slot,
+    size_t *, qa_error *);
 bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,
                                qa_native_host_guest_memory *, qa_error *);
 
@@ -304,6 +306,24 @@ bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);
 bool qa_native_host_source_actor(qa_native_host *, qa_native_address, bool observe,
                                   qa_actor_id *, qa_error *);
 bool qa_native_host_source_reconcile(qa_native_host *, qa_error *);
+bool qa_native_host_source_active(qa_native_host *, uint32_t source_slot, bool *, qa_error *);
+/* Source clocks are published by the actual application source owner. These
+ * boundaries read the original table and events without calling RunFrame. */
+bool qa_native_host_source_frame_begin(qa_native_host *, qa_error *);
+bool qa_native_host_source_frame_end(qa_native_host *, qa_error *);
+bool qa_native_host_source_birth(qa_native_host *, qa_native_address, qa_actor_id *, qa_error *);
+bool qa_native_host_source_body_read(qa_native_host *, uint32_t source_slot,
+    uint32_t velocity_offset, uint32_t ground_offset, qa_body_state *, qa_error *);
+bool qa_native_host_source_body_write(qa_native_host *, uint32_t source_slot,
+    uint32_t velocity_offset, uint32_t ground_offset, const qa_body_state *, qa_error *);
+typedef struct qa_native_host_source_touch qa_native_host_source_touch;
+/* The caller retains even a partially prepared ticket until checked disposal.
+ * Arguments borrow its native scratch for one synchronous source call. */
+bool qa_native_host_source_touch_prepare(qa_native_host *, bool rerelease,
+    const qa_touch_contact *, qa_native_host_source_touch **, qa_error *);
+bool qa_native_host_source_touch_arguments(const qa_native_host_source_touch *,
+    qa_native_value arguments[4], qa_error *);
+bool qa_native_host_source_touch_close(qa_native_host_source_touch **, qa_error *);
 
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);

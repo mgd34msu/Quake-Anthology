@@ -173,7 +173,7 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
     if (!owner->bound || !peer || peer->protocol.kind != QA_NET_UNIFIED_1 || peer->protocol.flags || peer->protocol.revision ||
         peer->seat_count != 1 || !peer->seats || !qa_net_client_id_equal(peer->id, owner->options.domain.client) ||
         !qa_net_client_owns_seat(peer, owner->options.domain.seat) || peer->seats[0].remote_index ||
-        owner->busy || !owner->actors || !owner->strings ||
+        owner->busy || !owner->actors || !owner->strings || (owner->retirement_pending && !owner->retired) ||
         (owner->prepared && !owner->preparing) || (owner->preparing && (!owner->preparing_recipe || !owner->offer)) ||
         (owner->preparing_recipe && !owner->offer) || (owner->frame_obsolete && !owner->prepared_frame) ||
         (owner->admitted && (!owner->recipe || !owner->epoch || !qa_actors_get(owner->actors, owner->player))) ||
@@ -262,7 +262,9 @@ static bool fields(qa_source_save_io *io, frontend_remote_unified *owner,
     uint64_t pool = qa_application_content_pool_id(graph, domain->resources);
     uint32_t physical = domain->physical_seat, capacity = owner->options.identity_capacity;
     qa_net_seat_id seat = domain->seat;
-    if (!catalog || !pool || !application_unified_save_magic(io, "QURP") ||
+    char magic[4] = {'Q','U','R','P'}; uint32_t version = 2;
+    if (!catalog || !pool || !qa_source_save_bytes(io, magic, sizeof(magic)) ||
+        memcmp(magic, "QURP", sizeof(magic)) || !qa_source_save_u32(io, &version) || version != 2 ||
         !application_unified_save_client(io, domain->client) ||
         !qa_source_save_u64(io, &seat.owner) || seat.owner != domain->seat.owner ||
         !qa_source_save_u32(io, &seat.index) || seat.index != domain->seat.index ||
@@ -283,7 +285,8 @@ static bool fields(qa_source_save_io *io, frontend_remote_unified *owner,
         !qa_source_save_bool(io, &owner->frame_obsolete) || !qa_source_save_bool(io, &owner->bound) ||
         !qa_source_save_bool(io, &owner->preparing) || !qa_source_save_bool(io, &owner->prepared) ||
         !qa_source_save_bool(io, &owner->admitted) || !qa_source_save_bool(io, &owner->retired) ||
-        !qa_source_save_bool(io, &owner->consumers_live) || !qa_source_save_bool(io, &owner->transport_restarted)) return false;
+        !qa_source_save_bool(io, &owner->consumers_live) || !qa_source_save_bool(io, &owner->transport_restarted) ||
+        !qa_source_save_bool(io, &owner->retirement_pending)) return false;
     if (reading) owner->restore_pending = true;
     return retained_valid(owner, peer, io->error);
 }
@@ -316,9 +319,12 @@ bool frontend_remote_unified_restore_prefix(qa_frontend *frontend, const fronten
         frontend->application != domain->application || !domain->runtime ||
         !qa_net_client_id_equal(domain->client, peer->id) || !domain->catalog || !domain->resources ||
         !domain->console || !domain->cvars || !options->identity_capacity || !options->current ||
-        !options->userinfo || !options->disconnected || !consumers->prepare || !consumers->offer_publish ||
+        !options->userinfo || !options->disconnected || !options->retirement || !options->transport_restart ||
+        !consumers->prepare || !consumers->offer_publish ||
         !consumers->offer_ready || !consumers->control || !consumers->frame || !consumers->publish ||
-        !consumers->input || !consumers->sample || !consumers->draw || !consumers->idle || !consumers->close ||
+        !consumers->input || !consumers->begin_frame || !consumers->clock_read ||
+        !consumers->physical_ready || !consumers->physical_input ||
+        !consumers->sample || !consumers->draw || !consumers->idle || !consumers->close ||
         !consumers->content_visit || domain->physical_seat >= frontend->options.seats ||
         !options->current(options->context, domain, e))
         return frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified replica import requires its actual restored CLIENT and presentation owners");
@@ -357,10 +363,20 @@ bool frontend_remote_unified_checkpoint_current(const frontend_remote_unified *o
     for (const frontend_remote_unified *row = owner && owner->frontend ? owner->frontend->remote_unified : NULL;
         row; row = row->next) if (row == owner) { linked = true; break; }
     if (!owner || !linked || owner->busy || owner->frontend->application != owner->options.domain.application ||
-        (owner->restore_pending ? !owner->frontend->source_restoring : !owner->frontend->capture) ||
+        (!owner->frontend->capture && !owner->frontend->source_restoring) ||
         !owner->options.current(owner->options.context, &owner->options.domain, e)) return false;
-    return retained_valid(owner, qa_net_connections_get(qa_network_connections(owner->options.domain.runtime),
-        owner->options.domain.client), e);
+    const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->options.domain.runtime),
+        owner->options.domain.client);
+    if (!retained_valid(owner, peer, e)) return false;
+    if (owner->frontend->source_restoring && !owner->restore_pending) {
+        qa_unified_session *installed = NULL;
+        return owner->session && qa_unified_session_source_retired(owner->session) &&
+            qa_unified_session_find(owner->options.domain.runtime, owner->options.domain.client, &installed, e) &&
+            installed == owner->session && qa_unified_session_qualified(installed, peer, e) &&
+            qa_unified_session_client_receipt(installed, owner->epoch, owner->admitted, owner->retired,
+                owner->offer, owner->frame, owner->prepared_frame, e);
+    }
+    return !owner->restore_pending || owner->frontend->source_restoring;
 }
 bool frontend_remote_unified_qualified(const frontend_remote_unified *owner, qa_network_runtime *runtime,
     const qa_net_client *peer, qa_error *e)
@@ -386,6 +402,6 @@ bool frontend_remote_unified_restore_dispose(frontend_remote_unified **owned, qa
         return frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified prefix cleanup still owns physical callback custody");
     if (!owner->options.consumers.close(owner->options.consumers.context, owner, e)) return false;
     owner->consumers_live = false;
-    owner->session = NULL; owner->retired = true;
+    owner->session = NULL; owner->retired = true; owner->retirement_pending = false;
     return frontend_remote_unified_destroy(owned, e);
 }

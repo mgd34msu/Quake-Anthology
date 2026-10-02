@@ -48,12 +48,18 @@ static bool temporary(qa_source_save_io *io, qa_q2_temp_entity *value)
     for (size_t i = 0; i < 7; ++i) {
         qa_q2_temp_field *field = value->fields + i;
         uint32_t kind = (uint32_t)field->kind, name = (uint32_t)field->name; U32(kind); U32(name);
+        COUNT(field->offset, SIZE_MAX);
         if (kind > QA_Q2_TEMP_VECTOR || name > QA_Q2_TEMP_OFFSET) return invalid(io, "Saved Q2 temporary field is invalid");
         if (io->direction == QA_SOURCE_SAVE_READ) { field->kind = (qa_q2_temp_field_kind)kind; field->name = (qa_q2_temp_field_name)name; }
         if (kind == QA_Q2_TEMP_VECTOR) for (size_t axis = 0; axis < 3; ++axis) { F32(field->value.vector[axis]); }
         else { I32(field->value.integer); }
     }
-    return bytes(io, &value->raw);
+    if (!bytes(io, &value->raw)) return false;
+    for (size_t i = 0; i < value->field_count; ++i)
+        if (!value->fields[i].offset || value->fields[i].offset >= value->raw.size ||
+            (i && value->fields[i].offset <= value->fields[i - 1].offset))
+            return invalid(io, "Saved Q2 temporary field lost its actual primitive offset");
+    return true;
 }
 static bool fog(qa_source_save_io *io, qa_q2_wire_fog *value)
 {

@@ -4,6 +4,7 @@
 #include "remote_unified_components.h"
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
+#include "remote_unified_render.h"
 #include "q3_render_policy.h"
 #include "qa/q3_source_scene_bank.h"
 #include "../../presentation/q3_native/events.h"
@@ -36,6 +37,7 @@ typedef struct unified_q3_bank {
     qa_actor_owner provider;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *backend;
+    qa_q3_supplement *supplement;
     q3n_media *media;
     q3n_events *effects;
     q3n_weapons *weapons;
@@ -56,6 +58,8 @@ typedef struct unified_q3_character {
     uint32_t flags, powerups;
     float color[4], scale, opacity;
     bool visible, reset;
+    qa_q3_ref_entity submitted_parts[3];
+    bool submitted, hidden;
 } unified_q3_character;
 typedef struct unified_q3_ballistic {
     struct unified_q3_ballistic *next;
@@ -98,6 +102,7 @@ struct frontend_unified_q3 {
     qa_scene_frame *sampled_scene;
     uint64_t sampled_frame_number;
     bool sampled;
+    bool world_submitted;
     qa_ui_preferences preferences;
     bool busy, prepared, has_frame;
 };
@@ -182,7 +187,7 @@ static bool effect_current(const q3n_unified_effect_source *s)
         (!s->actor.registry || qa_actors_get(frontend_remote_unified_registry(o->replica),s->actor));
 }
 static double bank_clock(void *context)
-{ unified_q3_bank *b = context; return b->source.time*.001; }
+{ unified_q3_bank *b = context; return (double)b->source.time; }
 static bool trace(void *context, const q3n_frame *f, qa_vec3 start, qa_vec3 end,
     qa_bounds bounds, int32_t skip, uint32_t mask, qa_trace_result *out, qa_error *e)
 {
@@ -300,7 +305,9 @@ static bool component_submit(void *context,const qa_q3_scene_options *options,qa
     unified_q3_bank *b=context;frontend_unified_q3 *o=b->owner;
     if(b!=o->component_bank)return true;
     return o->components && effect_current(&b->source) && frame==&o->frontend->frame &&
-        frontend_unified_components_submit(o->components,b->backend,o->scene_bank,options,frame,e) && effect_current(&b->source);
+        (options->world.view.mirror?
+            frontend_unified_components_submit_reflected(o->components,b->backend,o->scene_bank,options,frame,e):
+            frontend_unified_components_submit(o->components,b->backend,o->scene_bank,options,frame,e)) && effect_current(&b->source);
 }
 static bool backend_read(unified_q3_bank *b, qa_scene_rect viewport, qa_error *e)
 {
@@ -438,9 +445,10 @@ bool frontend_unified_q3_frame_ready(frontend_unified_q3 *o, const qa_unified_do
 void frontend_unified_q3_frame_commit(frontend_unified_q3 *o)
 {
     if (!o || !o->prepared || o->busy) return;
+    for(unified_q3_bank *b=o->banks;b;b=b->next)qa_q3_presentation_supplement_release(&b->supplement);
     qa_unified_document_destroy(o->frame); o->frame=o->candidate; o->candidate=NULL;
     o->previous_time=o->has_frame?o->time:o->candidate_time; o->time=o->candidate_time;
-    o->has_frame=true; o->prepared=false; o->candidate_input=NULL; o->sampled=false;
+    o->has_frame=true; o->prepared=false; o->candidate_input=NULL; o->sampled=false; o->sampled_scene=NULL;o->world_submitted=false;
 }
 void frontend_unified_q3_frame_abort(frontend_unified_q3 *o)
 { if (o && !o->busy) { qa_unified_document_destroy(o->candidate); o->candidate=NULL; o->candidate_input=NULL; o->prepared=false; } }
@@ -655,6 +663,12 @@ bool frontend_unified_q3_validate(frontend_unified_q3 *o, bool simulation,
     if (!qa_json_string_equal(j,kind,"q3-source"))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 CLIENT received another event family");
     kind=field(j,event,"kind");
+    if(qa_json_string_equal(j,kind,"server-command") || qa_json_string_equal(j,kind,"configstring")) {
+        qa_buffer instance={0};
+        bool stamped=text(d,field(j,field(j,row,"source"),"provider"),&instance,e) && instance.size>1;
+        qa_buffer_free(&instance);
+        if(!stamped)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 Source event has no actual emitter stamp");
+    }
     if (qa_json_string_equal(j,kind,"print") || qa_json_string_equal(j,kind,"log") ||
         qa_json_string_equal(j,kind,"console-command")) {
         qa_buffer b={0}; okay=text(d,field(j,event,"text"),&b,e); qa_buffer_free(&b); return okay;
@@ -847,7 +861,8 @@ static bool character_draw(frontend_unified_q3 *o,unified_q3_character *c,qa_err
 {
     qa_actor_id viewer; uint32_t number;
     if (!frontend_remote_unified_player(o->replica,&viewer,&number)) return false;
-    if ((c->flags&128) || c->opacity<=0 || c->scale==0) return true;
+    c->hidden=(c->flags&128)!=0 || c->opacity<=0 || c->scale==0;
+    if (c->hidden) return true;
     if (c->reset) {
         if (!q3n_lerp_clear(&c->animation,&c->pose.legs.animation,c->legs,o->time,e) ||
             !q3n_lerp_clear(&c->animation,&c->pose.torso.animation,c->torso,o->time,e)) return false;
@@ -877,6 +892,7 @@ static bool character_draw(frontend_unified_q3 *o,unified_q3_character *c,qa_err
     if (!q3n_attach(c->bank->assets,&parts[1],&parts[0],"tag_torso",true,e) ||
         !q3n_attach(c->bank->assets,&parts[2],&parts[1],"tag_head",true,e)) return false;
     for (unsigned i=0;i<3;++i) parts[i].old_origin=parts[i].origin;
+    memcpy(c->submitted_parts,parts,sizeof(parts));
     const char *shaders[4]={NULL}; size_t count=1;
     if (c->powerups&(1u<<4)) shaders[0]="powerups/invisibility";
     else {
@@ -890,7 +906,7 @@ static bool character_draw(frontend_unified_q3 *o,unified_q3_character *c,qa_err
         for (unsigned part=0;part<3;++part) { parts[part].custom_shader=shader;
             if (!qa_q3_presentation_entity(c->bank->backend,&parts[part],e) || !current(o,e)) return false; }
     }
-    c->time=o->time; return true;
+    c->submitted=true;c->time=o->time; return true;
 }
 static qa_vec3 perpendicular(qa_vec3 n)
 {
@@ -957,6 +973,8 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     qa_scene_frame *scene,qa_error *e)
 {
     if (!view || !world || !scene || !enter(o,(qa_actor_id){0},e)) return false;
+    for(unified_q3_bank *b=o->banks;b;b=b->next)qa_q3_presentation_supplement_release(&b->supplement);
+    o->sampled=false;o->sampled_scene=NULL;o->world_submitted=false;
     o->view=view; o->world=world; o->scene=scene; o->light_count=0;
     bool okay=true;
     if(!o->scene_bank){
@@ -967,7 +985,7 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
             qa_q3_source_scene_bank_create(polygons,vertices,&o->scene_bank,e);
     }
     if(okay){qa_q3_source_scene_bank_frame(o->scene_bank);okay=component_bank_read(o,e);}
-    for (unified_q3_character *c=o->characters;c;c=c->next) c->visible=false;
+    for (unified_q3_character *c=o->characters;c;c=c->next) { c->visible=false;c->submitted=false;c->hidden=false; }
     const qa_json_document *j=qa_unified_document_json(o->frame);
     qa_json_id rows=field(j,field(j,qa_unified_document_root(o->frame),"output"),"characters");
     size_t character_count=qa_json_size(j,rows);
@@ -1014,8 +1032,14 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
                 if (!next) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q3 private CLIENT lights");
                 else { o->lights=next; o->light_capacity=needed; } }
         }
-        if (okay && count) { memcpy(o->lights+o->light_count,lights,count*sizeof(*lights)); o->light_count=needed; }
+        for(size_t i=0;okay && i<count;++i){
+            bool admitted=false;
+            okay=qa_q3_source_scene_bank_light(o->scene_bank,b->assets,lights+i,&admitted,e) && current(o,e);
+            if(okay && admitted)o->lights[o->light_count++]=lights[i];
+        }
     }
+    for(unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired)
+        okay=qa_q3_presentation_supplement_prepare(b->backend,o->scene_bank,scene,&b->supplement,e) && current(o,e);
     if (okay) { o->sampled_view=*view; o->sampled_scene=scene; o->sampled_frame_number=o->frontend->frame_number; o->sampled=true; }
     o->view=NULL; o->world=NULL; o->scene=NULL; return leave(o,okay,e);
 }
@@ -1025,10 +1049,108 @@ bool frontend_unified_q3_lights(frontend_unified_q3 *o,const qa_scene_view *view
     if (!out || !count || !sample(o,view,world,&o->frontend->frame,e)) return false;
     *out=o->lights; *count=o->light_count; return true;
 }
+bool frontend_unified_q3_scene_bank_read(frontend_unified_q3 *o,const qa_scene_frame *frame,
+    qa_q3_source_scene_bank **out,qa_error *e)
+{
+    if(!o || !out || !frame || frame!=&o->frontend->frame || o->busy || o->prepared || !current(o,e) ||
+        !o->scene_bank || o->sampled_scene!=frame || o->sampled_frame_number!=o->frontend->frame_number)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 Source bank requires its actual sampled recipient frame");
+    *out=o->scene_bank;return true;
+}
+bool frontend_unified_q3_hud_recipient_read(frontend_unified_q3 *o,const qa_scene_frame *frame,
+    qa_q3_presentation **out,qa_error *e)
+{
+    qa_q3_source_scene_bank *bank=NULL;qa_q3_presentation_binding binding;
+    if(!out || !frontend_unified_q3_scene_bank_read(o,frame,&bank,e))return false;
+    if(!o->component_bank){*out=NULL;return true;}
+    if(o->component_bank->retired || !o->component_bank->backend ||
+        !qa_q3_presentation_idle(o->component_bank->backend) ||
+        !qa_q3_presentation_binding_read(o->component_bank->backend,&binding,e) || binding.frame!=frame ||
+        binding.options.assets!=o->component_bank->assets || binding.options.context!=o->component_bank ||
+        binding.options.owner!=o->audio_owner)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 HUD packets require their real returned recipient backend");
+    *out=o->component_bank->backend;return true;
+}
+static bool character_receipt(frontend_unified_q3 *o,const q3n_frame *f,
+    const q3n_compiled_entity *row,unified_q3_character **out,qa_error *e)
+{
+    const frontend_remote_unified_domain *domain=o?frontend_remote_unified_domain_read(o->replica):NULL;
+    qa_q3_presentation_binding binding;
+    if(!o || !f || !row || !out || !f->compiled || row->frame!=f->compiled ||
+        (!row->published && !row->predicted) || !q3n_frame_current(f) || !q3n_compiled_entity_current(row) ||
+        !domain || domain->application!=f->application || f->application!=o->frontend->application ||
+        domain->physical_seat!=f->physical_presentation_seat ||
+        f->compiled->source.basis.physical_seat!=domain->physical_seat ||
+        !qa_q3_presentation_binding_read(f->presentation,&binding,e) || binding.frame!=&o->frontend->frame ||
+        binding.options.assets!=f->assets || binding.options.seat!=domain->physical_seat ||
+        !current(o,e) || o->busy || o->prepared || !o->sampled || o->sampled_scene!=&o->frontend->frame ||
+        o->sampled_frame_number!=o->frontend->frame_number)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled CHARACTER requires the actual returned sampled frame");
+    *out=NULL;
+    for(unified_q3_character *c=o->characters;c;c=c->next)if(c->visible && qa_actor_id_equal(c->actor,row->actor)) {
+        if(!c->bank || c->bank->retired || (!c->submitted && !c->hidden) ||
+            !qa_q3_assets_idle(c->bank->assets) || !qa_q3_presentation_idle(c->bank->backend) ||
+            !qa_q3_presentation_supplement_current(c->bank->supplement,o->sampled_scene))
+            return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Selected CHARACTER submission is not returned");
+        *out=c;break;
+    }
+    return true;
+}
+bool frontend_unified_q3_body_hidden(void *context,const q3n_frame *f,const q3n_compiled_entity *row,
+    bool *hidden,qa_error *e)
+{
+    unified_q3_character *c=NULL;
+    if(!hidden || !character_receipt(context,f,row,&c,e))return false;
+    *hidden=c && c->hidden;return true;
+}
+bool frontend_unified_q3_body_submit(void *context,const q3n_frame *f,const q3n_compiled_entity *row,
+    uint32_t part,const qa_q3_ref_entity *ref,bool base,bool *consumed,qa_error *e)
+{
+    (void)base;unified_q3_character *c=NULL;
+    if(!consumed || !ref || part>=3 || !character_receipt(context,f,row,&c,e))return false;
+    *consumed=c && (c->submitted || c->hidden);return true;
+}
+bool frontend_unified_q3_player_weapon(void *context,const q3n_frame *f,const q3n_compiled_entity *row,
+    const qa_q3_ref_entity *torso,int32_t team,qa_error *e)
+{
+    (void)team;unified_q3_character *c=NULL;
+    if(!torso || !character_receipt(context,f,row,&c,e))return false;
+    if(!c)return q3n_weapons_player_compiled(f,torso,row,e);
+    if(c->hidden)return true;
+    return q3n_weapons_player_compiled_parent(f,c->bank->assets,&c->submitted_parts[1],row,e) &&
+        character_receipt(context,f,row,&c,e);
+}
+bool frontend_unified_q3_equipment_replacement(frontend_unified_q3 *o,const q3n_frame *f,const qa_q3_player *ps,
+    const frontend_unified_render_equipment *equipment,bool present,bool *consumed,qa_error *e)
+{
+    const frontend_remote_unified_domain *domain=o?frontend_remote_unified_domain_read(o->replica):NULL;
+    qa_q3_presentation_binding binding;qa_actor_id viewer;uint32_t source_entity;
+    if(!o || !f || !f->compiled || !consumed || ps!=q3n_frame_predicted_player(f) || !q3n_frame_current(f) ||
+        !domain || domain->application!=f->application || f->application!=o->frontend->application ||
+        domain->physical_seat!=f->physical_presentation_seat ||
+        f->compiled->source.basis.physical_seat!=domain->physical_seat ||
+        !frontend_remote_unified_player(o->replica,&viewer,&source_entity) ||
+        !qa_actor_id_equal(viewer,f->compiled->source.basis.viewer) ||
+        !qa_q3_presentation_binding_read(f->presentation,&binding,e) || binding.frame!=&o->frontend->frame ||
+        binding.options.assets!=f->assets || binding.options.seat!=domain->physical_seat ||
+        !current(o,e) || o->busy || o->prepared)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Selected view equipment lost its actual compiled recipient");
+    *consumed=false;
+    if(!present)return true;
+    if(!equipment || !qa_actor_id_equal(equipment->actor,viewer) || !equipment->provider ||
+        !equipment->instance || !equipment->input || !equipment->input->view_model ||
+        equipment->source_frame!=o->replica->frame_number || equipment->scene_sequence!=binding.frame->sequence ||
+        !f->compiled->source.basis.instance)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Selected view equipment changed its registered frame receipt");
+    *consumed=equipment->slot || equipment->provider!=f->compiled->source.basis.provider ||
+        strcmp(equipment->instance,f->compiled->source.basis.instance)!=0;
+    return true;
+}
 bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_scene_frame *scene,qa_error *e)
 {
     if (!o || !view || !world || !scene) return false;
+    if(o->world_submitted)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 primary supplement already belongs to this sampled view");
     if (!o->sampled && !sample(o,view,world,scene,e)) return false;
     if (o->sampled_scene!=scene || o->sampled_frame_number!=o->frontend->frame_number ||
         memcmp(&o->sampled_view.viewport,&view->viewport,sizeof(view->viewport)) ||
@@ -1050,23 +1172,46 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={6,16,32}};
     qa_scene_state_default(&options.state); bool okay=true;
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)
-        if(!b->retired)okay=qa_q3_presentation_supplement(b->backend,o->scene_bank,&options,scene,e) && current(o,e);
-    o->sampled=false; return leave(o,okay,e);
+        if(!b->retired)okay=qa_q3_presentation_supplement_prepare(b->backend,o->scene_bank,scene,&b->supplement,e) && current(o,e);
+    for (unified_q3_bank *b=o->banks;okay && b;b=b->next)
+        if(!b->retired)okay=qa_q3_presentation_supplement_draw(b->supplement,&options,scene,e) && current(o,e);
+    if(okay){o->sampled=false;o->world_submitted=true;}
+    return leave(o,okay,e);
+}
+bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_world_input *world,
+    qa_scene_frame *scene,qa_error *e)
+{
+    if(!o || !world || !scene || o->sampled_scene!=scene ||
+        o->sampled_frame_number!=o->frontend->frame_number || scene!=&o->frontend->frame ||
+        !qa_scene_world_q1_mirror_scope(frontend_unified_media_world(o->media),world,scene) ||
+        !enter(o,(qa_actor_id){0},e))return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 reflection requires its real mirror scope and sampled frame");
+    qa_q3_scene_options options={.world=*world,.world_family=QA_SCENE_Q1,.lod_scale=5,
+        .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={6,16,32}};
+    qa_scene_state_default(&options.state);bool okay=true;
+    for(unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired)
+        okay=qa_q3_presentation_supplement_prepare(b->backend,o->scene_bank,scene,&b->supplement,e) && current(o,e);
+    if(okay && o->components && o->component_bank)
+        okay=frontend_unified_components_prepare_submission(o->components,o->scene_bank,scene,e) && current(o,e);
+    for(unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired)
+        okay=qa_q3_presentation_supplement_draw(b->supplement,&options,scene,e) && current(o,e);
+    return leave(o,okay,e);
 }
 static bool source_command_event(frontend_unified_q3 *o,const qa_unified_document *d,
     qa_json_id row,bool command,qa_error *e)
 {
     const qa_json_document *j=qa_unified_document_json(d);
     qa_json_id event=field(j,row,"event");
-    qa_buffer content={0},instance={0},value={0};uint64_t generation;
+    qa_buffer content={0},instance={0},value={0};
     double sequence=0;int32_t recipient=-1,index=0;
-    bool okay=content_text(d,row,&content,e) && event_owner(d,row,&instance,&generation,e);
-    if(okay && (!generation || !instance.size))
+    qa_json_id source=field(j,row,"source");
+    bool okay=content_text(d,row,&content,e) && text(d,field(j,source,"provider"),&instance,e);
+    if(okay && instance.size<=1)
         okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 Source event lost its actual activation receipt");
     if(okay && command) {
-        okay=number(d,field(j,row,"sequence"),&sequence,e) && sequence>=0 &&
-            sequence<=9007199254740991.0 && trunc(sequence)==sequence &&
-            integer(d,field(j,event,"client"),&recipient,e) && text(d,field(j,event,"text"),&value,e);
+        okay=number(d,field(j,row,"sequence"),&sequence,e);
+        if(okay && (sequence<0 || sequence>9007199254740991.0 || trunc(sequence)!=sequence))
+            okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 reliable event sequence exceeds its actual source domain");
+        if(okay)okay=integer(d,field(j,event,"client"),&recipient,e) && text(d,field(j,event,"text"),&value,e);
     } else if(okay) {
         okay=integer(d,field(j,event,"index"),&index,e) && index>=0 && index<1024 &&
             text(d,field(j,event,"value"),&value,e);
@@ -1076,7 +1221,7 @@ static bool source_command_event(frontend_unified_q3 *o,const qa_unified_documen
     for(size_t i=0;okay && i<count;++i) {
         frontend_unified_q3_client *client=frontend_remote_unified_presentation_q3_client(o->replica,i);
         if(!frontend_unified_q3_client_event_matches(client,(const char *)instance.data,
-            (const char *)content.data,generation))continue;
+            (const char *)content.data,o->epoch))continue;
         matched=true;
         if(command)okay=frontend_unified_q3_client_server_command(client,(uint64_t)sequence,
             recipient,(const char *)value.data,e);
@@ -1140,6 +1285,8 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
     if (!address || !*address) return true;
     frontend_unified_q3 *o=*address;
     if (!frontend_unified_q3_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 CLIENT children have not returned");
+    for(unified_q3_bank *b=o->banks;b;b=b->next)qa_q3_presentation_supplement_release(&b->supplement);
+    if(o->components)frontend_unified_components_submission_release(o->components,o->scene_bank);
     qa_q3_source_scene_bank_destroy(o->scene_bank);o->scene_bank=NULL;
     while (o->banks) {
         unified_q3_bank *b=o->banks;
@@ -1295,12 +1442,67 @@ static bool imported_bank(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e)
     qa_q3_product product=view.product->campaign && !strcmp(view.product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
     return bank_children(b,product,e);
 }
+typedef struct saved_scene_registries {
+    qa_q3_presentation_assets **values;
+    size_t count;
+} saved_scene_registries;
+static bool scene_assets_encode(void *context,const qa_q3_presentation_assets *assets,uint64_t *id,qa_error *e)
+{
+    saved_scene_registries *refs=context;
+    for(size_t i=0;i<refs->count;++i)if(refs->values[i]==assets){*id=(uint64_t)i+1;return true;}
+    return frontend_unified_fail(e,QA_ERROR_FORMAT,"Source scene cell has no retained registry dictionary row");
+}
+static bool scene_assets_decode(void *context,uint64_t id,qa_q3_presentation_assets **out,qa_error *e)
+{
+    saved_scene_registries *refs=context;
+    if(!id || id>refs->count)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Source scene registry key is outside its dictionary");
+    *out=refs->values[(size_t)id-1];return *out!=NULL;
+}
+static bool saved_scene_bank(qa_source_save_io *io,frontend_unified_q3 *o,size_t banks)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=o->scene_bank!=NULL;
+    if(!qa_source_save_bool(io,&present))return false;
+    if(!present)return true;
+    saved_scene_registries dictionary={.count=reading?0:qa_q3_source_scene_bank_registry_count(o->scene_bank)};
+    if(!qa_source_save_count(io,&dictionary.count,reading?io->input.size/12:SIZE_MAX/sizeof(*dictionary.values)))return false;
+    if(dictionary.count>SIZE_MAX/sizeof(*dictionary.values))return false;
+    dictionary.values=dictionary.count?calloc(dictionary.count,sizeof(*dictionary.values)):NULL;
+    if(dictionary.count && !dictionary.values)return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining Source scene registry dictionary");
+    bool okay=true;
+    for(size_t i=0;okay && i<dictionary.count;++i){
+        uint32_t kind=0;uint64_t identity=0;
+        if(!reading){
+            dictionary.values[i]=qa_q3_source_scene_bank_registry_at(o->scene_bank,i);
+            size_t ordinal=0;
+            for(unified_q3_bank *b=o->banks;b;b=b->next,++ordinal)if(b->assets==dictionary.values[i]){
+                kind=1;identity=(uint64_t)ordinal+1;break;
+            }
+            if(!kind){kind=2;okay=o->components && frontend_unified_components_assets_encode(o->components,
+                dictionary.values[i],&identity,io->error);}
+        }
+        if(okay)okay=qa_source_save_u32(io,&kind) && qa_source_save_u64(io,&identity) && identity && (kind==1 || kind==2);
+        if(okay && reading){
+            if(kind==1){unified_q3_bank *b=identity<=banks?bank_at(o,(size_t)identity-1):NULL;
+                okay=b && b->assets;if(okay)dictionary.values[i]=b->assets;
+            }else okay=o->components && frontend_unified_components_assets_decode(o->components,identity,dictionary.values+i,io->error);
+            for(size_t j=0;okay && j<i;++j)if(dictionary.values[j]==dictionary.values[i])okay=false;
+        }
+    }
+    qa_q3_source_scene_bank_refs refs={&dictionary,scene_assets_encode,scene_assets_decode};
+    qa_buffer bytes={0};
+    if(okay && !reading)okay=qa_q3_source_scene_bank_checkpoint(o->scene_bank,&refs,&bytes,io->error);
+    if(okay)okay=saved_blob(io,&bytes);
+    if(okay && reading)okay=qa_q3_source_scene_bank_restore((qa_bytes){bytes.data,bytes.size},&refs,&o->scene_bank,io->error);
+    if(okay && reading && o->components)
+        okay=frontend_unified_components_submission_restore(o->components,o->scene_bank,io->error);
+    qa_buffer_free(&bytes);free(dictionary.values);return okay;
+}
 static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa_application_content_graph *content)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','3'};
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','4'};
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     uint32_t epoch=o->epoch,seat=domain->physical_seat;
-    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ33",sizeof(magic)) ||
+    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ34",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u32(io,&seat) || seat!=domain->physical_seat ||
         !qa_source_save_u64(io,&o->audio_owner) || !qa_source_save_bool(io,&o->has_frame) ||
         !qa_source_save_i32(io,&o->time) || !qa_source_save_i32(io,&o->previous_time))return false;
@@ -1360,7 +1562,7 @@ static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa
             v->last_fire_weapon<0 || v->last_fire_weapon>13 || v->bolt_weapon<0 || v->bolt_weapon>13)return false;
         v=v->next;
     }
-    return true;
+    return saved_scene_bank(io,o,banks);
 }
 bool frontend_unified_q3_checkpoint(frontend_unified_q3 *o,const qa_application_content_graph *content,qa_buffer *out,qa_error *e)
 {

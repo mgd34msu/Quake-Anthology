@@ -26,7 +26,7 @@ static void appearance(frontend_remote_q2 *row, const char *text, char model[64]
 {
     const char *start = strchr(text, '\\'); start = start ? start + 1 : text;
     const char *slash = strchr(start, '/');
-    if (!slash && row->layout.max_models != 8192) slash = strchr(start, '\\');
+    if (!slash && !remote_q2_rerelease_presentation(row)) slash = strchr(start, '\\');
     const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_noskins");
     double noskins = setting ? setting->number : 0;
     size_t length = slash ? (size_t)(slash - start) : 0;
@@ -36,7 +36,7 @@ static void appearance(frontend_remote_q2 *row, const char *text, char model[64]
     const char *end = strchr(value, '\\'); length = end ? (size_t)(end - value) : strlen(value);
     if (length >= 64) length = 0;
     memcpy(skin, value, length); skin[length] = 0;
-    if (row->layout.max_models == 8192) {
+    if (remote_q2_rerelease_presentation(row)) {
         if (noskins == 2 || !component(skin)) {
             if (equal(model, "female")) { strcpy(model, "female"); strcpy(skin, "athena"); }
             else { strcpy(model, "male"); strcpy(skin, "grunt"); }
@@ -85,7 +85,7 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
     }
     snprintf(out->skin, sizeof(out->skin), "players/%s/%s.pcx", model, skin);
     if (!skin_admit(row, out->skin, &has_skin, error)) return false;
-    if (!has_skin && row->layout.max_models == 8192 && equal(model, "female")) {
+    if (!has_skin && remote_q2_rerelease_presentation(row) && equal(model, "female")) {
         strcpy(skin, "athena"); strcpy(out->skin, "players/female/athena.pcx");
         if (!skin_admit(row, out->skin, &has_skin, error)) return false;
     }
@@ -96,7 +96,7 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
     }
     if (!has_skin) {
         snprintf(out->skin, sizeof(out->skin), "players/%s/grunt.pcx", model);
-        if (row->layout.max_models == 8192) strcpy(skin, "grunt");
+        if (remote_q2_rerelease_presentation(row)) strcpy(skin, "grunt");
         if (!skin_admit(row, out->skin, &has_skin, error)) return false;
     }
     const qa_cvar_view *vwep = qa_cvars_find(row->options.domain.cvars, "cl_vwep");
@@ -122,7 +122,7 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
     bool default_weapon = false; char default_path[256];
     snprintf(default_path, sizeof(default_path), "players/%s/weapon.md2", model);
     if (!model_admit(row, default_path, &default_weapon, error)) return false;
-    out->valid = has_model && has_skin && default_weapon && (row->layout.max_models == 8192 || image);
+    out->valid = has_model && has_skin && default_weapon && (remote_q2_rerelease_presentation(row) || image);
     if (!out->valid && !base) return load(row, "male/grunt", 0, out, true, error);
     if (!has_weapon && !base) {
         bool fallback = false; strcpy(out->weapon, "players/male/weapon.md2");

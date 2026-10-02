@@ -83,6 +83,23 @@ static bool read_blob(qa_net_reader *r, qa_bytes *out)
     return qa_net_read_bytes(r, (size_t)size, out);
 }
 
+bool qa_network_connections_saved_policy(qa_bytes bytes,qa_network_saved_policy *out,qa_error *error)
+{
+    if(!bytes.data || !out) return qa_network_fail(error,"Missing captured Network constructor policy");
+    qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
+    uint32_t tag=qa_net_read_u32(&reader),version=qa_net_read_u32(&reader);
+    uint64_t timeout=qa_net_read_u64(&reader);
+    uint32_t packets=qa_net_read_u32(&reader);
+    (void)qa_net_read_u64(&reader);
+    qa_bytes table;
+    if(tag!=UINT32_C(0x434e4151) || version!=1 || !packets || !read_blob(&reader,&table))
+        return qa_net_reader_fail(&reader,"Captured Network constructor header is invalid");
+    qa_net_reader slots; qa_net_reader_init(&slots,table,error);
+    uint32_t table_version=qa_net_read_u32(&slots),clients=qa_net_read_u32(&slots);
+    if(slots.failed || table_version!=1 || !clients || table.size<8 || clients>(table.size-8)/10)
+        return qa_net_reader_fail(&slots,"Captured Network table policy exceeds its actual records");
+    *out=(qa_network_saved_policy){clients,packets,timeout}; return true;
+}
 bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     const qa_network_options *options, const qa_network_checkpoint_refs *refs,
     qa_network_runtime **out, qa_error *error)

@@ -153,7 +153,7 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
         qa_regular_armor next;
         *call->available = q2_item_armor_result(g, d, &combat.armor.regular, &next);
         if (*call->available)
-            *call->utility = fmaxf(1, next.points - combat.armor.regular.points);
+            *call->utility = fmaxf(1, (float)next.points - (float)combat.armor.regular.points);
         return true;
     }
     case QA_Q2_ITEM_MAX_HEALTH:

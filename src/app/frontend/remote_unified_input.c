@@ -20,22 +20,23 @@ static bool command_equal(const qa_command_context *a,const qa_command_context *
         a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
         ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
 }
-static bool domain_matches(const frontend_remote_unified_domain *d,const frontend_client_source_view *v)
+static bool domain_source_matches(const frontend_remote_unified_domain *d,const qa_application_client_source *s)
 {
-    const qa_application_client_source *s=&v->source;
-    return d && v->ready && s->runtime==d->runtime && qa_net_client_id_equal(s->client,d->client) &&
+    return d && s->runtime==d->runtime && qa_net_client_id_equal(s->client,d->client) &&
         s->network_seat.owner==d->seat.owner && s->network_seat.index==d->seat.index &&
         s->context.physical_seat==d->physical_seat && s->context.console==d->console &&
         s->context.cvars==d->cvars && command_equal(&s->context.command,&d->command_context);
 }
-static bool current(frontend_unified_input *p,qa_error *e)
+static bool domain_matches(const frontend_remote_unified_domain *d,const frontend_client_source_view *v)
+{ return v->ready&&domain_source_matches(d,&v->source); }
+static bool current(const frontend_unified_input *p,qa_error *e)
 {
     const frontend_remote_unified_domain *d=p?frontend_remote_unified_domain_read(p->replica):NULL;
     frontend_neutral_config_view configuration;
     return p && p->frontend && d && p->frontend->application==d->application &&
         p->recipe==frontend_remote_unified_recipe(p->replica) && p->epoch==frontend_remote_unified_epoch(p->replica) &&
-        p->movement==frontend_remote_unified_provider(p->replica,QA_ROLE_MOVEMENT,"") &&
-        p->arsenal==frontend_remote_unified_provider(p->replica,QA_ROLE_ARSENAL,"") &&
+        p->movement==frontend_remote_unified_provider_published(p->replica,QA_ROLE_MOVEMENT,"") &&
+        p->arsenal==frontend_remote_unified_provider_published(p->replica,QA_ROLE_ARSENAL,"") &&
         frontend_remote_unified_current(p->replica,e) && frontend_client_source_current(&p->client_view) &&
         domain_matches(d,&p->client_view) && frontend_neutral_config_current(&p->configuration) &&
         frontend_config_store_neutral_read(p->frontend->config_store,d->console,&configuration,e) &&
@@ -47,10 +48,8 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
     frontend_remote_unified_prediction *prediction,bool importing,frontend_unified_input **out,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
-    const qa_recipe_provider *movement=importing ? frontend_remote_unified_provider_published(replica,QA_ROLE_MOVEMENT,"") :
-        frontend_remote_unified_provider(replica,QA_ROLE_MOVEMENT,"");
-    const qa_recipe_provider *arsenal=importing ? frontend_remote_unified_provider_published(replica,QA_ROLE_ARSENAL,"") :
-        frontend_remote_unified_provider(replica,QA_ROLE_ARSENAL,"");
+    const qa_recipe_provider *movement=frontend_remote_unified_provider_published(replica,QA_ROLE_MOVEMENT,"");
+    const qa_recipe_provider *arsenal=frontend_remote_unified_provider_published(replica,QA_ROLE_ARSENAL,"");
     frontend_unified_prediction_view snapshot;
     frontend_neutral_config_view configuration;
     if(!f || !replica || !prediction || prediction->replica!=replica || !out || *out || !d || f->application!=d->application ||
@@ -60,7 +59,8 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
         !(importing ? frontend_prediction_checkpoint_snapshot(prediction,&snapshot,e) :
             frontend_remote_unified_prediction_snapshot(prediction,&snapshot,e)) ||
         (!importing && !frontend_config_store_neutral_movement_adopt(f->config_store,d->console,snapshot.state.kind,e)) ||
-        !frontend_config_store_neutral_read(f->config_store,d->console,&configuration,e) ||
+        !(importing?frontend_config_store_neutral_checkpoint_read(f->config_store,d->console,&configuration,e):
+            frontend_config_store_neutral_read(f->config_store,d->console,&configuration,e)) ||
         !configuration.ready || !configuration.published || configuration.client!=d->cvars ||
         configuration.physical_seat!=d->physical_seat || configuration.kind!=snapshot.state.kind)
         return fail(e,"Unified input lacks its actual completed CLIENT settings and prediction baseline");
@@ -75,11 +75,13 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
             return fail(e,"Unified input changed its unique physical CLIENT constructor");
         client=candidate;selected=view;
     }
-    if(!client || !frontend_neutral_config_current(&configuration))
+    if(!client || !(importing?frontend_neutral_config_checkpoint_current(&configuration,e):
+        frontend_neutral_config_current(&configuration)))
         return fail(e,"Unified input lacks its true selected provider and CLIENT ownership");
     frontend_unified_input *p=calloc(1,sizeof(*p));
     if(!p) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating retained Unified physical input");
-    if(!frontend_client_source_retain(client,e)) {free(p);return false;}
+    if(!(importing?frontend_client_source_checkpoint_retain(client,&selected.source,e):
+        frontend_client_source_retain(client,e))) {free(p);return false;}
     p->frontend=f;p->replica=replica;p->prediction=prediction;p->client=client;p->client_view=selected;
     p->configuration=configuration;p->recipe=frontend_remote_unified_recipe(replica);
     p->movement=movement;p->arsenal=arsenal;p->epoch=frontend_remote_unified_epoch(replica);
@@ -123,6 +125,7 @@ static bool frame_read(frontend_unified_input *p,double time,
         qa_json_id arsenal=qa_json_get(j,qa_unified_document_root(prediction),"arsenal");
         if(qa_json_string_equal(j,qa_json_get(j,arsenal,"kind"),"q3") &&
             !scalar(prediction,qa_json_get(j,arsenal,"sourceWeapon"),&frame.weapon,e)) return false;
+        if(p->has_q3_values) { frame.weapon=p->q3_weapon; frame.sensitivity=p->q3_sensitivity; }
     }
     *out=frame;return true;
 }
@@ -176,6 +179,15 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         .use_holdable=sample->game_focus &&
             (sample->buttons[QA_INPUT_USE].active || sample->buttons[QA_INPUT_USE].pressed ||
              sample->buttons[QA_INPUT_BUTTON2].active || sample->buttons[QA_INPUT_BUTTON2].pressed)};
+    if(input.command.kind==QA_MOVEMENT_Q3) {
+        qa_movement_command actual;
+        if(!qa_application_control_project_unified(&input.command,&snapshot.state,input.sequence,&actual,e)) return false;
+        if(p->q3_command_count==64) {
+            memmove(p->q3_commands,p->q3_commands+1,63*sizeof(*p->q3_commands));
+            --p->q3_command_count;
+        }
+        p->q3_commands[p->q3_command_count++]=actual;
+    }
     p->pending=input;p->pending_time=time;p->pending_builder=next;p->has_pending=true;
     return true;
 }
@@ -192,12 +204,35 @@ bool frontend_unified_input_build(frontend_unified_input *p,const qa_seat_input_
 }
 bool frontend_unified_input_idle(const frontend_unified_input *p)
 { return !p || (!p->busy && frontend_client_source_idle(p->client)); }
+bool frontend_unified_input_pending(const frontend_unified_input *p)
+{ return p&&(p->has_sample||p->has_pending); }
 bool frontend_unified_input_view_angles(frontend_unified_input *p,const qa_unified_vec3 *angles,qa_error *e)
 {
     if(!p || p->busy || p->has_sample || !angles || !isfinite(angles->x) ||
         !isfinite(angles->y) || !isfinite(angles->z) || !current(p,e))
         return fail(e,"Unified view reset requires its current input with no retained sample");
     p->builder.angles=*angles;return true;
+}
+bool frontend_unified_input_command_values(frontend_unified_input *p,int32_t weapon,float sensitivity,qa_error *e)
+{
+    if(!p||p->busy||!isfinite(sensitivity)||!current(p,e))
+        return fail(e,"Unified Q3 command values require the returned actual input owner");
+    if(p->has_sample&&(!p->has_q3_values||p->q3_weapon!=weapon||p->q3_sensitivity!=sensitivity))
+        return fail(e,"Unified command values cannot change its retained sampled prefix");
+    p->q3_weapon=weapon; p->q3_sensitivity=sensitivity; p->has_q3_values=true; return true;
+}
+bool frontend_unified_input_oldest_q3(const frontend_unified_input *p,qa_movement_command *out,bool *available,qa_error *e)
+{
+    if(!p||!out||!available||p->busy||!current(p,e))
+        return fail(e,"Q3 command history requires its actual returned input owner");
+    *available=false;
+    if(p->builder.kind==QA_MOVEMENT_Q3&&p->q3_command_count) {
+        uint64_t latest=p->q3_commands[p->q3_command_count-1].sequence;
+        if(latest>=63) for(size_t i=0;i<p->q3_command_count;++i) if(p->q3_commands[i].sequence==latest-63) {
+            *available=true;*out=p->q3_commands[i];break;
+        }
+    }
+    return true;
 }
 bool frontend_unified_input_destroy(frontend_unified_input **owned,qa_error *e)
 {
@@ -212,9 +247,18 @@ static bool physical(qa_frontend *f,uint32_t ordinal,frontend_remote_unified **o
     if(!f || ordinal>=f->options.seats) return fail(e,"Unified physical input seat is absent");
     for(frontend_remote_unified *p=f->remote_unified;p;p=p->next) {
         const frontend_remote_unified_domain *d=&p->options.domain;
-        if(p->retired || d->physical_seat!=ordinal) continue;
+        if(d->physical_seat!=ordinal) continue;
         if(*out) return fail(e,"Two Unified CLIENT owners claim one physical input seat");
-        if(!frontend_remote_unified_current(p,e)) return false;
+        if(p->retired) {
+            qa_application_client_source source;
+            if(!d->command_context.owner||d->command_context.owner>UINT32_MAX)
+                return fail(e,"Retired Unified input has no representable physical CLIENT receiver");
+            if(!qa_application_client_physical_read(f->application,(qa_actor_owner)d->command_context.owner,
+                d->command_context.seat,&source,e)||!domain_source_matches(d,&source)||
+                !qa_application_client_retirement_current(f->application,&source)||
+                !p->options.current(p->options.context,d,e))
+                return fail(e,"Retired Unified input lost its actual physical CLIENT custody");
+        } else if(!frontend_remote_unified_current(p,e)) return false;
         *out=p;
     }
     return true;
@@ -227,6 +271,7 @@ bool frontend_remote_unified_input_prepare(qa_frontend *f,uint32_t ordinal,uint6
     if(!physical(f,ordinal,&p,e)) return false;
     *owned=p!=NULL;*needed=false;
     if(!p) return true;
+    if(p->retired) return true;
     if(*sequence>=QA_UNIFIED_SAFE_INTEGER) return fail(e,"Unified physical input sequence exceeds the wire domain");
     if(!p->options.consumers.physical_ready) return fail(e,"Unified CLIENT has no retained physical input owner");
     uint64_t completed=0;
@@ -244,6 +289,7 @@ bool frontend_remote_unified_input(qa_frontend *f,uint32_t ordinal,const qa_seat
     if(!physical(f,ordinal,&p,e)) return false;
     *handled=p!=NULL;
     if(!p) return true;
+    if(p->retired) return true;
     return p->options.consumers.physical_input &&
         p->options.consumers.physical_input(p->options.consumers.context,p,sample,sequence,elapsed,e);
 }

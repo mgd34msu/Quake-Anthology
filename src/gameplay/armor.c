@@ -1,12 +1,15 @@
 #include "qa/gameplay.h"
 
+static bool same_number(double a, double b) {
+    return a == b && (a != 0 || signbit(a) == signbit(b));
+}
 bool qa_regular_armor_equal(qa_regular_armor a, qa_regular_armor b) {
     if (a.kind != b.kind) return false;
     if (a.kind == QA_ARMOR_NONE) return true;
-    if (a.points != b.points) return false;
+    if (!same_number(a.points, b.points)) return false;
     switch (a.kind) {
     case QA_ARMOR_Q1: return a.item == b.item && a.protection.q1_absorption == b.protection.q1_absorption;
-    case QA_ARMOR_Q2: return a.item == b.item && a.protection.q2.normal == b.protection.q2.normal && a.protection.q2.energy == b.protection.q2.energy;
+    case QA_ARMOR_Q2: return a.item == b.item && same_number(a.protection.q2.normal, b.protection.q2.normal) && same_number(a.protection.q2.energy, b.protection.q2.energy);
     case QA_ARMOR_Q3: return a.protection.q3_protection == b.protection.q3_protection;
     case QA_ARMOR_SOURCE: return a.item == b.item;
     case QA_ARMOR_NONE: return true;
@@ -17,7 +20,7 @@ bool qa_regular_armor_equal(qa_regular_armor a, qa_regular_armor b) {
 bool qa_powered_armor_equal(qa_powered_armor a, qa_powered_armor b) {
     return a.kind == b.kind && a.source_owner == b.source_owner &&
         a.source_edition == b.source_edition && a.source_kind == b.source_kind &&
-        (a.kind == QA_POWER_NONE || a.cells == b.cells);
+        (a.kind == QA_POWER_NONE || same_number(a.cells, b.cells));
 }
 
 bool qa_armor_equal(qa_armor a, qa_armor b) {
@@ -91,14 +94,18 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
         float damage_per_cell = powered->kind == QA_POWER_SCREEN || context->ctf ? 1.0f : 2.0f;
         float protected_damage = truncf(powered->kind == QA_POWER_SCREEN ? damage / 3 : 2 * damage / 3);
         bool doubled = context->rerelease ? flags.energy : flags.no_regular_armor;
-        float available = powered->cells * damage_per_cell;
+        float cells = (float)powered->cells;
+        if (!isfinite(cells)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "compiled armor cells exceed binary32 arithmetic"); return false;
+        }
+        float available = cells * damage_per_cell;
         if (doubled) available = truncf(available / 2);
         if (context->rerelease) { protected_damage = fmaxf(1, protected_damage); available = fmaxf(1, available); }
         if (available != 0) {
             result.power_activated = true;
             result.power_saved = fminf(available, protected_damage);
             float used = truncf(result.power_saved / damage_per_cell) * (doubled ? 2 : 1);
-            powered->cells = context->rerelease ? fmaxf(0, powered->cells - fmaxf(damage_per_cell, used)) : powered->cells - used;
+            powered->cells = context->rerelease ? fmaxf(0, cells - fmaxf(damage_per_cell, used)) : cells - used;
         }
     }
     qa_regular_armor *item = &result.armor.regular;
@@ -106,14 +113,18 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
         float protection;
         switch (item->kind) {
         case QA_ARMOR_Q1: protection = item->protection.q1_absorption; break;
-        case QA_ARMOR_Q2: protection = flags.energy ? item->protection.q2.energy : item->protection.q2.normal; break;
+        case QA_ARMOR_Q2: protection = (float)(flags.energy ? item->protection.q2.energy : item->protection.q2.normal); break;
         case QA_ARMOR_Q3: protection = item->protection.q3_protection; break;
         case QA_ARMOR_SOURCE:
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "source armor requires an absorption owner"); return false;
         default: protection = 0; break;
         }
-        result.regular_saved = fminf(item->points, ceilf(protection * flags.regular_scale * (damage - result.power_saved)));
-        item->points -= result.regular_saved;
+        float points = (float)item->points;
+        if (!isfinite(points) || !isfinite(protection)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "compiled armor exceeds binary32 arithmetic"); return false;
+        }
+        result.regular_saved = fminf(points, ceilf(protection * flags.regular_scale * (damage - result.power_saved)));
+        item->points = points - result.regular_saved;
         if (item->kind == QA_ARMOR_Q1 && item->points <= 0) item->protection.q1_absorption = 0;
     }
     if (!isfinite(result.power_saved) || !isfinite(result.regular_saved) || !qa_armor_validate(&result.armor, error)) {

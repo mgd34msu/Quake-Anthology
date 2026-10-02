@@ -231,7 +231,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   size_t index = (size_t)fragment->y * buffer->width + fragment->x;
   double old_depth = buffer->depth[index];
   bool passed =
-      state->depth_test == QA_DEPTH_ALWAYS ||
+      state->depth_test == QA_DEPTH_ALWAYS || state->depth_test == QA_DEPTH_DISABLED ||
       (state->depth_test == QA_DEPTH_LEQUAL && fragment->depth <= old_depth) ||
       (state->depth_test == QA_DEPTH_EQUAL && fragment->depth == old_depth) ||
       (state->depth_test == QA_DEPTH_LESS && fragment->depth < old_depth) ||
@@ -276,7 +276,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       else
         color[c] = texel[c];
     }
-    if (image->kind == QA_SCENE_RGBA8)
+    if (qa_render_source_texture_alpha(image))
       color[3] = draw->environment == QA_TEXTURE_REPLACE ? texel[3]
                                                          : color[3] * texel[3];
   }
@@ -356,6 +356,6 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     if (!buffer->alpha)
       destination[3] = 255;
   }
-  if (state->depth_write)
+  if (state->depth_write && state->depth_test!=QA_DEPTH_DISABLED)
     buffer->depth[index] = fragment->depth;
 }

@@ -8,6 +8,7 @@ struct qa_cinematic_asset {
     qa_resource *source_record;
     qa_sha256_digest digest;
     uint32_t width, height;
+    bool source_roq;
     char *name;
     struct qa_cinematic_asset *next;
 };

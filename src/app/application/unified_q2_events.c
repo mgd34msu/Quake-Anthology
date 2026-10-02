@@ -387,7 +387,8 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         ok = text(&presentation, "{\"kind\":\"q2-player\",\"event\":{\"kind\":\"stufftext\"", e) &&
             actor(&presentation, ",\"actor\":", target, e) && string(&presentation, ",\"text\":", event->data.print.text, e) &&
             text(&presentation, "}}", e) && text(&simulation, "{\"kind\":\"message\",\"event\":{\"kind\":\"command-text\"", e) &&
-            string(&simulation, ",\"text\":", event->data.print.text, e) && text(&simulation, "}}", e); break;
+            string(&simulation, ",\"text\":", event->data.print.text, e) && text(&simulation, "}}", e);
+        link = true; break;
     case QA_Q2_SVC_CONFIGSTRING: {
         uint32_t skins = p->engine->resource_base[QA_NATIVE_HOST_IMAGE] +
             p->engine->resource_limit[QA_NATIVE_HOST_IMAGE] + 512;
@@ -549,8 +550,16 @@ bool application_unified_q2_protocol_event(application_provider *provider,
     struct application_native_q2 *engine = provider->state.native.q2_engine;
     if (engine->profile != QA_NATIVE_Q2_GAME_API3 && engine->profile != QA_NATIVE_Q2_GAME_API2023) return true;
     qa_clock_state clock;
+    bool has_clock = qa_session_clock(provider->application->session, provider->owner, &clock);
+    if (!has_clock && !provider->constructed && engine->provider == provider &&
+        engine->prepared && engine->calls && engine->host_constructing &&
+        (!delivery || !delivery->audience.captured)) {
+        bool connected = false;
+        for (size_t i = 1; i < 257; ++i) connected |= engine->clients[i].connected;
+        if (!connected) return true;
+    }
     if (!message || !provider->state.native.host || engine->provider != provider ||
-        !qa_session_clock(provider->application->session, provider->owner, &clock) ||
+        !has_clock ||
         (delivery && delivery->original && (delivery->profile != engine->profile ||
             (delivery->audience.captured && delivery->audience.source != provider->owner))))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q2 protocol projection lost its actual GAME Source");

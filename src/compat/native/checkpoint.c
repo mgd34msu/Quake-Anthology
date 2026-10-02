@@ -22,7 +22,8 @@ static bool checkpoint_ready(qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance is required for checkpointing");
-    if (instance->active_depth || instance->callback_depth || instance->checkpointing ||
+    if (instance->active_depth || instance->callback_depth || instance->region_scopes ||
+        instance->write_scope || instance->call_scope || instance->checkpointing ||
         instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint requires an idle instance");

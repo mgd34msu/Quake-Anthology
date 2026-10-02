@@ -70,13 +70,13 @@ static bool mover_path_read(bot_travel *t, const bot_reach *r, mover_path *path,
 }
 static bool mover_finish(bot_travel *t, const bot_reach *r, const mover_path *path,
                          qa_bot_move_result *out, qa_error *e) {
-    qa_bot_move_input *s = &t->state->input;
+    bot_move_record *s = t->state;
     qa_vec3 direction;
     if (!path->bobbing) {
         qa_vec3 center;
         if (!mover_center(t, r, &center, e))
             return false;
-        qa_vec3 bottom = qa_vec_sub(center, s->origin), top = qa_vec_sub(r->end, s->origin);
+        qa_vec3 bottom = qa_vec_sub(center, bot_move_vector(s,BM_ORIGIN)), top = qa_vec_sub(r->end, bot_move_vector(s,BM_ORIGIN));
         direction = fabsf(bottom.z) < fabsf(top.z) ? bottom : top;
         return bot_move_action(t, qa_vec_normalize(direction), 300, e);
     }
@@ -84,21 +84,21 @@ static bool mover_finish(bot_travel *t, const bot_reach *r, const mover_path *pa
         return bot_move_fail(e, "bobbing travel consumes absent mover origin");
     direction = qa_vec_sub(path->origin, path->end);
     if (qa_vec_length(direction) < 16) {
-        qa_vec3 offset = qa_vec_sub(r->end, s->origin);
-        if (!(s->flags & QA_BOT_MOVE_SWIMMING))
+        qa_vec3 offset = qa_vec_sub(r->end, bot_move_vector(s,BM_ORIGIN));
+        if (!(bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_SWIMMING))
             offset.z = 0;
         float speed = 360 - (360 - 6 * fminf(qa_vec_length(offset), 60));
         if (speed > 5 && !bot_move_action(t, direction, speed, e))
             return false;
         out->direction = direction;
-        if (s->flags & QA_BOT_MOVE_SWIMMING)
+        if (bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_SWIMMING)
             out->flags |= QA_BOT_MOVE_SWIM_VIEW;
     } else {
         qa_vec3 center;
         if (!mover_center(t, r, &center, e))
             return false;
-        qa_vec3 offset = qa_vec_sub(center, s->origin);
-        if (!(s->flags & QA_BOT_MOVE_SWIMMING))
+        qa_vec3 offset = qa_vec_sub(center, bot_move_vector(s,BM_ORIGIN));
+        if (!(bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_SWIMMING))
             offset.z = 0;
         float distance = qa_vec_length(offset);
         if (distance > 5) {
@@ -117,7 +117,7 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
         return false;
     if (airborne)
         return mover_finish(t, r, &path, out, e);
-    qa_bot_move_input *s = &t->state->input;
+    bot_move_record *s = t->state;
     bool riding;
     if (!bot_on_mover(t, r, &riding, e))
         return false;
@@ -126,9 +126,9 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
             return bot_move_fail(e, "bobbing travel consumes absent mover origin");
         bool at_end = path.bobbing
                           ? qa_vec_length(qa_vec_sub(path.origin, path.end)) < 24
-                          : fabsf(truncf(s->origin.z - r->end.z)) < bot_variable(t, BOT_BARRIER);
+                          : fabsf(truncf(bot_move_vector(s,BM_ORIGIN).z - r->end.z)) < bot_variable(t, BOT_BARRIER);
         if (at_end) {
-            qa_vec3 direction = qa_vec_normalize(bot_horizontal(s->origin, r->end));
+            qa_vec3 direction = qa_vec_normalize(bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end));
             bool jumped;
             if (!bot_barrier_jump(t, direction, 100, &jumped, e) ||
                 (!jumped && !bot_move_action(t, direction, 400, e)))
@@ -138,7 +138,7 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
             qa_vec3 center;
             if (!mover_center(t, r, &center, e))
                 return false;
-            qa_vec3 offset = bot_horizontal(s->origin, center);
+            qa_vec3 offset = bot_horizontal(bot_move_vector(s,BM_ORIGIN), center);
             float distance = qa_vec_length(offset);
             if (distance > 10) {
                 qa_vec3 direction = qa_vec_normalize(offset);
@@ -149,9 +149,9 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
         }
         return true;
     }
-    qa_vec3 direction = qa_vec_sub(r->end, s->origin);
+    qa_vec3 direction = qa_vec_sub(r->end, bot_move_vector(s,BM_ORIGIN));
     float distance = qa_vec_length(direction);
-    bool swimming = (s->flags & QA_BOT_MOVE_SWIMMING) != 0;
+    bool swimming = (bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_SWIMMING) != 0;
     if (distance < 64) {
         float speed = 360 - (360 - 6 * fminf(distance, 60));
         bool jumped = false;
@@ -162,10 +162,10 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
         out->direction = direction;
         if (swimming)
             out->flags |= QA_BOT_MOVE_SWIM_VIEW;
-        t->state->reachability_time = 0;
+        bot_move_write_float(t->state,BM_REACHABILITY_TIME,0);
         return true;
     }
-    qa_vec3 start = qa_vec_sub(r->start, s->origin);
+    qa_vec3 start = qa_vec_sub(r->start, bot_move_vector(s,BM_ORIGIN));
     if (!swimming)
         start.z = 0;
     float start_distance = qa_vec_length(start);
@@ -184,7 +184,7 @@ static bool mover(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_
         qa_vec3 middle;
         if (!mover_center(t, r, &middle, e))
             return false;
-        qa_vec3 center = qa_vec_sub(middle, s->origin);
+        qa_vec3 center = qa_vec_sub(middle, bot_move_vector(s,BM_ORIGIN));
         if (!swimming)
             center.z = 0;
         float center_distance = qa_vec_length(center);
@@ -222,7 +222,7 @@ static bool selected_weapon(bot_travel *t, qa_nav_travel mode, int32_t *out, boo
                             qa_error *e) {
     *found = false;
     return !t->moves->services.travel_weapon ||
-           t->moves->services.travel_weapon(t->moves->services.context, t->state->input.client,
+           t->moves->services.travel_weapon(t->moves->services.context, bot_move_integer(t->state,BM_CLIENT),
                                             mode, out, found, e);
 }
 static bool weapon(bot_travel *t, qa_nav_travel mode, int32_t *out, qa_error *e) {
@@ -233,44 +233,44 @@ static bool weapon(bot_travel *t, qa_nav_travel mode, int32_t *out, qa_error *e)
 }
 static bool weapon_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_result *out,
                         qa_error *e) {
-    qa_bot_move_state *state = t->state;
-    qa_bot_move_input *s = &state->input;
+    bot_move_record *state = t->state;
+    bot_move_record *s = state;
     qa_vec3 direction;
     if (airborne) {
-        if (!state->jump_reach)
+        if (!bot_move_word(state,BM_JUMP_REACH))
             return true;
         bool controlled;
         float speed;
         if (!bot_air_control(t, r->end, &controlled, &direction, &speed, e))
             return false;
         if (!controlled)
-            direction = qa_vec_normalize(bot_horizontal(s->origin, r->end));
+            direction = qa_vec_normalize(bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end));
         if (!bot_move_action(t, direction, speed, e))
             return false;
     } else {
-        qa_vec3 offset = bot_horizontal(s->origin, r->start);
+        qa_vec3 offset = bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->start);
         float distance = qa_vec_length(offset);
         direction = qa_vec_normalize(offset);
         out->ideal_view_angles = bot_vector_angles(direction);
         out->ideal_view_angles.x = 90;
         if (distance < 5 &&
-            fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, s->view_angles.x)) < 5 &&
-            fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, s->view_angles.y)) < 5) {
-            direction = qa_vec_normalize(bot_horizontal(s->origin, r->end));
+            fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 5 &&
+            fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 5) {
+            direction = qa_vec_normalize(bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end));
             if (!bot_jump_action(t, false, e) || !bot_flag_action(t, QA_BOT_ATTACK, e) ||
                 !bot_move_action(t, direction, 800, e))
                 return false;
-            state->jump_reach = state->last_reachability;
+            bot_move_write_word(state,BM_JUMP_REACH,bot_move_word(state,BM_LAST_REACHABILITY));
         } else if (!bot_move_action(t, direction, 400 - (400 - 5 * fminf(distance, 80)), e))
             return false;
         out->ideal_view_angles = bot_vector_angles(direction);
         out->ideal_view_angles.x = 90;
-        if (!qa_bot_actions_view(t->moves->actions, (uint32_t)s->client, out->ideal_view_angles, e))
+        if (!qa_bot_actions_view(t->moves->actions, (uint32_t)bot_move_integer(s,BM_CLIENT), out->ideal_view_angles, e))
             return false;
         out->flags |= QA_BOT_MOVE_VIEW_SET;
         int32_t selected;
         if (!weapon(t, r->graph_edge->mode, &selected, e) ||
-            !qa_bot_actions_weapon(t->moves->actions, (uint32_t)s->client, selected, e) ||
+            !qa_bot_actions_weapon(t->moves->actions, (uint32_t)bot_move_integer(s,BM_CLIENT), selected, e) ||
             !weapon(t, r->graph_edge->mode, &out->weapon, e))
             return false;
         out->flags |= QA_BOT_MOVE_WEAPON;
@@ -282,34 +282,34 @@ static bool grapple_command(bot_travel *t, bool activate, qa_error *e) {
     if (bot_variable(t, BOT_OFFHAND_GRAPPLE) == 0)
         return true;
     const char *command = t->moves->variables[activate ? BOT_GRAPPLE_ON : BOT_GRAPPLE_OFF]->string;
-    return qa_bot_actions_text(t->moves->actions, t->state->input.client, QA_BOT_COMMAND, 0,
+    return qa_bot_actions_text(t->moves->actions, bot_move_integer(t->state,BM_CLIENT), QA_BOT_COMMAND, 0,
                                command, e);
 }
 bool bot_reset_grapple(bot_travel *t, qa_error *e) {
     bot_reach reach;
     bool found;
-    if (!bot_reach_read(t, t->state->last_reachability, &reach, &found, e))
+    if (!bot_reach_read(t, bot_move_word(t->state,BM_LAST_REACHABILITY), &reach, &found, e))
         return false;
-    qa_bot_move_state *s = t->state;
+    bot_move_record *s = t->state;
     if ((!found || (reach.type & BOT_TRAVEL_MASK) != BOT_GRAPPLE_HOOK) &&
-        ((s->input.flags & QA_BOT_MOVE_ACTIVE_GRAPPLE) || s->grapple_visible_time != 0)) {
+        ((bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_ACTIVE_GRAPPLE) || bot_move_float(s,BM_GRAPPLE_VISIBLE_TIME) != 0)) {
         if (!grapple_command(t, false, e))
             return false;
-        s->input.flags &= ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE;
-        s->grapple_visible_time = 0;
+        bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) & (~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE));
+        bot_move_write_float(s,BM_GRAPPLE_VISIBLE_TIME,0);
     }
     return true;
 }
 static bool grapple_state(bot_travel *t, int *out, qa_error *e) {
     *out = 0;
-    if (t->state->input.flags & QA_BOT_MOVE_GRAPPLE_PULL) {
+    if (bot_move_word(t->state,BM_FLAGS) & QA_BOT_MOVE_GRAPPLE_PULL) {
         *out = 2;
         return true;
     }
     qa_bot_move_services *services = &t->moves->services;
     if (services->grapple_state) {
         qa_bot_grapple_observation observed;
-        if (!services->grapple_state(services->context, t->state->input.client, &observed, e))
+        if (!services->grapple_state(services->context, bot_move_integer(t->state,BM_CLIENT), &observed, e))
             return false;
         if (observed < QA_BOT_GRAPPLE_NONE || observed > QA_BOT_GRAPPLE_PULLING)
             return bot_move_fail(e, "invalid selected grapple observation");
@@ -336,12 +336,12 @@ static bool grapple_state(bot_travel *t, int *out, qa_error *e) {
     return true;
 }
 static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, qa_error *e) {
-    qa_bot_move_state *state = t->state;
-    qa_bot_move_input *s = &state->input;
-    if (s->flags & QA_BOT_MOVE_GRAPPLE_RESET) {
+    bot_move_record *state = t->state;
+    bot_move_record *s = state;
+    if (bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_GRAPPLE_RESET) {
         if (!grapple_command(t, false, e))
             return false;
-        s->flags &= ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE;
+        bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) & (~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE));
         return true;
     }
     bool hand_weapon = truncf(bot_variable(t, BOT_OFFHAND_GRAPPLE)) == 0;
@@ -350,44 +350,44 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
             return false;
         out->flags |= QA_BOT_MOVE_WEAPON;
     }
-    if (s->flags & QA_BOT_MOVE_ACTIVE_GRAPPLE) {
+    if (bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_ACTIVE_GRAPPLE) {
         int hook_state;
         if (!grapple_state(t, &hook_state, e))
             return false;
-        float distance = qa_vec_length(bot_horizontal(s->origin, r->end));
+        float distance = qa_vec_length(bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end));
         bool reset = false;
         if (hook_state && distance < 48)
-            reset = state->last_grapple_distance - distance < 1;
-        else if (!hook_state || (hook_state == 2 && distance > state->last_grapple_distance - 2))
-            reset = state->grapple_visible_time < (double)t->moves->time - .4;
+            reset = bot_move_float(state,BM_LAST_GRAPPLE_DISTANCE) - distance < 1;
+        else if (!hook_state || (hook_state == 2 && distance > bot_move_float(state,BM_LAST_GRAPPLE_DISTANCE) - 2))
+            reset = bot_move_float(state,BM_GRAPPLE_VISIBLE_TIME) < (double)t->moves->time - .4;
         else
-            state->grapple_visible_time = t->moves->time;
+            bot_move_write_float(state,BM_GRAPPLE_VISIBLE_TIME,t->moves->time);
         if (reset) {
             if (!grapple_command(t, false, e))
                 return false;
-            s->flags = (s->flags & ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE) | QA_BOT_MOVE_GRAPPLE_RESET;
-            state->reachability_time = 0;
+            bot_move_write_word(s,BM_FLAGS,(bot_move_word(s,BM_FLAGS) & ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE) | QA_BOT_MOVE_GRAPPLE_RESET);
+            bot_move_write_float(state,BM_REACHABILITY_TIME,0);
             return true;
         }
         if (hand_weapon && !bot_flag_action(t, QA_BOT_ATTACK, e))
             return false;
-        state->last_grapple_distance = distance;
+        bot_move_write_float(state,BM_LAST_GRAPPLE_DISTANCE,distance);
         return true;
     }
-    state->grapple_visible_time = t->moves->time;
-    qa_vec3 offset = qa_vec_sub(r->start, s->origin);
-    if (!(s->flags & QA_BOT_MOVE_SWIMMING))
+    bot_move_write_float(state,BM_GRAPPLE_VISIBLE_TIME,t->moves->time);
+    qa_vec3 offset = qa_vec_sub(r->start, bot_move_vector(s,BM_ORIGIN));
+    if (!(bot_move_word(s,BM_FLAGS) & QA_BOT_MOVE_SWIMMING))
         offset.z = 0;
     qa_vec3 direction = qa_vec_normalize(offset);
     float distance = qa_vec_length(offset);
-    qa_vec3 eye = qa_vec_add(s->origin, s->view_offset);
+    qa_vec3 eye = qa_vec_add(bot_move_vector(s,BM_ORIGIN), bot_move_vector(s,BM_VIEW_OFFSET));
     out->ideal_view_angles = bot_vector_angles(qa_vec_sub(r->end, eye));
     out->flags |= QA_BOT_MOVE_VIEW;
     if (distance < 5 &&
-        fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, s->view_angles.x)) < 2 &&
-        fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, s->view_angles.y)) < 2) {
+        fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 2 &&
+        fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 2) {
         qa_trace_result trace;
-        if (!bot_trace(t, eye, r->end, NULL, s->entity, 1, &trace, e))
+        if (!bot_trace(t, eye, r->end, NULL, bot_move_integer(s,BM_ENTITY), 1, &trace, e))
             return false;
         if (qa_vec_length(qa_vec_sub(r->end, trace.end)) > 16) {
             out->failure = true;
@@ -398,8 +398,8 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
                 return false;
         } else if (!bot_flag_action(t, QA_BOT_ATTACK, e))
             return false;
-        s->flags |= QA_BOT_MOVE_ACTIVE_GRAPPLE;
-        state->last_grapple_distance = 999999;
+        bot_move_write_word(s,BM_FLAGS,bot_move_word(s,BM_FLAGS) | (QA_BOT_MOVE_ACTIVE_GRAPPLE));
+        bot_move_write_float(state,BM_LAST_GRAPPLE_DISTANCE,999999);
     } else {
         float speed = distance < 70 ? 300 - (300 - 4 * distance) : 400;
         if (!bot_blocked(t, direction, true, out, e) || !bot_move_action(t, direction, speed, e))
@@ -407,10 +407,10 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
         out->direction = direction;
     }
     uint32_t area;
-    if (!qa_bot_navigation_point(t->navigation, s->origin, &area, e))
+    if (!qa_bot_navigation_point(t->navigation, bot_move_vector(s,BM_ORIGIN), &area, e))
         return false;
-    if (area && area != state->reach_area)
-        state->reachability_time = 0;
+    if (area && area != bot_move_word(state,BM_REACH_AREA))
+        bot_move_write_float(state,BM_REACHABILITY_TIME,0);
     return true;
 }
 bool bot_special_travel(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_move_result *out,

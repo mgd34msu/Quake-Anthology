@@ -3,6 +3,7 @@
 #include "qa/frontend.h"
 #include "qa/cinematic.h"
 #include "qa/material.h"
+#include "qa/q3_cinematic_handles.h"
 
 typedef struct frontend_material_movies frontend_material_movies;
 typedef struct frontend_material_movie_source {
@@ -34,6 +35,20 @@ bool frontend_material_movies_create(const frontend_material_movie_source *,
 bool frontend_material_movies_destroy(frontend_material_movies **, qa_error *);
 bool frontend_material_movies_idle(const frontend_material_movies *);
 bool frontend_material_movies_current(const frontend_material_movies *);
+/* Original Q3 shaders share the actual numeric guest handle/scratch pool.
+ * The constructor supplies its genuine physical seat and audio namespace. */
+bool frontend_material_movies_cinematic_attach(frontend_material_movies *,
+    qa_q3_cinematic_handles *, uint32_t seat, uint64_t audio_bus, qa_error *);
+bool frontend_material_movies_cinematic_read(const frontend_material_movies *,
+    qa_q3_cinematic_source **, qa_error *);
+bool frontend_material_movies_cinematic_retained(const frontend_material_movies *);
+bool frontend_material_movies_cinematic_parameters(const frontend_material_movies *,
+    uint32_t *seat, uint64_t *audio_bus, qa_error *);
+bool frontend_material_movies_cinematic_namespace_read(const frontend_material_movies *,
+    uint32_t *seat, uint64_t *audio_bus, bool *present, qa_error *);
+/* Reads retained frontend wall and canonical ENGINE timescale fields without
+ * dispatching the source-current or clock callback. */
+bool frontend_material_movies_cinematic_clock_read(const frontend_material_movies *, double *, qa_error *);
 bool frontend_material_movies_library_owner(const qa_material_library *,
     frontend_material_movies **, qa_error *);
 bool frontend_material_movies_roster_count(const qa_frontend *, size_t *, qa_error *);

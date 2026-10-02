@@ -6,7 +6,9 @@
 #include "network_restore_attempt.h"
 #include "shared_render_controls.h"
 #include "q3_render_policy.h"
+#include "q3_color_policy.h"
 #include "music_sources.h"
+#include "material_movies.h"
 #include "qa/audio_music_prepare.h"
 #include "qa/catalog.h"
 #include "qa/catalog_write.h"
@@ -41,6 +43,26 @@ static qa_vfs *mounts(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? owner->basis.initial.view.mounts : owner->basis.decoded.view.mounts; }
 static qa_media_library *movies(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? owner->basis.initial.view.movies : owner->basis.decoded.view.movies; }
+static bool cinematic_parent(const remote_module_lease *lease,
+    qa_q3_cinematic_source **out, qa_error *error)
+{
+    frontend_material_movies *provider = NULL;
+    if (!frontend_material_movies_library_owner(materials(lease->owner), &provider, error) ||
+        !frontend_material_movies_cinematic_read(provider, out, error)) return false;
+    return *out || frontend_fail(error, QA_ERROR_ARGUMENT,
+        "Acquired cinematic role requires its actual numeric movie provider");
+}
+static bool cinematic_current(const remote_module_lease *lease, qa_error *error)
+{
+    if (!lease->cinematics) return lease->owner->restoring || lease->legacy_cinematics;
+    qa_q3_cinematic_source *actual = NULL;
+    const qa_q3_cinematic_source *parent = NULL;
+    uint32_t seat = 0; uint64_t bus = 0;
+    return cinematic_parent(lease, &actual, error) &&
+        qa_q3_cinematic_source_role_read(lease->cinematics, &parent, &seat, &bus) &&
+        parent == actual && seat == physical_seat(lease->owner) && bus == lease->service_owner &&
+        qa_q3_cinematic_source_handles(lease->cinematics) == lease->owner->frontend->source_cinematics;
+}
 static uint64_t identity(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? owner->basis.initial.view.identity : owner->basis.decoded.view.identity; }
 static qa_input_seat *input(const frontend_remote_q3_modules *owner)
@@ -296,6 +318,32 @@ static int32_t frame_number(void *context)
 { remote_module_lease *lease = context; return (int32_t)(lease->owner->frontend->frame_number & INT32_MAX); }
 static uint64_t audio_bus(void *context)
 { return ((remote_module_lease *)context)->service_owner; }
+static bool cinematic_diagnostic_current(void *context, const qa_q3_cinematic_source *source_value)
+{
+    const remote_module_lease *lease = context;
+    const frontend_remote_q3_modules *owner = lease ? lease->owner : NULL;
+    if (!attached(owner) || !lease->registry || lease->callbacks == SIZE_MAX ||
+        owner->application != owner->frontend->application || lease->cinematics != source_value ||
+        lease->constructor.frontend_lifetime != lease || lease->constructor.role != lease->role ||
+        lease->constructor.service_owner != lease->service_owner ||
+        lease->constructor.session != source(owner)->receiver.session ||
+        lease->constructor.owner != source(owner)->receiver.receiver ||
+        lease->constructor.console != source(owner)->receiver.console ||
+        lease->constructor.cvars != frontend_client_registry_cvars(lease->registry)) return false;
+    return cinematic_current(lease, NULL);
+}
+static void cinematic_print(void *context, const char *text)
+{
+    remote_module_lease *lease = context;
+    if (!lease || !cinematic_diagnostic_current(lease, lease->cinematics)) return;
+    ++lease->callbacks;
+    qa_console *console = lease->constructor.console;
+    qa_console *shared = qa_application_console(lease->owner->application);
+    if (qa_console_output_redirected(console)) qa_console_emit(console, &lease->command, text);
+    else if (shared && qa_console_output_redirected(shared)) qa_console_emit(shared, &lease->command, text);
+    else frontend_console_print(lease->owner->frontend, &lease->command, text);
+    --lease->callbacks;
+}
 static void print(void *context, const char *text)
 {
     remote_module_lease *lease = context;
@@ -513,6 +561,11 @@ static bool prepare_picture(void *context, qa_material_context *material, qa_err
     remote_module_lease *lease = context;
     if (!material || !entered(lease, NULL, NULL, error)) return false;
     qa_frontend *f = lease->owner->frontend;
+    qa_q3_color_lighting lighting;
+    if (!f->source_color)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote picture lacks its physical Source color owner");
+    if (!frontend_q3_source_color_lighting_read(f, NULL, &lighting, error)) return false;
+    material->identity_light = lighting.identity_light;
     qa_render_controls *controls = f->cpu ? qa_cpu_render_controls(f->cpu) : f->gl ? qa_gl_render_controls(f->gl) : NULL;
     if (!controls) return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote picture lost its actual physical renderer");
     material->source_scratch = qa_render_controls_source_scratch(controls, error);
@@ -659,6 +712,7 @@ static bool dispose_lease(remote_module_lease *lease, qa_error *error)
     lease->equipment = NULL;
     if (lease->presentation && !qa_q3_presentation_destroy(lease->presentation, error)) return false;
     lease->presentation = NULL;
+    if (!qa_q3_cinematic_source_destroy(&lease->cinematics, error)) return false;
     if (lease->movie_references)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module retirement retains a system cinematic source lease");
     if (f->audio) {
@@ -746,7 +800,14 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
             request->source->connection_epoch, lease, browser_current, &lease->browser, &host->browser, error);
         lease->preparing = false;
     }
+    qa_q3_cinematic_source *parent = NULL;
+    if (ok && !owner->restoring) ok = cinematic_parent(lease, &parent, error) &&
+        qa_q3_cinematic_source_create_role(parent, physical_seat(owner), lease->service_owner,
+            &lease->cinematics, error) &&
+        qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
+            cinematic_diagnostic_current, error);
     qa_q3_presentation_options backend = {.assets = assets(owner), .audio = f->audio,
+        .cinematics = lease->cinematics,
         .clock = {lease, milliseconds}, .seat = physical_seat(owner), .owner = lease->service_owner,
         .viewport = {0, 0, f->width, f->height},
         .near_clip = 4, .far_clip = 16384, .identity_light = 1, .lod_scale = 5,
@@ -755,6 +816,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         .frame_number = frame_number, .milliseconds = source_milliseconds, .audio_bus = audio_bus,
         .prepare_view = prepare_view, .submit_view = submit_view, .prepare_picture = prepare_picture,
         .scene_cleared = scene_cleared, .remap = remap, .print = print};
+    if (ok && !owner->restoring) ok = frontend_q3_renderer_options_read(f, &backend, error);
     if (ok) ok = qa_q3_presentation_create(&backend, &lease->presentation, error);
     if (ok && owner->kind == REMOTE_MODULE_DECODED) {
         const frontend_remote_q3_resources *resources = &owner->basis.decoded.view;
@@ -909,6 +971,54 @@ size_t frontend_remote_q3_modules_role_count(const frontend_remote_q3_modules *o
     for (const remote_module_lease *lease = owner ? owner->leases : NULL; lease; lease = lease->next) ++count;
     return count;
 }
+bool frontend_remote_modules_restore_renderer_parameters(frontend_remote_q3_modules *owner, qa_error *error)
+{
+    if (!owner || !owner->restoring || !owner->frontend->source_color)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Restored renderer parameters require the imported physical Source color owner");
+    qa_q3_presentation_options parameters = {0};
+    if (!frontend_q3_renderer_options_read(owner->frontend, &parameters, error)) return false;
+    for (remote_module_lease *lease = owner->leases; lease; lease = lease->next)
+        if (lease->released || lease->callbacks || lease->render_definition ||
+            !qa_q3_presentation_renderer_parameters_set(lease->presentation,
+                parameters.near_clip, parameters.identity_light, error)) return false;
+    return true;
+}
+bool frontend_remote_q3_modules_cinematics_bind(frontend_remote_q3_modules *owner, qa_error *error)
+{
+    if (!owner || !owner->restoring || owner->retiring || owner->constructing ||
+        !attached(owner) || !owner->modules || !qa_application_native_q3_client_modules_idle(owner->modules))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Restored cinematic roles require their returned module prefix");
+    if (!frontend_remote_modules_restore_renderer_parameters(owner, error)) return false;
+    for (remote_module_lease *lease = owner->leases; lease; lease = lease->next) {
+        qa_q3_presentation_binding binding;
+        qa_q3_host *host = NULL; qa_q3_host_client_context context;
+        if (lease->released || lease->callbacks || lease->render_definition ||
+            !frontend_equipment_source_idle(lease->equipment) || !lease->presentation ||
+            !qa_q3_presentation_binding_read(lease->presentation, &binding, error) ||
+            binding.options.assets != assets(owner) ||
+            !qa_application_native_q3_client_modules_host_read(owner->modules, lease->role, &host, &context, error) ||
+            !same_host_context(&context, &lease->constructor)) return false;
+        remote_module_saved *saved = frontend_remote_modules_saved(owner, lease->role, lease->service_owner);
+        bool shared = false;
+        if (!saved || !saved->prepared || !qa_q3_presentation_media_binding_read(
+            (qa_bytes){saved->media.data, saved->media.size}, &shared, error)) return false;
+        if (!shared) {
+            if (lease->cinematics || binding.options.cinematics)
+                return frontend_fail(error, QA_ERROR_FORMAT, "Saved local movie role cannot acquire a numeric source");
+            continue;
+        }
+        qa_q3_cinematic_source *parent = NULL;
+        if (!cinematic_parent(lease, &parent, error)) return false;
+        if (!lease->cinematics && !qa_q3_cinematic_source_create_role(parent,
+            physical_seat(owner), lease->service_owner, &lease->cinematics, error)) return false;
+        if (!cinematic_current(lease, error)) return false;
+        if (!qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
+            cinematic_diagnostic_current, error)) return false;
+        if (binding.options.cinematics != lease->cinematics &&
+            !qa_q3_presentation_cinematics_bind(lease->presentation, lease->cinematics, error)) return false;
+    }
+    return frontend_remote_q3_modules_capture_returned(owner, error);
+}
 bool frontend_remote_q3_modules_capture_returned(const frontend_remote_q3_modules *owner, qa_error *error)
 {
     if (!owner || owner->retiring || owner->constructing || !attached(owner) || !owner->modules ||
@@ -919,12 +1029,13 @@ bool frontend_remote_q3_modules_capture_returned(const frontend_remote_q3_module
             !frontend_equipment_source_idle(lease->equipment) || !lease->presentation ||
             !qa_q3_presentation_binding_read(lease->presentation, &binding, error) ||
             !qa_application_native_q3_client_modules_host_read(owner->modules, lease->role, &host, &context, error) ||
-            !same_host_context(&context, &lease->constructor) || binding.options.assets != assets(owner)) return false;
+            !same_host_context(&context, &lease->constructor) || binding.options.assets != assets(owner) ||
+            binding.options.cinematics != lease->cinematics || !cinematic_current(lease, error)) return false;
     }
     return true;
 }
-bool frontend_remote_q3_modules_role_read(const frontend_remote_q3_modules *owner, size_t index,
-    frontend_remote_q3_module_topology *out, qa_error *error)
+static bool role_read(const frontend_remote_q3_modules *owner, size_t index,
+    bool cinematic_only, frontend_remote_q3_module_topology *out, qa_error *error)
 {
     if (!owner || !out || owner->retiring || !attached(owner) || !owner->modules ||
         owner->constructing || !qa_application_native_q3_client_modules_idle(owner->modules))
@@ -932,7 +1043,8 @@ bool frontend_remote_q3_modules_role_read(const frontend_remote_q3_modules *owne
     for (const remote_module_lease *lease = owner->leases; lease; lease = lease->next) {
         qa_q3_presentation_binding binding;
         if (lease->callbacks || lease->render_definition || !frontend_equipment_source_idle(lease->equipment) ||
-            !lease->presentation || !qa_q3_presentation_binding_read(lease->presentation, &binding, error))
+            !lease->presentation || !qa_q3_presentation_binding_read(lease->presentation, &binding, error) ||
+            binding.options.cinematics != lease->cinematics)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module inventory retains an active role callback");
     }
     qa_application_q3_remote_source physical;
@@ -960,29 +1072,42 @@ bool frontend_remote_q3_modules_role_read(const frontend_remote_q3_modules *owne
         !qa_application_native_q3_client_modules_host_read(owner->modules, lease->role, &host, &constructor, error) ||
         !same_host_context(&constructor, &lease->constructor) ||
         constructor.service_owner != lease->service_owner || constructor.frontend_lifetime != lease ||
-        (qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) &&
+        (cinematic_only && !lease->cinematics) || !cinematic_current(lease, error) ||
+        (!cinematic_only && qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) &&
             qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) != lease->music))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module inventory lost its retained role namespace");
     *out = (frontend_remote_q3_module_topology){.owner = owner, .index = index, .source = physical,
         .source_group = identity(owner), .service_owner = lease->service_owner,
         .physical_seat = physical_seat(owner), .role = lease->role, .host = host,
         .constructor = constructor, .modules = owner->modules, .presentation = lease->presentation,
-        .assets = assets(owner), .movies = movies(owner), .mounts = mounts(owner), .keys = lease->keys,
+        .assets = assets(owner), .movies = movies(owner), .cinematics = lease->cinematics,
+        .mounts = mounts(owner), .keys = lease->keys,
         .equipment = lease->equipment, .music = lease->music,
         .music_attached = lease->music && qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) == lease->music};
     return true;
 }
-bool frontend_remote_q3_modules_role_current(const frontend_remote_q3_module_topology *view)
+bool frontend_remote_q3_modules_role_read(const frontend_remote_q3_modules *owner, size_t index,
+    frontend_remote_q3_module_topology *out, qa_error *error)
+{ return role_read(owner, index, false, out, error); }
+bool frontend_remote_q3_modules_cinematics_role_read(const frontend_remote_q3_modules *owner, size_t index,
+    frontend_remote_q3_module_topology *out, qa_error *error)
+{ return role_read(owner, index, true, out, error); }
+static bool role_current(const frontend_remote_q3_module_topology *view, bool cinematic_only)
 {
     frontend_remote_q3_module_topology actual;
-    return view && frontend_remote_q3_modules_role_read(view->owner, view->index, &actual, NULL) &&
+    return view && role_read(view->owner, view->index, cinematic_only, &actual, NULL) &&
         same_source(&view->source, &actual.source) && same_host_context(&view->constructor, &actual.constructor) &&
         view->source_group == actual.source_group && view->service_owner == actual.service_owner &&
         view->physical_seat == actual.physical_seat && view->role == actual.role && view->host == actual.host &&
         view->modules == actual.modules && view->presentation == actual.presentation && view->assets == actual.assets &&
-        view->movies == actual.movies && view->mounts == actual.mounts && view->keys == actual.keys &&
+        view->movies == actual.movies && view->cinematics == actual.cinematics &&
+        view->mounts == actual.mounts && view->keys == actual.keys &&
         view->equipment == actual.equipment && view->music == actual.music && view->music_attached == actual.music_attached;
 }
+bool frontend_remote_q3_modules_role_current(const frontend_remote_q3_module_topology *view)
+{ return role_current(view, false); }
+bool frontend_remote_q3_modules_cinematics_role_current(const frontend_remote_q3_module_topology *view)
+{ return role_current(view, true); }
 bool frontend_remote_q3_modules_idle(const frontend_remote_q3_modules *owner)
 {
     if (!owner) return true;

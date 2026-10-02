@@ -1,4 +1,5 @@
 #include "remote_q2_private.h"
+#include "remote_q2_source.h"
 #include "qa/persistence_content.h"
 #include "qa/media_resource.h"
 #include "qa/scene_world_save.h"
@@ -48,18 +49,28 @@ bool remote_q2_domain_equal(const frontend_remote_q2_domain *a, const frontend_r
 }
 bool remote_q2_live(const frontend_remote_q2 *row, qa_error *error)
 {
-    if (!row || !linked(row) || !row->bound || row->retired || row->importing || row->image_policy ||
+    if (!row || !linked(row) || !row->bound || row->retired || row->retiring || row->importing || row->image_policy ||
         row->frontend->capture || row->frontend->resource_inventory ||
         row->frontend->application != row->options.domain.application ||
         qa_network_epoch(row->options.domain.runtime, row->options.domain.client) != row->options.domain.epoch)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Remote Q2 receiver has no current authenticated CLIENT");
     return row->options.current(row->options.context, &row->options.domain, error);
 }
+bool remote_q2_retirement_current(const frontend_remote_q2 *row, qa_error *error)
+{
+    return row && linked(row) && row->retiring && !row->busy && !row->image_policy &&
+        row->frontend->application == row->options.domain.application && row->bound &&
+        row->options.domain.client.owner && row->options.domain.client.generation &&
+        row->options.domain.epoch && !qa_net_connections_get(qa_network_connections(
+            row->options.domain.runtime), row->options.domain.client) &&
+        row->options.retirement_current &&
+        row->options.retirement_current(row->options.context, &row->options.domain, error);
+}
 bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *row, uint32_t *out, qa_error *error)
 {
     const qa_net_client *client = row && row->bound ? qa_net_connections_get(
         qa_network_connections(row->options.domain.runtime), row->options.domain.client) : NULL;
-    if (!row || !linked(row) || row->retired || row->importing || !client || !out)
+    if (!row || !linked(row) || row->retired || row->retiring || row->importing || !client || !out)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 wire seat has no actual attached connection");
     bool found = false;
     for (size_t i = 0; i < client->seat_count; ++i)
@@ -73,10 +84,42 @@ bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *row, uint32_t *out, 
 }
 remote_q2_layout remote_q2_layout_read(qa_net_protocol_id protocol)
 {
-    if (protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2KEX_2023 ||
-        protocol.kind == QA_NET_Q2KEX_DEMO_2022)
-        return (remote_q2_layout){62, 8254, 10302, 10814, 11326, 11582, 61, 8192, 2048, 512, 12448};
-    return (remote_q2_layout){32, 288, 544, 800, 1056, 1312, 31, 256, 256, 256, 2080};
+    qa_q2_codec codec = {0}; qa_q2_config_layout value = {0}; qa_error error = {0};
+    if (!qa_q2_codec_init(&codec, protocol, &error) || !qa_q2_config_layout_read(&codec, &value, &error))
+        return (remote_q2_layout){0};
+    return (remote_q2_layout){(uint16_t)value.models, (uint16_t)value.sounds, (uint16_t)value.images,
+        (uint16_t)value.lights, (uint16_t)value.items, (uint16_t)value.player_skins, (uint16_t)value.map_checksum,
+        (uint16_t)value.max_clients, (uint16_t)value.air_accelerate,
+        value.max_models, value.max_sounds, value.max_images, value.max_configs};
+}
+bool remote_q2_float_movement(const frontend_remote_q2 *row)
+{
+    qa_net_protocol kind = row->options.domain.protocol.kind;
+    return kind == QA_NET_Q2REPRO_1038 || kind == QA_NET_Q2PRIVATE_4038 ||
+        kind == QA_NET_Q2KEX_2023 || kind == QA_NET_Q2KEX_DEMO_2022;
+}
+bool remote_q2_rerelease_presentation(const frontend_remote_q2 *row)
+{
+    return remote_q2_float_movement(row) ||
+        (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 && row->layout.max_models == 8192);
+}
+bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *data, qa_error *error)
+{
+    qa_net_protocol_id protocol = row->options.domain.protocol;
+    if (protocol.kind == QA_NET_Q2PRO_36) {
+        if (data->protocol_revision) protocol.revision = data->protocol_revision;
+        protocol.flags = data->wire_flags;
+    }
+    remote_q2_layout layout = remote_q2_layout_read(protocol);
+    if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
+    if (layout.max_configs != row->layout.max_configs) {
+        for (size_t i = 0; i < row->layout.max_configs; ++i)
+            if (row->configs && row->configs[i]) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 namespace replacement retains old configstrings");
+        char **configs = calloc(layout.max_configs, sizeof(*configs));
+        if (!configs) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");
+        free(row->configs); row->configs = configs;
+    }
+    row->layout = layout; return true;
 }
 const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint16_t index)
 { return row && row->configs && index < row->layout.max_configs && row->configs[index] ? row->configs[index] : ""; }
@@ -109,7 +152,7 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     row->prediction_command = 0; row->prediction_frame = 0;
     row->prediction_ground = (qa_movement_ground){0}; row->prediction_plane = (qa_collision_plane){0};
     row->last_sent = row->acknowledged = 0; qa_input_command_clear(&row->input);
-    if (row->bound && !row->retired && !row->importing && row->options.entities_changed &&
+    if (row->bound && !row->retired && !row->retiring && !row->importing && row->options.entities_changed &&
         qa_net_connections_get(qa_network_connections(row->options.domain.runtime), row->options.domain.client)) {
         ++row->busy;
         bool ok = row->options.current(row->options.context, &row->options.domain, error) &&
@@ -143,7 +186,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
 }
 bool frontend_remote_q2_bind(frontend_remote_q2 *row, const frontend_remote_q2_domain *actual, qa_error *error)
 {
-    if (!row || !actual || !linked(row) || row->frontend->capture || row->frontend->resource_inventory || row->image_policy || row->bound || row->busy || row->retired ||
+    if (!row || !actual || !linked(row) || row->frontend->capture || row->frontend->resource_inventory || row->image_policy || row->bound || row->busy || row->retired || row->retiring ||
         !actual->client.owner || !actual->client.generation || !actual->epoch)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 bind requires its actual successful attach result");
     frontend_remote_q2_domain expected = row->options.domain;
@@ -160,14 +203,13 @@ static bool hook_current(void *context, qa_net_client_id id, qa_error *error)
 }
 static bool select_owned(frontend_remote_q2 *row, const qa_q2_serverdata *data, qa_error *error)
 {
-    const char *key = row->layout.max_models == 8192 ? "q2-rerelease-baseq2" : "q2-classic-baseq2";
-    const qa_product *base = qa_catalog_find(row->options.domain.catalog, key);
+    const qa_product *base = qa_catalog_product(row->options.domain.catalog, row->options.domain.product);
     qa_catalog *fresh = NULL; qa_product_id selected = 0; qa_vfs *mounts = NULL;
     if (!base || row->content_generation == UINT64_MAX)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT lacks its actual configured base");
     if (!qa_catalog_discover_remote_q2(row->options.domain.catalog, base->id, data->gamedir,
         row->content_generation + 1, &fresh, &selected, error)) return false;
-    const qa_product *fresh_base = qa_catalog_find(fresh, key);
+    const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
     if (!fresh_base || !qa_catalog_open(fresh, selected, &mounts, error)) { qa_catalog_release(fresh); return false; }
     row->content = (frontend_remote_q2_content){fresh, selected, fresh_base->id, mounts,
         qa_catalog_product_write_root(fresh, selected), qa_catalog_product_write_root(fresh, fresh_base->id)};
@@ -202,6 +244,7 @@ static bool hook_serverdata(void *context, qa_net_client_id id, uint64_t generat
     if (!hook_current(row, id, error) || !data || !generation || !result) return false;
     if (generation != row->loading_generation) {
         if (!content_clear(row, error)) return false;
+        if (!remote_q2_layout_adopt(row, data, error)) return false;
         row->loading_generation = generation; row->data = *data;
     } else if (!serverdata_equal(&row->data, data))
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 retained serverdata changed within one loading operation");
@@ -264,7 +307,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
     row->received_ns = received_ns; row->fraction = 0;
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;
-    if (row->layout.max_models == 8192) {
+    if (remote_q2_rerelease_presentation(row)) {
         uint32_t seat;
         if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
         const qa_q2_player *player = &row->frame.players[seat].player;
@@ -351,10 +394,11 @@ static bool hook_command(void *context, const qa_network_command *source, qa_q2_
     if (!frontend_remote_q2_wire_seat(row, &remote_index, error)) return false;
     const qa_q2_player *player = row->frame.valid && remote_index < row->frame.player_count ?
         &row->frame.players[remote_index].player : NULL;
-    if (row->layout.max_models == 8192) {
+    if (remote_q2_float_movement(row)) {
         float angles[3] = {command->angles.x, command->angles.y, command->angles.z};
         for (size_t i = 0; i < 3; ++i) {
-            float delta = player ? player->pmove.delta_angles_f[i] : 0;
+            float delta = !player ? 0 : player->pmove.float_delta_angles ? player->pmove.delta_angles_f[i] :
+                player->pmove.delta_angles[i] * (360.0f / 65536);
             out->angles[i] = (int16_t)(int32_t)fmodf(truncf((angles[i] - delta) * (65536.0f / 360)), 65536);
         }
     } else for (size_t i = 0; i < 3; ++i)
@@ -381,15 +425,17 @@ static bool hook_print(void *context, qa_net_client_id id, const char *text, qa_
 static bool hook_drop(void *context, qa_net_client_id id, const char *reason, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || !qa_net_client_id_equal(id, row->options.domain.client) || row->retired ||
+    if (!row || row->busy || !qa_net_client_id_equal(id, row->options.domain.client) || row->retired || row->retiring ||
         row->frontend->capture || row->frontend->resource_inventory || row->image_policy) return false;
-    row->retired = true; ++row->busy;
+    ++row->busy;
     bool ok = row->options.disconnected(row->options.context, &row->options.domain, reason, error);
-    --row->busy; return ok;
+    --row->busy;
+    if (ok) row->retired = true;
+    return ok;
 }
 bool frontend_remote_q2_hooks(frontend_remote_q2 *row, qa_network_q2_client_hooks *out, qa_error *error)
 {
-    if (!row || !out || !linked(row) || row->retired)
+    if (!row || !out || !linked(row) || row->retired || row->retiring)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 session hooks require their actual retained Source");
     *out = (qa_network_q2_client_hooks){row, hook_current, hook_serverdata, hook_prepare, hook_frame,
         hook_records, hook_download, hook_cancel, hook_ack, hook_sent, hook_command,
@@ -430,7 +476,11 @@ bool remote_q2_capture_owned(const frontend_remote_q2 *row)
 {
     if (!row || !linked(row) || row->busy || row->importing || row->image_policy || !frontend_remote_q2_effects_idle(row->effects) || !row->frontend->capture ||
         row->frontend->application != row->options.domain.application) return false;
-    if (row->bound && !row->retired) {
+    if (row->retiring) { qa_error error = {0};
+        if (!(row->frontend->resource_inventory ?
+            frontend_remote_q2_source_retirement_metadata_current(row, &error) :
+            remote_q2_retirement_current(row, &error))) return false; }
+    if (row->bound && !row->retired && !row->retiring) {
         const frontend_remote_q2_domain *domain = &row->options.domain;
         const qa_net_client *client = qa_net_connections_get(qa_network_connections(domain->runtime), domain->client);
         uint32_t remote_index; qa_error error = {0};
@@ -473,7 +523,7 @@ bool frontend_remote_q2_player_number(const frontend_remote_q2 *row,
 }
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *row, uint32_t number)
 {
-    if (!row || !linked(row) || row->retired || row->importing || !row->frame.valid || !number) return false;
+    if (!row || !linked(row) || row->retired || row->retiring || row->importing || !row->frame.valid || !number) return false;
     for (size_t i = 0; i < row->frame.entity_count; ++i) if (row->frame.entities[i].number == number) return true;
     for (size_t i = 0; i < row->frame.player_count; ++i) {
         int32_t player_number;
@@ -493,7 +543,7 @@ bool frontend_remote_q2_entity_generation(const frontend_remote_q2 *row, uint32_
 bool frontend_remote_q2_entity_publication_read(const frontend_remote_q2 *row,
     qa_application_client_entity_publication *out)
 {
-    if (!row || !out || !linked(row) || !row->bound || row->retired || row->importing) return false;
+    if (!row || !out || !linked(row) || !row->bound || row->retired || row->retiring || row->importing) return false;
     bool published = row->media_ready && row->frame.valid && row->content_generation && row->loading_generation;
     *out = (qa_application_client_entity_publication){.published = published,
         .map_generation = published ? row->content_generation : 0,
@@ -575,6 +625,8 @@ bool frontend_remote_q2_content_visit(const qa_frontend *f, const qa_application
             !visitor->pool(visitor->context, qa_vfs_resources(row->content.mounts), error) ||
             !visitor->view(visitor->context, row->content.mounts, error))) return false;
         if (!remote_q2_footsteps_visit(row, visitor, error)) return false;
+        for (const remote_q2_model *m = row->models; m; m = m->next)
+            if (!remote_q2_model_scope_current(row, m, error)) return false;
         if (row->media) {
             qa_resource_pool *pool = qa_vfs_resources(row->content.mounts);
             if (!pool || qa_media_library_resource_owner(row->media) != row->images ||

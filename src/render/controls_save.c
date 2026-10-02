@@ -12,6 +12,59 @@ static bool coordinates_fields(qa_source_save_io *io, qa_scene_vec2 *uv)
 {
     return qa_source_save_f32(io, &uv->x) && qa_source_save_f32(io, &uv->y);
 }
+bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_source_texture *texture,
+    uint32_t version,const qa_render_checkpoint_refs *refs)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint32_t count=texture->count,filter=texture->filter,wrap=texture->wrap;
+    if (!qa_source_save_u32(io,&count) || count>QA_SOURCE_TEXTURE_LEVELS ||
+        !qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||
+        !qa_source_save_u32(io,&wrap) || wrap>QA_SCENE_CLAMP || !color_fields(io,&texture->border) ||
+        !isfinite(texture->border.x) || !isfinite(texture->border.y) ||
+        !isfinite(texture->border.z) || !isfinite(texture->border.w)) return false;
+    texture->filter=(qa_scene_filter)filter; texture->wrap=(qa_scene_wrap)wrap;
+    if (version>=19) {
+        if (!qa_source_save_bool(io,&texture->magnification_linear)) return false;
+    } else if (reading) {
+        texture->magnification_linear=filter==QA_SCENE_LINEAR || filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
+            filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
+    }
+    for (uint32_t i=0;i<count;++i) {
+        uint32_t kind=texture->kinds[i];
+        uint32_t format=texture->formats[i];
+        if (!render_save_image(io,refs,texture->images+i) || !texture->images[i]) return false;
+        if (reading) texture->count=i+1;
+        if (texture->images[i]->level_count<=i || !texture->images[i]->levels ||
+            !qa_source_save_u32(io,&kind) || kind>QA_SCENE_DEPTH32F ||
+            !qa_source_save_u32(io,&format) || format>QA_Q3_TEXTURE_RGB4_S3TC) return false;
+        texture->kinds[i]=(qa_scene_image_kind)kind;
+        texture->formats[i]=(qa_q3_texture_format)format;
+        qa_scene_resources *owner=qa_scene_image_resource_owner(texture->images[i]);
+        if (reading) {
+            if (!owner || !qa_scene_resources_retain(owner,io->error)) return false;
+            texture->owners[i]=owner; texture->levels[i]=texture->images[i]->levels[i];
+        } else if (!owner || owner!=texture->owners[i] ||
+            texture->levels[i].width!=texture->images[i]->levels[i].width ||
+            texture->levels[i].height!=texture->images[i]->levels[i].height ||
+            texture->levels[i].bytes!=texture->images[i]->levels[i].bytes ||
+            texture->levels[i].pixels!=(texture->pixels[i]?texture->pixels[i]:texture->images[i]->levels[i].pixels)) return false;
+        if (version>=18) {
+            bool modified=texture->pixels[i]!=NULL;
+            if (!qa_source_save_bool(io,&modified)) return false;
+            if (modified) {
+                if (reading) {
+                    texture->pixels[i]=malloc(texture->levels[i].bytes);
+                    if (!texture->pixels[i]) {
+                        qa_error_set(io->error,QA_ERROR_MEMORY,i,"Restoring modified Source texture pixels"); return false;
+                    }
+                    texture->levels[i].pixels=texture->pixels[i];
+                }
+                if (!qa_source_save_bytes(io,texture->pixels[i],texture->levels[i].bytes)) return false;
+            }
+        } else if (!reading && texture->pixels[i]) return false;
+    }
+    return true;
+}
 static bool entity_fields(qa_source_save_io *io, material_source_entity *entity)
 {
     if (!color_fields(io, &entity->color) || !coordinates_fields(io, &entity->texcoord) ||
@@ -162,6 +215,7 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
 bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *controls, uint32_t version,
     const qa_render_checkpoint_refs *refs)
 {
+    if (version>=17 && !qa_render_source_texture_saved_fields(io,&controls->zero_texture,version,refs)) return false;
     /* The enclosing CPU/GL codec owns the schema version and idle boundary. */
     qa_render_source_attributes *attributes=&controls->attributes;
     if (version>=10) {
@@ -185,6 +239,13 @@ bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *
             if (version>=12 && !qa_source_save_bool(io,attributes->actual_empty+unit)) return false;
         }
     } else if (io->direction==QA_SOURCE_SAVE_READ) qa_render_source_attributes_init(attributes);
+    if (version>=16 && !color_fields(io,&attributes->zero_border)) return false;
+    if (version>=20) {
+        uint32_t cull=controls->source_cull_type;
+        if (!qa_source_save_u32(io,&cull) || cull>QA_CULL_BACK ||
+            !qa_source_save_bool(io,&controls->source_cull_valid)) return false;
+        if (io->direction==QA_SOURCE_SAVE_READ) controls->source_cull_type=(qa_scene_cull)cull;
+    } else if (io->direction==QA_SOURCE_SAVE_READ) controls->source_cull_valid=false;
     if (version>=6) {
         uint32_t filter=controls->source_filter;
         if (!qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||

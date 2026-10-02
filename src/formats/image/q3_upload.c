@@ -20,7 +20,8 @@ bool qa_q3_image_upload_options_equal(const qa_q3_image_upload_options *a,
         a->color.gamma == b->color.gamma && a->color.intensity == b->color.intensity &&
         a->picmip == b->picmip && a->maximum_texture_size == b->maximum_texture_size &&
         a->round_down == b->round_down && a->simple_mips == b->simple_mips &&
-        a->color_mips == b->color_mips && a->allow_picmip == b->allow_picmip && a->mipmap == b->mipmap;
+        a->color_mips == b->color_mips && a->allow_picmip == b->allow_picmip && a->mipmap == b->mipmap &&
+        a->texture_bits == b->texture_bits && a->s3tc == b->s3tc && a->lightmap == b->lightmap;
 }
 
 static bool power_of_two(uint32_t value, bool down, uint32_t *out, qa_error *error)
@@ -60,8 +61,8 @@ static void tint_mip(qa_image *image, size_t level)
                 (c == selected ? 255U * 128 : 0)) >> 9);
 }
 
-bool qa_q3_image_upload(const qa_image *source, const qa_q3_image_upload_options *options,
-    qa_mip_chain *out, qa_error *error)
+static bool upload(const qa_image *source, const qa_q3_image_upload_options *options,
+    qa_mip_chain *out, qa_q3_texture_format *format, qa_error *error)
 {
     if (!out) return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source upload requires an output");
     if (!qa_q3_image_upload_options_valid(options, error)) return false;
@@ -83,6 +84,18 @@ bool qa_q3_image_upload(const qa_image *source, const qa_q3_image_upload_options
     } else {
         if (!qa_img_new(width, height, &work, error)) return false;
         memcpy(work.rgba.data, source->rgba.data, source->rgba.size);
+    }
+    bool alpha=false;
+    if (!options->lightmap)
+        for (size_t i=3;i<work.rgba.size;i+=4)
+            if (work.rgba.data[i]!=255) { alpha=true; break; }
+    qa_q3_texture_format selected=QA_Q3_TEXTURE_RGB;
+    if (!options->lightmap) {
+        if (alpha) selected=options->texture_bits==16?QA_Q3_TEXTURE_RGBA4:
+            options->texture_bits==32?QA_Q3_TEXTURE_RGBA8:QA_Q3_TEXTURE_RGBA;
+        else selected=options->s3tc?QA_Q3_TEXTURE_RGB4_S3TC:
+            options->texture_bits==16?QA_Q3_TEXTURE_RGB5:
+            options->texture_bits==32?QA_Q3_TEXTURE_RGB8:QA_Q3_TEXTURE_RGB;
     }
     uint32_t target_width = width, target_height = height;
     if (options->allow_picmip) {
@@ -134,5 +147,17 @@ bool qa_q3_image_upload(const qa_image *source, const qa_q3_image_upload_options
     qa_image_free(&work);
     if (!ok) { qa_mip_chain_free(&next); return false; }
     *out = next;
+    if (format) *format=selected;
     return true;
+}
+
+bool qa_q3_image_upload(const qa_image *source,const qa_q3_image_upload_options *options,
+    qa_mip_chain *out,qa_error *error)
+{ return upload(source,options,out,NULL,error); }
+
+bool qa_q3_image_upload_format(const qa_image *source,const qa_q3_image_upload_options *options,
+    qa_mip_chain *out,qa_q3_texture_format *format,qa_error *error)
+{
+    if (!format) return qa_img_fail(error,QA_ERROR_ARGUMENT,0,"Source upload requires its native storage format");
+    return upload(source,options,out,format,error);
 }

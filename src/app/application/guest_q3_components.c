@@ -340,6 +340,25 @@ bool application_q3_components_event_source_read(const qa_application *app,qa_ac
     }
     return application_fail(e,QA_ERROR_NOT_FOUND,"Component event has no genuine installed or entered Init source owner");
 }
+bool application_q3_components_item_read(qa_application *app,qa_actor_id actor,qa_actor_owner id,qa_item_id item,
+    application_q3_component_item_metadata *out,bool *found,qa_error *e)
+{
+    if(!app||!out||!found||!id||!item||!qa_actors_get(qa_session_actors(app->session),actor))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Component item metadata requires its actual source and full actor");
+    *found=false;
+    application_q3_components *owner=app->components;
+    for(size_t i=0;owner&&i<owner->count;++i) {
+        component_game_row *row=owner->rows[i];
+        if(!row||row->publication.owner!=id) continue;
+        if(!row->initialized||!row->attached||!q3components_current(row))
+            return application_fail(e,QA_ERROR_ARGUMENT,"Component item metadata lost its actual admitted source");
+        application_q3_component_item_metadata value={.source=row->publication};
+        if(!application_q3_component_item_read(row->publication.game,actor,item,&value.admission,&value.icon,&value.held,found,e)) return false;
+        if(*found) *out=value;
+        return true;
+    }
+    return true;
+}
 bool application_q3_components_checkpoint_publication_read(const qa_application *app,qa_actor_owner id,
     application_q3_component_publication *out,bool *found,qa_error *e)
 {

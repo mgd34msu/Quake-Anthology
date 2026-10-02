@@ -1,6 +1,7 @@
 #include "q3/internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
+#include "qa/material_library_save.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -65,6 +66,7 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
                                   data->lightmaps + i, error)) { free(pixels); return false; }
         if (source) {
             data->lightmaps[i]->source_mipmap=false;
+            data->lightmaps[i]->source_format=QA_Q3_TEXTURE_RGB;
             if (!qa_scene_image_source_admit(world->resources,data->lightmaps[i],profile.multitexture?1u:0u,error)) {
                 free(pixels); return false;
             }
@@ -451,8 +453,16 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
         sky_context.local_view_origin = context->view.origin;
     }
     sky_context.light_mask = 0;
+    bool outer=true;
+    if (qa_material_library_has_source_profile(materials)) {
+        const qa_scene_image *missing=qa_scene_source_q3_missing(qa_material_library_resource_owner(materials));
+        if (!missing) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source sky lost its actual registered default image"); return false;
+        }
+        outer=material->sky_outer_images[0] && material->sky_outer_images[0]!=missing;
+    }
     static const unsigned sky_image_order[6] = {0, 2, 1, 3, 4, 5};
-    for (unsigned i = 0; i < 6; ++i) {
+    for (unsigned i = 0; outer && i < 6; ++i) {
         const qa_scene_image *image = material->sky_outer_images[sky_image_order[i]];
         if (!geometry.visible[i] || !image) continue;
         qa_scene_draw draw = {0};
@@ -465,7 +475,20 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
                         ((uint64_t)context->fog_index << 2) |
                         ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
         draw.environment = QA_TEXTURE_MODULATE;
-        if (context->source_scratch) draw.source_direct = QA_SOURCE_DIRECT_SKY;
+        if (context->source_scratch) {
+            draw.source_direct = QA_SOURCE_DIRECT_SKY;
+            uint32_t *indices = qa_arena_alloc(&frame->storage,
+                draw.mesh.index_count * sizeof(*indices), _Alignof(uint32_t), error);
+            if (!indices) return false;
+            memcpy(indices, draw.mesh.indices, draw.mesh.index_count * sizeof(*indices));
+            for (size_t cell = 0; cell < draw.mesh.index_count; cell += 6) {
+                uint32_t first = indices[cell + 3];
+                indices[cell + 3] = indices[cell + 5];
+                indices[cell + 5] = indices[cell + 4];
+                indices[cell + 4] = first;
+            }
+            draw.mesh.indices = indices;
+        }
         qa_scene_state_default(&draw.state);
         draw.state.cull = QA_CULL_NONE;
         draw.state.depth_near = draw.state.depth_far = context->source_scratch && context->source_diagnostics.show_sky ? 0 : 1;

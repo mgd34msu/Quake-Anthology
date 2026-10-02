@@ -3,6 +3,7 @@
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
+#include "qa/game_q1_wire.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -535,6 +536,17 @@ static bool define_item(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             bounds = 2;
             model = "progs/lavasuit.mdl";
             sound = "items/suit.wav";
+            qa_actor_id actor = entity->id;
+            if (!qa_q1_wire_declare_model(g, model, error) ||
+                !q1_alive(g, actor) || q1_entity(g, actor) != entity ||
+                !qa_q1_wire_declare_sound(g, "items/suit.wav", error) ||
+                !q1_alive(g, actor) || q1_entity(g, actor) != entity ||
+                !qa_q1_wire_declare_sound(g, "items/suit2.wav", error) ||
+                !q1_alive(g, actor) || q1_entity(g, actor) != entity) {
+                if (!error || error->code == QA_OK)
+                    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "MG3 lava suit retired during its source precache");
+                return false;
+            }
         } else {
             static const char *const names[] = {"item_upgrade_health", "item_upgrade_shells",
                                                 "item_upgrade_nails", "item_upgrade_rockets",
@@ -694,7 +706,7 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
                            : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
                            : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection
                                                        : 0;
-        if (armor.points * protection >= item->count * item->absorption)
+        if ((float)armor.points * protection >= item->count * item->absorption)
             return true;
         armor = (qa_regular_armor){.kind = QA_ARMOR_Q1,
                                    .points = item->count,
@@ -806,7 +818,7 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         armor = (qa_regular_armor){
             .kind = QA_ARMOR_Q1,
             .item = identity,
-            .points = fminf(200, armor.points + 5),
+            .points = fminf(200, (float)armor.points + 5),
             .protection.q1_absorption =
                 armor.kind == QA_ARMOR_Q1 ? fmaxf(0.3f, armor.protection.q1_absorption) : 0.3f};
         *taken = true;
@@ -1106,8 +1118,8 @@ bool qa_q1_pickup_grant_external(qa_q1_game *g, qa_actor_id actor, qa_actor_id r
     }
     return pickup_grant(g, entity, recipient, true, accepted, error);
 }
-bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
-                                 bool bounce, qa_actor_id *out, qa_error *error) {
+static bool spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
+                           bool bounce, qa_actor_id *out, qa_error *error) {
     if (!g || !spawn || !spawn->classname || !body || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 external pickup spawn");
         return false;
@@ -1133,6 +1145,25 @@ bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const 
 fail:
     (void)q1_remove(g, entity, NULL);
     return false;
+}
+bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
+                                 bool bounce, qa_actor_id *out, qa_error *error) {
+    if (!out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 external pickup output");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    qa_actor_id actor;
+    bool okay = spawn_external(g, spawn, body, bounce, &actor, error);
+    if (okay && (!qa_q1_game_operation_live(&operation) || !q1_alive(g, actor))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 external pickup retired during its source constructor");
+        okay = false;
+    }
+    if (okay) *out = actor;
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
@@ -1345,7 +1376,7 @@ static float protection_value(qa_regular_armor armor) {
     float absorption = armor.kind == QA_ARMOR_Q1 ? armor.protection.q1_absorption
         : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
         : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection : 0;
-    return armor.points * absorption;
+    return (float)armor.points * absorption;
 }
 bool qa_q1_bot_supply_preview(qa_q1_game *g,qa_actor_id pickup,qa_actor_id recipient,
     qa_supply_preview_result *out,bool *eligible,bool *found,qa_error *error) {
@@ -1458,7 +1489,7 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
             *accepted = *utility > 0;
         } else if (armor.points < 200) {
             float absorption = armor.kind == QA_ARMOR_Q1 ? fmaxf(.3f, armor.protection.q1_absorption) : .3f;
-            *utility = fmaxf(0, fminf(200, armor.points + 5) * absorption - before);
+            *utility = fmaxf(0, fminf(200, (float)armor.points + 5) * absorption - before);
             *accepted = true;
         }
         return true;

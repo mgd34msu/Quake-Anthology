@@ -1449,7 +1449,7 @@ static bool player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed,
         if (decay &&
             combat.armor.regular.points > (float)maximum &&
             !qa_combat_set_regular_points(game->options.services.combat, actor,
-                                          combat.armor.regular.points - 1, NULL, error))
+                                          (float)combat.armor.regular.points - 1, NULL, error))
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry)

@@ -2,6 +2,7 @@
 #define QA_FRONTEND_SHARED_REGISTER_H
 #include "internal.h"
 #include "qa/console_cvars_prepare.h"
+#include "remote_q2_effects.h"
 /* The factory supplies its actual selected source dialect, or NULL for a
  * menu with no source. NULL retains generic effects/music defaults 0.7/1;
  * Q3 source defaults are 0.8/0.25. Native output/gamma come from their real
@@ -14,6 +15,8 @@ bool frontend_shared_menu_track_valid(const char *);
  * the already imported private records. */
 bool frontend_source_q2_settings_register(const qa_launch_instance *,qa_cvars *,
     const qa_command_context *,qa_error *);
+bool frontend_source_q2_effects_register(qa_cvars *, const qa_command_context *,
+    frontend_remote_q2_effects_profile, qa_error *);
 /* The actual first/restarted physical Source renderer applies R_Register
  * latches and near-clip initialization before consuming its policy rows.
  * Imported renderers retain their decoded continuation. */

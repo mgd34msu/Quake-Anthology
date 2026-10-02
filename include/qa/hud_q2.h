@@ -56,6 +56,12 @@ typedef struct qa_hud_q2_options {
 } qa_hud_q2_options;
 bool qa_hud_q2_layout(const qa_hud_q2_options *, const qa_hud_q2_frame *, const char *source,
                       qa_scene_frame *, qa_error *);
+typedef struct qa_hud_q2_stat_references {
+    uint64_t images, configstrings;
+} qa_hud_q2_stat_references;
+/* Reads every conditional branch with the same lexer and operand parser as draw. */
+bool qa_hud_q2_layout_stat_references(const char *, bool rerelease,
+    qa_hud_q2_stat_references *, qa_error *);
 bool qa_hud_q2_draw(const qa_hud_q2_options *, const qa_hud_q2_frame *, bool overlay_only,
                     qa_scene_frame *, qa_error *);
 #endif

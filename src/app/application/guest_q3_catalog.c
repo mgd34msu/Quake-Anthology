@@ -320,6 +320,14 @@ bool application_q3_catalog_create_native(q3g_role *role, qa_bytes declaration,
     }
     *out = c; return true;
 }
+
+bool application_q3_catalog_native_restore_validate(application_q3_catalog *c,
+    const q3g_role *role, qa_error *error)
+{
+    if (!c || !c->native || c->native_role != role)
+        return fail(error, QA_ERROR_ARGUMENT, "Native catalog import changed its actual role owner");
+    return application_q3_native_catalog_restore_validate(c->native, role, error);
+}
 bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi abi,
     qa_strings *strings, qa_bytes declared, qa_bytes items, bool missionpack,
     application_q3_catalog **out, qa_error *e)

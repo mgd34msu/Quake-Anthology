@@ -669,7 +669,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
     } else {
         qa_error load_error = {0};
         if (!qa_scene_image_load(library->resources, image_name, &options, &image, &load_error)) {
-            if (load_error.code == QA_ERROR_MEMORY) {
+            if (load_error.code == QA_ERROR_MEMORY || (library->source_profile && load_error.code == QA_ERROR_ARGUMENT)) {
                 if (error) *error = load_error;
                 return false;
             }
@@ -709,7 +709,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
         base->alpha = QA_COLOR_VERTEX;
         base->state.blend_source = QA_BLEND_SRC_ALPHA;
         base->state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
-        base->state.depth_test = QA_DEPTH_ALWAYS;
+        base->state.depth_test = library->source_profile ? QA_DEPTH_DISABLED : QA_DEPTH_ALWAYS;
         base->state.depth_write = false;
         base->clamp = true;
     }
@@ -740,12 +740,14 @@ typedef struct material_policy_record {
     const qa_scene_image *base;
     qa_scene_image_options options;
     qa_q3_image_upload_options variant_upload;
+    qa_material_video_receipt *videos;
 } material_policy_record;
 struct qa_scene_material_image_policy {
     qa_material_library *owner;
     qa_scene_resource_policy *resources;
     material_policy_record *records;
     qa_material_generated *generated;
+    qa_scene_image *fog_image, *dlight_image;
     size_t count;
     qa_material_library *destination;
     qa_material_order_image_policy *order;
@@ -796,7 +798,10 @@ static void material_policy_dispose(qa_scene_material_image_policy *ticket)
     for (size_t i = 0; i < ticket->count; ++i) {
         qa_material_clear(&ticket->records[i].material);
         qa_scene_image_release(ticket->records[i].base);
+        qa_material_record videos = {.videos = ticket->records[i].videos};
+        qa_material_videos_clear(&videos);
     }
+    qa_scene_image_release(ticket->fog_image); qa_scene_image_release(ticket->dlight_image);
     qa_material_generated *generated = ticket->generated;
     while (generated) {
         qa_material_generated *next = generated->next;
@@ -829,6 +834,12 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
     ticket->replace_profile = profile != NULL;
     ticket->order = order;
     library->image_policy = ticket;
+    if ((library->fog_image && !qa_scene_resource_policy_dependency_image(resources, library->fog_image,
+            &ticket->fog_image, error)) ||
+        (library->dlight_image && !qa_scene_resource_policy_dependency_image(resources, library->dlight_image,
+            &ticket->dlight_image, error))) {
+        material_policy_dispose(ticket); return false;
+    }
     qa_material_generated **tail = &ticket->generated;
     for (const qa_material_generated *current = library->generated; current; current = current->next) {
         qa_material_generated *generated = calloc(1, sizeof(*generated));
@@ -843,6 +854,7 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
     }
     qa_material_library staging = *library;
     staging.resources = destination; staging.generated = ticket->generated;
+    staging.fog_image = ticket->fog_image; staging.dlight_image = ticket->dlight_image;
     staging.profile = ticket->profile;
     qa_q3_image_upload_options restart_upload = {0};
     bool source_restart = qa_scene_resource_policy_source_restart_read(resources, &restart_upload);
@@ -868,6 +880,23 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
             qa_error_set(error, QA_ERROR_MEMORY, i, "Material image revisions exhausted"); return false;
         }
         if (current->source_variant_parent) continue;
+        qa_material_video_receipt **video_tail = &prepared->videos;
+        for (const qa_material_video_receipt *video = current->videos; video; video = video->next) {
+            qa_material_video_receipt *copy = calloc(1, sizeof(*copy));
+            if (!copy) {
+                qa_error_set(error, QA_ERROR_MEMORY, i, "Preparing actual shader video receipts");
+                material_policy_dispose(ticket); return false;
+            }
+            *copy = *video; copy->next = NULL; copy->image = NULL;
+            copy->source = qa_material_string(video->source, error);
+            *video_tail = copy; video_tail = &copy->next;
+            qa_scene_image *mapped = NULL;
+            if (!copy->source || (video->image &&
+                !qa_scene_resource_policy_dependency_image(resources, video->image, &mapped, error))) {
+                material_policy_dispose(ticket); return false;
+            }
+            copy->image = mapped;
+        }
         if (current->base_image) {
             const qa_scene_image *base = NULL;
             for (size_t w = 0; !base && w < world_count; ++w)
@@ -890,7 +919,8 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
         pending.material.profile = ticket->replace_profile ? ticket->profile : current->material.profile;
         if (library->source_profile) pending.material.profile.ui_fullscreen = current->material.profile.ui_fullscreen;
         if (!pending.material.name) { material_policy_dispose(ticket); return false; }
-        staging.refresh_record = current; staging.registration_record = NULL;
+        qa_material_record refresh = *current; refresh.videos = prepared->videos;
+        staging.refresh_record = &refresh; staging.registration_record = NULL;
         qa_material_script *script = library->scripts[qa_material_hash(current->material.name)];
         while (script && strcmp(script->name, current->material.name)) script = script->next;
         const qa_material_generated *generated = ticket->generated;
@@ -918,7 +948,7 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
         pending.material.registration = current->material.registration;
         pending.material.sorted_index = current->material.sorted_index;
         pending.material.order_entry = current->material.order_entry;
-        pending.material.fog_image = library->fog_image; pending.material.dlight_image = library->dlight_image;
+        pending.material.fog_image = ticket->fog_image; pending.material.dlight_image = ticket->dlight_image;
         pending.material.remapped = current->material.remapped;
         pending.material.remap_time_offset = current->material.remap_time_offset;
         pending.material.source_time_offset = current->material.source_time_offset;
@@ -989,7 +1019,7 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
     prepared_library->source_ui_context = library->source_ui_context;
     prepared_library->sun_direction = library->sun_direction; prepared_library->has_sun = library->has_sun;
     prepared_library->sky_height = library->sky_height; prepared_library->catalog_ready = true;
-    prepared_library->fog_image = library->fog_image; prepared_library->dlight_image = library->dlight_image;
+    prepared_library->fog_image = ticket->fog_image; prepared_library->dlight_image = ticket->dlight_image;
     prepared_library->policy_source = library;
     *out = ticket; return true;
 memory:
@@ -1093,6 +1123,9 @@ void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *tick
 {
     if (!material_policy_current(ticket) || !ticket->sealed || ticket->published) return;
     qa_material_library *library = ticket->owner;
+    qa_scene_image *fog_image = library->fog_image, *dlight_image = library->dlight_image;
+    library->fog_image = ticket->fog_image; library->dlight_image = ticket->dlight_image;
+    ticket->fog_image = fog_image; ticket->dlight_image = dlight_image;
     for (size_t i = 0; i < ticket->count; ++i) {
         material_policy_record *prepared = &ticket->records[i];
         qa_material material = prepared->record->material;
@@ -1103,6 +1136,8 @@ void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *tick
         prepared->record->options = prepared->options; prepared->options = options;
         qa_q3_image_upload_options upload = prepared->record->source_variant_upload;
         prepared->record->source_variant_upload = prepared->variant_upload; prepared->variant_upload = upload;
+        qa_material_video_receipt *videos = prepared->record->videos;
+        prepared->record->videos = prepared->videos; prepared->videos = videos;
         qa_material_order_changed(prepared->record->material.order_entry);
     }
     for (size_t i = 0; i < ticket->count; ++i) {
@@ -1387,6 +1422,23 @@ bool qa_material_register(qa_material_library *library, const char *name,
         lightmapped ? QA_MATERIAL_LIGHTMAP : QA_MATERIAL_DYNAMIC, out, error);
 }
 
+bool qa_material_library_source_shaders_initialize(qa_material_library *library,
+    const qa_scene_image_options *options, qa_error *error)
+{
+    if (!library || !library->source_profile || !options || !library->catalog_ready ||
+        !library->source_upload) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source shader initialization requires its loaded catalog and upload owner");
+        return false;
+    }
+    static const char *const names[] = {"projectionShadow", "flareShader", "sun"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const qa_material *material = NULL;
+        if (!qa_material_register_kind(library, names[i], options, QA_MATERIAL_DYNAMIC, &material, error))
+            return false;
+    }
+    return true;
+}
+
 static bool generated_picture(qa_material_library *library, const char *name,
                                             const qa_scene_image *image, const qa_material **out,
                                             qa_error *error)
@@ -1637,7 +1689,20 @@ bool qa_material_library_set_source_upload(qa_material_library *library,
             }
         }
     }
-    if (ok) { library->source_upload = producer; library->source_upload_context = context; }
+    if (ok) {
+        const qa_scene_image *fog = qa_scene_source_q3_fog(library->resources);
+        const qa_scene_image *dlight = qa_scene_source_q3_dlight(library->resources);
+        if (fog && dlight) {
+            qa_scene_image_retain(fog); qa_scene_image_retain(dlight);
+            qa_scene_image_release(library->fog_image); qa_scene_image_release(library->dlight_image);
+            library->fog_image = (qa_scene_image *)fog; library->dlight_image = (qa_scene_image *)dlight;
+            for (size_t i = 0; i < library->count; ++i) {
+                library->ordered[i]->material.fog_image = library->fog_image;
+                library->ordered[i]->material.dlight_image = library->dlight_image;
+            }
+        }
+        library->source_upload = producer; library->source_upload_context = context;
+    }
     else if (!error || error->code == QA_OK)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload binding requires its actual constructor or restored owner");
     return mutation_end(library, ok);

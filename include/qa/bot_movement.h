@@ -2,6 +2,7 @@
 #define QA_BOT_MOVEMENT_H
 #include "qa/bot_actions.h"
 #include "qa/bot_goals.h"
+#include "qa/bots_allocator.h"
 
 #define QA_BOT_AVOID_SPOTS 32
 enum {
@@ -108,6 +109,10 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *, qa_bot_actions *,
                          const qa_bot_move_services *, qa_bot_moves **, qa_error *);
 void qa_bot_moves_destroy(qa_bot_moves *);
 bool qa_bot_moves_shutdown(qa_bot_moves *, qa_error *);
+/* Borrowed actual MEMORY owner/allocation. The 772 bytes use source little
+ * endian fields; they are not a native qa_bot_move_state structure overlay. */
+qa_bot_memory *qa_bot_moves_memory(const qa_bot_moves *);
+bool qa_bot_moves_allocation(const qa_bot_moves *,uint32_t,qa_bot_memory_allocation *,qa_error *);
 bool qa_bot_moves_active(const qa_bot_moves *);
 bool qa_bot_moves_setup(qa_bot_moves *, qa_error *);
 bool qa_bot_moves_time(qa_bot_moves *, float, qa_error *);

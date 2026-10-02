@@ -530,6 +530,44 @@ static bool platform_hud_view(void *context, uint32_t seat,
     --source->active_imports;
     return ok;
 }
+static bool platform_resource_precache(void *context, qa_native_host_resource_kind kind,
+    const char *logical, const qa_vfs **files, qa_resource **resource,
+    qa_vfs_acquisition *opening, bool *found, qa_error *error)
+{
+    frontend_native_q2 *source = context;
+    if (!source || kind != QA_NATIVE_HOST_IMAGE || !logical || !*logical || !files || *files ||
+        !resource || *resource || !opening || !found || source->image_policy)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 image precache lacks its actual Source outputs");
+    ++source->active_imports;
+    *found = false;
+    bool ok = source_files(source, error);
+    char path[1024];
+    int length = logical[0] == '/' || logical[0] == '\\' ? snprintf(path, sizeof(path), "%s", logical + 1) :
+        snprintf(path, sizeof(path), "pics/%s", logical);
+    if (ok && (length < 0 || (size_t)length >= sizeof(path)))
+        ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 image precache path exceeds Source limit");
+    qa_scene_image *image = NULL; qa_scene_image_load_receipt receipt = {0}; qa_error local = {0};
+    if (ok) {
+        qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+            .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
+        bool decoded = qa_scene_image_load_observed(source->images, path, &options, &image, &receipt, &local);
+        if (!decoded && (local.code == QA_ERROR_MEMORY || (!receipt.source && local.code != QA_ERROR_NOT_FOUND))) {
+            if (error) *error = local;
+            ok = false;
+        } else if (receipt.source) {
+            ok = receipt.source_opening.opening_present &&
+                qa_vfs_acquisition_copy(&receipt.source_opening, opening, error);
+            if (ok) {
+                *resource = receipt.source; receipt.source = NULL;
+                *files = source->mounts; *found = true;
+            } else if (!error || error->code == QA_OK)
+                frontend_fail(error, QA_ERROR_FORMAT, "Native Q2 image winner lacks its actual opening receipt");
+        }
+    }
+    qa_scene_image_release(image); qa_scene_image_load_receipt_dispose(&receipt);
+    --source->active_imports;
+    return ok;
+}
 static bool source_free(frontend_native_q2 *source, qa_error *error)
 {
     if (!frontend_owners_idle(source->frontend))
@@ -603,6 +641,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     source->cvars = engine->cvars; source->prepared = false;
     engine->context = source; engine->print = platform_print; engine->sound = platform_sound;
     engine->hud_view = platform_hud_view;
+    engine->resource_precache = platform_resource_precache;
     engine->frontend_lifetime = source; engine->release_frontend = release_source;
     *out = application_import; *application_context = source; return true;
 }

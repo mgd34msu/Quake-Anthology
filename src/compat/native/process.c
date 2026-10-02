@@ -341,7 +341,7 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
     qa_buffer *out, qa_error *error)
 {
     if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !out || out->data || out->size ||
-        instance->active_depth || instance->callback_depth || instance->destroying ||
+        instance->active_depth || instance->callback_depth || instance->region_scopes || instance->destroying ||
         qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process capture requires its idle complete source owner");
     qa_buffer process = {0};
@@ -370,7 +370,7 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
 
 bool qa_native_process_checkpoint(qa_native_instance *instance, qa_buffer *out, qa_error *error)
 {
-    if (!instance || instance->checkpointing || instance->active_depth || instance->callback_depth ||
+    if (!instance || instance->checkpointing || instance->active_depth || instance->callback_depth || instance->region_scopes ||
         instance->destroying || instance->process_host_pending || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
         !instance->options.checkpoint || !instance->options.restore)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native private capture requires its actual idle process/host binding");
@@ -384,7 +384,7 @@ bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expec
 {
     if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
         !instance->process_host_pending || !instance->process_host.size ||
-        instance->active_depth || instance->callback_depth || instance->checkpointing ||
+        instance->active_depth || instance->callback_depth || instance->region_scopes || instance->checkpointing ||
         instance->destroying || qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native host adoption requires its staged idle process continuation");
     if (!expected_host.data || expected_host.size != instance->process_host.size ||

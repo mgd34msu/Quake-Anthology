@@ -6,6 +6,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+size_t q3remote_component_physical_count(const frontend_unified_components *owner)
+{
+    size_t count=owner->count;
+    for(remote_component *row=owner->retired;row;row=row->retired_next) ++count;
+    return count;
+}
+remote_component *q3remote_component_physical_at(const frontend_unified_components *owner,size_t ordinal)
+{
+    if(ordinal<owner->count) return owner->rows[ordinal];
+    ordinal-=owner->count; remote_component *row=owner->retired;
+    while(row&&ordinal--) row=row->retired_next;
+    return row;
+}
+
 bool frontend_unified_components_current(const frontend_unified_components *o)
 {
     return o&&!o->closing&&!o->restoring&&!o->failed&&frontend_unified_media_current(o->media)&&
@@ -50,13 +64,39 @@ bool frontend_unified_components_recipient_current(const frontend_unified_compon
     const qa_recipe_provider *provider)
 {
     if(!content||!provider||(!frontend_unified_components_current(o)&&!frontend_unified_components_retained_current(o))) return false;
-    for(size_t i=0;i<o->count;++i) {
-        const remote_component *r=o->rows[i];
+    for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
+        const remote_component *r=q3remote_component_physical_at(o,i);
         if(!r||r->state.provider_row!=provider||!r->state.mod) continue;
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),r->state.mod->product);
         if(product&&!strcmp(product->identity,content)) return true;
     }
     return false;
+}
+bool frontend_unified_components_assets_encode(const frontend_unified_components *o,const qa_q3_presentation_assets *assets,
+    uint64_t *identity,qa_error *e)
+{
+    if(!assets||!identity||(!frontend_unified_components_current(o)&&!frontend_unified_components_retained_current(o)))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component registry encode lost its retained private roster");
+    for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
+        const remote_component *row=q3remote_component_physical_at(o,i);
+        if(row&&row->assets==assets&&row->frontend_identity&&row->frontend.owner&&(row->scene||row->retired)) {
+            *identity=row->frontend_identity; return true;
+        }
+    }
+    return q3remote_component_fail(e,QA_ERROR_NOT_FOUND,"Source bank registry has no actual component frontend identity");
+}
+bool frontend_unified_components_assets_decode(const frontend_unified_components *o,uint64_t identity,
+    qa_q3_presentation_assets **assets,qa_error *e)
+{
+    if(!identity||!assets||(!frontend_unified_components_current(o)&&!frontend_unified_components_retained_current(o)))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component registry decode lost its retained private roster");
+    for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
+        const remote_component *row=q3remote_component_physical_at(o,i);
+        if(row&&row->frontend_identity==identity&&row->assets&&row->frontend.owner&&(row->scene||row->retired)) {
+            *assets=row->assets; return true;
+        }
+    }
+    return q3remote_component_fail(e,QA_ERROR_NOT_FOUND,"Saved Source bank registry has no actual imported component frontend identity");
 }
 bool frontend_unified_components_create(qa_frontend *f,frontend_remote_unified *replica,frontend_unified_media *media,
     frontend_unified_components **out,qa_error *e)
@@ -71,8 +111,8 @@ bool frontend_unified_components_idle(const frontend_unified_components *o)
 {
     if(!o) return true;
     if(o->busy||o->prepared) return false;
-    for(size_t i=0;i<o->count;++i) {
-        remote_component *r=o->rows[i];
+    for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
+        remote_component *r=q3remote_component_physical_at(o,i);
         if(r&&(r->acquired||(r->scene&&!application_q3_scene_idle(r->scene))||
             (r->frontend.owner&&!r->frontend.idle(r->frontend.owner)))) return false;
     }
@@ -137,7 +177,14 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
             for(size_t k=0;k<count;++k) if(!strcmp(states[k].provider,o->rows[i]->state.provider))
                 retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
             if(retire) ok=frontend_unified_events_component_retire(o->events,o->rows[i]->state.presentation_owner,e);
-            if(ok) ok=q3remote_component_close(o->rows+i,e);
+            if(ok) {
+                remote_component *row=o->rows[i];
+                ok=q3remote_component_retire(row,e);
+                if(ok) {
+                    remote_component **tail=&o->retired; while(*tail) tail=&(*tail)->retired_next;
+                    *tail=row; o->rows[i]=NULL;
+                }
+            }
         }
     }
     if(ok) {
@@ -202,7 +249,8 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
 }
 bool frontend_unified_components_frame_ready(const frontend_unified_component_frame *c,const qa_unified_document *d,qa_error *e)
 {
-    if(!c||!d||c->owner->prepared!=c||c->count!=c->owner->count||!frontend_unified_components_current(c->owner))
+    if(!c||!d||c->owner->prepared!=c||c->count!=c->owner->count||
+        !(frontend_unified_components_current(c->owner)||frontend_unified_components_retained_current(c->owner)))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component token lost its exact returned frame candidate");
     if(c->input!=d) {
         if(!c->owned_input) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component frame token belongs to another live invocation");
@@ -235,6 +283,11 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
     o->closing=true;
     for(size_t i=0;i<o->count;++i) {
         if(!q3remote_component_close(o->rows+i,e)) return false;
+    }
+    while(o->retired) {
+        remote_component *row=o->retired,*next=row->retired_next;
+        if(!q3remote_component_close(&row,e)) return false;
+        o->retired=next;
     }
     free(o->rows); free(o->lights); free(o); *slot=NULL; return true;
 }

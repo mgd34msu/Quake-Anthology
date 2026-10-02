@@ -1,4 +1,5 @@
 #include "source_prompt.h"
+#include "source_companion_legacy.h"
 #include "root_resources.h"
 #include "qa/material_source_scratch.h"
 #include "internal.h"
@@ -8,6 +9,9 @@
 #include "qc_rerelease_events.h"
 #include "native_q3_client.h"
 #include "native_composition.h"
+#include "equipment_media.h"
+#include "component_scene.h"
+#include "qa/application_q3_components.h"
 #include "network_session.h"
 #include "remote_q2_client.h"
 #include "remote_q1_client.h"
@@ -24,6 +28,20 @@
 #include "particle_delivery.h"
 #include <stdio.h>
 
+static bool source_status_native(const qa_frontend *f,uint32_t physical,qa_actor_id viewer,bool *out,qa_error *error)
+{
+    *out=false;
+    for (size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if (!frontend_component_scene_read(f,i,&row,error)) return false;
+        if (row.retired || row.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL || !row.begun ||
+            row.physical_seat!=physical || !qa_actor_id_equal(row.viewer,viewer)) continue;
+        bool replaces=false;
+        if (!qa_application_q3_component_scene_hud_read(f->application,row.identity,physical,viewer,row.sequence,&replaces,error)) return false;
+        *out=*out || replaces;
+    }
+    return true;
+}
 bool frontend_scene_sync(qa_frontend *frontend,qa_error *error)
 { return frontend_root_resources_sync(frontend,error); }
 qa_scene_rect frontend_viewport(const qa_frontend *frontend, unsigned seat)
@@ -46,9 +64,9 @@ void frontend_camera_axes(qa_vec3 angles, qa_vec3 axis[3])
     axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
 }
 static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *fallback,
-    qa_audio_listener *listener,bool *rendered,const qa_ui_preferences *preferences,bool visible,qa_error *error)
+    qa_audio_listener *listener,bool *rendered,bool *hud_drawn,const qa_ui_preferences *preferences,bool visible,qa_error *error)
 {
-    *rendered=false;
+    *rendered=false; *hud_drawn=false;
     frontend_remote_q1 *selected=NULL;
     frontend_remote_q1_view source={0};
     for (size_t i=0;i<frontend_remote_q1_count(f);++i) {
@@ -101,9 +119,13 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     view.projection=qa_scene_projection(horizontal,vertical,4,far_clip->number);
     if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
     frontend_seat *physical=&f->seats[seat];
-    return qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
+    bool component_status=false;
+    if (!source_status_native(f,seat,player.actor,&component_status,error)) return false;
+    if (!qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
+        .source_status_native=component_status,
         .time_ns=f->time_ns,.viewport=fallback->viewport,.safe_area=fallback->viewport,
-        .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error);
+        .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error)) return false;
+    *hud_drawn=true; return true;
 }
 bool frontend_present(qa_frontend *frontend, qa_error *error)
 {
@@ -114,7 +136,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (frontend->cpu && !qa_cpu_resize(frontend->cpu, display.drawable_width, display.drawable_height, error)) return false;
         frontend->width = display.drawable_width; frontend->height = display.drawable_height;
     }
-    if (!frontend_ui_features_sync(frontend, error) || !frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
+    if (!frontend_equipment_media_prune(frontend,error) || !frontend_ui_features_sync(frontend, error) || !frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
     frontend_native_q3_factory native_factory = {.context = frontend,
         .compose = frontend_native_composition_create};
     qa_application_map_view native_map;
@@ -139,11 +161,22 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         bool live = published && qa_application_player_actor(frontend->application, launch_seat, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
         qa_application_presentation_view source = {0};
         if (published) (void)qa_application_presentation_read(frontend->application, launch_seat, &source);
+        bool source_weapon_status=false;
+        if (live) {
+            qa_application_equipment_view equipped; bool present=false;
+            if (!qa_application_equipment_source_read(frontend->application,actor,&equipped,&present,error)) return false;
+            source_weapon_status=present && equipped.selected;
+            if (source_weapon_status) {
+                frontend_equipment_media *media=NULL; const qa_material *icon=NULL;
+                if (!frontend_equipment_media_prepare_source_icon(frontend,&equipped,&media,&icon,error)) return false;
+            }
+        }
         qa_scene_view view = {.viewport = rect, .seat = i, .clear_color = true, .clear_depth = true,
             .color = {.015f, .02f, .03f, 1}, .depth = 1};
         bool legacy_receiver=false,legacy_clear=true;
         if (!frontend_remote_q1_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
         if (!legacy_receiver && !frontend_remote_q2_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
+        if (!legacy_receiver && !frontend_remote_unified_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
         if (legacy_receiver) view.clear_color=legacy_clear;
         else if (live && !ui.fullscreen && !source.source_world && frontend->scene_world && native_ready) {
             const qa_product *product=qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation);
@@ -177,7 +210,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         if (!frontend_source_frame(frontend, i, rect, error) ||
             !frontend_native_q2_frame(frontend, i, rect, error)) return false;
-        bool remote_rendered=false,remote_listener_present=false,native_rendered=false;
+        bool remote_rendered=false,remote_listener_present=false,native_rendered=false,common_hud_drawn=false;
         qa_audio_listener remote_listener;
         if (!frontend_network_client_draw(frontend,i,0,&remote_rendered,&remote_listener,
             &remote_listener_present,error)) return false;
@@ -190,7 +223,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
         }
         if (!remote_rendered) {
-            if (!remote_q1_present(frontend,i,&view,&remote_listener,&remote_rendered,&preferences,!ui.fullscreen,error)) return false;
+            if (!remote_q1_present(frontend,i,&view,&remote_listener,&remote_rendered,&common_hud_drawn,&preferences,!ui.fullscreen,error)) return false;
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
         }
         if (remote_rendered) native_rendered=true;
@@ -199,8 +232,17 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4,
                 .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend};
-            if (!frontend_event_world(frontend, i, &world, error) ||
-                !frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error)) return false;
+            frontend_source_companion_legacy *companion=NULL;
+            bool okay=frontend_event_world(frontend,i,&world,error);
+            const qa_product *product=native_ready?
+                qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation):NULL;
+            if (okay && product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2))
+                okay=frontend_source_companion_legacy_prepare(frontend,i,actor,frontend->scene_world,
+                    product->family==QA_GAME_Q1?QA_SCENE_Q1:QA_SCENE_Q2,&world,&companion,error);
+            if (okay) okay=frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error);
+            if (okay) okay=frontend_source_companion_legacy_submit(companion,&frontend->frame,error);
+            frontend_source_companion_legacy_dispose(&companion);
+            if (!okay) return false;
         }
         if (!source.source_world && !native_rendered && (!frontend_event_debug(frontend, &view, error) ||
             !frontend_tools_debug(frontend, &view, error))) return false;
@@ -227,12 +269,21 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q2_view_ready &&
                 qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0 && !preferences.reduced_flashes) {
-            qa_q2_blend blend = seat->q2_view.blend;
-            if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
-                    (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
+            if (!native_ready) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 blend lost its actual published map policy");
+            const qa_product *product=qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation);
+            frontend_legacy_render_policy policy;
+            if (!product || !frontend_legacy_local_policy_read(frontend,i,product,&policy,error)) return false;
+            if (policy.lighting.polyblend) {
+                qa_q2_blend blend = seat->q2_view.blend;
+                if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
+                        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
+            }
         }
         if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;
-        if (live && !native_rendered && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
+        bool component_status=false;
+        if (live && !source_status_native(frontend,i,actor,&component_status,error)) return false;
+        if (live && !common_hud_drawn && (!native_rendered || source_weapon_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
+            .weapon_only=native_rendered,.source_status_native=component_status,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen}, &frontend->frame, error)) return false;

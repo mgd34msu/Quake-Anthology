@@ -3,6 +3,7 @@
 #include "qa/material_library_save.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
+#include "../image_options_save.h"
 
 typedef struct model_node {
     qa_scene_model *model;
@@ -266,7 +267,7 @@ static bool material_ref(qa_source_save_io *io, const qa_scene_model_owner_refs 
         qa_source_save_u64(io, &key) && key != UINT64_MAX &&
         (!reading || (refs->material_decode(refs->context, key, material, io->error) && *material));
 }
-static bool options(qa_source_save_io *io, qa_scene_model *model)
+static bool options(qa_source_save_io *io, qa_scene_model *model, uint32_t schema)
 {
     qa_scene_image_options *value = &model->options; bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t family = value->family, wrap = value->wrap, filter = value->filter, usage = value->usage;
@@ -289,6 +290,8 @@ static bool options(qa_source_save_io *io, qa_scene_model *model)
         value->translation = translation ? (qa_bytes){model->translation, sizeof(model->translation)} : (qa_bytes){0};
     } else if ((palette && (value->palette_rgb.data != model->palette || value->palette_rgb.size != sizeof(model->palette))) ||
         (translation && (value->translation.data != model->translation || value->translation.size != sizeof(model->translation)))) return false;
+    if (schema >= 6 ? !qa_scene_source_upload_precision_fields(io, value) :
+        (schema >= 5 && !qa_scene_source_upload_fields(io, value))) return false;
     return (!palette || value->palette_rgb.size == 768) &&
         (!(model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_SPR || family == QA_SCENE_Q2) || palette) &&
         (model->source->format != QA_MODEL_SP2 || (value->transparent && value->transparent_index == 255 && !value->mipmap));
@@ -451,7 +454,7 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
     const qa_scene_model_owner_refs *refs, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    if (!model_ref(io, refs, &model->source, &model->source_lease) || !options(io, model) ||
+    if (!model_ref(io, refs, &model->source, &model->source_lease) || !options(io, model, schema) ||
         !refs->source_qualify(refs->context, model->source, model->resources, model->materials, &model->options, io->error) ||
         !identity_field(io,refs,QA_SCENE_MODEL_IDENTITY_MODEL,node,0,&model->identity)) return false;
     if (schema >= 4 && !qa_source_save_bool(io, &model->source_topology)) return false;
@@ -523,9 +526,9 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
 }
 static bool prefix(qa_source_save_io *io, model_inventory *inventory, qa_bytes *body)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 4;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 6;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMON", 4) || !qa_source_save_u32(io, &schema) ||
-        (schema < 1 || schema > 4) ||
+        (schema < 1 || schema > 6) ||
         !qa_source_save_count(io, &inventory->identity_count, reading ? io->input.size / 28 : SIZE_MAX) || !inventory->identity_count) return false;
     if (reading) {
         if (inventory->identity_count > SIZE_MAX / sizeof(*inventory->identities)) return false;
@@ -606,7 +609,7 @@ bool qa_scene_model_owner_checkpoint(const qa_scene_model *model, const qa_scene
 {
     if (!model || !refs_ready(refs) || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "Model capture requires qualified references and empty output");
-    model_inventory inventory = {.schema = 4}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
+    model_inventory inventory = {.schema = 6}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
     bool ok = collect(&inventory, (qa_scene_model *)model, error);
     for (size_t i=0;ok && refs->identity_encode && i<inventory.identity_count;++i) {
         qa_scene_model_saved_identity *row=inventory.identities+i;

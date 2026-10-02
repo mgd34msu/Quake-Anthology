@@ -94,7 +94,6 @@ bool qa_unified_channel_valid(const qa_unified_channel *c, qa_error *e)
         const assembly *a = c->assemblies[i];
         if (!assembly_valid(c, a, true, e) || a->sequence <= c->reliable_received ||
             (uint64_t)a->sequence > (uint64_t)c->reliable_received + channel_window(c) ||
-            (a->sequence == (uint64_t)c->reliable_received + 1 && a->received_count == a->fragments) ||
             a->payload.size > c->limits.queued_reliable_bytes - received)
             return fail(e, "Unified reliable assembly changes its actual source window");
         for (size_t j = 0; j < i; ++j) if (c->assemblies[j] && c->assemblies[j]->sequence == a->sequence)
@@ -108,7 +107,7 @@ bool qa_unified_channel_valid(const qa_unified_channel *c, qa_error *e)
         return fail(e, "Invalid unified in-flight frame assembly");
     if (c->waiting_frame && (!assembly_valid(c, c->waiting_frame, false, e) ||
         c->waiting_frame->sequence > c->newest_frame || c->waiting_frame->sequence <= c->frame_received ||
-        c->waiting_frame->received_count != c->waiting_frame->fragments || c->waiting_frame->required <= c->reliable_received ||
+        c->waiting_frame->received_count != c->waiting_frame->fragments ||
         (c->frame_assembly && c->frame_assembly->sequence == c->waiting_frame->sequence)))
         return fail(e, "Invalid unified reliable-dependent waiting frame");
     if (c->closed && (c->reliable || c->tail || c->frame || c->pending_frame || received || c->frame_assembly ||

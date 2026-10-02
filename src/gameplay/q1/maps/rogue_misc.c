@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_wire.h"
 
 static q1_actor *misc_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
@@ -39,14 +40,19 @@ bool q1_map_rogue_misc_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e = misc_actor(g, id);
         return !e || q1_link(g, e, error);
     }
-    case Q1_MAP_ROGUE_LAMP:
+    case Q1_MAP_ROGUE_LAMP: {
+        const char *model = q1_classnamed(g, id, "light_lantern") ? "progs/lantern.mdl"
+                                                                : "progs/candle.mdl";
+        if (!qa_q1_wire_declare_model(g, model, error)) return false;
+        e = misc_actor(g, id);
+        if (!e) return true;
+        if (!q1_model(g, e, model, error)) return false;
+        e = misc_actor(g, id);
+        if (!e) return true;
         e->physics.solid = QA_PHYSICS_NOT_SOLID;
         e->physics.motion = QA_PHYSICS_STATIONARY;
-        if (!q1_model(g, e, q1_classnamed(g, id, "light_lantern") ? "progs/lantern.mdl"
-                                                                : "progs/candle.mdl", error))
-            return false;
-        e = misc_actor(g, id);
-        return !e || q1_map_make_static(g, e, error);
+        return q1_map_make_static(g, e, error);
+    }
     default:
         return q1_map_fail(error, "invalid Rogue miscellaneous spawn");
     }

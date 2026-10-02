@@ -37,6 +37,20 @@ typedef struct command_chunk {
     bool success;
     struct command_chunk *next;
 } command_chunk;
+struct qa_console_release {
+    qa_console *console;
+    struct qa_console_release *next;
+    qa_command_context context;
+    command_chunk *prepared;
+    command_chunk *head, *tail, *deferred, *deferred_tail;
+    size_t queued_bytes, deferred_bytes;
+    int32_t wait;
+    qa_command_context wait_context;
+    size_t alias_count;
+    bool drain_yielded, started, entered, complete;
+    bool imported, claimed;
+    qa_error fault;
+};
 typedef struct retired_id {
     uint64_t value;
     struct retired_id *next;
@@ -82,6 +96,7 @@ struct qa_console {
     bool drain_yielded;
     size_t release_leases;
     qa_console_release *release_owner;
+    qa_console_release *release_first;
     bool release_advancing;
     const qa_command_context *release_dispatch_context;
     struct qac_cvar_scope *cvar_scope;

@@ -97,7 +97,10 @@ static bool q3_model_shadow(qa_scene_model *model, const qa_scene_model_input *i
                                       input->light_direction, qa_scene_white(model->resources), error)) return false;
     } else {
         if (!(input->flags & 256u)) return true;
-        if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
+        if (context->source_scratch && qa_material_library_has_source_profile(materials)) {
+            shadow = qa_material_find(materials, "projectionShadow");
+            if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source projection shadow lacks its real Init registration"); return false; }
+        } else if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
                                          QA_MATERIAL_DYNAMIC, &shadow, error)) return false;
         context->projection_shadow = true;
         if (!qa_material_submit(shadow, mesh, context, frame, error)) return false;
@@ -260,11 +263,14 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
             context.source_model_release = scene_model_source_pose_release;
             context.source_model_context = pose;
             context.source_model_assets = input->source_model_owner;
+            context.source_cell_geometry = input->source_entity_cell;
             context.source_model_frame = (int32_t)pose->input.frame;
             context.source_model_old_frame = (int32_t)pose->input.old_frame;
             context.source_model_back_lerp = pose->input.back_lerp;
         }
-        context.source_white = qa_scene_white(model->resources);
+        context.source_white = context.source_scratch && world && world->source_white ? world->source_white :
+            qa_material_library_has_source_profile(model->materials) ? qa_scene_source_q3_white(model->resources) :
+            qa_scene_white(model->resources);
         if (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4)
             context.source_writer = source_md4 ? QA_SOURCE_WRITE_MODEL_MD4 : QA_SOURCE_WRITE_MODEL;
         if (input->shadow_only) {

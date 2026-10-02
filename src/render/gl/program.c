@@ -48,6 +48,7 @@ static const char *const stage_fragment[] = {
     "uniform int primaryEnabled;\n"
     "uniform sampler2D secondaryTexture;\n"
     "uniform int secondaryMode;\n"
+    "uniform int secondaryAlpha;\n"
     "uniform int alphaMode;\n"
     "uniform int u_preblend_gamma;\n"
     "uniform sampler2D u_preblend_table;\n"
@@ -173,7 +174,7 @@ static const char *const stage_fragment[] = {
     "  if(secondaryMode!=0) { vec4 second=texture2D(secondaryTexture,coordinates1);\n"
     "    if(secondaryMode==1) color*=second;\n"
     "    else if(secondaryMode==2) color=vec4(color.rgb+second.rgb,color.a*second.a);\n"
-    "    else color=second; color=clamp(color,0.0,1.0); }\n"
+    "    else color=vec4(second.rgb,secondaryAlpha!=0?second.a:color.a); color=clamp(color,0.0,1.0); }\n"
     "  float fogAmount=u_fog_mode==2?u_fog_amount:0.0;\n"
     "  if(u_fog_mode!=0&&u_fog_mode!=2) { float d=u_fog_amount/(64.0*gl_FragCoord.w); fogAmount=1.0-exp(-(d*d)); }\n"
     "  if(u_fog_mode!=0) color.rgb=clamp(color.rgb,0.0,1.0);\n"
@@ -339,6 +340,7 @@ static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
     STAGE_UNIFORM(primary_enabled, "primaryEnabled");
     STAGE_UNIFORM(secondary, "secondaryTexture");
     STAGE_UNIFORM(secondary_mode, "secondaryMode");
+    STAGE_UNIFORM(secondary_alpha, "secondaryAlpha");
     STAGE_UNIFORM(alpha_mode, "alphaMode");
     STAGE_UNIFORM(preblend_gamma, "u_preblend_gamma");
     STAGE_UNIFORM(preblend_table, "u_preblend_table");
@@ -517,11 +519,12 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
                   renderer->view.clip_plane.normal.z,
                   -renderer->view.clip_plane.distance);
     gl->Uniform1i(u->secondary_mode,
-                  draw->texture_count < 2 ? 0 :
+                  draw->texture_count < 2 || !draw->textures[1] ? 0 :
                   draw->environment == QA_TEXTURE_MODULATE ? 1 :
                   draw->environment == QA_TEXTURE_ADD ? 2 : 3);
-    bool source=draw->source_arrays || draw->source_retain_depth_range || draw->source_direct!=QA_SOURCE_DIRECT_NONE;
-    gl->Uniform1i(u->primary_enabled,source?renderer->controls.attributes.texture_enabled[0]:draw->texture_count>0);
+    gl->Uniform1i(u->primary_enabled,draw->texture_count>0 && draw->textures[0]!=NULL);
+    gl->Uniform1i(u->secondary_alpha,draw->texture_count>1 && draw->textures[1] &&
+        qa_render_source_texture_alpha(draw->textures[1]));
     gl->Uniform1i(u->alpha_mode, (GLint)draw->state.alpha_test);
     int mode = fog_mode(&draw->fog);
     gl->Uniform1i(u->fog_mode, mode);

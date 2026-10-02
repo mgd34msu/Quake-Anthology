@@ -1,4 +1,6 @@
 #include "q3_inventory.h"
+#include "renderer_registries.h"
+#include "component_scene.h"
 #include "capture.h"
 #include "content_refs.h"
 #include "material_inventory.h"
@@ -13,6 +15,7 @@
 #include "remote_q3_client.h"
 #include "remote_q3_initial.h"
 #include "network_initial_graph.h"
+#include "unified_media_inventory.h"
 #include "qa/media_library_save.h"
 #include "qa/media_resource.h"
 #include "qa/q3_assets_save.h"
@@ -22,9 +25,9 @@
 #include "qa/vfs_view_save.h"
 
 typedef enum q3_owner_kind { Q3_OWNER_SOURCE, Q3_OWNER_NATIVE, Q3_OWNER_SELECTED, Q3_OWNER_CHARACTER, Q3_OWNER_EFFECTS,
-    Q3_OWNER_GEAR, Q3_OWNER_REMOTE, Q3_OWNER_INITIAL } q3_owner_kind;
+    Q3_OWNER_GEAR, Q3_OWNER_REMOTE, Q3_OWNER_INITIAL,Q3_OWNER_COMPONENT,Q3_OWNER_REGISTRY } q3_owner_kind;
 static bool parent_registry(q3_owner_kind kind)
-{ return kind==Q3_OWNER_REMOTE || kind==Q3_OWNER_INITIAL; }
+{ return kind==Q3_OWNER_REMOTE || kind==Q3_OWNER_INITIAL || kind==Q3_OWNER_COMPONENT; }
 static bool assets_only(q3_owner_kind kind)
 { return kind==Q3_OWNER_SELECTED || kind==Q3_OWNER_CHARACTER || kind==Q3_OWNER_GEAR; }
 static bool private_owner(q3_owner_kind kind)
@@ -40,6 +43,8 @@ static frontend_scene_owner_kind scene_owner(q3_owner_kind kind)
     case Q3_OWNER_GEAR: return FRONTEND_SCENE_OWNER_GEAR;
     case Q3_OWNER_REMOTE: return FRONTEND_SCENE_OWNER_REMOTE;
     case Q3_OWNER_INITIAL: return FRONTEND_SCENE_OWNER_INITIAL;
+    case Q3_OWNER_COMPONENT: return FRONTEND_SCENE_OWNER_COMPONENT;
+    case Q3_OWNER_REGISTRY: return FRONTEND_SCENE_OWNER_REGISTRY;
     }
     return FRONTEND_SCENE_OWNER_FRONTEND;
 }
@@ -109,12 +114,36 @@ bool frontend_q3_assets_encode(void *context,const qa_q3_presentation_assets *as
         if(group>=inventory->group_count) return false;
         if(inventory->groups[group].source.assets==assets) { *out=i+1; return true; }
     }
+    size_t media_count=0;
+    if(!frontend_unified_media_inventory_count(inventory->frontend,&media_count,error)) return false;
+    for(size_t i=0;i<media_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(inventory->frontend,i,&media,error)) return false;
+        for(size_t n=0;media && n<frontend_unified_media_bank_count(media);++n) {
+            frontend_unified_bank_view bank; uint64_t key=0;
+            if(!frontend_unified_media_bank_read(media,n,&bank)) return false;
+            if(bank.q3_assets==assets) {
+                if(!frontend_unified_media_bank_key(i,n,&key) || (key>>63))
+                    return frontend_fail(error,QA_ERROR_FORMAT,"Unified registry ordinal overflows its actual media namespace");
+                *out=key|UINT64_C(0x8000000000000000); return true;
+            }
+        }
+    }
     return frontend_fail(error,QA_ERROR_FORMAT,"Raw Source cell registry is outside the genuine Q3 owner roster");
 }
 bool frontend_q3_assets_decode(void *context,uint64_t id,qa_q3_presentation_assets **out,qa_error *error)
 {
     frontend_q3_inventory *inventory=context;
-    if(!inventory || !out || id>inventory->registry_count) return false;
+    if(!inventory || !out) return false;
+    if(id>>63) {
+        size_t media_index=0,bank_index=0; frontend_unified_media *media=NULL; frontend_unified_bank_view bank;
+        if(!frontend_unified_media_bank_key_read(id&UINT64_C(0x7fffffffffffffff),&media_index,&bank_index) ||
+            !frontend_unified_media_inventory_at(inventory->frontend,media_index,&media,error) || !media ||
+            !frontend_unified_media_bank_read(media,bank_index,&bank) || !bank.q3_assets)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved Unified raw cell registry has no genuine media-bank owner");
+        *out=bank.q3_assets; return true;
+    }
+    if(id>inventory->registry_count) return false;
     if(!id) { *out=NULL; return true; }
     size_t group=inventory->registries[id-1].group;
     if(group>=inventory->group_count || !inventory->groups[group].source.assets)
@@ -127,7 +156,7 @@ static bool phase(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,qa_
     if (!f || !f->application || !refs || !refs->content || !refs->scene || !refs->models ||
         !refs->worlds || refs->content!=qa_application_content_graph_read(f->application) ||
         f->stepping || f->preparing || f->round || f->source_restoring!=restoring ||
-        (restoring?f->capture!=NULL:f->capture==NULL) || !frontend_seat_callbacks_idle(f) ||
+        (restoring?f->capture!=NULL:f->capture==NULL) || !(restoring?frontend_seat_callbacks_returned(f):frontend_seat_callbacks_checkpoint_ready(f,error)) ||
         !frontend_native_q2_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 inventory requires its actual capture or isolated candidate owners");
     return !restoring || frontend_source_complete_groups(f,error);
@@ -159,6 +188,12 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
     if(remote>SIZE_MAX-count || !frontend_network_initial_graph_read(f,&initial,error)) return false;
     count+=remote;
     if(initial.present) { if(count==SIZE_MAX) return false; ++count; }
+    size_t component_base=count,components=frontend_component_scene_count(f);
+    if(components>SIZE_MAX-count) return false;
+    count+=components;
+    size_t ordinary_count=count,retained=frontend_renderer_registries_count(f);
+    if(retained>SIZE_MAX-count) return false;
+    count+=retained;
     if (count>SIZE_MAX/sizeof(q3_group) || count>SIZE_MAX/sizeof(q3_registry) ||
         count>SIZE_MAX/sizeof(q3_media) || count>SIZE_MAX/sizeof(q3_presentation) || (count && !refs->audio && !roster_only))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 source inventory exceeds its actual holder namespace");
@@ -173,18 +208,18 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
     }
     bool ok=!count || (inventory->groups && inventory->registries && inventory->media && inventory->presentations);
     if (!ok) frontend_fail(error,QA_ERROR_MEMORY,"Collecting physical Q3 source rows");
-    for (size_t i=0;ok && i<count;++i) {
+    for (size_t i=0;ok && i<ordinary_count;++i) {
         q3_group *group=inventory->groups+i; qa_scene_world *world=NULL; qa_collision_geometry *collision=NULL;
         group->kind=i<sources?Q3_OWNER_SOURCE:i<sources+native?Q3_OWNER_NATIVE:
             i<sources+native+selected?Q3_OWNER_SELECTED:
             i<sources+native+selected+character?Q3_OWNER_CHARACTER:
             i<sources+native+selected+character+effects?Q3_OWNER_EFFECTS:i<base?Q3_OWNER_GEAR:
-            i<base+remote?Q3_OWNER_REMOTE:Q3_OWNER_INITIAL;
+            i<base+remote?Q3_OWNER_REMOTE:i<component_base?Q3_OWNER_INITIAL:Q3_OWNER_COMPONENT;
         group->ordinal=i<sources?i:i<sources+native?i-sources:
             i<sources+native+selected?i-sources-native:
             i<sources+native+selected+character?i-sources-native-selected:
             i<sources+native+selected+character+effects?i-sources-native-selected-character:
-            i<base?i-sources-native-selected-character-effects:i<base+remote?i-base:0;
+            i<base?i-sources-native-selected-character-effects:i<base+remote?i-base:i<component_base?0:i-component_base;
         if (group->kind==Q3_OWNER_SOURCE) {
             frontend_source_group_view source;
             ok=frontend_source_group_read(f,group->ordinal,&source);
@@ -233,6 +268,14 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
                 .source_files=source.domain.content,.mounts=source.mounts,.images=source.images,
                 .assets=source.assets,.movies=source.movies,.selected_materials=source.materials,
                 .sounds=source.sounds,.parent_world=source.world,.parent_geometry=source.geometry};
+        } else if(group->kind==Q3_OWNER_COMPONENT) {
+            frontend_component_scene_view source;
+            ok=frontend_component_scene_metadata_read(f,group->ordinal,&source,error);
+            if(ok) group->source=(q3_component_owner){.owner=source.receiver,.seat=source.physical_seat,
+                .identity=source.identity,.source_files=source.descriptor?source.descriptor->content:
+                    source.recipe_provider?source.recipe_provider->content:NULL,
+                .mounts=source.files,.images=source.images,.assets=source.assets,
+                .movies=source.media,.selected_materials=source.materials,.sounds=source.sounds};
         } else {
             frontend_remote_q3_initial_view source;
             ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&source,error);
@@ -290,10 +333,58 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
         group->assets=a; group->presentation=group->source.presentation?p:SIZE_MAX;
         group->media=group->source.movies?m:SIZE_MAX;
     }
+    inventory->group_count=ordinary_count;
+    for(size_t i=0;ok && i<retained;++i) {
+        qa_q3_presentation_assets *assets=NULL;
+        ok=frontend_renderer_registries_at(f,i,&assets,error) && assets;
+        bool alias=false;
+        for(size_t j=0;ok && j<inventory->registry_count;++j)
+            if(inventory->groups[inventory->registries[j].group].source.assets==assets) alias=true;
+        size_t media_count=0;
+        ok=ok && frontend_unified_media_inventory_count(f,&media_count,error);
+        for(size_t m=0;ok && !alias && m<media_count;++m) {
+            frontend_unified_media *media=NULL;
+            ok=frontend_unified_media_inventory_at(f,m,&media,error);
+            for(size_t n=0;ok && media && n<frontend_unified_media_bank_count(media);++n) {
+                frontend_unified_bank_view bank;
+                ok=frontend_unified_media_bank_read(media,n,&bank);
+                if(ok && bank.q3_assets==assets) alias=true;
+            }
+        }
+        if(!ok || alias) continue;
+        size_t g=inventory->group_count++,a=inventory->registry_count++;
+        q3_group *group=inventory->groups+g;
+        group->kind=Q3_OWNER_REGISTRY; group->ordinal=i;
+        group->source.assets=assets; group->assets=a; group->presentation=group->media=SIZE_MAX;
+        ok=qa_q3_assets_services(assets,&group->services,&group->source.parent_world,
+            &group->source.parent_geometry,error);
+        if(ok) {
+            group->source.mounts=group->source.source_files=group->services.provider.mounts;
+            group->source.images=group->services.provider.images;
+            group->source.selected_materials=group->services.provider.materials;
+            group->mounts=group->source_view=qa_application_content_view_id(refs->content,group->source.mounts);
+            inventory->registries[a].group=g;
+            ok=group->mounts!=0 && (!restoring || qa_q3_assets_idle(assets));
+        }
+    }
     if (ok && !restoring) {
-        for (size_t i=0;ok && i<inventory->registry_count;++i)
-            ok=frontend_capture_assets_at(f->capture,i)==inventory->groups[inventory->registries[i].group].source.assets;
-        ok=ok && frontend_capture_assets_at(f->capture,inventory->registry_count)==NULL;
+        size_t actual=0,expected=inventory->registry_count,media_count=0;
+        ok=frontend_unified_media_inventory_count(f,&media_count,error);
+        for(size_t i=0;ok && i<media_count;++i) {
+            frontend_unified_media *media=NULL;
+            ok=frontend_unified_media_inventory_at(f,i,&media,error);
+            for(size_t n=0;ok && media && n<frontend_unified_media_bank_count(media);++n) {
+                frontend_unified_bank_view bank;
+                ok=frontend_unified_media_bank_read(media,n,&bank);
+                if(ok && bank.q3_assets) { if(expected==SIZE_MAX) ok=false; else ++expected; }
+            }
+        }
+        while(ok && frontend_capture_assets_at(f->capture,actual)) {
+            uint64_t key=0;
+            ok=frontend_q3_assets_encode(inventory,frontend_capture_assets_at(f->capture,actual),&key,error);
+            ++actual;
+        }
+        ok=ok && actual==expected;
     }
     if (!ok) {
         frontend_q3_inventory_destroy(inventory);
@@ -328,9 +419,9 @@ static bool equal_count(qa_source_save_io *io,size_t expected)
 }
 static bool header(qa_source_save_io *io,const frontend_q3_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=9;
+    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=10;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
-        qa_source_save_u32(io,&version) && version==9 && equal_count(io,inventory->group_count) &&
+        qa_source_save_u32(io,&version) && version==10 && equal_count(io,inventory->group_count) &&
         equal_count(io,inventory->registry_count) && equal_count(io,inventory->presentation_count) &&
         equal_count(io,inventory->media_count);
 }
@@ -356,6 +447,10 @@ static bool metadata(qa_source_save_io *io,frontend_q3_inventory *inventory,size
     qa_actor_owner owner=group->source.owner; uint32_t seat=group->source.seat,launch_seat=group->source.launch_seat;
     uint64_t identity=group->source.identity,mounts=group->mounts,source=group->source_view;
     size_t assets=group->assets,presentation=group->presentation,media=group->media;
+    if(group->kind==Q3_OWNER_REGISTRY) return qa_source_save_u32(io,&kind) && kind==(uint32_t)group->kind &&
+        qa_source_save_count(io,&row,SIZE_MAX) && row==group->ordinal &&
+        qa_source_save_u64(io,&mounts) && mounts==group->mounts &&
+        qa_source_save_count(io,&assets,SIZE_MAX) && assets==group->assets;
     bool ok=qa_source_save_u32(io,&kind) && kind==(uint32_t)group->kind &&
         qa_source_save_count(io,&row,SIZE_MAX) && row==group->ordinal &&
         (parent_registry(group->kind)?qa_source_save_string(io,&owner):
@@ -514,6 +609,25 @@ static qa_q3_movie_checkpoint_refs movie_refs(q3_scope *scope)
     return (qa_q3_movie_checkpoint_refs){.context=scope,.asset_encode=media_asset_encode,.asset_decode=media_asset_decode,
         .playback={scope,movie_target_encode,movie_target_decode},.publication={scope,image_encode,image_decode}};
 }
+bool frontend_q3_component_movie_refs(frontend_q3_inventory *inventory,uint64_t identity,
+    qa_q3_movie_checkpoint_refs *out,qa_error *error)
+{
+    if(!inventory || !identity || !out) return false;
+    for(size_t i=0;i<inventory->group_count;++i) {
+        q3_group *group=inventory->groups+i;
+        if(group->kind!=Q3_OWNER_COMPONENT || group->source.identity!=identity) continue;
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(inventory->frontend,group->ordinal,&row,error) ||
+            row.identity!=identity || row.assets!=group->source.assets || row.media!=group->source.movies ||
+            row.files!=group->source.mounts || row.images!=group->source.images) return false;
+        q3_scope *scope=calloc(1,sizeof(*scope));
+        if(!scope) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine component movie dictionary scope");
+        scope->inventory=inventory; scope->group=i; scope->target=identity;
+        scope->next=inventory->movie_scopes; inventory->movie_scopes=scope;
+        *out=movie_refs(scope); return true;
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Component movie cache is outside its genuine Q3 roster");
+}
 static bool module_system_source(void *context,const frontend_system_cinematic_identity *identity,
     frontend_system_cinematic_source *out,qa_error *error)
 {
@@ -543,11 +657,11 @@ static bool module_system_decode(void *context,qa_bytes bytes,uint32_t flags,
 }
 static void module_system_discard(void *context,qa_q3_system_movie *movie)
 { (void)context; frontend_system_cinematic_discard(movie); }
-bool frontend_q3_module_movie_refs(frontend_q3_inventory *inventory,
-    const frontend_remote_q3_module_topology *role,qa_q3_movie_checkpoint_refs *out,qa_error *error)
+static bool module_movie_refs(frontend_q3_inventory *inventory,
+    const frontend_remote_q3_module_topology *role,bool cinematic,qa_q3_movie_checkpoint_refs *out,qa_error *error)
 {
     if(!inventory || !role || !out || !role->service_owner || !role->assets || !role->movies ||
-        !frontend_remote_q3_modules_role_current(role))
+        !(cinematic?frontend_remote_q3_modules_cinematics_role_current(role):frontend_remote_q3_modules_role_current(role)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Module movie refs require the actual returned role and shared cache roster");
     frontend_remote_q3 *decoded=frontend_remote_q3_modules_parent(role->owner);
     frontend_remote_q3_initial *initial=frontend_remote_q3_modules_initial_parent(role->owner);
@@ -569,11 +683,21 @@ bool frontend_q3_module_movie_refs(frontend_q3_inventory *inventory,
     }
     return frontend_fail(error,QA_ERROR_FORMAT,"Module movie refs leave their genuine parent cache and physical receiver");
 }
+bool frontend_q3_module_movie_refs(frontend_q3_inventory *inventory,
+    const frontend_remote_q3_module_topology *role,qa_q3_movie_checkpoint_refs *out,qa_error *error)
+{ return module_movie_refs(inventory,role,false,out,error); }
+bool frontend_q3_module_cinematic_refs(frontend_q3_inventory *inventory,
+    const frontend_remote_q3_module_topology *role,qa_q3_movie_checkpoint_refs *out,qa_error *error)
+{ return module_movie_refs(inventory,role,true,out,error); }
 static bool map_binding(const q3_scope *scope,const qa_scene_world **world,
     qa_collision_geometry **geometry,const qa_resource **map,qa_error *error)
 {
     frontend_q3_inventory *inventory=scope->inventory; qa_frontend *f=inventory->frontend;
     q3_group *group=inventory->groups+scope->group;
+    if(group->kind==Q3_OWNER_REGISTRY) {
+        *world=group->source.parent_world; *geometry=group->source.parent_geometry;
+        *map=*geometry?qa_collision_resource(*geometry):NULL; return true;
+    }
     if(group->kind==Q3_OWNER_INITIAL) { *world=NULL; *geometry=NULL; *map=NULL; return true; }
     if(group->kind==Q3_OWNER_REMOTE) {
         frontend_remote_q3_resources source;
@@ -676,6 +800,45 @@ static bool attach_binding(frontend_q3_inventory *inventory,const q3_presentatio
     }
     return qa_q3_presentation_prepare_restored(group->source.presentation,(qa_scene_frame *)frame,world,collision,entities,error);
 }
+bool frontend_q3_registry_alias(frontend_q3_inventory *inventory,const qa_q3_presentation_assets *assets,
+    uint64_t *key,bool *present,qa_error *error)
+{
+    if(!inventory || !assets || !key || !present) return false;
+    for(size_t i=0;i<inventory->registry_count;++i) {
+        q3_group *group=inventory->groups+inventory->registries[i].group;
+        if(group->kind!=Q3_OWNER_REGISTRY && group->source.assets==assets) { *key=i+1; *present=true; return true; }
+    }
+    uint64_t encoded=0;
+    qa_error absent={0};
+    if(frontend_q3_assets_encode(inventory,assets,&encoded,&absent) && (encoded>>63)) {
+        *key=encoded; *present=true; return true;
+    }
+    (void)error; *key=0; *present=false; return true;
+}
+bool frontend_q3_registry_services_key(frontend_q3_inventory *inventory,
+    const qa_q3_presentation_asset_options *services,uint64_t *key,qa_error *error)
+{
+    if(!inventory || !services || !key) return false;
+    if(!services->sounds && !services->movies && !services->context && !services->select &&
+        !services->model_initialize && !services->print) { *key=0; return true; }
+    for(size_t i=0;i<inventory->group_count;++i) {
+        q3_group *group=inventory->groups+i;
+        const qa_q3_presentation_asset_options *actual=&group->services;
+        if(group->kind!=Q3_OWNER_REGISTRY && actual->sounds==services->sounds && actual->movies==services->movies &&
+            actual->context==services->context && actual->select==services->select &&
+            actual->model_initialize==services->model_initialize && actual->print==services->print) { *key=i+1; return true; }
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Retained registry borrowed services have no actual returned parent");
+}
+bool frontend_q3_registry_services_read(frontend_q3_inventory *inventory,uint64_t key,
+    qa_q3_presentation_asset_options *out,qa_error *error)
+{
+    if(!inventory || !out || key>inventory->group_count ||
+        (key && inventory->groups[key-1].kind==Q3_OWNER_REGISTRY))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Retained registry service key has no genuine current owner");
+    *out=key?inventory->groups[key-1].services:(qa_q3_presentation_asset_options){0};
+    out->zero_sound=NULL; return true;
+}
 static bool services_encode(void *context,const qa_q3_presentation_asset_options *services,uint64_t *key,qa_error *error)
 {
     q3_scope *scope=context; q3_group *group=scope->inventory->groups+scope->group;
@@ -683,7 +846,8 @@ static bool services_encode(void *context,const qa_q3_presentation_asset_options
         services->provider.images!=group->services.provider.images || services->provider.materials!=group->services.provider.materials ||
         services->provider.family!=group->services.provider.family || services->sounds!=group->services.sounds ||
         services->movies!=group->services.movies || services->zero_sound!=group->services.zero_sound ||
-        services->context!=group->services.context || services->select!=group->services.select || services->print!=group->services.print)
+        services->context!=group->services.context || services->select!=group->services.select || services->print!=group->services.print ||
+        services->model_initialize!=group->services.model_initialize)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q3 asset services differ from their genuine preobserved source owner");
     *key=scope->group+1; return true;
 }

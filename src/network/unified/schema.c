@@ -443,6 +443,9 @@ static bool control(reader r) {
     if (is(kind,"events")) return natural(field(r,"frame")) && fields(r,"payload simulation",bytes);
     if (is(kind,"components")) return component_header(field(r,"update")) && integer(field(field(r,"update"),"revision"),1,(double)QA_UNIFIED_SAFE_INTEGER);
     if (is(kind,"component-command")) return owner(field(r,"owner")) && natural(field(r,"generation")) && list(field(r,"args"),1,128,protocol_string);
+    if (is(kind,"source-command")) return protocol_string(field(r,"instance")) && record(field(r,"activation")) &&
+        integer(field(field(r,"activation"),"publication"),1,(double)QA_UNIFIED_SAFE_INTEGER) &&
+        natural(field(field(r,"activation"),"mapRevision")) && list(field(r,"args"),1,128,protocol_string);
     if (is(kind,"command")) return command_name(field(r,"name")) && list(field(r,"args"),0,128,protocol_string);
     return literal(kind,"userinfo") && protocol_string(field(r,"value"));
 }

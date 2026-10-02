@@ -13,12 +13,18 @@ bool cinematic_fail(qa_error *error, const char *text) {
 }
 static bool wall_time(qa_cinematic *movie, double *out, qa_error *error) {
     double now = movie->options.clock.sample(movie->options.clock.context);
+    if ((!isfinite(now) || now < 0) && movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid original cinematic Source clock");
+        return false;
+    }
     if (!isfinite(now) || now < 0)
         return cinematic_fail(error, "Invalid cinematic wall clock");
     *out = now;
     return true;
 }
 bool cinematic_elapsed(qa_cinematic *movie, double *out, qa_error *error) {
+    if (movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch)
+        return wall_time(movie,out,error);
     double now = movie->paused_at;
     if (!movie->paused && !wall_time(movie, &now, error))
         return false;
@@ -197,6 +203,9 @@ static void still_digest(const qa_scene_image *image, qa_sha256_digest *out) {
     qa_sha256_final(&hash, out);
 }
 static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, bool qualified, qa_error *error) {
+    if (qualified && movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch &&
+        saved->elapsed_ms!=movie->start_ms)
+        return cinematic_fail(error,"Source cinematic checkpoint differs from its retained absolute clock receipt");
     if (!saved->source || saved->format != movie->format ||
         !same_target(saved->target, movie->options.target) || saved->loop != movie->options.loop ||
         saved->audio_audience.kind != movie->options.audio_audience.kind ||
@@ -326,6 +335,7 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
                                        .hold = options->hold,
                                        .silent = options->silent,
                                        .shader = options->target.kind == QA_CINEMATIC_MATERIAL,
+                                       .scratch = options->roq_scratch,
                                        .context = movie,
                                        .audio = queue_audio,
                                        .before_audio_reset = before_audio_reset,
@@ -424,6 +434,33 @@ void qa_cinematic_destroy(qa_cinematic *movie) {
     }
     free_movie(movie);
 }
+bool qa_cinematic_roq_restart(qa_cinematic *movie, qa_error *error)
+{
+    if (!movie || movie->busy || movie->restore_pending || movie->format!=QA_CINEMATIC_ROQ ||
+        !movie->options.roq_scratch)
+        return cinematic_fail(error,"Original RoQ restart requires its returned shared decoder owner");
+    movie->busy=true;
+    bool ok=pause_clock(movie,false,error) &&
+        qa_roq_playback_restart(movie->movie.roq,(qa_media_clock){movie,sample},false,error);
+    if (ok) {
+        movie->status=movie->decoder_status=QA_MEDIA_PLAYING;
+        movie->completed=false; movie->faulted=false;
+        picture(movie);
+    }
+    movie->busy=false; return ok;
+}
+bool qa_cinematic_roq_scratch_rebind_ready(const qa_cinematic *movie,
+    const qa_roq_scratch *scratch, qa_error *error)
+{
+    if (!movie || movie->busy || movie->format != QA_CINEMATIC_ROQ || !movie->options.roq_scratch)
+        return cinematic_fail(error,"RoQ scratch adoption requires its returned explicit cinematic owner");
+    return qa_roq_playback_scratch_rebind_ready(movie->movie.roq,scratch,error);
+}
+void qa_cinematic_roq_scratch_rebind(qa_cinematic *movie, qa_roq_scratch *scratch)
+{
+    qa_roq_playback_scratch_rebind(movie->movie.roq,scratch);
+    movie->options.roq_scratch=scratch;
+}
 bool qa_cinematic_tick(qa_cinematic *movie, qa_media_tick *out, qa_error *error) {
     if (!movie || !out || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cinematic is unavailable");
@@ -511,6 +548,10 @@ const qa_media_frame *qa_cinematic_frame(const qa_cinematic *movie) {
 }
 uint64_t qa_cinematic_revision(const qa_cinematic *movie) {
     return movie && !movie->restore_pending ? movie->revision : 0;
+}
+bool qa_cinematic_checkpoint_revision_read(const qa_cinematic *movie, uint64_t *out) {
+    if (!movie || !out || movie->busy) return false;
+    *out=movie->revision; return true;
 }
 bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uint64_t *loop,
                        qa_error *error) {

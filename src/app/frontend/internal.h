@@ -152,6 +152,7 @@ struct qa_frontend {
     qa_save_image *save_image_pending;
     struct frontend_renderer_materials *renderer_materials;
     struct frontend_renderer_worlds *renderer_worlds;
+    struct frontend_renderer_registries *renderer_registries;
     frontend_event_state *events;
     frontend_particle_state *particles;
     qa_application_q3_round_cut *round;
@@ -166,6 +167,7 @@ struct qa_frontend {
     struct frontend_q1_sky *q1_sky;
     struct frontend_qc_messages *qc_messages;
     struct frontend_q3_color *source_color;
+    struct qa_q3_cinematic_handles *source_cinematics;
     frontend_view_settings *view_restore_pending;
     struct frontend_global_settings_storage *global_settings_storage;
     frontend_ui_features *ui_features;
@@ -220,6 +222,7 @@ struct qa_frontend {
     qa_audio_bank *sounds;
     frontend_seat *seats;
     uint64_t time_ns, wall_time_ns, frame_number, configuration, map_revision;
+    uint64_t recipient_begin_generation;
     uint64_t silent_audio_remainder;
     char *map_name;
     unsigned sdl_subsystems;
@@ -318,7 +321,8 @@ bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
-bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, qa_error *);
+bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *);
+bool frontend_network_client_only(const qa_frontend *);
 bool frontend_network_command(qa_frontend *, uint32_t, qa_actor_id, const qa_movement_command *, qa_error *);
 bool frontend_network_client_command_seat(qa_frontend *,uint32_t,const char *,qa_error *);
 bool frontend_network_publish(qa_frontend *, qa_error *);

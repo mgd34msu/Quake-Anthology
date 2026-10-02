@@ -136,9 +136,27 @@ bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *own
         role->music_looping = lease->music_looping; role->has_listener = lease->has_listener; role->listener = lease->listener;
         if (role->has_listener && role->listener.actor != QA_AUDIO_NO_ACTOR &&
             !frontend_audio_id_read(owner->frontend, role->listener.actor, NULL, NULL)) { ok = false; break; }
+        uint32_t media_schema = 3;
+        if (owner->restoring) {
+            const remote_module_saved *previous = NULL;
+            for (size_t j = 0; j < owner->saved_count; ++j)
+                if (owner->saved[j].role == (uint32_t)lease->role &&
+                    owner->saved[j].service_owner == lease->service_owner) { previous = owner->saved + j; break; }
+            bool shared = false;
+            if (!previous || !previous->media_restored) {
+                ok = frontend_fail(error, QA_ERROR_FORMAT, "Restored role witness lacks its completed original media binding");
+                break;
+            }
+            if (!qa_q3_presentation_media_binding_version_read(
+                (qa_bytes){previous->media.data, previous->media.size}, &media_schema, &shared, error)) { ok = false; break; }
+            if (shared != (lease->cinematics != NULL)) {
+                ok = frontend_fail(error, QA_ERROR_FORMAT, "Restored role witness changed its original media binding");
+                break;
+            }
+        }
         ok = copy_text(lease->music_intro, &role->music_intro, error) && copy_text(lease->music_loop, &role->music_loop, error) &&
             qa_q3_presentation_scene_checkpoint(lease->presentation, &role->scene, error) &&
-            qa_q3_presentation_media_checkpoint(lease->presentation, &movies, &role->media, error) &&
+            qa_q3_presentation_media_checkpoint_schema(lease->presentation, &movies, media_schema, &role->media, error) &&
             (!lease->equipment || frontend_equipment_source_checkpoint(lease->equipment, &role->equipment, error));
         if (ok && role->music_attached)
             ok = qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) == lease->music &&
@@ -184,10 +202,31 @@ bool frontend_remote_q3_modules_restore_continuation(frontend_remote_q3_modules 
 {
     if (!owner || !owner->restoring || !refs || !refs->movies ||
         !frontend_remote_q3_modules_capture_returned(owner, error)) return false;
+    if (!frontend_remote_modules_restore_renderer_parameters(owner, error)) return false;
     for (size_t i = 0; i < owner->saved_count; ++i) {
         remote_module_saved *saved = &owner->saved[i]; remote_module_lease *lease = owner->leases;
         while (lease && (lease->role != (qa_qvm_role)saved->role || lease->service_owner != saved->service_owner)) lease = lease->next;
         if (!lease || !saved->prepared) return false;
+        if (!saved->music_restored) {
+            if (saved->has_listener && saved->listener.actor != QA_AUDIO_NO_ACTOR &&
+                !frontend_audio_id_read(owner->frontend, saved->listener.actor, NULL, NULL))
+                return frontend_fail(error, QA_ERROR_FORMAT, "Saved module listener has no actual restored audio actor identity");
+            if (saved->has_music) {
+                if (saved->music_attached) {
+                    uint32_t physical = owner->kind == REMOTE_MODULE_INITIAL ?
+                        owner->basis.initial.view.physical_seat : owner->basis.decoded.view.physical_seat;
+                    qa_audio_music *player = qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner);
+                    if (!player || !qa_audio_engine_music_ready(owner->frontend->audio,
+                        lease->service_owner, physical, 1) || !qa_audio_music_retain(player, error)) return false;
+                    lease->music = player;
+                } else if (!qa_audio_music_restore((qa_bytes){saved->music.data,saved->music.size}, &lease->music, error)) return false;
+                lease->music_attached = saved->music_attached;
+            }
+            lease->music_intro = saved->music_intro; saved->music_intro = NULL;
+            lease->music_loop = saved->music_loop; saved->music_loop = NULL;
+            lease->music_looping = saved->music_looping; lease->has_listener = saved->has_listener; lease->listener = saved->listener;
+            saved->music_restored = true;
+        }
         size_t index = 0; for (remote_module_lease *p = owner->leases; p != lease; p = p->next) ++index;
         frontend_remote_q3_module_topology topology; qa_q3_movie_checkpoint_refs movies;
         if (!frontend_remote_q3_modules_role_read(owner, index, &topology, error) ||
@@ -199,24 +238,8 @@ bool frontend_remote_q3_modules_restore_continuation(frontend_remote_q3_modules 
         if (!saved->media_restored) {
             if (!qa_q3_presentation_media_restore(lease->presentation, &movies, lease->service_owner,
                 (double)owner->frontend->wall_time_ns / 1000000.0, (qa_bytes){saved->media.data,saved->media.size}, error)) return false;
+            lease->legacy_cinematics = !lease->cinematics;
             saved->media_restored = true;
-        }
-        if (!saved->music_restored) {
-            if (saved->has_listener && saved->listener.actor != QA_AUDIO_NO_ACTOR &&
-                !frontend_audio_id_read(owner->frontend, saved->listener.actor, NULL, NULL))
-                return frontend_fail(error, QA_ERROR_FORMAT, "Saved module listener has no actual restored audio actor identity");
-            if (saved->has_music) {
-                if (saved->music_attached) {
-                    lease->music = qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner);
-                    if (!lease->music || !qa_audio_engine_music_ready(owner->frontend->audio,
-                        lease->service_owner, topology.physical_seat, 1) || !qa_audio_music_retain(lease->music, error)) return false;
-                } else if (!qa_audio_music_restore((qa_bytes){saved->music.data,saved->music.size}, &lease->music, error)) return false;
-                lease->music_attached = saved->music_attached;
-            }
-            lease->music_intro = saved->music_intro; saved->music_intro = NULL;
-            lease->music_loop = saved->music_loop; saved->music_loop = NULL;
-            lease->music_looping = saved->music_looping; lease->has_listener = saved->has_listener; lease->listener = saved->listener;
-            saved->music_restored = true;
         }
         if (!saved->music_origin_restored) {
             if (!frontend_remote_modules_music_restore_origin(lease, error)) return false;

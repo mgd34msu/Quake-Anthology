@@ -124,6 +124,8 @@ bool frontend_scene_mesh_identity_encode(void *, uint64_t, uint64_t *, qa_error 
 bool frontend_scene_mesh_identity_decode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_light_identity_encode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_light_identity_decode(void *, uint64_t, uint64_t *, qa_error *);
+bool frontend_scene_static_audio_identity_encode(void *,uint64_t,uint64_t *,qa_error *);
+bool frontend_scene_static_audio_identity_decode(void *,uint64_t,uint64_t *,qa_error *);
 bool frontend_scene_world_install(void *, qa_scene_world_identity_kind, size_t ordinal,
     uint64_t saved, uint64_t *, qa_error *);
 bool frontend_scene_model_install(void *, qa_scene_model_identity_kind, size_t node,

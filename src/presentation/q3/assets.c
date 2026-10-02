@@ -105,9 +105,8 @@ bool qa_q3_assets_idle(const qa_q3_presentation_assets *a)
     return a && a->users && !a->busy && !a->capturing && !a->codec_busy &&
         q3p_assets_children_idle(a);
 }
-void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
+static void assets_free(qa_q3_presentation_assets *a)
 {
-    if (!a || a->busy || !a->users || !q3p_assets_children_idle(a) || --a->users) return;
     for (size_t i = 0; i < a->name_capacity; ++i) {
         q3p_name *next;
         for (q3p_name *row = a->names[i]; row; row = next) { next = row->next; free(row); }
@@ -124,6 +123,18 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
     q3p_provider_custody_release(a);
     qa_q3_assets_release(a->parent);
     free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
+}
+void q3p_assets_dispose_borrowed(qa_q3_presentation_assets *a)
+{
+    /* Isolated imports own metadata and leases, never the decoded scene/world
+     * roots. Their disposal must also work when those borrowed roots are held
+     * by the aggregate's capture. */
+    if (a) assets_free(a);
+}
+void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
+{
+    if (!a || a->busy || !a->users || !q3p_assets_children_idle(a) || --a->users) return;
+    assets_free(a);
 }
 bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
     qa_audio_asset ***out, size_t *count, qa_error *error)

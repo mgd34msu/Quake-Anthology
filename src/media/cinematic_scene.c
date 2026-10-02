@@ -5,6 +5,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+bool qa_cinematic_shader_frame(const qa_cinematic *movie, qa_media_frame *out, qa_error *error)
+{
+    if (!movie || !out || movie->restore_pending || !movie->has_picture ||
+        movie->options.target.kind!=QA_CINEMATIC_MATERIAL)
+        return cinematic_fail(error,"Shader upload requires its actual decoded material cinematic");
+    return qa_cinematic_upload_frame(movie,true,out,error);
+}
+bool qa_cinematic_upload_frame(const qa_cinematic *movie, bool shader, qa_media_frame *out, qa_error *error)
+{
+    if (!movie || !out || !movie->has_picture)
+        return cinematic_fail(error,"Cinematic upload requires its actual decoded frame holder");
+    if (shader && movie->format==QA_CINEMATIC_ROQ)
+        return qa_roq_playback_image(movie->movie.roq,true,256,256,false,out,error);
+    if (movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch)
+        return qa_roq_playback_image(movie->movie.roq,false,movie->picture.width,
+            movie->picture.height,false,out,error);
+    *out=movie->picture; return true;
+}
+bool qa_cinematic_source_ui_frame(qa_cinematic *movie, uint32_t width, uint32_t height,
+    bool dirty, qa_media_frame *out, qa_error *error)
+{
+    if (!movie || !out || movie->busy || movie->faulted || movie->restore_pending ||
+        !movie->has_picture || movie->format!=QA_CINEMATIC_ROQ || !movie->options.roq_scratch)
+        return cinematic_fail(error,"Source UI upload requires its reached shared RoQ owner");
+    return qa_roq_playback_image(movie->movie.roq,false,width,height,dirty,out,error);
+}
 
 bool qa_cinematic_publication_read(const qa_cinematic *movie, qa_cinematic_publication *out)
 {

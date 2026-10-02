@@ -69,6 +69,7 @@ typedef struct q1_ambient {
     qa_vec3 origin;
     float volume,attenuation;
     uint64_t identity;
+    bool saved_installed;
 } q1_ambient;
 typedef struct q1_group {
     frontend_unified_q1 *parent;
@@ -128,7 +129,7 @@ struct frontend_unified_q1 {
     uint32_t epoch;
     uint64_t frame,prepared_frame;
     double seconds,prepared_seconds,bonus_until,capture_until;
-    bool has_frame,prepared,busy,ctf_present;
+    bool has_frame,prepared,busy,ctf_present,restoring;
     bool monsters_present,secrets_present;
     qa_scene_light *scene_lights;
     size_t scene_capacity;
@@ -191,7 +192,7 @@ static bool checkpoint_current(const frontend_unified_q1 *o,qa_error *e)
 }
 static bool mutable(frontend_unified_q1 *o,qa_error *e)
 {
-    return (frontend_unified_q1_current(o) && !o->frontend->capture && !o->frontend->resource_inventory &&
+    return (frontend_unified_q1_current(o) && !o->restoring && !o->frontend->capture && !o->frontend->resource_inventory &&
         !o->frontend->source_restoring) || frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 CLIENT presentation has a foreign or captured parent");
 }
 static bool parse(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,q1_event *p,qa_error *e)
@@ -691,7 +692,8 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
     case Q1_CLEAR_PROMPT:prompt_clear(o);break;
     case Q1_LOG:ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
     case Q1_ACHIEVEMENT:ok=progress_record(o,&p,row,e);
-        if(ok && p.text.size)ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
+        if(ok && p.text.size)ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);
+        break;
     case Q1_COMPLETED:break;
     case Q1_TOTAL:o->total_monsters=p.a;o->monsters_present=true;break;
     case Q1_FOUND: {const qa_json_document *j=qa_unified_document_json(d);
@@ -851,25 +853,24 @@ static void transform(qa_model_transform *out,qa_vec3 origin,qa_vec3 angles)
     out->origin[0]=origin.x;out->origin[1]=origin.y;out->origin[2]=origin.z;
     for(unsigned i=0;i<3;++i){out->axes[i][0]=axes[i].x;out->axes[i][1]=axes[i].y;out->axes[i][2]=axes[i].z;}
 }
-bool frontend_unified_q1_world(frontend_unified_q1 *o,const qa_scene_view *view,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+static bool world_enter(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
 {
-    if(!o || !view || !world || !frame || o->busy || o->prepared || !o->has_frame || !mutable(o,e))return false;
-    o->busy=true;bool ok=true;qa_scene_vec4 overlay={0};
+    if(!o || !world || frame!=&o->frontend->frame || o->busy || o->prepared ||
+        !o->has_frame || !mutable(o,e))return false;
+    if(world->view.mirror && !qa_scene_world_q1_mirror_scope(frontend_unified_media_world(o->media),world,frame))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 reflected output lost its genuine world mirror scope");
+    o->busy=true; return true;
+}
+bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+{
+    if(!world_enter(o,world,frame,e))return false;
+    const qa_scene_view *view=&world->view;
+    bool ok=true;
     for(q1_group *g=o->groups;ok && g;g=g->next) {
-        for(q1_ambient *a=g->ambient;ok && a;a=a->next) {
-            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-            qa_audio_mixer *m=o->frontend->audio?qa_audio_engine_seat_mixer(o->frontend->audio,domain->physical_seat):NULL;
-            if(a->mixer && a->mixer!=m) {ok=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 ambient must detach before its real mixer parent changes");break;}
-            if(m && !a->mixer) {ok=qa_audio_mixer_static_asset(m,a->identity,a->asset,a->origin,truncf(a->volume*255),truncf(a->attenuation*64),e);
-                qa_audio_static_view installed;if(ok && qa_audio_mixer_static_read(m,a->identity,&installed))a->mixer=m;}
-        }
-        if(ok && g->particles.count && !g->particle_image)ok=qa_scene_particle_image(g->images,QA_SCENE_Q1,&g->particle_image,e);
-        qa_bytes palette={0};if(ok && g->particles.count)ok=qa_scene_resources_palette(g->images,QA_SCENE_Q1,&palette,e) && palette.size>=768;
-        for(size_t i=g->particles.count;ok && i>0;--i) {const qa_scene_q1_particle_state *p=g->particles.values.q1+i-1;if(p->die<world->seconds)continue;
-            uint32_t color=(p->color&255)*3;ok=qa_scene_indexed_particle(frame,view,QA_SCENE_Q1,p->origin,1,(qa_scene_vec4){palette.data[color]/255.0f,palette.data[color+1]/255.0f,palette.data[color+2]/255.0f,1},g->particle_image,e);}
         for(q1_static *s=g->statics;ok && s;s=s->next) {
             qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.frame=s->frame,.old_frame=s->frame,.skin=s->skin,.color={1,1,1,1},
-                .source_path=s->path,.material_library=g->materials,.seconds=world->seconds,.identity_light=1,.ambient={1,1,1}};
+                .source_path=s->path,.material_library=g->materials,.seconds=world->seconds,.identity_light=world->identity_light,.ambient={1,1,1},
+                .video_frame=world->video_frame,.video_context=world->video_context};
             transform(&input.transform,s->origin,s->angles);
             if(s->model.brush_world)ok=qa_scene_world_submit_model(s->model.brush_world,s->model.inline_model,&input.transform,world,0,input.color,frame,e);
             else {ok=qa_scene_world_sample_light_input(frontend_unified_media_world(o->media),world,s->origin,&input.ambient,&input.directed,&input.light_direction,e) &&
@@ -883,26 +884,67 @@ bool frontend_unified_q1_world(frontend_unified_q1 *o,const qa_scene_view *view,
             qa_vec3 angles=qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,atan2f(direction.y,direction.x)*57.29577951308232f,0);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
             for(float step=0;ok && step<length;step+=30) {qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.source_path=models[b->kind],.material_library=g->materials,
-                    .seconds=world->seconds,.identity_light=1,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot};
+                    .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
+                    .video_frame=world->video_frame,.video_context=world->video_context};
                 angles.z=(float)(qa_builtin_random_integer(&roll)%360);transform(&input.transform,qa_vec_add(b->start,qa_vec_scale(direction,step)),angles);
                 ok=frontend_legacy_model_input_product(o->frontend,g->product,frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}
         }
-        qa_scene_light lights[Q1_LIGHTS];size_t count=0;
-        for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=world->seconds)continue;float radius=fmaxf(0,l->radius-(float)(world->seconds-l->born)*l->decay);
-            if(radius>0)lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
-        frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
-        if(ok && count){
+    }
+    o->busy=false;return ok && mutable(o,e);
+}
+bool frontend_unified_q1_world_particles(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
+{
+    if(!world_enter(o,world,frame,e))return false;
+    const qa_scene_view *view=&world->view;
+    bool ok=true;
+    for(q1_group *g=o->groups;ok && g;g=g->next) {
+        for(q1_ambient *a=view->mirror?NULL:g->ambient;ok && a;a=a->next) {
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+            qa_audio_mixer *m=o->frontend->audio?qa_audio_engine_seat_mixer(o->frontend->audio,domain->physical_seat):NULL;
+            if(a->mixer && a->mixer!=m) {ok=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 ambient must detach before its real mixer parent changes");break;}
+            if(m && !a->mixer) {ok=qa_audio_mixer_static_asset(m,a->identity,a->asset,a->origin,truncf(a->volume*255),truncf(a->attenuation*64),e);
+                qa_audio_static_view installed;if(ok && qa_audio_mixer_static_read(m,a->identity,&installed))a->mixer=m;}
+        }
+        if(ok && g->particles.count && !g->particle_image)ok=qa_scene_particle_image(g->images,QA_SCENE_Q1,&g->particle_image,e);
+        qa_bytes palette={0};if(ok && g->particles.count)ok=qa_scene_resources_palette(g->images,QA_SCENE_Q1,&palette,e) && palette.size>=768;
+        for(size_t i=g->particles.count;ok && i>0;--i) {const qa_scene_q1_particle_state *p=g->particles.values.q1+i-1;if(p->die<world->seconds)continue;
+            uint32_t color=(p->color&255)*3;ok=qa_scene_indexed_particle(frame,view,QA_SCENE_Q1,p->origin,1,(qa_scene_vec4){palette.data[color]/255.0f,palette.data[color+1]/255.0f,palette.data[color+2]/255.0f,1},g->particle_image,e);}
+    }
+    o->busy=false;return ok && mutable(o,e);
+}
+bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_world_input *world,
+    qa_scene_frame *frame,qa_scene_vec4 *overlay,qa_error *e)
+{
+    if(!overlay || !world_enter(o,world,frame,e))return false;
+    qa_executable_recipe *recipe=frontend_unified_media_recipe(o->media);
+    const qa_recipe_choices *choices=qa_executable_recipe_choices(recipe);
+    const qa_product *product=choices?qa_catalog_product(qa_executable_recipe_catalog(recipe),choices->world.presentation):NULL;
+    bool ok=product!=NULL;
+    if(!ok)frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 supplemental light lost its actual WORLD presentation");
+    for(q1_group *g=product && product->family==QA_GAME_Q3?o->groups:NULL;ok && g;g=g->next) {
+        qa_scene_light lights[Q1_LIGHTS];size_t count=0;
+        for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=world->seconds)continue;
+            float radius=fmaxf(0,l->radius-(float)(world->seconds-l->born)*l->decay);
+            if(radius>0)lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},
+                .radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
+        frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
+        if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_SCENE_Q1?
                 frontend_legacy_render_policy_read_registry(domain->cvars,g->product,&policy,e):
                 frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
-            if(ok)ok=mutable(o,e);
-        }
-        if(ok && count && policy.flashblend)ok=qa_scene_legacy_dlights(frame,view,QA_SCENE_Q1,policy.quakeworld,lights,count,&blend,e);
-        if(ok && blend.w>0){float alpha=overlay.w+(1-overlay.w)*blend.w,weight=blend.w/alpha;
-            overlay=(qa_scene_vec4){overlay.x*(1-weight)+blend.x*weight,overlay.y*(1-weight)+blend.y*weight,
-                overlay.z*(1-weight)+blend.z*weight,alpha};}
+            if(ok && policy.flashblend)ok=qa_scene_legacy_dlights(frame,&world->view,QA_SCENE_Q1,
+                policy.quakeworld,lights,count,&blend,e);}
+        if(ok && blend.w>0){float alpha=overlay->w+(1-overlay->w)*blend.w,weight=blend.w/alpha;
+            *overlay=(qa_scene_vec4){overlay->x*(1-weight)+blend.x*weight,overlay->y*(1-weight)+blend.y*weight,
+                overlay->z*(1-weight)+blend.z*weight,alpha};}
     }
+    o->busy=false;return ok && mutable(o,e);
+}
+bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_vec4 overlay,qa_scene_frame *frame,qa_error *e)
+{
+    if(!world_enter(o,world,frame,e))return false;
+    const qa_scene_view *view=&world->view;
+    bool ok=true;
     if(ok && !view->mirror && o->groups && (!world->legacy_policy.present || world->legacy_policy.polyblend)){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_ui_preferences preferences;
         ok=qa_ui_preferences_read(domain->cvars,domain->physical_seat,&preferences,e);
@@ -1152,13 +1194,13 @@ static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_u
                 const qa_audio_asset *bank=qa_audio_bank_get(g->sounds,qa_resource_id(qa_audio_asset_resource(actual)),QA_AUDIO_Q1);
                 if(bank!=actual)return fail(e,"Q1 ambient asset does not belong to its imported content bank");
                 a->asset=(qa_audio_asset *)actual;qa_audio_asset_retain(a->asset);}
-            qa_audio_mixer *m=installed?(reading?qa_audio_engine_seat_mixer(o->frontend->audio,o->replica->options.domain.physical_seat):a->mixer):NULL;
-            if(installed){qa_audio_static_view view;
+            if(reading)a->saved_installed=installed;
+            if(!reading && installed){qa_audio_mixer *m=a->mixer;qa_audio_static_view view;
                 if(!m || !qa_audio_mixer_static_read(m,a->identity,&view) || view.sample!=qa_audio_asset_sample(a->asset) ||
                     view.origin.x!=a->origin.x || view.origin.y!=a->origin.y || view.origin.z!=a->origin.z ||
                     view.volume!=trunc((double)truncf(a->volume*255)/255*255) || view.attenuation!=(double)truncf(a->attenuation*64)/64000)
                     return fail(e,"Q1 ambient voice does not match the imported actual mixer");
-                if(reading)a->mixer=m;}
+            }
             if(!reading)a=a->next;
         }
         if(!reading)g=g->next;
@@ -1167,7 +1209,7 @@ static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_u
 }
 bool frontend_unified_q1_checkpoint(frontend_unified_q1 *o,const frontend_unified_q1_refs *refs,qa_buffer *out,qa_error *e)
 {
-    if(!o || !out || out->data || !frontend_unified_q1_idle(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
+    if(!o || o->restoring || !out || out->data || !frontend_unified_q1_idle(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
     qa_source_save_io io;if(!qa_source_save_writer(&io,NULL,e))return false;
     bool ok=fields(o,&io,refs,e) && qa_source_save_finish(&io,out);qa_source_save_dispose(&io);return ok;
 }
@@ -1177,18 +1219,32 @@ bool frontend_unified_q1_restore(qa_frontend *f,frontend_remote_unified *r,front
     if(!out || *out)return fail(e,"Q1 cold candidate output is occupied");
     frontend_unified_q1 *o=NULL;
     if(!frontend_unified_q1_create(f,r,media,options,&o,e))return false;
+    o->restoring=true;
+    *out=o;
     qa_source_save_io io;
     bool opened=qa_source_save_reader(&io,NULL,input,e),ok=opened && fields(o,&io,refs,e) && qa_source_save_finish(&io,NULL);
     if(opened)qa_source_save_dispose(&io);
     if(!ok){/* Preserve a checked cleanup owner even when imported native audio prevents disposal. */
-        if(!frontend_unified_q1_destroy(&o,NULL))*out=o;
+        (void)frontend_unified_q1_destroy(out,NULL);
         return false;}
-    *out=o;return true;
+    return true;
 }
 bool frontend_unified_q1_restore_finish(frontend_unified_q1 *o,qa_error *e)
 {
     if(!o || !o->frontend->source_restoring || !checkpoint_current(o,e))return fail(e,"Q1 music import lost its real retained CLIENT recipe");
     for(q1_group *g=o->groups;g;g=g->next)if(g->music){frontend_music_origin origin;
         if(!music_origin(g,&origin,e) || !frontend_received_music_restore_finish(g->music,&origin,e))return false;}
+    for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->saved_installed){
+        qa_audio_mixer *m=qa_audio_engine_seat_mixer(o->frontend->audio,o->replica->options.domain.physical_seat);
+        qa_audio_static_view view;
+        if(!m || !qa_audio_mixer_callbacks_idle(m) || !qa_audio_mixer_static_read(m,a->identity,&view) ||
+            view.sample!=qa_audio_asset_sample(a->asset) || view.origin.x!=a->origin.x ||
+            view.origin.y!=a->origin.y || view.origin.z!=a->origin.z ||
+            view.volume!=trunc((double)truncf(a->volume*255)/255*255) ||
+            view.attenuation!=(double)truncf(a->attenuation*64)/64000)
+            return fail(e,"Q1 ambient voice does not match the imported actual mixer");
+        a->mixer=m;a->saved_installed=false;
+    }
+    o->restoring=false;
     return true;
 }

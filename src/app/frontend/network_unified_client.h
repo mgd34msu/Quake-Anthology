@@ -22,6 +22,7 @@ typedef struct frontend_network_unified_client_view {
     qa_net_address remote;
     qa_net_seat_id seat;
     qa_product_id profile;
+    bool retired;
 } frontend_network_unified_client_view;
 
 /* Configuration custody transfers with the returned partial service. */
@@ -30,20 +31,38 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
 bool frontend_network_unified_client_advance(frontend_network_unified_client_service *, bool *ready, qa_error *);
 bool frontend_network_unified_client_drain(frontend_network_unified_client_service *, size_t budget,
     size_t *executed, qa_error *);
+bool frontend_network_unified_client_dispatch(frontend_network_unified_client_service *,
+    const qa_application_client_source *,const char *,qa_error *);
 bool frontend_network_unified_client_options_read(frontend_network_unified_client_service *,
     frontend_remote_unified_options *, qa_error *);
+bool frontend_network_unified_client_import_options_read(frontend_network_unified_client_service *,
+    frontend_remote_unified_options *, qa_error *);
+bool frontend_network_unified_client_retirement_options_read(frontend_network_unified_client_service *,
+    frontend_remote_unified_options *,qa_error *);
 bool frontend_network_unified_client_bind(frontend_network_unified_client_service *, qa_net_client_id,
     qa_net_seat_id, frontend_remote_unified *, qa_error *);
+bool frontend_network_unified_client_bind_restored(frontend_network_unified_client_service *,qa_net_client_id,
+    qa_net_seat_id,frontend_remote_unified *,qa_error *);
+bool frontend_network_unified_client_restart_adopt(frontend_network_unified_client_service *,
+    const frontend_remote_unified_domain *,uint64_t,qa_error *);
+bool frontend_network_unified_client_request_retirement(frontend_network_unified_client_service *,
+    const qa_application_client_source *,qa_error *);
+bool frontend_network_unified_client_retired(const frontend_network_unified_client_service *);
+bool frontend_network_unified_client_retirement_current(void *,const qa_application_client_source *);
 bool frontend_network_unified_client_source_read(const frontend_network_unified_client_service *,
     frontend_client_source_view *, qa_error *);
 bool frontend_network_unified_client_metadata_read(const frontend_network_unified_client_service *,
     frontend_network_unified_client_view *, qa_error *);
 bool frontend_network_unified_client_idle(const frontend_network_unified_client_service *);
+bool frontend_network_unified_client_publication_ready(const frontend_network_unified_client_service *,qa_error *);
+void frontend_network_unified_client_publish(frontend_network_unified_client_service *);
+bool frontend_network_unified_client_imported(const frontend_network_unified_client_service *);
+bool frontend_network_unified_client_restored_complete(const frontend_network_unified_client_service *);
 bool frontend_network_unified_client_destroy(frontend_network_unified_client_service **, qa_error *);
 bool frontend_network_unified_client_checkpoint(frontend_network_unified_client_service *,
     const qa_application_content_graph *, qa_buffer *, qa_error *);
 bool frontend_network_unified_client_saved_read(qa_frontend *, qa_application_content_graph *, qa_bytes,
-    frontend_client_source_prefix *, qa_net_address *, qa_net_seat_id *, qa_error *);
+    frontend_client_source_prefix *, qa_net_address *, qa_net_seat_id *,bool *retired, qa_error *);
 /* The physical graph, QFCR heaps, neutral programme and generic connections
  * restore first. Imports the actual CLIENT prefix without configuration. */
 bool frontend_network_unified_client_restore(const frontend_network_unified_client_options *,

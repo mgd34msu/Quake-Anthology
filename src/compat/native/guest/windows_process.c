@@ -323,10 +323,14 @@ static bool process_invoke(qa_native_windows_process *owner, uint64_t original, 
     guest_abi_plan *plan = NULL;
     if (!guest_abi_plan_native(signature, NULL, 0, &plan, error)) return false;
     bool outer_busy = owner->busy;
-    bool nested = owner->guest && owner->guest->run && owner->guest->callback_depth &&
-        !owner->guest->publication_depth && !owner->failed && !owner->disposing &&
+    bool nested = owner->guest &&
+        ((owner->guest->run&&owner->guest->callback_depth)||
+         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
+        (!owner->guest->publication_depth || owner->guest->stopped_write_calls) && !owner->failed && !owner->disposing &&
         !owner->provisional && guest_mutable(owner->guest, error);
-    bool okay = nested ? windows_process_current(owner, error) : begin(owner, error);
+    bool prepared=!outer_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
+        guest_call_prepared(owner->guest)&&guest_windows_idle(owner->runtime);
+    bool okay = nested||prepared ? windows_process_current(owner, error) : begin(owner, error);
     if (okay) {
         owner->busy = true;
         okay = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ?

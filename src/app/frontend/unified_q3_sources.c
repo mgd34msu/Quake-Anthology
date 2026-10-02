@@ -18,6 +18,7 @@ typedef struct received_source {
     uint16_t visible_entities[256];
     uint8_t area_mask[32];
     char *instance, *content;
+    size_t references;
 } received_source;
 struct frontend_unified_q3_sources {
     frontend_remote_unified *replica;
@@ -29,6 +30,15 @@ struct frontend_unified_q3_sources {
     size_t count;
     qa_unified_document *packet;
     frontend_unified_q3_source_frame *prepared;
+    frontend_unified_q3_source_retirement *retirements;
+};
+struct frontend_unified_q3_source_retirement {
+    frontend_unified_q3_source_retirement *next;
+    frontend_unified_q3_sources *owner;
+    received_source *row;
+    qa_unified_document *packet;
+    size_t index;
+    const frontend_unified_q3_client *client;
 };
 struct frontend_unified_q3_source_frame {
     frontend_unified_q3_sources *owner;
@@ -90,7 +100,7 @@ static bool actor(frontend_unified_q3_sources *o, const qa_unified_document *d, 
             frontend_remote_unified_actor(o->replica, (uint32_t)slot, generation, out, e));
 }
 static void source_free(received_source *r)
-{ if (r) { free(r->instance); free(r->content); free(r->players); free(r); } }
+{ if (r && --r->references == 0) { free(r->instance); free(r->content); free(r->players); free(r); } }
 static void rows_free(received_source **rows, size_t count)
 { if (rows) for (size_t i = 0; i < count; ++i) source_free(rows[i]); free(rows); }
 
@@ -176,11 +186,12 @@ static bool game_state(frontend_unified_q3_sources *o, const qa_unified_document
 }
 
 static bool source_read(frontend_unified_q3_sources *o, const qa_unified_document *d,
-    qa_json_id id, uint64_t revision, bool restoring, received_source **out, qa_error *e)
+    qa_json_id id, uint64_t revision, bool restoring, bool retired, received_source **out, qa_error *e)
 {
     const qa_json_document *j = qa_unified_document_json(d);
     received_source *r = calloc(1,sizeof(*r));
     if (!r) return fail(e, QA_ERROR_MEMORY, "Retaining complete compiled Q3 Source records");
+    r->references = 1;
     frontend_unified_q3_source_view *v = &r->view;
     v->owner = o; v->source = r; v->revision = revision; v->epoch = o->epoch;
     char *owner = NULL; uint64_t product, clients, snapshot_bit;
@@ -210,7 +221,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
             v->files == v->provider->content && v->content_product->family == QA_GAME_Q3 &&
             v->content_product->id == v->provider->selection.product;
         qa_actor_id viewer; uint32_t source_entity;
-        if (ok) ok = frontend_remote_unified_player(o->replica,&viewer,&source_entity) && qa_actor_id_equal(viewer,v->viewer);
+        if (ok && !retired) ok = frontend_remote_unified_player(o->replica,&viewer,&source_entity) && qa_actor_id_equal(viewer,v->viewer);
     }
     qa_json_id client = field(d,id,"clientNumber");
     if (ok && qa_json_type(j,client) != QA_JSON_NULL) {
@@ -301,7 +312,7 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
     bool ok = (!count || t->rows) && qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,array),&t->packet,e);
     o->prepared = t;
     for (size_t i = 0; ok && i < count; ++i) {
-        ok = source_read(o,d,qa_json_at(j,array,i),t->revision,restoring,t->rows+i,e);
+        ok = source_read(o,d,qa_json_at(j,array,i),t->revision,restoring,false,t->rows+i,e);
         for (size_t k = 0; ok && k < i; ++k) if (!strcmp(t->rows[k]->instance,t->rows[i]->instance)) ok = false;
         for (size_t k = 0; ok && k < o->count; ++k) {
             const received_source *old = o->rows[k], *next = t->rows[i];
@@ -392,6 +403,118 @@ bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *v
 { return row_current(v,false); }
 bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *v)
 { return row_current(v,true); }
+bool frontend_unified_q3_source_retirement_current(const frontend_unified_q3_source_retirement *t)
+{
+    const frontend_unified_q3_sources *o = t ? t->owner : NULL;
+    if (!o || !t->row || !t->row->references || !t->packet || t->row->view.owner != o ||
+        t->row->view.source != t->row || t->row->view.epoch != o->epoch ||
+        frontend_unified_media_recipe(o->media) != o->recipe || !frontend_unified_media_current(o->media)) return false;
+    bool linked = false;
+    for (const frontend_unified_q3_source_retirement *p = o->retirements; p; p = p->next) if (p == t) linked = true;
+    qa_q3_presentation_assets *assets;
+    return linked && frontend_unified_media_q3_assets_read(o->media,t->row->content,&assets) && assets == t->row->view.assets;
+}
+bool frontend_unified_q3_source_retirement_departed(const frontend_unified_q3_source_retirement *t)
+{
+    if (!frontend_unified_q3_source_retirement_current(t)) return false;
+    for (size_t i = 0; i < t->owner->count; ++i)
+        if (t->owner->rows[i] == t->row) return false;
+    return true;
+}
+bool frontend_unified_q3_source_retirement_prepare(const frontend_unified_q3_source_view *view,
+    frontend_unified_q3_source_retirement **out,qa_error *e)
+{
+    if (!view || !out || *out || !frontend_unified_q3_source_current(view))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement custody requires its actual committed Source row");
+    frontend_unified_q3_sources *o = (frontend_unified_q3_sources *)view->owner;
+    size_t index = 0;
+    while (index < o->count && o->rows[index] != view->source) ++index;
+    if (index == o->count || !o->packet || o->rows[index]->references == SIZE_MAX)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement custody cannot borrow an unpublished or exhausted Source");
+    frontend_unified_q3_source_retirement *t = calloc(1,sizeof(*t));
+    if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining actual compiled Source cleanup custody");
+    const qa_json_document *j = qa_unified_document_json(o->packet);
+    if (!qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,qa_unified_document_root(o->packet)),&t->packet,e)) {
+        free(t); return false;
+    }
+    t->owner = o; t->row = o->rows[index]; t->index = index; ++t->row->references;
+    t->next = o->retirements; o->retirements = t; *out = t; return true;
+}
+bool frontend_unified_q3_source_retirement_checkpoint_current(const frontend_unified_q3_source_retirement *t)
+{ return frontend_unified_q3_source_retirement_current(t) && frontend_unified_q3_sources_checkpoint_current(t->owner); }
+bool frontend_unified_q3_source_retirement_client_hold(frontend_unified_q3_source_retirement *t,
+    const frontend_unified_q3_client *client,qa_error *e)
+{
+    if (!client || !frontend_unified_q3_source_retirement_current(t) || t->client)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement custody already has a CLIENT or lost its parent");
+    t->client = client; return true;
+}
+bool frontend_unified_q3_source_retirement_client_drop(frontend_unified_q3_source_retirement *t,
+    const frontend_unified_q3_client *client,qa_error *e)
+{
+    if (!client || !frontend_unified_q3_source_retirement_current(t) || t->client != client)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement custody cannot release a different CLIENT");
+    t->client = NULL; return true;
+}
+bool frontend_unified_q3_source_retirement_read(const frontend_unified_q3_source_retirement *t,
+    frontend_unified_q3_source_view *out,qa_error *e)
+{
+    if (!out || !frontend_unified_q3_source_retirement_current(t))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement observation lost its actual structural custody");
+    *out = t->row->view; return true;
+}
+bool frontend_unified_q3_source_retirement_return(frontend_unified_q3_source_retirement **out,qa_error *e)
+{
+    if (!out || !*out) return true;
+    frontend_unified_q3_source_retirement *t = *out;
+    if (!frontend_unified_q3_source_retirement_current(t) || t->client)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement release lost its retained resource owners");
+    frontend_unified_q3_source_retirement **slot = &t->owner->retirements;
+    while (*slot != t) slot = &(*slot)->next;
+    *slot = t->next; source_free(t->row); qa_unified_document_destroy(t->packet); free(t); *out = NULL; return true;
+}
+bool frontend_unified_q3_source_retirement_checkpoint(const frontend_unified_q3_source_retirement *t,qa_buffer *out,qa_error *e)
+{
+    if (!out || out->data || !frontend_unified_q3_source_retirement_current(t) ||
+        !frontend_unified_q3_sources_checkpoint_current(t->owner))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement capture requires its genuine cold parent");
+    qa_source_save_io io = {0}; qa_buffer packet = {0}; uint32_t version = 1, epoch = t->row->view.epoch;
+    uint64_t revision = t->row->view.revision; size_t index = t->index, size = 0;
+    bool ok = qa_unified_document_encode(t->packet,&packet,e) && qa_source_save_writer(&io,NULL,e) &&
+        qa_source_save_bytes(&io,(void *)"Q3SR",4) && qa_source_save_u32(&io,&version) && qa_source_save_u32(&io,&epoch) &&
+        qa_source_save_u64(&io,&revision) && qa_source_save_count(&io,&index,qa_executable_recipe_provider_count(t->owner->recipe));
+    size = packet.size;
+    if (ok) ok = qa_source_save_count(&io,&size,32u*1024u*1024u) && qa_source_save_bytes(&io,packet.data,size) &&
+        qa_source_save_finish(&io,out);
+    qa_buffer_free(&packet); qa_source_save_dispose(&io); return ok;
+}
+bool frontend_unified_q3_source_retirement_restore(frontend_unified_q3_sources *o,qa_bytes bytes,
+    frontend_unified_q3_source_retirement **out,qa_error *e)
+{
+    if (!o || !out || *out || o->prepared || !frontend_unified_q3_sources_checkpoint_current(o))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement import requires its genuine isolated Source parent");
+    frontend_unified_q3_source_retirement *t = calloc(1,sizeof(*t));
+    if (!t) return fail(e,QA_ERROR_MEMORY,"Importing actual compiled Source cleanup custody");
+    qa_source_save_io io = {0}; char magic[4]; uint32_t version, epoch; uint64_t revision; size_t size;
+    bool ok = qa_source_save_reader(&io,NULL,bytes,e) && qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"Q3SR",4) &&
+        qa_source_save_u32(&io,&version) && version == 1 && qa_source_save_u32(&io,&epoch) && epoch == o->epoch &&
+        qa_source_save_u64(&io,&revision) && revision &&
+        qa_source_save_count(&io,&t->index,qa_executable_recipe_provider_count(o->recipe)) &&
+        qa_source_save_count(&io,&size,32u*1024u*1024u) && size && size <= io.input.size-io.offset &&
+        qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){io.input.data+io.offset,size},&t->packet,e);
+    if (ok) {
+        io.offset += size;
+        const qa_json_document *j = qa_unified_document_json(t->packet); qa_json_id root = qa_unified_document_root(t->packet);
+        ok = io.offset == io.input.size && qa_json_type(j,root) == QA_JSON_ARRAY &&
+            qa_json_size(j,root) <= qa_executable_recipe_provider_count(o->recipe) && t->index < qa_json_size(j,root) &&
+            source_read(o,t->packet,qa_json_at(j,root,t->index),revision,true,true,&t->row,e);
+    }
+    if (ok) { t->owner = o; t->next = o->retirements; o->retirements = t;
+        ok = frontend_unified_q3_source_retirement_current(t); }
+    if (ok) *out = t;
+    else { if (t->owner) t->owner->retirements = t->next; source_free(t->row); qa_unified_document_destroy(t->packet); free(t); }
+    qa_source_save_dispose(&io); return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled retirement bytes lost their real Source provenance"));
+}
 bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *o,size_t index,
     frontend_unified_q3_source_view *out,qa_error *e)
 {
@@ -425,7 +548,8 @@ bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **out, qa_e
 {
     if (!out || !*out) return true;
     frontend_unified_q3_sources *o = *out;
-    if (!frontend_unified_q3_sources_idle(o)) return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source retains its prepared frame");
+    if (!frontend_unified_q3_sources_idle(o) || o->retirements)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source retains its prepared frame or checked retirement custody");
     rows_free(o->rows,o->count); qa_unified_document_destroy(o->packet); free(o); *out = NULL; return true;
 }
 

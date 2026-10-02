@@ -280,7 +280,8 @@ bool application_q3_mod_entry_end(application_q3_mod_entry **in, bool succeeded,
     --scope->owner->calls; free(scope->selected); free(scope); *in=NULL; return ok;
 }
 bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
-    application_q3_mod_application *a, application_q3_mod_output **out, size_t *count, qa_error *e)
+    application_q3_mod_application *a,application_q3_mod_input_prepare_fn prepare,void *context,
+    application_q3_mod_output **out, size_t *count, qa_error *e)
 {
     if (!o || !out || *out || !count || !a || a->owner!=o || o->application!=a ||
         index>=o->profile->input_count || !q3mod_current(o,e))
@@ -298,8 +299,12 @@ bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
         o->capture=&c;
     }
     bool ok=true; double ignored;
-    for (size_t i=0;ok && i<binding->call_count && application_q3_mod_client_live(o,a->actor);++i)
-        ok=q3mod_invoke(o,binding->calls+i,&a->inputs,&ignored,e);
+    for (size_t i=0;ok && i<binding->call_count && application_q3_mod_client_live(o,a->actor);++i) {
+        if (prepare) ok=prepare(context,binding->calls[i].entry,e);
+        if (ok && !application_q3_mod_application_current(o,a,a->actor))
+            ok=q3mod_fail(e,QA_ERROR_ARGUMENT,"Source input preparation retired its actual application");
+        if (ok) ok=q3mod_invoke(o,binding->calls+i,&a->inputs,&ignored,e);
+    }
     if (ok && captured && active(&c)) ok=reconcile(&c,true,e);
     if (captured) o->capture=c.previous;
     if (ok && captured && o->services.live_client(o->services.context,a->actor)) {

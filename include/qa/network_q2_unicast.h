@@ -8,6 +8,7 @@ typedef struct qa_q2_unicast_claim {
     uint64_t connection_epoch;
     qa_actor_owner source;
     qa_sha256_digest map;
+    uint64_t map_revision;
     uint64_t source_frame, source_time_ns;
     uint32_t key;
 } qa_q2_unicast_claim;
@@ -27,7 +28,7 @@ typedef struct qa_q2_unicast_refs {
     bool (*client_encode)(void *, qa_net_client_id, uint64_t *saved, qa_error *);
     bool (*client_decode)(void *, uint64_t saved, qa_net_client_id *, qa_error *);
     bool (*source_encode)(void *, qa_actor_owner, uint64_t *saved, qa_error *);
-    bool (*source_decode)(void *, uint64_t saved, qa_actor_owner *, qa_error *);
+    bool (*source_decode)(void *, uint64_t saved, qa_actor_owner *, uint64_t *map_revision, qa_error *);
     /* Qualifies actual current connection epoch and Source map/frame domain.
      * A retired connection is absent; no admission or Source call occurs. */
     bool (*current)(void *, const qa_q2_unicast_claim *, bool *present, qa_error *);

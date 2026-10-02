@@ -962,10 +962,8 @@ static bool q3_primary_attack_allowed(void *opaque, qa_actor_id actor)
         !qa_actors_get(qa_session_actors(provider->application->session), actor) ||
         application_provider_for(provider->application, actor, QA_ROLE_ARSENAL, "") != provider)
         return false;
-    qa_equipment_state equipment;
     return !provider->application->equipment ||
-        !qa_equipment_read(provider->application->equipment, actor, &equipment) ||
-        (!equipment.slot_active && !equipment.slot_holstering && !equipment.slot_lowering);
+        qa_equipment_primary_selected(provider->application->equipment, actor);
 }
 
 static int32_t q3_source_team(void *opaque, qa_actor_id actor)
@@ -1279,7 +1277,7 @@ bool application_provider_construct(qa_application *application,
     return true;
 }
 
-bool application_provider_construct_qvm_restored(qa_application *application,
+bool application_provider_construct_q3_restored(qa_application *application,
     application_provider *provider, qa_world *world, qa_catalog *catalog,
     const qa_product *product, const qa_launch_choices *choices,
     const qa_save_record *record, qa_error *error)
@@ -1287,11 +1285,11 @@ bool application_provider_construct_qvm_restored(qa_application *application,
     if (application == NULL || provider == NULL || world == NULL ||
         catalog == NULL || product == NULL || choices == NULL || record == NULL ||
         provider->application != application || provider->constructed ||
-        provider->kind != APPLICATION_PROVIDER_QVM ||
+        (provider->kind != APPLICATION_PROVIDER_QVM && provider->kind != APPLICATION_PROVIDER_NATIVE) ||
         application->operation != APPLICATION_PERSISTING ||
         qa_catalog_product(catalog, product->id) != product)
         return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Invalid detached saved QVM provider construction");
+                                "Invalid detached saved original Q3 provider construction");
     provider->constructed = true;
     qa_catalog_retain(catalog);
     qa_catalog_release(provider->product_catalog);

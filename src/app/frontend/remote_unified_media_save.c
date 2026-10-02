@@ -1,6 +1,7 @@
 #include "remote_unified_media_save.h"
 #include "remote_unified_media_private.h"
 #include "remote_unified_private.h"
+#include "remote_unified_material_movies_bridge.h"
 #include "save_private.h"
 #include "material_inventory.h"
 #include "scene_refs.h"
@@ -231,13 +232,13 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
     const frontend_unified_media_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t version = 2;
     uint64_t physical = refs->owner, world = reading ? 0 : owner->saved_world;
     size_t banks = reading ? 0 : frontend_unified_media_bank_count(owner);
     size_t world_bank = reading ? 0 : bank_index(owner, owner->world_bank);
     if (!reading && !frontend_world_encode(refs->roots, owner->world, &world, io->error)) return false;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUMD", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_u64(io, &physical) ||
+        !qa_source_save_u32(io, &version) || version != 2 || !qa_source_save_u64(io, &physical) ||
         physical != refs->owner || !physical || !qa_source_save_count(io, &banks, UINT32_MAX - 1) ||
         !banks || (reading && banks > (io->input.size - io->offset) / 22) ||
         !qa_source_save_count(io, &world_bank, banks - 1) || !qa_source_save_u64(io, &world) || !world) return false;
@@ -249,11 +250,11 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
         if (reading) { *tail = row; tail = &row->next; }
         uint64_t view = reading ? 0 : qa_application_content_view_id(refs->content, row->files);
         uint32_t product = reading ? 0 : row->product->id;
-        bool assets = row->q3_assets != NULL, map = false;
+        bool assets = row->q3_assets != NULL, map = false, movies = row->media != NULL;
         qa_buffer state = {0};
         if (!frontend_save_text(io, &row->content) || !row->content || !*row->content ||
             !qa_source_save_u64(io, &view) || !view || !qa_source_save_u32(io, &product) ||
-            !qa_source_save_bool(io, &assets)) return false;
+            !qa_source_save_bool(io, &assets) || !qa_source_save_bool(io, &movies)) return false;
         qa_vfs *admitted = NULL; const qa_product *selected = NULL;
         if (!qa_executable_recipe_content_read(owner->recipe, row->content, &admitted, &selected) ||
             selected->id != product || admitted != qa_application_content_view(refs->content, view)) return false;
@@ -264,6 +265,7 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
             if (row->materials) row->fonts = qa_font_library_create(admitted, row->images, io->error);
             if (!row->images || !row->materials || !row->fonts ||
                 !qa_audio_bank_create(admitted, &row->sounds, io->error)) return false;
+            if (movies && !frontend_unified_material_movies_prepare_restored(owner, i, io->error)) return false;
             if (assets) {
                 qa_q3_presentation_asset_options policy = {.provider =
                     {admitted, row->images, row->materials, QA_SCENE_Q3}, .sounds = row->sounds};
@@ -340,6 +342,11 @@ bool frontend_unified_media_checkpoint(frontend_unified_media *owner,
         !refs || !refs->content || !refs->scene || !refs->models || !refs->roots || !refs->audio ||
         !refs->owner || !out || out->data || out->size)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media capture needs its real idle graph and dictionaries");
+    for (unified_media_bank *row = owner->banks; row; row = row->next)
+        if (row->constructing || row->construction_failed || !row->content || !row->product || !row->files ||
+            !row->images || !row->materials || !row->fonts || !row->sounds ||
+            (row->media != NULL) != (row->shader_movies != NULL))
+            return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media capture retains an unfinished real content bank");
     qa_source_save_io io = {0}; owner->busy = true;
     bool okay = qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
         fields(&io, owner, refs) && qa_source_save_finish(&io, out);
@@ -430,14 +437,19 @@ bool frontend_unified_media_restore_finish(frontend_unified_media *owner,
         !owner->frontend->source_restoring || !refs || !refs->content || !refs->scene ||
         !refs->models || !refs->roots || !refs->audio || !refs->owner)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media finish requires all actual imported dictionaries");
+    if (!frontend_unified_material_movies_restore_ready(owner, error)) return false;
     owner->busy = true; bool okay = true; size_t ordinal = 0;
     for (unified_media_bank *row = owner->banks; okay && row; row = row->next, ++ordinal)
-        if (row->q3_assets) {
+        if (row->q3_assets && !row->assets_restored) {
             asset_scope scope = {owner, refs, row, ordinal}; qa_q3_asset_owner_refs registry = asset_refs(&scope);
             okay = (!row->saved_map || qa_q3_assets_prepare_restored_map(row->q3_assets, owner->world,
                 (qa_collision_geometry *)qa_executable_recipe_geometry(owner->recipe), error)) &&
                 qa_q3_assets_owner_restore(row->q3_assets, qa_application_session(owner->frontend->application),
                     &registry, (qa_bytes){row->saved_assets.data, row->saved_assets.size}, error);
+            if (okay) {
+                row->assets_restored = true;
+                qa_buffer_free(&row->saved_assets);
+            }
         }
     owner->busy = false;
     if (!okay) return false;

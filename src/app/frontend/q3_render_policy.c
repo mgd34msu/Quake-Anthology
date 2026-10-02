@@ -37,6 +37,30 @@ static bool permedia2(const qa_gl_capabilities *caps)
     renderer[sizeof(renderer) - 1] = 0;
     return strstr(renderer, "permedia2") != NULL;
 }
+bool frontend_q3_renderer_hardware_read(const qa_frontend *f,int32_t *hardware,uint32_t *maximum,qa_error *error)
+{
+    if (!f || !hardware || !maximum || (!!f->cpu==!!f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source hardware requires its actual physical renderer");
+    *hardware=0; *maximum=0;
+    if (f->cpu) {
+        qa_cpu_capabilities actual;
+        return qa_cpu_capabilities_read(f->cpu,&actual,error);
+    }
+    const qa_gl_capabilities *caps=qa_gl_capabilities_get(f->gl);
+    if (!caps) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source hardware lost its actual native capabilities");
+    char renderer[sizeof(caps->renderer)];
+    for (size_t i=0;i<sizeof(renderer);++i) {
+        unsigned char c=(unsigned char)caps->renderer[i];
+        renderer[i]=(char)(c>='A' && c<='Z'?c+'a'-'A':c);
+    }
+    renderer[sizeof(renderer)-1]=0;
+    *maximum=caps->maximum_texture_size;
+    if (strstr(renderer,"banshee") || strstr(renderer,"voodoo_graphics")) *hardware=1;
+    else if (strstr(renderer,"rage pro") || strstr(renderer,"ragepro")) *hardware=3;
+    else if (strstr(renderer,"permedia2")) *hardware=4;
+    else if (strstr(renderer,"riva 128")) *hardware=2;
+    return true;
+}
 static bool texture_mode_parse(const char *value, qa_scene_filter *out)
 {
     static const char *const modes[]={"GL_NEAREST","GL_LINEAR","GL_NEAREST_MIPMAP_NEAREST",
@@ -53,16 +77,10 @@ static bool texture_mode_parse(const char *value, qa_scene_filter *out)
     }
     return false;
 }
-static bool texture_mode_apply(qa_frontend *f,qa_render_controls *controls,
-    const qa_cvar_view *row,qa_error *error)
+static bool texture_mode_resolve(qa_frontend *f,const char *value,qa_scene_filter *out)
 {
     qa_scene_filter filter;
-    if (!texture_mode_parse(row->value,&filter)) {
-        frontend_print(f,"bad filter name\n");
-        qa_scene_filter previous; bool initialized;
-        return qa_render_controls_source_texture_mode_read(controls,&previous,&initialized,error) &&
-            (initialized || qa_render_controls_source_texture_mode(controls,previous,error));
-    }
+    if (!texture_mode_parse(value,&filter)) return false;
     const qa_gl_capabilities *caps=f->gl?qa_gl_capabilities_get(f->gl):NULL;
     if (filter==QA_SCENE_LINEAR_MIPMAP_LINEAR && caps) {
         char renderer[sizeof(caps->renderer)];
@@ -77,11 +95,27 @@ static bool texture_mode_apply(qa_frontend *f,qa_render_controls *controls,
         bool voodoo=strstr(renderer,"banshee") || strstr(renderer,"voodoo_graphics");
 #endif
         if (voodoo) {
-            frontend_print(f,"Refusing to set trilinear on a voodoo.\n");
             filter=QA_SCENE_LINEAR_MIPMAP_NEAREST;
         }
     }
-    return qa_render_controls_source_texture_mode(controls,filter,error);
+    *out=filter;
+    return true;
+}
+static bool texture_mode_apply(qa_frontend *f,qa_render_controls *controls,
+    const qa_cvars_edit *edit,const qa_cvar_view *row,qa_error *error)
+{
+    qa_scene_filter filter,requested;
+    bool no_bind;
+    if (!frontend_q3_source_no_bind_read(f,edit,&no_bind,error)) return false;
+    if (!texture_mode_resolve(f,row->value,&filter)) {
+        frontend_print(f,"bad filter name\n");
+        qa_scene_filter previous; bool initialized;
+        return qa_render_controls_source_texture_mode_read(controls,&previous,&initialized,error) &&
+            (initialized || qa_render_controls_source_texture_mode(controls,previous,no_bind,error));
+    }
+    if (texture_mode_parse(row->value,&requested) && requested!=filter)
+        frontend_print(f,"Refusing to set trilinear on a voodoo.\n");
+    return qa_render_controls_source_texture_mode(controls,filter,no_bind,error);
 }
 
 static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const *names,
@@ -97,6 +131,24 @@ static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const
         if (!out[i] || !out[i]->value)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
     }
+    return true;
+}
+bool frontend_q3_source_restart_read(qa_frontend *f,const qa_cvars_edit *edit,
+    qa_render_source_restart_values *out,qa_error *error)
+{
+    static const char *const names[]={"r_maxpolys","r_maxpolyverts","r_textureMode"};
+    const qa_cvar_view *rows[3];
+    if (!out || !f || (f->cpu && f->gl) || (!f->cpu && !f->gl) ||
+        !records(f,edit,names,3,rows,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source restart lost its actual renderer and constructor rows");
+    qa_scene_filter filter;
+    if (!texture_mode_resolve(f,rows[2]->value,&filter)) {
+        qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+        bool initialized;
+        if (!qa_render_controls_source_texture_mode_read(controls,&filter,&initialized,error)) return false;
+    }
+    *out=(qa_render_source_restart_values){.max_polys=rows[0]->integer,
+        .max_polyverts=rows[1]->integer,.filter=filter};
     return true;
 }
 bool frontend_q3_material_profile_initialize(qa_frontend *f, qa_material_library *library,
@@ -125,7 +177,7 @@ bool frontend_q3_texture_mode_initialize(qa_frontend *f,qa_error *error)
     const qa_cvar_view *row;
     static const char *const names[]={"r_textureMode"};
     return frontend_resource_policy_admission_edit(f,&edit,error) &&
-        records(f,edit,names,1,&row,error) && texture_mode_apply(f,controls,row,error);
+        records(f,edit,names,1,&row,error) && texture_mode_apply(f,controls,edit,row,error);
 }
 bool frontend_q3_scene_limits_initialize(qa_frontend *f,qa_error *error)
 {
@@ -156,7 +208,7 @@ bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
     if (!row || !row->value)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame has no real ENGINE mode row");
     if (!row->modified) return true;
-    if (!texture_mode_apply(f,controls,row,error)) return false;
+    if (!texture_mode_apply(f,controls,NULL,row,error)) return false;
     qa_cvars_clear_modified(registry,"r_textureMode");
     row=frontend_render_control_record(registry,"r_textureMode");
     return (row && !row->modified) ||
@@ -197,7 +249,20 @@ bool frontend_q3_source_image_admit(void *context,const qa_scene_image *image,ui
     if (!f || !f->application || (f->cpu && f->gl) || (!f->cpu && !f->gl))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source image admission lost its actual renderer recipient");
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
-    return qa_render_controls_source_image_admit(controls,image,unit,error);
+    bool no_bind=false;
+    const qa_cvars_edit *edit=NULL;
+    if (!frontend_resource_policy_admission_edit(f,&edit,error) ||
+        !frontend_q3_source_no_bind_read(f,edit,&no_bind,error)) return false;
+    const qa_scene_image *dlight=NULL;
+    if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
+    return qa_render_controls_source_image_admit(controls,image,dlight?dlight:image,unit,error);
+}
+bool frontend_q3_source_no_bind_read(qa_frontend *f,const qa_cvars_edit *edit,bool *out,qa_error *error)
+{
+    static const char *const names[]={"r_nobind"};
+    const qa_cvar_view *row;
+    if (!out || !records(f,edit,names,1,&row,error)) return false;
+    *out=row->integer!=0; return true;
 }
 bool frontend_q3_material_source_bind(qa_frontend *f, qa_material_library *library, qa_error *error)
 {
@@ -289,14 +354,19 @@ bool frontend_q3_material_diagnostics_read(qa_frontend *f, qa_scene_source_diagn
     qa_error *error)
 {
     static const char *const names[] = {"r_debugSort", "r_showtris", "r_shownormals", "r_showsky",
-        "r_nobind", "r_offsetfactor", "r_offsetunits", "r_fastsky"};
+        "r_nobind", "r_offsetfactor", "r_offsetunits", "r_fastsky",
+        "r_railCoreWidth", "r_railWidth", "r_railSegmentLength", "r_lightmap",
+        "r_vertexLight", "r_uiFullScreen"};
     const qa_cvar_view *rows[sizeof(names)/sizeof(*names)];
     if (!out || !records(f, NULL, names, sizeof(names)/sizeof(*names), rows, error)) return false;
     *out = (qa_scene_source_diagnostics){.debug_sort = rows[0]->integer,
         .show_triangles = rows[1]->integer != 0, .show_normals = rows[2]->integer != 0,
         .show_sky = rows[3]->integer != 0, .no_bind = rows[4]->integer != 0,
         .polygon_offset_factor = (float)rows[5]->number, .polygon_offset_units = (float)rows[6]->number,
-        .fast_sky = rows[7]->integer};
+        .fast_sky = rows[7]->integer, .rail_core_width = rows[8]->integer,
+        .rail_width = rows[9]->integer, .rail_segment_length = (float)rows[10]->number,
+        .lightmap = rows[11]->integer,
+        .vertex_lighting = rows[12]->integer!=0 && rows[13]->integer==0};
     if (f->cpu && f->gl)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source stencil capability requires one actual renderer");
     if (f->cpu) {

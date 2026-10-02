@@ -37,7 +37,8 @@ static bool server_control(const qa_unified_document *d)
 static bool client_control(const qa_unified_document *d)
 {
     return qa_unified_session_kind(d, "ready") || qa_unified_session_kind(d, "userinfo") ||
-        qa_unified_session_kind(d, "command") || qa_unified_session_kind(d, "component-command");
+        qa_unified_session_kind(d, "command") || qa_unified_session_kind(d, "component-command") ||
+        qa_unified_session_kind(d, "source-command");
 }
 
 bool qa_unified_session_reply_valid(const qa_unified_session *s, const qa_unified_document *d, qa_error *e)
@@ -51,16 +52,48 @@ bool qa_unified_session_reply_valid(const qa_unified_session *s, const qa_unifie
     return epoch == s->epoch || qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its retained control epoch");
 }
 
-bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_document *d, qa_error *e)
+static bool outgoing_control(const qa_unified_session *s, const qa_unified_document *d,
+    uint32_t *epoch, bool *offer, bool *disconnect, qa_error *e)
 {
     if (!s || !d || qa_unified_document_type(d) != QA_UNIFIED_CONTROL_DOCUMENT || s->disconnected || s->closing ||
         (!qa_unified_session_kind(d, "disconnect") && !(s->server ? server_control(d) : client_control(d))))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control changes its authenticated direction");
-    bool offer = qa_unified_session_kind(d, "offer"), disconnect = qa_unified_session_kind(d, "disconnect");
-    uint32_t epoch = s->epoch;
-    if (!disconnect && !qa_unified_session_document_epoch(d, &epoch, e)) return false;
-    if (!disconnect && (offer ? epoch <= s->epoch : epoch != s->epoch))
+    *offer = qa_unified_session_kind(d, "offer"); *disconnect = qa_unified_session_kind(d, "disconnect");
+    *epoch = s->epoch;
+    if (!*disconnect && !qa_unified_session_document_epoch(d, epoch, e)) return false;
+    if (!*disconnect && (*offer ? *epoch <= s->epoch : *epoch != s->epoch))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control changes its retained world epoch");
+    return true;
+}
+
+static bool control_admission(const qa_unified_session *s, const qa_unified_document *d,
+    bool *ready, qa_error *e)
+{
+    bool offer, disconnect; uint32_t epoch;
+    if (!ready) return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Missing production control admission output");
+    if (!outgoing_control(s, d, &epoch, &offer, &disconnect, e)) return false;
+    qa_buffer wire = {0}; qa_error deferred = {0};
+    bool okay = qa_unified_document_encode(d, &wire, &deferred);
+    qa_bytes payload = {wire.data, wire.size};
+    if (okay) okay = qa_unified_channel_reliable_ready(s->channel, &payload, 1, ready, &deferred);
+    qa_buffer_free(&wire);
+    if (!okay && deferred.code == QA_ERROR_MEMORY) { *ready = false; return true; }
+    if (!okay && e) *e = deferred;
+    return okay;
+}
+
+bool qa_unified_session_control_ready(const qa_unified_session *s, const qa_unified_document *d,
+    bool *ready, qa_error *e)
+{
+    if (!qa_unified_session_idle(s) || !s->bound_source)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control admission requires its idle Source owner");
+    return control_admission(s, d, ready, e);
+}
+
+bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_document *d, qa_error *e)
+{
+    bool offer, disconnect; uint32_t epoch;
+    if (!outgoing_control(s, d, &epoch, &offer, &disconnect, e)) return false;
     qa_buffer encoded = {0};
     if (!qa_unified_document_encode(d, &encoded, e)) return false;
     uint32_t sequence;
@@ -114,7 +147,7 @@ static bool phase(qa_unified_session *s, qa_net_phase wanted, qa_error *e)
     return qa_network_phase(s->runtime, s->id, wanted, e);
 }
 
-static bool commit_queue(qa_unified_session *s, qa_unified_held *held, qa_error *e)
+static bool commit_queue(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)
 {
     const qa_unified_session_commit *commit = &held->commit;
     if (held->responses_queued) return true;
@@ -123,6 +156,7 @@ static bool commit_queue(qa_unified_session *s, qa_unified_held *held, qa_error 
     qa_buffer encoded[9] = {0}; qa_bytes payloads[9];
     size_t count = commit->followup_count + (commit->reply != NULL);
     bool disconnect = false, ok = true;
+    qa_error deferred = {0};
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_unified_document *d = commit->reply && !i ? commit->reply :
             commit->followups[i - (commit->reply != NULL)];
@@ -130,15 +164,19 @@ static bool commit_queue(qa_unified_session *s, qa_unified_held *held, qa_error 
         if (disconnect || s->closing || s->disconnected) {
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its authenticated control direction"); break;
         }
-        ok = qa_unified_session_reply_valid(s, d, e);
-        if (ok) ok = qa_unified_document_encode(d, encoded + i, e);
+        ok = qa_unified_session_reply_valid(s, d, &deferred);
+        if (ok) ok = qa_unified_document_encode(d, encoded + i, &deferred);
         payloads[i] = (qa_bytes){encoded[i].data, encoded[i].size};
         disconnect = next_disconnect;
     }
-    if (ok) ok = qa_unified_channel_reliable_batch(s->channel, payloads, count,
-        &held->response_first, &held->response_last, e);
+    bool ready = false;
+    if (ok) ok = qa_unified_channel_reliable_ready(s->channel, payloads, count, &ready, &deferred);
+    if (ok && ready) ok = qa_unified_channel_reliable_batch(s->channel, payloads, count,
+        &held->response_first, &held->response_last, &deferred);
     for (size_t i = 0; i < 9; ++i) qa_buffer_free(encoded + i);
-    if (!ok) return false;
+    if (!ok && deferred.code == QA_ERROR_MEMORY) { *waiting = true; return true; }
+    if (!ok) { if (e && deferred.code != QA_OK) *e = deferred; return false; }
+    if (!ready) { *waiting = true; return true; }
     if (count) s->required = held->response_last;
     if (disconnect) { s->closing = true; s->admitted = false; s->closing_ns = s->now_ns; }
     held->responses_queued = true;
@@ -158,7 +196,7 @@ void qa_unified_session_delivery_free(qa_unified_held *held)
     qa_unified_document_destroy(held->document); qa_buffer_free(&held->wire); free(held);
 }
 
-static bool process_control(qa_unified_session *s, qa_unified_held *held, qa_error *e)
+static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)
 {
     const qa_unified_document *d = held->document;
     bool disconnect = qa_unified_session_kind(d, "disconnect"), offer = qa_unified_session_kind(d, "offer");
@@ -189,7 +227,8 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, qa_err
         }
         if (commit.applied && disconnect) s->admitted = false;
     }
-    ok = commit_queue(s, held, e);
+    ok = commit_queue(s, held, waiting, e);
+    if (!ok || *waiting) return ok;
     if (ok && !s->closing && held->commit.applied && qa_unified_session_kind(d, "ready")) {
         ok = phase(s, QA_NET_ACTIVE, e);
         if (ok) s->admitted = true;
@@ -199,13 +238,22 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, qa_err
         if (ok) s->admitted = true;
     }
     if (ok && disconnect) {
-        if (s->server && !s->closing) ok = qa_unified_session_queue_control(s, d, e);
+        if (s->server && !s->closing) {
+            bool ready = false;
+            ok = control_admission(s, d, &ready, e);
+            if (!ok) return false;
+            if (!ready) { *waiting = true; return true; }
+            qa_error deferred = {0};
+            ok = qa_unified_session_queue_control(s, d, &deferred);
+            if (!ok && deferred.code == QA_ERROR_MEMORY) { *waiting = true; return true; }
+            if (!ok && e) *e = deferred;
+        }
         else if (!s->server) s->disconnected = true;
     }
     return ok;
 }
 
-static bool process_frame(qa_unified_session *s, qa_unified_held *held, qa_error *e)
+static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)
 {
     const qa_unified_document *d = held->document;
     uint32_t epoch;
@@ -225,7 +273,8 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, qa_error
         if (!ok) { commit_free(&commit); return false; }
         held->commit = commit; held->source_finished = true;
     }
-    bool ok = commit_queue(s, held, e);
+    bool ok = commit_queue(s, held, waiting, e);
+    if (!ok || *waiting) return ok;
     if (ok && !s->closing && held->commit.applied) ok = phase(s, QA_NET_ACTIVE, e);
     if (ok && held->commit.applied) qa_unified_session_ack(s, held->commit.acknowledged_input);
     return ok;
@@ -250,13 +299,61 @@ static bool process_input(qa_unified_session *s, const qa_unified_document *d, q
     return ok;
 }
 
+static void delivery_applied(qa_unified_session *s)
+{
+    qa_unified_held *held = s->held;
+    if (held->kind == QA_UNIFIED_CONTROL_DOCUMENT) s->reliable_applied = held->sequence;
+    else s->frame_applied = held->sequence;
+    s->held = held->next; if (!s->held) s->tail = NULL;
+    --s->held_count; s->held_bytes -= held->bytes;
+    qa_unified_session_delivery_free(held);
+}
+
+bool qa_unified_session_restart_prepare(qa_unified_session *s, bool *ready, bool *retiring, qa_error *e)
+{
+    if (!ready || !retiring || !qa_unified_session_idle(s) || !s->bound_source || !s->server)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production travel requires its returned actual server peer");
+    *ready = true; *retiring = qa_unified_session_retiring(s);
+    if (*retiring) return true;
+    s->processing = true;
+    bool okay = true, waiting = false;
+    while (okay && s->held && s->held->source_finished && !s->closing && !s->disconnected && !s->timeout_pending) {
+        if (!s->held->document || s->held->kind != QA_UNIFIED_CONTROL_DOCUMENT) {
+            okay = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production travel retained a completed non-control server delivery");
+            break;
+        }
+        okay = process_control(s, s->held, &waiting, e);
+        if (!okay || waiting) break;
+        delivery_applied(s);
+    }
+    s->processing = false;
+    *ready = !waiting; *retiring = qa_unified_session_retiring(s);
+    return okay;
+}
+
+bool qa_unified_session_offer_ready(const qa_unified_session *s, const qa_unified_document *offer,
+    bool *ready, qa_error *e)
+{
+    if (!ready || !qa_unified_session_idle(s) || !s->bound_source || !s->server ||
+        qa_unified_session_retiring(s) || !qa_unified_session_kind(offer, "offer") || s->epoch == UINT32_MAX)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer admission lacks its returned server epoch");
+    uint32_t epoch;
+    if (!qa_unified_session_document_epoch(offer, &epoch, e)) return false;
+    if (epoch != s->epoch + 1)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer changes its actual next wire epoch");
+    for (const qa_unified_held *held = s->held; held; held = held->next)
+        if (held->source_finished)
+            return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer admission retains a completed prior epoch reply");
+    return control_admission(s, offer, ready, e);
+}
+
 bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *e)
 {
     if (!waiting || !qa_unified_session_idle(s) || !s->bound_source)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production preparation requires its idle runtime owner");
     *waiting = false; s->processing = true;
-    bool ok = true;
-    if (s->timeout_pending && !s->closing && !s->disconnected) {
+    bool ok = qa_unified_session_receive_resume(s, e);
+    if (ok && s->timeout_pending && !s->closing && !s->disconnected) {
         static const char json[] = "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"disconnect\",\"reason\":\"Connection timed out\"}}";
         if (!s->timeout_delivery) {
             s->timeout_delivery = calloc(1, sizeof(*s->timeout_delivery));
@@ -268,13 +365,13 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
             if (ok) s->timeout_delivery->bytes = s->timeout_delivery->wire.size;
             else { qa_unified_session_delivery_free(s->timeout_delivery); s->timeout_delivery = NULL; }
         }
-        if (ok) ok = process_control(s, s->timeout_delivery, e);
-        if (ok) {
+        if (ok) ok = process_control(s, s->timeout_delivery, waiting, e);
+        if (ok && !*waiting) {
             s->timeout_pending = false; s->close_cause = 0;
             qa_unified_session_delivery_free(s->timeout_delivery); s->timeout_delivery = NULL;
         }
     }
-    while (ok && s->held && !s->disconnected && !s->timeout_pending) {
+    while (ok && s->held && !s->disconnected && !s->timeout_pending && !*waiting) {
         qa_unified_held *held = s->held;
         qa_unified_document_kind kind = held->kind;
         bool skipped = s->closing || (s->server && kind == QA_UNIFIED_INPUT_DOCUMENT && !s->admitted);
@@ -303,14 +400,11 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
             ok = s->hooks.prepare(s->hooks.context, s->id, held->document, &ready, e);
             if (!ok || !ready) { *waiting = ok; break; }
         }
-        ok = skipped || obsolete || (kind == QA_UNIFIED_CONTROL_DOCUMENT ? process_control(s, held, e) :
-            s->server ? process_input(s, held->document, e) : process_frame(s, held, e));
-        if (!ok) break;
-        if (kind == QA_UNIFIED_CONTROL_DOCUMENT) s->reliable_applied = held->sequence;
-        else s->frame_applied = held->sequence;
-        s->held = held->next; if (!s->held) s->tail = NULL;
-        --s->held_count; s->held_bytes -= held->bytes;
-        qa_unified_session_delivery_free(held);
+        ok = skipped || obsolete || (kind == QA_UNIFIED_CONTROL_DOCUMENT ? process_control(s, held, waiting, e) :
+            s->server ? process_input(s, held->document, e) : process_frame(s, held, waiting, e));
+        if (!ok || *waiting) break;
+        delivery_applied(s);
+        ok = qa_unified_session_receive_resume(s, e);
     }
     s->processing = false;
     return ok;

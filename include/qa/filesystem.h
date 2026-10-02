@@ -280,6 +280,12 @@ bool qa_fs_stage_open_readonly(qa_fs_root *, const char *target, uint64_t nonce,
  * owner there on failure. The caller must retire it with checked close. */
 bool qa_fs_stage_open_checked(qa_fs_root *, const char *target, uint64_t nonce,
                                bool resume, qa_fs_stage **, uint64_t *initial_size, qa_error *);
+/* Advances the actual caller namespace until exclusive native creation succeeds,
+ * skipping only real name collisions and the excluded logical nonce. Failed
+ * admission returns its partial owner for checked retirement. */
+bool qa_fs_stage_open_unique_checked(qa_fs_root *, const char *target,
+    uint64_t *namespace_nonce, uint64_t excluded_nonce, qa_fs_stage **,
+    uint64_t *initial_size, qa_error *);
 bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
 bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
                        size_t *read, qa_error *);

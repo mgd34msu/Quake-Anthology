@@ -85,16 +85,14 @@ static bool live(const match_scope *scope, qa_error *error)
     if (!source_live(provider, error)) return false;
     if (provider->application != app || provider->state.q3 != scope->game ||
         provider->owner != scope->owner || app->modes != scope->modes ||
-        !app->primary_mode_ready || app->primary_mode.slot != scope->mode.slot ||
-        app->primary_mode.generation != scope->mode.generation ||
         app->publication_generation != scope->publication_generation ||
         app->command_generation != scope->command_generation ||
-        app->map_revision != scope->map_revision ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)
+        app->map_revision != scope->map_revision)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "native Q3 match source changed during its callback");
     int32_t time;
-    return qa_q3_source_clock(scope->game, &time, error) &&
+    return application_native_q3_source_mode_current(provider, scope->mode, error) &&
+        qa_q3_source_clock(scope->game, &time, error) &&
         (time == scope->time || application_fail(error, QA_ERROR_ARGUMENT,
             "native Q3 match callback advanced its source clock"));
 }
@@ -103,15 +101,20 @@ static bool begin(application_provider *provider, match_scope *scope, qa_error *
 {
     if (!source_live(provider, error)) return false;
     qa_application *app = provider->application;
-    if (!app->modes || !app->primary_mode_ready)
+    if (!app->modes)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "native Q3 match requires the selected rule owner");
     *scope = (match_scope){.provider = provider, .application = app,
         .game = provider->state.q3, .modes = app->modes,
-        .mode = app->primary_mode, .owner = provider->owner,
+        .owner = provider->owner,
         .publication_generation = app->publication_generation,
         .command_generation = app->command_generation, .map_revision = app->map_revision};
     qa_mode_view mode;
+    bool associated;
+    if (!application_native_q3_source_mode(provider, &scope->mode, &associated, error)) return false;
+    if (!associated)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Q3 match has no actual provider-associated rule owner");
     if (!qa_q3_source_clock(scope->game, &scope->time, error) || !live(scope, error) ||
         !qa_modes_read(scope->modes, scope->mode, &mode, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||

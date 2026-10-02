@@ -4,9 +4,23 @@
 #include "qa/application_character_selection.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_client.h"
+#include "qa/input_release.h"
 bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
 {
     if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
+    if (f->seats && f->seats[ordinal].input) {
+        qa_console *console; qa_cvars *cvars; qa_command_context command;
+        qa_application_client_source source;
+        if (!qa_input_seat_recipient_read(f->seats[ordinal].input,&console,&cvars,&command)) return false;
+        if (command.owner) {
+            if (command.owner>UINT32_MAX ||
+                !qa_application_client_physical_read(f->application,(qa_actor_owner)command.owner,command.seat,&source,NULL) ||
+                !qa_application_client_associated(f->application,&source) || source.context.physical_seat!=ordinal ||
+                source.context.console!=console || source.context.cvars!=cvars ||
+                !qa_application_command_context_active(f->application,&command)) return false;
+            *out=source.context.seat; return true;
+        }
+    }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
     if (!choices || ordinal>=choices->seat_count) return false;
     *out=choices->seats[ordinal].id; return true;
@@ -35,6 +49,14 @@ bool frontend_command_seat_read(const qa_frontend *f,const qa_command_context *c
     if (!f || !f->application || !command || !out || f->options.dedicated ||
         ((command->registry || command->generation) &&
          !qa_application_command_context_active(f->application,command))) return false;
+    if (command->owner && command->owner<=UINT32_MAX) {
+        qa_application_client_source source;
+        if (qa_application_client_physical_read(f->application,(qa_actor_owner)command->owner,command->seat,&source,NULL) &&
+            qa_application_client_associated(f->application,&source) && source.context.physical_seat<f->options.seats &&
+            qa_application_command_context_active(f->application,command)) {
+            *out=source.context.physical_seat; return true;
+        }
+    }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
     if (!choices) {
         if (command->actor.registry || command->seat>=f->options.seats) return false;
@@ -65,8 +87,16 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
     if (f && f->application && f->seats && ordinal<f->options.seats && seat==f->seats+ordinal &&
         seat->id==ordinal && command && command->owner && command->owner<=UINT32_MAX) {
         qa_application_client_source source;
-        if (qa_application_client_read(f->application,(qa_actor_owner)command->owner,command->seat,&source,NULL) &&
-            source.context.physical_seat==ordinal && qa_application_client_current(f->application,&source)) {
+        qa_input_release_scope all={.all=true,.controller=-1};
+        qa_input_release *release=qa_input_seat_release_read(seat->input);
+        bool captured_release=f->capture && release &&
+            qa_input_release_scope_owned(release,seat->input,&all,NULL);
+        if (qa_application_client_physical_read(f->application,(qa_actor_owner)command->owner,command->seat,&source,NULL) &&
+            source.context.physical_seat==ordinal && qa_application_client_associated(f->application,&source) &&
+            (qa_application_command_context_active(f->application,command) ||
+                ((f->source_restoring || (captured_release &&
+                        qa_input_release_console(release)==source.context.console)) &&
+                    qa_application_client_retirement_current(f->application,&source)))) {
             const qa_command_context *actual=&source.context.command;
             if (command->origin==QA_COMMAND_SEAT && !command->script && !command->console_text &&
                 command->owner==actual->owner && command->session==actual->session &&

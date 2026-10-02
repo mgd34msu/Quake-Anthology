@@ -15,9 +15,10 @@ static uint32_t legacy_flags(uint32_t flags)
     return source;
 }
 
-static void store_float(uint8_t *out, float number)
+static bool action_vector(void *context,qa_vec3 *out,qa_error *error)
 {
-    uint32_t bits; memcpy(&bits, &number, sizeof(bits)); qa_store_u32le(out, bits);
+    q3_call *call=context;
+    return q3_vector(call,call->arguments[1],out,error);
 }
 
 q3_service_result q3_bot_actions(q3_call *call, int32_t *result, qa_error *error)
@@ -54,26 +55,17 @@ q3_service_result q3_bot_actions(q3_call *call, int32_t *result, qa_error *error
     } else if (operation == 417 || operation == 418) {
         ok = qa_bot_actions_jump(actions, (uint32_t)client, operation == 418, error);
     } else if (operation == 419 || operation == 420) {
-        qa_vec3 vector;
-        ok = q3_vector(call, call->arguments[1], &vector, error);
-        if (ok) ok = operation == 419 ? qa_bot_actions_move(actions, (uint32_t)client, vector, q3_float(call, 2), error) :
-                                         qa_bot_actions_view(actions, (uint32_t)client, vector, error);
+        ok = operation == 419 ? qa_bot_actions_move_from(actions,(uint32_t)client,action_vector,call,q3_float(call,2),error) :
+            qa_bot_actions_view_from(actions,(uint32_t)client,action_vector,call,error);
     } else if (operation == 421) {
         qa_bot_actions_end_regular(actions, client, q3_float(call, 1)); ok = true;
     } else if (operation == 422) {
-        qa_bot_input input;
+        qa_bytes input;
         q3_record admitted;
         ok = (legacy || q3_record_open(call, call->arguments[2], 40, &admitted, error)) &&
-             qa_bot_actions_input(actions, (uint32_t)client, q3_float(call, 1), &input, error);
+             qa_bot_actions_input_bytes(actions, (uint32_t)client, q3_float(call, 1), &input, error);
         if (ok) {
-            uint8_t bytes[40];
-            store_float(bytes, input.think_time);
-            store_float(bytes + 4, input.direction.x); store_float(bytes + 8, input.direction.y);
-            store_float(bytes + 12, input.direction.z); store_float(bytes + 16, input.speed);
-            store_float(bytes + 20, input.view_angles.x); store_float(bytes + 24, input.view_angles.y);
-            store_float(bytes + 28, input.view_angles.z);
-            qa_store_u32le(bytes + 32, input.action_flags); qa_store_u32le(bytes + 36, (uint32_t)input.weapon);
-            ok = q3_write(call, call->arguments[2], (qa_bytes){bytes, sizeof(bytes)}, error);
+            ok = q3_write(call, call->arguments[2], input, error);
             if (ok && legacy) {
                 uint8_t current[4];
                 ok = q3_read(call, call->arguments[2] + 32, current, sizeof(current), error) &&

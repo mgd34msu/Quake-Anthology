@@ -9,6 +9,8 @@ bool application_q3_native_catalog_create(struct q3g_role *, qa_bytes,
 void application_q3_native_catalog_destroy(application_q3_native_catalog *);
 bool application_q3_native_catalog_current(const application_q3_native_catalog *,
     const struct q3g_role *);
+bool application_q3_native_catalog_restore_validate(application_q3_native_catalog *,
+    const struct q3g_role *, qa_error *);
 bool application_q3_native_catalog_records(application_q3_native_catalog *,
     const application_q3_catalog_record **, size_t *, qa_error *);
 bool application_q3_native_catalog_weapons(application_q3_native_catalog *,

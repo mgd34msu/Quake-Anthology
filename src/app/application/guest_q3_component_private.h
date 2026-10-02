@@ -9,7 +9,7 @@ typedef struct component_hook {
     application_q3_component *owner;
     uint32_t entry;
     qa_qvm_binding id;
-    bool middleware,allocate,release,frame,actor;
+    bool middleware,allocate,release,frame,actor,items;
 } component_hook;
 typedef struct component_call_lease {
     struct component_call_lease *next;
@@ -23,6 +23,8 @@ struct application_q3_component {
     application_q3_component_options options;
     application_q3_mod_profile *profile;
     application_q3_mod *mod;
+    application_q3_mod_items_profile *items_profile;
+    application_q3_mod_items *items;
     application_q3_component_records *records;
     application_q3_component_source *source;
     application_q3_mod_actors *actor_semantics;
@@ -48,7 +50,7 @@ struct application_q3_component {
     qa_string_id definition;
     int32_t milliseconds;
     bool initialized,restoring,closing,busy,has_source,draining,scene;
-    bool restored_storage,restored_baseline,restored_actors,restored_mod,restored_callbacks;
+    bool restored_storage,restored_baseline,restored_actors,restored_mod,restored_items,restored_callbacks;
 };
 bool q3component_storage(void *,qa_error *);
 bool q3component_current(void *,qa_error *);
@@ -62,5 +64,6 @@ bool q3component_frame_profile(application_q3_component *,qa_error *);
 bool q3component_frame_proceed(application_q3_component *,const qa_qvm_call *,int32_t *,qa_error *);
 bool q3component_call(application_q3_component *,uint32_t,const int32_t *,size_t,int32_t *,qa_error *);
 bool q3component_actors_create(application_q3_component *,qa_error *);
+bool q3component_items_create(application_q3_component *,qa_error *);
 qa_qvm_function_hook q3component_actor_resolve(void *,const qa_qvm_call *,void **);
 #endif

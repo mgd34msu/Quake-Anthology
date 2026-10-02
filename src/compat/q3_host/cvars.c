@@ -94,14 +94,20 @@ static bool binding_namespace(const qa_q3_host *host,const q3_cvar_binding *bind
 }
 static bool cache_fields(qa_source_save_io *io,q3_cvar_cache *cache)
 {
-    return qa_source_save_i32(io,&cache->pointer) && qa_source_save_i32(io,&cache->handle) &&
-        ((cache->pointer!=0 && cache->handle!=-1 && cache->handle!=ENGINE_CHEATS_HANDLE) ||
+    uint64_t address = cache->native_address ? cache->address : 0;
+    bool ok = qa_source_save_bool(io,&cache->native_address) &&
+        qa_source_save_i32(io,&cache->pointer) && qa_source_save_u64(io,&address) &&
+        qa_source_save_i32(io,&cache->handle) &&
+        (((cache->native_address ? cache->pointer==0 && address!=0 : cache->pointer!=0 && address==0) &&
+            cache->handle!=-1 && cache->handle!=ENGINE_CHEATS_HANDLE) ||
             q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid original CGAME cvar cache identity"));
+    if (ok && io->direction==QA_SOURCE_SAVE_READ) cache->address=address;
+    return ok;
 }
 bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *error)
 {
     qa_source_save_io io={0};
-    uint8_t magic[4]={'Q','3','C','B'}; uint32_t version=3;
+    uint8_t magic[4]={'Q','3','C','B'}; uint32_t version=4;
     size_t count=host->cvar_binding_count;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
         qa_source_save_u32(&io,&version) && qa_source_save_count(&io,&count,1024);
@@ -117,7 +123,10 @@ bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *e
     if (ok) ok=qa_source_save_count(&io,&caches,SIZE_MAX/sizeof(q3_cvar_cache));
     for (size_t i=0;ok && i<caches;++i) {
         q3_cvar_cache copy=host->cvar_caches[i];
-        if (!host->vm || copy.vm!=host->vm || copy.native || host->options.role!=QA_QVM_CGAME)
+        if (host->options.role!=QA_QVM_CGAME ||
+            (host->vm ? copy.vm!=host->vm || copy.native || copy.native_address :
+                !host->native || copy.vm || copy.native!=host->native || !copy.native_address ||
+                qa_native_get_backend(host->native)!=QA_NATIVE_BACKEND_OWNED_PROCESS))
             ok=q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cache has no original executor owner");
         if (ok) ok=cache_fields(&io,&copy);
     }
@@ -137,7 +146,7 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar decode requires empty actual candidate output");
     bool ok=qa_source_save_bytes(&io,magic,sizeof(magic)) && qa_source_save_u32(&io,&version) &&
         qa_source_save_count(&io,&count,1024);
-    if (ok && (memcmp(magic,"Q3CB",4) || version!=3 || count>bytes.size-io.offset))
+    if (ok && (memcmp(magic,"Q3CB",4) || version!=4 || count>bytes.size-io.offset))
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Unsupported Q3 cvar binding continuation");
     q3_cvar_binding *bindings=ok && count?calloc(count,sizeof(*bindings)):NULL;
     if (ok && count && !bindings) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring routed Q3 cvar bindings");
@@ -149,7 +158,7 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
     }
     size_t cache_count=0;
     if (ok) ok=qa_source_save_count(&io,&cache_count,SIZE_MAX/sizeof(q3_cvar_cache));
-    if (ok && cache_count>(bytes.size-io.offset)/8)
+    if (ok && cache_count>(bytes.size-io.offset)/17)
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Q3 cache inventory exceeds retained bytes");
     q3_cvar_cache *caches=ok && cache_count?calloc(cache_count,sizeof(*caches)):NULL;
     if (ok && cache_count && !caches) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring original Q3 cvar caches");
@@ -158,7 +167,8 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
         if (ok && caches[i].handle<=-3 && (uint64_t)(-(int64_t)caches[i].handle-3)>=count)
             ok=q3_fail(error,QA_ERROR_FORMAT,0,"Original Q3 cache has no routed handle owner");
         for (size_t j=0;ok && j<i;++j)
-            if (caches[j].pointer==caches[i].pointer)
+            if (caches[j].native_address==caches[i].native_address &&
+                (caches[i].native_address ? caches[j].address==caches[i].address : caches[j].pointer==caches[i].pointer))
                 ok=q3_fail(error,QA_ERROR_FORMAT,0,"Duplicate original Q3 cvar cache pointer");
     }
     q3_cvar_status status={0};
@@ -180,7 +190,7 @@ bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
             return q3_fail(error,QA_ERROR_FORMAT,0,"Restored Q3 binding differs from its actual canonical handle");
         binding->registry=binding->previous_current?registry:NULL;
     }
-    if (host->cvar_cache_count && (!host->vm || host->options.role!=QA_QVM_CGAME))
+    if (host->cvar_cache_count && ((!host->vm && !host->native) || host->options.role!=QA_QVM_CGAME))
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar cache lacks its original CGAME executor");
     for (size_t i=0;i<host->cvar_cache_count;++i) {
         q3_cvar_cache *cache=host->cvar_caches+i; qa_bytes span;
@@ -194,9 +204,14 @@ bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
             if (index>=host->cvar_binding_count || !status_name(host->cvar_bindings[index].name))
                 return q3_fail(error,QA_ERROR_FORMAT,0,"Restored Q3 cache differs from its routed status declaration");
         }
-        if (!qa_qvm_span(host->vm,cache->pointer,0,272,&span,error)) return false;
-        cache->vm=host->vm; cache->memory=host->memory;
-        cache->address=(uint64_t)qa_qvm_memory_size(host->vm)+qa_qvm_mask_address(host->vm,cache->pointer);
+        if (host->vm) {
+            if (cache->native_address || !qa_qvm_span(host->vm,cache->pointer,0,272,&span,error))
+                return q3_fail(error,QA_ERROR_FORMAT,0,"Restored QVM cvar cache changed its memory backend");
+            cache->address=(uint64_t)qa_qvm_memory_size(host->vm)+qa_qvm_mask_address(host->vm,cache->pointer);
+        } else if (!cache->native_address || qa_native_get_backend(host->native)!=QA_NATIVE_BACKEND_OWNED_PROCESS ||
+            !qa_native_range_check(host->native,cache->address,272,QA_NATIVE_MEMORY_READ|QA_NATIVE_MEMORY_WRITE,error))
+            return q3_fail(error,QA_ERROR_FORMAT,0,"Restored native cvar cache changed its actual process memory");
+        cache->vm=host->vm; cache->native=host->native; cache->memory=host->memory;
     }
     return true;
 }
@@ -476,7 +491,8 @@ static bool cache_note(q3_call *call,uint64_t address,const qa_cvar_view *view,q
         host->cvar_caches=grown; ++host->cvar_cache_count;
     }
     host->cvar_caches[index]=(q3_cvar_cache){.vm=call->vm,.native=call->native,
-        .memory=call->memory,.pointer=pointer,.address=address,.handle=qa_load_i32le(token)};
+        .memory=call->memory,.pointer=pointer,.address=address,.native_address=call->native!=NULL,
+        .handle=qa_load_i32le(token)};
     return true;
 }
 static bool update(q3_call *call,uint64_t pointer,qa_error *error)

@@ -307,6 +307,18 @@ bool qa_network_q1_client_retirement_pending(const qa_network_peer *p)
     const q1_runtime_client *c = p->state;
     return c->retiring && !c->retirement.marked;
 }
+bool qa_network_q1_client_timeout(qa_network_peer *p,const char *reason,qa_error *e)
+{
+    if (!qa_network_q1_client_peer(p) || !reason)
+        return qa_network_fail(e,"Q1 CLIENT timeout requires its actual peer and reason");
+    q1_runtime_client *c=p->state;
+    if (!c->runtime->pumping || !c->runtime->callback || c->busy)
+        return qa_network_fail(e,"Q1 CLIENT timeout requires its genuine idle pump callback");
+    c->busy=true;
+    bool ok=retire_client(c,reason,true,e);
+    c->busy=false;
+    return ok;
+}
 void qa_network_q1_client_transport_rebind(qa_network_peer *p, qa_net_transport *transport)
 { if (qa_network_q1_client_peer(p)) ((q1_runtime_client *)p->state)->native.transport = transport; }
 q1_runtime_client *q1_client_get(qa_network_runtime *runtime, qa_net_client_id id, qa_error *e)

@@ -43,7 +43,7 @@ bool q3n_hud_create_compiled(const q3n_hud_options *options,q3n_hud **out,qa_err
 {
     q3n_compiled_source_view source;
     if(!options || !out || *out || !options->compiled_source || options->source || options->client || options->remote_client ||
-       !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command || !options->oldest_command ||
+       !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command || !options->compiled_oldest_command ||
        !q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) || source.basis.application!=options->application ||
        source.basis.assets!=options->assets || source.basis.seat!=options->seat ||
        (source.basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order ||
@@ -340,7 +340,13 @@ static bool disconnect(q3n_hud_draw *d)
 {
     q3n_hud *o=d->owner;
     int32_t time=o->oldest_command_time;
-    if(d->frame->remote || d->frame->compiled) {
+    if(d->frame->compiled) {
+        bool available;
+        if(!o->options.compiled_oldest_command || !q3nh_current(o,d->frame,d->error) ||
+           !o->options.compiled_oldest_command(o->options.context,d->frame,&time,&available,d->error) ||
+           !q3nh_current(o,d->frame,d->error))return false;
+        if(!available)return true;
+    } else if(d->frame->remote) {
         qa_q3_usercmd command;
         if(!o->options.oldest_command || !q3nh_current(o,d->frame,d->error) ||
            !o->options.oldest_command(o->options.context,d->frame,&command,d->error) ||

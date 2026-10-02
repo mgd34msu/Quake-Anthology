@@ -47,7 +47,8 @@ bool qa_q3_assets_skin_holder(const qa_q3_presentation_assets *, size_t ordinal,
     qa_q3_asset_skin_holder *, qa_error *);
 bool qa_q3_assets_services(const qa_q3_presentation_assets *,
     qa_q3_presentation_asset_options *, qa_scene_world **, qa_collision_geometry **, qa_error *);
-/* Cold attachment to an empty isolated registry; dispatches no source service. */
+/* Cold attachment to an empty isolated registry; repeating the same genuine
+ * map pair is allowed. Dispatches no source service. */
 bool qa_q3_assets_prepare_restored_map(qa_q3_presentation_assets *,
     qa_scene_world *, qa_collision_geometry *, qa_error *);
 
@@ -97,8 +98,10 @@ bool qa_q3_assets_owner_checkpoint(qa_q3_presentation_assets *, qa_session *,
  * model holders and scenes/worlds/materials/audio already exist in the same
  * aggregate dictionary. Import copies private skin/name/LOD metadata and
  * attaches those exact owners. It does not register, select, acquire, parse,
- * rasterize or construct an image/material/model/world. A failed candidate
- * retains only its local allocations/references and must be discarded. */
+ * rasterize or construct an image/material/model/world. Decode and readiness
+ * use an isolated registry; failure disposes its private metadata and leases,
+ * leaving the destination and its prebound map/services unchanged for retry.
+ * Success publishes into the same destination allocation before adoption. */
 bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *, qa_session *,
     const qa_q3_asset_owner_refs *, qa_bytes, qa_error *);
 #endif

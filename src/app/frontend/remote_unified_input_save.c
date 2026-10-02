@@ -11,11 +11,16 @@ typedef struct saved_input {
     uint64_t configuration,connection,namespace_revision;
     qa_sha256_digest descriptor;
     frontend_unified_command_builder builder,next;
+    qa_movement_command q3_commands[64];
+    size_t q3_command_count;
     qa_seat_input_sample sample;
     qa_unified_input_batch command;
     uint64_t sequence,last_sequence;
     double time,pending_time,elapsed;
     bool submitted,has_sample,has_pending;
+    bool has_q3_values;
+    int32_t q3_weapon;
+    float q3_sensitivity;
 } saved_input;
 static bool real(qa_source_save_io *io,double *v)
 { return qa_source_save_f64(io,v) && isfinite(*v); }
@@ -59,34 +64,58 @@ static bool command(qa_source_save_io *io,saved_input *s)
     } else if(ok) ok=qa_source_save_bytes(io,bytes.data,size);
     qa_unified_document_destroy(doc);qa_buffer_free(&bytes);return ok;
 }
+static bool q3_history(qa_source_save_io *io,saved_input *s)
+{
+    if(!qa_source_save_count(io,&s->q3_command_count,64)||(s->q3_command_count&&s->builder.kind!=QA_MOVEMENT_Q3)) return false;
+    for(size_t i=0;i<s->q3_command_count;++i) {
+        qa_movement_command *c=s->q3_commands+i; c->kind=QA_MOVEMENT_Q3;
+        if(!qa_source_save_u64(io,&c->sequence)||c->sequence>QA_UNIFIED_SAFE_INTEGER||
+            (i&&c->sequence<=s->q3_commands[i-1].sequence)||!qa_source_save_i32(io,&c->server_time_ms)||
+            !qa_source_save_u32(io,&c->milliseconds)||c->milliseconds>200||!qa_source_save_u32(io,&c->buttons)||
+            !qa_source_save_u8(io,&c->weapon)||!scalar(io,&c->forward_move)||!scalar(io,&c->side_move)||!scalar(io,&c->up_move)) return false;
+        for(size_t axis=0;axis<3;++axis) if(!qa_source_save_i32(io,&c->angle_words[axis])) return false;
+    }
+    return true;
+}
 static bool fields(qa_source_save_io *io,saved_input *s)
 {
-    uint8_t tag[8]={'Q','U','I','P',2,0,0,0};
-    const uint8_t expected[8]={'Q','U','I','P',2,0,0,0};
+    uint8_t tag[8]={'Q','U','I','P',4,0,0,0};
+    const uint8_t expected[8]={'Q','U','I','P',4,0,0,0};
     if(!qa_source_save_bytes(io,tag,8) || memcmp(tag,expected,8) ||
         !qa_source_save_u32(io,&s->epoch) || !s->epoch || !qa_source_save_u32(io,&s->physical) ||
         !qa_source_save_u64(io,&s->configuration) || !qa_source_save_u64(io,&s->connection) ||
         !qa_source_save_u64(io,&s->namespace_revision) || !s->namespace_revision ||
         !qa_source_save_bytes(io,s->descriptor.bytes,sizeof(s->descriptor.bytes)) ||
-        !builder(io,&s->builder) || !real(io,&s->time) ||
+        !builder(io,&s->builder) || !real(io,&s->time) || !q3_history(io,s) ||
+        !qa_source_save_bool(io,&s->has_q3_values) ||
+        (s->has_q3_values&&(!qa_source_save_i32(io,&s->q3_weapon)||!scalar(io,&s->q3_sensitivity))) ||
         !qa_source_save_bool(io,&s->submitted) || !qa_source_save_u64(io,&s->last_sequence) ||
         s->last_sequence>QA_UNIFIED_SAFE_INTEGER || (!s->submitted && s->last_sequence) ||
         !qa_source_save_bool(io,&s->has_sample) || !qa_source_save_bool(io,&s->has_pending) ||
         (s->has_pending && !s->has_sample)) return false;
-    if(!s->has_sample) return true;
+    if(!s->has_sample) return !s->q3_command_count||
+        (s->submitted&&s->q3_commands[s->q3_command_count-1].sequence==s->last_sequence);
     if(!qa_source_save_u64(io,&s->sequence) || s->sequence>QA_UNIFIED_SAFE_INTEGER ||
         (s->submitted && s->sequence<=s->last_sequence) || !real(io,&s->elapsed) || s->elapsed<0 ||
         !sample(io,&s->sample)) return false;
-    if(!s->has_pending) return true;
+    if(!s->has_pending) return !s->q3_command_count||
+        (s->submitted&&s->q3_commands[s->q3_command_count-1].sequence==s->last_sequence);
     return builder(io,&s->next) && s->next.kind==s->builder.kind && real(io,&s->pending_time) &&
         command(io,s) && s->command.commands[0].sequence==s->sequence &&
-        s->command.commands[0].command.kind==s->builder.kind;
+        s->command.commands[0].command.kind==s->builder.kind &&
+        (s->builder.kind!=QA_MOVEMENT_Q3||(s->q3_command_count&&s->q3_commands[s->q3_command_count-1].sequence==s->sequence));
 }
 bool frontend_unified_input_checkpoint(const frontend_unified_input *p,qa_buffer *out,qa_error *e)
 {
+    frontend_client_source_view physical;
     if(!p || !out || out->data || !frontend_unified_input_idle(p) ||
-        !frontend_client_source_current(&p->client_view) || !frontend_neutral_config_current(&p->configuration) ||
-        !frontend_remote_unified_checkpoint_current(p->replica,e) || p->epoch!=frontend_remote_unified_epoch(p->replica)) return false;
+        !frontend_client_source_metadata_read(p->client,&physical,e)||physical.ready!=p->client_view.ready||
+        !qa_application_client_associated(p->frontend->application,&p->client_view.source)||
+        !frontend_neutral_config_checkpoint_current(&p->configuration,e)||
+        !frontend_remote_unified_checkpoint_current(p->replica,e)||p->epoch!=frontend_remote_unified_epoch(p->replica)||
+        p->recipe!=frontend_remote_unified_recipe(p->replica)||
+        p->movement!=frontend_remote_unified_provider_published(p->replica,QA_ROLE_MOVEMENT,"")||
+        p->arsenal!=frontend_remote_unified_provider_published(p->replica,QA_ROLE_ARSENAL,"")) return false;
     saved_input s={.epoch=p->epoch,.physical=p->configuration.physical_seat,
         .configuration=p->client_view.source.configuration_generation,.connection=p->client_view.source.connection_epoch,
         .namespace_revision=p->configuration.namespace_revision,
@@ -94,6 +123,8 @@ bool frontend_unified_input_checkpoint(const frontend_unified_input *p,qa_buffer
         .sample=p->retained_sample,.sequence=p->retained_sequence,.last_sequence=p->last_sequence,
         .time=p->command_time,.pending_time=p->pending_time,.elapsed=p->retained_elapsed,
         .submitted=p->submitted,.has_sample=p->has_sample,.has_pending=p->has_pending};
+    s.has_q3_values=p->has_q3_values; s.q3_weapon=p->q3_weapon; s.q3_sensitivity=p->q3_sensitivity;
+    s.q3_command_count=p->q3_command_count; memcpy(s.q3_commands,p->q3_commands,sizeof(s.q3_commands));
     s.command.epoch=p->epoch;s.command.count=p->has_pending?1u:0u;s.command.commands[0]=p->pending;
     qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,NULL,e) && fields(&io,&s) && qa_source_save_finish(&io,out);
@@ -123,6 +154,8 @@ bool frontend_unified_input_restore(qa_frontend *f,frontend_remote_unified *repl
         p->retained_sequence=s.sequence;p->last_sequence=s.last_sequence;p->command_time=s.time;
         p->pending_time=s.pending_time;p->retained_elapsed=s.elapsed;p->submitted=s.submitted;
         p->has_sample=s.has_sample;p->has_pending=s.has_pending;
+        p->has_q3_values=s.has_q3_values; p->q3_weapon=s.q3_weapon; p->q3_sensitivity=s.q3_sensitivity;
+        p->q3_command_count=s.q3_command_count; memcpy(p->q3_commands,s.q3_commands,sizeof(p->q3_commands));
         if(s.has_pending) {
             p->pending=s.command.commands[0];
             p->pending.arsenal.provider=(qa_bytes){(const unsigned char *)p->arsenal->selection.instance,

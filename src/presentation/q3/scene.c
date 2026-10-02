@@ -121,6 +121,47 @@ bool qa_q3_presentation_poly(qa_q3_presentation *p, int32_t shader,
     return q3p_end(p, ok);
 }
 
+bool qa_q3_presentation_poly_cursor(const qa_q3_presentation *p, size_t vertices,
+    size_t *index, bool *available, qa_error *error)
+{
+    if (!p || !index || !available)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Source polygon cursor requires its actual presentation");
+    if (p->options.source_state) {
+        qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        qa_q3_source_scene_membership membership;
+        if (!bank || !qa_q3_source_scene_bank_membership(bank, &membership)) return false;
+        if (membership.first_polygon > membership.polygons)
+            return q3p_fail(error, QA_ERROR_FORMAT, "Source polygon cursor leaves its actual scene membership");
+        *index = membership.polygons - membership.first_polygon;
+        *available = qa_q3_source_scene_bank_poly_capacity(bank, vertices);
+    } else {
+        *index = p->polygon_count;
+        *available = p->polygon_count != SIZE_MAX && vertices <= SIZE_MAX - p->vertex_count;
+    }
+    return true;
+}
+
+bool qa_q3_presentation_light_cursor(const qa_q3_presentation *p, size_t *index,
+    bool *available, qa_error *error)
+{
+    if (!p || !index || !available)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Source light cursor requires its actual presentation");
+    if (p->options.source_state) {
+        qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        qa_q3_source_scene_membership membership;
+        if (!bank || !qa_q3_source_scene_bank_membership(bank, &membership)) return false;
+        if (membership.first_light > membership.lights)
+            return q3p_fail(error, QA_ERROR_FORMAT, "Source light cursor leaves its actual scene membership");
+        *index = membership.lights - membership.first_light;
+        *available = qa_q3_source_scene_bank_light_capacity(bank);
+    } else {
+        *index = p->light_count; *available = p->light_count != SIZE_MAX;
+    }
+    return true;
+}
+
 bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radius,
                                qa_vec3 color, bool additive, qa_error *error)
 {

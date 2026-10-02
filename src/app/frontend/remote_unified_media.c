@@ -4,11 +4,15 @@
 #include "q3_render_policy.h"
 #include "visual_access.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_assets_custody.h"
 #include "qa/scene_world_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
+#include "remote_unified_material_movies_bridge.h"
+#include "qa/media_library_save.h"
+#include "qa/media_resource.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -32,13 +36,19 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
     if (!owner || owner->importing || owner->busy || !content || !out || !frontend_unified_media_current(owner))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media lost its retained recipe content");
     for (unified_media_bank *row = owner->banks; row; row = row->next)
-        if (!strcmp(row->content, content)) { *out = row; return true; }
+        if (row->content && !strcmp(row->content, content)) {
+            if (row->constructing || row->construction_failed)
+                return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified content bank retains an incomplete construction");
+            *out = row; return true;
+        }
     if (owner->frontend->resource_inventory)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified bank creation overlaps retained resource inventory");
     unified_media_bank *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified content media bank");
     row->content = malloc(strlen(content) + 1);
     if (row->content) strcpy(row->content, content);
+    row->constructing = true;
+    row->next = owner->banks; owner->banks = row;
     bool okay = row->content && qa_executable_recipe_content(owner->recipe, content, &row->files, &row->product, error);
     if (okay) row->images = qa_scene_resources_create(row->files, error);
     if (okay) okay = row->images && frontend_image_policy_initialize(owner->frontend, row->images, error);
@@ -47,6 +57,7 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         row->fonts = qa_font_library_create(row->files, row->images, error);
         okay = row->materials && row->fonts && qa_audio_bank_create(row->files, &row->sounds, error);
     }
+    if (okay) okay = frontend_unified_material_movies_create(owner, 0, error);
     if (okay) {
         qa_scene_family family = row->product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
             row->product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
@@ -55,11 +66,14 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
             qa_material_library_load_scripts(row->materials, row->files, &images, error);
     }
     if (!okay) {
+        row->constructing = false; row->construction_failed = true;
+        if (!frontend_unified_material_movies_clear(owner, 0, NULL)) return false;
+        owner->banks = row->next;
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images);
         free(row->content); free(row); return false;
     }
-    row->next = owner->banks; owner->banks = row; *out = row; return true;
+    row->constructing = false; *out = row; return true;
 }
 bool frontend_unified_media_bank(frontend_unified_media *owner, const char *content,
     qa_scene_resources **images, qa_material_library **materials, qa_font_library **fonts,
@@ -132,7 +146,10 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
             qa_scene_world_create(&bsp, owner->world_bank->images, owner->world_bank->materials, &options, &owner->world, error) &&
             qa_scene_world_source_resource_bind(owner->world, map, error);
     }
-    if (!okay) { (void)frontend_unified_media_destroy(owner, NULL); return false; }
+    if (!okay) {
+        if (!frontend_unified_media_destroy(owner, NULL)) *out = owner;
+        return false;
+    }
     *out = owner; return true;
 }
 
@@ -224,7 +241,7 @@ bool frontend_unified_media_bank_read(const frontend_unified_media *owner,size_t
     const unified_media_bank *row=owner->banks;
     while (row && index--) row=row->next;
     if (!row) return false;
-    *out=(frontend_unified_bank_view){row->content,row->files,row->product,row->images,row->materials,row->fonts,row->sounds,row->q3_assets};
+    *out=(frontend_unified_bank_view){row->content,row->files,row->product,row->images,row->materials,row->fonts,row->sounds,row->q3_assets,row->media};
     return true;
 }
 size_t frontend_unified_media_model_count(const frontend_unified_media *owner)
@@ -255,15 +272,29 @@ qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner
 { return owner ? owner->world : NULL; }
 bool frontend_unified_media_current(const frontend_unified_media *owner)
 { return owner && qa_executable_recipe_current(owner->recipe, qa_executable_recipe_catalog(owner->recipe)); }
+bool frontend_unified_media_ready(const frontend_unified_media *owner)
+{
+    if (!frontend_unified_media_current(owner) || owner->importing || !owner->world || !owner->world_bank)
+        return false;
+    bool world = false;
+    for (const unified_media_bank *row=owner->banks;row;row=row->next) {
+        if (row==owner->world_bank) world=true;
+        if (row->constructing || row->construction_failed || !row->content || !row->files || !row->product ||
+            !row->images || !row->materials || !row->fonts || !row->sounds || !row->media || !row->shader_movies)
+            return false;
+    }
+    return world;
+}
 bool frontend_unified_media_idle(const frontend_unified_media *owner)
 {
     if (!owner) return true;
-    if (owner->busy || (owner->world && !qa_scene_world_idle(owner->world))) return false;
+    if (owner->busy || !frontend_unified_material_movies_idle(owner) ||
+        (owner->world && !qa_scene_world_idle(owner->world))) return false;
     for (const unified_media_model *row=owner->models;row;row=row->next)
         if ((row->world && !qa_scene_world_idle(row->world)) ||
             (row->scene && !qa_scene_model_idle(row->scene))) return false;
     for (const unified_media_bank *row=owner->banks;row;row=row->next)
-        if ((row->q3_assets && !qa_q3_assets_idle(row->q3_assets)) ||
+        if (row->constructing || (row->q3_assets && !qa_q3_assets_idle(row->q3_assets)) ||
             (row->images && !qa_scene_resources_idle(row->images)) ||
             (row->materials && !qa_material_library_idle(row->materials)) ||
             (row->fonts && !qa_font_library_idle(row->fonts))) return false;
@@ -271,13 +302,34 @@ bool frontend_unified_media_idle(const frontend_unified_media *owner)
 }
 bool frontend_unified_media_visit(const frontend_unified_media *owner,
     const qa_application_content_visitor *visitor, qa_error *error)
-{ return owner && !owner->busy && qa_executable_recipe_content_visit(owner->recipe, visitor, error); }
+{
+    if (!owner || owner->busy || !visitor ||
+        !qa_executable_recipe_content_visit(owner->recipe,visitor,error)) return false;
+    for (const unified_media_bank *row=owner->banks;row;row=row->next) {
+        if (!row->media) continue;
+        qa_resource_pool *pool=qa_vfs_resources(row->files);
+        if (!pool || qa_media_library_resource_owner(row->media)!=row->images ||
+            !visitor->pool(visitor->context,pool,error)) return false;
+        for (size_t i=0;i<qa_media_library_record_count(row->media);++i) {
+            const qa_cinematic_asset *asset=qa_media_library_record_at(row->media,i);
+            const qa_resource *resource=asset?qa_cinematic_asset_resource(asset):NULL;
+            if (!resource || qa_resource_pool_find(pool,qa_resource_id(resource))!=resource)
+                return frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified movie cache left its retained content pool");
+        }
+    }
+    return true;
+}
 bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *error)
 {
     if (!owner) return true;
     if ((owner->frontend->resource_inventory && !owner->frontend->source_restoring) ||
         !frontend_unified_media_idle(owner))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media cleanup requires all captured children to return");
+    size_t ordinal = 0;
+    for (unified_media_bank *row = owner->banks; row; row = row->next, ++ordinal)
+        if (!frontend_unified_material_movies_clear(owner, ordinal, error)) return false;
+    for (unified_media_bank *row = owner->banks; row; row = row->next)
+        if (!qa_q3_assets_services_retire(row->q3_assets,error)) return false;
     /* Registry retirement observes its borrowed map; retire it while the real
      * map and its bank are still alive. Family users retire before this owner. */
     for (unified_media_bank *row = owner->banks; row; row = row->next) {

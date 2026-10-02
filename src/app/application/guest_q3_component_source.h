@@ -14,6 +14,7 @@ typedef struct application_q3_component_source_options {
     qa_qvm_abi abi;
     void *context;
     bool (*current)(void *);
+    bool (*information)(void *,uint32_t flags,qa_buffer *,qa_error *);
     qa_q3_visibility_world visibility;
     bool scene;
 } application_q3_component_source_options;

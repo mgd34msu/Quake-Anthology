@@ -6,9 +6,23 @@ bool q3items_current(item_actor *a,qa_error *e)
     if(!a||a->releasing||!q3mod_storage_current(a->owner->mod,e)||
         !application_q3_mod_client_live(a->owner->mod,a->actor)||
         !qa_actors_get(qa_session_actors(a->owner->mod->session),a->actor)||
-        (!a->admitting&&!qa_inventory_lease_current(a->owner->inventory,a->lease)))return false;
+        (!a->admitting&&!(a->restore_inventory&&a->owner->mod->restoring)&&
+            !qa_inventory_lease_current(a->owner->inventory,a->lease)))return false;
     for(size_t i=0;i<a->address_count;++i){uint32_t actual;const char *record=a->owner->profile->source->records[a->addresses[i].record].id;
         if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,record,&actual,e)||actual!=a->addresses[i].address)return false;}
+    return true;
+}
+bool application_q3_mod_items_actor_current(application_q3_mod_items *o,qa_actor_id actor)
+{return q3items_current(q3items_actor(o,actor),NULL);}
+bool application_q3_mod_items_item_read(application_q3_mod_items *o,qa_actor_id actor,qa_item_id item,
+    qa_item_admission *out,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *e)
+{
+    if(!o||!out||!icon||!held||!found||!q3items_current(q3items_actor(o,actor),e))return false;
+    *found=false;
+    for(size_t i=0;i<o->profile->definition_count;++i)if(o->profile->definitions[i].admission.definition.item==item){
+        if(!application_q3_mod_items_definition(o->profile,i,out,icon,held,e))return false;
+        out->definition.owner=o->mod->owner;*found=true;return true;
+    }
     return true;
 }
 static size_t entry_count(void *context)
@@ -34,7 +48,8 @@ static bool write_word(item_actor *a,item_field f,int32_t value,qa_error *e)
 static bool write(void *context,const qa_inventory_entry *value,qa_error *e)
 {
     item_actor *a=context;size_t bit;
-    if(!value||!q3items_current(a,e))return false;const item_storage *s=storage_for(a->owner->profile,value->item,&bit);
+    if(!value||!q3items_current(a,e))return false;
+    const item_storage *s=storage_for(a->owner->profile,value->item,&bit);
     if(!s)return false;
     if(s->bits){int32_t previous;if(value->capacity!=1||(value->count!=0&&value->count!=1)||!q3items_scalar(a,s->field,NULL,&previous,e))return false;
         uint32_t bits=value->count?((uint32_t)previous|s->items[bit].mask):((uint32_t)previous&~s->items[bit].mask);int32_t word;memcpy(&word,&bits,4);
@@ -101,18 +116,28 @@ static bool publish(void *context,qa_qvm *vm,const qa_qvm_committed_write *event
 }
 static bool after(void *context,qa_qvm *vm,const qa_qvm_committed_write *event,qa_error *e)
 {
-    item_actor *a=context;if(vm!=a->owner->mod->vm)return false;item_pending **link=&a->pending;
+    item_actor *a=context;
+    if(vm!=a->owner->mod->vm)return false;
+    item_pending **link=&a->pending;
     while(*link&&(*link)->sequence!=event->sequence)link=&(*link)->next;
-    if(!*link)return true;item_pending *pending=*link;*link=pending->next;
+    if(!*link)return true;
+    item_pending *pending=*link;*link=pending->next;
     ++a->references;++a->owner->calls;
-    bool current=q3items_current(a,NULL);
+    bool current=pending->count&&q3items_current(a,NULL);
     bool ok=!pending->count||!current||qa_inventory_source_stored(a->owner->inventory,a->lease,pending->changes,pending->count,e);
     if(current&&!q3items_current(a,NULL))for(application_q3_mod_items_entry *entry=a->owner->entries;entry;entry=entry->previous)
         if(entry->input&&qa_actor_id_equal(entry->actor,a->actor)){
-            qa_error cancelled={0};bool stopped=qa_qvm_cancel(&entry->call,ok?e:&cancelled);
+            qa_error cancelled={0};bool stopped=entry->cancelled||qa_qvm_cancel(&entry->call,ok?e:&cancelled);
+            if(stopped)entry->cancelled=true;
             ok=ok&&stopped;break;
         }
     --a->owner->calls;--a->references;free(pending->changes);free(pending);return ok;
+}
+static void dispose(void *context,const qa_qvm_committed_write *event)
+{
+    item_actor *a=context;item_pending **link=&a->pending;
+    while(*link&&(*link)->sequence!=event->sequence)link=&(*link)->next;
+    if(*link){item_pending *pending=*link;*link=pending->next;free(pending->changes);free(pending);}
 }
 bool q3items_watch_create(item_actor *a,qa_error *e)
 {
@@ -135,14 +160,19 @@ bool q3items_watch_create(item_actor *a,qa_error *e)
         }
         for(size_t j=0;ok&&j<globals;++j)ranges[count++]=(qa_qvm_write_range){s->capacity.overrides[j].address,4};
     }
-    if(ok)ok=qa_qvm_observe_writes(o->mod->vm,ranges,count,publish,after,a,&a->watch,e);
+    if(ok)ok=qa_qvm_observe_writes_owned(o->mod->vm,ranges,count,publish,after,dispose,a,&a->watch,e);
     free(ranges);return ok;
+}
+bool q3items_watch_read(item_actor *a,qa_qvm_saved_write_watch *out,qa_error *e)
+{
+    return a&&out&&qa_qvm_write_watch_read(a->owner->mod->vm,a->watch,out,e)&&
+        out->publish==publish&&out->after==after&&out->dispose==dispose&&out->context==a;
 }
 bool application_q3_mod_items_create(application_q3_mod_items_profile *p,application_q3_mod *mod,
     qa_inventory *inventory,const application_q3_mod_items_services *services,application_q3_mod_items **out,qa_error *e)
 {
     if(!p||!mod||p->source!=mod->profile||!inventory||!services||!out||*out||
-        (p->stage&&(!services->selected||!services->posture||!services->weapon_bind||!services->weapon_unbind)))return q3mod_fail(e,QA_ERROR_ARGUMENT,"Items require their actual executor and canonical services");
+        (p->stage&&(!services->selected||!services->posture||!services->weapon_bind||!services->weapon_unbind||!services->weapon_current)))return q3mod_fail(e,QA_ERROR_ARGUMENT,"Items require their actual executor and canonical services");
     application_q3_mod_items *o=calloc(1,sizeof(*o));if(!o)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning generic source items");
     o->profile=p;o->mod=mod;o->inventory=inventory;o->services=*services;*out=o;return true;
 }
@@ -152,7 +182,9 @@ static bool address_add(item_actor *a,size_t record,qa_error *e)
 {
     for(size_t i=0;i<a->address_count;++i)if(a->addresses[i].record==record)return true;
     if(a->address_count==SIZE_MAX/sizeof(*a->addresses))return false;
-    item_record_address *next=realloc(a->addresses,(a->address_count+1)*sizeof(*next));if(!next)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original item record bases");a->addresses=next;
+    item_record_address *next=realloc(a->addresses,(a->address_count+1)*sizeof(*next));
+    if(!next)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original item record bases");
+    a->addresses=next;
     uint32_t address;if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,a->owner->profile->source->records[record].id,&address,e))return false;
     a->addresses[a->address_count++]=(item_record_address){record,address};return true;
 }
@@ -161,7 +193,9 @@ bool application_q3_mod_items_admit(application_q3_mod_items *o,qa_actor_id acto
     if(!o||!q3mod_storage_current(o->mod,e)||!application_q3_mod_client_live(o->mod,actor)||!qa_actors_get(qa_session_actors(o->mod->session),actor))return false;
     item_actor *existing=q3items_actor(o,actor);if(existing)return existing->watch&&
         (!o->profile->stage||existing->weapon_bound)&&q3items_current(existing,e);
-    item_actor *a=calloc(1,sizeof(*a));if(!a)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original item lease");a->owner=o;a->actor=actor;a->next=o->actors;o->actors=a;
+    item_actor *a=calloc(1,sizeof(*a));
+    if(!a)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original item lease");
+    a->owner=o;a->actor=actor;a->next=o->actors;o->actors=a;
     size_t range_count=0;qa_qvm_write_range *ranges=NULL;bool ok=true;
     for(size_t i=0;ok&&i<o->profile->storage_count;++i){const item_storage *s=o->profile->storage+i;size_t fields=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD)?2:1;
         for(size_t j=0;ok&&j<fields;++j){item_field f=j?s->capacity.field:s->field;uint32_t address;
@@ -172,9 +206,11 @@ bool application_q3_mod_items_admit(application_q3_mod_items *o,qa_actor_id acto
     }
     qa_inventory_items binding={0};if(ok)ok=q3items_binding(a,&binding,e);
     if(ok){a->admitting=true;ok=qa_inventory_bind_items(o->inventory,actor,&binding,&a->lease,e);a->admitting=false;}
-    if(ok)ok=qa_qvm_observe_writes(o->mod->vm,ranges,range_count,publish,after,a,&a->watch,e);
+    if(ok)ok=qa_qvm_observe_writes_owned(o->mod->vm,ranges,range_count,publish,after,dispose,a,&a->watch,e);
     free(ranges);
-    if(ok&&o->profile->stage){ok=o->services.weapon_bind(o->services.context,actor,o,e);if(ok)a->weapon_bound=true;}
+    if(ok&&o->profile->stage){ok=o->services.weapon_bind(o->services.context,actor,o,e);if(ok)a->weapon_bound=true;
+        if(ok)ok=o->services.weapon_current(o->services.context,actor,o);}
+    if(!ok){qa_error cleanup={0};application_q3_mod_items_release(o,actor,&cleanup);}
     return ok;
 }
 bool application_q3_mod_items_release(application_q3_mod_items *o,qa_actor_id actor,qa_error *e)

@@ -225,10 +225,12 @@ bool qa_native_guest_bind(qa_native_guest *guest, const qa_native_guest_callback
     if (!guest_mutable(guest, error)) return false;
     /* Source services can create real callback methods lazily at an import
      * entry. The CPU is stopped and run copied its active callback by value.
-     * Appending a descriptor cannot change that frame. Store observers and
-     * fault/restore publication are not callback registration boundaries. */
+     * Appending a descriptor cannot change that frame. A committed Source write
+     * can also publish a callback under its exact pure subscription capability. */
     if (!qa_native_guest_idle(guest) &&
-        !(guest->run && guest->callback_depth && !guest->publication_depth))
+        !guest_call_prepared(guest)&&
+        !(guest->run && guest->callback_depth && !guest->publication_depth)&&
+        !(guest->publication_depth && guest->stopped_write_bindings))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest callback binding requires idle ownership or a stopped import callback");
     if (!callback || !callback->id || !callback->invoke)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest callback identity and actual dispatch are required");
@@ -352,6 +354,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             ++guest->callback_depth;
             okay = callback.invoke(callback.context, guest, callback.id, error);
             --guest->callback_depth;
+            if(!okay) (void)guest_callback_failure(guest,error);
             if (okay) okay = guest_mutable(guest, error);
             uint64_t after = 0;
             if (okay) okay = instruction_pointer(guest, &after, false, error);
@@ -369,6 +372,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             ++guest->callback_depth;
             okay = guest->instruction_observer(guest->instruction_context, guest, instruction, error);
             --guest->callback_depth;
+            if(!okay) (void)guest_callback_failure(guest,error);
             if (okay) okay = guest_mutable(guest, error);
             uint64_t after = instruction;
             if (okay) okay = instruction_pointer(guest, &after, false, error);
@@ -434,7 +438,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
     }
     guest->run = frame.parent;
     free(frame.writes);
-    if (!okay) guest->failed = true;
+    if (!okay && !guest_callback_cancelled(guest,error)) guest->failed = true;
     return okay;
 }
 

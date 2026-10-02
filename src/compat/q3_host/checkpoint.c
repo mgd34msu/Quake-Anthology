@@ -11,8 +11,10 @@ static bool decode_file(checkpoint_reader *, q3_file [64],
 
 bool qa_q3_host_checkpoint_portable_ready(const qa_q3_host *host, qa_error *error)
 {
-    if (!host || host->retired || host->native || !host->vm || host->calls)
-        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Portable Q3 host requires an idle original QVM owner");
+    if (!host || host->retired || host->calls ||
+        (!host->vm && (!host->native || qa_native_get_backend(host->native) != QA_NATIVE_BACKEND_OWNED_PROCESS ||
+            qa_native_active(host->native) || qa_native_terminal(host->native))))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Portable Q3 host requires its idle original executor owner");
     bool client_globals = host->options.role != QA_QVM_GAME && host->options.script_globals &&
         host->options.script_globals_owner;
     if (host->options.script_globals && !client_globals && (!host->options.bots ||
@@ -42,7 +44,23 @@ static bool service_text(qa_source_save_io *io, const char *text)
 
 bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_error *error)
 {
-    if (!out || !qa_q3_host_checkpoint_portable_ready(host, error)) return false;
+    if (!out || !host) return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 services require their actual host owner");
+    if (host->vm || host->native) {
+        if (!qa_q3_host_checkpoint_portable_ready(host, error)) return false;
+    } else {
+        if (host->retired || host->calls || host->restore_pending || host->file_serial ||
+            host->script_generation || host->cvar_binding_count || host->cvar_cache_count ||
+            host->bots_shutdown || (host->game && (host->game->entities || host->game->clients ||
+                host->game->entity_count || host->game->entity_stride || host->game->client_stride ||
+                host->game->portal_count)))
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Prepared Q3 services retain mutable executor state");
+        for (size_t i = 1; i < 64; ++i)
+            if (host->files[i].kind != Q3_FILE_CLOSED || host->scripts[i])
+                return q3_fail(error, QA_ERROR_ARGUMENT, i, "Prepared Q3 services retain entered file or script state");
+        for (size_t i = 0; host->game && i < 1024; ++i)
+            if (host->game->slots[i].actor.registry || host->game->slots[i].input_motion || host->game->slots[i].input_retired)
+                return q3_fail(error, QA_ERROR_ARGUMENT, i, "Prepared Q3 services retain source actor bindings");
+    }
     const qa_q3_host_options *o = &host->options;
     const qa_command_context *c = &o->command_context;
     if (c->session || c->client || c->registry || c->generation || c->actor.registry ||
@@ -50,7 +68,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 16, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 17, role = o->role, abi = o->abi, owner = o->owner;
     bool write_present=o->write_view.root!=NULL;
     bool write_context=o->write_view.resolver.context!=NULL;
     bool write_resolver=o->write_view.resolver.root!=NULL;
@@ -121,6 +139,8 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         o->presentation.seat != NULL, o->presentation.fonts != NULL,
         o->presentation.configuration != NULL, o->presentation.update_screen != NULL,
         o->source_entity != NULL, o->source_entity_context != NULL,
+        o->source_poly != NULL, o->source_poly_context != NULL,
+        o->source_light != NULL, o->source_light_context != NULL,
         o->render.context != NULL, o->render.enter != NULL, o->render.leave != NULL,
         o->cvar_namespaces.context != NULL, o->cvar_namespaces.reference != NULL,
         o->cvar_namespaces.resolve != NULL,
@@ -297,7 +317,7 @@ static bool save_file(checkpoint_writer *writer, size_t slot, const q3_file *fil
 bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
 {
     if (!out || !idle(host, error)) return false;
-    if (host->native)
+    if (host->native && qa_native_get_backend(host->native) != QA_NATIVE_BACKEND_OWNED_PROCESS)
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native Q3 continuation requires an executor memory checkpoint");
     qa_buffer game = {0},bindings={0};
     if (!q3_game_checkpoint_capture(host, &game, error)) return false;
@@ -438,7 +458,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     if (!idle(host, error)) return false;
     if (host->cvar_binding_count || host->cvar_cache_count || host->cvar_status.read)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 restore requires empty routed cvar binding ownership");
-    if (host->native)
+    if (host->native && qa_native_get_backend(host->native) != QA_NATIVE_BACKEND_OWNED_PROCESS)
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native Q3 continuation requires an executor memory checkpoint");
     if (host->game) {
         if (host->game->portal_count) return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 restore requires empty portal ownership");

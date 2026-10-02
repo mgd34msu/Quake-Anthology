@@ -163,6 +163,10 @@ static bool polygons(q3_call *call, qa_q3_presentation *seat, bool multiple,
                                                  qa_load_f32le(vertex + 16)};
             memcpy(polygon[i].color, vertex + 20, 4);
         }
+        if (call->source_call && call->host->options.role == QA_QVM_CGAME &&
+            call->host->options.source_poly &&
+            !call->host->options.source_poly(call->host->options.source_poly_context,
+                call->source_call, vertices, error)) return false;
         if (!qa_q3_presentation_poly(seat, shader, polygon, vertices, error))
             return false;
     }
@@ -380,8 +384,11 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         if (radius <= 0.0f) ok = true;
         else {
             qa_vec3 position;
-            ok = q3_vector(call, call->arguments[0], &position, error) &&
-                qa_q3_presentation_light(seat, position, radius,
+            ok = q3_vector(call, call->arguments[0], &position, error);
+            if (ok && !ui && call->source_call && call->host->options.source_light)
+                ok = call->host->options.source_light(call->host->options.source_light_context,
+                    call->source_call, error);
+            if (ok) ok = qa_q3_presentation_light(seat, position, radius,
                     (qa_vec3){q3_float(call, 2), q3_float(call, 3), q3_float(call, 4)},
                     service == 85, error);
         }

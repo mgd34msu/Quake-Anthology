@@ -1,12 +1,32 @@
 #include "equipment_media_private.h"
 #include "equipment_held_stock.h"
+#include "equipment_icon.h"
 #include "../application/equipment_runtime.h"
 #include "qa/application_equipment_content.h"
+#include "../application/guest_q3_components.h"
+#include "shared_resource_policy.h"
+#include "renderer_materials.h"
+#include "qa/media_library_prepare.h"
 #include <stdio.h>
 
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     const frontend_equipment_media *row)
 {
+    if(row->source_slot) {
+        application_q3_component_publication source;bool found=false;
+        if(!frontend||!frontend->application||row->gear_namespace||row->gear_service_owner||
+            !application_q3_components_checkpoint_publication_read(frontend->application,row->provider,&source,&found,NULL)||
+            !found||source.generation!=row->source_generation||!source.product||source.product->family!=row->family||
+            !qa_vfs_lookup_equal(source.content,row->owner.mounts))return false;
+        for(size_t i=0;i<application_q3_component_item_definition_count(source.game);++i) {
+            qa_item_admission item;qa_bytes icon,held;
+            if(!application_q3_component_item_definition(source.game,i,&item,&icon,&held,NULL))return false;
+            if(item.definition.item==row->item)return held.size==row->source_held.size&&
+                (!held.size||!memcmp(held.data,row->source_held.data,held.size))&&
+                icon.size==row->source_icon.size&&(!icon.size||!memcmp(icon.data,row->source_icon.data,icon.size));
+        }
+        return false;
+    }
     if (!row->gear_namespace) {
         if (row->gear_service_owner) return false;
         if (row->family != QA_GAME_Q3) return true;
@@ -45,15 +65,47 @@ bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     return false;
 }
 
-void frontend_equipment_media_dispose(frontend_equipment_media *media)
+static bool movie_current(void *context,const frontend_material_movie_source *source)
 {
+    frontend_equipment_media *row=context;
+    return row&&row->source_slot&&row->frontend&&source&&source->frontend==row->frontend&&
+        source->context==row&&source->current==movie_current&&source->files==row->owner.mounts&&
+        source->images==row->owner.images&&source->materials==row->owner.materials&&source->media==row->media&&
+        frontend_equipment_media_namespace_current(row->frontend,row);
+}
+
+frontend_material_movie_source frontend_equipment_media_movie_source(frontend_equipment_media *row)
+{
+    return (frontend_material_movie_source){.frontend=row->frontend,.files=row->owner.mounts,
+        .images=row->owner.images,.materials=row->owner.materials,.media=row->media,
+        .context=row,.current=movie_current};
+}
+
+bool frontend_equipment_media_dispose(frontend_equipment_media *media,qa_error *error)
+{
+    if(media->movies) {
+        frontend_material_movie_source source=frontend_equipment_media_movie_source(media);
+        if(!media->frontend->source_restoring&&
+            !frontend_renderer_materials_adopt_movies(media->frontend,&source,&media->movies,&media->media,error))return false;
+        if(!frontend_material_movies_destroy(&media->movies,error))return false;
+    }
+    qa_media_library_destroy(media->media);media->media=NULL;
     qa_scene_model_destroy(media->held_scene);
     frontend_held_model_free(&media->held);
     frontend_model_release(media->held_lease);
+    if(media->source_model){qa_model_free(media->source_model);free(media->source_model);}
     frontend_held_declaration_free(&media->declaration);
     qa_resource_release((qa_resource *)media->view.resource);
     qa_resource_release((qa_resource *)media->held_parent.resource);
-    free(media->saved_parent_path); free(media->view_path); free(media);
+    if(media->source_slot){
+        qa_material_library_destroy(media->owner.materials);
+        qa_scene_resources_destroy(media->owner.images);
+        qa_vfs_destroy(media->owner.mounts);
+    }
+    qa_buffer_free(&media->source_held);
+    qa_buffer_free(&media->source_icon);
+    qa_resource_release(media->icon_source);
+    free(media->saved_parent_path); free(media->view_path); free(media);return true;
 }
 
 bool frontend_equipment_idle(const qa_frontend *frontend)
@@ -61,7 +113,9 @@ bool frontend_equipment_idle(const qa_frontend *frontend)
     if (!frontend || !frontend->equipment) return true;
     if (frontend->equipment->admitting) return false;
     for (const frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
-        if (row->users || (row->held_scene && !qa_scene_model_idle(row->held_scene))) return false;
+        if (row->users || (row->held_scene && !qa_scene_model_idle(row->held_scene)) ||
+            (row->movies&&!frontend_material_movies_idle(row->movies)) ||
+            (row->media&&!qa_media_library_idle(row->media))) return false;
     return true;
 }
 
@@ -70,10 +124,46 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
     if (!frontend_equipment_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment media has an active real scene or admission");
     if (!frontend || !frontend->equipment) return true;
-    frontend_equipment_media *row = frontend->equipment->media;
-    while (row) { frontend_equipment_media *next = row->next; frontend_equipment_media_dispose(row); row = next; }
-    frontend->equipment->media = frontend->equipment->tail = NULL;
+    frontend->equipment->admitting=true;
+    while(frontend->equipment->media) {
+        frontend_equipment_media *row=frontend->equipment->media,*next=row->next;
+        if(!frontend_equipment_media_dispose(row,error)){frontend->equipment->admitting=false;return false;}
+        frontend->equipment->media=next;
+    }
+    frontend->equipment->tail = NULL;
+    frontend->equipment->admitting=false;
     return true;
+}
+
+bool frontend_equipment_media_prune(qa_frontend *f,qa_error *error)
+{
+    if(!f||!f->application||f->source_restoring||f->capture||f->resource_inventory||
+        !frontend_equipment_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Equipment cache retirement requires its returned live media owners");
+    if(!f->equipment)return true;
+    f->equipment->admitting=true;
+    bool okay=true;
+    frontend_equipment_media **slot=&f->equipment->media;
+    while(*slot) {
+        frontend_equipment_media *row=*slot;
+        if(!row->source_slot){slot=&row->next;continue;}
+        application_q3_component_publication source;bool found=false;
+        if(!application_q3_components_checkpoint_publication_read(f->application,row->provider,&source,&found,error)) {
+            okay=false;break;
+        }
+        if(found&&source.generation==row->source_generation&&(row->bound||row->restoring)) {
+            if(!frontend_equipment_media_namespace_current(f,row)) {
+                okay=frontend_fail(error,QA_ERROR_ARGUMENT,"Equipment cache changed its retained component declaration");break;
+            }
+            slot=&row->next;continue;
+        }
+        frontend_equipment_media *next=row->next;
+        if(!frontend_equipment_media_dispose(row,error)){okay=false;break;}
+        *slot=next;
+    }
+    f->equipment->tail=NULL;
+    for(frontend_equipment_media *row=f->equipment->media;row;row=row->next)f->equipment->tail=row;
+    f->equipment->admitting=false;return okay;
 }
 
 void frontend_equipment_destroy(qa_frontend *frontend)
@@ -170,7 +260,7 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
     row->gear_namespace = view->gear_namespace; row->gear_service_owner = view->gear_service_owner;
     size_t length = strlen(view->view_model) + 1;
     row->view_path = malloc(length);
-    if (!row->view_path) { frontend_equipment_media_dispose(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
+    if (!row->view_path) { (void)frontend_equipment_media_dispose(row,error); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
     memcpy(row->view_path, view->view_model, length);
     frontend->equipment->admitting = true;
     bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error);
@@ -187,7 +277,7 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
         !frontend_equipment_media_namespace_current(frontend, row)))
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment admission lost its actual selected source owner");
     frontend->equipment->admitting = false;
-    if (!ok) { frontend_equipment_media_dispose(row); return false; }
+    if (!ok) { (void)frontend_equipment_media_dispose(row,error); return false; }
     row->bound = true;
     if (frontend->equipment->tail) frontend->equipment->tail->next = row;
     else frontend->equipment->media = row;
@@ -199,6 +289,134 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
 bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_application_equipment_view *view,
     frontend_equipment_media **out, qa_error *error)
 { return prepare_media(frontend, view, NULL, out, error); }
+
+static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_view *view,
+    frontend_equipment_media **out,bool *authored,qa_error *error)
+{
+    if(!f||!view||!out||*out||!authored||!view->source_slot||!view->selected||
+        !qa_application_equipment_current(f->application,view)||f->resource_inventory||
+        (f->equipment&&f->equipment->admitting))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source held admission requires its actual component binding");
+    *authored=false;
+    if(!view->source_held.size&&!view->source_icon.size)return true;
+    for(frontend_equipment_media *row=f->equipment?f->equipment->media:NULL;row;row=row->next)
+        if(row->held_scene&&!qa_scene_model_idle(row->held_scene))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source held admission retains an active scene operation");
+    if(!f->equipment){f->equipment=calloc(1,sizeof(*f->equipment));
+        if(!f->equipment)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining source held media owner");}
+    for(frontend_equipment_media *row=f->equipment->media;row;row=row->next)
+        if(row->source_slot&&row->provider==view->provider&&row->item==view->item&&
+            row->source_generation==view->source_generation&&row->source_held.size==view->source_held.size&&
+            (!view->source_held.size||!memcmp(row->source_held.data,view->source_held.data,view->source_held.size))&&
+            row->source_icon.size==view->source_icon.size&&
+            (!view->source_icon.size||!memcmp(row->source_icon.data,view->source_icon.data,view->source_icon.size))) {
+            if(!row->bound||!frontend_equipment_media_namespace_current(f,row))
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Retained held model lost its actual source declaration");
+            *out=row;*authored=true;return true;
+        }
+    frontend_equipment_media *row=calloc(1,sizeof(*row));
+    if(!row)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining declared component held model");
+    row->source_slot=true;row->source_generation=view->source_generation;
+    row->frontend=f;
+    row->provider=view->provider;row->family=view->family;row->item=view->item;
+    f->equipment->admitting=true;
+    bool ok=true;
+    if(view->source_held.size){row->source_held.data=malloc(view->source_held.size);
+        ok=row->source_held.data!=NULL;
+        if(ok){row->source_held.size=view->source_held.size;memcpy(row->source_held.data,view->source_held.data,view->source_held.size);
+            ok=frontend_held_declaration_value(view->source_held,&row->declaration,error);}
+        else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source held declaration");}
+    else row->declaration.none=true;
+    if(ok&&view->source_icon.size){row->source_icon.data=malloc(view->source_icon.size);
+        ok=row->source_icon.data!=NULL;
+        if(ok){row->source_icon.size=view->source_icon.size;memcpy(row->source_icon.data,view->source_icon.data,view->source_icon.size);}
+        else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source icon declaration");}
+    row->view_path=calloc(1,1);
+    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family==QA_GAME_Q1?QA_SCENE_Q1:
+        view->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3};
+    if(ok)row->owner.mounts=qa_vfs_clone(view->view_content,error);
+    if(ok)row->owner.images=row->owner.mounts?qa_scene_resources_create(row->owner.mounts,error):NULL;
+    if(ok)ok=row->view_path&&row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);
+    if(ok)row->owner.materials=qa_material_library_create(row->owner.images,f->order,error);
+    if(ok)ok=row->owner.materials!=NULL;
+    if(ok)row->media=qa_media_library_create(row->owner.images,error);
+    if(ok)ok=row->media!=NULL;
+    if(ok){frontend_material_movie_source source=frontend_equipment_media_movie_source(row);
+        ok=frontend_material_movies_create(&source,&row->movies,error);}
+    qa_scene_image_options images={.family=row->owner.family,.wrap=QA_SCENE_REPEAT,
+        .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.usage=QA_IMAGE_USAGE_SKIN,.transparent_index=-1};
+    if(ok)ok=qa_material_library_load_scripts(row->owner.materials,row->owner.mounts,&images,error)&&
+        frontend_material_remaps(f,row->owner.materials,error);
+    if(ok&&view->source_icon.size)ok=frontend_equipment_icon_load(view->source_icon,row->owner.family,
+        row->owner.mounts,row->owner.images,row->owner.materials,&row->icon,&row->icon_source,error);
+    if(ok&&!row->declaration.none) {
+        const char *path=row->declaration.path;bool found=false;uint64_t size;
+        ok=qa_vfs_probe(row->owner.mounts,path,&found,&size,error);
+        if(ok&&!found&&row->declaration.fallback){path=row->declaration.fallback;ok=qa_vfs_probe(row->owner.mounts,path,&found,&size,error);}
+        qa_resource *resource=NULL;
+        if(ok&&!found)ok=frontend_fail(error,QA_ERROR_NOT_FOUND,"Actual component held model is absent");
+        if(ok)ok=qa_vfs_acquire(row->owner.mounts,path,&resource,NULL,error);
+        row->held_parent.resource=resource;
+        if(ok){row->source_model=calloc(1,sizeof(*row->source_model));
+            if(!row->source_model)ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining component held model arrays");}
+        if(ok)ok=qa_model_load(qa_resource_bytes(resource),row->source_model,error);
+        if(ok){size_t length=strlen(path)+1;row->saved_parent_path=malloc(length);
+            if(!row->saved_parent_path)ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component held path");
+            else memcpy(row->saved_parent_path,path,length);}
+        row->held_parent.path=row->saved_parent_path;row->held_parent.model=row->source_model;
+        if(ok)ok=frontend_held_model_prepare(&row->declaration,resource,row->source_model,&row->held,error)&&
+            qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,&row->held_scene,error);
+    }
+    if(ok)ok=qa_application_equipment_current(f->application,view)&&frontend_equipment_media_namespace_current(f,row);
+    f->equipment->admitting=false;
+    if(!ok){
+        if(!frontend_equipment_media_dispose(row,error)) {
+            if(f->equipment->tail)f->equipment->tail->next=row;else f->equipment->media=row;
+            f->equipment->tail=row;
+        }
+        return false;
+    }
+    row->bound=true;
+    if(f->equipment->tail)f->equipment->tail->next=row;else f->equipment->media=row;
+    f->equipment->tail=row;*out=row;*authored=true;return true;
+}
+
+bool frontend_equipment_media_prepare_source_held(qa_frontend *f,const qa_application_equipment_view *view,
+    frontend_equipment_media **out,bool *authored,qa_error *error)
+{
+    bool present=false;
+    if(!authored||!source_media_prepare(f,view,out,&present,error))return false;
+    *authored=present&&view->source_held.size!=0;return true;
+}
+bool frontend_equipment_media_prepare_source_icon(qa_frontend *f,const qa_application_equipment_view *view,
+    frontend_equipment_media **out,const qa_material **icon,qa_error *error)
+{
+    bool present=false;
+    if(!icon||*icon||!source_media_prepare(f,view,out,&present,error))return false;
+    *icon=present?(*out)->icon:NULL;return true;
+}
+
+bool frontend_equipment_media_source_icon_read(const qa_frontend *f,
+    const qa_application_equipment_view *view,const qa_material **icon,qa_error *error)
+{
+    if(!f||!view||!icon||*icon||!view->source_slot||!view->selected||
+        !qa_application_equipment_current(f->application,view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source icon read requires its actual selected component binding");
+    if(!view->source_icon.size)return true;
+    for(const frontend_equipment_media *row=f->equipment?f->equipment->media:NULL;row;row=row->next) {
+        if(!row->source_slot||row->provider!=view->provider||row->family!=view->family||
+            row->item!=view->item||row->source_generation!=view->source_generation||
+            row->source_icon.size!=view->source_icon.size||
+            memcmp(row->source_icon.data,view->source_icon.data,view->source_icon.size)||
+            row->source_held.size!=view->source_held.size||
+            (view->source_held.size&&memcmp(row->source_held.data,view->source_held.data,view->source_held.size)))continue;
+        if(!row->bound||!row->icon||!frontend_equipment_media_namespace_current(f,row)||
+            !qa_application_equipment_current(f->application,view))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source icon lost its actual prepared media receipt");
+        *icon=row->icon;return true;
+    }
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"Source icon has not completed its actual media preparation");
+}
 
 bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
     const qa_application_equipment_view *view, frontend_equipment_media **out,
@@ -254,7 +472,9 @@ bool frontend_equipment_media_read(const frontend_equipment_media *row,
     if (!row || !out) return false;
     *out = (frontend_equipment_media_view){row->provider, row->family, row->item,
         row->view_path, row->owner, row->view, row->held_parent, &row->declaration,
-        &row->held, row->held_scene, row->gear_namespace, row->gear_service_owner};
+        &row->held, row->held_scene, row->gear_namespace, row->gear_service_owner,
+        row->source_slot,row->source_generation,{row->source_held.data,row->source_held.size},
+        {row->source_icon.data,row->source_icon.size},row->icon,row->media,row->movies};
     return true;
 }
 
@@ -285,4 +505,42 @@ bool frontend_equipment_media_at(const qa_frontend *frontend, size_t ordinal,
     const frontend_equipment_media *row = frontend && frontend->equipment ? frontend->equipment->media : NULL;
     while (row && ordinal) { row = row->next; --ordinal; }
     return frontend_equipment_media_read(row, out);
+}
+
+size_t frontend_equipment_movie_count(const qa_frontend *f)
+{
+    size_t count=0;
+    for(const frontend_equipment_media *row=f&&f->equipment?f->equipment->media:NULL;row;row=row->next)
+        count+=row->source_slot;
+    return count;
+}
+bool frontend_equipment_movie_at(const qa_frontend *f,size_t index,size_t *physical)
+{
+    size_t ordinal=0;
+    for(const frontend_equipment_media *row=f&&f->equipment?f->equipment->media:NULL;row;row=row->next,++ordinal)
+        if(row->source_slot){if(!index){if(!physical)return false;*physical=ordinal;return true;}--index;}
+    return false;
+}
+bool frontend_equipment_movie_source_read(qa_frontend *f,size_t ordinal,
+    frontend_material_movie_source *out,qa_error *error)
+{
+    frontend_equipment_media *row=f&&f->equipment?f->equipment->media:NULL;
+    while(row&&ordinal){row=row->next;--ordinal;}
+    if(!row||!out||!row->source_slot||row->frontend!=f||!row->media||
+        !frontend_equipment_media_namespace_current(f,row))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Equipment shader movie lost its actual component media owner");
+    *out=frontend_equipment_media_movie_source(row);
+    return (f->source_restoring&&row->restoring&&!row->movies)||
+        (row->movies&&frontend_material_movies_current(row->movies));
+}
+bool frontend_equipment_movies_restore(qa_frontend *f,size_t ordinal,
+    const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
+{
+    frontend_equipment_media *row=f&&f->equipment?f->equipment->media:NULL;
+    size_t at=ordinal;
+    while(row&&at){row=row->next;--at;}
+    frontend_material_movie_source source;
+    return f&&f->source_restoring&&row&&row->restoring&&!row->movies&&
+        frontend_equipment_movie_source_read(f,ordinal,&source,error)&&
+        frontend_material_movies_restore(&source,refs,bytes,&row->movies,error);
 }

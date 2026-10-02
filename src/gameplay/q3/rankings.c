@@ -167,8 +167,8 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
         armor_written = true;
         if (mutation->value.armor.before.regular.kind != QA_ARMOR_NONE &&
             mutation->value.armor.after.regular.kind != QA_ARMOR_NONE)
-            armor += mutation->value.armor.before.regular.points -
-                     mutation->value.armor.after.regular.points;
+            armor += (float)mutation->value.armor.before.regular.points -
+                     (float)mutation->value.armor.after.regular.points;
     }
     if (outcome->result.applied_damage == 0 && !armor_written)
         return true;

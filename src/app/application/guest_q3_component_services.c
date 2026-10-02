@@ -58,6 +58,11 @@ static bool user_command(void *context,uint32_t slot,qa_q3_usercmd *out,qa_error
     if(!application_q3_mod_input_current(c->mod,actor,&inputs,&found,e)) return false;
     qa_q3_player state;
     if(!qa_q3_host_source_player(c->host,slot,&state,e)) return false;
+    if(c->items) {
+        int32_t requested=0; bool present=false;
+        if(!application_q3_mod_items_requested(c->items,actor,&requested,&present,e)) return false;
+        if(present) state.weapon=requested;
+    }
     if(found) {
         if(!c->options.clients.active_command) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component usercmd has no actual active command converter");
         return c->options.clients.active_command(c->options.clients.context,actor,&inputs,&state,out,e);
@@ -115,6 +120,18 @@ bool q3component_services(application_q3_component *c,qa_error *e)
 {
     qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=c,.print=print,.cheats_allowed=cheats};
     c->cvars=qa_cvars_create(&cvars,e); if(!c->cvars) return false;
+    if(c->options.map_path) {
+        const char *path=c->options.map_path;
+        if(!strncmp(path,"maps/",5)) path+=5;
+        size_t length=strlen(path);
+        if(length>=4&&!strcmp(path+length-4,".bsp")) length-=4;
+        char *name=malloc(length+1);
+        if(!name) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component map cvar");
+        memcpy(name,path,length); name[length]=0;
+        bool registered=qa_cvars_register(c->cvars,"mapname",name,QA_CVAR_SERVERINFO|QA_CVAR_READONLY,0,NULL,e)&&
+            qa_cvars_set(c->cvars,"mapname",name,true,e);
+        free(name); if(!registered) return false;
+    }
     qa_console_options console={.context=c->options.host.command_context,.cvars=c->cvars,.user=c,.print=console_print,.cvar_owner=cvar_owner,
         .read_script=read_script,.release_script=release_script,.source_command=console_command,.capture_context=command_capture,.context_active=command_current};
     c->console=qa_console_create(&console,e); if(!c->console) return false;

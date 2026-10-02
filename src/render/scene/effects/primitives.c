@@ -14,16 +14,17 @@ static void rail_vertex(qa_scene_vertex *vertex, qa_vec3 position, float s, floa
     vertex->color.z = dim ? truncf(color.z * 255 * 0.25f) / 255 : color.z;
 }
 
-bool qa_scene_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
+static bool rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
                             qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin,
                             qa_scene_vec4 color, const qa_scene_rail_options *options,
-                            qa_scene_mesh *out, qa_error *error)
+                            qa_scene_mesh *out, bool source, qa_error *error)
 {
     const qa_scene_rail_options defaults = {.core_width = 6, .ring_width = 16, .segment_length = 32};
     if (!options) options = &defaults;
     if (!frame || !view || !out || !qa_vec_finite(origin) || !qa_vec_finite(old_origin) ||
         kind < QA_RAIL_CORE || kind > QA_RAIL_LIGHTNING ||
-        !isfinite(options->segment_length) || options->segment_length <= 0 ||
+        ((!source || kind == QA_RAIL_RINGS) && (!isfinite(options->segment_length) ||
+            (source ? options->segment_length == 0 : options->segment_length <= 0))) ||
         (!options->retained_vertices && options->retained_count)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid rail parameters");
         return false;
@@ -97,6 +98,15 @@ bool qa_scene_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
     return true;
 }
 
+bool qa_scene_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
+    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4 color,
+    const qa_scene_rail_options *options, qa_scene_mesh *out, qa_error *error)
+{ return rail_geometry(frame, view, kind, origin, old_origin, color, options, out, false, error); }
+bool qa_scene_source_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
+    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4 color,
+    const qa_scene_rail_options *options, qa_scene_mesh *out, qa_error *error)
+{ return rail_geometry(frame, view, kind, origin, old_origin, color, options, out, true, error); }
+
 bool qa_scene_flare(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
                     const qa_scene_flare_options *options, const qa_scene_image *image,
                     qa_error *error)
@@ -141,14 +151,15 @@ bool qa_scene_flare(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 or
     return qa_scene_frame_draw(frame, &draw, error);
 }
 
-bool qa_scene_q3_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
+bool qa_scene_q3_beam_draw(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
                       qa_vec3 old_origin, const qa_scene_image *image,
-                      const qa_scene_state *previous_state, qa_error *error)
+                      const qa_scene_state *previous_state, qa_scene_draw *out, bool *present, qa_error *error)
 {
-    if (!frame || !view || !previous_state || !qa_vec_finite(origin) || !qa_vec_finite(old_origin)) {
+    if (!frame || !view || !previous_state || !out || !present || !qa_vec_finite(origin) || !qa_vec_finite(old_origin)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 beam parameters");
         return false;
     }
+    *present = false;
     qa_vec3 delta = qa_vec_sub(old_origin, origin);
     if (qa_vec_length(delta) == 0) return true;
     qa_vec3 direction = qa_vec_normalize(delta), perpendicular = qa_vec_scale(qa_effect_perpendicular(direction), 4);
@@ -177,7 +188,14 @@ bool qa_scene_q3_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 
     draw.state.depth_test = QA_DEPTH_LEQUAL;
     draw.state.depth_write = false;
     draw.state.alpha_test = QA_ALPHA_NONE;
-    return qa_scene_frame_draw(frame, &draw, error);
+    *out = draw; *present = true; return true;
+}
+bool qa_scene_q3_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
+    qa_vec3 old_origin, const qa_scene_image *image, const qa_scene_state *state, qa_error *error)
+{
+    qa_scene_draw draw; bool present;
+    return qa_scene_q3_beam_draw(frame, view, origin, old_origin, image, state, &draw, &present, error) &&
+        (!present || qa_scene_frame_draw(frame, &draw, error));
 }
 
 bool qa_scene_poly_geometry(qa_scene_frame *frame, const qa_scene_vertex *source,
@@ -206,11 +224,11 @@ bool qa_scene_poly_geometry(qa_scene_frame *frame, const qa_scene_vertex *source
     return true;
 }
 
-bool qa_scene_default_model(qa_scene_frame *frame, const qa_scene_view *view,
+bool qa_scene_default_model_draw(qa_scene_frame *frame, const qa_scene_view *view,
                             qa_scene_matrix model, const qa_scene_image *white,
-                            const qa_scene_state *state, qa_error *error)
+                            const qa_scene_state *state, qa_scene_draw *out, qa_error *error)
 {
-    if (!frame || !view || !state) {
+    if (!frame || !view || !state || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default model requires a view and draw state");
         return false;
     }
@@ -233,5 +251,12 @@ bool qa_scene_default_model(qa_scene_frame *frame, const qa_scene_view *view,
     draw.mvp = qa_scene_matrix_multiply(draw.mvp, model);
     draw.state = *state;
     draw.state.line_width = 3;
-    return qa_scene_frame_draw(frame, &draw, error);
+    *out = draw; return true;
+}
+bool qa_scene_default_model(qa_scene_frame *frame, const qa_scene_view *view, qa_scene_matrix model,
+    const qa_scene_image *white, const qa_scene_state *state, qa_error *error)
+{
+    qa_scene_draw draw;
+    return qa_scene_default_model_draw(frame, view, model, white, state, &draw, error) &&
+        qa_scene_frame_draw(frame, &draw, error);
 }

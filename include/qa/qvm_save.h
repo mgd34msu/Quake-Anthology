@@ -28,6 +28,7 @@ typedef struct qa_qvm_saved_write_watch {
     size_t count;
     qa_qvm_write_observer publish, after;
     void *context;
+    qa_qvm_write_dispose dispose;
 } qa_qvm_saved_write_watch;
 /* Borrow the actual normalized ranges and callbacks of one live watch. The
  * returned range span remains owned by the executor until watch removal. */

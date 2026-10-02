@@ -1,6 +1,13 @@
 #include "persistence.h"
 #include "internal.h"
 #include "capture.h"
+#include "component_scene.h"
+#include "component_scene_save.h"
+#include "unified_graph_save.h"
+#include "classic_client_graph_save.h"
+#include "q2_client_graph_save.h"
+#include "../application/guest_q3_components.h"
+#include "../application/save_private.h"
 #include "restore_topology.h"
 #include "image_inventory.h"
 #include "material_inventory.h"
@@ -64,6 +71,7 @@
 #include "root_resources.h"
 #include "client_source.h"
 #include "network_client_commands.h"
+#include "remote_q1_effects.h"
 #include "q3_color_policy.h"
 #include "q1_sky_save.h"
 #include "qc_messages.h"
@@ -74,6 +82,7 @@
 #include "qa/audio_acoustics_prepare.h"
 #include "renderer_materials.h"
 #include "renderer_worlds.h"
+#include "renderer_registries_save.h"
 #include "restart_binding.h"
 #include "config_store.h"
 #include "keys.h"
@@ -100,7 +109,8 @@ typedef enum frontend_section {
     SECTION_CHARACTER_TOPOLOGY, SECTION_EFFECTS_TOPOLOGY, SECTION_GEAR_EVENTS, SECTION_GEAR_TOPOLOGY,
     SECTION_GLOBAL_SETTINGS, SECTION_REMOTE_GRAPH, SECTION_MUSIC_SOURCES, SECTION_VIEW_SETTINGS,
     SECTION_MATERIAL_MOVIES, SECTION_Q1_SKY, SECTION_QC_MESSAGES, SECTION_SOURCE_COLOR,
-    SECTION_RENDERER_MATERIALS, SECTION_RESTART, SECTION_RENDERER_WORLDS, SECTION_COUNT
+    SECTION_RENDERER_MATERIALS, SECTION_RESTART, SECTION_RENDERER_WORLDS, SECTION_COMPONENT_SCENES,
+    SECTION_UNIFIED_GRAPH, SECTION_CLASSIC_CLIENT_GRAPH, SECTION_Q2_CLIENT_GRAPH, SECTION_RENDERER_REGISTRIES, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -136,6 +146,13 @@ struct frontend_persistence {
     frontend_q3_inventory *q3;
     frontend_q3_inventory *renderer_q3;
     frontend_remote_q3_graph_roster *remote_graph;
+    frontend_component_scene_restore_set *component_scenes;
+    frontend_unified_graph *unified_graph;
+    frontend_classic_client_graph *classic_graph;
+    frontend_q2_client_graph *q2_graph;
+    const qa_save_image *restore_image;
+    application_save_console_context client_console_context;
+    qa_console_save_resolvers client_console;
     qa_audio_asset_inventory *audio;
     qa_scene_image_set *images;
     frontend_restore_topology *topology;
@@ -239,8 +256,8 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?18:
-        expected==QA_SAVE_AUDIO?6:expected==QA_SAVE_INPUT?5:expected==QA_SAVE_MEDIA?2:1,
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?23:
+        expected==QA_SAVE_AUDIO?10:expected==QA_SAVE_INPUT?5:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
         !qa_source_save_u32(io,&version) || version!=required || !qa_source_save_u32(io,&kind) || kind!=(uint32_t)expected ||
@@ -257,7 +274,7 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
     SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY,SECTION_REMOTE_GRAPH,SECTION_VIEW_SETTINGS,
-    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS};
+    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS,SECTION_COMPONENT_SCENES,SECTION_UNIFIED_GRAPH,SECTION_CLASSIC_CLIENT_GRAPH,SECTION_Q2_CLIENT_GRAPH,SECTION_RENDERER_REGISTRIES};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES,
     SECTION_MUSIC_SOURCES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
@@ -361,6 +378,13 @@ static bool module_audio_scope(const frontend_remote_q3_modules *modules,uint64_
 }
 static bool audio_scope(qa_frontend *f, uint64_t id, uint32_t *domain, uint64_t *ordinal,uint64_t *role)
 {
+    if(frontend_unified_graph_audio_scope(f,id,domain,ordinal,role)) return true;
+    for(size_t i=0;i<frontend_remote_q1_count(f);++i) {
+        uint64_t bus=0; qa_audio_music *player=NULL;
+        if(remote_q1_effects_music(frontend_remote_q1_at(f,i),&bus,&player) && bus==id) {
+            *domain=16; *ordinal=i+1; *role=0; return true;
+        }
+    }
     if (id==QA_FRONTEND_COMMAND_OWNER) { *domain=1; *ordinal=0; return true; }
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
@@ -394,6 +418,20 @@ static bool audio_scope(qa_frontend *f, uint64_t id, uint32_t *domain, uint64_t 
         if(resources.identity==id) { *domain=6; *ordinal=1; return true; }
         if(module_audio_scope(initial.modules,id,role)) { *domain=8; *ordinal=1; return true; }
     }
+    for(size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if(!frontend_component_scene_metadata_read(f,i,&row,NULL)) return false;
+        if(row.identity==id) { *domain=11; *ordinal=i+1; return true; }
+    }
+    size_t retained=0;
+    if(!frontend_renderer_materials_count(f,&retained,NULL)) return false;
+    for(size_t i=0;i<retained;++i) {
+        frontend_renderer_materials_view row;
+        if(!frontend_renderer_materials_read_at(f,i,&row,NULL)) return false;
+        if(row.has_cinematics && row.cinematic_bus==id) {
+            *domain=18; *ordinal=i+1; *role=0; return true;
+        }
+    }
     for(unsigned slot=0;slot<2;++slot) {
         uint64_t bus=0;
         if(frontend_music_sources_bus(f->music_sources,(frontend_music_slot)slot,&bus) && bus==id) {
@@ -404,6 +442,25 @@ static bool audio_scope(qa_frontend *f, uint64_t id, uint32_t *domain, uint64_t 
 }
 static bool audio_scope_decode(qa_frontend *f, uint32_t domain, uint64_t ordinal,uint64_t role,uint64_t *id)
 {
+    if((domain>=12 && domain<=15) || domain==17) return frontend_unified_graph_audio_resolve(f,domain,ordinal,role,id);
+    if(domain==18) {
+        frontend_renderer_materials_view row;
+        if(!ordinal || ordinal-1>SIZE_MAX || role ||
+            !frontend_renderer_materials_read_at(f,(size_t)ordinal-1,&row,NULL) ||
+            !row.has_cinematics || !row.cinematic_bus) return false;
+        *id=row.cinematic_bus; return true;
+    }
+    if(domain==16) {
+        qa_audio_music *player=NULL;
+        return ordinal && ordinal-1<=SIZE_MAX && !role &&
+            remote_q1_effects_music(frontend_remote_q1_at(f,(size_t)ordinal-1),id,&player) && *id;
+    }
+    if(domain==11) {
+        frontend_component_scene_view row;
+        if(!ordinal || ordinal-1>SIZE_MAX || role ||
+            !frontend_component_scene_metadata_read(f,(size_t)ordinal-1,&row,NULL)) return false;
+        *id=row.identity; return true;
+    }
     if(domain==9 || domain==10) return ordinal==1 && !role &&
         frontend_music_sources_bus(f->music_sources,(frontend_music_slot)(domain-9),id);
     if(domain==5 || domain==7) {
@@ -459,12 +516,21 @@ static bool audio_resource_present(frontend_persistence *operation, uint64_t id)
 static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t id, qa_buffer *out, qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate?operation->candidate:operation->active;
-    if (kind==QA_AUDIO_REFERENCE_ACTOR) return frontend_audio_id_encode(f,id,out,error);
+    if(kind==QA_AUDIO_REFERENCE_ACTOR) {
+        uint32_t domain=0; uint64_t owner=0,row=0;
+        if(frontend_unified_graph_audio_scope(f,id,&domain,&owner,&row) && domain==15) {
+            qa_source_save_io actor={0};
+            bool ok=qa_source_save_writer(&actor,NULL,error) && qa_source_save_u32(&actor,&domain) &&
+                qa_source_save_u64(&actor,&owner) && qa_source_save_u64(&actor,&row) && qa_source_save_finish(&actor,out);
+            qa_source_save_dispose(&actor); return ok;
+        }
+        return frontend_audio_id_encode(f,id,out,error);
+    }
     qa_source_save_io io={0}; uint32_t tag=0; uint64_t key=id,role=0; char *owner=NULL;
     bool valid=false;
     switch (kind) {
     case QA_AUDIO_REFERENCE_OWNER:
-        if (audio_scope(f,id,&tag,&key,&role)) valid=true;
+        if (audio_scope(f,id,&tag,&key,&role)) valid=tag!=15;
         else if (id<=UINT32_MAX && qa_application_provider_instance(f->application,(qa_actor_owner)id)) {
             owner=(char *)qa_strings_cstr(qa_session_strings(qa_application_session(f->application)),(qa_string_id)id);
             valid=owner!=NULL;
@@ -478,14 +544,17 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
         }
         break;
     case QA_AUDIO_REFERENCE_BUS:
-        valid=audio_scope(f,id,&tag,&key,&role); if (tag==1) tag=0; break;
+        valid=audio_scope(f,id,&tag,&key,&role) && tag!=15; if (tag==1) tag=0; break;
     case QA_AUDIO_REFERENCE_RESOURCE: valid=audio_resource_present(operation,id); break;
-    case QA_AUDIO_REFERENCE_KEY: valid=frontend_event_static_index(f,id,&key); break;
+    case QA_AUDIO_REFERENCE_KEY:
+        valid=frontend_event_static_index(f,id,&key);
+        if(!valid) { tag=19; valid=frontend_scene_static_audio_identity_encode(operation->space,id,&key,error); }
+        break;
     case QA_AUDIO_REFERENCE_ACTOR: break;
     }
     bool ok=valid && qa_source_save_writer(&io,NULL,error) && qa_source_save_u32(&io,&tag) &&
         (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
-        ((tag!=7 && tag!=8) || qa_source_save_u64(&io,&role)) &&
+        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     return ok || frontend_fail(error,QA_ERROR_FORMAT,"Audio reference leaves its actual frontend owner graph");
@@ -493,15 +562,23 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
 static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes bytes, uint64_t *out, qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    if (kind==QA_AUDIO_REFERENCE_ACTOR) return frontend_audio_id_decode(f,bytes,out,error);
+    if(kind==QA_AUDIO_REFERENCE_ACTOR) {
+        if(bytes.size==8) return frontend_audio_id_decode(f,bytes,out,error);
+        qa_source_save_io actor={0}; uint32_t domain=0; uint64_t owner=0,row=0;
+        bool ok=qa_source_save_reader(&actor,NULL,bytes,error) && qa_source_save_u32(&actor,&domain) && domain==15 &&
+            qa_source_save_u64(&actor,&owner) && qa_source_save_u64(&actor,&row) && qa_source_save_finish(&actor,NULL) &&
+            frontend_unified_graph_audio_resolve(f,domain,owner,row,out);
+        qa_source_save_dispose(&actor);
+        return ok || frontend_fail(error,QA_ERROR_FORMAT,"Saved Unified mixer route leaves its actual replica ledger");
+    }
     qa_source_save_io io={0}; uint32_t tag=0; uint64_t key=0,id=0,role=0; char *owner=NULL;
     bool ok=f && out && qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_u32(&io,&tag) &&
         (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
-        ((tag!=7 && tag!=8) || qa_source_save_u64(&io,&role)) &&
+        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,NULL);
     if (ok) switch (kind) {
     case QA_AUDIO_REFERENCE_OWNER:
-        if ((tag>=1 && tag<=3) || (tag>=5 && tag<=10)) ok=audio_scope_decode(f,tag,key,role,&id);
+        if ((tag>=1 && tag<=3) || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18) ok=audio_scope_decode(f,tag,key,role,&id);
         else if (!tag && owner) {
             id=qa_strings_find(qa_session_strings(qa_application_session(f->application)),(qa_bytes){(const uint8_t *)owner,strlen(owner)});
             ok=id && id<=UINT32_MAX && qa_application_provider_instance(f->application,(qa_actor_owner)id);
@@ -512,10 +589,12 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
                 (qa_actor_owner)id,&gear,error) && qa_application_equipment_content_current(f->application,&gear);
         } else ok=false;
         break;
-    case QA_AUDIO_REFERENCE_BUS: ok=(tag==0 || tag==2 || tag==3 || (tag>=5 && tag<=10)) &&
+    case QA_AUDIO_REFERENCE_BUS: ok=(tag==0 || tag==2 || tag==3 || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18) &&
         audio_scope_decode(f,tag?tag:1,key,role,&id); break;
     case QA_AUDIO_REFERENCE_RESOURCE: ok=!tag && audio_resource_present(operation,key); id=key; break;
-    case QA_AUDIO_REFERENCE_KEY: ok=!tag && frontend_event_static_key(f,key,&id); break;
+    case QA_AUDIO_REFERENCE_KEY:
+        ok=tag==19?frontend_scene_static_audio_identity_decode(operation->space,key,&id,error):
+            !tag && frontend_event_static_key(f,key,&id); break;
     case QA_AUDIO_REFERENCE_ACTOR: ok=false; break;
     }
     free(owner); qa_source_save_dispose(&io);
@@ -530,6 +609,13 @@ static qa_audio_checkpoint_refs audio_refs(frontend_persistence *operation)
 {
     return (qa_audio_checkpoint_refs){.context=operation,.encode=audio_encode,.decode=audio_decode,
         .asset_encode=asset_encode,.asset_decode=asset_decode};
+}
+static frontend_unified_graph_refs unified_refs(frontend_persistence *operation,const qa_audio_checkpoint_refs *audio)
+{
+    qa_frontend *f=operation->candidate?operation->candidate:operation->active;
+    return (frontend_unified_graph_refs){.content=qa_application_content_graph_read(f->application),
+        .scene=operation->space,.models=operation->models,.roots=operation->roots,
+        .assets=operation->audio,.audio=audio,.components=operation->component_scenes};
 }
 static bool music_sources_capture(frontend_persistence *operation,qa_buffer *out,qa_error *error)
 {
@@ -733,6 +819,10 @@ static void cut_destroy(frontend_persistence *operation)
     frontend_q3_source_color_defer_finish(&operation->color_ticket);
     frontend_q3_source_color_defer_abort(&operation->color_ticket);
     frontend_remote_q3_graph_destroy(operation->remote_graph); operation->remote_graph=NULL;
+    frontend_unified_graph_destroy(operation->unified_graph); operation->unified_graph=NULL;
+    frontend_classic_client_graph_destroy(operation->classic_graph); operation->classic_graph=NULL;
+    frontend_q2_client_graph_destroy(operation->q2_graph); operation->q2_graph=NULL;
+    frontend_component_scene_restore_set_destroy(operation->component_scenes); operation->component_scenes=NULL;
     frontend_q3_inventory_destroy(operation->q3); operation->q3=NULL;
     frontend_q3_inventory_destroy(operation->renderer_q3); operation->renderer_q3=NULL;
     frontend_world_inventory_destroy(operation->roots); operation->roots=NULL;
@@ -817,16 +907,31 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         renderer_resources_capture(f,operation->space,error) &&
         (!f->gl || qa_gl_checkpoint_meshes(f->gl,renderer_mesh_capture,operation->space,error)) &&
         frontend_scene_namespace_capture_frame(operation->space,1,&f->frame,error) &&
+        frontend_component_scenes_capture_frames(f,operation->space,error) &&
+        frontend_unified_graph_capture_numbers(f,operation->space,error) &&
+        frontend_classic_client_graph_capture_numbers(f,operation->space,error) &&
         frontend_scene_namespace_seal(operation->space,error) &&
         (!operation->canonical || frontend_scene_namespace_rebase_capture(operation->space,operation->canonical,error)) &&
         frontend_world_inventory_capture(f,operation->scenes,operation->space,&operation->roots,error) &&
         frontend_audio_banks_checkpoint(f,&banks,&operation->audio,set->owned+SECTION_BANKS,error) &&
         frontend_tools_checkpoint_resolvers(f,&tools,&llm,error);
     qa_scene_frame_checkpoint_refs frame=frame_refs(operation->space);
+    qa_audio_checkpoint_refs audio=audio_refs(operation);
+    frontend_unified_graph_refs unified=unified_refs(operation,&audio);
     frontend_keys_cvar_refs keys=key_registry_refs(f);
     frontend_q3_refs q3={qa_application_content_graph_read(f->application),operation->space,operation->models,operation->roots,operation->audio};
     frontend_remote_q3_modules_save_refs modules=module_save_refs(operation);
     ok=ok && frontend_q3_inventory_capture(f,&q3,&operation->q3,error) &&
+        frontend_component_scenes_checkpoint(f,&(frontend_component_scene_save_refs){
+            .content=q3.content,.scene=operation->space,.frame=&frame,.q3=operation->q3},
+            set->owned+SECTION_COMPONENT_SCENES,error) &&
+        frontend_unified_graph_checkpoint(f,&unified,set->owned+SECTION_UNIFIED_GRAPH,error) &&
+        frontend_classic_client_graph_checkpoint(f,&(frontend_remote_q1_restore_refs){
+            .content=q3.content,.scene=operation->space,.models=operation->models,.roots=operation->roots,
+            .assets=operation->audio,.audio=&audio},set->owned+SECTION_CLASSIC_CLIENT_GRAPH,error) &&
+        frontend_q2_client_graph_checkpoint(f,&(frontend_remote_q2_restore_refs){
+            .content=q3.content,.scene=operation->space,.models=operation->models,.roots=operation->roots},
+            set->owned+SECTION_Q2_CLIENT_GRAPH,error) &&
         frontend_remote_q3_graph_checkpoint(f,&modules,set->owned+SECTION_REMOTE_GRAPH,error) &&
         frontend_topology_checkpoint(f,set->owned+SECTION_TOPOLOGY,error) &&
         frontend_event_topology_checkpoint(f,set->owned+SECTION_EVENTS_TOPOLOGY,error) &&
@@ -860,13 +965,14 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_audio_id_checkpoint(f,set->owned+SECTION_AUDIO_IDS,error) &&
         music_sources_capture(operation,set->owned+SECTION_MUSIC_SOURCES,error) &&
         frontend_view_settings_checkpoint(f->view_settings,set->owned+SECTION_VIEW_SETTINGS,error) &&
-        frontend_material_movie_inventory_checkpoint(f,operation->space,&frame,set->owned+SECTION_MATERIAL_MOVIES,error) &&
+        frontend_material_movie_inventory_checkpoint(f,operation->space,&frame,&audio,operation->q3,set->owned+SECTION_MATERIAL_MOVIES,error) &&
         (f->options.dedicated || (f->q1_sky && frontend_q1_sky_checkpoint(f->q1_sky,operation->space,&sky,error))) &&
         optional_encode("QFQK",!f->options.dedicated,(qa_bytes){sky.data,sky.size},set->owned+SECTION_Q1_SKY,error) &&
         frontend_qc_messages_checkpoint(f->qc_messages,set->owned+SECTION_QC_MESSAGES,error) &&
         frontend_q3_source_color_checkpoint(f,set->owned+SECTION_SOURCE_COLOR,error) &&
         frontend_renderer_materials_checkpoint(f,set->owned+SECTION_RENDERER_MATERIALS,error) &&
         frontend_renderer_worlds_checkpoint(f,operation->roots,set->owned+SECTION_RENDERER_WORLDS,error) &&
+        frontend_renderer_registries_checkpoint(f,operation->q3,operation->roots,set->owned+SECTION_RENDERER_REGISTRIES,error) &&
         capture_engine(operation,set->owned+SECTION_ENGINE,error) &&
         frontend_ui_features_checkpoint(f,operation->audio,set->owned+SECTION_UI_FEATURES,error) &&
         capture_device(operation,set->owned+SECTION_DEVICE,error) &&
@@ -946,7 +1052,7 @@ static bool prepare_services(void *context, qa_application *candidate, const qa_
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
     if (!f || f->application || !candidate) return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend candidate service prefix was already installed");
-    f->application=candidate;
+    f->application=candidate; operation->restore_image=image;
     qa_frontend *native_source=operation->fresh_original?operation->constructor:operation->active;
     qa_audio_output_format output=native_source->device?
         qa_audio_device_requested_configuration(native_source->device).format:native_source->audio_output_format;
@@ -965,6 +1071,12 @@ static bool prepare_services(void *context, qa_application *candidate, const qa_
         frontend_renderer_materials_prepare_restored(f,section(&operation->sections,SECTION_RENDERER_MATERIALS),error) &&
         frontend_remote_q3_graph_decode(f,section(&operation->sections,SECTION_REMOTE_GRAPH),
             &operation->remote_graph,error) &&
+        frontend_unified_graph_decode(f,section(&operation->sections,SECTION_UNIFIED_GRAPH),
+            &operation->unified_graph,error) &&
+        frontend_classic_client_graph_decode(f,section(&operation->sections,SECTION_CLASSIC_CLIENT_GRAPH),
+            &operation->classic_graph,error) &&
+        frontend_q2_client_graph_decode(f,section(&operation->sections,SECTION_Q2_CLIENT_GRAPH),
+            &operation->q2_graph,error) &&
         frontend_native_q3_topology_decode(f,section(&operation->sections,SECTION_NATIVE_Q3_TOPOLOGY),
             &operation->native_topology,error) &&
         frontend_event_prepare_restored(f,section(&operation->sections,SECTION_EVENTS_TOPOLOGY),error) &&
@@ -1022,50 +1134,83 @@ static bool equipment_roots_restore(frontend_persistence *operation,qa_error *er
     }
     return frontend_equipment_topology_ready(f,error);
 }
+static bool renderer_registries_roster(frontend_persistence *operation,qa_error *error)
+{
+    frontend_q3_inventory_destroy(operation->renderer_q3); operation->renderer_q3=NULL;
+    qa_frontend *f=operation->candidate;
+    frontend_q3_refs refs={qa_application_content_graph_read(f->application),operation->space,
+        operation->models,operation->roots,NULL};
+    return frontend_q3_inventory_restore_roster(f,&refs,&operation->renderer_q3,error);
+}
 static bool import_components(frontend_persistence *operation, qa_error *error)
 {
     qa_frontend *f=operation->candidate; frontend_section_set *set=&operation->sections;
     qa_application_content_graph *content=qa_application_content_graph_read(f->application);
     qa_audio_bank_checkpoint_refs banks=frontend_audio_content_refs(content);
     qa_tools_checkpoint_refs tools; qa_llm_checkpoint_refs llm;
+    qa_audio_checkpoint_refs audio=audio_refs(operation);
+    frontend_unified_graph_refs unified=unified_refs(operation,&audio);
     qa_bytes engine={0},device={0},platform={0},terminal={0},sky={0};
-    bool ok=frontend_renderer_worlds_prepare_restored(f,section(set,SECTION_RENDERER_WORLDS),error) &&
+    bool ok=frontend_component_scenes_prepare_restored(f,content,section(set,SECTION_COMPONENT_SCENES),
+            &operation->component_scenes,error) &&
+        application_q3_components_scenes_restore_prepare(f->application,error) &&
+        frontend_unified_graph_prepare_components(operation->unified_graph,&unified,error) &&
+        frontend_component_scene_restore_set_order(operation->component_scenes,error) &&
+        frontend_renderer_worlds_prepare_restored(f,section(set,SECTION_RENDERER_WORLDS),error) &&
         frontend_view_settings_restore(f->view_settings,section(set,SECTION_VIEW_SETTINGS),error) &&
         frontend_equipment_gear_prepare_restored(f,section(set,SECTION_GEAR_TOPOLOGY),error) &&
         frontend_input_profile_restore(f,content,section(set,SECTION_INPUT_PROFILE),error) &&
         frontend_images_restore(f,section(set,SECTION_IMAGES),&operation->images,error) &&
         frontend_scene_namespace_restore(section(set,SECTION_NAMESPACE),operation->images,&operation->space,error) &&
         frontend_scene_namespace_bind_frame(operation->space,1,&f->frame,error) &&
+        frontend_component_scenes_bind_frames(f,operation->space,error) &&
         frontend_image_owners_restore(f,operation->space,section(set,SECTION_IMAGE_OWNERS),error) &&
         frontend_materials_restore(f,operation->space,section(set,SECTION_MATERIALS),error) &&
         frontend_fonts_restore(f,operation->space,section(set,SECTION_FONTS),error) &&
         frontend_models_restore(content,section(set,SECTION_MODELS),&operation->models,error) &&
         frontend_world_inventory_restore(f,operation->models,operation->space,section(set,SECTION_ROOTS),&operation->roots,error) &&
+        frontend_unified_graph_roots(operation->unified_graph,&(frontend_unified_graph_refs){
+            .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots,
+            .audio=&audio,.components=operation->component_scenes},error) &&
+        frontend_classic_client_graph_roots(operation->classic_graph,&(frontend_remote_q1_restore_refs){
+            .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots,
+            .assets=operation->audio,.audio=&audio},error) &&
+        frontend_q2_client_graph_roots(operation->q2_graph,&(frontend_remote_q2_restore_refs){
+            .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots},error) &&
         frontend_renderer_worlds_attach_restored(f,operation->roots,error) &&
         frontend_roots_attach_restored(f,operation->roots,operation->models,error) &&
         frontend_source_roots_attach_restored(f,operation->roots,error) &&
         frontend_remote_roots_attach_restored(f,operation->roots,error) &&
-        frontend_remote_q3_graph_prepare_modules(operation->remote_graph,error) &&
-        frontend_remote_q3_graph_prepare_runtime(operation->remote_graph,error) &&
         frontend_q3_inventory_restore_roster(f,&(frontend_q3_refs){content,operation->space,
             operation->models,operation->roots,NULL},&operation->renderer_q3,error) &&
+        frontend_renderer_registries_prepare_restored(f,operation->renderer_q3,operation->roots,
+            section(set,SECTION_RENDERER_REGISTRIES),error) &&
+        renderer_registries_roster(operation,error) &&
         music_sources_prepare(operation,error) &&
         equipment_roots_restore(operation,error) &&
         aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_restore(operation,error) &&
         frontend_source_renderer_runtime_bind(f,error) &&
         frontend_q3_source_color_restore(f,operation->display_guard,section(set,SECTION_SOURCE_COLOR),error) &&
+        frontend_remote_q3_graph_prepare_modules(operation->remote_graph,error) &&
+        frontend_remote_q3_graph_prepare_runtime(operation->remote_graph,error) &&
         frontend_source_material_bindings_restore(f,error) &&
         frontend_native_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_initial_material_bindings_restore(f,error) &&
+        frontend_component_scenes_bind_restored(f,error) &&
         frontend_renderer_materials_bind_restored(f,error) &&
         frontend_renderer_worlds_bind_restored(f,error) &&
         frontend_audio_id_restore(f,section(set,SECTION_AUDIO_IDS),error) &&
         frontend_audio_banks_restore(f,&banks,section(set,SECTION_BANKS),&operation->audio,error);
     frontend_scene_identity_scope events={operation->space,1};
-    qa_audio_checkpoint_refs audio=audio_refs(operation);
     qa_scene_frame_checkpoint_refs frame=frame_refs(operation->space);
+    unified=unified_refs(operation,&audio);
     ok=ok && frontend_event_restore(f,operation->audio,&events,section(set,SECTION_EVENTS),error) &&
+        frontend_tools_checkpoint_resolvers(f,&tools,&llm,error) && frontend_tools_restore(f,&tools,&llm,section(set,SECTION_TOOLS),error) &&
+        frontend_save_commands_restore(f,section(set,SECTION_SAVE_COMMANDS),error) &&
+        (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),error)) &&
+        frontend_material_movie_inventory_restore_unified(f,operation->space,&frame,&audio,operation->q3,section(set,SECTION_MATERIAL_MOVIES),error) &&
+        frontend_unified_graph_audio_prefix(operation->unified_graph,&unified,error) &&
         optional_decode("QFQK",!f->options.dedicated,section(set,SECTION_Q1_SKY),&sky,error) &&
         (f->options.dedicated || frontend_q1_sky_restore(f,operation->space,sky,&f->q1_sky,error)) &&
         optional_decode("QFAE",f->audio!=NULL,section(set,SECTION_ENGINE),&engine,error) &&
@@ -1076,11 +1221,6 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         (!operation->active->device || qa_audio_device_restore(device,operation->active->device,f->audio,
             &f->device,&operation->device_guard,error)) &&
         frontend_native_q2_private_restore(f,section(set,SECTION_NATIVE),error) &&
-        frontend_tools_checkpoint_resolvers(f,&tools,&llm,error) && frontend_tools_restore(f,&tools,&llm,section(set,SECTION_TOOLS),error) &&
-        frontend_save_commands_restore(f,section(set,SECTION_SAVE_COMMANDS),error) &&
-        (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),error)) &&
-        frontend_seats_recipients_restore(f,error) &&
-        frontend_seats_restore(f,operation->space,section(set,SECTION_SEATS_INPUT),section(set,SECTION_SEATS_PRESENTATION),error) &&
         frontend_equipment_events_restore(f->gear_events,section(set,SECTION_GEAR_EVENTS),error) &&
         frontend_players_restore(f,section(set,SECTION_PLAYERS),error) &&
         frontend_particle_restore(f,section(set,SECTION_PARTICLES),error) && frontend_shader_restore(f,section(set,SECTION_SHADERS),error) &&
@@ -1097,8 +1237,21 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     ok=ok && frontend_q3_prepare(f,&q3,section(set,SECTION_Q3),&operation->q3,error) &&
         qa_scene_frame_restore(&f->frame,section(set,SECTION_FRAME),&frame,error) &&
         frontend_scene_namespace_qualify_frame(operation->space,1,&f->frame,error) &&
+        frontend_material_movie_inventory_restore(f,operation->space,&frame,&audio,operation->q3,section(set,SECTION_MATERIAL_MOVIES),error) &&
         frontend_q3_restore(operation->q3,(double)f->time_ns/1000000.0,error) &&
-        frontend_material_movie_inventory_restore(f,operation->space,&frame,section(set,SECTION_MATERIAL_MOVIES),error) &&
+        frontend_component_scenes_restore_continuation(operation->component_scenes,
+            &(frontend_component_scene_save_refs){.content=content,.scene=operation->space,
+                .frame=&frame,.q3=operation->q3},error) &&
+        application_q3_components_scenes_restore_finish(f->application,error) &&
+        frontend_component_scenes_finish_restore(f,error) &&
+        frontend_unified_graph_finish(operation->unified_graph,&unified,error) &&
+        frontend_classic_client_graph_finish(operation->classic_graph,&(frontend_remote_q1_restore_refs){
+            .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots,
+            .assets=operation->audio,.audio=&audio},error) &&
+        frontend_q2_client_graph_finish(operation->q2_graph,&(frontend_remote_q2_restore_refs){
+            .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots},error) &&
+        frontend_seats_recipients_restore(f,error) &&
+        frontend_seats_restore(f,operation->space,section(set,SECTION_SEATS_INPUT),section(set,SECTION_SEATS_PRESENTATION),error) &&
         frontend_remote_q3_graph_restore_children(operation->remote_graph,error) &&
         frontend_remote_q3_graph_restore_modules(operation->remote_graph,&modules,error) &&
         frontend_remote_q3_graph_restore_frames(operation->remote_graph,error) &&
@@ -1126,9 +1279,23 @@ static bool restore_owner(void *context, qa_application *candidate, qa_bytes byt
         (bytes.size && memcmp(bytes.data,operation->external[binding->ordinal].data,bytes.size)))
         return frontend_fail(error,QA_ERROR_FORMAT,"External import leaves its complete retained owner inventory");
     operation->restored|=1u<<binding->ordinal;
-    if(binding->kind==QA_SAVE_CONNECTIONS &&
-        (!frontend_network_restore_connections_prefix(operation->candidate,bytes,&operation->network_staged,error) ||
-        !frontend_remote_q3_graph_prepare(operation->remote_graph,error))) return false;
+    if(binding->kind==QA_SAVE_CONNECTIONS) {
+        qa_audio_checkpoint_refs audio=audio_refs(operation);
+        frontend_unified_graph_refs unified=unified_refs(operation,&audio);
+        if(!application_save_console_context_from_image(candidate,operation->restore_image,
+                &operation->client_console_context,error) ||
+            !application_save_console_resolvers(&operation->client_console_context,&operation->client_console,error) ||
+            !frontend_unified_graph_stage(operation->unified_graph,unified.content,&operation->client_console,error) ||
+            !frontend_classic_client_graph_stage(operation->classic_graph,
+                &(frontend_remote_q1_restore_refs){.content=unified.content,.audio=&audio},&operation->client_console,error) ||
+            !frontend_q2_client_graph_stage(operation->q2_graph,
+                &(frontend_remote_q2_restore_refs){.content=unified.content},&operation->client_console,error) ||
+            !frontend_network_restore_connections_prefix(operation->candidate,bytes,&operation->network_staged,error) ||
+            !frontend_unified_graph_prepare(operation->unified_graph,&unified,error) ||
+            !frontend_classic_client_graph_prepare(operation->classic_graph,error) ||
+            !frontend_q2_client_graph_prepare(operation->q2_graph,error) ||
+            !frontend_remote_q3_graph_prepare(operation->remote_graph,error)) return false;
+    }
     if (binding->kind!=QA_SAVE_MEDIA) return true;
     if (operation->restored!=127u) return frontend_fail(error,QA_ERROR_FORMAT,"MEDIA import preceded a required external owner");
     return import_components(operation,error);
@@ -1360,7 +1527,8 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
     if (!operation->finished || !operation->slot || *operation->slot!=operation->active ||
         operation->active->application!=active || !f || f->application!=candidate ||
         !frontend_owners_idle(operation->active) || !frontend_owners_idle(f) ||
-        !frontend_seat_callbacks_idle(operation->active) || !frontend_seat_callbacks_idle(f))
+        !frontend_seat_callbacks_checkpoint_ready(operation->active,error) ||
+        !frontend_seat_callbacks_checkpoint_ready(f,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend publication lost its idle active/candidate ownership cut");
     if ((!f->options.dedicated && !frontend_q1_sky_publish_ready(f->q1_sky,error)) ||
         !frontend_campaign_publish_ready(f,error) || !frontend_client_registries_rebind_ready(f,f,error) ||
@@ -1462,8 +1630,8 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?17:
-                kinds[i]==QA_SAVE_AUDIO?6:kinds[i]==QA_SAVE_INPUT?4:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
+                kinds[i]==QA_SAVE_PRESENTATION?23:
+                kinds[i]==QA_SAVE_AUDIO?10:kinds[i]==QA_SAVE_INPUT?5:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }
     size_t extra=services?services->owner_count:0;

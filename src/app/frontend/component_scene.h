@@ -4,20 +4,28 @@
 #include "material_movies.h"
 #include "material_movies_save.h"
 #include "../application/guest_q3_component_scene_factory.h"
+struct frontend_scene_namespace;
 bool frontend_component_scene_prepare(void *,const application_q3_component_scene_preparation *,qa_error *);
 bool frontend_component_scenes_idle(const qa_frontend *);
 typedef struct frontend_component_scene_view {
+    const void *owner;
     uint64_t identity,sequence,generation,service_owner;
     application_q3_component_scene_origin origin;
     qa_executable_recipe *recipe;
     const qa_recipe_provider *recipe_provider;
-    size_t packet_count;
+    size_t packet_count,picture_count;
+    uint64_t picture_frame;
+    size_t picture_cursor;
+    bool picture_frame_valid;
     qa_actor_owner receiver;
     uint32_t physical_seat;
+    int32_t clock_ms;
+    bool retired;
     qa_actor_id viewer;
     const qa_launch_instance *descriptor;
     qa_catalog *catalog;
     qa_vfs *files;
+    qa_resource_pool *pool;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_font_library *fonts;
@@ -46,6 +54,8 @@ bool frontend_component_scene_restore_output(qa_frontend *,uint64_t identity,uin
     qa_bytes,const qa_scene_frame_checkpoint_refs *,qa_error *);
 bool frontend_component_scene_restore_packet(qa_frontend *,uint64_t identity,
     const struct frontend_component_scene_packet *,qa_error *);
+bool frontend_component_scene_restore_picture(qa_frontend *,uint64_t identity,
+    const qa_q3_picture_receipt *,qa_error *);
 bool frontend_component_scene_restore_music(qa_frontend *,uint64_t identity,qa_audio_music **,
     bool attached,const char *intro,const char *loop,bool looping,bool pending,qa_error *);
 bool frontend_component_scene_restore_movies(qa_frontend *,uint64_t identity,
@@ -54,6 +64,9 @@ bool frontend_component_scenes_finish_restore(qa_frontend *,qa_error *);
 bool frontend_component_scene_movie_source_read(const qa_frontend *,uint64_t,
     frontend_material_movie_source *,qa_error *);
 bool frontend_component_scenes_bind_restored(qa_frontend *,qa_error *);
+bool frontend_component_scenes_restore_order(qa_frontend *,const uint64_t *,size_t,qa_error *);
+bool frontend_component_scene_restore_frame_bind(qa_frontend *,uint64_t identity,
+    struct frontend_scene_namespace *,uint64_t ordinal,qa_error *);
 bool frontend_component_scene_packet_count(const qa_frontend *,uint64_t identity,uint64_t sequence,size_t *,qa_error *);
 typedef struct frontend_component_scene_packet {
     qa_q3_refdef definition;
@@ -69,4 +82,12 @@ typedef struct frontend_component_scene_packet {
 } frontend_component_scene_packet;
 bool frontend_component_scene_packet_read(const qa_frontend *,uint64_t identity,uint64_t sequence,
     size_t ordinal,frontend_component_scene_packet *,qa_error *);
+bool frontend_component_scene_picture_count(const qa_frontend *,uint64_t identity,uint64_t sequence,size_t *,qa_error *);
+bool frontend_component_scene_picture_read(const qa_frontend *,uint64_t identity,uint64_t sequence,
+    size_t ordinal,qa_q3_picture_receipt *,qa_error *);
+bool frontend_component_scene_pictures(qa_frontend *,uint64_t identity,uint64_t sequence,
+    qa_q3_presentation *recipient,qa_scene_frame *,qa_error *);
+bool frontend_component_scene_pictures_finish(qa_frontend *,uint32_t physical_seat,bool issued,qa_error *);
+bool frontend_component_scene_restore_picture_cursor(qa_frontend *,uint64_t identity,
+    bool valid,uint64_t frame,size_t cursor,qa_error *);
 #endif

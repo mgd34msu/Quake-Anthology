@@ -67,13 +67,73 @@ application_provider *application_mode_provider(qa_application *app, qa_mode_id 
     return NULL;
 }
 
+bool application_native_q3_source_mode(application_provider *provider, qa_mode_id *out,
+    bool *found, qa_error *error) {
+    qa_application *app = provider ? provider->application : NULL;
+    if (!out || !found || !app || app->destroy_requested || !app->modes ||
+        provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
+        !provider->constructed || !provider->attached || provider->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 mode association lost its actual installed GAME owner");
+    *found = false;
+    if (application_world_provider(app, QA_ROLE_ENTITIES, "") == provider) {
+        qa_mode_view view;
+        if (!app->primary_mode_ready) return true;
+        if (!qa_modes_read(app->modes, app->primary_mode, &view, error)) return false;
+        *out = app->primary_mode;
+        *found = true;
+        return true;
+    }
+    if (!application_native_q3_source_command_entered(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Supplemental Q3 mode requires its actual entered Source command");
+    qa_mode_id selected = {0};
+    bool admitted = false;
+    for (size_t i = 0; i < app->mode_count; ++i) {
+        qa_mode_id mode = app->mode_ids[i];
+        qa_mode_view view;
+        if (!qa_modes_read(app->modes, mode, &view, error)) return false;
+        if (!view.rules.enabled || application_mode_provider(app, mode) != provider) continue;
+        if (view.rules.source < QA_MODE_Q3 || view.rules.source > QA_MODE_TEAM_ARENA ||
+            view.rules.kind < QA_MODE_FFA || view.rules.kind > QA_MODE_HARVESTER)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Supplemental Q3 GAME is associated with a foreign rule family");
+        if (admitted)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Supplemental Q3 GAME has competing enabled mode associations");
+        selected = mode;
+        admitted = true;
+    }
+    if (!admitted) return true;
+    if (!application_native_q3_source_command_entered(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Supplemental Q3 mode lost its actual Source command");
+    *out = selected;
+    *found = true;
+    return true;
+}
+
+bool application_native_q3_source_mode_current(application_provider *provider,
+    qa_mode_id expected, qa_error *error) {
+    qa_mode_id actual;
+    bool found;
+    return application_native_q3_source_mode(provider, &actual, &found, error) &&
+        ((found && actual.slot == expected.slot && actual.generation == expected.generation) ||
+         application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 callback changed its actual provider-associated mode"));
+}
+
 static bool mode_respawn_current(qa_application *app, qa_mode_id mode,
     application_provider *policy, application_provider *source, qa_actor_id actor,
     qa_mode_view *view, qa_error *error) {
     qa_mode_player_view player;
+    bool supplemental = app && source && policy == source &&
+        source->kind == APPLICATION_PROVIDER_Q3 &&
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source &&
+        application_native_q3_source_command_entered(source);
     if (!app || app->destroy_requested || app->finalizing || !app->players ||
-        !policy || !source || app->players->map_provider != source ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        !policy || !source || (!supplemental && (app->players->map_provider != source ||
+            application_world_provider(app, QA_ROLE_ENTITIES, "") != source)) ||
         application_mode_provider(app, mode) != policy ||
         !policy->constructed || !policy->attached || policy->close_pending ||
         !source->constructed || !source->attached || source->close_pending ||
@@ -83,6 +143,7 @@ static bool mode_respawn_current(qa_application *app, qa_mode_id mode,
             app->primary_mode.generation != mode.generation)))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Mode respawn lost its actual source and player association");
+    if (supplemental && !application_native_q3_source_mode_current(source, mode, error)) return false;
     if (!qa_modes_read(app->modes, mode, view, error) ||
         !qa_modes_player_read(app->modes, mode, actor, &player, error)) return false;
     return view->rules.enabled || application_fail(error, QA_ERROR_ARGUMENT,
@@ -102,6 +163,8 @@ bool application_native_mode_respawn(void *opaque, qa_mode_id mode,
     qa_application *app = opaque;
     application_provider *policy = app ? application_mode_provider(app, mode) : NULL;
     application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (policy && policy->kind == APPLICATION_PROVIDER_Q3 &&
+        application_native_q3_source_command_entered(policy)) source = policy;
     qa_mode_view view;
     if (!mode_respawn_current(app, mode, policy, source, actor, &view, error)) return false;
     /* Each physical source owns the discontinuity produced by its real spawn. */
@@ -148,9 +211,10 @@ bool application_native_mode_q3_team_status_bound(void *opaque, qa_mode_id id) {
 bool application_native_mode_q3_source_match_exit(void *opaque, qa_mode_id mode,
     qa_string_id reason, qa_error *error) {
     qa_application *app = opaque;
-    application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    application_provider *p = app ? application_native_q3_mode_source_provider(app, mode) : NULL;
     if (!p || p->kind != APPLICATION_PROVIDER_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 match exit has no actual native GAME source");
+    if (!application_native_q3_source_mode_current(p, mode, error)) return false;
     return application_native_q3_match_log_exit(p, mode, reason, error);
 }
 

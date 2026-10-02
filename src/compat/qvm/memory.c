@@ -10,6 +10,7 @@ typedef struct qa_qvm_write_watch {
     qa_qvm_write_range *ranges;
     size_t count;
     qa_qvm_write_observer publish, after;
+    qa_qvm_write_dispose dispose;
     void *context;
     bool active;
 } qa_qvm_write_watch;
@@ -28,6 +29,7 @@ bool qa_qvm_live(const qa_qvm *vm, qa_error *error)
 bool qa_qvm_mutable(const qa_qvm *vm, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
+    if (vm->candidate_inventory) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"Candidate callback inventory awaits its exact RAM import");
     return vm->publication_depth == 0 || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM publication permits bookkeeping only");
 }
 bool qa_qvm_raw_range(const qa_qvm *vm, uint32_t offset, size_t length, qa_error *error)
@@ -94,11 +96,12 @@ static void collect_watches(qa_qvm *vm)
     }
 }
 
-bool qa_qvm_observe_writes(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t count,
+bool qa_qvm_observe_writes_owned(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t count,
                           qa_qvm_write_observer publish, qa_qvm_write_observer after,
-                          void *context, qa_qvm_binding *out, qa_error *error)
+                          qa_qvm_write_dispose dispose, void *context, qa_qvm_binding *out, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
+    if (vm->candidate_inventory) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"Candidate watch inventory already sealed");
     if (publish == NULL || out == NULL || (count > 0 && ranges == NULL) || count > SIZE_MAX / sizeof(*ranges))
         return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM write observer");
     if (vm->next_watch == UINT64_MAX) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"QVM observer identity exhausted");
@@ -126,18 +129,26 @@ bool qa_qvm_observe_writes(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t 
         watch->ranges[merged++] = range;
     }
     watch->count = merged; watch->publish = publish; watch->after = after; watch->context = context;
+    watch->dispose=dispose;
     watch->active = true; watch->id = ++vm->next_watch;
     qa_qvm_write_watch **tail = &vm->watches;
     while (*tail != NULL) tail = &(*tail)->next;
     *tail = watch; *out = watch->id;
     return true;
 }
+bool qa_qvm_observe_writes(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t count,
+    qa_qvm_write_observer publish, qa_qvm_write_observer after, void *context,
+    qa_qvm_binding *out, qa_error *error)
+{return qa_qvm_observe_writes_owned(vm,ranges,count,publish,after,NULL,context,out,error);}
 
 bool qa_qvm_unobserve_writes(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
     for (qa_qvm_write_watch *watch = vm->watches; watch != NULL; watch = watch->next)
-        if (watch->id == id && watch->active) { watch->active = false; collect_watches(vm); return true; }
+        if (watch->id == id && watch->active) {
+            if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
+            watch->active = false; collect_watches(vm); return true;
+        }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM write observer not found");
 }
 
@@ -146,7 +157,7 @@ static bool watch_matches(const qa_qvm_write_watch *watch,
 {
     if (!watch->active || watch->id != expected->binding ||
         watch->publish != expected->publish || watch->after != expected->after ||
-        watch->context != expected->context || watch->count != expected->count ||
+        watch->context != expected->context || watch->dispose != expected->dispose || watch->count != expected->count ||
         (expected->count && !expected->ranges)) return false;
     for (size_t i = 0; i < watch->count; ++i)
         if (watch->ranges[i].offset != expected->ranges[i].offset ||
@@ -160,7 +171,7 @@ bool qa_qvm_write_watch_read(const qa_qvm *vm, qa_qvm_binding id,
     for (const qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next)
         if (watch->active && watch->id == id) {
             *out = (qa_qvm_saved_write_watch){id,watch->ranges,watch->count,
-                watch->publish,watch->after,watch->context};
+                watch->publish,watch->after,watch->context,watch->dispose};
             return true;
         }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM retained write watch is absent");
@@ -219,6 +230,14 @@ static void free_deliveries(write_delivery *head)
         free(head->bytes); free(head->ranges); free(head);
         head = next;
     }
+}
+static void dispose_deliveries(qa_qvm *vm,write_delivery *head)
+{
+    ++vm->publication_depth;
+    for(write_delivery *delivery=head;delivery;delivery=delivery->next)
+        if(delivery->watch->active&&delivery->watch->dispose)
+            delivery->watch->dispose(delivery->watch->context,&delivery->event);
+    --vm->publication_depth;
 }
 
 static bool capture_writes(qa_qvm *vm, uint32_t offset, size_t length, write_delivery **out, qa_error *error)
@@ -305,6 +324,7 @@ static bool publish_writes(qa_qvm *vm, write_delivery *head, qa_error *error)
         after_effect effect = {vm,delivery};
         if (!qa_qvm_execution_effect(vm,after_publication,&effect,&first)) { success = false; break; }
     }
+    dispose_deliveries(vm,head);
     --vm->write_delivery_depth;
     free_deliveries(head); collect_watches(vm);
     if (!success && error != NULL) *error = first;

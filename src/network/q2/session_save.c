@@ -6,6 +6,42 @@
 
 static bool invalid(qa_source_save_io *io, const char *message)
 { qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "%s", message); io->failed = true; return false; }
+
+static bool pending_policy(const qa_network_q2_client_policy *value)
+{
+    static const uint8_t empty_opcodes[32] = {0};
+    const qa_q2_channel_options *channel = &value->channel;
+    const qa_q2_message_options *messages = &value->messages;
+    return !channel->protocol.kind && !channel->protocol.revision && !channel->protocol.flags &&
+        !channel->server && !channel->new_channel && !channel->compress && !channel->qport &&
+        !channel->payload_bytes && !channel->message_bytes && !channel->datagram_bytes && !channel->sequence_recording &&
+        !messages->config_strings && !messages->inventory_slots && !messages->history_capacity &&
+        !messages->max_inflated_bytes && !messages->demo && !messages->override_extended_temps &&
+        !messages->extended_temps && !messages->native_api2023 &&
+        !memcmp(messages->private_opcodes, empty_opcodes, sizeof(empty_opcodes)) &&
+        !messages->private_read && !messages->private_user && !value->pending_commands;
+}
+
+bool qa_network_q2_save_client_policy(qa_source_save_io *io, qa_network_q2_client_policy *value, bool optional)
+{
+    if (!io || !value) return false;
+    if (value->messages.private_read || value->messages.private_user)
+        return invalid(io, "Q2 CLIENT recipe cannot retain process reader bindings");
+    bool selected = qa_q2_protocol_version(value->channel.protocol) != 0;
+    if (!qa_source_save_bool(io, &selected)) return false;
+    if (!selected) {
+        if (!optional) return invalid(io, "Q2 CLIENT recipe has no actual selected policy");
+        if (io->direction == QA_SOURCE_SAVE_READ) *value = (qa_network_q2_client_policy){0};
+        return pending_policy(value) || invalid(io, "Q2 pending CLIENT policy is not literal empty state");
+    }
+    if (!qa_q2_save_channel_options(io, &value->channel) ||
+        !qa_q2_save_message_options(io, &value->messages, false) ||
+        !qa_source_save_count(io, &value->pending_commands, SIZE_MAX / sizeof(q2_command_group))) return false;
+    return (!value->channel.server && value->channel.protocol.kind != QA_NET_Q2KEX_DEMO_2022 &&
+        value->pending_commands && value->messages.config_strings && value->messages.inventory_slots &&
+        (!value->messages.native_api2023 || value->channel.protocol.kind == QA_NET_Q2KEX_2023)) ||
+        invalid(io, "Q2 CLIENT recipe differs from its real channel, command queue or message constructor");
+}
 static bool text(qa_source_save_io *io, char **value)
 {
     bool present = *value != NULL;
@@ -108,8 +144,7 @@ static bool download(qa_source_save_io *io, q2_server *server, const qa_network_
             server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
             server->download_opening.resource_id = qa_resource_id(decoded);
         }
-        if (
-            !qa_source_save_u64(io, &server->download_opening.mount) ||
+        if (!qa_source_save_u64(io, &server->download_opening.mount) ||
             !text(io, &server->download_opening.path) || !text(io, &server->download_opening.lookup_path) ||
             !text(io, &server->download_opening.link_source) || !text(io, &server->download_opening.link_target) ||
             !qa_vfs_acquisition_opening_codec(io, server->download_view, &server->download_opening) ||
@@ -143,11 +178,14 @@ static bool server_fields(qa_source_save_io *io, q2_session *session, const qa_n
         !qa_source_save_bytes(io, server->userinfo, sizeof(server->userinfo)) ||
         !qa_source_save_bool(io, &server->has_source_frame) || !qa_source_save_u64(io, &server->last_source_frame) ||
         !qa_source_save_i32(io, &server->wire_frame) || !text(io, &server->drop_reason) ||
+        !qa_source_save_bool(io, &server->drop_notice) ||
         !qa_source_save_bool(io, &server->drop_queued) || !qa_source_save_bool(io, &server->drop_sent) ||
         !qa_source_save_bool(io, &server->drop_hook_done)) return false;
     if ((server->drop_reason && (!session->retiring || session->active)) ||
-        (!server->drop_reason && (server->drop_queued || server->drop_sent || server->drop_hook_done)) ||
-        (server->drop_sent && !server->drop_queued) || (server->drop_hook_done && !server->drop_sent))
+        (!server->drop_reason && (server->drop_notice || server->drop_queued || server->drop_sent || server->drop_hook_done)) ||
+        (!server->drop_notice && (server->drop_queued || server->drop_sent)) ||
+        (server->drop_sent && !server->drop_queued) ||
+        (server->drop_notice && server->drop_hook_done && !server->drop_sent))
         return invalid(io, "Q2 disconnect continuation lost its actual staged packet");
     uint32_t source_fps = (uint32_t)(UINT64_C(1000000000) / policy.source_interval_ns), source_divisor = source_fps / 10;
     if (!source_divisor) source_divisor = 1;
@@ -207,8 +245,32 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
         return invalid(io, "Q2 client candidate policy differs from its source");
     if (!qa_q2_save_messages(io, &client->policy.messages, &client->messages) || !records(io, &client->batch) ||
         !game_state(io, &client->preparing) || !qa_q2_save_serverdata(io, &client->server_data)) return false;
+    if (!text(io, &client->drop_reason) || !qa_source_save_bool(io, &client->drop_canceled) ||
+        !qa_source_save_bool(io, &client->drop_hook_done) ||
+        !qa_source_save_bool(io, &client->drop_notice) || !qa_source_save_bool(io, &client->drop_queued) ||
+        !qa_source_save_bool(io, &client->drop_sent) || !qa_source_save_bool(io, &client->drop_notify) ||
+        !qa_source_save_bool(io, &client->drop_records_needed) || !qa_source_save_bool(io, &client->drop_records_done) ||
+        (client->drop_reason && (!session->retiring || session->active)) ||
+        (!client->drop_reason && (client->drop_canceled || client->drop_hook_done || client->drop_notice ||
+            client->drop_queued || client->drop_sent || client->drop_notify || client->drop_records_needed || client->drop_records_done)) ||
+        (!client->drop_notice && (client->drop_queued || client->drop_sent)) ||
+        (client->drop_sent && !client->drop_queued) || (client->drop_notice && client->drop_canceled && !client->drop_sent) ||
+        (!client->drop_records_needed && client->drop_records_done) ||
+        (client->drop_records_done && !client->drop_canceled) ||
+        (client->drop_hook_done && (!client->drop_canceled || (client->drop_records_needed && !client->drop_records_done))))
+        return invalid(io, "Q2 CLIENT timeout lost its actual Source notification stages");
     for (size_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i)
         if (!qa_q2_save_usercmd(io, &client->oldest[i]) || !qa_q2_save_usercmd(io, &client->previous[i])) return false;
+    if (!qa_source_save_bool(io, &client->sent_pending)) return false;
+    if (client->sent_pending) {
+        if (!qa_source_save_u64(io, &client->sent.number) || !qa_source_save_u32(io, &client->sent_sequence) ||
+            !qa_source_save_u64(io, &client->sent_ns) || !qa_source_save_count(io, &client->sent_cursor, session->seats) ||
+            !client->sent.number || client->sent_cursor >= session->seats || client->sent_ns > session->runtime->now_ns ||
+            !session->active || session->retiring)
+            return invalid(io, "Q2 sent notification lost its accepted packet and Source cursor");
+        for (size_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i)
+            if (!qa_q2_save_usercmd(io, &client->sent.commands[i])) return false;
+    }
     if (!qa_source_save_count(io, &client->command_capacity, pending) ||
         !qa_source_save_count(io, &client->command_count, client->command_capacity)) return false;
     if (client->command_capacity && client->command_capacity != pending) return invalid(io, "Q2 command allocation differs from its admitted extent");
@@ -218,11 +280,13 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
         client->commands = calloc(client->command_capacity, sizeof(*client->commands));
         if (!client->commands) return invalid(io, "Cannot restore Q2 command allocation");
     }
-    if (!qa_source_save_u64(io, &client->command_number)) return false;
+    if (!qa_source_save_u64(io, &client->command_number) ||
+        (client->sent_pending && client->sent.number > client->command_number)) return false;
     for (size_t i = 0; i < client->command_capacity; ++i) {
         if (!qa_source_save_u64(io, &client->commands[i].number)) return false;
         if (i < client->command_count && (!client->commands[i].number ||
             client->commands[i].number > client->command_number ||
+            (client->sent_pending && client->commands[i].number <= client->sent.number) ||
             (i && client->commands[i - 1].number >= client->commands[i].number)))
             return invalid(io, "Q2 pending command lost its actual logical number");
         for (size_t seat = 0; seat < QA_NETWORK_MAX_SEATS; ++seat)
@@ -259,11 +323,11 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
-    uint32_t tag = UINT32_C(0x32534e51), version = 8, slot = session->id.slot;
+    uint32_t tag = UINT32_C(0x32534e51), version = 14, slot = session->id.slot;
     uint64_t generation = session->id.generation; bool server = session->server; size_t seats = session->seats;
     if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) || !qa_source_save_bool(io, &server) ||
         !qa_source_save_u32(io, &slot) || !qa_source_save_u64(io, &generation) || !qa_source_save_count(io, &seats, QA_NETWORK_MAX_SEATS)) return false;
-    if (tag != UINT32_C(0x32534e51) || version != 8 || server != session->server || !seats ||
+    if (tag != UINT32_C(0x32534e51) || version != 14 || server != session->server || !seats ||
         slot != client->id.slot || generation != client->id.generation || seats != client->seat_count)
         return invalid(io, "Saved Q2 session does not belong to its actual candidate connection");
     session->seats = seats;

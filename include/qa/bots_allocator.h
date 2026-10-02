@@ -39,6 +39,7 @@ bool qa_bot_memory_allocate(qa_bot_memory *,uint32_t,qa_bot_memory_kind,bool,
     const qa_bot_memory_provenance *,qa_bot_memory_allocation *,qa_error *);
 /* Span is borrowed until release/disposal. It excludes the four-byte prefix. */
 bool qa_bot_memory_bytes(const qa_bot_memory *,qa_bot_memory_allocation,qa_bot_memory_span *,qa_error *);
+bool qa_bot_memory_kind_read(const qa_bot_memory *,qa_bot_memory_allocation,qa_bot_memory_kind *,qa_error *);
 bool qa_bot_memory_free(qa_bot_memory *,qa_bot_memory_allocation,qa_error *);
 bool qa_bot_memory_reset_hunk(qa_bot_memory *,qa_error *);
 size_t qa_bot_memory_live_allocations(const qa_bot_memory *);

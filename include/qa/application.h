@@ -20,6 +20,7 @@
 #include "qa/q3_product_policy.h"
 #include "qa/network_q1.h"
 #include "qa/session.h"
+#include "qa/scene.h"
 
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
@@ -293,6 +294,27 @@ typedef bool (*qa_application_native_q2_services_fn)(void *, qa_application *,
     qa_actor_owner, qa_native_profile, qa_native_host_engine_services *,
     qa_native_host_q2_application_fn *, void **application_context, qa_error *);
 
+typedef struct qa_application_model_admission_request {
+    qa_actor_owner provider;
+    qa_game_family family;
+    const char *request;
+    const qa_resource *resource;
+    const qa_vfs_acquisition *opening;
+    const qa_vfs *view;
+    bool has_player_colors;
+    uint8_t player_colors;
+} qa_application_model_admission_request;
+typedef struct qa_application_model_admission {
+    qa_scene_image_options images;
+    qa_bytes palette_rgb;
+    qa_scene_palette_source palette_source;
+    const qa_vfs *palette_view;
+} qa_application_model_admission;
+/* The real BODY constructor owns these borrowed receipts until its next
+ * mutation. The caller must retain/copy them before another callback. */
+typedef bool (*qa_application_model_admission_fn)(void *, qa_application *,
+    const qa_application_model_admission_request *, qa_application_model_admission *, qa_error *);
+
 typedef struct qa_application_options {
     const char *const *startup_commands;
     size_t startup_command_count;
@@ -326,6 +348,7 @@ typedef struct qa_application_options {
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
     qa_application_native_q2_services_fn native_q2_services;
+    qa_application_model_admission_fn model_admission;
     qa_application_world_hook_fn world_change_ready;
     qa_application_world_hook_fn before_world_change;
     qa_application_world_hook_fn world_retired;
@@ -340,6 +363,9 @@ typedef struct qa_application_options {
 } qa_application_options;
 
 void qa_application_options_default(qa_application_options *);
+/* handled=false means no platform constructor is installed. */
+bool qa_application_model_admit(qa_application *, const qa_application_model_admission_request *,
+    qa_application_model_admission *, bool *handled, qa_error *);
 /* Failure normally leaves *out NULL. If checked cleanup rejects retirement,
  * *out retains the genuine partial owner: keep its borrowed option services
  * alive and retry qa_application_destroy before releasing them. */

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/input_save.h"
 #include "qa/source_save.h"
+#include "qa/console_save.h"
 
 bool qa_input_seat_ui_binding_read(const qa_input_seat *seat, qa_input_ui_token token,
     qa_input_ui_handler *handler, void **context)
@@ -225,17 +226,143 @@ static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_in
     }
     return command_sources(io,seat) && binding_graph(io,seat) && ui_graph(io,seat,refs);
 }
+static bool recipient_handoffs(qa_source_save_io *io,qa_input_seat *seat,const qa_input_checkpoint_refs *refs)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=0;
+    if (!reading) for (qa_input_recipient_handoff *at=seat->recipient_retired;at;at=at->next) ++count;
+    if (!qa_source_save_count(io,&count,reading?io->input.size/32:SIZE_MAX) ||
+        (count && !refs->recipient_fields)) return false;
+    qa_input_recipient_handoff **tail=&seat->recipient_retired;
+    for (size_t i=0;i<count;++i) {
+        if (reading && !allocate(io,(void **)tail,1,sizeof(**tail))) return false;
+        qa_input_recipient_handoff *at=*tail;
+        if (!at || !refs->recipient_fields(refs->context,io,&at->former) ||
+            !at->former.context.owner || at->former.context.script || at->former.context.console_text ||
+            at->former.context.origin!=QA_COMMAND_SEAT || at->former.seat!=seat->options.seat ||
+            !at->former.console || !at->former.cvars || at->former.console==seat->options.console) return false;
+        for (qa_input_recipient_handoff *prior=seat->recipient_retired;prior!=at;prior=prior->next)
+            if (prior->former.console==at->former.console && prior->former.cvars==at->former.cvars &&
+                qa_input_recipient_command_equal(&prior->former.context,&at->former.context)) return false;
+        tail=&at->next;
+    }
+    return true;
+}
+static void release_storage_discard(qa_input_seat *seat)
+{
+    qa_input_release *owner=seat->release;
+    if (!owner) return;
+    free(owner->keys); free(owner->snapshot); free(owner->records); free(owner->reserved); free(owner);
+    seat->release=NULL;
+}
+static bool release_fields(qa_source_save_io *io,qa_input_seat *seat)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=seat->release!=NULL;
+    if (!qa_source_save_bool(io,&present) || !present) return !io->failed;
+    if (reading) {
+        if (!allocate(io,(void **)&seat->release,1,sizeof(*seat->release))) return false;
+        seat->release->seat=seat;
+    }
+    qa_input_release *owner=seat->release;
+    if (!owner || owner->seat!=seat || owner->advancing || (!owner->scope.all && !reading) ||
+        owner->reserved || owner->reserved_count || owner->all_reserved) return false;
+    bool all=owner->scope.all;
+    if (!qa_source_save_bool(io,&all) || !all ||
+        !qa_source_save_bool(io,&owner->scope.clear_gamepad) ||
+        !qa_source_save_i32(io,&owner->scope.controller) || owner->scope.controller<-1 ||
+        !qa_source_save_count(io,&owner->scope.key_count,reading?io->input.size/4:SIZE_MAX/sizeof(int))) return false;
+    owner->scope.all=all;
+    if (reading && !allocate(io,(void **)&owner->keys,owner->scope.key_count,sizeof(*owner->keys))) return false;
+    for (size_t i=0;i<owner->scope.key_count;++i) {
+        int32_t key=reading?0:owner->scope.keys[i];
+        if (!qa_source_save_i32(io,&key) || key<0 || key>UINT16_MAX) return false;
+        if (reading) owner->keys[i]=key;
+    }
+    if (reading) owner->scope.keys=owner->keys;
+    if (!qa_source_save_count(io,&owner->held_count,seat->held_count) || owner->held_count!=seat->held_count ||
+        !qa_source_save_count(io,&owner->count,owner->held_count) || owner->count!=owner->held_count ||
+        !qa_source_save_count(io,&owner->cursor,owner->count) ||
+        !qa_source_save_f64(io,&owner->time_ms) || !isfinite(owner->time_ms) || owner->time_ms<0 ||
+        !qa_source_save_bool(io,&owner->entered) || !qa_source_save_bool(io,&owner->complete) ||
+        !qa_source_save_bool(io,&owner->metadata_entered) ||
+        (owner->metadata_entered && owner->complete!=(owner->cursor==owner->count)) ||
+        (!owner->metadata_entered && (owner->entered || owner->cursor || owner->complete)) ||
+        (owner->metadata_entered && !owner->entered)) return false;
+    uint32_t fault=(uint32_t)owner->fault.code;
+    size_t message=reading?0:strlen(owner->fault.message);
+    if (!qa_source_save_u32(io,&fault) || fault>QA_ERROR_NOT_FOUND ||
+        !qa_source_save_count(io,&owner->fault.offset,SIZE_MAX) ||
+        !qa_source_save_count(io,&message,sizeof(owner->fault.message)-1) ||
+        !qa_source_save_bytes(io,owner->fault.message,message) || memchr(owner->fault.message,0,message) ||
+        (!fault && (message || owner->fault.offset)) || (fault && !owner->entered)) return false;
+    owner->fault.code=(qa_status)fault; owner->fault.message[message]=0;
+    if (reading) {
+        if (!allocate(io,(void **)&owner->snapshot,owner->held_count,sizeof(*owner->snapshot)) ||
+            !allocate(io,(void **)&owner->records,owner->count,sizeof(*owner->records))) return false;
+        if (owner->held_count) memcpy(owner->snapshot,seat->held,owner->held_count*sizeof(*owner->snapshot));
+    }
+    for (size_t i=0;i<owner->held_count;++i)
+        if (!qa_input_physical_equal(owner->snapshot[i].input,seat->held[i].input) ||
+            owner->snapshot[i].binding!=seat->held[i].binding) return false;
+    qa_command_context lexical=seat->options.context;
+    lexical.script="key-binding"; lexical.direct=false;
+    for (size_t i=0;i<owner->count;++i) {
+        release_record *record=&owner->records[i];
+        size_t index=0;
+        if (!reading) {
+            while (index<owner->held_count &&
+                (!qa_input_physical_equal(record->held.input,owner->snapshot[index].input) ||
+                 record->held.binding!=owner->snapshot[index].binding)) ++index;
+        }
+        if (!qa_source_save_count(io,&index,owner->held_count) || index>=owner->held_count) return false;
+        if (reading) record->held=owner->snapshot[index];
+        for (size_t j=0;j<i;++j) if (qa_input_physical_equal(record->held.input,owner->records[j].held.input)) return false;
+        if (!qa_source_save_bool(io,&record->action) || !qa_source_save_bool(io,&record->complete) ||
+            record->action!=(record->held.binding && record->held.binding->view.kind==QA_BIND_ACTION) ||
+            (i<owner->cursor && !record->complete)) return false;
+        uint64_t reference=0;
+        if (!reading && record->program &&
+            !qa_console_release_save_reference(seat->options.console,record->program,&reference)) return false;
+        if (!qa_source_save_u64(io,&reference)) return false;
+        if (reading && reference) {
+            record->program=qa_console_release_restore_reference(seat->options.console,reference);
+            if (!record->program) return false;
+        }
+        if ((record->program!=NULL)!=(record->held.binding && record->held.binding->view.kind==QA_BIND_COMMAND)) return false;
+        if (record->program) {
+            bool complete=false,entered=false;
+            qa_status program_fault=QA_OK;
+            if (!qa_console_release_state_read(record->program,seat->options.console,&lexical,&complete,&entered,&program_fault) ||
+                complete!=record->complete || (entered && !owner->entered) ||
+                (program_fault!=QA_OK && program_fault!=owner->fault.code)) return false;
+            for (size_t j=0;j<i;++j) if (owner->records[j].program==record->program) return false;
+        } else if (record->complete!=owner->metadata_entered) return false;
+    }
+    return true;
+}
+static bool release_ready(const qa_input_seat *seat,const qa_input_checkpoint_refs *refs,qa_error *error)
+{
+    if (!seat->release) return qa_input_seat_context_ready(seat,&seat->options.context,error);
+    const qa_input_release_scope all={.all=true,.controller=-1};
+    return refs->release_ready && qa_input_release_scope_owned(seat->release,seat,&all,error) &&
+        refs->release_ready(refs->context,&seat->options,seat->release,error);
+}
+bool qa_input_seat_checkpoint_ready(const qa_input_seat *seat,const qa_input_checkpoint_refs *refs,qa_error *error)
+{
+    return seat && refs_ready(refs) && release_ready(seat,refs,error);
+}
 bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!seat || seat->release || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=3; uint64_t services=0;
+    if (!seat || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
+    qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=5; uint64_t services=0;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     qa_input_seat saved=*seat;
-    bool ok=qa_input_seat_context_ready(seat,&seat->options.context,error) &&
+    bool ok=release_ready(seat,refs,error) &&
         refs->services_encode(refs->context,&seat->options,&services,error) && qa_source_save_bytes(&io,magic,4) &&
         qa_source_save_u32(&io,&schema) && qa_source_save_u64(&io,&services) &&
         qa_source_save_u32(&io,&saved.options.seat) && qa_source_save_u32(&io,&saved.options.context.seat) &&
-        continuation(&io,&saved,refs) && qa_source_save_finish(&io,out);
+        continuation(&io,&saved,refs) && recipient_handoffs(&io,&saved,refs) &&
+        release_fields(&io,(qa_input_seat *)seat) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid retained input seat");
     qa_source_save_dispose(&io); return ok;
 }
@@ -246,7 +373,7 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
     qa_input_seat *saved=calloc(1,sizeof(*saved));
     if (!saved) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored input seat"); return false; }
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { free(saved); return false; }
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==3 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) && qa_source_save_u32(&io,&schema) && schema==5 &&
         qa_source_save_u64(&io,&services) && refs->services_decode(refs->context,services,&saved->options,error) &&
         qa_source_save_u32(&io,&ordinal) && ordinal<4 && ordinal==seat->options.seat && ordinal==saved->options.seat &&
         qa_source_save_u32(&io,&launch_seat) && launch_seat==saved->options.context.seat &&
@@ -255,9 +382,16 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
         saved->options.ui==seat->options.ui && saved->options.ui_user==seat->options.ui_user &&
         saved->options.before_ui==seat->options.before_ui && saved->options.before_ui_user==seat->options.before_ui_user &&
         saved->options.context_ready==seat->options.context_ready && saved->options.context_user==seat->options.context_user &&
-        continuation(&io,saved,refs) && qa_source_save_finish(&io,NULL) &&
-        qa_input_seat_context_ready(saved,&saved->options.context,error);
-    if (ok) { qa_input_seat old=*seat; *seat=*saved; *saved=old; }
+        continuation(&io,saved,refs) && recipient_handoffs(&io,saved,refs) && release_fields(&io,saved) &&
+        qa_source_save_finish(&io,NULL) && release_ready(saved,refs,error);
+    if (ok) {
+        if (saved->release) for (size_t i=0;i<saved->release->count;++i) {
+            qa_console_release *program=saved->release->records[i].program;
+            if (program) (void)qa_console_release_restore_claim(program,NULL);
+        }
+        qa_input_seat old=*seat; *seat=*saved; *saved=old;
+        if (seat->release) seat->release->seat=seat;
+    } else release_storage_discard(saved);
     qa_input_seat_destroy(saved); qa_source_save_dispose(&io);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid or unqualified retained input seat");
     return ok;

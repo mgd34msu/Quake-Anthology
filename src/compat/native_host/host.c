@@ -283,6 +283,22 @@ qa_native_profile qa_native_host_profile(const qa_native_host *host)
     return host ? host->profile : QA_NATIVE_Q2_GAME_API3;
 }
 
+bool qa_native_host_source_public_bytes(qa_native_host *host, uint32_t slot,
+                                        size_t *out, qa_error *error)
+{
+    qa_native_entity_table table;
+    if (!host || !out || !host->instance || !host->edict ||
+        !profile_is_q2_game(host->profile) || qa_native_terminal(host->instance))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native public entity extent requires its actual Q2 host");
+    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    if (slot >= table.count || table.stride < host->edict->bytes)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native public entity extent exceeds its actual source table");
+    *out = host->edict->bytes;
+    return true;
+}
+
 bool qa_native_host_q3_vm_call(qa_native_host *host, int32_t command,
                                const int32_t *arguments, size_t argument_count,
                                int32_t *result, qa_error *error)

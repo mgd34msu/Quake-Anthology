@@ -14,6 +14,7 @@ typedef struct qa_scene_source_diagnostics qa_scene_source_diagnostics;
 typedef struct qa_material_context qa_material_context;
 typedef struct qa_scene_world qa_scene_world;
 typedef struct qa_scene_image qa_scene_image;
+typedef struct qa_scene_draw qa_scene_draw;
 typedef struct qa_q3_source_scene_bank qa_q3_source_scene_bank;
 typedef enum qa_material_source_writer {
     QA_SOURCE_WRITE_FULL, QA_SOURCE_WRITE_MODEL, QA_SOURCE_WRITE_POLY,
@@ -43,6 +44,10 @@ bool qa_render_controls_source_runtime_bind(qa_render_controls *,
     bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context,
     bool (*frame_policy)(void *, qa_scene_frame *, qa_error *), void *frame_context, qa_error *);
 bool qa_material_source_swap_end(qa_material_source_scratch *, qa_scene_frame *, qa_error *);
+bool qa_material_source_raw_submit(qa_material_source_scratch *, qa_scene_frame *,
+    const qa_material_context *, const qa_scene_draw *, qa_error *);
+bool qa_material_source_no_bind_image(qa_material_source_scratch *, const qa_scene_image *,
+    const qa_scene_image **, qa_error *);
 /* Structural identity remains readable while the owner holds a controls ticket. */
 bool qa_material_source_material_metadata(const qa_material_source_scratch *, const qa_material **, qa_error *);
 bool qa_material_source_entity_scene(qa_material_source_scratch *, uint32_t *first, qa_error *);

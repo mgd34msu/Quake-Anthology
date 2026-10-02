@@ -4,6 +4,7 @@
 #include "qa/input_save.h"
 #include "qa/console_seat_save.h"
 #include "qa/application_client.h"
+#include "qa/input_release.h"
 
 /* Exact installed service bindings on each stable heap seat. Descriptor
  * decode observes prepared owners and invokes no input/console/UI callbacks. */
@@ -15,6 +16,8 @@ bool frontend_seat_client_recipient_ready(qa_frontend *,uint32_t,const qa_applic
 bool frontend_seat_client_recipient_ready_is(const qa_frontend *,uint32_t,const qa_application_client_source *);
 void frontend_seat_client_recipient_publish(qa_frontend *,uint32_t,const qa_application_client_source *);
 bool frontend_seat_engine_recipient_ready(qa_frontend *,uint32_t,qa_command_context *,qa_error *);
+bool frontend_seat_engine_recipient_retirement_ready(qa_frontend *,uint32_t,const qa_input_release *,
+    qa_console_release_disposition,qa_console_release_retirement_fn,void *,qa_command_context *,qa_error *);
 void frontend_seat_engine_recipient_publish(qa_frontend *,uint32_t,const qa_command_context *);
 bool frontend_seats_recipients_restore(qa_frontend *,qa_error *);
 #endif

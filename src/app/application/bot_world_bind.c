@@ -38,7 +38,7 @@ static qa_actor_id bot_actor(void *context,int32_t client) {
     }
     return (qa_actor_id){0};
 }
-static bool integer(float value,int32_t *out,qa_error *error) {
+static bool integer(double value,int32_t *out,qa_error *error) {
     (void)error;
     double reduced=isfinite(value)?fmod(trunc((double)value),4294967296.0):0;
     if(reduced<0) reduced+=4294967296.0;

@@ -185,6 +185,10 @@ bool qa_roq_scratch_create(qa_roq_scratch **out, qa_error *);
 void qa_roq_scratch_retain(qa_roq_scratch *);
 void qa_roq_scratch_release(qa_roq_scratch *);
 void qa_roq_scratch_clear(qa_roq_scratch *, bool clear_codebooks);
+/* The cinematic pool serializes all users before saving or replacing these
+ * physical bytes. Reference counts and decoder cursors are separate owners. */
+bool qa_roq_scratch_capture(const qa_roq_scratch *, qa_buffer *, qa_error *);
+bool qa_roq_scratch_restore(qa_roq_scratch *, qa_bytes, qa_error *);
 bool qa_roq_decoder_create(qa_media_input *, const qa_roq_decoder_options *, qa_roq_decoder **out, qa_error *);
 void qa_roq_decoder_destroy(qa_roq_decoder *);
 /* Borrowed payloads remain valid until the next decoder operation using the
@@ -193,6 +197,8 @@ void qa_roq_decoder_destroy(qa_roq_decoder *);
 bool qa_roq_decoder_chunk(qa_roq_decoder *, const qa_roq_decode_hooks *, qa_roq_event *, qa_error *);
 bool qa_roq_decoder_next(qa_roq_decoder *, qa_roq_event *, qa_error *);
 bool qa_roq_decoder_rewind(qa_roq_decoder *, qa_error *);
+bool qa_roq_decoder_scratch_rebind_ready(const qa_roq_decoder *, const qa_roq_scratch *, qa_error *);
+void qa_roq_decoder_scratch_rebind(qa_roq_decoder *, qa_roq_scratch *);
 uint16_t qa_roq_decoder_rate(const qa_roq_decoder *);
 void qa_roq_decoder_dimensions(const qa_roq_decoder *, uint32_t *width, uint32_t *height);
 bool qa_roq_decoder_in_packet(const qa_roq_decoder *);
@@ -237,6 +243,8 @@ void qa_roq_playback_destroy(qa_roq_playback *);
 bool qa_roq_playback_tick(qa_roq_playback *, qa_media_clock, qa_media_tick *, qa_error *);
 /* Full reset clears retained image/codebook state; restart preserves it. */
 bool qa_roq_playback_restart(qa_roq_playback *, qa_media_clock, bool full_reset, qa_error *);
+bool qa_roq_playback_scratch_rebind_ready(const qa_roq_playback *, const qa_roq_scratch *, qa_error *);
+void qa_roq_playback_scratch_rebind(qa_roq_playback *, qa_roq_scratch *);
 const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *);
 /* Shader and UI uploads retain the original physical-buffer sampling rules.
  * The image is borrowed until the next playback operation. */

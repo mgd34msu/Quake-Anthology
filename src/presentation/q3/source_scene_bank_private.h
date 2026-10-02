@@ -6,6 +6,7 @@
 #include <string.h>
 
 struct qa_q3_source_scene_bank {
+    uint64_t cycle;
     qa_q3_source_scene_membership membership;
     qa_q3_source_entity_cell entities[QA_Q3_SOURCE_ENTITY_CAPACITY];
     qa_q3_source_light_cell lights[QA_Q3_SOURCE_LIGHT_CAPACITY];

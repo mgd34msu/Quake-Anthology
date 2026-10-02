@@ -61,20 +61,22 @@ bool q2_item_armor_result(qa_q2_game *g, const qa_q2_item_definition *d,
                           const qa_regular_armor *old, qa_regular_armor *out) {
     if (old->kind == QA_ARMOR_SOURCE)
         return false;
+    float points = (float)old->points;
+    float protection = old->kind == QA_ARMOR_Q2 ? (float)old->protection.q2.normal : 0;
     qa_regular_armor next = *old;
     const qa_q2_item_definition *jacket = qa_q2_item_lookup(g, "item_armor_jacket");
     if (d->kind == QA_Q2_ITEM_SHARD) {
-        if (old->kind == QA_ARMOR_Q2 && old->points > 0)
-            next.points += 2;
+        if (old->kind == QA_ARMOR_Q2 && points > 0)
+            next.points = points + 2;
         else
             next = (qa_regular_armor){.kind = QA_ARMOR_Q2,
                                       .points = 2,
                                       .item = jacket->item,
                                       .protection.q2 = {.normal = .3f, .energy = 0}};
-    } else if (old->kind != QA_ARMOR_Q2 || old->points == 0 ||
-               d->normal_protection > old->protection.q2.normal) {
+    } else if (old->kind != QA_ARMOR_Q2 || points == 0 ||
+               d->normal_protection > protection) {
         float salvage = old->kind == QA_ARMOR_Q2
-                            ? truncf(old->points * old->protection.q2.normal / d->normal_protection)
+                            ? truncf(points * protection / d->normal_protection)
                             : 0;
         next = (qa_regular_armor){
             .kind = QA_ARMOR_Q2,
@@ -85,11 +87,11 @@ bool q2_item_armor_result(qa_q2_game *g, const qa_q2_item_definition *d,
         const qa_q2_item_definition *previous = q2_item_by_id(g, old->item);
         float maximum = previous ? (float)previous->capacity : 200.0f;
         float salvage =
-            old->protection.q2.normal > 0
-                ? truncf((float)d->quantity * d->normal_protection / old->protection.q2.normal)
+            protection > 0
+                ? truncf((float)d->quantity * d->normal_protection / protection)
                 : 0;
-        next.points = fminf(maximum, old->points + salvage);
-        if (next.points <= old->points)
+        next.points = fminf(maximum, points + salvage);
+        if (next.points <= points)
             return false;
     }
     *out = next;

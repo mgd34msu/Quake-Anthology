@@ -6,6 +6,7 @@ typedef struct frontend_material_movies_policy frontend_material_movies_policy;
  * its prepared callback before replacement skins register new shaders. */
 bool frontend_material_movies_policy_prepare(frontend_material_movies *,
     qa_scene_resource_policy *, qa_scene_material_image_policy *,
+    qa_q3_cinematic_handles_stage *,
     frontend_material_movies_policy **, qa_error *);
 bool frontend_material_movies_policy_current(const frontend_material_movies_policy *,
     const frontend_material_movies *, const qa_scene_resource_policy *,

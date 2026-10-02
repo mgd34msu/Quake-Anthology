@@ -3,6 +3,7 @@
 #include "equipment_q3.h"
 #include "equipment_gear_output.h"
 #include "equipment_gear_world_output.h"
+#include "source_companion.h"
 #include "qa/ui_preferences.h"
 #include "save_private.h"
 
@@ -11,7 +12,7 @@ typedef struct equipment_packet {
     frontend_equipment_held_output *output;
     frontend_equipment_q3_output *q3_output;
     frontend_equipment_gear_output *gear_output;
-    bool committed;
+    bool committed, companion;
 } equipment_packet;
 
 typedef struct equipment_world_packet {
@@ -24,6 +25,31 @@ typedef struct equipment_source_actor {
     qa_actor_id actor;
     bool view;
 } equipment_source_actor;
+
+typedef struct equipment_source_effect {
+    size_t ordinal;
+    qa_actor_id actor;
+    bool view;
+} equipment_source_effect;
+
+typedef struct equipment_companion_ref {
+    qa_q3_ref_entity ref;
+    qa_q3_refdef definition;
+    bool view;
+} equipment_companion_ref;
+
+typedef struct equipment_companion_polygon {
+    qa_q3_scene_polygon polygon;
+    qa_scene_vertex *vertices;
+    qa_q3_refdef definition;
+    bool view;
+} equipment_companion_polygon;
+
+typedef struct equipment_companion_light {
+    qa_scene_light light;
+    qa_q3_refdef definition;
+    bool view;
+} equipment_companion_light;
 
 struct frontend_equipment_source {
     frontend_equipment_source_options options;
@@ -41,11 +67,25 @@ struct frontend_equipment_source {
     equipment_world_packet *world_packets;
     equipment_source_actor *source_actors;
     size_t source_actor_count;
+    equipment_source_effect *source_polygons, *source_lights;
+    size_t source_polygon_count, source_light_count;
+    qa_application_q3_equipment_source_weapon *source_weapons;
+    size_t source_weapon_count;
+    frontend_source_companion_view companion;
+    equipment_companion_ref *companion_refs;
+    size_t companion_ref_count;
+    equipment_companion_polygon *companion_polygons;
+    equipment_companion_light *companion_lights;
+    size_t companion_polygon_count, companion_light_count;
+    qa_application_q3_equipment_source_weapon *companion_weapons;
+    size_t companion_weapon_count;
+    qa_scene_light *view_lights, *view_projected_lights;
     qa_model_transform view_transform;
     qa_q3_ref_entity view_entity;
     qa_vec3 view_offset;
     uint32_t first_order, reserved;
-    bool borrowed, drawing, view_ready, world_ready, submitting, original_q3_view;
+    bool borrowed, drawing, view_ready, world_ready, submitting, original_q3_view, companion_selected;
+    bool companion_view_requested;
 };
 
 static bool original_q3_match(const frontend_equipment_source *owner,
@@ -67,7 +107,90 @@ static bool current_owner(const frontend_equipment_source *owner)
         owner->options.current(owner->options.lease, &owner->client) &&
         (!owner->draw.selected || qa_application_equipment_current(owner->options.frontend->application,
             &owner->selection)) && (!owner->original_q3_view ||
-            (original_q3_match(owner, &owner->selection, &matching, NULL) && matching));
+            (original_q3_match(owner, &owner->selection, &matching, NULL) && matching)) &&
+        (!owner->companion_selected || frontend_source_companion_current(owner->options.frontend, &owner->companion));
+}
+
+static bool companion_prepare(frontend_equipment_source *owner, bool *present, qa_error *error)
+{
+    *present = false;
+    frontend_source_companion_view captured;
+    if (!frontend_source_companion_read(owner->options.frontend, owner->options.physical_seat,
+            owner->selection.actor, &captured, present, error)) return false;
+    if (!*present) return true;
+    const qa_application_q3_client_context *client = &captured.receipt.client.source;
+    if (client->source_owner != owner->selection.provider || client->seat != owner->options.seat || !captured.assets)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected weapon capture changed its real GAME and launch seat");
+    qa_application_q3_weapon_models models = {0}; bool registered;
+    if (!qa_application_equipment_q3_models_read(owner->options.frontend->application, &owner->selection,
+            client->receiver, client->seat, &models, &registered, error)) return false;
+    for (size_t i = 0; i < captured.packet_count; ++i) {
+        frontend_source_companion_packet packet;
+        if (!frontend_source_companion_packet_read(owner->options.frontend, &captured, i, &packet, error)) return false;
+        if (packet.definition.flags & 1) continue;
+        for (size_t j = 0; j < packet.entity_count; ++j) {
+            const qa_q3_ref_entity *ref = packet.entities + j;
+            bool owned = packet.entity_actors && qa_actor_id_equal(packet.entity_actors[j], owner->selection.actor);
+            bool view = owned && packet.entity_views && packet.entity_views[j];
+            if (!owned && registered && (ref->flags & 4) && ref->kind == QA_Q3_REF_MODEL && ref->model > 0 &&
+                (ref->model == models.gun || ref->model == models.hands ||
+                    ref->model == models.barrel || ref->model == models.flash)) owned = view = true;
+            if (!owned) continue;
+            if (owner->companion_ref_count >= 1021)
+                return frontend_fail(error, QA_ERROR_FORMAT, "Selected Source weapon refs exceed the real scene extent");
+            equipment_companion_ref *refs = realloc(owner->companion_refs,
+                (owner->companion_ref_count + 1) * sizeof(*refs));
+            if (!refs) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon refs");
+            owner->companion_refs = refs;
+            refs[owner->companion_ref_count++] = (equipment_companion_ref){*ref, packet.definition, view};
+        }
+        for (size_t j = 0; j < packet.polygon_count; ++j) {
+            if (!packet.polygon_actors || !qa_actor_id_equal(packet.polygon_actors[j], owner->selection.actor)) continue;
+            const qa_q3_scene_polygon *polygon = packet.polygons + j;
+            if (polygon->first > packet.vertex_count || polygon->count > packet.vertex_count - polygon->first ||
+                polygon->count > SIZE_MAX / sizeof(*packet.vertices) ||
+                owner->companion_polygon_count == SIZE_MAX / sizeof(*owner->companion_polygons))
+                return frontend_fail(error, QA_ERROR_FORMAT, "Selected Source polygon leaves its genuine captured vertex span");
+            equipment_companion_polygon *polygons = realloc(owner->companion_polygons,
+                (owner->companion_polygon_count + 1) * sizeof(*polygons));
+            if (!polygons) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon polygons");
+            owner->companion_polygons = polygons;
+            equipment_companion_polygon *row = polygons + owner->companion_polygon_count;
+            *row = (equipment_companion_polygon){.polygon = *polygon, .definition = packet.definition,
+                .view = packet.polygon_views && packet.polygon_views[j]};
+            ++owner->companion_polygon_count;
+            if (polygon->count) {
+                row->vertices = malloc(polygon->count * sizeof(*row->vertices));
+                if (!row->vertices) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Source weapon polygon vertices");
+                memcpy(row->vertices, packet.vertices + polygon->first, polygon->count * sizeof(*row->vertices));
+            }
+            row->polygon.first = 0;
+        }
+        for (size_t j = 0; j < packet.light_count; ++j) {
+            if (!packet.light_actors || !qa_actor_id_equal(packet.light_actors[j], owner->selection.actor)) continue;
+            if (owner->companion_light_count == SIZE_MAX / sizeof(*owner->companion_lights))
+                return frontend_fail(error, QA_ERROR_MEMORY, "Selected Source weapon lights exceed native extent");
+            equipment_companion_light *lights = realloc(owner->companion_lights,
+                (owner->companion_light_count + 1) * sizeof(*lights));
+            if (!lights) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon lights");
+            owner->companion_lights = lights;
+            lights[owner->companion_light_count++] = (equipment_companion_light){packet.lights[j],
+                packet.definition, packet.light_views && packet.light_views[j]};
+        }
+        for (size_t j = 0; j < packet.weapon_count; ++j) {
+            if (!qa_actor_id_equal(packet.weapons[j].actor, owner->selection.actor)) continue;
+            if (owner->companion_weapon_count == SIZE_MAX / sizeof(*owner->companion_weapons))
+                return frontend_fail(error, QA_ERROR_MEMORY, "Selected Source weapon completions exceed native extent");
+            qa_application_q3_equipment_source_weapon *weapons = realloc(owner->companion_weapons,
+                (owner->companion_weapon_count + 1) * sizeof(*weapons));
+            if (!weapons) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed empty Source weapon recipe");
+            owner->companion_weapons = weapons;
+            weapons[owner->companion_weapon_count++] = packet.weapons[j];
+        }
+    }
+    owner->companion = captured; owner->companion_selected = true;
+    return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+        "Selected weapon capture retired its real Source Draw receipt");
 }
 
 static bool current_draw(void *context, const qa_application_q3_equipment_draw *draw)
@@ -80,6 +203,20 @@ static bool current_draw(void *context, const qa_application_q3_equipment_draw *
 
 static bool current_preparation(void *context)
 { return current_owner(context); }
+
+static bool companion_held(const frontend_equipment_source *owner, qa_actor_id actor)
+{
+    if (!owner->companion_selected || !qa_actor_id_equal(actor, owner->selection.actor)) return false;
+    for (size_t i = 0; i < owner->companion_weapon_count; ++i)
+        if (!owner->companion_weapons[i].view && qa_actor_id_equal(owner->companion_weapons[i].actor, actor)) return true;
+    for (size_t i = 0; i < owner->companion_ref_count; ++i)
+        if (!owner->companion_refs[i].view) return true;
+    for (size_t i = 0; i < owner->companion_polygon_count; ++i)
+        if (!owner->companion_polygons[i].view) return true;
+    for (size_t i = 0; i < owner->companion_light_count; ++i)
+        if (!owner->companion_lights[i].view) return true;
+    return false;
+}
 
 static bool requests(const frontend_equipment_source *owner, bool *hud, bool *view, qa_error *error)
 {
@@ -116,12 +253,22 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
     frontend_equipment_gear_output_destroy(owner->gear_view); owner->gear_view = NULL;
     owner->reserved = 0; owner->view_ready = false;
     free(owner->source_actors); owner->source_actors = NULL; owner->source_actor_count = 0;
+    free(owner->source_polygons); owner->source_polygons = NULL; owner->source_polygon_count = 0;
+    free(owner->source_lights); owner->source_lights = NULL; owner->source_light_count = 0;
+    free(owner->source_weapons); owner->source_weapons = NULL; owner->source_weapon_count = 0;
+    free(owner->view_lights); owner->view_lights = NULL;
+    free(owner->view_projected_lights); owner->view_projected_lights = NULL;
 }
 
 static bool source_scene_current(const frontend_equipment_source *owner,
     size_t count, qa_error *error)
 {
-    if (!owner || !owner->drawing || !current_owner(owner))
+    if (!owner)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon attribution lost its actual Draw lease");
+    if (!owner->drawing)
+        return !owner->source_actor_count || frontend_fail(error, QA_ERROR_ARGUMENT,
+            "Source weapon attribution outlived its actual declared Draw");
+    if (!current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon attribution lost its actual Draw lease");
     for (size_t i = 0; i < owner->source_actor_count; ++i)
         if (owner->source_actors[i].entity >= count)
@@ -153,10 +300,103 @@ bool frontend_equipment_source_scene_views(const frontend_equipment_source *owne
     return true;
 }
 
-static bool held_source(void *context, qa_actor_id actor, bool view,
-    const qa_q3_ref_entity *ref, qa_error *error)
+static bool source_effects_read(const frontend_equipment_source *owner,
+    const equipment_source_effect *rows, size_t row_count, size_t count,
+    qa_actor_id *actors, bool *views, qa_error *error)
+{
+    if (!owner || (count && (!actors || !views)) || count > SIZE_MAX / sizeof(*actors))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects require their actual output extent");
+    if ((!owner->drawing && row_count) || (owner->drawing && !current_owner(owner)))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects lost their actual declared Draw");
+    if (count) { memset(actors, 0, count * sizeof(*actors)); memset(views, 0, count * sizeof(*views)); }
+    for (size_t i = 0; i < row_count; ++i) {
+        if (rows[i].ordinal >= count)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Source effects leave their reached scene queue");
+        actors[rows[i].ordinal] = rows[i].actor; views[rows[i].ordinal] = rows[i].view;
+    }
+    return true;
+}
+
+bool frontend_equipment_source_scene_polygons(const frontend_equipment_source *owner,
+    size_t count, qa_actor_id *actors, bool *views, qa_error *error)
+{
+    return source_effects_read(owner, owner ? owner->source_polygons : NULL,
+        owner ? owner->source_polygon_count : 0, count, actors, views, error);
+}
+
+bool frontend_equipment_source_scene_lights(const frontend_equipment_source *owner,
+    size_t count, qa_actor_id *actors, bool *views, qa_error *error)
+{
+    return source_effects_read(owner, owner ? owner->source_lights : NULL,
+        owner ? owner->source_light_count : 0, count, actors, views, error);
+}
+
+bool frontend_equipment_source_scene_weapons(const frontend_equipment_source *owner,
+    const qa_application_q3_equipment_source_weapon **rows, size_t *count, qa_error *error)
+{
+    if (!owner || !rows || !count || (!owner->drawing && owner->source_weapon_count) ||
+        (owner->drawing && !current_owner(owner)))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon completions require their actual Draw lease");
+    *rows = owner->source_weapons; *count = owner->source_weapon_count;
+    return true;
+}
+
+static bool held_source_completed(void *context, qa_actor_id actor, bool view, qa_error *error)
 {
     frontend_equipment_source *owner = context;
+    if (!owner->original_q3_view) return true;
+    if (!owner->drawing || !current_owner(owner) ||
+        !qa_actors_get(qa_session_actors(owner->client.session), actor))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon completion lost its actual full actor and Draw");
+    if (owner->source_weapon_count == SIZE_MAX / sizeof(*owner->source_weapons))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Source weapon completions exceed native extent");
+    qa_application_q3_equipment_source_weapon *rows = realloc(owner->source_weapons,
+        (owner->source_weapon_count + 1) * sizeof(*rows));
+    if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual completed Source weapon helper");
+    owner->source_weapons = rows;
+    rows[owner->source_weapon_count++] = (qa_application_q3_equipment_source_weapon){actor, view};
+    return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+        "Source weapon completion changed its actual Draw namespace");
+}
+
+static bool held_source_effect(frontend_equipment_source *owner, qa_actor_id actor,
+    bool view, bool polygon, size_t vertices, qa_error *error)
+{
+    if (!owner->original_q3_view) return true;
+    if (!owner->drawing || !current_owner(owner) ||
+        !qa_actors_get(qa_session_actors(owner->client.session), actor))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon effect lost its actual full actor and Draw");
+    size_t ordinal; bool available;
+    bool okay = polygon ? qa_q3_presentation_poly_cursor(owner->options.presentation,
+        vertices, &ordinal, &available, error) :
+        qa_q3_presentation_light_cursor(owner->options.presentation, &ordinal, &available, error);
+    if (!okay || !available) return okay;
+    equipment_source_effect **rows = polygon ? &owner->source_polygons : &owner->source_lights;
+    size_t *count = polygon ? &owner->source_polygon_count : &owner->source_light_count;
+    if (*count == SIZE_MAX / sizeof(**rows))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Source weapon effects exceed native extent");
+    for (size_t i = 0; i < *count; ++i)
+        if ((*rows)[i].ordinal == ordinal)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon effect repeats an uncommitted ordinal");
+    equipment_source_effect *values = realloc(*rows, (*count + 1) * sizeof(*values));
+    if (!values) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Source weapon effect attribution");
+    *rows = values; values[(*count)++] = (equipment_source_effect){ordinal, actor, view};
+    return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+        "Source weapon effect changed its genuine Draw namespace");
+}
+
+static bool held_source_poly(void *context, qa_actor_id actor, bool view,
+    size_t vertices, qa_error *error)
+{ return held_source_effect(context, actor, view, true, vertices, error); }
+
+static bool held_source_light(void *context, qa_actor_id actor, bool view, qa_error *error)
+{ return held_source_effect(context, actor, view, false, 0, error); }
+
+static bool held_source(void *context, qa_actor_id actor, bool view,
+    const qa_q3_ref_entity *ref, size_t *ordinal, bool *observed, qa_error *error)
+{
+    frontend_equipment_source *owner = context;
+    *observed = false;
     if (!owner->original_q3_view) return true;
     if (!ref || !owner->drawing || !current_owner(owner) ||
         !qa_actors_get(qa_session_actors(owner->client.session), actor))
@@ -174,8 +414,27 @@ static bool held_source(void *context, qa_actor_id actor, bool view,
     if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Source weapon actor attribution");
     owner->source_actors = rows;
     rows[owner->source_actor_count++] = (equipment_source_actor){entity, actor, view};
+    *ordinal = entity; *observed = true;
     return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
         "Source weapon attribution changed its genuine Draw namespace");
+}
+
+static bool held_source_cancel(void *context, qa_actor_id actor, bool view,
+    size_t ordinal, qa_error *error)
+{
+    frontend_equipment_source *owner = context;
+    if (!owner->original_q3_view || !owner->drawing || !current_owner(owner))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Suppressed Source ref lost its actual Draw attribution");
+    for (size_t i = owner->source_actor_count; i; --i) {
+        equipment_source_actor *row = owner->source_actors + i - 1;
+        if (row->entity != ordinal) continue;
+        if (!qa_actor_id_equal(row->actor, actor) || row->view != view)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Suppressed Source ref changed its actual weapon scope");
+        memmove(row, row + 1, (owner->source_actor_count - i) * sizeof(*row));
+        --owner->source_actor_count;
+        return true;
+    }
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "Suppressed Source ref has no matching pending attribution");
 }
 
 static void release_draw(void *context)
@@ -188,6 +447,13 @@ static void release_draw(void *context)
     frontend_equipment_gear_release(owner->gear_presenter); owner->gear_presenter = NULL;
     owner->selection = owner->hud;
     owner->drawing = false; owner->original_q3_view = false;
+    free(owner->companion_refs); owner->companion_refs = NULL; owner->companion_ref_count = 0;
+    for (size_t i = 0; i < owner->companion_polygon_count; ++i) free(owner->companion_polygons[i].vertices);
+    free(owner->companion_polygons); owner->companion_polygons = NULL; owner->companion_polygon_count = 0;
+    free(owner->companion_lights); owner->companion_lights = NULL; owner->companion_light_count = 0;
+    free(owner->companion_weapons); owner->companion_weapons = NULL; owner->companion_weapon_count = 0;
+    owner->companion_selected = false; owner->companion = (frontend_source_companion_view){0};
+    owner->companion_view_requested = false;
     if (owner->borrowed) {
         owner->borrowed = false;
         owner->options.release(owner->options.lease);
@@ -207,6 +473,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
     free(owner->hud_label); owner->hud_label = NULL;
     owner->client = (qa_application_q3_client_context){0};
     owner->original_q3_view = false;
+    owner->companion_selected = false;
     if (!owner->options.borrow(owner->options.lease, &owner->client, error)) return false;
     owner->borrowed = true;
     if (!current_owner(owner) || !owner->client.initialized)
@@ -216,10 +483,22 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
         if (!qa_application_equipment_read(owner->options.frontend->application, owner->draw.actor,
                 &owner->selection, error) || !current_owner(owner)) return false;
         if (owner->selection.selected) {
+            if(owner->selection.source_slot) {
+                frontend_equipment_media *media=NULL;const qa_material *icon=NULL;
+                if(!frontend_equipment_media_prepare_source_icon(owner->options.frontend,
+                    &owner->selection,&media,&icon,error)||!current_owner(owner))return false;
+            }
             if (!original_q3_match(owner, &owner->selection, &owner->original_q3_view, error)) return false;
+            if (!owner->original_q3_view && owner->selection.original_qvm) {
+                bool captured;
+                if (!companion_prepare(owner, &captured, error)) return false;
+            }
             if (owner->original_q3_view) {
                 if (!current_owner(owner))
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "Original weapon view lost its actual Source Draw namespace");
+            } else if (owner->companion_selected) {
+                if (!current_owner(owner))
+                    return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected weapon capture lost its actual Source receipt");
             } else if (owner->selection.view_model && owner->selection.view_model[0]) {
                 if (owner->selection.equipment_slot) {
                     application_equipment_gear_presentation gear; bool selected;
@@ -242,7 +521,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
                 if (owner->view_media && !frontend_equipment_media_retain(owner->view_media, error)) {
                     owner->view_media = NULL; return false;
                 }
-            } else if (owner->selection.visible || owner->selection.item)
+            } else if (!owner->selection.source_slot && (owner->selection.visible || owner->selection.item))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Selected equipment has no actual view model producer");
             owner->draw.selected = !owner->original_q3_view;
             owner->draw.warning = owner->selection.warning;
@@ -262,6 +541,10 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
             .primary=source->primary,.family=source->family,.item=source->item,.ammo=source->ammo,
             .equipment_slot=source->equipment_slot,.gear_namespace=source->gear_namespace,
             .gear_service_owner=source->gear_service_owner,
+            .source_slot=source->source_slot,.source_binding=source->source_binding,
+            .source_generation=source->source_generation,.view_content=source->view_content,
+            .pending=source->pending,.pending_provider=source->pending_provider,
+            .source_icon=source->source_icon,.source_held=source->source_held,
             .label=owner->hud_label,.ammo_count=source->ammo_count,.warning=source->warning,
             .selected=source->selected,.visible=source->visible,.has_weapon_status=source->has_weapon_status,
             .finite_ammo=source->finite_ammo,.has_ammo_to_start=source->has_ammo_to_start,
@@ -336,6 +619,23 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
                 "Original held weapon lost its genuine Source Draw");
         }
     }
+    if (source.selected && source.original_qvm && companion_held(owner, actor)) {
+        equipment_packet *packet = calloc(1, sizeof(*packet));
+        if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining captured Source held replacement");
+        packet->companion = true; packet->next = owner->active; owner->active = packet;
+        *token = packet; *selected = true;
+        return true;
+    }
+    if(source.source_slot) {
+        frontend_equipment_media *media=NULL;bool authored=false;
+        if(!frontend_equipment_media_prepare_source_held(owner->options.frontend,&source,&media,&authored,error))return false;
+        if(!authored)return true;
+        equipment_packet *packet=calloc(1,sizeof(*packet));
+        if(!packet)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source held invocation");
+        if(!frontend_equipment_held_output_create_from(owner->options.frontend,&source,media,
+            parent_assets,owner->options.assets,parent,&packet->output,error)) {free(packet);return false;}
+        packet->next=owner->active;owner->active=packet;*token=packet;*selected=true;return true;
+    }
     if (!source.selected || !source.view_model || !source.view_model[0]) return true;
     equipment_packet *packet = calloc(1, sizeof(*packet));
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held source invocation");
@@ -389,6 +689,12 @@ static bool held_pass(void *context, void *token, const qa_q3_ref_entity *pass, 
     equipment_packet *packet = *token_slot(owner, token);
     if (!packet || packet->committed)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held pass has no actual active invocation token");
+    if (packet->companion) {
+        if (!pass || !companion_held(owner, owner->selection.actor) ||
+            !frontend_source_companion_current(owner->options.frontend, &owner->companion))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Captured Source held replacement lost its actual completed refs");
+        return true;
+    }
     return packet->gear_output ? frontend_equipment_gear_output_source_pass(packet->gear_output, pass, error) :
         packet->q3_output ? frontend_equipment_q3_output_source_pass(packet->q3_output, pass, error) :
         frontend_equipment_held_output_pass(packet->output, pass, error);
@@ -444,6 +750,15 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held equipment requires its actual active receiver");
     qa_application_equipment_view source;
     if (!qa_application_equipment_read(owner->options.frontend->application, actor, &source, error)) return false;
+    if (source.selected && source.original_qvm && companion_held(owner, actor)) {
+        *submitted = true;
+        return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+            "Native held replacement retired its genuine Source capture");
+    }
+    if(source.source_slot) {
+        frontend_equipment_media *media=NULL;
+        return frontend_equipment_media_prepare_source_held(owner->options.frontend,&source,&media,authored,error);
+    }
     if (!source.selected || source.family != QA_GAME_Q3 || !source.view_model || !source.view_model[0]) return true;
     frontend_equipment_media *media = NULL;
     if (!frontend_equipment_media_prepare_q3_held(owner->options.frontend, &source,
@@ -487,14 +802,21 @@ void frontend_equipment_source_services(frontend_equipment_source *owner,
     if (out) *out = (qa_application_q3_equipment_services){.context = owner,
         .prepare = prepare, .current = current_draw, .release_draw = release_draw,
         .held_begin = held_begin, .held_pass = held_pass, .held_submit = held_submit,
-        .held_release = held_release, .held_source = held_source};
+        .held_release = held_release, .held_source = held_source,
+        .held_source_cancel = held_source_cancel,
+        .held_source_poly = held_source_poly, .held_source_light = held_source_light,
+        .held_source_completed = held_source_completed};
 }
 
 bool frontend_equipment_source_idle(const frontend_equipment_source *owner)
 {
     return !owner || (!owner->borrowed && !owner->drawing && !owner->active &&
         !owner->packets && !owner->world_packets && !owner->submitting && !owner->view_media &&
-        !owner->q3_presenter && !owner->q3_view && !owner->gear_presenter && !owner->gear_view);
+        !owner->q3_presenter && !owner->q3_view && !owner->gear_presenter && !owner->gear_view &&
+        !owner->companion_selected && !owner->companion_refs && !owner->source_actors &&
+        !owner->source_polygons && !owner->source_lights && !owner->companion_polygons &&
+        !owner->companion_lights && !owner->view_lights && !owner->view_projected_lights &&
+        !owner->source_weapons && !owner->companion_weapons);
 }
 
 bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_error *error)
@@ -502,7 +824,10 @@ bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_erro
     if (!owner) return true;
     if (!frontend_equipment_source_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment receiver retains actual draw or submission scopes");
-    free(owner->source_actors); free(owner->hud_label); free(owner);
+    free(owner->companion_refs); free(owner->source_actors); free(owner->source_polygons);
+    free(owner->source_lights); free(owner->companion_lights); free(owner->companion_polygons);
+    free(owner->source_weapons); free(owner->companion_weapons);
+    free(owner->view_lights); free(owner->view_projected_lights); free(owner->hud_label); free(owner);
     return true;
 }
 
@@ -605,6 +930,12 @@ bool frontend_equipment_source_native_view(frontend_equipment_source *owner, flo
     if (owner->original_q3_view) return true;
     bool hud, requested;
     if (!requests(owner, &hud, &requested, error)) return false;
+    if (owner->companion_selected) {
+        owner->companion_view_requested = requested;
+        *consumed = true;
+        return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+            "Native view replacement lost its actual companion Draw");
+    }
     owner->view_ready = false;
     if (requested && owner->selection.visible) {
         if ((!owner->view_media && !owner->q3_presenter && !owner->gear_presenter) ||
@@ -647,6 +978,68 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
     return true;
 }
 
+static qa_vec3 companion_vector(const qa_vec3 source[3], const qa_vec3 destination[3], qa_vec3 vector)
+{
+    qa_vec3 result = {0};
+    for (size_t i = 0; i < 3; ++i)
+        result = qa_vec_add(result, qa_vec_scale(destination[i], qa_vec_dot(vector, source[i])));
+    return result;
+}
+
+static qa_vec3 companion_point(const qa_q3_refdef *definition, const qa_scene_view *view, qa_vec3 point)
+{
+    return qa_vec_add(view->origin, companion_vector(definition->axis, view->axis,
+        qa_vec_sub(point, definition->origin)));
+}
+
+static bool companion_lights_prepare(frontend_equipment_source *owner,
+    qa_q3_scene_options *options, qa_error *error)
+{
+    if (!owner->companion_selected || options->world.no_world) return true;
+    size_t count = 0;
+    for (size_t i = 0; i < owner->companion_light_count; ++i)
+        if (!owner->companion_lights[i].view || owner->companion_view_requested) ++count;
+    if (!count) return true;
+    if ((options->world.light_count && !options->world.lights) ||
+        options->world.projected_light_count > 32 ||
+        (options->world.projected_light_count && !options->world.projected_lights) ||
+        count > SIZE_MAX / sizeof(*owner->view_lights) ||
+        options->world.light_count > SIZE_MAX / sizeof(*owner->view_lights) - count)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon lights leave the actual recipient span");
+    size_t total = options->world.light_count + count;
+    qa_scene_light *lights = malloc(total * sizeof(*lights));
+    size_t projected = options->world.projected_light_count;
+    size_t added = count < 32 - projected ? count : 32 - projected;
+    qa_scene_light *projected_lights = added ? malloc((projected + added) * sizeof(*projected_lights)) : NULL;
+    if (!lights || (added && !projected_lights)) {
+        free(lights); free(projected_lights);
+        return frontend_fail(error, QA_ERROR_MEMORY, "Combining genuine Source weapon lights");
+    }
+    if (options->world.light_count)
+        memcpy(lights, options->world.lights, options->world.light_count * sizeof(*lights));
+    if (added && projected)
+        memcpy(projected_lights, options->world.projected_lights, projected * sizeof(*projected_lights));
+    size_t at = options->world.light_count, emitted = 0;
+    for (size_t i = 0; i < owner->companion_light_count; ++i) {
+        const equipment_companion_light *captured = owner->companion_lights + i;
+        if (captured->view && !owner->companion_view_requested) continue;
+        qa_scene_light light = captured->light;
+        if (captured->view) light.origin = companion_point(&captured->definition, &options->world.view, light.origin);
+        lights[at++] = light;
+        if (emitted < added) projected_lights[projected + emitted] = light;
+        ++emitted;
+    }
+    if (!frontend_source_companion_current(owner->options.frontend, &owner->companion)) {
+        free(lights); free(projected_lights);
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon lights retired their completed Draw receipt");
+    }
+    free(owner->view_lights); owner->view_lights = lights;
+    free(owner->view_projected_lights); owner->view_projected_lights = projected_lights;
+    options->world.lights = lights; options->world.light_count = total;
+    if (added) { options->world.projected_lights = projected_lights; options->world.projected_light_count = projected + added; }
+    return true;
+}
+
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
     const qa_q3_refdef *definition, qa_q3_scene_options *options, qa_error *error)
 {
@@ -666,8 +1059,13 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
     }
     size_t count = owner->view_ready ? owner->gear_view ? frontend_equipment_gear_output_count(owner->gear_view) :
         owner->q3_view ? frontend_equipment_q3_output_count(owner->q3_view) : 1 : 0;
+    owner->companion_view_requested = owner->companion_selected && requested && !options->world.view.clip_enabled;
+    if (!companion_lights_prepare(owner, options, error)) return false;
+    if (owner->companion_selected && !options->world.no_world)
+        for (size_t i = 0; i < owner->companion_ref_count; ++i)
+            if (!owner->companion_refs[i].view || owner->companion_view_requested) ++count;
     for (equipment_packet *row = owner->packets; row; row = row->next) {
-        size_t extent = row->gear_output ? frontend_equipment_gear_output_count(row->gear_output) :
+        size_t extent = row->companion ? 0 : row->gear_output ? frontend_equipment_gear_output_count(row->gear_output) :
             row->q3_output ? frontend_equipment_q3_output_count(row->q3_output) :
             frontend_equipment_held_output_count(row->output);
         if (extent > 1021 - count)
@@ -678,7 +1076,48 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
         return frontend_fail(error, QA_ERROR_FORMAT, "Equipment cannot reserve its physical source scene orders");
     owner->first_order = options->first_entity; owner->reserved = (uint32_t)count;
     options->first_entity += (uint32_t)count;
-    options->supplemental_weapon = owner->view_ready;
+    options->supplemental_weapon = owner->view_ready || owner->companion_view_requested;
+    return true;
+}
+
+static bool companion_submit(frontend_equipment_source *owner,
+    const qa_q3_scene_options *options, uint32_t *order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!owner->companion_selected || options->world.no_world) return true;
+    for (size_t i = 0; i < owner->companion_ref_count; ++i) {
+        const equipment_companion_ref *captured = owner->companion_refs + i;
+        if (captured->view && !owner->companion_view_requested) continue;
+        qa_q3_ref_entity ref = captured->ref;
+        if (captured->view) {
+            ref.origin = companion_point(&captured->definition, &options->world.view, ref.origin);
+            ref.old_origin = companion_point(&captured->definition, &options->world.view, ref.old_origin);
+            ref.lighting_origin = companion_point(&captured->definition, &options->world.view, ref.lighting_origin);
+            for (size_t j = 0; j < 3; ++j)
+                ref.axis[j] = companion_vector(captured->definition.axis, options->world.view.axis, ref.axis[j]);
+        }
+        if (!frontend_source_companion_current(owner->options.frontend, &owner->companion) ||
+            !qa_q3_presentation_source_component_entity(owner->options.presentation, owner->companion.assets,
+                &ref, captured->definition.time, options, (*order)++, frame, error)) return false;
+    }
+    for (size_t i = 0; i < owner->companion_polygon_count; ++i) {
+        const equipment_companion_polygon *captured = owner->companion_polygons + i;
+        if (captured->view && !owner->companion_view_requested) continue;
+        qa_scene_vertex *vertices = captured->vertices, *transformed = NULL;
+        if (captured->view && captured->polygon.count) {
+            transformed = malloc(captured->polygon.count * sizeof(*transformed));
+            if (!transformed) return frontend_fail(error, QA_ERROR_MEMORY, "Transforming genuine Source view weapon polygon");
+            memcpy(transformed, vertices, captured->polygon.count * sizeof(*transformed));
+            for (size_t j = 0; j < captured->polygon.count; ++j)
+                transformed[j].position = companion_point(&captured->definition, &options->world.view, transformed[j].position);
+            vertices = transformed;
+        }
+        bool okay = frontend_source_companion_current(owner->options.frontend, &owner->companion) &&
+            qa_q3_presentation_source_component_poly(owner->options.presentation, owner->companion.assets,
+                captured->polygon.shader, vertices, captured->polygon.count, &captured->polygon.fog,
+                captured->definition.time, options, frame, error);
+        free(transformed);
+        if (!okay) return false;
+    }
     return true;
 }
 
@@ -693,8 +1132,8 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment submission left its retained source ordering and lease");
     owner->submitting = true;
     uint32_t order = owner->first_order;
-    bool ok = true;
-    if (owner->view_ready) {
+    bool ok = companion_submit(owner, options, &order, frame, error);
+    if (ok && owner->view_ready) {
         if (!options->world.view.clip_enabled) {
             if (owner->gear_view) ok = frontend_equipment_gear_output_submit(owner->gear_view,
                 owner->options.presentation, owner->view_offset, options, order, frame, error);
@@ -716,6 +1155,7 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
     }
     if (!options->world.no_world) {
         for (equipment_packet *row = owner->packets; ok && row; row = row->next) {
+            if (row->companion) continue;
             ok = row->gear_output ? frontend_equipment_gear_output_submit(row->gear_output,
                 owner->options.presentation, qa_v3(0, 0, 0), options, order, frame, error) :
                 row->q3_output ? frontend_equipment_q3_output_submit(row->q3_output,
@@ -750,9 +1190,9 @@ typedef struct equipment_source_saved {
 static bool saved_fields(qa_source_save_io *io, qa_application *application,
     equipment_source_saved *saved)
 {
-    uint8_t magic[4]={'Q','F','E','S'}; uint32_t schema=2;
+    uint8_t magic[4]={'Q','F','E','S'}; uint32_t schema=3;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFES",sizeof(magic)) ||
-        !qa_source_save_u32(io,&schema) || schema!=2 || !qa_source_save_bool(io,&saved->present)) return false;
+        !qa_source_save_u32(io,&schema) || schema!=3 || !qa_source_save_bool(io,&saved->present)) return false;
     if (!saved->present) return true;
     uint32_t kind=saved->frame.kind,phase=saved->frame.phase;
     if (!frontend_save_provider(io,application,&saved->receiver) || !saved->receiver ||
@@ -775,10 +1215,15 @@ static bool saved_fields(qa_source_save_io *io, qa_application *application,
     qa_application_equipment_view *hud=&saved->hud;
     uint32_t family=hud->family;
     if (!qa_source_save_actor(io,&hud->actor) || !qa_actor_id_equal(hud->actor,saved->draw.actor) ||
-        !frontend_save_provider(io,application,&hud->provider) || !hud->provider ||
+        !qa_source_save_bool(io,&hud->source_slot) ||
+        !(hud->source_slot?qa_source_save_string(io,&hud->provider):frontend_save_provider(io,application,&hud->provider)) || !hud->provider ||
         !frontend_save_provider(io,application,&hud->primary) || !hud->primary ||
         !qa_source_save_u32(io,&family) || family>QA_GAME_Q3 ||
         !qa_source_save_bool(io,&hud->equipment_slot)) return false;
+    if(hud->source_slot && (hud->equipment_slot ||
+        !qa_source_save_u64(io,&hud->source_generation) ||
+        !qa_source_save_string(io,&hud->pending) || !qa_source_save_string(io,&hud->pending_provider) ||
+        (!hud->pending!=!hud->pending_provider))) return false;
     if (hud->equipment_slot && (family!=QA_GAME_Q3 ||
         !qa_source_save_string(io,&hud->gear_namespace) || !hud->gear_namespace ||
         !qa_source_save_u64(io,&hud->gear_service_owner) || !hud->gear_service_owner)) return false;
@@ -789,6 +1234,26 @@ static bool saved_fields(qa_source_save_io *io, qa_application *application,
         !qa_source_save_bool(io,&hud->low_ammo) || !qa_source_save_bool(io,&hud->has_start_requirement)) return false;
     hud->family=(qa_game_family)family; hud->selected=true;
     hud->warning=saved->draw.warning; hud->label=saved->label;
+    return true;
+}
+
+static bool restore_source_hud(qa_application *app,qa_application_equipment_view *saved,qa_error *error)
+{
+    if(!saved->source_slot)return true;
+    qa_application_equipment_view current;
+    if(!qa_application_equipment_read(app,saved->actor,&current,error))return false;
+    if(!current.source_slot || current.provider!=saved->provider || current.primary!=saved->primary ||
+        current.family!=saved->family || current.item!=saved->item || current.ammo!=saved->ammo ||
+        current.pending!=saved->pending || current.pending_provider!=saved->pending_provider ||
+        current.source_generation!=saved->source_generation || current.ammo_count!=saved->ammo_count ||
+        current.visible!=saved->visible || current.warning!=saved->warning ||
+        current.has_weapon_status!=saved->has_weapon_status || current.finite_ammo!=saved->finite_ammo ||
+        current.has_ammo_to_start!=saved->has_ammo_to_start || current.low_ammo!=saved->low_ammo ||
+        current.has_start_requirement!=saved->has_start_requirement ||
+        (!current.label!=!saved->label) || (current.label&&strcmp(current.label,saved->label)))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved source weapon HUD differs from its actual rebound source");
+    const char *label=saved->label;
+    *saved=current;saved->label=label;
     return true;
 }
 
@@ -827,6 +1292,7 @@ bool frontend_equipment_source_restore(frontend_equipment_source *owner,
     equipment_source_saved saved={0}; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,qa_application_session(application),bytes,error) &&
         saved_fields(&io,application,&saved) && qa_source_save_finish(&io,NULL);
+    if(ok&&saved.present&&saved.draw.selected)ok=restore_source_hud(application,&saved.hud,error);
     if (ok && saved.present) {
         ok=client && client->session==qa_application_session(application) &&
             client->frontend_lifetime==owner->options.lease && client->receiver==owner->options.receiver &&

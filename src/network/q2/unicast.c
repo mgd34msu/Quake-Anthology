@@ -6,10 +6,10 @@ struct qa_q2_unicast_cache { qa_q2_unicast_claim *rows; size_t count, capacity; 
 static bool fail(qa_error *e, qa_status code, const char *text)
 { qa_error_set(e, code, 0, "%s", text); return false; }
 static bool valid(const qa_q2_unicast_claim *r)
-{ return r && r->client.owner && r->client.generation && r->connection_epoch && r->source && r->key; }
+{ return r && r->client.owner && r->client.generation && r->connection_epoch && r->source && r->map_revision && r->key; }
 static bool domain(const qa_q2_unicast_claim *a, const qa_q2_unicast_claim *b)
 {
-    return a->source == b->source && qa_sha256_equal(&a->map, &b->map) &&
+    return a->source == b->source && a->map_revision == b->map_revision && qa_sha256_equal(&a->map, &b->map) &&
         a->source_frame == b->source_frame && a->source_time_ns == b->source_time_ns;
 }
 static bool same(const qa_q2_unicast_claim *a, const qa_q2_unicast_claim *b)
@@ -87,10 +87,11 @@ static bool row_codec(qa_source_save_io *io, const qa_q2_unicast_refs *refs, qa_
     if (!qa_source_save_u64(io, &client) || !qa_source_save_u64(io, &source) || !client || !source ||
         !qa_source_save_u64(io, &row->connection_epoch) ||
         !qa_source_save_bytes(io, row->map.bytes, sizeof(row->map.bytes)) ||
+        !qa_source_save_u64(io, &row->map_revision) ||
         !qa_source_save_u64(io, &row->source_frame) || !qa_source_save_u64(io, &row->source_time_ns) ||
         !qa_source_save_u32(io, &row->key)) return false;
     if (reading && (!refs->client_decode(refs->context, client, &row->client, io->error) ||
-        !refs->source_decode(refs->context, source, &row->source, io->error))) return false;
+        !refs->source_decode(refs->context, source, &row->source, &row->map_revision, io->error))) return false;
     return valid(row) || fail(io->error, QA_ERROR_FORMAT, "Saved Q2 unicast claim is incomplete");
 }
 bool qa_q2_unicast_capture(const qa_q2_unicast_cache *cache, const qa_q2_unicast_refs *refs,
@@ -108,7 +109,7 @@ bool qa_q2_unicast_capture(const qa_q2_unicast_cache *cache, const qa_q2_unicast
     }
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, e);
-    uint32_t magic = UINT32_C(0x5532514e), version = 1;
+    uint32_t magic = UINT32_C(0x5532514e), version = 2;
     if (ok) ok = qa_source_save_u32(&io, &magic) && qa_source_save_u32(&io, &version) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(*rows));
     for (size_t i = 0; ok && i < count; ++i) ok = row_codec(&io, refs, rows + i);
@@ -125,9 +126,9 @@ bool qa_q2_unicast_restore(qa_bytes bytes, const qa_q2_unicast_refs *refs,
     uint32_t magic = 0, version = 0; size_t count = 0;
     bool ok = qa_source_save_reader(&io, NULL, bytes, e) &&
         qa_source_save_u32(&io, &magic) && qa_source_save_u32(&io, &version) &&
-        magic == UINT32_C(0x5532514e) && version == 1 &&
+        magic == UINT32_C(0x5532514e) && version == 2 &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(qa_q2_unicast_claim)) &&
-        count <= (io.input.size - io.offset) / 76;
+        count <= (io.input.size - io.offset) / 84;
     qa_q2_unicast_cache *cache = NULL;
     if (ok) ok = qa_q2_unicast_cache_create(&cache, e);
     for (size_t i = 0; ok && i < count; ++i) {

@@ -1,4 +1,5 @@
 #include "remote_q2_private.h"
+#include "remote_q2_restore.h"
 #include "qa/archive.h"
 #include "qa/network_q2_materials.h"
 #include <stdlib.h>
@@ -26,12 +27,12 @@ static bool native_asset(const char *path)
             (*p >= '0' && *p <= '9') || strchr("_+./-", *p))) return false;
     return (prefix(path, "maps/") && suffix(path, ".bsp")) ||
         ((prefix(path, "models/") || prefix(path, "players/")) &&
-            (suffix(path, ".mdl") || suffix(path, ".md2") || suffix(path, ".md3") ||
+            (suffix(path, ".mdl") || suffix(path, ".spr") || suffix(path, ".md2") || suffix(path, ".md3") ||
                 suffix(path, ".sp2") || model_image(path) || suffix(path, ".wav") ||
-                suffix(path, ".shader") || suffix(path, ".lmp") || suffix(path, ".wal") ||
+                suffix(path, ".shader") || suffix(path, ".qai") || suffix(path, ".qpm") || suffix(path, ".lmp") || suffix(path, ".wal") ||
                 suffix(path, ".roq") || suffix(path, ".cin") || suffix(path, ".ogv"))) ||
         (prefix(path, "sound/") && suffix(path, ".wav")) ||
-        (prefix(path, "pics/") && suffix(path, ".pcx")) ||
+        ((prefix(path, "pics/") || prefix(path, "sprites/")) && model_image(path)) ||
         (prefix(path, "env/") && (suffix(path, ".tga") || suffix(path, ".pcx"))) ||
         (prefix(path, "textures/") && suffix(path, ".wal"));
 }
@@ -43,10 +44,79 @@ bool remote_q2_download_path_valid(const char *path)
 }
 qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *row, const char *path)
 { return row && remote_q2_download_path_valid(path) &&
-    (row->options.material_scripts || !(suffix(path, ".shader") || suffix(path, ".lmp") ||
+    (row->options.material_scripts || !(suffix(path, ".shader") || suffix(path, ".qai") || suffix(path, ".qpm") || suffix(path, ".lmp") ||
         suffix(path, ".roq") || suffix(path, ".cin") || suffix(path, ".ogv") ||
         ((prefix(path, "models/") || prefix(path, "players/")) && suffix(path, ".wal")))) ?
     (prefix(path, "players/") ? row->content.base_write_root : row->content.selected_write_root) : NULL; }
+
+static bool download_resource(void *context, const qa_download_request *request,
+    const qa_download_view *view, bool staged, qa_error *error)
+{
+    frontend_remote_q2 *row = context;
+    frontend_remote_q2_view owned = {0};
+    if (!row || row->busy || row->image_policy || !request || !view || !staged ||
+        !row->download_path || !row->download_root || !row->download_logical_nonce ||
+        !request->path || !view->path || strcmp(request->path, row->download_path) ||
+        strcmp(view->path, row->download_path) || request->stage_nonce != row->download_logical_nonce ||
+        view->stage_nonce != row->download_logical_nonce || request->maximum_bytes != INT32_MAX ||
+        request->expected_bytes || request->exact_identity || request->resume ||
+        view->received != row->download_bytes || view->received > INT32_MAX || view->limit != INT32_MAX ||
+        view->state != QA_DOWNLOAD_RECEIVING || view->published || view->mounted ||
+        row->download_root != remote_q2_download_destination(row, row->download_path) ||
+        !qa_catalog_product_view_current(row->content.catalog, row->content.selected, row->content.mounts))
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 download leaves its retained target and prefix");
+    if (row->importing) return row->frontend->source_restoring &&
+        frontend_remote_q2_import_read(row, &owned, error);
+    if (row->frontend->capture) return remote_q2_capture_owned(row);
+    if (row->retiring) return remote_q2_retirement_current(row, error);
+    return frontend_remote_q2_read(row, &owned, error);
+}
+static bool download_stage(void *context, const qa_download_request *request,
+    const qa_download_view *view, qa_bytes bytes, qa_fs_stage **out, uint64_t *nonce, qa_error *error)
+{
+    frontend_remote_q2 *row = context;
+    if (!out || *out || !nonce || *nonce || !download_resource(row, request, view, true, error) ||
+        !row->importing || !row->frontend->source_restoring || row->download_stage ||
+        !row->options.restore_stage || bytes.size != row->download_bytes || (bytes.size && !bytes.data))
+        return false;
+    qa_fs_stage *candidate = NULL; uint64_t native_nonce = 0, size = 0;
+    ++row->busy;
+    bool ok = row->options.restore_stage(row->options.context, row->download_root,
+        row->download_path, row->download_logical_nonce, bytes, &candidate, &native_nonce, error);
+    --row->busy;
+    if (ok) ok = candidate && native_nonce && native_nonce != row->download_logical_nonce &&
+        download_resource(row, request, view, true, error) &&
+        qa_fs_stage_size(candidate, &size, error) && size == bytes.size;
+    if (!ok) { qa_fs_stage_close(candidate, false); return false; }
+    *out = candidate; *nonce = native_nonce; return true;
+}
+static bool download_artifact(void *context, const qa_download_request *request,
+    const qa_download_view *view, qa_fs_stage **out, qa_error *error)
+{
+    frontend_remote_q2 *row = context; uint64_t size = 0;
+    if (!out || *out || !download_resource(row, request, view, true, error) ||
+        !row->download_stage || !row->download_nonce) return false;
+    qa_fs_stage *artifact = NULL;
+    if (!qa_fs_stage_open_readonly(row->download_root, row->download_path,
+        row->download_nonce, &artifact, &size, error)) return false;
+    if (size != row->download_bytes || !download_resource(row, request, view, true, error)) {
+        qa_fs_stage_close(artifact, true); return false;
+    }
+    *out = artifact; return true;
+}
+bool frontend_remote_q2_download_refs(frontend_remote_q2 *row,
+    qa_download_checkpoint_refs *out, qa_error *error)
+{
+    if (!row || !out) return false;
+    qa_download_request request = {.path = row->download_path, .maximum_bytes = INT32_MAX,
+        .stage_nonce = row->download_logical_nonce};
+    qa_download_view view = {.path = row->download_path, .received = row->download_bytes,
+        .limit = INT32_MAX, .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = row->download_logical_nonce};
+    if (!download_resource(row, &request, &view, true, error)) return false;
+    *out = (qa_download_checkpoint_refs){.context = row, .resource = download_resource,
+        .stage = download_stage, .artifact = download_artifact};
+    return true;
+}
 
 static bool attempted(const frontend_remote_q2 *row, const char *path)
 {
@@ -196,20 +266,46 @@ static bool model_materials(frontend_remote_q2 *row, const qa_model *model, bool
             const char *name = model->meshes[i].shaders[j].name;
             if (!*name) continue;
             if (!request(row, name, waiting, error) || *waiting) return *waiting;
-            if (!suffix(name, ".shader")) continue;
+            bool image_receipt = suffix(name, ".qai");
+            if (!suffix(name, ".shader") && !image_receipt) continue;
             if (!row->options.material_scripts)
                 return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 MD3 shader requires its negotiated full material capability");
             qa_resource *script = NULL;
             if (!qa_vfs_acquire(row->content.mounts, name, &script, NULL, error)) return false;
-            qa_q2_material_scope scope;
             material_download state = {.row = row};
-            bool ok = qa_q2_material_script_scope(qa_resource_bytes(script), &scope, error);
-            if (ok) { state.family = scope.family; ok = qa_q2_material_script_dependencies(
-                qa_resource_bytes(script), material_dependency, &state, error); }
+            bool ok;
+            if (image_receipt) ok = qa_q2_material_image_dependencies(
+                qa_resource_bytes(script), material_dependency, &state, error);
+            else {
+                qa_q2_material_scope scope;
+                ok = qa_q2_material_script_scope(qa_resource_bytes(script), &scope, error);
+                if (ok) { state.family = scope.family; ok = qa_q2_material_script_dependencies(
+                    qa_resource_bytes(script), material_dependency, &state, error); }
+            }
             qa_resource_release(script); *waiting = state.waiting;
             if (!ok) return false;
         }
     return true;
+}
+static bool model_palette(frontend_remote_q2 *row, const char *path, qa_bytes model, bool *waiting, qa_error *error)
+{
+    if (!remote_q2_model_scope_required(path, model)) return true;
+    char companion[1024];
+    if (!row->options.material_scripts)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model requires its negotiated Source palette companion");
+    if (!qa_q2_material_model_scope_path(path, companion, error)) return false;
+    if (!request(row, companion, waiting, error) || *waiting) return *waiting;
+    qa_resource *artifact = NULL, *palette = NULL;
+    qa_q2_material_model_scope scope; qa_scene_image_options options;
+    material_download state = {.row = row};
+    bool ok = qa_vfs_acquire(row->content.mounts, companion, &artifact, NULL, error) &&
+        qa_q2_material_model_scope_read(qa_resource_bytes(artifact), path, model, &scope, error) &&
+        qa_q2_material_model_scope_dependencies(qa_resource_bytes(artifact), material_dependency, &state, error);
+    *waiting = state.waiting;
+    if (ok && !*waiting) ok = qa_vfs_acquire(row->content.mounts, scope.palette_alias, &palette, NULL, error) &&
+        qa_q2_material_model_scope_apply(&scope, qa_resource_bytes(palette), &options, error);
+    qa_resource_release(artifact); qa_resource_release(palette);
+    return ok;
 }
 bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *result, qa_error *error)
 {
@@ -235,7 +331,8 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
             return false;
         }
         qa_model model = {0}; bool ok = qa_model_load(qa_resource_bytes(resource), &model, error);
-        if (ok) ok = model_materials(row, &model, &waiting, error);
+        if (ok) ok = model_palette(row, name, qa_resource_bytes(resource), &waiting, error);
+        if (ok && !waiting) ok = model_materials(row, &model, &waiting, error);
         if (ok) for (size_t j = 0; j < model.skin_count && !waiting; ++j)
             if (*model.skins[j].name && !request(row, model.skins[j].name, &waiting, error)) { ok = false; break; }
         if (ok) for (size_t j = 0; j < model.sprite_count && !waiting; ++j)
@@ -251,8 +348,10 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
     for (size_t i = 1; i < row->layout.max_images; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
         if (!*name) continue;
-        if (!path_join(row, name[0] == '/' ? "" : "pics/", name[0] == '/' ? name + 1 : name,
-            name[0] == '/' ? "" : ".pcx", &waiting, error) || waiting) return waiting;
+        bool direct = remote_q2_image_direct(row, name);
+        const char *relative = name + (name[0] == '/' || name[0] == '\\');
+        if (!path_join(row, direct ? "" : "pics/", direct ? relative : name,
+            direct ? "" : ".pcx", &waiting, error) || waiting) return waiting;
     }
     for (size_t i = 0; i < 256; ++i) {
         const char *value = frontend_remote_q2_config(row, (uint16_t)(row->layout.players + i));

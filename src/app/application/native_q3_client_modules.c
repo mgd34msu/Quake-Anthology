@@ -297,8 +297,21 @@ static bool source_entity(void *context, const qa_qvm_call *call, int32_t pointe
     if (!role->equipment)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME submission lost its equipment owner");
     if (!application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error)) return false;
-    return *suppress || !role->body ||
-        application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error);
+    if (*suppress || !role->body) return true;
+    if (!application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error)) return false;
+    return !*suppress || application_q3_equipment_source_entity_cancel(role->equipment, call, error);
+}
+
+static bool source_poly(void *context, const qa_qvm_call *call, size_t vertices, qa_error *error)
+{
+    native_client_module *role = context;
+    return application_q3_equipment_source_poly(role->equipment, call, vertices, error);
+}
+
+static bool source_light(void *context, const qa_qvm_call *call, qa_error *error)
+{
+    native_client_module *role = context;
+    return application_q3_equipment_source_light(role->equipment, call, error);
 }
 
 bool native_client_module_namespace(native_client_module *role, bool restoring, qa_error *error)
@@ -338,6 +351,8 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         .script_globals = owner->script_globals, .script_globals_owner = actual.receiver.service_owner};
     if (role->image && role->kind == QA_QVM_CGAME) {
         options.source_entity = source_entity; options.source_entity_context = role;
+        options.source_poly = source_poly; options.source_poly_context = role;
+        options.source_light = source_light; options.source_light_context = role;
     }
     qa_application_q3_equipment_services equipment = {0};
     qa_application_q3_body_services body = {0};

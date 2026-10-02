@@ -27,6 +27,7 @@ struct frontend_remote_unified_prediction {
     size_t command_count;
     int64_t discarded;
     uint32_t epoch;
+    uint64_t authoritative_frame;
     int rounding;
     bool received, busy, importing;
 };

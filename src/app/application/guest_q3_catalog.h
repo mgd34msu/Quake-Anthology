@@ -32,6 +32,8 @@ bool application_q3_catalog_create_native(struct q3g_role *, qa_bytes,
     application_q3_catalog **, qa_error *);
 bool application_q3_catalog_role_current(const application_q3_catalog *,
     const struct q3g_role *);
+bool application_q3_catalog_native_restore_validate(application_q3_catalog *,
+    const struct q3g_role *, qa_error *);
 void application_q3_catalog_destroy(application_q3_catalog *);
 /* Outputs borrow this owner's latest admitted records until its next read. */
 bool application_q3_catalog_records(application_q3_catalog *,

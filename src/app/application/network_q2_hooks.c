@@ -1,4 +1,5 @@
 #include "network_q2_private.h"
+#include "native_q2_visibility.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
 #include "native_q2_wire_engine.h"
@@ -266,13 +267,32 @@ static application_provider *recipient_source(qa_application *app, qa_actor_owne
     return found;
 }
 
+struct application_q2_recipient_binding {
+    struct application_native_q2 *engine;
+    size_t references;
+};
+
+static void recipient_binding_release(struct application_q2_recipient_binding *binding)
+{
+    if (binding && !--binding->references) free(binding);
+}
+
+void application_network_q2_retire_bindings(struct application_native_q2 *engine)
+{
+    if (!engine || !engine->network_recipient_binding) return;
+    struct application_q2_recipient_binding *binding = engine->network_recipient_binding;
+    binding->engine = NULL; engine->network_recipient_binding = NULL;
+    engine->network_recipient_users = 0; engine->network_recipient_runtime = NULL;
+    engine->network_recipient_context = NULL; engine->network_recipient = NULL; engine->network_unicast = NULL;
+    recipient_binding_release(binding);
+}
+
 void application_network_q2_unbind(qa_application_network_q2 *owner)
 {
-    if (!owner || !owner->recipient_engine) return;
-    application_provider *provider = recipient_source(owner->app, owner->host.source.source_owner);
-    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ?
-        provider->state.native.q2_engine : NULL;
-    if (engine == owner->recipient_engine && engine->network_recipient_users &&
+    if (!owner || !owner->recipient_binding) return;
+    struct application_q2_recipient_binding *binding = owner->recipient_binding;
+    struct application_native_q2 *engine = binding->engine;
+    if (engine && engine->network_recipient_binding == binding && engine->network_recipient_users &&
         engine->network_recipient_runtime == owner->bindings.runtime &&
         engine->network_recipient_context == owner->bindings.recipient_context &&
         engine->network_recipient == owner->bindings.recipient &&
@@ -284,7 +304,7 @@ void application_network_q2_unbind(qa_application_network_q2 *owner)
             engine->network_unicast = NULL;
         }
     }
-    owner->recipient_engine = NULL;
+    owner->recipient_binding = NULL; recipient_binding_release(binding);
 }
 
 bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner source,
@@ -361,14 +381,16 @@ bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner sourc
             engine->frame.number != clock.frame.number || engine->frame.time_ns != clock.frame.time_ns)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast lost its executing Source clock or cache owner");
     qa_q2_unicast_claim claim = {.client = recipient.client, .connection_epoch = recipient.connection_epoch,
-        .source = source, .source_frame = clock.frame.number, .source_time_ns = clock.frame.time_ns, .key = key};
+        .source = source, .map_revision = app->map_revision,
+        .source_frame = clock.frame.number, .source_time_ns = clock.frame.time_ns, .key = key};
     claim.map = *qa_resource_digest(app->map_resource);
     if (!engine->network_unicast(engine->network_recipient_context, &claim, remember, duplicate, error)) return false;
     qa_application_network_q2_recipient_view after;
     bool current;
     if (!qa_application_network_q2_recipient(app, source, actor, &after, &current, error) || !current ||
         !qa_net_client_id_equal(after.client, recipient.client) || after.connection_epoch != recipient.connection_epoch ||
-        recipient_source(app, source) != provider || provider->state.native.q2_engine != engine ||
+        app->map_revision != claim.map_revision || recipient_source(app, source) != provider ||
+        provider->state.native.q2_engine != engine ||
         !qa_session_clock(app->session, source, &clock) || clock.frame.number != claim.source_frame ||
         clock.frame.time_ns != claim.source_time_ns)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast changed its actual Source or recipient group");
@@ -436,15 +458,23 @@ bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
                 engine->network_recipient_context != bindings->recipient_context ||
                 engine->network_recipient != bindings->recipient || engine->network_unicast != bindings->unicast)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 peers disagree on their actual Source recipient owner");
-        if (!owner->recipient_engine) {
+        if (!engine->network_recipient_binding) {
+            struct application_q2_recipient_binding *binding = calloc(1, sizeof(*binding));
+            if (!binding) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 Source recipient lifetime");
+            binding->engine = engine; binding->references = 1; engine->network_recipient_binding = binding;
+        }
+        if (!owner->recipient_binding) {
             if (engine->network_recipient_users == SIZE_MAX)
                 return application_fail(error, QA_ERROR_MEMORY, "Q2 recipient binding count overflows");
+            if (engine->network_recipient_binding->references == SIZE_MAX)
+                return application_fail(error, QA_ERROR_MEMORY, "Q2 recipient lifetime reference count overflows");
             engine->network_recipient_runtime = bindings->runtime;
             engine->network_recipient_context = bindings->recipient_context;
             engine->network_recipient = bindings->recipient;
             engine->network_unicast = bindings->unicast;
-            ++engine->network_recipient_users; owner->recipient_engine = engine;
-        } else if (owner->recipient_engine != engine)
+            ++engine->network_recipient_users;
+            ++engine->network_recipient_binding->references; owner->recipient_binding = engine->network_recipient_binding;
+        } else if (owner->recipient_binding != engine->network_recipient_binding)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 publisher retained a retired Source recipient binding");
     }
     owner->bindings = *bindings;
@@ -452,6 +482,21 @@ bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
         .begin = begin, .input = input, .expand_command = expand_command, .command = command,
         .userinfo = userinfo, .download_source = download_source, .drop = drop};
     return true;
+}
+
+bool qa_application_network_q2_client_frame_ready(qa_application_network_q2 *owner,
+    qa_net_client_id id, bool *out, qa_error *error)
+{
+    qa_actor_id values[QA_Q2_MAX_SEATS]; size_t count;
+    if (!out || !application_network_q2_current(owner, error) || !actors(owner, id, values, &count, error)) return false;
+    *out = true;
+    if (owner->host.source.kind != QA_APPLICATION_NATIVE_Q2_ORIGINAL) return true;
+    qa_network_q2_player players[QA_Q2_MAX_SEATS];
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_application_network_q2_player(owner, values[i], &players[i], error)) return false;
+    application_provider *physical = application_network_q2_provider(owner);
+    struct application_native_q2 *engine = physical ? physical->state.native.q2_engine : NULL;
+    return application_native_q2_visibility_ready(engine, players, count, out, error);
 }
 
 bool qa_application_network_q2_client_frame(qa_application_network_q2 *owner,

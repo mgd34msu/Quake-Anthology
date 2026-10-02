@@ -35,6 +35,20 @@ typedef struct qa_application_network_q2_resource_view {
     bool missing;
     qa_bytes wire_bytes;
 } qa_application_network_q2_resource_view;
+typedef struct qa_application_network_q2_metadata {
+    qa_actor_owner source_owner;
+    qa_application_native_q2_source_kind kind;
+    qa_q2_edition edition;
+    qa_net_protocol_id protocol;
+    uint32_t client_slots, entity_slots;
+    int32_t server_count;
+    qa_sha256_digest identity, map_identity;
+    const char *instance, *map;
+    qa_clock_config clock_config;
+    qa_clock_state clock;
+    uint64_t server_time_ns, publication_generation, map_revision;
+    bool archival, materials_bound, materials_capability;
+} qa_application_network_q2_metadata;
 
 /* Host discovery and binding require the actual physical ENTITIES GAME. A
  * local seat or selected CHARACTER is not a substitute for source admission. */
@@ -55,6 +69,9 @@ bool qa_application_network_q2_slot(qa_application_network_q2 *, uint32_t source
  * transport adapters clone or encode them synchronously. */
 bool qa_application_network_q2_game_state(qa_application_network_q2 *,
     const qa_actor_id *, size_t seats, qa_q2_game_state *, qa_error *);
+/* Does not rebuild or invalidate a previously borrowed entity/frame span. */
+bool qa_application_network_q2_configs(qa_application_network_q2 *,
+    const qa_q2_config_entry **, size_t *, qa_error *);
 bool qa_application_network_q2_frame(qa_application_network_q2 *,
     const qa_actor_id *, size_t seats, qa_q2_wire_frame *, qa_error *);
 bool qa_application_network_q2_motion(qa_application_network_q2 *,
@@ -66,6 +83,10 @@ bool qa_application_network_q2_download_source(qa_application_network_q2 *,
 size_t qa_application_network_q2_resource_count(const qa_application_network_q2 *);
 bool qa_application_network_q2_resource_read(const qa_application_network_q2 *, size_t,
     qa_application_network_q2_resource_view *, qa_error *);
+/* Pure retained scalar custody. An archival receipt grants no live Source
+ * membership even when the previous namespace's literal owner is retained. */
+bool qa_application_network_q2_metadata_read(const qa_application_network_q2 *,
+    qa_application_network_q2_metadata *, qa_error *);
 
 typedef struct qa_application_network_q2_bindings {
     qa_network_runtime *runtime;
@@ -86,6 +107,10 @@ bool qa_application_network_q2_hooks(qa_application_network_q2 *,
     const qa_application_network_q2_bindings *, qa_network_q2_server_hooks *, qa_error *);
 bool qa_application_network_q2_client_frame(qa_application_network_q2 *,
     qa_net_client_id, qa_q2_wire_frame *, qa_error *);
+/* Newly begun physical viewers wait for actual Source visibility decisions
+ * when instanced entities exist. This never invokes a GAME callback. */
+bool qa_application_network_q2_client_frame_ready(qa_application_network_q2 *,
+    qa_net_client_id, bool *, qa_error *);
 /* Native GAME imports may ask while the real Source invocation is active.
  * This observes its physical client binding and the Network owner's actual
  * connection group; it does not advance or publish a completed frame. */
@@ -101,6 +126,8 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *, qa_ac
     const qa_application_protocol_resource_reference *, uint32_t *, qa_error *);
 bool qa_application_network_q2_event_config(qa_application_network_q2 *, uint16_t wire_index,
     const char **actual_text, qa_error *);
+bool qa_application_network_q2_event_layout(qa_application_network_q2 *, qa_actor_id recipient,
+    qa_native_profile source_profile, const char *actual_layout, qa_error *);
 bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,
@@ -110,5 +137,10 @@ bool qa_application_network_q2_download_server(qa_application_network_q2 *,
  * Cold import requires an empty owner bound to the restored physical GAME. */
 bool qa_application_network_q2_capture(qa_application_network_q2 *, qa_buffer *, qa_error *);
 bool qa_application_network_q2_restore(qa_application_network_q2 *, qa_bytes, qa_error *);
+/* A travel capsule may retain the preceding publication after its GAME has
+ * retired. This owner preserves custody only and cannot supply Source hooks. */
+bool qa_application_network_q2_capture_retained(qa_application_network_q2 *, qa_buffer *, qa_error *);
+bool qa_application_network_q2_restore_retained(qa_application *, qa_bytes,
+    qa_application_network_q2 **, qa_error *);
 
 #endif

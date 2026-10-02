@@ -41,6 +41,8 @@ bool application_unified_player_command(qa_application *, qa_net_client_id, qa_n
 bool application_unified_component_command(qa_application *, qa_net_client_id, qa_net_seat_id,
     const qa_unified_document *owner, uint64_t generation, const char *const *arguments,
     size_t count, qa_error *);
+bool application_unified_source_command(qa_application *,qa_net_client_id,qa_net_seat_id,
+    const qa_unified_source_command *,qa_error *);
 bool application_unified_player_input(qa_application *, qa_net_client_id, qa_net_seat_id,
     qa_actor_id, const qa_unified_input *, qa_error *);
 bool application_unified_player_disconnect(qa_application *, qa_net_client_id, qa_net_seat_id,
@@ -71,6 +73,11 @@ bool application_unified_server_offer(application_unified_server *, uint32_t epo
 bool application_unified_server_pre_frame(application_unified_server *, qa_error *);
 bool application_unified_server_publish(application_unified_server *,
     const struct application_unified_output_external *, qa_error *);
+bool application_unified_server_publication_complete(const application_unified_server *);
+bool application_unified_server_source_drop(application_unified_server *,qa_actor_owner,
+    uint32_t source_slot,const char *reason,bool *matched,qa_error *);
+bool application_unified_server_source_drop_finish(application_unified_server *,qa_error *);
+bool application_unified_server_source_drop_current(const application_unified_server *,qa_error *);
 bool application_unified_server_destroy(application_unified_server *, qa_error *);
 bool application_unified_server_transport_retired(application_unified_server *,
     const qa_unified_session *, qa_error *);

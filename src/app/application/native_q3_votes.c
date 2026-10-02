@@ -659,7 +659,8 @@ bool application_native_q3_votes_bound(const application_provider *provider)
     qa_application *app = provider ? provider->application : NULL;
     return owner && owner->provider == provider && owner->state.initialized && app &&
         provider->constructed && provider->attached && !provider->close_pending && provider->state.q3 &&
-        !app->destroy_requested && application_world_provider(app, QA_ROLE_ENTITIES, "") == provider &&
+        !app->destroy_requested && (application_world_provider(app, QA_ROLE_ENTITIES, "") == provider ||
+            application_native_q3_source_command_entered(provider)) &&
         application_native_q3_settings_initialized(provider) &&
         application_native_q3_console_settings_bound(provider);
 }

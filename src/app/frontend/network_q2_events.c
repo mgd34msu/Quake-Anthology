@@ -18,16 +18,21 @@ typedef struct q2_event_packet {
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error, code, 0, "%s", message); return false; }
 
-static bool captured_seat(const q2_event_packet *packet, uint8_t marker, size_t seat)
+static bool captured_recipient(const q2_event_packet *packet, uint8_t marker, size_t seat,
+    const qa_application_q2_recipient *recipient)
 {
     const qa_net_seat_binding *binding = packet->client->seats + seat;
+    return recipient->has_connection && qa_net_client_id_equal(recipient->connection, packet->client->id) &&
+        recipient->connection_epoch == packet->epoch && recipient->connection_seat.owner == binding->seat.owner &&
+        recipient->connection_seat.index == binding->seat.index && recipient->remote_index == binding->remote_index &&
+        (!marker || marker == (uint8_t)(recipient->remote_index + 1u));
+}
+static bool captured_seat(const q2_event_packet *packet, uint8_t marker, size_t seat)
+{
     const qa_application_q2_audience *audience = &packet->delivery->audience;
     for (size_t i = 0; i < audience->count; ++i) {
         const qa_application_q2_recipient *recipient = audience->recipients + i;
-        if (recipient->has_connection && qa_net_client_id_equal(recipient->connection, packet->client->id) &&
-            recipient->connection_epoch == packet->epoch && recipient->connection_seat.owner == binding->seat.owner &&
-            recipient->connection_seat.index == binding->seat.index && recipient->remote_index == binding->remote_index &&
-            (!marker || marker == (uint8_t)(recipient->remote_index + 1u))) return true;
+        if (captured_recipient(packet, marker, seat, recipient)) return true;
     }
     return false;
 }
@@ -82,20 +87,15 @@ static bool translate(q2_event_packet *packet, const qa_q2_server_record *record
         event->data.muzzle.entity = number;
     } else if (event->kind == QA_Q2_SVC_TEMP_ENTITY) {
         qa_q2_temp_entity *temporary = &event->data.temporary;
-        size_t offset = 2;
         for (size_t i = 0; i < temporary->field_count; ++i) {
             qa_q2_temp_field *field = temporary->fields + i;
             bool entity_field = field->name == QA_Q2_TEMP_ENTITY1 || field->name == QA_Q2_TEMP_ENTITY2;
             if (field->kind == QA_Q2_TEMP_INTEGER && field->value.integer >= 0 && entity_field &&
                 temporary->type != QA_Q2_TE_STEAM && temporary->type != QA_Q2_TE_WIDOWBEAMOUT) {
-                if (!entity(packet, record, offset, (uint32_t)field->value.integer, &number, error)) return false;
+                if (!entity(packet, record, 1u + field->offset, (uint32_t)field->value.integer, &number, error)) return false;
                 if (number > INT16_MAX) return fail(error, QA_ERROR_FORMAT, "Q2 event entity exceeds its genuine temporary word");
                 field->value.integer = (int32_t)number;
             }
-            if (field->kind == QA_Q2_TEMP_VECTOR)
-                offset += field->name == QA_Q2_TEMP_DIRECTION ? 1u :
-                    packet->delivery->profile == QA_NATIVE_Q2_GAME_API3 ? 6u : 12u;
-            else offset += entity_field ? 2u : field->name == QA_Q2_TEMP_TIME ? 4u : 1u;
         }
     } else if (event->kind == QA_Q2_SVC_SOUND) {
         const qa_application_protocol_resource_reference *receipt = resource(packet, ordinal,
@@ -130,9 +130,10 @@ static bool translate(q2_event_packet *packet, const qa_q2_server_record *record
                 (qa_native_host_resource_kind)kind, event->data.config.index - base);
             if (!receipt) continue;
             if (!qa_application_network_q2_event_resource(packet->publisher, packet->source->provider, receipt, &number, error)) return false;
-            bool wire_rerelease = packet->codec.protocol.kind == QA_NET_Q2KEX_2023 ||
-                packet->codec.protocol.kind == QA_NET_Q2REPRO_1038 || packet->codec.protocol.kind == QA_NET_Q2PRIVATE_4038;
-            uint32_t wire_base = resource_base(wire_rerelease, (qa_native_host_resource_kind)kind);
+            qa_q2_config_layout layout;
+            if (!qa_q2_config_layout_read(&packet->codec, &layout, error)) return false;
+            const uint32_t bases[] = {layout.models, layout.sounds, layout.images};
+            uint32_t wire_base = bases[kind];
             if (wire_base + number > UINT16_MAX) return fail(error, QA_ERROR_FORMAT, "Foreign Q2 configstring exceeds its admitted table");
             event->data.config.index = (uint16_t)(wire_base + number);
             if (!qa_application_network_q2_event_config(packet->publisher, event->data.config.index,
@@ -165,6 +166,16 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
     bool include;
     if (!translate(packet, record, ordinal, &event, &include, error)) return false;
     if (!include) return true;
+    if (event.kind == QA_Q2_SVC_LAYOUT) {
+        const qa_application_q2_audience *audience = &packet->delivery->audience;
+        for (size_t seat = 0; seat < packet->client->seat_count; ++seat)
+            for (size_t i = 0; i < audience->count; ++i) {
+                const qa_application_q2_recipient *recipient = audience->recipients + i;
+                if (captured_recipient(packet, record->seat, seat, recipient) &&
+                    !qa_application_network_q2_event_layout(packet->publisher, recipient->actor,
+                        packet->delivery->profile, event.data.print.text, error)) return false;
+            }
+    }
     bool kex = packet->codec.protocol.kind == QA_NET_Q2KEX_2023;
     if (!kex) return qa_q2_server_event_write(&packet->codec, &packet->writer, &event);
     if (eligible == packet->client->seat_count)

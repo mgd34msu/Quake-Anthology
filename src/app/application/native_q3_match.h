@@ -3,6 +3,11 @@
 
 #include "internal.h"
 
+/* WORLD retains its explicit selected primary policy. A supplemental GAME
+ * command uses the unique enabled mode associated with its actual instance. */
+bool application_native_q3_source_mode(application_provider *, qa_mode_id *, bool *found, qa_error *);
+bool application_native_q3_source_mode_current(application_provider *, qa_mode_id, qa_error *);
+
 /* Pure views of GAME's retained level state. Selected match phase, deadlines
  * and source slot numbers do not reconstruct these source fields. */
 bool application_native_q3_match_intermission(application_provider *, int32_t *, qa_error *);

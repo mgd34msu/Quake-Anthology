@@ -16,6 +16,15 @@ channel sequencing, reliable queues, fragments, signon pages, command replay,
 wire frame history, decoded service records, and one hosted download holder.
 It creates no simulation world or Source clock.
 
+Initial signon queues serverdata and its config request as one packet. Each
+config or baseline page queues its records and continuation together. Encoding
+uses a copy of the negotiated codec; queue failure retains the prior codec,
+signon, replay, frame and download state. Initial canonical restart and lower
+resets commit only after the complete signon packet is accepted.
+The nofail acceptance hook then adopts already allocated HOST config
+beforeimages. A game-state loan keeps its staged beforeimages separate from
+the last accepted namespace; the HOST capsule retains both extents.
+
 The server hooks require an actual physical GAME player receipt with canonical
 full actor, Source owner, and Source edict. The host supplies real configstrings,
 baselines, frame players, recipient filtering, and Source input application.
@@ -35,6 +44,14 @@ Native KEX admission requires the actual LAN proof and ordered social IDs.
 Client handshake retries refresh genuine local identity and wait for actual
 LAN readiness. The real remote CLIENT constructor can retain a preparation
 generation until it supplies its actual canonical claim and hooks.
+
+The pure constructor recipe codec reuses the lower request and CLIENT policy
+field codecs. It retains endpoint, protocol, qport, physical seat, negotiated
+request, policy and composition as values. An unselected policy remains literal
+empty state; selected policies retain the constructor's zero history and inflate
+defaults and require its real config, inventory and command extents. Process
+reader and context pointers are rejected. No Source, content graph or admission
+callback is invoked by these field codecs.
 
 The bootstrap handles native challenge/connect, ping and Source-backed
 status/info replies. Unrecognized binary master/browser, other-family and
@@ -64,6 +81,10 @@ the real lower queue admits them. The sent receipt carries that number and
 the actual packet sequence. Reliable fragmentation keeps unsent groups queued;
 it emits no sent receipt until the command datagram was actually included.
 Rerelease prediction can therefore retain its true packet-to-command mapping.
+If a sent notification fails, the lower owner retains that accepted packet,
+command group, send time and per-seat completion cursor. It retries only the
+unfinished Source notifications before consuming further received messages;
+it does not resend the accepted command. This continuation is cold-saved.
 
 Slower Q2PRO client frames consume the genuine whole Source motion receipt.
 Its physical actor and edict, link count, creation frame/origin and eight
@@ -106,7 +127,7 @@ numbers, staged disconnect reason/queue/send/retirement marker, and held immutab
 download and its optional derived wire artifact. Genuine memory catalog
 downloads retain their owned Source bytes and actual view without a file
 resource or fabricated acquisition. The current session cold
-version is seven. Candidate callbacks receive
+version is fourteen. Candidate callbacks receive
 the actual isolated runtime and rebind to its genuine Source and ContentGraph.
 Resource and view IDs map to candidate ownership. The acquisition receipt is
 checked against the retained view rather than reconstructed from the filesystem.
@@ -119,16 +140,70 @@ client ID. Candidate callback inventories bind without calling identity,
 prepare, commit, Source startup, transport send or admission. The upper
 retirement owner clears that ID after its exact canonical client is detached.
 
-## Required joins still open
+`network_q2_host_save.c` owns the frontend HOST capsule. It retains real
+ordered canonical connection claims and epochs, full Source actor receipts,
+one-human LOCAL groups, config beforeimages, pending event packets and journal
+cursors, the bootstrap, and the Source/frame-qualified unicast cache. The
+cache includes the actual map revision, distinguishing another load of the
+same BSP when Source frame and time restart. HOST capsule version five rebinds
+that revision through its genuine saved current Source anchor. The
+capsule records offline `local_only` explicitly. It restores custody before
+the generic runtime admits the saved claims; callbacks bind to that actual
+candidate runtime without readmission or GAME startup.
 
-Network owns generic runtime dispatch, physical Source claim binding, disconnect
-ordering, upper bootstrap installation and generic cold peer registration.
-Its checkpoint callers must supply the real active or candidate reference graph.
+Partial map travel preserves the preceding publication as an archival owner
+and separately retains any current candidate publication and install cursor.
+Each LOCAL connection retains its actual preceding Source map revision until
+the genuine local refresh cursor runs. Checkpoint and import use its retained
+player receipt; ordinary commands and flushes still require the current human
+actor. The capsule distinguishes historical receipts explicitly when map
+revision values are rebound in the isolated candidate.
+Each LOCAL claim also saves its actual canonical composition, which changes
+only when that connection's restart succeeds rather than at the discovery
+publisher's earlier install boundary.
+An archive owns its prior resource bytes and numbering and supplies no live
+Source callbacks. Process-only current binders transfer at the ordinary travel
+creation boundary. Failed import cleanup frees custody without replaying
+Source disconnect. The parent Network owner installs this capsule in QANF24.
+
+Q2PRO frames retain an explicit client-number-field receipt, distinguishing a
+real chase player zero from an omitted field. The decoder seeds the first
+effective identity from actual serverdata and inherits later omitted identity
+from the delta base. Actual serverdata flags and minor version also select the
+negotiated config namespace, including the enhanced 13,630-entry layout. The
+namespace allocation survives reset and cold capture independently of the
+initial decoder policy.
+
+Original Source precache registers an exact held resource, view and issued
+opening. EVENTS20 preserves additional custody receipts when the same
+immutable ResourceKey came from different genuine mount or link recipes.
+Protocol records capture the key and selected custody at append time; HOST
+transcoding consumes that exact receipt without selecting a later opening.
+TEMP operands also retain their real primitive byte offsets and captured full
+actors. Stufftext presentation and simulation records are linked at emission.
+
+## Integration and remaining validation
+
+Network supplies generic runtime dispatch, physical Source claim binding,
+disconnect ordering, upper bootstrap installation and generic cold peer
+registration. Its checkpoint callers supply the active or candidate reference
+graph, including held download resource and view identities.
 This lower owner supplies the native bootstrap, authenticated endpoint matching
 and game-channel state. Root owns build registration and publication.
 
-The application Q2 publisher owner must bind every host callback to the actual
-compiled or external Source GAME. The client constructor must create the real
+The application Q2 publisher binds host callbacks to the actual compiled or
+external Source GAME. Its Original API2023 to PRIVATE4038 projection preserves
+the real Source movement domain while mapping configs and resource indices into
+the target codec's namespace. Per-peer resources retain original acquisitions;
+the projection does not change SDK tables. LAYOUT masks retain the captured
+recipient and actual API3 or API2023 grammar. NativeHost now invokes the real
+rerelease SDK `Entity_IsVisibleToPlayer` export during this Source's returned
+end-frame stage. It reconciles and requalifies both full physical bindings and
+the Source frame around the call. The pure stage entity getter observes that
+same admitted frame. The publisher owner is joining retained visibility and
+first-viewer readiness; `instance_bits` does not establish a physical client
+mask.
+The client constructor must create the real
 remote Source/view owner, console context, content preparation and download
 consumer, frame observer, presentation timing, and teardown. A selected character
 or frontend seat ordinal supplies none of those receipts.
@@ -154,7 +229,7 @@ and inventory with actual map/admission/retirement resets and cold continuation.
 Service seat markers qualify genuine canonical connection groups. Rerelease
 duplicate keys use the shared HOST cache, checked before actual raw and normalized
 packet publication and remembered afterward. The pure cache has explicit graph
-capture/restore; its enclosing HOST cold wrapper remains a required parent join.
+capture/restore and is retained by the installed HOST cold wrapper.
 
 Original `WriteEntity` records its full actor and exact byte offset at the real
 write, with the Engine namespace number supplied by the genuine Source bridge.
@@ -189,6 +264,11 @@ normalized consumer joins remain with the corresponding owners.
 Hosted disconnect retries retain one reason and atomically queued notice. The
 retiring channel accepts only native acknowledgements, progresses actual pending
 fragments and calls its enclosing retirement marker once after notice delivery.
+An incomplete reliable notice returns pending progress without inventing an
+I/O error; actual transport and Source callback errors remain failures.
+An incoming native client disconnect retains its reason and Source retirement
+callback separately, with no outgoing notice. A failed Source callback remains
+owned for retry and cold recovery.
 Production channel send commits its scalar sequencing only after transport
 acceptance; failed sends keep their genuine queued and fragment backing bytes.
 Server frame cursors and history also commit only for actually included datagrams.

@@ -3,6 +3,7 @@
 
 #include "qa/application.h"
 #include "qa/application_q3_weapon_models.h"
+#include "qa/equipment_weapon_slot.h"
 
 typedef enum qa_application_ammo_warning {
     QA_APPLICATION_AMMO_NONE,
@@ -38,6 +39,12 @@ typedef struct qa_application_equipment_view {
      * namespace and is independent of the actor's ARSENAL binding. */
     bool equipment_slot;
     bool original_qvm;
+    bool source_slot;
+    qa_weapon_presentation source_binding;
+    qa_item_id pending;
+    qa_actor_owner pending_provider;
+    uint64_t source_generation;
+    qa_bytes source_icon, source_held;
 } qa_application_equipment_view;
 
 /* Observes the actual active equipment slot, otherwise the selected arsenal,
@@ -46,6 +53,8 @@ typedef struct qa_application_equipment_view {
  * Missing optional source fields remain explicit. Output is unchanged on error. */
 bool qa_application_equipment_read(qa_application *, qa_actor_id,
     qa_application_equipment_view *, qa_error *);
+bool qa_application_equipment_source_read(qa_application *,qa_actor_id,
+    qa_application_equipment_view *,bool *present,qa_error *);
 bool qa_application_equipment_current(qa_application *, const qa_application_equipment_view *);
 /* Pure product qualification for an actual retained equipment registry during
  * capture/import. Reads its real constructed provider; no source call runs. */

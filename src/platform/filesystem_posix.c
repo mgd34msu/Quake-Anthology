@@ -1392,7 +1392,8 @@ static bool stage_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *er
     identity_from_stat(&info, out); return true;
 }
 static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume, bool readonly, bool checked,
-                       qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+                       qa_fs_stage **out, uint64_t *initial, bool *collision, qa_error *error) {
+    if (collision) *collision = false;
     if (!root || !out || (checked && *out) || !initial || !qa_fs_relative_valid(target, false, error))
         return stage_argument(error, "Invalid contained staging request");
     qa_fs_stage *stage = calloc(1, sizeof(*stage));
@@ -1411,7 +1412,9 @@ static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, boo
     do { stage->descriptor = openat(stage->parent, stage->temporary, flags, 0600); }
     while (stage->descriptor < 0 && errno == EINTR);
     if (stage->descriptor < 0) {
-        int code = errno; if (!checked) qa_fs_stage_close(stage, true);
+        int code = errno;
+        if (collision) *collision = !resume && code == EEXIST;
+        if (!checked) qa_fs_stage_close(stage, true);
         return fail_errno(error, "cannot open staged file", target, code);
     }
     /* A shared root cannot admit two active writers of the same resume nonce. */
@@ -1430,15 +1433,31 @@ static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, boo
 }
 bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, resume, false, false, out, initial, error);
+    return stage_open(root, target, nonce, resume, false, false, out, initial, NULL, error);
 }
 bool qa_fs_stage_open_readonly(qa_fs_root *root, const char *target, uint64_t nonce,
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, true, true, false, out, initial, error);
+    return stage_open(root, target, nonce, true, true, false, out, initial, NULL, error);
 }
 bool qa_fs_stage_open_checked(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, resume, false, true, out, initial, error);
+    return stage_open(root, target, nonce, resume, false, true, out, initial, NULL, error);
+}
+bool qa_fs_stage_open_unique_checked(qa_fs_root *root, const char *target,
+    uint64_t *namespace_nonce, uint64_t excluded_nonce, qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    if (!namespace_nonce || !out || *out || !initial)
+        return stage_argument(error, "Unique stage admission requires its retained namespace and empty owner");
+    for (;;) {
+        if (*namespace_nonce == UINT64_MAX)
+            return stage_argument(error, "Native stage namespace is exhausted");
+        ++*namespace_nonce;
+        if (*namespace_nonce == excluded_nonce) continue;
+        bool collision = false; qa_error attempt = {0};
+        if (stage_open(root, target, *namespace_nonce, false, false, true, out, initial, &collision, &attempt))
+            return true;
+        if (!collision) { if (error) *error = attempt; return false; }
+        if (!qa_fs_stage_close_checked(out, true, error)) return false;
+    }
 }
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
     if (!stage || stage->closing || !out) return stage_argument(error, "Missing stage size output");

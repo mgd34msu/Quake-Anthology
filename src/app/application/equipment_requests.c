@@ -3,6 +3,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_catalog.h"
+#include "guest_native_q2_private.h"
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
 #include <stdlib.h>
@@ -13,6 +14,16 @@ static bool current(qa_application *app,application_provider *provider,qa_actor_
         qa_actors_get(qa_session_actors(app->session),actor)&&
         application_provider_for(app,actor,QA_ROLE_ARSENAL,"")==provider;
 }
+typedef struct equipment_q2_request {
+    qa_q2_game *game;
+    qa_q2_weapon weapon;
+    qa_q2_selection result;
+} equipment_q2_request;
+static bool q2_request(void *context,qa_actor_id actor,qa_error *e)
+{
+    equipment_q2_request *request=context;
+    return qa_q2_weapon_select(request->game,actor,request->weapon,false,&request->result,e);
+}
 bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_actor_owner owner,
     qa_item_id item,bool *accepted,qa_error *e)
 {
@@ -22,8 +33,11 @@ bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_ac
         return application_fail(e,QA_ERROR_ARGUMENT,"Weapon request requires its genuine selected arsenal and full actor");
     *accepted=false;
     if(provider->owner!=owner) return true;
+    if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
+        return application_native_q2_weapon_accepts(provider,actor,item,accepted,e);
     bool declared=false;
-    if(provider->kind==APPLICATION_PROVIDER_QVM) {
+    if(provider->kind==APPLICATION_PROVIDER_QVM ||
+        (provider->kind==APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
         struct application_q3_guest *engine=q3g_engine(provider);
         const application_q3_catalog_weapon *weapons=NULL; size_t n=0;
         if(!engine||!engine->game||!engine->game->catalog)
@@ -87,12 +101,29 @@ bool application_equipment_primary_select(void *context,qa_actor_id actor,qa_act
     bool ok;
     if(provider->kind==APPLICATION_PROVIDER_QC)
         ok=qa_application_qc_weapon_request(app,actor,item,accepted,e);
-    else if(provider->kind==APPLICATION_PROVIDER_QVM) {
+    else if(provider->kind==APPLICATION_PROVIDER_QVM||
+        (provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.engine)) {
         struct application_q3_guest *engine=q3g_engine(provider);
         if(!engine||!engine->game||!engine->game->weapon_services)
             return application_fail(e,QA_ERROR_UNSUPPORTED,"Original weapon request has no admitted Source request owner");
         ok=application_q3_weapons_services_select_intent(engine->game->weapon_services,actor,owner,item,accepted,e);
-    } else if(provider->kind==APPLICATION_PROVIDER_Q1||provider->kind==APPLICATION_PROVIDER_Q2||provider->kind==APPLICATION_PROVIDER_Q3)
+    } else if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
+        ok=application_native_q2_weapon_request(provider,actor,item,accepted,e);
+    else if(provider->kind==APPLICATION_PROVIDER_Q2) {
+        const char *identity=qa_strings_cstr(qa_session_strings(app->session),item);
+        equipment_q2_request request={.game=provider->state.q2,.result=QA_Q2_NOT_OWNED};
+        bool found=false;
+        for(int i=1;i<QA_Q2_WEAPON_COUNT;++i) {
+            const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(provider->state.q2,(qa_q2_weapon)i);
+            if(identity&&definition&&definition->item&&!strcmp(identity,definition->item)) {
+                request.weapon=(qa_q2_weapon)i; found=true; break;
+            }
+        }
+        if(!found) return application_fail(e,QA_ERROR_NOT_FOUND,"Weapon request lost its actual selected Q2 definition");
+        ok=qa_q2_run_actor(request.game,actor,q2_request,&request,e);
+        if(ok) *accepted=request.result==QA_Q2_SELECTED||request.result==QA_Q2_CURRENT;
+    }
+    else if(provider->kind==APPLICATION_PROVIDER_Q1||provider->kind==APPLICATION_PROVIDER_Q3)
         ok=application_native_mode_select_weapon(app,actor,item,e);
     else return application_fail(e,QA_ERROR_UNSUPPORTED,"Native external weapon request requires its genuine entered Source command adapter");
     if(!ok) return false;
@@ -105,27 +136,8 @@ bool application_equipment_request_weapon(qa_application *app,qa_actor_id actor,
     if(!app||!accepted||!owner||!item||!app->session||!qa_actors_get(qa_session_actors(app->session),actor))
         return application_fail(e,QA_ERROR_ARGUMENT,"Weapon request requires a genuine current application actor and source");
     *accepted=false;
-    qa_equipment_weapon_view slot; bool found=false;
-    if(app->equipment&&!qa_equipment_weapon_view_read(app->equipment,actor,&slot,&found,e)) return false;
-    if(found&&slot.source.owner==owner&&slot.item==item) {
-        if(!application_equipment_runtime_owner_current(app->equipment_runtime,owner))
-            return application_fail(e,QA_ERROR_NOT_FOUND,"Weapon request lost its real equipment source");
-        if(!qa_equipment_select_grapple(app->equipment,actor,true,e)||!qa_equipment_reconcile(app->equipment,actor,e)) return false;
-        qa_equipment_weapon_view reached; bool present=false;
-        if(!qa_equipment_weapon_view_read(app->equipment,actor,&reached,&present,e)) return false;
-        *accepted=present&&reached.source.owner==owner&&reached.item==item&&
-            application_equipment_runtime_owner_current(app->equipment_runtime,owner);
-        return true;
-    }
-    qa_equipment_state state;
-    bool coordinated=app->equipment&&qa_equipment_read(app->equipment,actor,&state)&&
-        state.selection.binding==QA_EQUIPMENT_WEAPON_SLOT&&state.selection.grapple!=QA_GRAPPLE_DISABLED;
-    if(!coordinated) return application_equipment_primary_select(app,actor,owner,item,accepted,e);
-    if(!qa_equipment_request_primary(app->equipment,actor,owner,item,accepted,e)) return false;
-    if(!*accepted) return true;
-    if(!qa_equipment_reconcile(app->equipment,actor,e)) return false;
-    application_provider *provider=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
-    if(!current(app,provider,actor)||provider->owner!=owner)
-        return application_fail(e,QA_ERROR_NOT_FOUND,"Coordinated weapon request replaced its actual primary source");
-    return true;
+    qa_equipment_state bound;
+    if(app->equipment&&qa_equipment_read(app->equipment,actor,&bound))
+        return qa_equipment_weapon_request(app->equipment,actor,owner,item,accepted,e);
+    return application_equipment_primary_select(app,actor,owner,item,accepted,e);
 }

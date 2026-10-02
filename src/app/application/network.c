@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "bots_catalog.h"
 #include "guest_q3_private.h"
 #include "guest_q3_restart.h"
 #include "map_players_private.h"
@@ -1221,11 +1222,11 @@ static struct application_q3_guest *round_source(qa_application *application, qa
     if (!owner || !engine || provider->owner != owner || !provider->constructed || !provider->attached ||
         application->operation != APPLICATION_IDLE || application->state != QA_APPLICATION_RUNNING ||
         !qa_session_safe(application->session) || !qa_world_idle(application->world) ||
-        engine->calls || engine->draining_clients || !engine->game || !engine->game->host ||
-        !qa_q3_host_idle(engine->game->host)) {
+        engine->calls || engine->draining_clients || !engine->game || !engine->game->host) {
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 round wire world requires its exact idle retained primary GAME owner");
         return NULL;
     }
+    if(!qa_q3_host_round_ready(engine->game->host,error)) return NULL;
     return engine;
 }
 

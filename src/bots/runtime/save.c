@@ -34,9 +34,9 @@ static bool fail(qa_error *error, const char *message)
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 7;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 9;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 7 ? true :
+        qa_source_save_u32(io, &version) && version == 9 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 
@@ -233,7 +233,7 @@ static bool capture_parts(qa_session *session, const qa_bot_runtime *runtime, qa
     bool ok=runtime->closed || qa_bot_memory_capture(runtime->memory,&parts[MEMORY],error);
     if(ok) ok = !runtime->library || (qa_bot_library_variables_capture(runtime->library, &parts[VARIABLES], error) &&
         qa_bot_runtime_assets_capture(runtime, &parts[ASSETS], &assets, error));
-    if (ok && runtime->actions) ok = qa_bot_actions_capture(runtime->actions, &parts[ACTIONS], error);
+    if (ok && runtime->actions) ok = qa_bot_actions_source_capture(runtime->actions, &parts[ACTIONS], error);
     if (ok && runtime->bsp) ok = qa_bot_bsp_capture(runtime->bsp, runtime->map.source_entities, &parts[BSP], error);
     if (ok && runtime->goals) ok = qa_bot_goals_save_capture(session, runtime->goals, assets, &parts[GOALS], error);
     qa_bot_chat_asset_save_refs refs = {.context = assets, .encode = chat_encode, .decode = chat_decode};
@@ -252,6 +252,7 @@ bool qa_bot_runtime_save_capture(qa_session *session, const qa_bot_runtime *runt
     if (!session || !runtime || !out || !qa_bot_runtime_can_destroy(runtime) || runtime->restore_pending)
         return fail(error, "Bot runtime capture requires its complete idle source owner");
     if (!runtime->globals || !runtime->log || !runtime->memory ||
+        qa_bot_actions_memory(runtime->actions)!=runtime->memory ||
         qa_bot_memory_disposed(runtime->memory)!=runtime->closed ||
         (runtime->library && qa_bot_library_memory(runtime->library)!=runtime->memory) ||
         runtime->options.library.preprocessor.globals != runtime->globals ||
@@ -344,7 +345,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
             if(!qa_bot_memory_dispose(runtime->memory,error)) ok=false;
         }
     }
-    if (ok) ok = qa_bot_actions_restore_bytes(runtime->actions, parts[ACTIONS], error);
+    if (ok) ok = qa_bot_actions_source_restore(runtime->actions, parts[ACTIONS], error);
     if (ok && state.bsp) ok = qa_bot_bsp_restore(parts[BSP], runtime->map.source_entities, &runtime->bsp, error);
     if (ok && state.goals) ok = qa_bot_goals_save_restore(session, runtime->goals, parts[GOALS], assets,
         runtime->bsp ? qa_bot_bsp_entities(runtime->bsp) : runtime->map.entities, error);

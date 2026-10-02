@@ -8,6 +8,7 @@
 #include "guest_q3_weapon_models.h"
 #include "native_q3_equipment.h"
 #include "equipment_gear_presentation.h"
+#include "guest_q3_components.h"
 #include "qa/application_equipment.h"
 #include "qa/qc_weapon_visual.h"
 #include "qa/game_q3_source.h"
@@ -49,7 +50,28 @@ bool qa_application_equipment_current(qa_application *app,
 {
     if (!app || !view || !app->session ||
         !qa_actors_get(qa_session_actors(app->session), view->actor)) return false;
+    if(view->source_slot) {
+        application_q3_component_publication component;
+        application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
+        qa_equipment_state reached;
+        if(!app->equipment||!qa_equipment_read(app->equipment,view->actor,&reached))return false;
+        qa_item_id pending=reached.weapon_slot.phase==QA_WEAPON_SLOT_ACTIVE?view->source_binding.pending:reached.weapon_slot.next_item;
+        qa_actor_owner pending_owner=pending?(reached.weapon_slot.phase==QA_WEAPON_SLOT_ACTIVE?view->provider:reached.weapon_slot.next_provider):0;
+        return app->equipment&&view->selected&&!view->equipment_slot&&!view->original_qvm&&
+            view->pending==pending&&view->pending_provider==pending_owner&&
+            !view->gear_namespace&&!view->gear_service_owner&&
+            qa_equipment_weapon_presented(app->equipment,view->actor,view->provider)&&
+            qa_equipment_weapon_presentation_current(app->equipment,&view->source_binding)&&
+            application_q3_components_event_source_read(app,view->provider,&component,NULL)&&
+            component.game&&component.product&&component.product->family==view->family&&
+            component.generation==view->source_generation&&component.content==view->view_content&&
+            application_q3_component_items(component.game)==view->source_binding.context&&
+            view->source_binding.provider==view->provider&&view->source_binding.active==view->item&&
+            primary&&primary->constructed&&primary->attached&&!primary->close_pending&&primary->owner==view->primary;
+    }
     qa_equipment_state slot;
+    if(app->equipment&&qa_equipment_read(app->equipment,view->actor,&slot)&&slot.weapon_slot_present&&
+        !qa_equipment_weapon_presented(app->equipment,view->actor,view->provider))return false;
     if (!view->equipment_slot && app->equipment &&
         qa_equipment_read(app->equipment, view->actor, &slot) && slot.slot_active &&
         slot.selection.grapple == QA_GRAPPLE_Q3 && slot.selection.binding == QA_EQUIPMENT_WEAPON_SLOT) {
@@ -70,7 +92,7 @@ bool qa_application_equipment_current(qa_application *app,
         application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
         if (!app->equipment || !qa_equipment_read(app->equipment, view->actor, &state) ||
             state.selection.grapple != QA_GRAPPLE_Q3 || state.selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
-            !state.slot_active || state.sources.grapple != view->provider || !view->selected ||
+            !(state.weapon_slot_present?qa_equipment_weapon_presented(app->equipment,view->actor,view->provider):state.slot_active) || state.sources.grapple != view->provider || !view->selected ||
             view->family != QA_GAME_Q3 || !view->gear_namespace || !view->gear_service_owner ||
             !primary || !primary->constructed || !primary->attached || primary->close_pending ||
             primary->owner != view->primary ||
@@ -392,15 +414,70 @@ static bool q3_warning(qa_application *app, qa_application_equipment_view *view,
     return true;
 }
 
+bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
+    qa_application_equipment_view *out,bool *present,qa_error *error)
+{
+    if (!app || !out || !present || !app->session || !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation requires a live full actor");
+    *present=false;
+    size_t bindings=qa_equipment_weapon_presentation_count(app->equipment,actor);
+    for(size_t i=0;i<bindings;++i) {
+        qa_weapon_presentation source;bool found=false;
+        if(!qa_equipment_weapon_presentation_read(app->equipment,actor,i,&source,&found,error))return false;
+        if(!found||!qa_equipment_weapon_presented(app->equipment,actor,source.provider))continue;
+        application_q3_component_publication component;bool component_found=false;
+        size_t components=application_q3_components_publication_count(app->components);
+        for(size_t j=0;j<components;++j) {
+            application_q3_component_publication row;
+            if(!application_q3_components_publication_at(app->components,j,&row,error))return false;
+            if(row.owner==source.provider){component=row;component_found=true;break;}
+        }
+        if(!component_found)continue;
+        if(!component.game||!component.product||application_q3_component_items(component.game)!=source.context)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Source weapon presentation changed its actual component item owner");
+        application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
+        if(!primary||!primary->constructed||!primary->attached||primary->close_pending)
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Source weapon observation lost its actual primary world");
+        qa_application_equipment_view view={.actor=actor,.provider=source.provider,.primary=primary->owner,
+            .family=component.product->family,.selected=true,.source_slot=true,.source_binding=source,
+            .item=source.active,.pending=source.pending,.pending_provider=source.pending?source.provider:0,
+            .source_generation=component.generation,.view_content=component.content};
+        if(source.active) {
+            qa_item_admission definition;bool declared=false;
+            if(!application_q3_mod_items_item_read(source.context,actor,source.active,&definition,
+                &view.source_icon,&view.source_held,&declared,error))return false;
+            if(!declared||!definition.definition.weapon||definition.definition.owner!=source.provider)
+                return application_fail(error,QA_ERROR_FORMAT,"Active source weapon is outside its genuine admitted declaration");
+            view.label=definition.definition.label;view.ammo=definition.definition.ammo;
+            view.has_weapon_status=view.has_start_requirement=true;
+            if(view.ammo) {
+                if(!qa_inventory_count_read(app->inventory,actor,view.ammo,&view.ammo_count,error))return false;
+                view.finite_ammo=true;
+            }
+            view.has_ammo_to_start=!view.finite_ammo||view.ammo_count>0;
+        }
+        qa_equipment_state state;
+        if(!qa_equipment_read(app->equipment,actor,&state))return false;
+        if(state.weapon_slot.phase!=QA_WEAPON_SLOT_ACTIVE){view.pending=state.weapon_slot.next_item;view.pending_provider=state.weapon_slot.next_provider;}
+        if(!view.pending)view.pending_provider=0;
+        if(!qa_application_equipment_current(app,&view))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Source weapon observation retired its actual registry binding");
+        *out=view;*present=true;return true;
+    }
+    return true;
+}
+
 bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
     qa_application_equipment_view *out, qa_error *error)
 {
-    if (!app || !out || !app->session || !qa_actors_get(qa_session_actors(app->session), actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation requires a live full actor");
+    bool source_present=false;
+    if(!qa_application_equipment_source_read(app,actor,out,&source_present,error))return false;
+    if(source_present)return true;
     application_equipment_gear_presentation gear;
     bool gear_selected = false;
     qa_equipment_state slot;
-    if (app->equipment && qa_equipment_read(app->equipment, actor, &slot) && slot.slot_active &&
+    if (app->equipment && qa_equipment_read(app->equipment, actor, &slot) &&
+        (slot.weapon_slot_present?qa_equipment_weapon_presented(app->equipment,actor,slot.sources.grapple):slot.slot_active) &&
         slot.selection.grapple == QA_GRAPPLE_Q3 && slot.selection.binding == QA_EQUIPMENT_WEAPON_SLOT &&
         !application_equipment_gear_presentation_read(app, actor, &gear, &gear_selected, error)) return false;
     if (gear_selected) {
@@ -432,7 +509,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         .primary = primary->owner, .selected = provider != primary,
         .family = provider->product->family, .rate = 10};
     qa_q3_product q3_product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
-    bool standard_q3 = true;
+    bool standard_q3 = true, declared_source_catalog = false;
     double required = 1;
     double low_threshold = 0;
     bool q1 = provider->kind == APPLICATION_PROVIDER_Q1;
@@ -502,10 +579,10 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         view.original_qvm = engine->game->vm != NULL;
         view.q3_time_ms = engine->milliseconds;
         if (engine->game->vm && !application_q3_guest_fire_read(provider, actor, &view.q3_fire, error)) return false;
-        if (view.original_qvm) {
+        if (engine->game->catalog) {
+            declared_source_catalog = true;
             const application_q3_catalog_weapon *weapons = NULL; size_t count = 0;
-            if (!engine->game->catalog || !application_q3_catalog_current(engine->game->catalog,
-                    engine->game->image, engine->game->vm, engine->game->abi))
+            if (!application_q3_catalog_role_current(engine->game->catalog, engine->game))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment lost its actual GAME catalog owner");
             if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error)) return false;
             bool found = false;
@@ -523,8 +600,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
                 q3_product = engine->product;
             }
         } else {
-            view.q3_weapon = (qa_q3_weapon)view.source_weapon;
-            view.item = q3_identity(app, view.q3_weapon, false); q3_product = engine->product;
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Original equipment has no declared source item namespace");
         }
         view.visible = view.source_weapon != 0; view.has_start_requirement = true;
     }
@@ -538,7 +614,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
                 view.view_model = items[i].model; break;
             }
     }
-    if (!view.original_qvm && !item_definition(app, &view, error)) return false;
+    if (!view.original_qvm && !declared_source_catalog && !item_definition(app, &view, error)) return false;
     if (view.ammo) {
         if (!qa_inventory_count_read(app->inventory, actor, view.ammo, &view.ammo_count, error)) return false;
         view.finite_ammo = view.family != QA_GAME_Q3 || view.ammo_count != -1;

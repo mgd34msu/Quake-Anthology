@@ -376,10 +376,6 @@ static bool checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *
 bool qa_qvm_checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *expected,
     size_t count, const qa_qvm_saved_resolver *resolver, qa_error *error)
 { return checkpoint_callbacks(vm,expected,count,resolver,false,error); }
-bool qa_qvm_execution_checkpoint_inventory(const qa_qvm *vm,
-    const qa_qvm_saved_function *expected, size_t count,
-    const qa_qvm_saved_resolver *resolver, qa_error *error)
-{ return checkpoint_callbacks(vm,expected,count,resolver,true,error); }
 bool qa_qvm_checkpoint_inventory(const qa_qvm *vm, const qa_qvm_saved_function *expected,
     size_t count, const qa_qvm_saved_resolver *resolver,
     const qa_qvm_saved_write_watch *watches, size_t watch_count, qa_error *error)
@@ -542,6 +538,8 @@ bool qa_qvm_observe_function(qa_qvm *vm, uint32_t instruction, qa_qvm_function_o
                              void *context, qa_qvm_binding *out, qa_error *error)
 {
     if (!qa_qvm_live(vm, error) || !function(vm->image, instruction, error)) return false;
+    if (vm->candidate_inventory)
+        return error_at(error, instruction, "Candidate callback inventory already sealed");
     if (observe == NULL || out == NULL) return error_at(error, instruction, "QVM function observer or output is missing");
     function_entry *target = ensure_entry(state(vm), instruction, error);
     if (target == NULL) return false;
@@ -569,7 +567,10 @@ bool qa_qvm_unbind(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
     if (!qa_qvm_live(vm, error)) return false;
     execution *exec = state(vm);
     for (binding *current = exec->bindings; current != NULL; current = current->next)
-        if (current->id == id && current->active) { current->active = false; collect_bindings(exec); return true; }
+        if (current->id == id && current->active) {
+            if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
+            current->active = false; collect_bindings(exec); return true;
+        }
     return qa_qvm_error(error, QA_ERROR_NOT_FOUND, 0, "QVM binding does not exist");
 }
 

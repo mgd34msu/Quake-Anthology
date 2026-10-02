@@ -7,7 +7,8 @@ static bool selected_state(const qa_application *app, qa_actor_id actor,
         !app->destroy_requested && qa_actors_get(qa_session_actors(app->session), actor) &&
         qa_equipment_read(app->equipment, actor, state) &&
         state->selection.grapple == QA_GRAPPLE_Q3 &&
-        state->selection.binding == QA_EQUIPMENT_WEAPON_SLOT && state->slot_active;
+        state->selection.binding == QA_EQUIPMENT_WEAPON_SLOT &&
+        (state->weapon_slot_present?qa_equipment_weapon_presented(app->equipment,actor,state->sources.grapple):state->slot_active);
 }
 
 bool application_equipment_gear_presentation_current(qa_application *app,

@@ -241,6 +241,15 @@ static application_provider *arsenal_provider(qa_application *application,
     return application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
 }
 
+static bool equipment_primary_owner(void *opaque,qa_actor_id actor,qa_actor_owner *out,qa_error *error)
+{
+    qa_application *app=opaque;
+    application_provider *provider=arsenal_provider(app,actor);
+    if(!out||!provider||!provider->constructed||!provider->attached||provider->close_pending||
+        !qa_actors_get(qa_session_actors(app->session),actor))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Equipment primary binding lost its genuine selected source");
+    *out=provider->owner; return true;
+}
 static bool equipment_holster(void *opaque, qa_actor_id actor,
                               qa_error *error)
 {
@@ -415,6 +424,7 @@ bool application_match_prepare_equipment(qa_application *application,
         .context = application,
         .select_weapon = application_native_mode_select_weapon,
         .primary_holster = equipment_holster,
+        .primary_owner = equipment_primary_owner,
         .primary_holstered = equipment_holstered,
         .primary_holstered_read = equipment_holstered_read,
         .primary_resume = equipment_resume,

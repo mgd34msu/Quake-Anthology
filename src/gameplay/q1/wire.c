@@ -71,7 +71,13 @@ static bool append(qa_q1_game *g, q1_wire_table *table, const char *path, qa_err
 bool qa_q1_wire_declare_model(qa_q1_game *g, const char *path, qa_error *error) {
     if (!g || !g->wire || !g->wire->loading || g->destroy_pending)
         return fail(error, "Q1 model declaration requires the native loading stage");
-    return append(g, &g->wire->models, path, error);
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    bool okay = append(g, &g->wire->models, path, error);
+    if (okay && !qa_q1_game_operation_live(&operation))
+        okay = fail(error, "Q1 source retired during its model precache");
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 bool qa_q1_wire_declare_sound(qa_q1_game *g, const char *path, qa_error *error) {
     if (!g || !g->wire || !g->wire->loading || g->destroy_pending)

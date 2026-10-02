@@ -8,7 +8,7 @@ static bool found(void *context, const qa_net_address *address, uint64_t now, qa
     frontend_kex_browser *b = context;
     size_t at = 0;
     while (at < b->query_count && !qa_net_address_equal(&b->queries[at].address, address, true)) ++at;
-    if (b->query_count == 256 || (at < b->query_count &&
+    if ((at == b->query_count && b->query_count == 256) || (at < b->query_count &&
         (now < b->queries[at].sent_ns || now - b->queries[at].sent_ns < UINT64_C(1000000000)))) return true;
     uint8_t bytes[256];
     qa_net_writer w;

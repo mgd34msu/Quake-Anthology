@@ -44,6 +44,9 @@ typedef struct qa_scene_rail_options {
 bool qa_scene_rail_geometry(qa_scene_frame *, const qa_scene_view *, qa_scene_rail_kind,
                             qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4,
                             const qa_scene_rail_options *, qa_scene_mesh *, qa_error *);
+bool qa_scene_source_rail_geometry(qa_scene_frame *, const qa_scene_view *, qa_scene_rail_kind,
+    qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4,
+    const qa_scene_rail_options *, qa_scene_mesh *, qa_error *);
 typedef struct qa_scene_flare_options {
     qa_vec3 color, rim_color;
     float scale, fade_start, fade_end;
@@ -54,6 +57,9 @@ bool qa_scene_flare(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
 bool qa_scene_q3_beam(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
                       qa_vec3 old_origin, const qa_scene_image *,
                       const qa_scene_state *previous_state, qa_error *);
+bool qa_scene_q3_beam_draw(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
+    qa_vec3 old_origin, const qa_scene_image *, const qa_scene_state *,
+    qa_scene_draw *, bool *present, qa_error *);
 bool qa_scene_poly_geometry(qa_scene_frame *, const qa_scene_vertex *, size_t,
                             qa_scene_mesh *, qa_error *);
 /* Geometry is owned by the frame until reset; no draw or material is emitted. */
@@ -62,6 +68,8 @@ bool qa_scene_sprite_geometry(qa_scene_frame *, const qa_scene_view *, qa_vec3 o
                               qa_scene_mesh *, qa_error *);
 bool qa_scene_default_model(qa_scene_frame *, const qa_scene_view *, qa_scene_matrix model,
                             const qa_scene_image *white, const qa_scene_state *, qa_error *);
+bool qa_scene_default_model_draw(qa_scene_frame *, const qa_scene_view *, qa_scene_matrix,
+    const qa_scene_image *, const qa_scene_state *, qa_scene_draw *, qa_error *);
 
 /* Call after backend recreation, atlas loss, or dropping an emitted frame. */
 void qa_scene_shadows_invalidate(qa_scene_shadows *);

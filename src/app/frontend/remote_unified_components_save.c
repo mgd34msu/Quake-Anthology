@@ -216,6 +216,52 @@ static bool profile(remote_component *row,qa_error *e)
             row->state.mod->program_path,qa_json_source(d,declaration),&row->profile,e);
     qa_json_destroy(d); return ok||(e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Saved component has another genuine CG declaration"));
 }
+static bool admissions(qa_source_save_io *io,remote_component *row)
+{
+    if(!qa_source_save_u64(io,&row->submission_cycle)||!qa_source_save_bool(io,&row->admissions_ready)||
+        !qa_source_save_count(io,&row->admission_count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    if(!row->submission_cycle&&(row->admission_count||row->admissions_ready||row->submitted))
+        return fail(io,"Component admission continuation lacks its real scene cycle");
+    if(row->submitted&&!row->admissions_ready) return fail(io,"Submitted component has no completed admission receipt");
+    if(io->direction==QA_SOURCE_SAVE_READ) {
+        row->admissions=row->admission_count?calloc(row->admission_count,sizeof(*row->admissions)):NULL;
+        if(row->admission_count&&!row->admissions) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining saved component admissions");
+    }
+    for(size_t i=0;i<row->admission_count;++i) {
+        remote_component_packet_admission *receipt=row->admissions+i;
+        if(!qa_source_save_i32(io,&receipt->source_time)||!qa_source_save_u32(io,&receipt->first_entity)||
+            receipt->first_entity>QA_Q3_SOURCE_ENTITY_LIMIT||!qa_source_save_bool(io,&receipt->entity_started)||
+            !qa_source_save_count(io,&receipt->entity_scanned,SIZE_MAX)||
+            !qa_source_save_count(io,&receipt->entity_count,QA_Q3_SOURCE_ENTITY_LIMIT-receipt->first_entity)||
+            !qa_source_save_count(io,&receipt->entity_emitted,receipt->entity_count)||receipt->entity_count>receipt->entity_scanned||
+            (!receipt->entity_started&&(receipt->first_entity||receipt->entity_scanned||receipt->entity_count||receipt->entity_emitted))||
+            !qa_source_save_count(io,&receipt->polygon_count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+        if(io->direction==QA_SOURCE_SAVE_READ) {
+            receipt->polygons=receipt->polygon_count?calloc(receipt->polygon_count,sizeof(*receipt->polygons)):NULL;
+            if(receipt->polygon_count&&!receipt->polygons) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining saved component polygon receipts");
+        }
+        for(size_t j=0;j<receipt->polygon_count;++j) {
+            remote_component_polygon_admission *polygon=receipt->polygons+j;
+            if(!qa_source_save_u32(io,&polygon->ordinal)||!qa_source_save_bool(io,&polygon->reached)||
+                !qa_source_save_bool(io,&polygon->admitted)||!qa_source_save_bool(io,&polygon->emitted)||
+                (!polygon->reached&&(polygon->ordinal||polygon->admitted||polygon->emitted))||
+                (polygon->emitted&&!polygon->admitted)||(row->admissions_ready&&!polygon->reached))
+                return fail(io,"Saved component polygon has no actual reached admission");
+        }
+        if(!qa_source_save_count(io,&receipt->light_count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+        if(io->direction==QA_SOURCE_SAVE_READ) {
+            receipt->lights=receipt->light_count?calloc(receipt->light_count,sizeof(*receipt->lights)):NULL;
+            if(receipt->light_count&&!receipt->lights) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining saved component light receipts");
+        }
+        for(size_t j=0;j<receipt->light_count;++j) {
+            remote_component_light_admission *light=receipt->lights+j;
+            if(!qa_source_save_u32(io,&light->ordinal)||!qa_source_save_bool(io,&light->reached)||!qa_source_save_bool(io,&light->admitted)||
+                (!light->reached&&(light->ordinal||light->admitted))||(light->admitted&&light->ordinal>=QA_Q3_SOURCE_LIGHT_CAPACITY))
+                return fail(io,"Saved component light has no actual reached admission");
+        }
+    }
+    return true;
+}
 static bool row_fields(qa_source_save_io *io,remote_component *row,const frontend_unified_components_refs *refs)
 {
     if(!state(io,row->parent,&row->state)) return false;
@@ -226,33 +272,50 @@ static bool row_fields(qa_source_save_io *io,remote_component *row,const fronten
         row->frame=row->baseline;
     } else if(!frame(io,row,&row->frame)) return false;
     bool initialized=io->direction==QA_SOURCE_SAVE_WRITE&&row->initialized;
-    if(!qa_source_save_bool(io,&initialized)) return false;
-    if(!initialized) return !row->scene||fail(io,"Uninitialized component retains an uncaptured physical constructor");
+    bool physical=io->direction==QA_SOURCE_SAVE_WRITE&&row->frontend.owner;
+    if(!qa_source_save_bool(io,&row->retired)||!qa_source_save_bool(io,&initialized)||
+        !qa_source_save_bool(io,&physical)||(row->retired&&initialized)) return false;
+    if(!physical) return (!initialized&&!row->scene)||fail(io,"Component physical constructor is absent from its continuation");
+    if(!initialized&&!row->retired) return fail(io,"Uninitialized component retains an uncaptured physical constructor");
     if(!row->frame||!row->baseline) return fail(io,"Initialized component has no accepted Source frame");
+    if(io->direction==QA_SOURCE_SAVE_WRITE&&row->submission_cycle) {
+        uint64_t cycle=0;
+        if(!qa_q3_source_scene_bank_cycle(row->submission_bank,&cycle)||cycle!=row->submission_cycle)
+            q3remote_component_admissions_clear(row);
+    }
     qa_vfs *files=NULL;
     const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(row->parent->recipe),row->state.mod->product);
     if(!product||!qa_executable_recipe_content(row->parent->recipe,product->identity,&files,&product,io->error)) return false;
     if(!resource(io,files,refs,&row->artifact,&row->acquisition)||!resource(io,files,refs,&row->gameplay,&row->gameplay_acquisition)||
-        !qa_source_save_u64(io,&row->frontend_identity)||!row->frontend_identity||
-        !qa_source_save_u64(io,&row->draw_sequence)||!qa_source_save_bool(io,&row->advanced)||!qa_source_save_bool(io,&row->submitted)) return false;
+        !qa_source_save_u64(io,&row->frontend_identity)||!row->frontend_identity||!qa_source_save_i32(io,&row->renderer_time)||row->renderer_time<0||
+        !qa_source_save_bool(io,&row->scene_time_present)||!qa_source_save_f64(io,&row->scene_time_offset)||!isfinite(row->scene_time_offset)||
+        (!row->scene_time_present&&row->scene_time_offset!=0)||
+        !qa_source_save_bool(io,&row->previous_frame_present)||!qa_source_save_i32(io,&row->previous_frame_time)||row->previous_frame_time<0||
+        (!row->previous_frame_present&&row->previous_frame_time!=0)||
+        (row->previous_frame_present&&!row->scene_time_present)||
+        !qa_source_save_u64(io,&row->draw_sequence)||!qa_source_save_bool(io,&row->advanced)||!qa_source_save_bool(io,&row->submitted)||
+        !qa_source_save_bool(io,&row->pictures_present)||!qa_source_save_u64(io,&row->picture_sequence)||
+        !qa_source_save_count(io,&row->pictures_submitted,SIZE_MAX)||!admissions(io,row)) return false;
+    if(!row->pictures_present&&(row->picture_sequence||row->pictures_submitted))
+        return fail(io,"Absent component picture continuation contains a reached cursor");
     if(io->direction==QA_SOURCE_SAVE_READ) {
         row->restore_pending=true;
         if(!profile(row,io->error)) return false;
     }
     if(io->direction==QA_SOURCE_SAVE_WRITE) {
-        if(!refs->scene_checkpoint) return q3remote_component_fail(io->error,QA_ERROR_UNSUPPORTED,"Component capture requires its actual private renderer graph codec");
-        if(!application_q3_scene_checkpoint(row->scene,&row->saved_scene,io->error)||
+        if(!refs->scene_current||!refs->scene_current(refs->context,row->frontend.owner,row->frontend_identity,io->error))
+            return io->error&&io->error->code!=QA_OK?false:q3remote_component_fail(io->error,QA_ERROR_ARGUMENT,"Component capture lost its actual shared private renderer graph");
+        if((!row->retired&&!application_q3_scene_checkpoint(row->scene,&row->saved_scene,io->error))||
             !qa_cvars_save_capture(row->cvars,&row->saved_cvars,io->error)||
-            !qa_console_save_capture(row->console,io->session,&row->saved_console,io->error)||
-            !refs->scene_checkpoint(refs->context,row->frontend.owner,&row->saved_frontend,io->error)) return false;
+            !qa_console_save_capture(row->console,io->session,&row->saved_console,io->error)) return false;
     }
-    return blob(io,&row->saved_scene)&&row->saved_scene.size&&blob(io,&row->saved_cvars)&&row->saved_cvars.size&&
-        blob(io,&row->saved_console)&&row->saved_console.size&&blob(io,&row->saved_frontend)&&row->saved_frontend.size;
+    return blob(io,&row->saved_scene)&&(row->retired?!row->saved_scene.size:row->saved_scene.size!=0)&&blob(io,&row->saved_cvars)&&row->saved_cvars.size&&
+        blob(io,&row->saved_console)&&row->saved_console.size;
 }
 static bool fields(qa_source_save_io *io,frontend_unified_components *owner,const frontend_unified_components_refs *refs)
 {
-    uint8_t magic[4]={'Q','U','C','P'}; uint32_t version=1,epoch=frontend_remote_unified_epoch(owner->replica);
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&version)||version!=1||
+    uint8_t magic[4]={'Q','U','C','P'}; uint32_t version=6,epoch=frontend_remote_unified_epoch(owner->replica);
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&version)||version!=6||
         !qa_source_save_u32(io,&epoch)||epoch!=frontend_remote_unified_epoch(owner->replica)||
         !qa_source_save_u64(io,&owner->revision)||owner->revision>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_count(io,&owner->count,256)) return false;
@@ -267,8 +330,31 @@ static bool fields(qa_source_save_io *io,frontend_unified_components *owner,cons
             owner->rows[i]->parent=owner;
         }
         if(!row_fields(io,owner->rows[i],refs)) return false;
+        if(owner->rows[i]->retired) return fail(io,"Active component roster contains a retired physical row");
         for(size_t k=0;k<i;++k) if(!strcmp(owner->rows[k]->state.provider,owner->rows[i]->state.provider))
             return fail(io,"Saved components duplicate an admitted provider");
+    }
+    size_t retired=0;
+    if(io->direction==QA_SOURCE_SAVE_WRITE) for(remote_component *row=owner->retired;row;row=row->retired_next) ++retired;
+    if(!qa_source_save_count(io,&retired,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    remote_component **tail=&owner->retired;
+    for(size_t i=0;i<retired;++i) {
+        if(io->direction==QA_SOURCE_SAVE_READ) {
+            *tail=calloc(1,sizeof(**tail));
+            if(!*tail) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining actual inactive component registry owner");
+            (*tail)->parent=owner;
+        }
+        if(!*tail||!row_fields(io,*tail,refs)||!(*tail)->retired) return fail(io,"Saved inactive component has no physical retirement witness");
+        tail=&(*tail)->retired_next;
+    }
+    size_t physical=q3remote_component_physical_count(owner);
+    for(size_t i=0;i<physical;++i) {
+        const remote_component *row=q3remote_component_physical_at(owner,i);
+        for(size_t k=0;k<i;++k) {
+            const remote_component *prior=q3remote_component_physical_at(owner,k);
+            if(row->frontend_identity&&row->frontend_identity==prior->frontend_identity)
+                return fail(io,"Saved component physical namespaces alias an existing activation");
+        }
     }
     bool prepared=io->direction==QA_SOURCE_SAVE_WRITE&&owner->prepared;
     if(!qa_source_save_bool(io,&prepared)||!prepared) return !io->failed;
@@ -290,8 +376,8 @@ bool frontend_unified_components_checkpoint(frontend_unified_components *owner,c
 {
     if(!owner||!refs||!refs->content||!out||out->data||out->size||owner->busy||owner->restoring||!frontend_unified_components_retained_current(owner))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component capture requires its actual returned replica and content graph");
-    for(size_t i=0;i<owner->count;++i) {
-        remote_component *row=owner->rows[i];
+    for(size_t i=0;i<q3remote_component_physical_count(owner);++i) {
+        remote_component *row=q3remote_component_physical_at(owner,i);
         if(row->acquired||(row->scene&&!application_q3_scene_idle(row->scene))||
             (row->frontend.owner&&!row->frontend.idle(row->frontend.owner)))
             return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component capture retains genuine entered output");
@@ -301,9 +387,9 @@ bool frontend_unified_components_checkpoint(frontend_unified_components *owner,c
     qa_source_save_io io={0};
     bool ok=domain&&qa_source_save_writer(&io,qa_application_session(domain->application),e)&&fields(&io,owner,refs)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
-    for(size_t i=0;i<owner->count;++i) {
-        qa_buffer_free(&owner->rows[i]->saved_scene); qa_buffer_free(&owner->rows[i]->saved_cvars);
-        qa_buffer_free(&owner->rows[i]->saved_console); qa_buffer_free(&owner->rows[i]->saved_frontend);
+    for(size_t i=0;i<q3remote_component_physical_count(owner);++i) {
+        remote_component *row=q3remote_component_physical_at(owner,i);
+        qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars); qa_buffer_free(&row->saved_console);
     }
     return ok;
 }
@@ -336,8 +422,8 @@ bool frontend_unified_components_restore_prepare(qa_frontend *frontend,frontend_
     bool ok=domain&&owner->recipe==frontend_unified_media_recipe(media)&&qa_source_save_reader(&io,qa_application_session(domain->application),bytes,e)&&
         fields(&io,owner,refs)&&qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    for(size_t i=0;ok&&i<owner->count;++i) {
-        remote_component *row=owner->rows[i]; if(!row->restore_pending) continue;
+    for(size_t i=0;ok&&i<q3remote_component_physical_count(owner);++i) {
+        remote_component *row=q3remote_component_physical_at(owner,i); if(!row->restore_pending) continue;
         ok=q3remote_component_open(row,e);
         qa_cvars_restore *cvars=NULL;
         if(ok) ok=qa_cvars_save_prepare(row->cvars,(qa_bytes){row->saved_cvars.data,row->saved_cvars.size},&cvars,e)&&qa_cvars_save_validate(cvars,e);
@@ -355,13 +441,25 @@ bool frontend_unified_components_restore_finish(frontend_unified_components *own
         !frontend_unified_components_retained_current(owner)||!frontend_unified_media_current(owner->media))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component activation requires its actual imported private media");
     if(!frontend_unified_components_events_bind(owner,owner->events,e)) return false;
-    for(size_t i=0;i<owner->count;++i) {
-        remote_component *row=owner->rows[i]; if(!row->restore_pending) continue;
-        if(!row->restore_consoles||!refs->scene_restore)
-            return q3remote_component_fail(e,QA_ERROR_UNSUPPORTED,"Component activation lacks its real private renderer dictionary continuation");
+    for(size_t i=0;i<q3remote_component_physical_count(owner);++i) {
+        remote_component *row=q3remote_component_physical_at(owner,i); if(!row->restore_pending) continue;
+        if(!row->restore_consoles||!refs->scene_current)
+            return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component activation lacks its real private renderer graph association");
         if(!row->restore_frontend) {
-            if(!refs->scene_restore(refs->context,row->frontend.owner,(qa_bytes){row->saved_frontend.data,row->saved_frontend.size},e)) return false;
+            if(!refs->scene_current(refs->context,row->frontend.owner,row->frontend_identity,e)) return false;
+            if(row->pictures_present) {
+                size_t pictures=0;
+                if(!row->advanced||row->picture_sequence!=row->draw_sequence||
+                    !frontend_component_scene_picture_count(owner->frontend,row->frontend_identity,row->draw_sequence,&pictures,e)||
+                    row->pictures_submitted>pictures)
+                    return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Saved component picture cursor exceeds its actual imported output");
+            }
             row->restore_frontend=true;
+        }
+        if(row->retired) {
+            if(!q3remote_component_retire(row,e)) return false;
+            row->restore_imported=true; row->restore_pending=false;
+            qa_buffer_free(&row->saved_cvars); qa_buffer_free(&row->saved_console); continue;
         }
         if(!row->restore_imported) {
             if(!application_q3_scene_restore(row->scene,(qa_bytes){row->saved_scene.data,row->saved_scene.size},e)) return false;
@@ -370,7 +468,7 @@ bool frontend_unified_components_restore_finish(frontend_unified_components *own
         if(!application_q3_scene_finish_restore(row->scene,e)) return false;
         row->initialized=true; row->restore_pending=false;
         qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars);
-        qa_buffer_free(&row->saved_console); qa_buffer_free(&row->saved_frontend);
+        qa_buffer_free(&row->saved_console);
     }
     owner->restoring=false; return frontend_unified_components_retained_current(owner)||
         q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Restored component collection lost its actual admitted replica");
@@ -378,7 +476,8 @@ bool frontend_unified_components_restore_finish(frontend_unified_components *own
 bool frontend_unified_components_prepared(frontend_unified_components *owner,frontend_unified_component_frame **out,
     const qa_unified_document **input,qa_error *e)
 {
-    if(!owner||!out||*out||!input||owner->restoring||!frontend_unified_components_current(owner))
+    if(!owner||!out||*out||!input||owner->restoring||
+        !(frontend_unified_components_current(owner)||frontend_unified_components_retained_current(owner)))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component token read requires its actual installed continuation");
     *out=owner->prepared; *input=owner->prepared?owner->prepared->input:NULL; return true;
 }

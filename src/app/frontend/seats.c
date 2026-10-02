@@ -17,10 +17,17 @@
 #include "campaign_menu.h"
 #include "campaign_cinematic.h"
 #include "network_recipient.h"
+#include "equipment_media.h"
+#include "material_movies.h"
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
 static double input_now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->wall_time_ns / 1000000.0; }
+static const qa_scene_image *hud_video_frame(void *context, uint64_t initial, double seconds, qa_error *error)
+{
+    frontend_seat *seat = context;
+    return frontend_material_movies_frontend_resolve(seat->frontend, initial, seconds, error);
+}
 static bool connected(void *context)
 {
     frontend_seat *seat = context;
@@ -90,6 +97,28 @@ bool frontend_game_menu(frontend_seat *seat, qa_error *error)
         !qa_application_guest_menu_set(seat->frontend->application, launch_seat, menu, &handled, error)) return false;
     return handled ? qa_ui_close_all(seat->ui, now_ms(seat), error) : frontend_menu_open(seat, FRONTEND_HOME, error);
 }
+static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
+    bool native_status, bool aggregate, bool *source_slot, qa_error *error)
+{
+    *source_slot = false;
+    if (!frame->actor.registry) return true;
+    qa_application_equipment_view equipment = {0};
+    if (!qa_application_equipment_source_read(seat->frontend->application, frame->actor, &equipment, source_slot, error)) return false;
+    if (!*source_slot) return true;
+    out->selected_weapon = equipment.item;
+    if (!equipment.has_weapon_status || frame->source_status_native || qa_input_seat_focus(seat->input) != QA_INPUT_GAME) return true;
+    const qa_material *picture = NULL;
+    if (!frontend_equipment_media_source_icon_read(seat->frontend, &equipment, &picture, error)) return false;
+    qa_bytes provider = qa_strings_text(qa_session_strings(qa_application_session(seat->frontend->application)), equipment.provider);
+    out->weapon = (qa_hud_weapon){.present = true, .label = equipment.label, .icon = picture,
+        .ammo_count = equipment.ammo_count, .finite_ammo = equipment.finite_ammo,
+        .has_ammo_to_start = equipment.has_ammo_to_start, .low_ammo = equipment.low_ammo,
+        .native_status = native_status || frame->weapon_only,
+        .suppress_active_warning = provider.size >= 3 && !memcmp(provider.data, "q3:", 3),
+        .aggregate_low = aggregate && equipment.warning == QA_APPLICATION_AMMO_LOW,
+        .aggregate_empty = aggregate && equipment.warning == QA_APPLICATION_AMMO_EMPTY};
+    return true;
+}
 static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
 {
     frontend_seat *seat = context;
@@ -97,8 +126,11 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         frontend_remote_q1 *row=frontend_remote_q1_at(seat->frontend,i);
         frontend_remote_q1_view received;
         if (!frontend_remote_q1_metadata_read(row,&received,error)) return false;
-        if (!received.retired && received.bound && received.domain.physical_seat==seat->id)
-            return frontend_remote_q1_hud_read(row,frame,out,error);
+        if (!received.retired && received.bound && received.domain.physical_seat==seat->id) {
+            bool source_slot = false;
+            return frontend_remote_q1_hud_read(row,frame,out,error) &&
+                hud_weapon_data(seat,frame,out,true,false,&source_slot,error);
+        }
     }
     qa_application_presentation_view source = {0};
     qa_ui_preferences preferences;
@@ -127,6 +159,10 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
     }
     if (!frame->actor.registry) return true;
+    bool source_slot = false;
+    if (!hud_weapon_data(seat,frame,out,source.source_hud || out->source_vitals,
+        !source.source_hud,&source_slot,error)) return false;
+    if (source_slot) return true;
     return qa_application_weapon_read(seat->frontend->application, frame->actor, &out->selected_weapon, error);
 }
 static bool input_handler(void *context, qa_input_seat *input, qa_input_focus kind, const qa_input_event *event)
@@ -278,8 +314,11 @@ bool frontend_seat_client_recipient_ready_is(const qa_frontend *f,uint32_t physi
 bool frontend_seat_client_recipient_ready(qa_frontend *f,uint32_t physical,
     const qa_application_client_source *source,qa_error *error)
 {
-    if (!frontend_seat_client_recipient_ready_is(f,physical,source) ||
-        !qa_application_client_current(f->application,source))
+    if (!f || !source || !f->seats || physical>=f->options.seats ||
+        source->context.physical_seat!=physical || f->seats[physical].frontend!=f ||
+        f->seats[physical].id!=physical ||
+        (!qa_application_client_current(f->application,source) &&
+            !(f->source_restoring && qa_application_client_retirement_current(f->application,source))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT input recipient lost its returned physical source");
     frontend_seat *seat=f->seats+physical;
     return qa_input_seat_recipient_ready(seat->input,source->context.console,source->context.cvars,
@@ -304,15 +343,18 @@ bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
     frontend_network_client_recipient recipients[QA_INPUT_LOCAL_SEATS]={0};
     bool present[QA_INPUT_LOCAL_SEATS]={0};
     for (uint32_t i=0;i<f->options.seats;++i) {
-        if (!frontend_network_client_recipient_read(f,i,recipients+i,present+i,error)) return false;
-        if (present[i] && (!recipients[i].ready || !frontend_seat_client_recipient_ready(f,i,&recipients[i].source,error)))
+        if (!frontend_network_client_retired_recipient_read(f,i,recipients+i,present+i,error)) return false;
+        bool retired=present[i];
+        if (!retired && !frontend_network_client_recipient_read(f,i,recipients+i,present+i,error)) return false;
+        if (present[i] && !retired && !recipients[i].ready) { present[i]=false; continue; }
+        if (present[i] && !frontend_seat_client_recipient_ready(f,i,&recipients[i].source,error))
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved input recipient has no completed physical CLIENT");
     }
     for (uint32_t i=0;i<f->options.seats;++i)
         if (present[i]) frontend_seat_client_recipient_publish(f,i,&recipients[i].source);
     return true;
 }
-bool frontend_seat_engine_recipient_ready(qa_frontend *f,uint32_t physical,qa_command_context *out,qa_error *error)
+static bool engine_recipient_command(qa_frontend *f,uint32_t physical,qa_command_context *out,qa_error *error)
 {
     if (!f || !f->application || !f->seats || physical>=f->options.seats || !out)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"ENGINE input handoff lost its actual physical seat");
@@ -322,8 +364,28 @@ bool frontend_seat_engine_recipient_ready(qa_frontend *f,uint32_t physical,qa_co
     qa_command_context previous=qa_input_seat_context(seat->input);
     qa_command_context command={.seat=physical,.origin=QA_COMMAND_SEAT,.dialect=previous.dialect,.direct=true};
     (void)frontend_seat_launch_id_read(f,physical,&command.seat);
+    *out=command; return true;
+}
+bool frontend_seat_engine_recipient_ready(qa_frontend *f,uint32_t physical,qa_command_context *out,qa_error *error)
+{
+    qa_command_context command;
+    if (!out || !engine_recipient_command(f,physical,&command,error)) return false;
+    frontend_seat *seat=f->seats+physical;
     qa_console *console=qa_application_console(f->application); qa_cvars *cvars=qa_application_cvars(f->application);
     if (!qa_input_seat_recipient_ready(seat->input,console,cvars,&command,error) ||
+        !qa_seat_console_recipient_ready(seat->console,console,&command,error)) return false;
+    *out=command; return true;
+}
+bool frontend_seat_engine_recipient_retirement_ready(qa_frontend *f,uint32_t physical,const qa_input_release *release,
+    qa_console_release_disposition disposition,qa_console_release_retirement_fn guard,void *context,
+    qa_command_context *out,qa_error *error)
+{
+    qa_command_context command;
+    if (!out || !engine_recipient_command(f,physical,&command,error)) return false;
+    frontend_seat *seat=f->seats+physical;
+    qa_console *console=qa_application_console(f->application); qa_cvars *cvars=qa_application_cvars(f->application);
+    if (!qa_input_seat_recipient_retirement_ready(seat->input,release,console,cvars,&command,
+        disposition,guard,context,error) ||
         !qa_seat_console_recipient_ready(seat->console,console,&command,error)) return false;
     *out=command; return true;
 }
@@ -395,7 +457,8 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
         if (!library ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
-                .context = seat, .read = hud_data}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
+                .context = seat, .read = hud_data, .video_frame = hud_video_frame,
+                .video_context = seat}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
         if (restoring && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
         if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
@@ -464,6 +527,17 @@ static bool same_recipient_command(const qa_command_context *a,const qa_command_
         a->generation==b->generation && a->direct==b->direct && a->console_text==b->console_text &&
         !a->script && !b->script && qa_actor_id_equal(a->actor,b->actor);
 }
+static bool retired_recipient_services(const frontend_seat *seat,const qa_console *console,
+    const qa_cvars *cvars,const qa_command_context *command)
+{
+    qa_application_client_source source;
+    return seat && seat->frontend && command && command->owner && command->owner<=UINT32_MAX &&
+        qa_application_client_physical_read(seat->frontend->application,(qa_actor_owner)command->owner,
+            command->seat,&source,NULL) && source.context.physical_seat==seat->id &&
+        qa_application_client_retirement_current(seat->frontend->application,&source) &&
+        console==source.context.console && (!cvars || cvars==source.context.cvars) &&
+        same_recipient_command(command,&source.context.command);
+}
 static bool recipient_services(const frontend_seat *seat,const qa_console *console,const qa_cvars *cvars,
     const qa_command_context *command,bool *client)
 {
@@ -480,6 +554,20 @@ static bool recipient_services(const frontend_seat *seat,const qa_console *conso
         (!cvars || cvars==recipient.source.context.cvars) &&
         same_recipient_command(command,&recipient.source.context.command);
 }
+static bool checkpoint_recipient_services(const frontend_seat *seat,const qa_console *console,
+    const qa_cvars *cvars,const qa_command_context *command,bool *client)
+{
+    if (recipient_services(seat,console,cvars,command,client)) return true;
+    if (!seat || !seat->frontend || !client ||
+        (!seat->frontend->capture && !seat->frontend->source_restoring)) return false;
+    qa_input_release *release=qa_input_seat_release_read(seat->input);
+    qa_input_release_scope all={.all=true,.controller=-1};
+    if ((release && (qa_input_release_console(release)!=console ||
+            !qa_input_release_scope_owned(release,seat->input,&all,NULL))) ||
+        (!release && !seat->frontend->source_restoring) ||
+        !retired_recipient_services(seat,console,cvars,command)) return false;
+    *client=true; return true;
+}
 bool frontend_seat_ui_clock_ready(void *context,const qa_ui *ui,double (*clock)(void *),
     void *clock_context,qa_error *error)
 {
@@ -494,7 +582,9 @@ static bool input_services_encode(void *context, const qa_input_seat_options *op
     frontend_seat *seat=context;
     bool client=false;
     if (!saved_seat_ready(seat) || !options || !out || options->seat!=seat->id ||
-        !recipient_services(seat,options->console,options->cvars,&options->context,&client) ||
+        (!recipient_services(seat,options->console,options->cvars,&options->context,&client) &&
+            !((qa_input_seat_release_read(seat->input) || seat->frontend->source_restoring) &&
+                retired_recipient_services(seat,options->console,options->cvars,&options->context))) ||
         options->context.script || options->context.console_text ||
         options->ui!=input_handler || options->ui_user!=seat ||
         options->before_ui!=source_input || options->before_ui_user!=seat ||
@@ -507,7 +597,7 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
     frontend_seat *seat=context;
     bool client=(key&UINT64_C(256))!=0;
     uint64_t dialect=key>>16;
-    if (!saved_seat_ready(seat) || !out || dialect<QA_CONSOLE_Q1 || dialect>QA_CONSOLE_Q3 ||
+    if (!saved_seat_ready(seat) || !out || dialect>QA_CONSOLE_Q3 ||
         (key&UINT64_C(65535)&~UINT64_C(256))!=(uint64_t)seat->id+1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
     qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=(qa_console_dialect)dialect,.direct=true};
@@ -515,14 +605,18 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     if (client) {
         frontend_network_client_recipient recipient; bool present;
-        if (!frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,error) ||
-            !present || !recipient.ready || recipient.source.context.command.dialect!=(qa_console_dialect)dialect)
+        if (!frontend_network_client_retired_recipient_read(seat->frontend,seat->id,&recipient,&present,error)) return false;
+        bool retired=present;
+        if (!retired && !frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,error)) return false;
+        if (!present || (!retired && !recipient.ready) || recipient.source.context.command.dialect!=(qa_console_dialect)dialect)
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved input CLIENT recipient is absent or incomplete");
         command=recipient.source.context.command; console=recipient.source.context.console; cvars=recipient.source.context.cvars;
     }
     else (void)frontend_seat_launch_id_read(seat->frontend,seat->id,&command.seat);
     bool actual_client=false;
-    if (!recipient_services(seat,console,cvars,&command,&actual_client) || actual_client!=client)
+    if ((!recipient_services(seat,console,cvars,&command,&actual_client) &&
+            !(client && seat->frontend->source_restoring && retired_recipient_services(seat,console,cvars,&command))) ||
+        actual_client!=client)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input has no prepared current launch context");
     *out=(qa_input_seat_options){.seat=seat->id,.context=command,
         .console=console,.cvars=cvars,
@@ -567,16 +661,67 @@ static bool input_catcher_ready(void *context, uint64_t owner, qa_error *error)
     }
     return frontend_fail(error,QA_ERROR_FORMAT,"Input catcher names no actual source role lease for this seat");
 }
+static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_seat_options *options)
+{
+    frontend_seat *seat=context;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    qa_command_context command=reading?(qa_command_context){0}:options->context;
+    uint32_t physical=reading?0:options->seat,dialect=command.dialect,origin=command.origin;
+    uint64_t registry=reading?0:command.registry,generation=0;
+    qa_sha256_digest identity={{0}};
+    qa_application_client_source source;
+    if (!saved_seat_ready(seat) || (!reading &&
+        (!command.owner || command.owner>UINT32_MAX ||
+         !qa_application_client_physical_read(seat->frontend->application,(qa_actor_owner)command.owner,
+             command.seat,&source,io->error) || !qa_application_client_associated(seat->frontend->application,&source) ||
+         source.context.physical_seat!=seat->id || options->console!=source.context.console ||
+         options->cvars!=source.context.cvars || !same_recipient_command(&command,&source.context.command)))) return false;
+    if (!reading) { identity=source.descriptor->identity; generation=source.configuration_generation; }
+    if (!qa_source_save_u32(io,&physical) || physical!=seat->id ||
+        !qa_source_save_bytes(io,&identity,sizeof(identity)) || !qa_source_save_u64(io,&generation) ||
+        !qa_source_save_u64(io,&registry) || !registry ||
+        !qa_source_save_u64(io,&command.owner) || !command.owner || command.owner>UINT32_MAX ||
+        !qa_source_save_u64(io,&command.session) || !qa_source_save_u64(io,&command.client) ||
+        !qa_source_save_u32(io,&command.seat) || !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io,&origin) || origin!=QA_COMMAND_SEAT ||
+        !qa_source_save_bool(io,&command.direct) || !qa_source_save_bool(io,&command.console_text) || command.console_text ||
+        !qa_source_save_u64(io,&command.registry) || command.registry!=registry ||
+        !qa_source_save_u64(io,&command.generation) || !qa_source_save_u64(io,&command.actor.registry) ||
+        !qa_source_save_u64(io,&command.actor.generation) || !qa_source_save_u32(io,&command.actor.slot) ||
+        command.actor.registry || command.actor.generation || command.actor.slot) return false;
+    if (reading) {
+        command.dialect=(qa_console_dialect)dialect; command.origin=(qa_command_origin)origin;
+        if (!seat->frontend->source_restoring ||
+            !qa_application_client_physical_read(seat->frontend->application,(qa_actor_owner)command.owner,
+                command.seat,&source,io->error) || !qa_application_client_associated(seat->frontend->application,&source) ||
+            source.context.physical_seat!=seat->id || source.configuration_generation!=generation ||
+            !qa_sha256_equal(&source.descriptor->identity,&identity)) return false;
+        command.registry=source.context.command.registry;
+        if (!same_recipient_command(&command,&source.context.command)) return false;
+        *options=(qa_input_seat_options){.seat=physical,.context=source.context.command,
+            .console=source.context.console,.cvars=source.context.cvars};
+    }
+    return true;
+}
+static bool input_release_ready(void *context,const qa_input_seat_options *options,
+    const qa_input_release *release,qa_error *error)
+{
+    frontend_seat *seat=context;
+    return (saved_seat_ready(seat) && options && release && options->seat==seat->id &&
+        options->console==qa_input_release_console(release) &&
+        retired_recipient_services(seat,options->console,options->cvars,&options->context)) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Input release lacks its retained physical Source retirement custody");
+}
 qa_input_checkpoint_refs frontend_seat_input_refs(frontend_seat *seat)
 {
     return (qa_input_checkpoint_refs){seat,input_services_encode,input_services_decode,
-        input_ui_encode,input_ui_decode,input_catcher_ready};
+        input_ui_encode,input_ui_decode,input_catcher_ready,input_recipient_fields,input_release_ready};
 }
 static bool console_services(const frontend_seat *seat, const qa_seat_console_options *options)
 {
     bool client=false;
     return saved_seat_ready(seat) && options && options->seat==seat->id &&
-        recipient_services(seat,options->commands,NULL,&options->command,&client) && options->context==seat &&
+        checkpoint_recipient_services(seat,options->commands,NULL,&options->command,&client) && options->context==seat &&
         options->context_ready==frontend_seat_context_ready &&
         options->now_ms==input_now_ms && options->connected==connected && options->clipboard==clipboard &&
         options->focus==focus && options->chat==chat;
@@ -586,7 +731,7 @@ static bool seat_console_encode(void *context, const qa_seat_console_options *op
     frontend_seat *seat=context;
     bool client=false;
     if (!console_services(seat,options) ||
-        !recipient_services(seat,options->commands,NULL,&options->command,&client) || !out || out->data || out->size)
+        !checkpoint_recipient_services(seat,options->commands,NULL,&options->command,&client) || !out || out->data || out->size)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat console capture lacks its actual installed callbacks");
     uint8_t *data=malloc(12);
     if (!data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining seat console service descriptor");
@@ -602,7 +747,7 @@ static bool seat_console_decode(void *context, const qa_seat_console_options *ca
         memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || qa_load_u32le(bytes.data+8)>1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved console descriptor differs from its prepared actual seat");
     bool client=false;
-    if (!recipient_services(seat,candidate->commands,NULL,&candidate->command,&client) ||
+    if (!checkpoint_recipient_services(seat,candidate->commands,NULL,&candidate->command,&client) ||
         client!=(qa_load_u32le(bytes.data+8)!=0) || command->script)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved console command names another physical recipient");
     if (client) {
@@ -622,6 +767,6 @@ bool frontend_seat_hud_options(frontend_seat *seat, qa_hud_options *out, qa_erro
     if (!saved_seat_ready(seat) || !seat->ui || !out)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"HUD restore lacks its actual prepared frontend seat");
     *out=(qa_hud_options){.ui=seat->ui,.application=seat->frontend->application,
-        .seat=seat->id,.context=seat,.read=hud_data};
+        .seat=seat->id,.context=seat,.read=hud_data,.video_frame=hud_video_frame,.video_context=seat};
     return true;
 }

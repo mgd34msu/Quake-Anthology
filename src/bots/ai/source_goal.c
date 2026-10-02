@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
+#include "source_timers.h"
 #include "source_inventory.h"
 #include "source_goal.h"
 #include "source_orders.h"
@@ -82,13 +83,13 @@ static void look_at(bot_ai_state *s,qa_vec3 target) {
     bot_ai_view_ideal_set(s,ideal);
 }
 static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    if(s->attack_crouch_time<b->time-5.0f) {
+    if(bot_ai_attack_crouch_time(s)<b->time-5.0f) {
         float propensity,random;
         SOURCE_CALL(bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&propensity,e));
         SOURCE_CALL(bot_ai_random(b,&random,e));
         if(random<s->view.think_time*propensity) {
             float span=propensity*15.0f;
-            s->attack_crouch_time=(b->time+5.0f)+span;
+            bot_ai_attack_crouch_time_set(s,(b->time+5.0f)+span);
         }
     }
     return true;
@@ -341,13 +342,13 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             SOURCE_CALL(crouch(b,s,e));
             bool in_water;
             SOURCE_CALL(swimming(b,s,&in_water,e));
-            if(in_water) s->attack_crouch_time=b->time-1.0f;
+            if(in_water) bot_ai_attack_crouch_time_set(s,b->time-1.0f);
             if(s->arrive_time<b->time-2.0f) {
                 if(!s->arrive_time) {
                     SOURCE_CALL(action(b,s,QA_BOT_GESTURE,e));
                     SOURCE_CALL(companion_chat(b,s,"accompany_arrive",s->teammate,s->teammate,e));
                     s->arrive_time=b->time;
-                } else if(s->attack_crouch_time>b->time) SOURCE_CALL(action(b,s,QA_BOT_CROUCH,e));
+                } else if(bot_ai_attack_crouch_time(s)>b->time) SOURCE_CALL(action(b,s,QA_BOT_CROUCH,e));
                 else {
                     float random;
                     SOURCE_CALL(bot_ai_random(b,&random,e));
@@ -433,10 +434,10 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
     SOURCE_CALL(bot_ai_random(b,&random,e));
     if(random<s->view.think_time*.8f) SOURCE_CALL(roam_view(b,s,e));
     SOURCE_CALL(crouch(b,s,e));
-    if(s->attack_crouch_time>b->time) SOURCE_CALL(action(b,s,QA_BOT_CROUCH,e));
+    if(bot_ai_attack_crouch_time(s)>b->time) SOURCE_CALL(action(b,s,QA_BOT_CROUCH,e));
     bool in_water;
     SOURCE_CALL(swimming(b,s,&in_water,e));
-    if(in_water) s->attack_crouch_time=b->time-1.0f;
+    if(in_water) bot_ai_attack_crouch_time_set(s,b->time-1.0f);
     int32_t point_contents;
     SOURCE_CALL(contents(b,s->player.eye,bot_ai_source_actor(b,s->view.entity),&point_contents,e));
     if(point_contents&SOURCE_LIQUID) {

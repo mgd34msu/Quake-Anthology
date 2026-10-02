@@ -6,6 +6,7 @@
 #include "native_q1_wire.h"
 #include "native_q2_wire_engine.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_source_actors.h"
 #include "native_q1_composition_flags.h"
 #include "native_q1_composition_death.h"
 #include "native_q1_composition_rogue.h"
@@ -519,9 +520,15 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
         break;
     case APPLICATION_PROVIDER_QC:
     case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
         ok = application_fail(error, QA_ERROR_UNSUPPORTED,
                               "selected foreign character has no source reaction adapter");
+        break;
+    case APPLICATION_PROVIDER_NATIVE:
+        if(provider->state.native.q2_engine&&application_native_q2_source_actors_declared(provider->state.native.q2_engine)){
+            bool handled=false;
+            ok=application_native_q2_source_actors_reaction(provider->state.native.q2_engine,outcome,&handled,error);
+            if(ok&&!handled)ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Selected native character has no owned declared reaction actor");
+        }else ok=application_fail(error,QA_ERROR_UNSUPPORTED,"selected foreign character has no source reaction adapter");
         break;
       }
     }
@@ -1113,6 +1120,9 @@ static bool physics_touch_body(void *opaque, const application_q3_mod_actor_requ
         okay = qa_q3_touch(provider->state.q3, contact, error);
     else if (provider->kind == APPLICATION_PROVIDER_QC)
         okay = application_qc_touch(provider, contact, error);
+    else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine != NULL &&
+             application_native_q2_source_actors_declared(provider->state.native.q2_engine))
+        return application_native_q2_source_actors_touch(provider->state.native.q2_engine,contact,result,error);
     else {
         *result = accepted;
         return true;

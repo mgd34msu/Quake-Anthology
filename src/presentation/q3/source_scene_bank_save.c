@@ -67,11 +67,16 @@ static bool membership(qa_source_save_io *io, qa_q3_source_scene_membership *m)
         qa_source_save_u32(io, &m->first_light) && qa_source_save_u32(io, &m->max_polygons) &&
         qa_source_save_u32(io, &m->max_vertices);
 }
-static bool header(qa_source_save_io *io, qa_q3_source_scene_membership *m)
+static bool header(qa_source_save_io *io, qa_q3_source_scene_membership *m, uint64_t *cycle)
 {
-    uint8_t magic[4] = {'Q','3','S','B'}; uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "Q3SB", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1 && membership(io, m);
+    uint8_t magic[4] = {'Q','3','S','B'}; uint32_t version = 2;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q3SB", sizeof(magic)) ||
+        !qa_source_save_u32(io, &version) || version < 1 || version > 2 || !membership(io, m)) return false;
+    if (version >= 2) {
+        if (!qa_source_save_u64(io, cycle)) return false;
+    } else *cycle = 1;
+    return *cycle || (!m->entities && !m->first_entity && !m->polygons && !m->first_polygon &&
+        !m->vertices && !m->lights && !m->first_light);
 }
 static bool cells(qa_source_save_io *io, qa_q3_source_scene_bank *bank,
     const qa_q3_source_scene_bank_refs *refs, uint64_t *keys)
@@ -105,7 +110,8 @@ bool qa_q3_source_scene_bank_checkpoint(const qa_q3_source_scene_bank *bank,
 {
     if (!out || out->data || out->size || !q3_source_bank_valid(bank, error)) return false;
     qa_source_save_io io = {0}; qa_q3_source_scene_membership m = bank->membership;
-    bool okay = qa_source_save_writer(&io, NULL, error) && header(&io, &m) &&
+    uint64_t cycle = bank->cycle;
+    bool okay = qa_source_save_writer(&io, NULL, error) && header(&io, &m, &cycle) &&
         cells(&io, (qa_q3_source_scene_bank *)bank, refs, NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return okay;
 }
@@ -114,9 +120,10 @@ bool qa_q3_source_scene_bank_restore(qa_bytes bytes, const qa_q3_source_scene_ba
 {
     if (!out || *out) return false;
     qa_source_save_io io = {0}; qa_q3_source_scene_membership m = {0};
+    uint64_t cycle = 0;
     qa_q3_source_scene_bank *bank = NULL;
     uint64_t *keys = NULL;
-    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && header(&io, &m) &&
+    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && header(&io, &m, &cycle) &&
         m.max_polygons <= bytes.size / 16 && m.max_vertices <= bytes.size / 24 &&
         qa_q3_source_scene_bank_create(m.max_polygons, m.max_vertices, &bank, error);
     size_t count = QA_Q3_SOURCE_ENTITY_CAPACITY + (size_t)m.max_polygons + QA_Q3_SOURCE_LIGHT_CAPACITY;
@@ -124,7 +131,7 @@ bool qa_q3_source_scene_bank_restore(qa_bytes bytes, const qa_q3_source_scene_ba
         keys = count <= SIZE_MAX / sizeof(*keys) ? calloc(count, sizeof(*keys)) : NULL;
         if (!keys) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Source registry namespace keys"); okay = false; }
     }
-    if (okay) { bank->membership = m; okay = cells(&io, bank, refs, keys) && qa_source_save_finish(&io, NULL); }
+    if (okay) { bank->membership = m; bank->cycle = cycle; okay = cells(&io, bank, refs, keys) && qa_source_save_finish(&io, NULL); }
     qa_source_save_dispose(&io);
     for (size_t i = 0; okay && i < count; ++i) {
         if (!keys[i]) continue;

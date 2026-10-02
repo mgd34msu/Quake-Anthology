@@ -32,6 +32,9 @@ typedef struct q3n_hud_options {
     /* Reads the actual current command number minus CMD_BACKUP plus one,
      * lazily at CG_DrawDisconnect. Missing remote ring rows are errors. */
     bool (*oldest_command)(void *, const q3n_frame *, qa_q3_usercmd *, qa_error *);
+    /* Compiled CG observes the real sampled Q3 history when that input
+     * family exists. Before sampling, or for foreign MOVEMENT, it is absent. */
+    bool (*compiled_oldest_command)(void *, const q3n_frame *, int32_t *time, bool *available, qa_error *);
     bool (*weapon_warning)(void *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
     /* Team Arena paints its real parsed cgame menus and fonts through their
      * native owner. The base HUD never substitutes an approximate layout. */

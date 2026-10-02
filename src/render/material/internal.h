@@ -7,7 +7,6 @@ float qa_material_sine(unsigned index);
 unsigned qa_material_table_index(float value);
 float qa_material_inverse_sqrt(float square);
 qa_vec3 qa_material_fast_normalize(qa_vec3 value);
-float qa_material_fog_factor(float s, float t);
 qa_scene_vec2 qa_material_fog_coordinates(const qa_material_context *, qa_vec3 local_position);
 bool qa_material_stage_texcoord(const qa_material_stage *, const qa_scene_vertex *,
                                 const qa_material_context *, float time,

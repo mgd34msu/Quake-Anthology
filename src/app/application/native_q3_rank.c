@@ -38,26 +38,27 @@ static bool live(const rank_scope *scope, qa_error *error)
     if (application->destroy_requested || provider->application != application ||
         provider->kind != APPLICATION_PROVIDER_Q3 || provider->state.q3 != scope->game ||
         provider->owner != scope->owner || !provider->constructed || !provider->attached ||
-        provider->close_pending || !application->primary_mode_ready ||
-        application->modes != scope->modes ||
-        application->primary_mode.slot != scope->mode.slot ||
-        application->primary_mode.generation != scope->mode.generation ||
-        application_world_provider(application, QA_ROLE_ENTITIES, "") != provider)
+        provider->close_pending || application->modes != scope->modes)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "native Q3 rank source retired during its callback");
-    return true;
+    return application_native_q3_source_mode_current(provider, scope->mode, error);
 }
 
 static bool begin(application_provider *provider, rank_scope *scope, qa_error *error)
 {
     qa_application *application = provider ? provider->application : NULL;
     if (!application || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
-        !application->modes || !application->primary_mode_ready)
+        !application->modes)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "CalculateRanks requires its native GAME and selected score owner");
     *scope = (rank_scope){.provider = provider, .application = application,
         .game = provider->state.q3, .modes = application->modes,
-        .mode = application->primary_mode, .owner = provider->owner};
+        .owner = provider->owner};
+    bool associated;
+    if (!application_native_q3_source_mode(provider, &scope->mode, &associated, error)) return false;
+    if (!associated)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "CalculateRanks has no actual provider-associated score owner");
     if (!live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
         !application_native_q3_settings_integer(provider, "g_gametype", &scope->game_type, error))

@@ -38,8 +38,13 @@ typedef struct frontend_remote_q2_options {
     bool material_scripts;
     void *context;
     bool (*current)(void *, const frontend_remote_q2_domain *, qa_error *);
+    bool (*retirement_current)(void *, const frontend_remote_q2_domain *, qa_error *);
     bool (*download_allowed)(void *, const char *path, bool *allowed, qa_error *);
     bool (*download_nonce)(void *, uint64_t *, qa_error *);
+    /* Exclusive candidate stage in a separate native preparation namespace.
+     * The root is the actual retained selected/base writable capability. */
+    bool (*restore_stage)(void *, qa_fs_root *, const char *, uint64_t logical_nonce, qa_bytes,
+        qa_fs_stage **, uint64_t *native_nonce, qa_error *);
     bool (*entity_actor)(void *, const frontend_remote_q2_domain *, uint32_t received_number,
         qa_actor_id *, qa_error *);
     bool (*content_admit)(void *, uint64_t loading_generation,

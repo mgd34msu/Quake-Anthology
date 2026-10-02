@@ -406,10 +406,12 @@ static bool construct_and_reserve(qa_application *application,
                 okay = false;
                 break;
             }
-            if (product != NULL && image != NULL && provider->kind == APPLICATION_PROVIDER_QVM) {
+            if (product != NULL && image != NULL &&
+                (provider->kind == APPLICATION_PROVIDER_QVM ||
+                 (provider->kind == APPLICATION_PROVIDER_NATIVE && product->family == QA_GAME_Q3))) {
                 const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                     provider->launch->selection.instance);
-                constructed = application_provider_construct_qvm_restored(application,
+                constructed = application_provider_construct_q3_restored(application,
                     provider, world, provider_catalog, product, choices, record, error);
             } else if (product != NULL) {
                 constructed = application_provider_construct(application, provider, world,
@@ -732,7 +734,7 @@ bool application_publication_finish(qa_application *application,
         if(!application->map_resource||!qa_bsp_open(qa_resource_bytes(application->map_resource),&map,error)) return false;
         application_q3_components_options options={.previous=application->components,.application=application,
             .snapshot=publication->candidate,.providers=publication->next,.provider_count=publication->next_count,
-            .world_source=application_world_provider(application,QA_ROLE_ENTITIES,""),.world=application->world,
+            .world_source=application_world_provider(application,QA_ROLE_ENTITIES,""),.world=application->world,.equipment=application->equipment,
             .entity_text=map.lumps[QA_BSP_ENTITIES].bytes,
             .scene_factory={.context=application->guest_context,.prepare=application->q3_component_scene_prepare}};
         return application_q3_components_create(&options,&publication->components,error)&&
@@ -746,7 +748,7 @@ bool application_publication_finish(qa_application *application,
         return false;
     application_q3_components_options options={.application=application,.snapshot=publication->candidate,
         .providers=publication->next,.provider_count=publication->next_count,.world_source=publication->map_provider,
-        .world=publication->initial_world?publication->initial_world:application->world,
+        .world=publication->initial_world?publication->initial_world:application->world,.equipment=publication->equipment,
         .entity_text=publication->map.lumps[QA_BSP_ENTITIES].bytes,
         .scene_factory={.context=application->guest_context,.prepare=application->q3_component_scene_prepare}};
     return application_q3_components_create(&options,&publication->components,error)&&
@@ -1096,7 +1098,7 @@ bool application_save_prepare_content(qa_application *candidate,
         if (ok) {
             application_q3_components_options options = {.application=candidate,.snapshot=snapshot,
                 .providers=publication->next,.provider_count=publication->next_count,
-                .world_source=publication->map_provider,.world=candidate->world,
+                .world_source=publication->map_provider,.world=candidate->world,.equipment=publication->equipment,
                 .entity_text=publication->map.lumps[QA_BSP_ENTITIES].bytes,
                 .saved=components_saved,.restoring=true,
                 .scene_factory={.context=candidate->guest_context,.prepare=candidate->q3_component_scene_prepare}};

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_timers.h"
 #include "source_inventory.h"
 #include "source_events.h"
 #include "source_orders.h"
@@ -198,6 +199,6 @@ bool bot_ai_source_set_teleport_time(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!live(b,s)) return true;
     int32_t flags;
     if(!bot_ai_source_player_word(b,s,BOT_PS_ENTITY_FLAGS,&flags,e)) return false;
-    if((flags^s->source_events.last_e_flags)&4) s->teleport_time=b->time;
+    if((flags^s->source_events.last_e_flags)&4) bot_ai_teleport_time_set(s,b->time);
     s->source_events.last_e_flags=flags;return true;
 }

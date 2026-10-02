@@ -12,6 +12,8 @@ typedef struct application_save_console_context {
 } application_save_console_context;
 bool application_save_console_resolvers(const application_save_console_context *,
                                         qa_console_save_resolvers *, qa_error *);
+bool application_save_console_context_from_image(qa_application *, const qa_save_image *,
+    application_save_console_context *, qa_error *);
 
 typedef struct application_save_foundation {
     qa_strings *strings;

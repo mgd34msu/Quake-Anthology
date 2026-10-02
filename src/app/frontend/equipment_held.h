@@ -16,6 +16,7 @@ typedef struct frontend_held_declaration {
 
 /* Retains the exact admitted declaration. Output is unchanged on failure. */
 bool frontend_held_declaration_read(qa_resource *, frontend_held_declaration *, qa_error *);
+bool frontend_held_declaration_value(qa_bytes, frontend_held_declaration *, qa_error *);
 void frontend_held_declaration_free(frontend_held_declaration *);
 
 typedef struct frontend_held_model {

@@ -147,7 +147,7 @@ static bool armor_write(void *opaque, const qa_armor *value, qa_error *error)
             !application_q2_combat_armor_read(&frame->record->source, &frame->armor, error)) { ok = false; break; }
     --record->owner->engine->calls; return ok;
 }
-static bool empty_armor(void *opaque, float points, qa_regular_armor *out, bool *selected, qa_error *error)
+static bool empty_armor(void *opaque, double points, qa_regular_armor *out, bool *selected, qa_error *error)
 {
     combat_record *record = opaque; ++record->owner->engine->calls;
     bool ok = application_q2_combat_empty_armor(&record->source, points, out, selected, error);

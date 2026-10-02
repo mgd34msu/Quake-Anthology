@@ -80,6 +80,7 @@ typedef struct q3_cvar_cache {
     qa_native_host_guest_memory memory;
     int32_t pointer,handle;
     uint64_t address;
+    bool native_address;
 } q3_cvar_cache;
 typedef struct q3_cvar_status {
     char *previous_value;

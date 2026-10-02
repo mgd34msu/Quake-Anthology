@@ -1,6 +1,7 @@
 #include "actions_private.h"
 #include "qa/builtin.h"
 #include "checkpoint_internal.h"
+#include "qa/binary.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -15,20 +16,43 @@ static bool action_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
-static qa_bot_input *action_read(const qa_bot_actions *actions, uint32_t client, qa_error *e) {
+static uint8_t *action_read(const qa_bot_actions *actions, uint32_t client, qa_error *e) {
     if (!actions || !actions->initialized || client >= actions->capacity) {
         action_fail(e, "bot action client is outside the initialized instance");
         return NULL;
     }
-    return &actions->inputs[client];
+    qa_bot_memory_span span;
+    if(!qa_bot_memory_bytes(actions->memory,actions->inputs,&span,e)) return NULL;
+    if(actions->capacity>INT32_MAX/40 || span.size!=actions->capacity*40) {
+        action_fail(e,"bot action source allocation has an invalid extent");return NULL;
+    }
+    return span.data+client*40;
 }
-static qa_bot_input *action_input(qa_bot_actions *actions, uint32_t client, qa_error *e) {
+static uint8_t *action_input(qa_bot_actions *actions, uint32_t client, qa_error *e) {
     if (actions && actions->restoring) {
         action_fail(e,"bot actions are preparing a checkpoint");return NULL;
     }
     return action_read(actions,client,e);
 }
-bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *services,
+static float load_float(const uint8_t *p) {
+    uint32_t word=qa_load_u32le(p);float value;memcpy(&value,&word,4);return value;
+}
+static void store_float(uint8_t *p,float value) {
+    uint32_t word;memcpy(&word,&value,4);qa_store_u32le(p,word);
+}
+static qa_vec3 load_vector(const uint8_t *p) {
+    return (qa_vec3){load_float(p),load_float(p+4),load_float(p+8)};
+}
+static void store_vector(uint8_t *p,qa_vec3 value) {
+    store_float(p,value.x);store_float(p+4,value.y);store_float(p+8,value.z);
+}
+static void input_read(const uint8_t *p,qa_bot_input *out) {
+    out->think_time=load_float(p);out->direction=load_vector(p+4);
+    out->speed=load_float(p+16);out->view_angles=load_vector(p+20);
+    out->action_flags=qa_load_u32le(p+32);
+    uint32_t weapon=qa_load_u32le(p+36);memcpy(&out->weapon,&weapon,4);
+}
+bool qa_bot_actions_create_source(qa_bot_memory *memory,const qa_bot_action_services *services,
                            qa_bot_actions **out, qa_error *e) {
     if (!services || !out)
         return action_fail(e, "invalid bot action services or output");
@@ -38,129 +62,209 @@ bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *servi
         return false;
     }
     actions->services = *services;
-    if (!qa_bot_actions_setup(actions, clients, e)) {
-        free(actions);
-        return false;
+    if(memory) {
+        if(!qa_bot_memory_retain(memory,e)) {free(actions);return false;}
+    } else {
+        if(!qa_bot_memory_create(NULL,&memory,e)) {free(actions);return false;}
+        actions->owns_memory=true;
     }
+    actions->memory=memory;
     *out = actions;
     return true;
 }
+bool qa_bot_actions_create(uint32_t clients,const qa_bot_action_services *services,
+                           qa_bot_actions **out,qa_error *e) {
+    if(!out) return action_fail(e,"missing bot actions output");
+    qa_bot_actions *actions;
+    if(!qa_bot_actions_create_source(NULL,services,&actions,e)) return false;
+    if(!qa_bot_actions_setup(actions,clients,e)) {qa_bot_actions_destroy(actions);return false;}
+    *out=actions;return true;
+}
 void qa_bot_actions_destroy(qa_bot_actions *actions) {
-    if (actions && !actions->restoring) {
-        qa_bot_actions_shutdown(actions);
+    if (actions && qa_bot_actions_idle(actions) && qa_bot_memory_idle(actions->memory)) {
+        actions->busy=true;
+        (void)qa_bot_memory_release(actions->memory,NULL);
         free(actions);
     }
 }
 uint32_t qa_bot_actions_capacity(const qa_bot_actions *actions) {
     return actions ? actions->capacity : 0;
 }
+bool qa_bot_actions_idle(const qa_bot_actions *actions) {
+    return !actions || (!actions->busy && !actions->restoring && !actions->operations);
+}
+qa_bot_memory *qa_bot_actions_memory(const qa_bot_actions *actions) {
+    return actions?actions->memory:NULL;
+}
 bool qa_bot_actions_setup(qa_bot_actions *actions, uint32_t clients, qa_error *e) {
-    if (!actions || actions->restoring || clients > INT32_MAX / 40 ||
-        (clients && sizeof(qa_bot_input) > SIZE_MAX / clients))
+    if (!actions || actions->restoring || actions->busy || clients > INT32_MAX / 40)
         return action_fail(e, "bot action capacity exceeds source allocation range");
-    qa_bot_input *inputs = clients ? calloc(clients, sizeof(*inputs)) : NULL;
-    if (clients && !inputs) {
-        qa_error_set(e, QA_ERROR_MEMORY, clients, "allocating bot input records");
-        return false;
-    }
-    free(actions->inputs);
+    qa_bot_memory_allocation inputs;
+    actions->busy=true;
+    bool allocated=qa_bot_memory_allocate(actions->memory,clients*40,QA_BOT_MEMORY_HUNK,true,
+        NULL,&inputs,e);
+    actions->busy=false;
+    if(!allocated) return false;
     actions->inputs = inputs;
     actions->capacity = clients;
     actions->initialized = true;
     return true;
 }
-void qa_bot_actions_shutdown(qa_bot_actions *actions) {
-    if (!actions || actions->restoring)
-        return;
-    free(actions->inputs);
-    actions->inputs = NULL;
+bool qa_bot_actions_shutdown(qa_bot_actions *actions,qa_error *e) {
+    if (!actions || actions->restoring || actions->busy) return action_fail(e,"bot action owner is absent or restoring");
+    actions->busy=true;
+    bool freed=!actions->initialized || qa_bot_memory_free(actions->memory,actions->inputs,e);
+    actions->busy=false;
+    if(!freed) return false;
+    actions->inputs = (qa_bot_memory_allocation){0};
     actions->initialized = false;
+    return true;
+}
+void qa_bot_actions_dispose_resources(qa_bot_actions *actions) {
+    if(actions && !actions->restoring && !actions->busy) {
+        actions->inputs=(qa_bot_memory_allocation){0};actions->initialized=false;
+    }
 }
 bool qa_bot_actions_add(qa_bot_actions *actions, uint32_t client, uint32_t flags, qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    input->action_flags |= flags;
+    qa_store_u32le(input+32,qa_load_u32le(input+32)|flags);
     return true;
 }
 bool qa_bot_actions_weapon(qa_bot_actions *actions, uint32_t client, int32_t weapon, qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    input->weapon = weapon;
+    qa_store_u32le(input+36,(uint32_t)weapon);
     return true;
 }
 bool qa_bot_actions_jump(qa_bot_actions *actions, uint32_t client, bool delayed, qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
     uint32_t flag = delayed ? QA_BOT_DELAYED_JUMP : QA_BOT_JUMP;
-    if (input->action_flags & BOT_JUMPED_LAST_FRAME)
-        input->action_flags &= ~flag;
-    else
-        input->action_flags |= flag;
+    uint32_t flags=qa_load_u32le(input+32);
+    qa_store_u32le(input+32,flags&BOT_JUMPED_LAST_FRAME?flags&~flag:flags|flag);
     return true;
 }
 bool qa_bot_actions_move(qa_bot_actions *actions, uint32_t client, qa_vec3 direction, float speed,
                          qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    input->direction = direction;
-    input->speed = speed > 400 ? 400 : speed < -400 ? -400 : speed;
+    store_vector(input+4,direction);
+    store_float(input+16,speed > 400 ? 400 : speed < -400 ? -400 : speed);
     return true;
 }
 bool qa_bot_actions_view(qa_bot_actions *actions, uint32_t client, qa_vec3 angles, qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    input->view_angles = angles;
+    store_vector(input+20,angles);
     return true;
+}
+static bool vector_from(qa_bot_actions *actions,uint32_t client,qa_bot_action_vector_read read,
+    void *context,bool moving,float speed,qa_error *e) {
+    if(!read) return action_fail(e,"missing lazy source action vector reader");
+    if(!action_input(actions,client,e)) return false;
+    qa_bot_memory_allocation allocation=actions->inputs;
+    qa_vec3 value;
+    if(actions->operations==SIZE_MAX) return action_fail(e,"source action callback nesting exceeds capacity");
+    ++actions->operations;
+    bool ok=read(context,&value,e);
+    --actions->operations;
+    if(!ok) return false;
+    qa_bot_memory_span span;
+    if(!qa_bot_memory_bytes(actions->memory,allocation,&span,e)) return false;
+    if(span.size/40<=client) return action_fail(e,"lazy source action allocation has changed extent");
+    uint8_t *input=span.data+client*40;
+    store_vector(input+(moving?4:20),value);
+    if(moving) store_float(input+16,speed>400?400:speed< -400? -400:speed);
+    return true;
+}
+bool qa_bot_actions_move_from(qa_bot_actions *actions,uint32_t client,qa_bot_action_vector_read read,
+    void *context,float speed,qa_error *e) {
+    return vector_from(actions,client,read,context,true,speed,e);
+}
+bool qa_bot_actions_view_from(qa_bot_actions *actions,uint32_t client,qa_bot_action_vector_read read,
+    void *context,qa_error *e) {
+    return vector_from(actions,client,read,context,false,0,e);
 }
 bool qa_bot_actions_input(qa_bot_actions *actions, uint32_t client, float think_time,
                           qa_bot_input *out, qa_error *e) {
     if (!out)
         return action_fail(e, "missing bot input output");
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    input->think_time = think_time;
-    *out = *input;
+    store_float(input,think_time);
+    input_read(input,out);
     return true;
+}
+bool qa_bot_actions_input_bytes(qa_bot_actions *actions,uint32_t client,float think_time,
+                                qa_bytes *out,qa_error *e) {
+    if(!out) return action_fail(e,"missing source bot input byte output");
+    uint8_t *input=action_input(actions,client,e);
+    if(!input) return false;
+    store_float(input,think_time);*out=(qa_bytes){input,40};return true;
 }
 bool qa_bot_actions_read(const qa_bot_actions *actions, uint32_t client, qa_bot_input *out,
                          qa_error *e) {
     if (!out)
         return action_fail(e, "missing bot input output");
-    const qa_bot_input *input = action_read(actions, client, e);
+    const uint8_t *input = action_read(actions, client, e);
     if (!input)
         return false;
-    *out = *input;
+    input_read(input,out);
     return true;
 }
 bool qa_bot_actions_restore(qa_bot_actions *actions, uint32_t client, const qa_bot_input *saved,
                             qa_error *e) {
     if (!saved)
         return action_fail(e, "missing saved bot input");
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    *input = *saved;
+    store_float(input,saved->think_time);store_vector(input+4,saved->direction);
+    store_float(input+16,saved->speed);store_vector(input+20,saved->view_angles);
+    qa_store_u32le(input+32,saved->action_flags);qa_store_u32le(input+36,(uint32_t)saved->weapon);
     return true;
 }
 void bot_action_restore_lock(qa_bot_actions *actions, bool locked) { actions->restoring=locked; }
-qa_bot_input *bot_action_restore_input(qa_bot_actions *actions, uint32_t client, qa_error *e) {
-    return action_read(actions,client,e);
+bool bot_action_snapshot_capture(qa_bot_actions *actions,bot_action_snapshot *out,qa_error *e) {
+    if(!actions || !out || actions->busy || actions->operations || actions->capacity>INT32_MAX/40 ||
+       actions->initialized!=(actions->inputs.owner!=0))
+        return action_fail(e,"bot action source alias is inconsistent");
+    if(actions->initialized) {
+        qa_bot_memory_span span;qa_bot_memory_kind kind;
+        if(!qa_bot_memory_bytes(actions->memory,actions->inputs,&span,e) ||
+           !qa_bot_memory_kind_read(actions->memory,actions->inputs,&kind,e)) return false;
+        if(span.size!=actions->capacity*40 || kind!=QA_BOT_MEMORY_HUNK)
+            return action_fail(e,"bot action source extent or kind differs from allocation");
+    }
+    *out=(bot_action_snapshot){actions->inputs,actions->capacity,actions->initialized};return true;
+}
+bool bot_action_snapshot_prepare(qa_bot_actions *actions,const bot_action_snapshot *saved,
+    const qa_bot_memory_prepared *memory,bot_action_snapshot *out,qa_error *e) {
+    if(!actions || !saved || !out || !actions->restoring || saved->capacity>INT32_MAX/40 ||
+       saved->initialized!=(saved->inputs.owner!=0))
+        return action_fail(e,"invalid prepared bot action alias");
+    *out=*saved;
+    return !saved->initialized || qa_bot_memory_checkpoint_resolve(memory,saved->inputs,&out->inputs,e);
+}
+void bot_action_snapshot_finish(qa_bot_actions *actions,const bot_action_snapshot *prepared,bool commit) {
+    if(commit) {actions->inputs=prepared->inputs;actions->capacity=prepared->capacity;
+        actions->initialized=prepared->initialized;}
 }
 bool qa_bot_actions_reset(qa_bot_actions *actions, uint32_t client, qa_error *e) {
-    qa_bot_input *input = action_input(actions, client, e);
+    uint8_t *input = action_input(actions, client, e);
     if (!input)
         return false;
-    bool jumped = (input->action_flags & QA_BOT_JUMP) != 0;
-    input->think_time = 0;
-    input->direction = (qa_vec3){0};
-    input->speed = 0;
-    input->action_flags = jumped ? BOT_JUMPED_LAST_FRAME : 0;
+    qa_store_u32le(input+32,qa_load_u32le(input+32)&~BOT_JUMPED_LAST_FRAME);
+    store_float(input,0);store_vector(input+4,(qa_vec3){0});store_float(input+16,0);
+    bool jumped=(qa_load_u32le(input+32)&QA_BOT_JUMP)!=0;
+    qa_store_u32le(input+32,jumped?BOT_JUMPED_LAST_FRAME:0);
     return true;
 }
 void qa_bot_actions_end_regular(qa_bot_actions *actions, int32_t client, float think_time) {
@@ -173,8 +277,12 @@ bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_ac
     if (!actions || actions->restoring || !actions->services.command || !text || action < QA_BOT_COMMAND ||
         action > QA_BOT_DROP_INVENTORY)
         return action_fail(e, "invalid bot command action");
-    if (action == QA_BOT_COMMAND)
-        return actions->services.command(actions->services.context, client, text, e);
+    if (action == QA_BOT_COMMAND) {
+        if(actions->operations==SIZE_MAX) return action_fail(e,"source action callback nesting exceeds capacity");
+        ++actions->operations;
+        bool ok=actions->services.command(actions->services.context,client,text,e);
+        --actions->operations;return ok;
+    }
     const char *prefix = "";
     char target[32];
     switch (action) {
@@ -196,7 +304,10 @@ bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_ac
     char command[BOT_COMMAND_CAPACITY];
     memcpy(command, prefix, first);
     memcpy(command + first, text, length + 1);
-    return actions->services.command(actions->services.context, client, command, e);
+    if(actions->operations==SIZE_MAX) return action_fail(e,"source action callback nesting exceeds capacity");
+    ++actions->operations;
+    bool ok=actions->services.command(actions->services.context,client,command,e);
+    --actions->operations;return ok;
 }
 
 static int32_t source_integer(float value) {

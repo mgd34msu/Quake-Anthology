@@ -11,11 +11,13 @@ typedef struct unified_media_bank {
     const qa_product *product;
     qa_scene_resources *images;
     qa_material_library *materials;
+    qa_media_library *media;
+    struct frontend_material_movies *shader_movies;
     qa_font_library *fonts;
     qa_audio_bank *sounds;
     qa_q3_presentation_assets *q3_assets;
     qa_buffer saved_assets;
-    bool saved_map;
+    bool saved_map, assets_restored, constructing, construction_failed;
 } unified_media_bank;
 typedef struct unified_media_model {
     struct unified_media_model *next;

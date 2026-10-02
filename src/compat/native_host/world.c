@@ -105,6 +105,71 @@ bool qa_native_host_actor_released(qa_native_host *host, qa_actor_record release
     return ok;
 }
 
+static bool source_body_address(qa_native_host *host,uint32_t slot,uint32_t velocity,
+    uint32_t ground,qa_native_address *address,qa_native_slot_binding *binding,qa_error *error)
+{
+    qa_native_entity_table table;
+    if(!host||host->kind!=NATIVE_HOST_Q2_GAME||!qa_native_entity_table_get(host->instance,&table,error)) return false;
+    if(slot>=table.count||velocity>table.stride||table.stride-velocity<12||
+        ground>table.stride||table.stride-ground<host->pointer_bytes||table.stride<minimum_edict_size(host))
+        return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native owned body fields exceed its real source row");
+    if(!qa_native_slot(host->instance,slot,binding,error)||!qa_native_entity_address(host->instance,slot,address,error)) return false;
+    if(binding->kind!=QA_NATIVE_SLOT_OWNED||binding->owner!=host->world.owner||binding->source_slot!=slot||!actor_live(host,binding->actor))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body requires its actual owned full actor binding");
+    return true;
+}
+
+bool qa_native_host_source_body_read(qa_native_host *host,uint32_t slot,uint32_t velocity,
+    uint32_t ground,qa_body_state *out,qa_error *error)
+{
+    qa_native_address address;qa_native_slot_binding binding;qa_body_state body={0};uint8_t pointer[8];
+    if(!out||!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
+    if(!native_host_read_vec3(host,address+4,&body.origin,error)||
+        !native_host_read_vec3(host,address+16,&body.angles,error)||
+        !native_host_read_vec3(host,address+host->edict->mins,&body.bounds.mins,error)||
+        !native_host_read_vec3(host,address+host->edict->maxs,&body.bounds.maxs,error)||
+        !native_host_read_vec3(host,address+velocity,&body.velocity,error)||
+        !native_host_read(host,address+ground,pointer,host->pointer_bytes,error)) return false;
+    if(!qa_vec_finite(body.origin)||!qa_vec_finite(body.angles)||!qa_vec_finite(body.velocity)||!qa_collision_bounds_valid(body.bounds))
+        return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native source body has invalid authored vectors or bounds");
+    qa_native_address at=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
+    if(at) {
+        uint32_t other;qa_native_slot_binding target;qa_native_entity_table table;
+        if(!qa_native_entity_table_get(host->instance,&table,error)||!qa_native_entity_slot(host->instance,at,&other,error)||
+            !qa_native_slot(host->instance,other,&target,error)) return false;
+        if(other>=table.count||target.kind==QA_NATIVE_SLOT_FREE||!actor_live(host,target.actor))
+            return native_host_fail(error,QA_ERROR_ARGUMENT,other,"Native source ground has no actual bound full actor");
+        body.ground=target.actor;
+    }
+    *out=body;return true;
+}
+
+bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_t velocity,
+    uint32_t ground,const qa_body_state *body,qa_error *error)
+{
+    qa_native_address address,target=0;qa_native_slot_binding binding;
+    if(!body||!qa_vec_finite(body->origin)||!qa_vec_finite(body->angles)||!qa_vec_finite(body->velocity)||
+        !qa_collision_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
+    if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
+    if(body->ground.registry&&!native_host_address_for_actor(host,body->ground,&target,error)) return false;
+    qa_native_address current_address;qa_native_slot_binding current_binding;
+    if(!source_body_address(host,slot,velocity,ground,&current_address,&current_binding,error)) return false;
+    if(current_address!=address||!qa_actor_id_equal(current_binding.actor,binding.actor))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body source changed during ground projection");
+    if(host->pointer_bytes==4&&target>UINT32_MAX) return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native ground exceeds its source pointer width");
+    const size_t offsets[]={4,16,host->edict->mins,host->edict->maxs,velocity,ground};
+    for(size_t i=0;i<sizeof(offsets)/sizeof(*offsets);++i)
+        if(!qa_native_range_check(host->instance,address+offsets[i],i==5?host->pointer_bytes:12,QA_NATIVE_MEMORY_WRITE,error)) return false;
+    uint8_t pointer[8];
+    if(host->pointer_bytes==4) qa_store_u32le(pointer,(uint32_t)target);else qa_store_u64le(pointer,target);
+    return native_host_write_vec3(host,address+4,body->origin,error)&&
+        native_host_write_vec3(host,address+16,body->angles,error)&&
+        native_host_write_vec3(host,address+host->edict->mins,body->bounds.mins,error)&&
+        native_host_write_vec3(host,address+host->edict->maxs,body->bounds.maxs,error)&&
+        native_host_write_vec3(host,address+velocity,body->velocity,error)&&
+        native_host_write(host,address+ground,pointer,host->pointer_bytes,error);
+}
+
 static bool bind_world(qa_native_host *host, uint32_t slot, qa_error *error)
 {
     if (!actor_live(host, host->world.world_actor))
@@ -220,12 +285,6 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
     if (!qa_session_allocate(host->world.session, host->world.owner, host->world.definition,
                              true, slot, &actor, error))
         return false;
-    if (host->world.bind_actor && !host->reconstruction &&
-        !host->world.bind_actor(host->world.binding_context, host, slot, actor, error)) {
-        qa_error ignored = {0};
-        qa_session_release(host->world.session, actor, &ignored);
-        return false;
-    }
     qa_native_slot_binding owned = {
         .kind = QA_NATIVE_SLOT_OWNED,
         .slot = slot,
@@ -237,6 +296,18 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
         qa_session_release(host->world.session, actor, &ignored);
         return false;
     }
+    if (host->world.bind_actor && !host->reconstruction &&
+        !host->world.bind_actor(host->world.binding_context, host, slot, actor, error)) {
+        qa_error ignored = {0};
+        qa_session_release(host->world.session, actor, &ignored);
+        return false;
+    }
+    qa_native_slot_binding admitted;
+    if (!actor_live(host, actor) || !qa_native_slot(host->instance, slot, &admitted, error) ||
+        admitted.kind != QA_NATIVE_SLOT_OWNED || !qa_actor_id_equal(admitted.actor, actor) ||
+        admitted.owner != host->world.owner || admitted.source_slot != slot)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native actor changed during its actual source binding");
     *out = actor;
     return true;
 }
@@ -336,6 +407,94 @@ bool qa_native_host_source_reconcile(qa_native_host *host, qa_error *error)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source reconciliation requires an original Q2 game host");
     ++host->callback_depth;
     bool ok = native_host_reconcile(host, error);
+    --host->callback_depth;
+    return ok;
+}
+
+bool qa_native_host_source_active(qa_native_host *host, uint32_t slot, bool *out,
+                                   qa_error *error)
+{
+    qa_native_entity_table table;
+    qa_native_address address;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native source activity requires its actual Q2 entity table");
+    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    if (slot >= table.count)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native source activity exceeds the allocated entity rows");
+    return qa_native_entity_address(host->instance, slot, &address, error) &&
+           source_inuse(host, address, out, error);
+}
+
+bool qa_native_host_source_frame_begin(qa_native_host *host, qa_error *error)
+{
+    qa_native_entity_table table;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || host->destroying || host->restoring)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "Native source frame requires its returned original Q2 owner");
+    if (!qa_native_entity_table_refresh(host->instance, &table, error)) return false;
+    size_t offset = host->profile == QA_NATIVE_Q2_GAME_API3 ? 80u : 84u;
+    size_t width = host->profile == QA_NATIVE_Q2_GAME_API3 ? 4u : 1u;
+    if (table.stride < offset + width)
+        return native_host_fail(error, QA_ERROR_FORMAT, table.stride,
+                                "Native source event exceeds its actual public edict prefix");
+    const uint8_t zero[4] = {0};
+    ++host->callback_depth;
+    bool ok = true;
+    for (uint32_t slot = 1; ok && slot < table.count; ++slot) {
+        qa_native_slot_binding binding;
+        qa_native_address address;
+        ok = qa_native_slot(host->instance, slot, &binding, error);
+        if (!ok || (binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED)) continue;
+        if (binding.owner != host->world.owner || binding.source_slot != slot || !actor_live(host, binding.actor)) continue;
+        ok = qa_native_entity_address(host->instance, slot, &address, error) &&
+             native_host_write(host, address + offset, zero, width, error);
+    }
+    --host->callback_depth;
+    return ok;
+}
+
+bool qa_native_host_source_frame_end(qa_native_host *host, qa_error *error)
+{
+    qa_native_entity_table table;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME ||
+        !qa_native_entity_table_refresh(host->instance, &table, error)) return false;
+    return qa_native_host_source_reconcile(host, error);
+}
+
+bool qa_native_host_source_birth(qa_native_host *host, qa_native_address address,
+                                  qa_actor_id *out, qa_error *error)
+{
+    qa_native_entity_table table;
+    uint32_t slot;
+    qa_native_slot_binding binding;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !out || !address ||
+        !qa_native_entity_table_refresh(host->instance, &table, error) ||
+        !qa_native_entity_slot(host->instance, address, &slot, error)) return false;
+    if (slot >= table.count)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native allocator returned an unallocated source row");
+    if (!qa_native_slot(host->instance, slot, &binding, error)) return false;
+    *out = (qa_actor_id){0};
+    bool reserved = slot == 0;
+    if (!reserved && host->world.reserved_source_slot &&
+        !host->world.reserved_source_slot(host->world.binding_context, slot, &reserved, error)) return false;
+    if (reserved || binding.kind == QA_NATIVE_SLOT_BORROWED || binding.kind == QA_NATIVE_SLOT_WORLD) return true;
+    if (binding.kind == QA_NATIVE_SLOT_OWNED &&
+        (binding.owner != host->world.owner || binding.source_slot != slot))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "Native allocation replaced another owned source namespace");
+    ++host->callback_depth;
+    bool ok = release_binding(host, binding, error);
+    qa_native_entity_table after;
+    qa_native_slot_binding vacant;
+    if (ok) ok = qa_native_entity_table_refresh(host->instance, &after, error) &&
+                 qa_native_slot(host->instance, slot, &vacant, error);
+    if (ok && (after.base != table.base || after.stride != table.stride || slot >= after.count || vacant.kind != QA_NATIVE_SLOT_FREE))
+        ok = native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                              "Native allocation source changed during prior actor retirement");
+    if (ok) ok = native_host_actor_for_address(host, address, true, out, NULL, error);
     --host->callback_depth;
     return ok;
 }
@@ -800,6 +959,78 @@ static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
     memcpy(result->as.bytes.data, bytes, size);
     result->as.bytes.size = size;
     return true;
+}
+
+struct qa_native_host_source_touch {
+    qa_native_host *host;
+    qa_native_address scratch;
+    qa_native_value arguments[4];
+    bool prepared;
+};
+
+bool qa_native_host_source_touch_close(qa_native_host_source_touch **slot,qa_error *error)
+{
+    if(!slot) return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch requires its retained ticket slot");
+    qa_native_host_source_touch *touch=*slot;
+    if(!touch) return true;
+    if(touch->scratch&&!qa_native_free(touch->host->instance,touch->scratch,error)) return false;
+    free(touch);*slot=NULL;return true;
+}
+
+bool qa_native_host_source_touch_prepare(qa_native_host *host,bool rerelease,
+    const qa_touch_contact *contact,qa_native_host_source_touch **out,qa_error *error)
+{
+    if(!host||host->kind!=NATIVE_HOST_Q2_GAME||!contact||!out||*out||
+        rerelease!=(host->profile==QA_NATIVE_Q2_GAME_API2023))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch requires its actual declared Q2 ABI and empty ticket slot");
+    qa_native_address self,other=0;
+    if(!native_host_address_for_actor(host,contact->self,&self,error)||
+        (contact->other.registry&&!native_host_address_for_actor(host,contact->other,&other,error))) return false;
+    if(rerelease&&!contact->has_source_trace)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Rerelease source touch requires its complete shared trace");
+    uint8_t bytes[96]={0};size_t size=rerelease?96u:44u;
+    if(rerelease) {
+        qa_native_value trace={.type=QA_NATIVE_BYTES,.as.bytes={bytes,sizeof(bytes)}};
+        if(!encode_trace(host,&contact->source_trace,0,&trace,error)) return false;
+    } else {
+        if(contact->has_plane) {
+            qa_vec3 normal=contact->plane.normal;
+            if(!qa_vec_finite(normal)||!isfinite(contact->plane.distance))
+                return native_host_fail(error,QA_ERROR_FORMAT,0,"Native touch plane is nonfinite");
+            store_f32(bytes,normal.x);store_f32(bytes+4,normal.y);store_f32(bytes+8,normal.z);
+            store_f32(bytes+12,contact->plane.distance);
+            bytes[16]=normal.x==1?0:normal.y==1?1:normal.z==1?2:3;
+            bytes[17]=(uint8_t)((normal.x<0?1:0)|(normal.y<0?2:0)|(normal.z<0?4:0));
+        }
+        if(contact->has_surface) {
+            size_t length=0;
+            while(length<16&&contact->surface.name[length]) ++length;
+            memcpy(bytes+20,contact->surface.name,length);
+            qa_store_u32le(bytes+36,(uint32_t)contact->surface.flags);
+            qa_store_u32le(bytes+40,(uint32_t)contact->surface.value);
+        }
+    }
+    qa_native_host_source_touch *touch=calloc(1,sizeof(*touch));
+    if(!touch) return native_host_fail(error,QA_ERROR_MEMORY,0,"Retaining native source touch arguments");
+    touch->host=host;*out=touch;
+    if(!qa_native_allocate(host->instance,size,INT32_MIN+10,&touch->scratch,error)||
+        !native_host_write(host,touch->scratch,bytes,size,error)) return false;
+    touch->arguments[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=self};
+    touch->arguments[1]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=other};
+    touch->arguments[2]=(qa_native_value){.type=QA_NATIVE_ADDRESS,
+        .as.address=rerelease||contact->has_plane?touch->scratch:0};
+    touch->arguments[3]=rerelease?
+        (qa_native_value){.type=QA_NATIVE_U8,.as.u8=contact->inverted?1:0}:
+        (qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=contact->has_surface?touch->scratch+20:0};
+    touch->prepared=true;return true;
+}
+
+bool qa_native_host_source_touch_arguments(const qa_native_host_source_touch *touch,
+    qa_native_value arguments[4],qa_error *error)
+{
+    if(!touch||!touch->prepared||!arguments)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch arguments are not completely prepared");
+    memcpy(arguments,touch->arguments,sizeof(touch->arguments));return true;
 }
 
 bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,

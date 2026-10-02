@@ -36,6 +36,13 @@ bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *, cons
 bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *, const char *instance,
     const char *content, uint32_t source_epoch);
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *);
+bool frontend_unified_q3_client_retirement_bind(frontend_unified_q3_client *,frontend_unified_q3_source_retirement *,qa_error *);
+bool frontend_unified_q3_client_retirement_unbind(frontend_unified_q3_client *,frontend_unified_q3_source_retirement *,qa_error *);
+bool frontend_unified_q3_client_retirement_current(const frontend_unified_q3_client *);
+bool frontend_unified_q3_client_retirement_departed(const frontend_unified_q3_client *);
+const qa_command_context *frontend_unified_q3_client_retirement_context(const frontend_unified_q3_client *);
+qa_cvars *frontend_unified_q3_client_retirement_cvars(const frontend_unified_q3_client *);
+bool frontend_unified_q3_client_constructor_reset(frontend_unified_q3_client *,void *,bool (*cg_closed)(const void *),qa_error *);
 bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **, qa_error *);
 /* The real video aggregate holds transport steady while its CG child closes,
  * registers and initializes against the reached CLIENT baseline. */
@@ -51,10 +58,14 @@ bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **,
 q3n_compiled_source *frontend_unified_q3_client_source(frontend_unified_q3_client *);
 const qa_command_context *frontend_unified_q3_client_context(const frontend_unified_q3_client *);
 qa_cvars *frontend_unified_q3_client_cvars(const frontend_unified_q3_client *);
+const qa_command_context *frontend_unified_q3_client_checkpoint_context(const frontend_unified_q3_client *);
+qa_cvars *frontend_unified_q3_client_checkpoint_cvars(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_register(frontend_unified_q3_client *, qa_error *);
 bool frontend_unified_q3_client_cvars_update(frontend_unified_q3_client *, qa_error *);
 bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *, const char *,
     qa_native_q3_client_cvar *, qa_error *);
+bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *, const char *, float, qa_error *);
+bool frontend_unified_q3_client_local_server_read(const frontend_unified_q3_client *, int32_t *, qa_error *);
 /* Called by the actual CG constructor only after all required child stages. */
 bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_client *, qa_error *);
 bool frontend_unified_q3_client_latest(const frontend_unified_q3_client *, int32_t *, int32_t *, qa_error *);
@@ -62,6 +73,8 @@ bool frontend_unified_q3_client_snapshot(const frontend_unified_q3_client *, int
     const qa_q3_snapshot **, qa_error *);
 bool frontend_unified_q3_client_snapshot_actor(const frontend_unified_q3_client *, int32_t message,
     uint32_t source_number, qa_actor_id *, bool *present, qa_error *);
+bool frontend_unified_q3_client_snapshot_number(const frontend_unified_q3_client *, int32_t message,
+    qa_actor_id, uint32_t *source_number, bool *present, qa_error *);
 /* Reaching a command applies only that command's actual cs value, retaining
  * the authoritative Source strings independently. No command is skipped. */
 bool frontend_unified_q3_client_command(frontend_unified_q3_client *, int32_t,
@@ -78,5 +91,7 @@ bool frontend_unified_q3_client_checkpoint(const frontend_unified_q3_client *, q
 bool frontend_unified_q3_client_restore(frontend_remote_unified *, frontend_unified_q3_sources *,
     const frontend_unified_q3_source_view *, uint64_t receiver, qa_bytes,
     frontend_unified_q3_client **, qa_error *);
+bool frontend_unified_q3_client_restore_retired(frontend_remote_unified *,frontend_unified_q3_sources *,
+    frontend_unified_q3_source_retirement *,uint64_t receiver,qa_bytes,frontend_unified_q3_client **,qa_error *);
 
 #endif

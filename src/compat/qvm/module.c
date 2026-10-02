@@ -8,7 +8,7 @@
 
 static bool safe_point(const qa_qvm *vm, qa_error *error)
 {
-    if (!qa_qvm_mutable(vm,error)) return false;
+    if (!qa_qvm_live(vm,error) || vm->publication_depth) return false;
     return qa_qvm_can_destroy(vm)
         || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM operation requires a completed source call and write delivery");
 }
@@ -59,7 +59,7 @@ bool qa_qvm_destroy(qa_qvm *vm, qa_error *error)
 
 bool qa_qvm_restart(qa_qvm *vm, qa_bytes replacement, qa_error *error)
 {
-    if (!safe_point(vm,error)) return false;
+    if (!safe_point(vm,error) || vm->candidate_inventory) return false;
     qa_buffer initialized = {0};
     size_t allocation;
     if (!qa_qvm_parse_restart(replacement,&initialized,&allocation,error)) return false;
@@ -79,7 +79,7 @@ bool qa_qvm_restart(qa_qvm *vm, qa_bytes replacement, qa_error *error)
 
 bool qa_qvm_restart_original(qa_qvm *vm, qa_error *error)
 {
-    if (!safe_point(vm, error)) return false;
+    if (!safe_point(vm, error) || vm->candidate_inventory) return false;
     qa_qvm_memory_close(vm);
     qa_qvm_execution_reset(vm);
     memset(vm->data, 0, vm->image->memory_size);
@@ -128,7 +128,7 @@ static void checkpoint_digest(qa_bytes bytes, qa_sha256_digest *out)
 bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
 {
     if (out == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"missing QVM checkpoint output");
-    if (!safe_point(vm,error)) return false;
+    if (!safe_point(vm,error) || vm->candidate_inventory) return false;
     if (vm->options.checkpoint == NULL)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound checkpoint services");
     uint64_t execution[3];
@@ -217,7 +217,7 @@ bool qa_qvm_restore_candidate_bindings(qa_qvm *vm, qa_bytes state,
     size_t count, qa_error *error)
 {
     saved_execution source;
-    if (!safe_point(vm, error) || !restore_envelope(vm, state, true, &source, error)) return false;
+    if (!safe_point(vm, error) || vm->candidate_inventory || !restore_envelope(vm, state, true, &source, error)) return false;
     return qa_qvm_execution_restore_bindings(vm, source.counters[0], constructed, saved, count, error);
 }
 bool qa_qvm_restore_candidate_callbacks(qa_qvm *vm, qa_bytes state,
@@ -226,7 +226,7 @@ bool qa_qvm_restore_candidate_callbacks(qa_qvm *vm, qa_bytes state,
     qa_error *error)
 {
     saved_execution source;
-    if (!safe_point(vm, error) || !restore_envelope(vm, state, true, &source, error)) return false;
+    if (!safe_point(vm, error) || vm->candidate_inventory || !restore_envelope(vm, state, true, &source, error)) return false;
     return qa_qvm_execution_restore_callbacks(vm, source.counters[0], constructed, saved,
         count, resolver, saved_resolver, error);
 }
@@ -254,7 +254,7 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     if (!safe_point(vm, error) || !restore_envelope(vm, state, candidate, &source, error)) return false;
     /* Host restoration sees the restored guest RAM, as in the donor. A host
      * restore error leaves the committed RAM visible and must be reported. */
-    if (vm->candidate_inventory && (!candidate ||
+    if (vm->candidate_inventory && (vm->candidate_inventory_invalid || !candidate ||
         memcmp(vm->candidate_inventory_digest.bytes,state.data+80,32)))
         return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"Candidate inventory belongs to another saved executor");
     if (!vm->candidate_inventory) qa_qvm_memory_close(vm);

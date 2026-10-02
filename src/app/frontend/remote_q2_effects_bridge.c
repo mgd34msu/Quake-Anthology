@@ -1,11 +1,15 @@
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_private.h"
 #include "remote_q2_restore.h"
+#include "remote_q2_source.h"
 #include "remote_q2_footsteps.h"
 #include "remote_q2_material_movies_bridge.h"
+#include "qa/console_cvar_observer.h"
 #include <math.h>
+#include <float.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static qa_vec3 vector(const float value[3]) { return qa_v3(value[0], value[1], value[2]); }
 static bool model(void *, const char *, bool, qa_scene_model **, qa_error *);
@@ -22,8 +26,8 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
     bool retained = row && row->importing ? frontend_remote_q2_import_read(row, &view, error) :
         frontend_remote_q2_metadata_read(row, &view, error);
     if (!retained || !source || source->context != row || row->frontend->application != row->options.domain.application ||
-        source->profile != (row->layout.max_models == 8192 ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC) ||
-        source->current != source_current || source->actor != actor || source->actor_pose != actor_pose ||
+        source->profile != (remote_q2_rerelease_presentation(row) ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC) ||
+        source->current != source_current || source->actor != actor || source->actor_pose != actor_pose || source->actor_live != NULL ||
         source->video_frame != frontend_material_movies_frontend_resolve || source->video_context != row->frontend ||
         source->model != model || source->sound != remote_q2_effect_sound || source->hit_marker != hit_marker ||
         source->controls != controls ||
@@ -39,7 +43,8 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
         !qa_catalog_product_view_current(row->content.catalog, row->content.selected, row->content.mounts))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects left their actual private CLIENT resource tuple");
     if (row->importing) return row->frontend->source_restoring;
-    if (row->frontend->resource_inventory) return !row->busy;
+    if (row->frontend->resource_inventory) return !row->busy &&
+        (!row->retiring || frontend_remote_q2_source_retirement_metadata_current(row, error));
     if (row->frontend->capture) return remote_q2_capture_owned(row);
     return remote_q2_live(row, error);
 }
@@ -73,11 +78,15 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
         pose.frame = (int32_t)entity->frame; pose.effects = entity->effects; pose.event = entity->event;
         pose.model_index = entity->modelindex;
         pose.scale = entity->scale ? entity->scale : 1;
+        pose.bounds_present = true;
+        if (entity->solid && entity->solid != 31) {
+            pose.bounds = remote_q2_solid_bounds(row, entity->solid);
+            pose.radius = qa_vec_length(qa_vec_sub(pose.bounds.maxs, pose.bounds.mins)) * .5f;
+        }
         if (entity->modelindex && entity->modelindex < row->layout.max_models) {
             const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + entity->modelindex));
             for (remote_q2_model *held = row->models; held; held = held->next) if (!strcmp(held->path, path) && held->source) {
-                pose.bounds = (qa_bounds){vector(held->source->bounds.min), vector(held->source->bounds.max)};
-                pose.radius = held->source->radius; pose.bounds_present = true; pose.model_present = true; break;
+                pose.model_present = true; break;
             }
         }
         *out = pose; return true;
@@ -87,7 +96,7 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
         int32_t player_number;
         if (frontend_remote_q2_player_number(row, &row->frame, i, &player_number) &&
             player_number >= 0 && (uint32_t)player_number + 1 == number) {
-            pose.origin = row->layout.max_models == 8192 ? vector(player->pmove.origin_f) :
+            pose.origin = remote_q2_float_movement(row) ? vector(player->pmove.origin_f) :
                 qa_v3((float)player->pmove.origin[0] * .125f, (float)player->pmove.origin[1] * .125f,
                     (float)player->pmove.origin[2] * .125f);
             pose.angles = vector(player->viewangles); pose.scale = 1; *out = pose; return true;
@@ -168,7 +177,7 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
         if (!frontend_remote_q2_wire_seat(row, &index, error)) return false;
         if (row->frame.valid && index < row->frame.player_count) {
             const qa_q2_player *player = &row->frame.players[index].player;
-            position = row->layout.max_models == 8192 ? vector(player->pmove.origin_f) :
+            position = remote_q2_float_movement(row) ? vector(player->pmove.origin_f) :
                 qa_v3((float)player->pmove.origin[0] * .125f, (float)player->pmove.origin[1] * .125f, (float)player->pmove.origin[2] * .125f);
             position = qa_vec_add(position, vector(player->viewoffset));
         }
@@ -177,22 +186,74 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
     }
     return true;
 }
+static bool rail_color(frontend_remote_q2 *row, const char *name, uint32_t *out, qa_error *error)
+{
+    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, name);
+    if (!setting) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color lost its actual CLIENT declaration");
+    if (frontend_remote_q2_effects_color(setting->value, out)) return true;
+    size_t value_length = strlen(setting->value), name_length = strlen(name);
+    if (value_length > SIZE_MAX - name_length - 32)
+        return remote_q2_fail(error, QA_ERROR_MEMORY, "Q2 rail color warning overflow");
+    size_t capacity = value_length + name_length + 32;
+    char *warning = malloc(capacity);
+    if (!warning) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 rail color warning");
+    snprintf(warning, capacity, "Invalid value '%s' for '%s'\n", setting->value, name);
+    qa_console_emit(row->options.domain.console, &row->options.domain.command_context, warning);
+    free(warning);
+    if (!remote_q2_live(row, error) || !qa_cvars_reset(row->options.domain.cvars, name, true, error) ||
+        !remote_q2_live(row, error)) return false;
+    setting = qa_cvars_find(row->options.domain.cvars, name);
+    return (setting && frontend_remote_q2_effects_color(setting->value, out)) ||
+        remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
+}
 static bool controls(void *context, frontend_remote_q2_effects_controls *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!row || !out || !remote_q2_live(row, error)) return false;
+    if (!qa_cvars_observer_idle(row->options.domain.cvars))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects controls require their returned CLIENT registry");
+    uint32_t core, spiral;
+    if (!rail_color(row, "cl_railcore_color", &core, error) ||
+        !rail_color(row, "cl_railspiral_color", &spiral, error)) return false;
+    const qa_cvar_view *rail_time = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_time");
+    if (!rail_time || !isfinite(rail_time->number))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail time has no actual finite CLIENT row");
+    float duration = rail_time->number;
+    if ((duration < 0 || duration > 2073600) &&
+        (!qa_cvars_set_number(row->options.domain.cvars, "cl_railtrail_time", duration < 0 ? 0 : 2073600, error) ||
+            !remote_q2_live(row, error))) return false;
+    rail_time = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_time");
+    const qa_cvar_view *core_row = qa_cvars_find(row->options.domain.cvars, "cl_railcore_color");
+    const qa_cvar_view *spiral_row = qa_cvars_find(row->options.domain.cvars, "cl_railspiral_color");
+    if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value, &core) ||
+        !frontend_remote_q2_effects_color(spiral_row->value, &spiral))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
     const qa_cvar_view *time = qa_cvars_find(row->options.domain.cvars, "cl_muzzlelight_time");
     const qa_cvar_view *effects = qa_cvars_find(row->options.domain.cvars, "cl_rerelease_effects");
     const qa_cvar_view *flashes = qa_cvars_find(row->options.domain.cvars, "cl_muzzleflashes");
     const qa_cvar_view *hacks = qa_cvars_find(row->options.domain.cvars, "cl_dlight_hacks");
     const qa_cvar_view *particles = qa_cvars_find(row->options.domain.cvars, "cl_disable_particles");
     const qa_cvar_view *explosions = qa_cvars_find(row->options.domain.cvars, "cl_disable_explosions");
-    if (!time || !effects || !flashes || !hacks || !particles || !explosions) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects have no actual canonical CLIENT controls");
-    *out = (frontend_remote_q2_effects_controls){.muzzlelight_milliseconds = time->integer,
+    const qa_cvar_view *gun = qa_cvars_find(row->options.domain.cvars, "cl_gun");
+    const qa_cvar_view *gun_fov = qa_cvars_find(row->options.domain.cvars, "cl_gunfov");
+    const qa_cvar_view *rail_type = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_type");
+    const qa_cvar_view *rail_width = qa_cvars_find(row->options.domain.cvars, "cl_railcore_width");
+    const qa_cvar_view *rail_radius = qa_cvars_find(row->options.domain.cvars, "cl_railspiral_radius");
+    if (!time || !effects || !flashes || !hacks || !particles || !explosions || !gun || !gun_fov ||
+        !rail_time || !rail_type || !rail_width || !rail_radius || !isfinite(rail_time->number) ||
+        rail_time->number < 0 || rail_time->number > 2073600 || !isfinite(rail_radius->number) ||
+        !isfinite(gun_fov->number) || gun_fov->number < -FLT_MAX || gun_fov->number > FLT_MAX)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects have no actual canonical CLIENT controls");
+    frontend_remote_q2_effects_controls result = {.muzzlelight_milliseconds = time->integer,
         .rerelease_effects = effects->integer != 0, .muzzleflashes = flashes->integer != 0,
         .dlight_hacks = (uint32_t)hacks->integer, .disable_particles = (uint32_t)particles->integer,
-        .disable_explosions = (uint32_t)explosions->integer};
-    return true;
+        .disable_explosions = (uint32_t)explosions->integer,
+        .gun = gun->integer, .gun_fov = gun_fov->number,
+        .rail_type = rail_type->integer, .rail_width = rail_width->integer,
+        .rail_seconds = rail_time->number, .rail_radius = rail_radius->number,
+        .rail_core_rgba = core, .rail_spiral_rgba = spiral};
+    if (!remote_q2_live(row, error)) return false;
+    *out = result; return true;
 }
 static bool frame_milliseconds(void *context, double *out, qa_error *error)
 {
@@ -210,7 +271,7 @@ static bool render_clock(void *context, uint64_t *wall, uint64_t *sequence, qa_e
 bool remote_q2_hit_marker_sample(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !remote_q2_live(row, error)) return false;
-    if (row->layout.max_models != 8192 || !row->media_ready || !row->frame.valid) return true;
+    if (!remote_q2_rerelease_presentation(row) || !row->media_ready || !row->frame.valid) return true;
     const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_hit_markers");
     if (!setting || !setting->integer) return true;
     uint32_t seat;
@@ -223,7 +284,7 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
     if (!row || !out) return false;
     *out = (frontend_remote_q2_effects_source){.session = qa_application_session(row->options.domain.application),
         .identity = row->identity, .content_generation = row->content_generation, .protocol = row->options.domain.protocol,
-        .profile = row->layout.max_models == 8192 ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
+        .profile = remote_q2_rerelease_presentation(row) ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
         .map = row->map, .files = row->content.mounts, .images = row->images, .materials = row->materials, .world = row->world,
         .white = row->white, .context = row, .current = source_current, .actor = actor, .actor_pose = actor_pose, .viewer = viewer,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend,
@@ -285,11 +346,12 @@ bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
     if (ok) ok = frontend_remote_q2_effects_frame(row->effects, &sample, error);
     free(poses); return ok;
 }
-bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_view *view, qa_vec3 viewer_origin, qa_vec3 gun_offset,
+bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_view *view, float player_fov, qa_vec3 viewer_origin, qa_vec3 gun_offset,
     int32_t viewer_number, frontend_remote_q2_effects_sample *sample, frontend_remote_q2_effects_pose **owned,
     const qa_scene_light **lights, size_t *count, qa_error *error)
 {
-    if (!row || !row->effects || !view || !qa_vec_finite(viewer_origin) || !sample || !owned || *owned || !lights || !count ||
+    if (!row || !row->effects || !view || !isfinite(player_fov) || player_fov <= 0 || player_fov >= 180 ||
+        !qa_vec_finite(viewer_origin) || !sample || !owned || *owned || !lights || !count ||
         row->frame.entity_count > SIZE_MAX / sizeof(**owned)) return false;
     frontend_remote_q2_effects_pose *poses = row->frame.entity_count ? calloc(row->frame.entity_count, sizeof(*poses)) : NULL;
     if (row->frame.entity_count && !poses) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 effects view poses");
@@ -316,6 +378,7 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
         .fraction = row->fraction, .frame_sequence = (uint64_t)(uint32_t)row->frame.server_frame,
         .entities = poses, .entity_count = row->frame.entity_count, .view = *view, .viewer = viewer.actor,
         .viewer_origin = viewer_origin, .viewer_origin_present = true,
+        .player_fov = player_fov,
         .gun_offset = gun_offset, .hand = hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2 ?
             (int32_t)hand->number : 0, .hardware = row->frontend->gl != NULL,
         .frame_seconds = (float)row->sample_frame_seconds, .per_pixel_lighting = false};

@@ -1,3 +1,4 @@
+#include "source_cinematics.h"
 #include "renderer_materials.h"
 #include "component_scene.h"
 #include "shared_resource_policy.h"
@@ -13,14 +14,19 @@
 #include "qa/render_controls.h"
 #include "qa/binary.h"
 #include "qa/q3_presentation_save.h"
+#include "qa/q3_assets_custody.h"
 #include "qa/application_q3_components.h"
+#include "scene_identity.h"
+#include "remote_unified_components.h"
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 typedef struct component_scene_packet {
     struct component_scene_packet *next;
     frontend_component_scene_packet view;
     uint8_t *areas;
     qa_scene_light *world_lights,*projected_lights;
+    qa_scene_vertex *rail_vertices;
     float *q1_styles;
     qa_vec3 *q2_styles;
     const char *texts[8];
@@ -29,6 +35,7 @@ struct frontend_component_scene_restore {
     struct frontend_component_scene_restore *next;
     uint64_t identity;
     qa_vfs *files;
+    qa_resource_pool *pool;
     qa_q3_presentation_options policy;
 };
 static void constructor_policy(qa_q3_presentation_options *out,const qa_q3_presentation_options *in)
@@ -49,7 +56,9 @@ bool frontend_component_scene_restore_prepare(qa_frontend *f,uint64_t identity,q
         if (row->identity==identity) return frontend_fail(e,QA_ERROR_FORMAT,"Duplicate component private graph prefix");
     struct frontend_component_scene_restore *row=calloc(1,sizeof(*row));
     if (!row) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining component private graph prefix");
-    row->identity=identity; row->files=*claimed; *claimed=NULL; constructor_policy(&row->policy,policy);
+    row->identity=identity; row->files=*claimed; *claimed=NULL;
+    row->pool=qa_vfs_resources(row->files); qa_resource_pool_retain(row->pool);
+    constructor_policy(&row->policy,policy);
     row->next=f->component_scene_restores; f->component_scene_restores=row; return true;
 }
 bool frontend_component_scene_restores_destroy(qa_frontend *f,qa_error *e)
@@ -59,7 +68,7 @@ bool frontend_component_scene_restores_destroy(qa_frontend *f,qa_error *e)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph prefixes retain an actual inventory borrower");
     while (f->component_scene_restores) {
         struct frontend_component_scene_restore *row=f->component_scene_restores;
-        f->component_scene_restores=row->next; qa_vfs_destroy(row->files); free(row);
+        f->component_scene_restores=row->next; qa_vfs_destroy(row->files); qa_resource_pool_destroy(row->pool); free(row);
     }
     return true;
 }
@@ -70,6 +79,7 @@ struct frontend_component_scene {
     application_q3_component_scene_preparation request;
     qa_launch_instance_lease *descriptor;
     qa_vfs *files;
+    qa_resource_pool *pool;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_font_library *fonts;
@@ -85,9 +95,17 @@ struct frontend_component_scene {
     char *music_intro,*music_loop;
     qa_scene_frame frame;
     component_scene_packet *packets,*last_packet;
+    qa_q3_picture_receipt *pictures;
+    size_t picture_count;
+    uint64_t picture_frame;
+    size_t picture_cursor;
+    bool picture_frame_valid;
+    bool pictures_pending;
+    size_t pending_picture_cursor;
+    uint64_t pending_picture_frame;
     size_t packet_count;
     uint64_t identity,sequence;
-    bool host_borrow,ready,begun,music_looping,music_pending,has_restore_policy;
+    bool host_borrow,ready,begun,music_looping,music_pending,has_restore_policy,retired;
 };
 static bool retained(const struct frontend_component_scene *owner)
 {
@@ -99,10 +117,20 @@ static bool retained(const struct frontend_component_scene *owner)
 }
 static bool structural_retained(const struct frontend_component_scene *owner)
 {
-    if (!owner || !owner->frontend || owner->request.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL) return false;
+    if (!owner || !owner->frontend) return false;
     bool linked=false;
     for (const struct frontend_component_scene *row=owner->frontend->component_scenes;row;row=row->next)
         if (row==owner) linked=true;
+    if (owner->request.origin==APPLICATION_Q3_COMPONENT_SCENE_REMOTE) {
+        frontend_unified_component_scene_association remote;
+        return linked && frontend_unified_components_scene_association_read(owner->frontend,owner->request.context,owner->identity,&remote) &&
+            remote.frontend_owner==owner && remote.frontend_identity==owner->identity && remote.assets==owner->assets &&
+            remote.owner==owner->request.owner && remote.service_owner==owner->request.service_owner &&
+            remote.generation==owner->request.generation && remote.physical_seat==owner->request.physical_seat &&
+            qa_actor_id_equal(remote.viewer,owner->request.viewer) && remote.recipe==owner->request.recipe &&
+            remote.provider==owner->request.recipe_provider;
+    }
+    if (owner->request.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL) return false;
     qa_application_q3_component_scene_association view;
     const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
     return linked && descriptor && qa_application_q3_component_scene_association_read(owner->frontend->application,owner->identity,&view) &&
@@ -111,9 +139,23 @@ static bool structural_retained(const struct frontend_component_scene *owner)
         view.physical_seat==owner->request.physical_seat && qa_actor_id_equal(view.viewer,owner->request.viewer) &&
         view.assets==owner->assets && view.descriptor && view.descriptor->storage==descriptor->storage;
 }
+static bool retained_clock(const struct frontend_component_scene *owner,int32_t *out)
+{
+    if (!structural_retained(owner)) return false;
+    if (owner->request.origin==APPLICATION_Q3_COMPONENT_SCENE_REMOTE) {
+        frontend_unified_component_scene_association view;
+        if (!frontend_unified_components_scene_association_read(owner->frontend,owner->request.context,owner->identity,&view)) return false;
+        *out=view.time_ms;
+    } else {
+        qa_application_q3_component_scene_association view;
+        if (!qa_application_q3_component_scene_association_read(owner->frontend->application,owner->identity,&view)) return false;
+        *out=view.time_ms;
+    }
+    return true;
+}
 static bool publication(struct frontend_component_scene *owner,application_q3_scene_context *view,qa_error *e)
 {
-    return retained(owner) && owner->ready && owner->host_borrow &&
+    return retained(owner) && !owner->retired && owner->ready && owner->host_borrow &&
         owner->request.publication_read(owner->request.context,view) &&
         owner->request.source.current(owner->request.source.context,view) ? true :
         frontend_fail(e,QA_ERROR_ARGUMENT,"Component renderer lost its genuine entered source publication");
@@ -289,11 +331,6 @@ static bool audio_actor(void *context,int32_t number,uint64_t *out,qa_error *e)
     *out=frontend_audio_actor(owner->frontend,actor,e);
     return *out!=QA_AUDIO_NO_ACTOR && owner->request.source.current(owner->request.source.context,&view);
 }
-static qa_material_source_scratch *scratch(struct frontend_component_scene *owner,qa_error *e)
-{
-    qa_frontend *f=owner->frontend;
-    return qa_render_controls_source_scratch(f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl),e);
-}
 static bool diagnostics(void *context,qa_scene_source_diagnostics *out,qa_error *e)
 {
     struct frontend_component_scene *owner=context; application_q3_scene_context view;
@@ -306,18 +343,19 @@ static bool prepare_view(void *context,const qa_q3_refdef *ref,qa_q3_scene_optio
     if (!publication(owner,&view,e) || !frontend_q3_scene_policy_read(owner->frontend,options,e) ||
         !frontend_q3_shadow_mode_read(owner->cvars,&options->shadow_mode,e)) return false;
     options->world.no_world=true;
-    options->world.source_scratch=scratch(owner,e);
+    options->world.source_scratch=NULL;
     options->world.source_diagnostics_read=diagnostics;
     options->world.source_diagnostics_context=owner;
-    return options->world.source_scratch && owner->request.source.current(owner->request.source.context,&view);
+    return owner->request.source.current(owner->request.source.context,&view);
 }
 static bool prepare_picture(void *context,qa_material_context *material,qa_error *e)
 {
     struct frontend_component_scene *owner=context; application_q3_scene_context view;
     if (!publication(owner,&view,e)) return false;
-    material->source_scratch=scratch(owner,e);
+    material->source_scratch=NULL;
     material->source_diagnostics_read=diagnostics; material->source_diagnostics_context=owner;
-    return material->source_scratch && frontend_q3_material_diagnostics_read(owner->frontend,&material->source_diagnostics,e);
+    return frontend_q3_material_diagnostics_read(owner->frontend,&material->source_diagnostics,e) &&
+        owner->request.source.current(owner->request.source.context,&view);
 }
 static bool remap(void *context,const char *from,const char *to,float offset,qa_error *e)
 {
@@ -337,6 +375,7 @@ static void packet_destroy(component_scene_packet *packet)
     free((void *)packet->view.entities); free((void *)packet->view.polygons);
     free((void *)packet->view.vertices); free((void *)packet->view.lights);
     free(packet->areas); free(packet->world_lights); free(packet->projected_lights);
+    free(packet->rail_vertices);
     free(packet->q1_styles); free(packet->q2_styles); free(packet);
 }
 static void packets_clear(struct frontend_component_scene *owner)
@@ -346,6 +385,37 @@ static void packets_clear(struct frontend_component_scene *owner)
         owner->packets=packet->next; packet_destroy(packet);
     }
     owner->last_packet=NULL; owner->packet_count=0;
+}
+static void pictures_clear(struct frontend_component_scene *owner)
+{
+    for (size_t i=0;i<owner->picture_count;++i) {
+        qa_material_release(owner->pictures[i].material);
+        qa_scene_image_release(owner->pictures[i].image);
+    }
+    free(owner->pictures); owner->pictures=NULL; owner->picture_count=0;
+    owner->picture_frame_valid=false; owner->picture_cursor=0;
+}
+static bool picture_append(struct frontend_component_scene *owner,const qa_q3_picture_receipt *receipt,qa_error *e)
+{
+    if (!receipt || receipt->assets!=owner->assets || (!receipt->material==!receipt->image) ||
+        receipt->seat!=owner->request.physical_seat || !receipt->viewport.width || !receipt->viewport.height ||
+        !isfinite(receipt->rect.x) || !isfinite(receipt->rect.y) || !isfinite(receipt->rect.width) || !isfinite(receipt->rect.height) ||
+        !isfinite(receipt->uv.x) || !isfinite(receipt->uv.y) || !isfinite(receipt->uv.z) || !isfinite(receipt->uv.w) ||
+        !isfinite(receipt->color.x) || !isfinite(receipt->color.y) || !isfinite(receipt->color.z) || !isfinite(receipt->color.w) ||
+        !isfinite(receipt->identity_light) || owner->picture_count>=SIZE_MAX/sizeof(*owner->pictures))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component picture leaves its actual registered command namespace");
+    qa_q3_picture_receipt *rows=realloc(owner->pictures,(owner->picture_count+1)*sizeof(*rows));
+    if (!rows) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining private component picture command");
+    owner->pictures=rows;
+    if (receipt->material && !qa_material_retain(receipt->material,e)) return false;
+    if (receipt->image) qa_scene_image_retain(receipt->image);
+    owner->pictures[owner->picture_count++]=*receipt; return true;
+}
+static bool picture_capture(void *context,const qa_q3_picture_receipt *receipt,qa_error *e)
+{
+    struct frontend_component_scene *owner=context; application_q3_scene_context view;
+    return owner->begun && publication(owner,&view,e) && picture_append(owner,receipt,e) &&
+        owner->request.source.current(owner->request.source.context,&view);
 }
 static bool copy_span(const void *span,size_t count,size_t element,void **out,qa_error *e)
 {
@@ -387,6 +457,10 @@ static bool packet_copy(struct frontend_component_scene *owner,const qa_q3_refde
     if (ok && options->world.q1_styles) ok=copy_span(options->world.q1_styles,options->world.style_count,sizeof(float),&q1,e);
     if (ok && options->world.q2_styles) ok=copy_span(options->world.q2_styles,options->world.style_count,sizeof(qa_vec3),&q2,e);
     packet->q1_styles=q1; packet->q2_styles=q2;
+    void *rail_vertices=NULL;
+    if (ok) ok=copy_span(options->rail.retained_vertices,options->rail.retained_count,
+        sizeof(qa_scene_vertex),&rail_vertices,e);
+    packet->rail_vertices=rail_vertices;
     if (ok && options->world.render_text_count>8)
         ok=frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene exceeds its actual refdef text slots");
     if (ok) {
@@ -395,6 +469,7 @@ static bool packet_copy(struct frontend_component_scene *owner,const qa_q3_refde
         packet->view.options.world.projected_lights=packet->projected_lights;
         packet->view.options.world.q1_styles=packet->q1_styles;
         packet->view.options.world.q2_styles=packet->q2_styles;
+        packet->view.options.rail.retained_vertices=packet->rail_vertices;
         for (size_t i=0;i<options->world.render_text_count;++i) packet->texts[i]=packet->view.definition.text[i];
         packet->view.options.world.render_texts=packet->texts;
     }
@@ -415,8 +490,22 @@ static void release_host(void *context) { ((struct frontend_component_scene *)co
 static bool idle(const void *context)
 {
     const struct frontend_component_scene *owner=context;
-    return owner && !owner->frame.source_pending && (!owner->presentation || qa_q3_presentation_idle(owner->presentation)) &&
+    return owner && !owner->pictures_pending && !owner->frame.source_pending && (!owner->presentation || qa_q3_presentation_idle(owner->presentation)) &&
         (!owner->movies || frontend_material_movies_idle(owner->movies));
+}
+static bool retire(void *context,qa_error *e)
+{
+    struct frontend_component_scene *owner=context;
+    if (!owner || owner->host_borrow || !idle(owner) || owner->frontend->capture || owner->frontend->resource_inventory)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component retirement retains its host or output borrower");
+    if (owner->retired) return qa_q3_assets_services_retire(owner->assets,e);
+    if ((owner->frontend->music_sources &&
+        !frontend_music_sources_explicit_retire(owner->frontend->music_sources,owner,e)) ||
+        !music_stop(owner,e) ||
+        (owner->frontend->audio && !qa_audio_engine_stop_owner(owner->frontend->audio,owner->identity,owner->request.physical_seat,e)) ||
+        !qa_q3_assets_services_retire(owner->assets,e)) return false;
+    owner->retired=true;
+    return true;
 }
 static bool destroy(void **slot,qa_error *e)
 {
@@ -436,11 +525,12 @@ static bool destroy(void **slot,qa_error *e)
     }
     if (!frontend_material_movies_destroy(&owner->movies,e)) return false;
     packets_clear(owner);
+    pictures_clear(owner);
     qa_scene_frame_destroy(&owner->frame);
     qa_q3_presentation_assets_destroy(owner->assets);
     qa_font_library_destroy(owner->fonts); qa_audio_bank_destroy(owner->sounds);
     qa_media_library_destroy(owner->media); qa_material_library_destroy(owner->materials);
-    qa_scene_resources_destroy(owner->images); qa_vfs_destroy(owner->files);
+    qa_scene_resources_destroy(owner->images); qa_vfs_destroy(owner->files); qa_resource_pool_destroy(owner->pool);
     qa_launch_instance_lease_release(owner->descriptor);
     struct frontend_component_scene **link=&owner->frontend->component_scenes;
     while (*link && *link!=owner) link=&(*link)->next;
@@ -456,10 +546,11 @@ static bool identity_read(const void *context,uint64_t *out)
 static bool begin(void *context,uint64_t sequence,qa_error *e)
 {
     struct frontend_component_scene *owner=context;
-    if (!retained(owner) || !owner->ready || !owner->host_borrow || !idle(owner))
+    if (!retained(owner) || owner->retired || !owner->ready || !owner->host_borrow || !idle(owner))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output begin needs its real returned private renderer");
     if (!music_publish(owner,e)) return false;
     packets_clear(owner);
+    pictures_clear(owner);
     qa_scene_frame_reset(&owner->frame,sequence);
     owner->sequence=sequence; owner->begun=true;
     return qa_q3_presentation_frame(owner->presentation,&owner->frame,frontend_viewport(owner->frontend,owner->request.physical_seat),e);
@@ -469,9 +560,9 @@ static bool finish(void *context,bool submitted,qa_error *e)
     struct frontend_component_scene *owner=context;
     if (!retained(owner) || !owner->ready || !owner->host_borrow)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output finish lost its retained entered renderer");
-    bool ok=!owner->frame.source_pending ||
-        qa_material_source_frame_end(owner->frame.source_pending,&owner->frame,submitted,e);
-    if (!submitted || !ok) packets_clear(owner);
+    bool ok=!owner->frame.source_pending;
+    if (!ok) frontend_fail(e,QA_ERROR_ARGUMENT,"Private component output borrowed the physical Source issue queue");
+    if (!submitted || !ok) { packets_clear(owner); pictures_clear(owner); }
     return ok;
 }
 static bool completed(void *context,uint64_t sequence,const qa_scene_frame **out,qa_error *e)
@@ -499,26 +590,30 @@ bool frontend_component_scene_metadata_read(const qa_frontend *f,size_t ordinal,
     const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
     while (owner && ordinal--) owner=owner->next;
     qa_q3_presentation_binding binding;
-    if (!out || !owner || !owner->ready ||
-        !((f->resource_inventory || f->capture)?structural_retained(owner):retained(owner)) ||
+    int32_t clock_ms;
+    if (!out || !owner || !owner->ready || !retained_clock(owner,&clock_ms) ||
+        !((f->resource_inventory || f->capture || owner->retired)?structural_retained(owner):retained(owner)) ||
         owner->frame.source_pending || owner->frontend!=f ||
         !qa_q3_presentation_binding_read(owner->presentation,&binding,e))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph read requires its genuine returned private renderer");
     if (binding.options.assets!=owner->assets || binding.options.context!=owner ||
         (binding.frame && binding.frame!=&owner->frame) || binding.world || binding.geometry ||
         !binding.options.source_scene_membership || binding.options.scene_completed!=scene_completed ||
-        binding.options.prepare_view!=prepare_view || binding.options.prepare_picture!=prepare_picture)
+        binding.options.prepare_view!=prepare_view || binding.options.prepare_picture!=prepare_picture ||
+        binding.options.picture_capture!=picture_capture)
         return frontend_fail(e,QA_ERROR_FORMAT,"Component metadata differs from its installed private renderer");
     qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,owner->identity);
     if (attached && attached!=owner->music)
         return frontend_fail(e,QA_ERROR_FORMAT,"Component graph music differs from its actual bus player");
-    *out=(frontend_component_scene_view){.identity=owner->identity,.sequence=owner->sequence,
-        .packet_count=owner->packet_count,.origin=owner->request.origin,
+    *out=(frontend_component_scene_view){.owner=owner,.identity=owner->identity,.sequence=owner->sequence,
+        .clock_ms=clock_ms,.retired=owner->retired,.packet_count=owner->packet_count,.picture_count=owner->picture_count,
+        .picture_frame=owner->picture_frame,.picture_cursor=owner->picture_cursor,
+        .picture_frame_valid=owner->picture_frame_valid,.origin=owner->request.origin,
         .recipe=owner->request.recipe,.recipe_provider=owner->request.recipe_provider,
         .generation=owner->request.generation,.service_owner=owner->request.service_owner,
         .receiver=owner->request.owner,.physical_seat=owner->request.physical_seat,.viewer=owner->request.viewer,
         .descriptor=qa_launch_instance_lease_view(owner->descriptor),.catalog=owner->request.catalog,
-        .files=owner->files,.images=owner->images,.materials=owner->materials,.fonts=owner->fonts,
+        .files=owner->files,.pool=owner->pool,.images=owner->images,.materials=owner->materials,.fonts=owner->fonts,
         .sounds=owner->sounds,.media=owner->media,.movies=owner->movies,.assets=owner->assets,
         .presentation=owner->presentation,.policy=binding.options,.frame=&owner->frame,.music=owner->music,
         .music_intro=owner->music_intro,.music_loop=owner->music_loop,.begun=owner->begun,
@@ -542,18 +637,20 @@ bool frontend_component_scene_metadata_current(const qa_frontend *f,const fronte
         frontend_component_scene_view actual;
         if (!structural_retained(row)) return false;
         return frontend_component_scene_metadata_read(f,ordinal,&actual,e) &&
-            actual.sequence==view->sequence && actual.generation==view->generation &&
+            actual.owner==view->owner && actual.clock_ms==view->clock_ms && actual.retired==view->retired && actual.sequence==view->sequence && actual.generation==view->generation &&
             actual.service_owner==view->service_owner && actual.receiver==view->receiver &&
             actual.physical_seat==view->physical_seat && qa_actor_id_equal(actual.viewer,view->viewer) &&
             actual.origin==view->origin && actual.descriptor==view->descriptor && actual.recipe==view->recipe &&
-            actual.recipe_provider==view->recipe_provider && actual.catalog==view->catalog && actual.files==view->files &&
+            actual.recipe_provider==view->recipe_provider && actual.catalog==view->catalog && actual.files==view->files && actual.pool==view->pool &&
             actual.images==view->images && actual.materials==view->materials && actual.fonts==view->fonts &&
             actual.sounds==view->sounds && actual.media==view->media && actual.movies==view->movies &&
             actual.assets==view->assets && actual.presentation==view->presentation && actual.frame==view->frame &&
             actual.music==view->music && actual.music_intro==view->music_intro && actual.music_loop==view->music_loop &&
             actual.music_attached==view->music_attached &&
             actual.music_looping==view->music_looping && actual.music_pending==view->music_pending &&
-            actual.begun==view->begun && actual.packet_count==view->packet_count;
+            actual.begun==view->begun && actual.packet_count==view->packet_count && actual.picture_count==view->picture_count &&
+            actual.picture_frame==view->picture_frame && actual.picture_cursor==view->picture_cursor &&
+            actual.picture_frame_valid==view->picture_frame_valid;
     }
     return frontend_fail(e,QA_ERROR_ARGUMENT,"Component metadata leaves its actual private roster");
 }
@@ -561,7 +658,8 @@ bool frontend_component_scene_packet_count(const qa_frontend *f,uint64_t identit
 {
     for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next)
         if (row->identity==identity) {
-            if (!out || !retained(row) || !idle(row) || !row->begun || row->sequence!=sequence)
+            if (!out || !((f->resource_inventory || f->capture)?structural_retained(row):retained(row)) ||
+                !idle(row) || !row->begun || row->sequence!=sequence)
                 return frontend_fail(e,QA_ERROR_ARGUMENT,"Component packet count lost its returned Draw receipt");
             *out=row->packet_count; return true;
         }
@@ -572,12 +670,76 @@ bool frontend_component_scene_packet_read(const qa_frontend *f,uint64_t identity
 {
     const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
     while (owner && owner->identity!=identity) owner=owner->next;
-    if (!owner || !out || !retained(owner) || !idle(owner) || !owner->begun || owner->sequence!=sequence)
+    if (!owner || !out || !((f->resource_inventory || f->capture || owner->retired)?structural_retained(owner):retained(owner)) ||
+        !idle(owner) || !owner->begun || owner->sequence!=sequence)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene packet lost its returned actual Draw sequence");
     const component_scene_packet *packet=owner->packets;
     while (packet && ordinal--) packet=packet->next;
     if (!packet) return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene packet ordinal leaves its completed roster");
     *out=packet->view; return true;
+}
+bool frontend_component_scene_picture_count(const qa_frontend *f,uint64_t identity,uint64_t sequence,size_t *out,qa_error *e)
+{
+    for (const struct frontend_component_scene *owner=f?f->component_scenes:NULL;owner;owner=owner->next)
+        if (owner->identity==identity) {
+            if (!out || !owner->begun || owner->sequence!=sequence || !idle(owner) ||
+                !((f->capture || f->resource_inventory)?structural_retained(owner):retained(owner)))
+                return frontend_fail(e,QA_ERROR_ARGUMENT,"Component pictures lost their returned private output sequence");
+            *out=owner->picture_count; return true;
+        }
+    return frontend_fail(e,QA_ERROR_ARGUMENT,"Component pictures leave the real private renderer roster");
+}
+bool frontend_component_scene_picture_read(const qa_frontend *f,uint64_t identity,uint64_t sequence,size_t ordinal,
+    qa_q3_picture_receipt *out,qa_error *e)
+{
+    size_t count;
+    if (!out || !frontend_component_scene_picture_count(f,identity,sequence,&count,e) || ordinal>=count)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component picture ordinal leaves its actual captured command span");
+    for (const struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next)
+        if (owner->identity==identity) { *out=owner->pictures[ordinal]; return true; }
+    return false;
+}
+bool frontend_component_scene_pictures(qa_frontend *f,uint64_t identity,uint64_t sequence,
+    qa_q3_presentation *recipient,qa_scene_frame *frame,qa_error *e)
+{
+    size_t count=0;
+    if (!f || frame!=&f->frame || f->capture || f->resource_inventory || f->source_restoring ||
+        !recipient || !frontend_component_scene_picture_count(f,identity,sequence,&count,e)) return false;
+    struct frontend_component_scene *owner=f->component_scenes;
+    while (owner && owner->identity!=identity) owner=owner->next;
+    qa_q3_presentation_binding binding;
+    if (!owner || !qa_q3_presentation_binding_read(recipient,&binding,e) || binding.frame!=frame ||
+        binding.options.seat!=owner->request.physical_seat)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component pictures differ from their actual recipient frame");
+    owner->pending_picture_frame=f->frame_number;
+    owner->pending_picture_cursor=owner->picture_frame_valid && owner->picture_frame==f->frame_number?
+        owner->picture_cursor:0;
+    owner->pictures_pending=true;
+    if (owner->pending_picture_cursor>count) return frontend_fail(e,QA_ERROR_FORMAT,"Component picture cursor exceeds its retained output");
+    while (owner->pending_picture_cursor<count) {
+        if (!retained(owner) || !qa_q3_presentation_completed_picture(recipient,
+            owner->pictures+owner->pending_picture_cursor,frame,e)) return false;
+        ++owner->pending_picture_cursor;
+    }
+    return retained(owner);
+}
+bool frontend_component_scene_pictures_finish(qa_frontend *f,uint32_t physical,bool issued,qa_error *e)
+{
+    if (!f || physical>=f->options.seats || f->capture || f->resource_inventory || f->frame.source_pending)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component picture publication requires returned Source issue");
+    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next)
+        if (owner->request.physical_seat==physical && owner->pictures_pending &&
+            (owner->pending_picture_frame!=f->frame_number || owner->pending_picture_cursor>owner->picture_count))
+            return frontend_fail(e,QA_ERROR_FORMAT,"Component picture publication changed its actual retained frame");
+    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next) {
+        if (owner->request.physical_seat!=physical || !owner->pictures_pending) continue;
+        if (issued) {
+            owner->picture_frame_valid=true; owner->picture_frame=owner->pending_picture_frame;
+            owner->picture_cursor=owner->pending_picture_cursor;
+        }
+        owner->pictures_pending=false;
+    }
+    return true;
 }
 static struct frontend_component_scene *import_owner(qa_frontend *f,uint64_t identity,qa_error *e)
 {
@@ -586,6 +748,19 @@ static struct frontend_component_scene *import_owner(qa_frontend *f,uint64_t ide
             if (row->identity==identity && row->request.restoring && row->ready && idle(row) && retained(row)) return row;
     frontend_fail(e,QA_ERROR_ARGUMENT,"Component import lost its actual detached private renderer"); return NULL;
 }
+bool frontend_component_scene_restore_picture(qa_frontend *f,uint64_t identity,const qa_q3_picture_receipt *receipt,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    return owner && owner->begun && picture_append(owner,receipt,e);
+}
+bool frontend_component_scene_restore_picture_cursor(qa_frontend *f,uint64_t identity,
+    bool valid,uint64_t frame,size_t cursor,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    if (!owner || cursor>owner->picture_count || (!valid && cursor))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component picture cursor differs from its actual imported output");
+    owner->picture_frame_valid=valid; owner->picture_frame=frame; owner->picture_cursor=cursor; return true;
+}
 bool frontend_component_scene_restore_output(qa_frontend *f,uint64_t identity,uint64_t sequence,bool begun,
     qa_bytes bytes,const qa_scene_frame_checkpoint_refs *refs,qa_error *e)
 {
@@ -593,7 +768,7 @@ bool frontend_component_scene_restore_output(qa_frontend *f,uint64_t identity,ui
     if (!owner || !refs || !qa_scene_frame_restore(&owner->frame,bytes,refs,e)) return false;
     if (owner->frame.sequence!=sequence)
         return frontend_fail(e,QA_ERROR_FORMAT,"Component output sequence differs from its actual saved frame");
-    packets_clear(owner); owner->sequence=sequence; owner->begun=begun; return true;
+    packets_clear(owner); pictures_clear(owner); owner->sequence=sequence; owner->begun=begun; return true;
 }
 bool frontend_component_scene_restore_packet(qa_frontend *f,uint64_t identity,
     const frontend_component_scene_packet *view,qa_error *e)
@@ -602,11 +777,11 @@ bool frontend_component_scene_restore_packet(qa_frontend *f,uint64_t identity,
     if (!owner || !view || !owner->begun)
         return frontend_fail(e,QA_ERROR_FORMAT,"Component packet lacks its imported output sequence");
     qa_q3_scene_options options=view->options;
-    options.world.source_scratch=scratch(owner,e);
+    options.world.source_scratch=NULL;
     options.world.source_diagnostics_read=diagnostics; options.world.source_diagnostics_context=owner;
     options.world.video_frame=frontend_material_movies_frontend_resolve; options.world.video_context=f;
     options.world.flare=NULL; options.world.flare_context=NULL;
-    if (!options.world.source_scratch || !frontend_q3_source_recipient(f,&options.world,e)) return false;
+    if (!frontend_q3_source_recipient(f,&options.world,e)) return false;
     return packet_copy(owner,&view->definition,&options,view->entities,view->entity_count,
         view->polygons,view->polygon_count,view->vertices,view->vertex_count,view->lights,view->light_count,e);
 }
@@ -637,7 +812,10 @@ bool frontend_component_scene_restore_movies(qa_frontend *f,uint64_t identity,
     if (!owner || owner->movies || !refs) return false;
     frontend_material_movie_source source={.frontend=f,.files=owner->files,.images=owner->images,
         .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
-    return frontend_material_movies_restore(&source,refs,bytes,&owner->movies,e);
+    qa_q3_cinematic_source *cinematics=NULL;
+    return frontend_material_movies_restore(&source,refs,bytes,&owner->movies,e) &&
+        frontend_material_movies_cinematic_read(owner->movies,&cinematics,e) &&
+        (!cinematics || qa_q3_presentation_cinematics_bind(owner->presentation,cinematics,e));
 }
 bool frontend_component_scene_movie_source_read(const qa_frontend *f,uint64_t identity,
     frontend_material_movie_source *out,qa_error *e)
@@ -658,6 +836,33 @@ bool frontend_component_scenes_bind_restored(qa_frontend *f,qa_error *e)
     for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next)
         if (!owner->ready || !retained(owner) || !frontend_q3_material_source_bind(f,owner->materials,e)) return false;
     return true;
+}
+bool frontend_component_scenes_restore_order(qa_frontend *f,const uint64_t *identities,size_t count,qa_error *e)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory || (count && !identities) ||
+        count!=frontend_component_scene_count(f) || count>SIZE_MAX/sizeof(struct frontend_component_scene *))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component restore order differs from its genuine physical roster");
+    struct frontend_component_scene **ordered=count?calloc(count,sizeof(*ordered)):NULL;
+    if (count && !ordered) return frontend_fail(e,QA_ERROR_MEMORY,"Preparing actual component restore chronology");
+    bool ok=true;
+    for (size_t i=0;ok && i<count;++i) {
+        for (struct frontend_component_scene *row=f->component_scenes;row;row=row->next)
+            if (row->identity==identities[i]) { ordered[i]=row; break; }
+        if (!ordered[i] || !ordered[i]->ready || ordered[i]->frontend!=f || !idle(ordered[i])) ok=false;
+        for (size_t j=0;ok && j<i;++j) if (ordered[i]==ordered[j]) ok=false;
+    }
+    if (ok) {
+        for (size_t i=0;i<count;++i) ordered[i]->next=i+1<count?ordered[i+1]:NULL;
+        f->component_scenes=count?ordered[0]:NULL;
+    }
+    free(ordered);
+    return ok || frontend_fail(e,QA_ERROR_FORMAT,"Component restore order names duplicate or absent physical owners");
+}
+bool frontend_component_scene_restore_frame_bind(qa_frontend *f,uint64_t identity,
+    frontend_scene_namespace *space,uint64_t ordinal,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    return owner && space && frontend_scene_namespace_bind_frame(space,ordinal,&owner->frame,e);
 }
 bool frontend_component_scenes_finish_restore(qa_frontend *f,qa_error *e)
 {
@@ -700,9 +905,11 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
             !qa_vfs_acquisition_retained(request->content,request->acquisition,e))
             return frontend_fail(e,QA_ERROR_FORMAT,"Remote component renderer differs from its admitted recipe provider");
     } else return frontend_fail(e,QA_ERROR_FORMAT,"Unknown component renderer origin");
+    if (request->retired && !request->restoring)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Retired component renderer needs its genuine restored request");
     struct frontend_component_scene *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Allocating component private renderer");
-    owner->frontend=f; owner->request=*request; owner->cvars=request->host->cvars; owner->command=request->host->command_context;
+    owner->frontend=f; owner->request=*request; owner->retired=request->retired; owner->cvars=request->host->cvars; owner->command=request->host->command_context;
     if (request->restoring) {
         if (request->frontend_identity<=QA_FRONTEND_COMMAND_OWNER ||
             request->frontend_identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id ||
@@ -718,7 +925,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         free(owner); return frontend_fail(e,QA_ERROR_ARGUMENT,"Fresh component renderer needs a newly allocated physical identity");
     }
     owner->next=f->component_scenes; f->component_scenes=owner;
-    *request->frontend=(application_q3_component_scene_frontend){.owner=owner,.idle=idle,.destroy=destroy,.identity_read=identity_read,.begin=begin,.finish=finish,.completed=completed};
+    *request->frontend=(application_q3_component_scene_frontend){.owner=owner,.idle=idle,.destroy=destroy,.identity_read=identity_read,.begin=begin,.finish=finish,.completed=completed,.retire=retire};
     qa_scene_frame_init(&owner->frame,owner->identity);
     if (!qa_scene_frame_material_order(&owner->frame,f->order,e) ||
         (request->descriptor && !qa_launch_instance_retain_metadata(request->descriptor,&owner->descriptor,e))) return false;
@@ -728,10 +935,13 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         while (*link && (*link)->identity!=owner->identity) link=&(*link)->next;
         saved=*link;
         if (!saved) return frontend_fail(e,QA_ERROR_FORMAT,"Restored component renderer has no claimed private graph prefix");
-        owner->files=saved->files; saved->files=NULL; *link=saved->next;
+        owner->files=saved->files; saved->files=NULL; owner->pool=saved->pool; saved->pool=NULL; *link=saved->next;
         constructor_policy(&owner->restored_policy,&saved->policy); owner->has_restore_policy=true;
         free(saved); saved=NULL;
-    } else owner->files=qa_vfs_clone(request->content,e);
+    } else {
+        owner->files=qa_vfs_clone(request->content,e);
+        if (owner->files) { owner->pool=qa_vfs_resources(owner->files); qa_resource_pool_retain(owner->pool); }
+    }
     if (!request->restoring && !frontend_q3_source_color_ensure(f,e)) return false;
     owner->images=owner->files?(request->restoring?qa_scene_resources_create_detached(owner->files,e):qa_scene_resources_create(owner->files,e)):NULL;
     if (owner->images && !request->restoring && !frontend_image_policy_initialize(f,owner->images,e)) return false;
@@ -746,7 +956,10 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
             .media=owner->media,.context=owner,.current=movie_current};
         if (!frontend_q3_material_profile_initialize(f,owner->materials,e) ||
             !frontend_material_movies_create(&movie,&owner->movies,e) ||
-            !qa_material_library_load_scripts(owner->materials,owner->files,&images,e)) return false;
+            !frontend_source_cinematics_ensure(f,owner->images,e) ||
+            !frontend_material_movies_cinematic_attach(owner->movies,f->source_cinematics,request->physical_seat,owner->identity,e) ||
+            !qa_material_library_load_scripts(owner->materials,owner->files,&images,e) ||
+            !qa_material_library_source_shaders_initialize(owner->materials,&images,e)) return false;
     }
     qa_q3_presentation_asset_options assets={.provider={owner->files,owner->images,owner->materials,QA_SCENE_Q3},
         .sounds=owner->sounds,.movies=owner->media,.context=owner,.print=print,.model_initialize=model_initialize};
@@ -757,7 +970,9 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=owner,.audio_actor=audio_actor,.music=music,.frame_number=frame_number,.milliseconds=source_time,.audio_bus=audio_bus,
         .prepare_view=prepare_view,.prepare_picture=prepare_picture,.scene_completed=scene_completed,.remap=remap,.print=print,
+        .picture_capture=picture_capture,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=f};
+    if (owner->movies && !frontend_material_movies_cinematic_read(owner->movies,&options.cinematics,e)) return false;
     if (owner->has_restore_policy) constructor_policy(&options,&owner->restored_policy);
     if (!request->restoring && !frontend_q3_renderer_options_read(f,&options,e)) return false;
     if (!qa_q3_presentation_create(&options,&owner->presentation,e)) return false;

@@ -109,7 +109,8 @@ static bool scope_live(const chat_scope *scope, qa_error *error)
         application->publication_generation != scope->publication_generation ||
         application->command_generation != scope->command_generation ||
         application->map_revision != scope->map_revision ||
-        application_world_provider(application, QA_ROLE_ENTITIES, "") != provider ||
+        (application_world_provider(application, QA_ROLE_ENTITIES, "") != provider &&
+         !application_native_q3_source_command_entered(provider)) ||
         !qa_q3_native_client_slot(scope->game, scope->actor, &slot, error) ||
         slot != scope->slot)
         return application_fail(error, QA_ERROR_NOT_FOUND,

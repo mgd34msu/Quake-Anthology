@@ -6,8 +6,7 @@
 typedef struct frontend_unified_components_refs {
     qa_application_content_graph *content;
     void *context;
-    bool (*scene_checkpoint)(void *,const void *,qa_buffer *,qa_error *);
-    bool (*scene_restore)(void *,void *,qa_bytes,qa_error *);
+    bool (*scene_current)(void *,const void *actual_frontend_owner,uint64_t frontend_identity,qa_error *);
 } frontend_unified_components_refs;
 bool frontend_unified_components_checkpoint(frontend_unified_components *,
     const frontend_unified_components_refs *,qa_buffer *,qa_error *);

@@ -109,6 +109,8 @@ struct qa_q3_presentation {
     qa_q3_presentation_options options;
     qa_scene_frame *frame;
     const qa_q3_scene_options *submission;
+    qa_scene_world *recipient_world;
+    bool recipient_submission;
     qa_scene_world *world;
     qa_collision_geometry *geometry;
     qa_bytes entity_text;
@@ -132,6 +134,7 @@ struct qa_q3_presentation {
     q3p_movie movies[16];
     q3p_movie_source *movie_sources;
     unsigned busy;
+    unsigned supplements;
     bool world_loaded, material_view_valid;
 };
 bool q3p_fail(qa_error *, qa_status, const char *);
@@ -155,6 +158,8 @@ void q3p_model_free(q3p_model *);
 const qa_model *q3p_model_source(const q3p_model *, uint32_t);
 const qa_model *q3p_model_md4_source(const q3p_model *);
 bool q3p_assets_children_idle(const qa_q3_presentation_assets *);
+/* Private isolated import only: all nonshared decoded roots remain borrowed. */
+void q3p_assets_dispose_borrowed(qa_q3_presentation_assets *);
 void q3p_provider_custody_release(qa_q3_presentation_assets *);
 bool q3p_model_shared(const qa_q3_presentation_assets *, const q3p_model *);
 bool q3p_skin_shared(const qa_q3_presentation_assets *, const q3p_skin *);
@@ -162,6 +167,8 @@ bool q3p_assets_fork(qa_q3_presentation_assets *, qa_q3_presentation_assets **, 
 char *q3p_movie_path(const char *, qa_error *);
 bool q3p_movie_close(qa_q3_presentation *, uint32_t, qa_cinematic_end, qa_error *);
 bool q3p_picture(qa_q3_presentation *, const qa_material *, qa_scene_rect_f, qa_scene_vec4, qa_error *);
+bool q3p_source_raw_picture(qa_q3_presentation *,const qa_scene_image *,qa_scene_rect_f,
+    qa_scene_vec4 uv,qa_scene_vec4 color,qa_error *);
 qa_scene_vec4 q3p_color(const uint8_t[4]);
 const qa_material *q3p_default_material(const qa_q3_presentation *);
 

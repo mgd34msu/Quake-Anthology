@@ -34,6 +34,7 @@ struct frontend_remote_unified {
     bool frame_obsolete;
     bool bound, preparing, prepared, admitted, retired, busy, consumers_live, transport_restarted;
     bool restore_pending;
+    bool retirement_pending;
 };
 bool frontend_unified_fail(qa_error *, qa_status, const char *);
 bool frontend_unified_clone(const qa_unified_document *, qa_unified_document **, qa_error *);

@@ -347,6 +347,18 @@ bool q3n_weapons_player_compiled(const q3n_frame *f,const qa_q3_ref_entity *pare
         player_weapon(f,f->assets,parent,NULL,source->presentation,source->current,false,NULL,e) &&
         compiled_entity_valid(f,source,e);
 }
+bool q3n_weapons_player_compiled_parent(const q3n_frame *f,const qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *parent,const q3n_compiled_entity *source,qa_error *e)
+{
+    if(!compiled_entity_valid(f,source,e) || !assets || !qa_q3_assets_idle(assets) ||
+        !parent || parent->kind!=QA_Q3_REF_MODEL || parent->model<=0)
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Compiled weapon requires its submitted character registry and torso");
+    qa_model_tag tag;bool found=false;
+    if(!qa_q3_presentation_tag(assets,parent->model,"tag_weapon",parent->old_frame,parent->frame,
+        add(1,-parent->back_lerp),&tag,&found,e) || !compiled_entity_valid(f,source,e))return false;
+    return !found || (player_weapon(f,assets,parent,NULL,source->presentation,source->current,false,NULL,e) &&
+        compiled_entity_valid(f,source,e));
+}
 bool q3n_weapons_player_parent(const q3n_frame *f,const qa_q3_presentation_assets *parent_assets,
     const qa_q3_ref_entity *parent,q3n_entity *cent,const qa_q3_entity *state,
     bool *submitted,qa_error *e)
@@ -381,7 +393,7 @@ bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e
 {
     if (!frame_valid(f,e) || !view || !q3n_frame_predicted_player(f)) return false;
     const qa_q3_player *ps=q3n_frame_predicted_player(f);
-    if (!f->remote && !f->compiled && f->weapons->options.view_replacement) {
+    if (!f->remote && f->weapons->options.view_replacement) {
         bool consumed=false;
         if (!f->weapons->options.view_replacement(f->weapons->options.context,f,ps,&consumed,e) || !frame_valid(f,e)) return false;
         if (consumed) return true;

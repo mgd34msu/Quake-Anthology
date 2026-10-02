@@ -37,6 +37,10 @@ bool qa_console_release_context_current(const qa_console_release *,const qa_cons
                                         const qa_command_context *);
 /* Records entry into real command dispatch, rather than queue installation. */
 bool qa_console_release_entered(const qa_console_release *);
+/* Returned physical programme state for its exact captured lexical source.
+ * No source-current callback or command runs. */
+bool qa_console_release_state_read(const qa_console_release *,const qa_console *,
+    const qa_command_context *,bool *complete,bool *entered,qa_status *fault);
 /* Refuses while an entered program has pending continuation or failed source
  * history. A refusal retains both the program and its actual console lease. */
 bool qa_console_release_abort(qa_console_release *, qa_console_release_outcome *, qa_error *);

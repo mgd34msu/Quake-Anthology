@@ -239,10 +239,12 @@ static bool server_children(const frontend_network_unified *owner, qa_network_ru
             !qa_unified_session_source_ready(peer->session, e))
             return bad(e, "Unified Source child differs from its real installed transport peer");
         uint32_t wire_epoch = qa_unified_session_epoch(peer->session);
+        bool retiring = qa_unified_session_retiring(peer->session);
         if (peer->travel_prepared ? (!owner->traveling || i != owner->travel_cursor || wire_epoch == UINT32_MAX ||
-            child->epoch != wire_epoch + 1) : child->epoch != wire_epoch)
+            child->epoch != wire_epoch + 1) : (child->epoch != wire_epoch &&
+                !(retiring && wire_epoch != UINT32_MAX && child->epoch == wire_epoch + 1)))
             return bad(e, "Unified travel differs from its actual prepared offer continuation");
-        if (owner->traveling && i < owner->travel_cursor &&
+        if (owner->traveling && i < owner->travel_cursor && !retiring &&
             application_unified_save_source_obsolete(source, &child->offered))
             return bad(e, "Unified completed travel peer retains an obsolete offer");
     }
@@ -330,7 +332,7 @@ bool frontend_network_unified_restore_client_service(frontend_network_unified *o
     if (!owner || !owner->restore_pending || owner->options.server || !service ||
         (owner->options.client_service && owner->options.client_service != service) ||
         !frontend_network_unified_client_metadata_read(service, &physical, e) ||
-        !frontend_network_unified_client_options_read(service, &client, e) ||
+        !frontend_network_unified_client_import_options_read(service, &client, e) ||
         client.domain.application != owner->options.frontend->application || !client.domain.runtime ||
         (owner->options.runtime && owner->options.runtime != client.domain.runtime) ||
         !qa_net_address_equal(&physical.remote, &owner->options.remote, true) ||
@@ -347,8 +349,12 @@ bool frontend_network_unified_restore_client_service(frontend_network_unified *o
                 peer->client), peer->binding.seat)) return false;
         ++count;
     }
-    if (!count && (client.domain.client.owner || client.domain.client.generation || client.domain.client.slot))
-        return bad(e, "Pending Unified handshake retained an already attached CLIENT service");
+    if (!count && (client.domain.client.owner || client.domain.client.generation || client.domain.client.slot)) {
+        if (!physical.retired || !client.domain.client.owner || !client.domain.client.generation ||
+            qa_net_connections_get(qa_network_connections(client.domain.runtime), client.domain.client) ||
+            !frontend_network_unified_client_retirement_current(service, &physical.physical.source))
+            return bad(e, "Absent Unified peer has no actual retired physical CLIENT receipt");
+    }
     owner->options.runtime = client.domain.runtime; owner->options.client_service = service; owner->options.client = client;
     return true;
 }
@@ -380,7 +386,7 @@ bool frontend_network_unified_restore_lower(frontend_network_unified *owner, qa_
                 !application_unified_server_restore_bind(peer->server, peer->session, e))) return false;
         } else {
             if (!peer->remote || i) return false;
-            if (!peer->client_bound && !frontend_network_unified_client_bind(owner->options.client_service,
+            if (!peer->client_bound && !frontend_network_unified_client_bind_restored(owner->options.client_service,
                 peer->client, peer->binding.seat, peer->remote, e)) return false;
             peer->client_bound = true;
         }
@@ -397,6 +403,27 @@ bool frontend_network_unified_restore_lower(frontend_network_unified *owner, qa_
     owner->lower_restored = true;
     return true;
 }
+bool frontend_network_unified_restore_client(frontend_network_unified *owner,
+    qa_network_runtime *runtime, qa_net_client_id *client, frontend_remote_unified **remote,
+    bool *present, qa_error *e)
+{
+    if (!owner || !owner->restore_pending || !owner->lower_restored || owner->options.server ||
+        owner->options.runtime != runtime || !runtime || owner->closing || owner->calls ||
+        !owner->options.frontend->source_restoring || !qa_network_callbacks_idle(runtime) ||
+        !client || !remote || !present)
+        return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified replica prefix requires its actual lower-restored CLIENT graph");
+    *client = (qa_net_client_id){0}; *remote = NULL; *present = false;
+    if (!inventory(owner, runtime, true, e)) return false;
+    unified_peer *peer = owner->peers;
+    if (!peer->occupied) return true;
+    if (!peer->client_bound || !peer->source_import.size || !peer->remote ||
+        !qa_unified_session_source_retired(peer->session) ||
+        !frontend_remote_unified_restore_pending(peer->remote) ||
+        !frontend_remote_unified_checkpoint_current(peer->remote, e))
+        return bad(e, "Unified CLIENT import lost its genuine owned replica prefix");
+    *client = peer->client; *remote = peer->remote; *present = true;
+    return true;
+}
 bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa_network_runtime *runtime, qa_error *e)
 {
     if (!frontend_network_unified_restore_lower(owner, runtime, e)) return false;
@@ -411,6 +438,7 @@ bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa
             if (frontend_remote_unified_restore_pending(peer->remote) &&
                 (!frontend_remote_unified_presentation_restore_ready(peer->remote, e) ||
                  !frontend_remote_unified_restore_bind(peer->remote, peer->session, e))) return false;
+            if (!frontend_remote_unified_presentation_restore_activate(peer->remote, e)) return false;
             if (!frontend_remote_unified_qualified(peer->remote, runtime,
                 qa_net_connections_get(qa_network_connections(runtime), peer->client), e)) return false;
         }
@@ -442,7 +470,9 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
         frontend_remote_unified_options client = {0};
         bool server; uint32_t maximum; qa_net_address remote;
         if (!frontend_network_unified_client_idle(owner->options.client_service) ||
-            !frontend_network_unified_client_options_read(owner->options.client_service, &client, e) ||
+            !(frontend_network_unified_client_retired(owner->options.client_service) ?
+                frontend_network_unified_client_retirement_options_read(owner->options.client_service, &client, e) :
+                frontend_network_unified_client_options_read(owner->options.client_service, &client, e)) ||
             client.domain.runtime != runtime || client.domain.application != owner->options.frontend->application ||
             !frontend_network_unified_idle(owner) || !inventory(owner, runtime, true, e) ||
             !qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) ||

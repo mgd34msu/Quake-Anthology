@@ -11,7 +11,7 @@ static inline bool render_save_pipeline(qa_source_save_io *io,qa_scene_state *st
         depth_fail=state->stencil_depth_fail,depth_pass=state->stencil_depth_pass;
     if (!qa_source_save_u32(io,&blend_source) || blend_source>QA_BLEND_SRC_ALPHA_SATURATE ||
         !qa_source_save_u32(io,&blend_destination) || blend_destination>QA_BLEND_SRC_ALPHA_SATURATE ||
-        !qa_source_save_u32(io,&depth) || depth>QA_DEPTH_GEQUAL ||
+        !qa_source_save_u32(io,&depth) || depth>QA_DEPTH_DISABLED ||
         !qa_source_save_u32(io,&alpha) || alpha>QA_ALPHA_GE128 ||
         !qa_source_save_u32(io,&cull) || cull>QA_CULL_BACK ||
         !qa_source_save_bool(io,&state->depth_write) || !qa_source_save_bool(io,&state->color_write) ||

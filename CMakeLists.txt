@@ -1073,6 +1073,11 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/assets_custody.c
     src/presentation/q3/source_scene_bank.c
     src/presentation/q3/source_scene_bank_save.c
+
+    src/presentation/q3/cinematic_handles.c
+    src/presentation/q3/cinematic_handles_prepare.c
+    src/presentation/q3/cinematic_handles_save.c
+    src/presentation/q3/scene_packet_save.c
 )
 target_link_libraries(qa_q3_presentation PUBLIC qa_scene qa_audio qa_media qa_text qa_input)
 
@@ -1446,6 +1451,19 @@ add_library(qa_application STATIC
     src/app/application/native_q2_armor.c
     src/app/application/native_q2_client_stages.c
     src/app/application/native_q2_protection.c
+
+    src/app/application/guest_q3_component_items.c
+    src/app/application/model_admission.c
+    src/app/application/native_q2_callback_region.c
+    src/app/application/native_q2_client_outputs.c
+    src/app/application/native_q2_items.c
+    src/app/application/native_q2_pickups.c
+    src/app/application/native_q2_source_actors.c
+    src/app/application/native_q2_source_combat_state.c
+    src/app/application/native_q2_source_damage.c
+    src/app/application/native_q2_source_invocation.c
+    src/app/application/native_q2_visibility.c
+    src/app/application/native_q2_weapon_stage.c
 )
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
 if(WIN32)
@@ -1826,6 +1844,25 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_runtime_save.c
     src/app/frontend/unified_q3_runtime_services.c
     src/app/frontend/unified_q3_runtime_video.c
+
+    src/app/frontend/classic_client_graph_save.c
+    src/app/frontend/component_scene_save.c
+    src/app/frontend/equipment_icon.c
+    src/app/frontend/network_q1_recipe_save.c
+    src/app/frontend/network_q2_host_save.c
+    src/app/frontend/network_q2_recipe_save.c
+    src/app/frontend/q2_client_graph_save.c
+    src/app/frontend/remote_q2_effects_semantic.c
+    src/app/frontend/remote_unified_components_submission.c
+    src/app/frontend/remote_unified_material_movies_bridge.c
+    src/app/frontend/remote_unified_q2_hud.c
+    src/app/frontend/renderer_registries.c
+    src/app/frontend/renderer_registries_save.c
+    src/app/frontend/source_cinematics.c
+    src/app/frontend/source_companion_legacy.c
+    src/app/frontend/unified_graph_save.c
+    src/app/frontend/unified_q3_commands.c
+    src/app/frontend/unified_q3_runtime_factory.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"

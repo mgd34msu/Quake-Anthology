@@ -56,11 +56,13 @@ typedef struct qa_damage_modifier {
 bool qa_damage_apply_modifier(const qa_actor_registry *, const qa_damage_request *, const qa_damage_modifier *, qa_damage_request *, qa_error *);
 
 typedef enum qa_regular_armor_kind { QA_ARMOR_NONE, QA_ARMOR_Q1, QA_ARMOR_Q2, QA_ARMOR_Q3, QA_ARMOR_SOURCE } qa_regular_armor_kind;
+/* Canonical source storage retains binary64 counts and authored Q2 rates.
+ * Compiled family arithmetic applies its own explicit binary32 boundary. */
 typedef struct qa_regular_armor {
     qa_regular_armor_kind kind;
-    float points;
+    double points;
     qa_item_id item;
-    union { float q1_absorption; struct { float normal, energy; } q2; float q3_protection; } protection;
+    union { float q1_absorption; struct { double normal, energy; } q2; float q3_protection; } protection;
 } qa_regular_armor;
 typedef enum qa_power_kind { QA_POWER_NONE, QA_POWER_SCREEN, QA_POWER_SHIELD } qa_power_kind;
 typedef enum qa_q2_power_armor_edition {
@@ -71,7 +73,7 @@ typedef enum qa_power_armor_source {
 } qa_power_armor_source;
 typedef struct qa_powered_armor {
     qa_power_kind kind;
-    float cells;
+    double cells;
     qa_actor_owner source_owner;
     qa_q2_power_armor_edition source_edition;
     /* Generic storage requires an actual owner-bound absorption lease.
@@ -162,7 +164,7 @@ typedef struct qa_combat_binding {
     bool (*write_armor)(void *, const qa_armor *, qa_error *);
     bool (*validate_armor)(void *, const qa_armor *, qa_error *);
     bool (*write_traits)(void *, const qa_combat_state *, qa_error *);
-    bool (*empty_regular_armor)(void *, float points, qa_regular_armor *, bool *selected, qa_error *);
+    bool (*empty_regular_armor)(void *, double points, qa_regular_armor *, bool *selected, qa_error *);
     bool (*normalize_legacy_armor)(void *, const qa_armor *, qa_armor *, qa_error *);
     qa_damage_admit_fn admit;
     bool (*adjust)(void *, const qa_damage_request *, float *amount, float *knockback, qa_error *);
@@ -338,7 +340,7 @@ bool qa_combat_read_traits(qa_combat *, qa_actor_id, qa_combat_state *, qa_error
 bool qa_combat_primary_read(qa_combat *, qa_actor_id, qa_combat_state *, bool *local, qa_error *);
 bool qa_combat_set_health(qa_combat *, qa_actor_id, float, qa_error *);
 bool qa_combat_set_armor(qa_combat *, qa_actor_id, const qa_armor *, qa_error *);
-bool qa_combat_set_regular_points(qa_combat *, qa_actor_id, float, const qa_regular_armor *initial, qa_error *);
+bool qa_combat_set_regular_points(qa_combat *, qa_actor_id, double, const qa_regular_armor *initial, qa_error *);
 bool qa_combat_set_regular_armor(qa_combat *, qa_actor_id, const qa_regular_armor *, qa_error *);
 bool qa_combat_set_powered_armor(qa_combat *, qa_actor_id, const qa_powered_armor *, qa_error *);
 bool qa_combat_normalize_legacy_armor(qa_combat *, qa_actor_id, const qa_armor *, qa_armor *, qa_error *);
@@ -395,10 +397,11 @@ typedef struct qa_pickup_execution qa_pickup_execution;
 bool qa_pickup_current(const qa_pickup_execution *);
 /* Pure proof that this current grant receipt owns the actual full recipient. */
 bool qa_pickup_recipient_is(const qa_pickup_execution *,qa_actor_id);
-/* Borrows the innermost open execution for this full recipient only until its
- * synchronous dispatch returns. No execution is true with found=false. */
-bool qa_pickups_execution_read(qa_pickups *,qa_actor_id,const qa_pickup_execution **,
-    bool *found,qa_error *);
+/* Borrows the innermost execution for this full recipient until dispatch
+ * returns. A nonzero owner selects its actual replacement registration;
+ * zero accepts any owner. No matching execution is true with found=false. */
+bool qa_pickups_execution_read(qa_pickups *,qa_actor_id,qa_actor_owner,
+    const qa_pickup_execution **,bool *found,qa_error *);
 const qa_pickup_write *qa_pickup_writes(const qa_pickup_execution *, size_t *count);
 bool qa_pickup_store_protection(qa_pickup_execution *, const qa_protection_store *, qa_error *);
 typedef struct qa_pickup_rule {
@@ -458,6 +461,10 @@ bool qa_pickups_idle(const qa_pickups *);
 bool qa_pickups_set_eligibility(qa_pickups *, bool (*)(void *, const qa_pickup_offer *, bool *, qa_error *), void *, qa_error *);
 void qa_pickups_actor_released(qa_pickups *, qa_actor_record);
 bool qa_pickups_bind(qa_pickups *, qa_actor_id, qa_actor_owner, const qa_pickup_rule *, size_t, qa_pickup_lease *, qa_error *);
+/* Pure qualification of the actual recipient registration and resource leases. */
+bool qa_pickups_registration_current(qa_pickups *,qa_pickup_lease,qa_actor_owner);
+/* Retained active ownership only; resource retirement does not erase the lease. */
+bool qa_pickups_registration_owned(const qa_pickups *,qa_pickup_lease,qa_actor_owner);
 bool qa_pickups_close(qa_pickups *, qa_pickup_lease, qa_error *);
 bool qa_pickups_touch(qa_pickups *, const qa_pickup_offer *, const qa_pickup_continuation *, qa_pickup_outcome *, qa_error *);
 bool qa_pickups_run_source(qa_pickups *, const qa_pickup_offer *, qa_pickup_source_fn, void *, qa_error *);

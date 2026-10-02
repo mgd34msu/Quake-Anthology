@@ -6,4 +6,5 @@
  * is connecting or loading. A handled sample never enters local GAME input. */
 bool frontend_network_q2_input(qa_frontend *, uint32_t physical_seat,
     const qa_seat_input_sample *, uint64_t sequence, bool *handled, qa_error *);
+bool frontend_network_q2_input_owned(const qa_frontend *,uint32_t physical_seat);
 #endif

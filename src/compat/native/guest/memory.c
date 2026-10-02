@@ -47,6 +47,7 @@ bool qa_native_guest_terminal(const qa_native_guest *guest)
 bool qa_native_guest_idle(const qa_native_guest *guest)
 {
     return guest && !guest->run && !guest->callback_depth && !guest->publication_depth &&
+        !guest->stopped_write_calls && !guest->stopped_write_bindings && !guest->recovery &&
         !guest->stepping && !guest->restoring && !guest->failed && !guest->faulting;
 }
 
@@ -107,7 +108,8 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     if (!owner) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest owner is required");
     qa_native_guest *guest = *owner;
     if (!guest) return true;
-    if (guest->run || guest->callback_depth || guest->publication_depth || guest->stepping)
+    if (guest->run || guest->callback_depth || guest->publication_depth || guest->stepping ||
+        guest->stopped_write_calls || guest->stopped_write_bindings || guest->recovery)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest destruction requires drained execution");
     if (guest->child) {
         if (!guest_host_child_destroy(&guest->child, error)) { guest->failed = true; return false; }
@@ -309,6 +311,29 @@ bool qa_native_guest_read(const qa_native_guest *guest, uint64_t address, void *
     return true;
 }
 
+bool guest_callback_cancelled(const qa_native_guest *guest,const qa_error *error)
+{
+    const guest_callback_recovery *r=guest?guest->recovery:NULL;
+    return r&&r->cancelled&&!r->restored&&!r->resolved&&!guest->failed&&error&&
+        error->code==r->failure.code&&error->offset==r->failure.offset&&
+        strcmp(error->message,r->failure.message)==0;
+}
+bool guest_call_prepared(const qa_native_guest *guest)
+{
+    const guest_callback_recovery *r=guest?guest->recovery:NULL;
+    return r&&r->invocation&&!r->resolved&&!r->restored&&!r->cancelled&&
+        !guest->run&&!guest->callback_depth&&!guest->publication_depth&&!guest->stopped_write_calls&&
+        !guest->failed&&!guest->faulting&&!guest->stepping&&!guest->restoring;
+}
+bool guest_callback_failure(qa_native_guest *guest,const qa_error *error)
+{
+    guest_callback_recovery *r=guest?guest->recovery:NULL;
+    if(!r||!r->invocation||!error||guest->failed||guest->faulting||guest->stepping||
+        r->restored||r->resolved) return false;
+    if(r->cancelled) return guest_callback_cancelled(guest,error);
+    if(!r->accepts(r->context,error)||guest->failed||guest->faulting||guest->stepping) return false;
+    r->failure=*error; r->cancelled=true; return true;
+}
 bool guest_publish(qa_native_guest *guest, const qa_native_guest_commit *commit, qa_error *error)
 {
     if (guest->options.backend == QA_NATIVE_GUEST_EMULATED &&
@@ -322,7 +347,7 @@ bool guest_publish(qa_native_guest *guest, const qa_native_guest_commit *commit,
     if (okay && guest->failed)
         okay = guest_fail(error, QA_ERROR_ARGUMENT, commit->address,
             "native guest observer cannot recover a terminal owner");
-    if (!okay) guest->failed = true;
+    if (!okay && !guest_callback_failure(guest,error)) guest->failed = true;
     return okay;
 }
 

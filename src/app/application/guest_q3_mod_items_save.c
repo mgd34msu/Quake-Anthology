@@ -40,14 +40,15 @@ static bool fields(application_q3_mod_items *o,item_actor *a,qa_source_save_io *
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     qa_qvm_binding watch=reading?0:a->watch;
+    bool bound=a->weapon_bound||a->restore_weapon_bound;
     uint32_t status=(uint32_t)a->status;
     if(!qa_source_save_actor(io,&a->actor)||!qa_source_save_u64(io,&a->lease.serial)||!a->lease.serial||
-        !qa_source_save_u64(io,&watch)||watch<=1||!qa_source_save_bool(io,&a->weapon_bound)||
+        !qa_source_save_u64(io,&watch)||watch<=1||!qa_source_save_bool(io,&bound)||
         !qa_source_save_u64(io,&a->request.id)||!qa_source_save_string(io,&a->request.item)||
         !qa_source_save_u32(io,&status)||status>Q3_ITEM_REQUEST_REFUSED||
         !qa_source_save_count(io,&a->address_count,o->profile->source->record_count)||
         a->address_count!=record_count(o->profile))return false;
-    if(reading){a->saved_watch=watch;a->lease.actor=a->actor;a->status=(application_q3_item_request_status)status;
+    if(reading){a->saved_watch=watch;a->restore_weapon_bound=bound;a->lease.actor=a->actor;a->status=(application_q3_item_request_status)status;
         if(a->request.id)a->request.actor=a->actor;
         a->addresses=calloc(a->address_count,sizeof(*a->addresses));
         if(a->address_count&&!a->addresses)return q3mod_fail(io->error,QA_ERROR_MEMORY,"Retaining restored item source addresses");
@@ -62,7 +63,7 @@ static bool fields(application_q3_mod_items *o,item_actor *a,qa_source_save_io *
         if(r->address<record->address||r->address>=end||(r->address-record->address)%record->stride)return false;
     }
     return qa_actors_get(qa_session_actors(o->mod->session),a->actor)&&
-        (!a->weapon_bound||o->profile->stage)&&request_valid(o,a);
+        bound==(o->profile->stage!=NULL)&&request_valid(o,a);
 }
 bool application_q3_mod_items_checkpoint(application_q3_mod_items *o,qa_buffer *out,qa_error *e)
 {
@@ -72,7 +73,8 @@ bool application_q3_mod_items_checkpoint(application_q3_mod_items *o,qa_buffer *
     bool ok=prefix(o,&io)&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
     for(item_actor *a=o->actors;ok&&a;a=a->next){qa_qvm_saved_write_watch watch;
         ok=q3items_current(a,e)&&(!o->profile->stage||a->weapon_bound)&&
-            qa_qvm_write_watch_read(o->mod->vm,a->watch,&watch,e)&&fields(o,a,&io);
+            (!a->weapon_bound||o->services.weapon_current(o->services.context,a->actor,o))&&
+            q3items_watch_read(a,&watch,e)&&fields(o,a,&io);
     }
     if(ok)ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);return ok;
@@ -102,7 +104,7 @@ bool application_q3_mod_items_watch(const application_q3_mod_items *o,size_t i,
     qa_qvm_saved_write_watch *out,qa_qvm_binding *saved,qa_error *e)
 {
     if(!o||!out||!saved||!application_q3_mod_items_idle(o))return false;
-    for(item_actor *a=o->actors;a;a=a->next)if(a->watch){if(i--==0){*saved=a->saved_watch?a->saved_watch:a->watch;return qa_qvm_write_watch_read(o->mod->vm,a->watch,out,e);}}
+    for(item_actor *a=o->actors;a;a=a->next)if(a->watch){if(i--==0){*saved=a->saved_watch?a->saved_watch:a->watch;return q3items_watch_read(a,out,e);}}
     return q3mod_fail(e,QA_ERROR_ARGUMENT,"Item watch inventory leaves actual source rows");
 }
 bool application_q3_mod_items_watches_adopt(application_q3_mod_items *o,qa_error *e)
@@ -112,6 +114,22 @@ bool application_q3_mod_items_watches_adopt(application_q3_mod_items *o,qa_error
         if(!a->saved_watch||!qa_qvm_write_watch_read(o->mod->vm,a->saved_watch,&watch,e)||watch.context!=a)return false;
     }
     for(item_actor *a=o->actors;a;a=a->next){a->watch=a->saved_watch;a->saved_watch=0;}
+    return true;
+}
+bool application_q3_mod_items_finish_restore(application_q3_mod_items *o,qa_error *e)
+{
+    if(!o||o->mod->restoring||!application_q3_mod_items_idle(o)||!q3mod_current(o->mod,e))return false;
+    for(item_actor *a=o->actors;a;a=a->next){qa_qvm_saved_write_watch watch;
+        if(a->saved_watch||!q3items_current(a,e)||!q3items_watch_read(a,&watch,e))return false;
+        a->restore_inventory=false;
+        if(!a->restore_weapon_bound)continue;
+        if(!o->services.weapon_current(o->services.context,a->actor,o)){
+            if(!o->services.weapon_bind(o->services.context,a->actor,o,e))return false;
+            a->weapon_bound=true;
+        }else a->weapon_bound=true;
+        if(!o->services.weapon_current(o->services.context,a->actor,o)||!q3items_current(a,e))return false;
+        a->restore_weapon_bound=false;
+    }
     return true;
 }
 bool application_q3_mod_items_inventory_group(application_q3_mod_items *o,qa_actor_id actor,
@@ -127,5 +145,6 @@ bool application_q3_mod_items_inventory_group(application_q3_mod_items *o,qa_act
             x->definition.weapon!=y->definition.weapon||x->definition.actions!=y->definition.actions||
             !x->definition.label||strcmp(x->definition.label,y->definition.label))return false;
     }
+    a->restore_inventory=true;
     return true;
 }

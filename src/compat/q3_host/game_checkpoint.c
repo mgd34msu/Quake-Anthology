@@ -82,19 +82,28 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     *out = bytes; return true;
 }
 
+static bool source_span(qa_q3_host *host, uint64_t address, size_t bytes, qa_error *error)
+{
+    if (host->vm) {
+        qa_bytes admitted;
+        return q3_vm_span(host->vm, address, bytes, &admitted, error);
+    }
+    return host->native && qa_native_get_backend(host->native) == QA_NATIVE_BACKEND_OWNED_PROCESS &&
+        qa_native_range_check(host->native, address, bytes, QA_NATIVE_MEMORY_READ | QA_NATIVE_MEMORY_WRITE, error);
+}
+
 static bool descriptor(qa_q3_host *host, const q3_game_data *game, qa_error *error)
 {
     if (!game->entities && !game->clients && !game->entity_count && !game->entity_stride && !game->client_stride) return true;
-    if (!host->vm || !game->entities || !game->clients || game->entity_count > 1024 ||
+    if ((!host->vm && !host->native) || !game->entities || !game->clients || game->entity_count > 1024 ||
         game->entity_stride < qa_qvm_shared_entity_bytes(host->options.abi) ||
         game->client_stride < qa_qvm_player_bytes(host->options.abi) ||
         (game->entity_stride & 3u) || (game->client_stride & 3u) || (game->entities & 3u) || (game->clients & 3u))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint game-data descriptor is invalid");
     uint64_t size = (uint64_t)game->entity_count * game->entity_stride;
-    qa_bytes admitted;
     return (size <= SIZE_MAX || q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint entity table is too large")) &&
-        q3_vm_span(host->vm, game->entities, (size_t)size, &admitted, error) &&
-        q3_vm_span(host->vm, game->clients, game->client_stride, &admitted, error);
+        source_span(host, game->entities, (size_t)size, error) &&
+        source_span(host, game->clients, game->client_stride, error);
 }
 
 bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **out, qa_error *error)
@@ -144,9 +153,8 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         slot->input_retired = (flags & 4u) != 0;
         if (!slot->borrowed && number < host->options.server.maximum_clients) {
             uint64_t displacement = (uint64_t)number * game->client_stride;
-            qa_bytes admitted;
             if (displacement > INT32_MAX || game->clients > UINT64_MAX - displacement ||
-                !q3_vm_span(host->vm, game->clients + displacement, game->client_stride, &admitted, error)) {
+                !source_span(host, game->clients + displacement, game->client_stride, error)) {
                 ok = q3_fail(error, QA_ERROR_FORMAT, i, "Q3 checkpoint client binding leaves its source memory"); break;
             }
         }

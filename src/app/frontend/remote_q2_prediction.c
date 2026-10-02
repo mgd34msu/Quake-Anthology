@@ -23,8 +23,8 @@ qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
 {
     qa_net_protocol_id protocol = row->options.domain.protocol;
     bool short_solid = protocol.kind == QA_NET_Q2_34 ||
-        (protocol.kind == QA_NET_R1Q2_35 && protocol.revision < 1905);
-    bool v2 = row->layout.max_models == 8192 || protocol.kind == QA_NET_Q2PRIVATE_4038 ||
+        (protocol.kind == QA_NET_R1Q2_35 && row->data.protocol_revision < 1905);
+    bool v2 = remote_q2_float_movement(row) || protocol.kind == QA_NET_Q2PRIVATE_4038 ||
         (protocol.kind == QA_NET_Q2PRO_36 &&
             ((row->data.protocol_revision >= 1024 && (row->data.wire_flags & 8)) ||
              (row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16))));
@@ -58,10 +58,10 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
     for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->solid || (self_number >= 0 && entity->number == (uint32_t)self_number + 1) || entity->number == pass_number) continue;
-        bool extended = row->layout.max_models == 8192 ||
+        bool extended = remote_q2_float_movement(row) ||
             (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
                 row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
-        unsigned long clients = strtoul(frontend_remote_q2_config(row, row->layout.max_models == 8192 ? 60 : 30), NULL, 10);
+        unsigned long clients = strtoul(frontend_remote_q2_config(row, row->layout.max_clients), NULL, 10);
         if (extended && entity->number <= clients && !(query->policy.contents_mask & (UINT32_C(1) << 30))) continue;
         uint32_t model = 0; qa_trace_result hit;
         q = *query;
@@ -71,7 +71,8 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
                 .origin = vector(entity->origin), .angles = vector(entity->angles)};
             if (!qa_collision_trace(row->geometry, &q, &hit, error)) return false;
         } else if (!qa_collision_trace_body(&q, QA_COLLISION_Q2, QA_SHAPE_BOX,
-            remote_q2_solid_bounds(row, entity->solid), vector(entity->origin), INT32_C(0x2000000), &hit, error)) return false;
+            remote_q2_solid_bounds(row, entity->solid), vector(entity->origin),
+            extended && entity->number <= clients ? INT32_C(0x40000000) : INT32_C(0x2000000), &hit, error)) return false;
         bool start_solid = out->start_solid || hit.start_solid;
         if (hit.all_solid || hit.fraction < out->fraction) {
             if (!row->options.entity_actor(row->options.context, &row->options.domain, entity->number, &hit.actor, error) ||
@@ -108,7 +109,7 @@ void remote_q2_prediction_receive(frontend_remote_q2 *row)
     if (!received || !command->valid || command->command_number != row->acknowledged_command || !command->predicted) {
         row->prediction_error = qa_v3(0, 0, 0); return;
     }
-    qa_vec3 origin = row->layout.max_models == 8192 ? vector(received->pmove.origin_f) :
+    qa_vec3 origin = remote_q2_float_movement(row) ? vector(received->pmove.origin_f) :
         qa_v3((float)received->pmove.origin[0] * .125f, (float)received->pmove.origin[1] * .125f,
             (float)received->pmove.origin[2] * .125f);
     qa_vec3 delta = qa_vec_sub(origin, command->origin);
@@ -128,7 +129,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         if (!row->commands[number & 63].valid || row->commands[number & 63].command_number != number) return true;
     }
     qa_actor_id actor;
-    bool rerelease = row->layout.max_models == 8192;
+    bool rerelease = remote_q2_float_movement(row);
     bool wide = row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
         row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u);
     qa_movement_kind kind = rerelease ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
@@ -137,7 +138,11 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         state.data.q2r = (qa_q2r_movement_state){.type = received->pmove.type,
             .origin = vector(received->pmove.origin_f), .velocity = vector(received->pmove.velocity_f),
             .flags = (uint32_t)received->pmove.flags, .time_ms = (uint32_t)received->pmove.time,
-            .gravity = (int16_t)received->pmove.gravity, .delta_angles = vector(received->pmove.delta_angles_f),
+            .gravity = (int16_t)received->pmove.gravity,
+            .delta_angles = received->pmove.float_delta_angles ? vector(received->pmove.delta_angles_f) :
+                qa_v3(received->pmove.delta_angles[0] * (360.0f / 65536),
+                    received->pmove.delta_angles[1] * (360.0f / 65536),
+                    received->pmove.delta_angles[2] * (360.0f / 65536)),
             .view_height = (float)received->pmove.viewheight};
     } else {
         state.data.q2.type = received->pmove.type; state.data.q2.flags = (uint32_t)received->pmove.flags;
@@ -159,7 +164,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         }
     }
     qa_movement_profile profile = qa_movement_profile_default(kind);
-    const char *air_text = frontend_remote_q2_config(row, rerelease ? 59 : 29); char *end;
+    const char *air_text = frontend_remote_q2_config(row, row->layout.air_accelerate); char *end;
     double air = strtod(air_text, &end);
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
     if ((*air_text && (*end || !isfinite(air))) || air < -FLT_MAX || air > FLT_MAX)

@@ -1850,6 +1850,10 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path, qa_vfs_accept_mount 
 { return acquire_filtered_mode(vfs, path, accept, context, out, out_mount, NULL, error); }
 bool qa_vfs_acquire_receipt(qa_vfs *vfs, const char *path, qa_resource **out,
     qa_vfs_acquisition *receipt, qa_error *error)
+{ return qa_vfs_acquire_filtered_receipt(vfs, path, NULL, NULL, out, receipt, error); }
+bool qa_vfs_acquire_filtered_receipt(qa_vfs *vfs, const char *path,
+    qa_vfs_accept_mount accept, void *context, qa_resource **out,
+    qa_vfs_acquisition *receipt, qa_error *error)
 {
     if (out) *out = NULL;
     if (!receipt || receipt->mount || receipt->resource_id || receipt->path || receipt->lookup_path ||
@@ -1857,7 +1861,7 @@ bool qa_vfs_acquire_receipt(qa_vfs *vfs, const char *path, qa_resource **out,
         receipt->opening.order || receipt->opening.order_count || receipt->opening.prefix || receipt->opening.user_overlay) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS acquisition requires an empty receipt"); return false;
     }
-    return acquire_filtered_mode(vfs, path, NULL, NULL, out, NULL, receipt, error);
+    return acquire_filtered_mode(vfs, path, accept, context, out, NULL, receipt, error);
 }
 static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path,
     bool *found, uint64_t *size, qa_error *error)
@@ -1955,7 +1959,64 @@ static bool acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *recei
 bool qa_vfs_acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, qa_error *error)
 { return acquisition_valid(vfs, receipt, true, error); }
 bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, qa_error *error)
-{ return acquisition_valid(vfs, receipt, false, error); }
+{
+    if (!vfs || !receipt || !receipt->path || !receipt->lookup_path ||
+        !receipt->link_source || !receipt->link_target ||
+        !qa_vfs_mount_id_was_issued(vfs, receipt->mount)) goto invalid;
+    const qa_resource *resource = qa_resource_pool_find(vfs->pool, receipt->resource_id);
+    qa_vfs_resource_origin origin;
+    if (!resource || !qa_vfs_resource_origin_read(vfs, receipt->mount, resource, &origin)) goto invalid;
+    const char *paths[] = {receipt->path, receipt->lookup_path, receipt->link_source, receipt->link_target};
+    for (size_t i = 0; i < 4; ++i) {
+        char *normalized = i < 2 ? qa_vfs_normalize_path(paths[i], error) : link_prefix(paths[i], true, error);
+        bool matches = normalized && !strcmp(normalized, paths[i]); free(normalized);
+        if (!matches) {
+            if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained acquisition path");
+            return false;
+        }
+    }
+    bool retained = false;
+    for (const retained_read *row = vfs->history; row; row = row->next)
+        if (row->resource == receipt->resource_id && row->recipe.mount == receipt->mount &&
+            read_recipe_equal(&row->recipe, receipt->path, receipt->lookup_path,
+                receipt->link_source, receipt->link_target)) { retained = true; break; }
+    if (!retained || origin.archive != (resource->archive != NULL) ||
+        (origin.archive && (*receipt->link_source ||
+         memcmp(origin.archive_digest.bytes, resource->archive->digest.bytes, sizeof(origin.archive_digest.bytes))))) goto invalid;
+    const qa_vfs_read_opening *opening = &receipt->opening;
+    if (!receipt->opening_present) {
+        if (opening->rank || opening->order || opening->order_count || opening->prefix || opening->user_overlay) goto invalid;
+        return true;
+    }
+    if (opening->rank < -1 || opening->order_count > SIZE_MAX / sizeof(qa_mount_id) ||
+        (opening->order_count && !opening->order)) goto invalid;
+    size_t prefix_length = opening->prefix ? strlen(opening->prefix) : 0;
+    if (prefix_length) {
+        char *normalized = qa_vfs_normalize_path(opening->prefix, error);
+        bool matches = normalized && !strcmp(normalized, opening->prefix); free(normalized);
+        if (!matches) return false;
+        if (opening->user_overlay || strlen(receipt->path) <= prefix_length ||
+            receipt->path[prefix_length] != '/') goto invalid;
+        for (size_t i = 0; i < prefix_length; ++i) {
+            unsigned char a = (unsigned char)receipt->path[i], b = (unsigned char)opening->prefix[i];
+            if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+            if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+            if (a != b) goto invalid;
+        }
+    }
+    for (size_t i = 0; i < opening->order_count; ++i) {
+        if (!qa_vfs_mount_id_was_issued(vfs, opening->order[i])) goto invalid;
+        for (size_t j = 0; j < i; ++j) if (opening->order[j] == opening->order[i]) goto invalid;
+    }
+    if (*receipt->link_source) {
+        if (opening->rank != -1 || opening->order_count || prefix_length || opening->user_overlay) goto invalid;
+    } else if (opening->rank < 0 || (uint64_t)opening->rank >= opening->order_count ||
+        opening->order[opening->rank] != receipt->mount) goto invalid;
+    return true;
+invalid:
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS acquisition differs from its retained resource origin and recipe");
+    return false;
+}
 bool qa_vfs_probe(qa_vfs *vfs, const char *path, bool *found, uint64_t *size, qa_error *error)
 {
     if (!vfs || !found || !size) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS probe requires its view and outputs"); return false; }

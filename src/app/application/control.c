@@ -186,6 +186,7 @@ bool application_control_output_admit(const qa_application *app, qa_actor_id act
         return application_arsenal_guest_output_admit(source, channels, error);
     if ((channels & (1u << APPLICATION_CLIENT_BODY_SHAPE)) &&
         source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
+        !source->state.native.q2_engine->callbacks &&
         source->state.native.q2_engine->profile == QA_NATIVE_Q2_GAME_API2023 &&
         !application_q2_control_body_admitted(source->state.native.q2_engine))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Original rerelease movement has no admitted body trace interface");
@@ -209,7 +210,8 @@ bool application_control_outputs(const qa_application *app, qa_actor_id actor,
     if (source->kind == APPLICATION_PROVIDER_QVM ||
         (source->kind == APPLICATION_PROVIDER_NATIVE && source->component.clock.kind == QA_CLOCK_Q3))
         return application_arsenal_guest_outputs(source, actor, out, error);
-    if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine)
+    if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
+        !source->state.native.q2_engine->callbacks)
         return application_q2_control_outputs(source->state.native.q2_engine, actor, out, error);
     if (source->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_player_info player;
@@ -1805,10 +1807,6 @@ bool application_control_guest_weapon_step(qa_application *app, qa_actor_id acto
     guest_weapon_delay delay = {app, primary, arsenal, engine->game->weapons};
     if (!guest_weapon_delay_current(&delay, actor, error)) return false;
     qa_movement_command applied = *command;
-    qa_equipment_state equipment;
-    bool selected = !qa_equipment_read(app->equipment, actor, &equipment) ||
-        (!equipment.slot_active && !equipment.slot_holstering && !equipment.slot_lowering);
-    if (!selected || !reached) applied.buttons &= ~1u;
     qa_vec3 aim = qa_v3(player->viewangles[0], player->viewangles[1], player->viewangles[2]);
     qa_application_control_view control;
     if (!qa_vec_finite(aim) || !qa_application_control_read(app, actor, &control))
@@ -1816,6 +1814,8 @@ bool application_control_guest_weapon_step(qa_application *app, qa_actor_id acto
     int32_t source_water;
     if (!application_q3_weapons_water_level(delay.weapons, actor, &source_water, error) ||
         !guest_weapon_delay_current(&delay, actor, error)) return false;
+    bool selected = qa_equipment_primary_selected(app->equipment, actor);
+    if (!selected || !reached) applied.buttons &= ~1u;
     bool okay;
     if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_arsenal_source source = {.view_angles = aim, .view_height = (float)player->viewheight,

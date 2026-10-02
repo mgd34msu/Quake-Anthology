@@ -9,6 +9,8 @@
 bool frontend_visual_model_acquire(qa_frontend *, qa_actor_owner provider,
     qa_game_family, const char *path, const qa_resource *retained_source,
     frontend_visual_model_view *, qa_error *);
+bool frontend_visual_model_admission(void *, qa_application *,
+    const qa_application_model_admission_request *, qa_application_model_admission *, qa_error *);
 bool frontend_visual_media_acquire(qa_frontend *, qa_actor_owner provider,
     qa_game_family, frontend_visual_owner_view *, qa_error *);
 bool frontend_visual_scene_model_source_read(const qa_scene_model *, qa_scene_model_content_kind,

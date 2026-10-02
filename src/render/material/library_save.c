@@ -337,8 +337,10 @@ static bool builtin_image(const qa_scene_image *image, const char *name, uint32_
 {
     return image && image->identity && image->revision && image->name && !strcmp(image->name, name) &&
         image->kind == QA_SCENE_RGBA8 && image->wrap == QA_SCENE_CLAMP && image->filter == QA_SCENE_LINEAR &&
-        image->level_count == 1 && image->levels && image->levels[0].width == width && image->levels[0].height == height &&
-        image->levels[0].bytes == (size_t)width * height * 4 && image->levels[0].pixels && !image->animation_count;
+        image->level_count == 1 && image->levels && image->logical_width == width && image->logical_height == height &&
+        (image->source_q3 || (image->levels[0].width == width && image->levels[0].height == height)) &&
+        image->levels[0].bytes == (size_t)image->levels[0].width * image->levels[0].height * 4 &&
+        image->levels[0].pixels && !image->animation_count;
 }
 static bool builtin_fields(qa_source_save_io *io, qa_material_library *library,
     const qa_material_library *qualified, const qa_material_library_checkpoint_refs *refs)
@@ -401,10 +403,10 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
 static bool library_header(qa_source_save_io *io, qa_material_library *library, const qa_material_library *qualified,
     const qa_material_library_checkpoint_refs *refs, uint32_t *schema)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 8;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 10;
     bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAML", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 3 || version > 8) || !qa_source_save_bool(io, &video) ||
+        !qa_source_save_u32(io, &version) || (version < 3 || version > 10) || !qa_source_save_bool(io, &video) ||
         (reading && video != qualified->video_required)) return false;
     *schema = version;
     if (reading) library->video_required = video;
@@ -582,7 +584,7 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         if (ok) ok = material_index(source, copy.source_variant_parent ? &copy.source_variant_parent->material : NULL, &parent) &&
             qa_source_save_u64(&io, &parent) &&
             (parent == UINT64_MAX || (qa_source_save_u64(&io, &copy.source_variant_revision) &&
-                qa_q3_image_upload_options_codec(&io, &copy.source_variant_upload)));
+                qa_q3_image_upload_options_precision_codec(&io, &copy.source_variant_upload)));
     }
     if (ok) ok = record_order(&io, &library) && remaps(&io, &library) && generated(&io, &library, refs) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -621,7 +623,8 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
         if (ok && schema >= 8) ok = qa_source_save_u64(&io, &parents[i]) &&
             (parents[i] == UINT64_MAX || (parents[i] < count && parents[i] != i &&
                 qa_source_save_u64(&io, &record->source_variant_revision) && record->source_variant_revision &&
-                qa_q3_image_upload_options_codec(&io, &record->source_variant_upload)));
+                (schema >= 10 ? qa_q3_image_upload_options_precision_codec(&io, &record->source_variant_upload) :
+                    qa_q3_image_upload_options_codec(&io, &record->source_variant_upload))));
         if (ok && i && library->ordered[i - 1]->material.sort > record->material.sort) ok = false;
         if (ok) {
             record->material.identity = qa_scene_identity();

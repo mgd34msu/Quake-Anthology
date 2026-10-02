@@ -149,7 +149,8 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
                 number(&j, ",\"count\":", r->count, e) && number(&j, ",\"capacity\":", r->capacity, e);
             if (ok && r->policy == QA_COUNT_STACK) ok = text(&j, ",\"countPolicy\":{\"kind\":\"stack\"}", e);
             else if (ok) ok = string(&j, ",\"countPolicy\":{\"kind\":\"source-counter\",\"arithmetic\":",
-                r->policy == QA_COUNT_SOURCE_INT32 ? "int32" : "binary32", e) && text(&j, "}", e);
+                r->policy == QA_COUNT_SOURCE_INT32 ? "int32" :
+                r->policy == QA_COUNT_SOURCE_DOUBLE ? "binary64" : "binary32", e) && text(&j, "}", e);
             ok = ok && text(&j, "}", e);
         }
         ok = ok && text(&j, "]", e); break;

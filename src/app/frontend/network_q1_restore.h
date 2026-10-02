@@ -12,6 +12,7 @@ typedef struct frontend_network_q1_client_recipe {
     qa_net_seat_id seat;
     uint64_t epoch;
     qa_sha256_digest composition;
+    bool retired;
 } frontend_network_q1_client_recipe;
 bool frontend_network_q1_checkpoint(qa_frontend *,const frontend_remote_q1_restore_refs *,bool *present,
     frontend_network_q1_client_recipe *,frontend_network_q1_client_state *,qa_error *);

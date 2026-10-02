@@ -130,6 +130,8 @@ bool q3n_weapons_player_remote(const q3n_frame *, const qa_q3_ref_entity *parent
     const q3n_remote_entity *, qa_error *);
 bool q3n_weapons_trail_remote(const q3n_frame *, const q3n_remote_entity *, qa_error *);
 bool q3n_weapons_player_compiled(const q3n_frame *, const qa_q3_ref_entity *, const q3n_compiled_entity *, qa_error *);
+bool q3n_weapons_player_compiled_parent(const q3n_frame *, const qa_q3_presentation_assets *,
+    const qa_q3_ref_entity *, const q3n_compiled_entity *, qa_error *);
 bool q3n_weapons_trail_compiled(const q3n_frame *, const q3n_compiled_entity *, qa_error *);
 /* Only the first attachment tag uses the supplied character registry. Weapon
  * models, passes, sounds and continuation remain the actual primary source.

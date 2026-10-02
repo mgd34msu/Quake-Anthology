@@ -2,6 +2,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
+#include <math.h>
 
 bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_owner owner,
     qa_q2_edition *out, uint64_t *interval_ns, bool *found, qa_error *error)
@@ -174,4 +175,110 @@ bool qa_application_native_q2_presentation_current(qa_application *app,
     return actual.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN ? actual.source.game == saved->source.game :
         actual.source.original.host == saved->source.original.host &&
         actual.source.original.profile == saved->source.original.profile;
+}
+
+bool qa_application_native_q2_presentation_extent(qa_application *app,
+    const qa_application_native_q2_presentation *source, uint32_t *out, qa_error *error)
+{
+    if (!out || !qa_application_native_q2_presentation_current(app,source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 prefix extent lost its completed GAME receipt");
+    uint32_t extent;
+    bool ok=source->kind==QA_APPLICATION_NATIVE_Q2_BUILTIN ?
+        qa_q2_wire_extent(source->source.game,&extent,error) :
+        qa_native_host_q2_wire_count((qa_native_host *)source->source.original.host,&extent,error);
+    if (!ok) return false;
+    if (!qa_application_native_q2_presentation_current(app,source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 prefix extent changed its GAME frame");
+    *out=extent;
+    return true;
+}
+
+bool qa_application_native_q2_presentation_entity(qa_application *app,
+    const qa_application_native_q2_presentation *source, uint32_t slot,
+    qa_application_native_q2_entity_prefix *out, bool *found, qa_error *error)
+{
+    if (!out || !found || !qa_application_native_q2_presentation_current(app,source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 entity prefix lost its completed GAME receipt");
+    qa_application_native_q2_entity_prefix value={.source_slot=slot};
+    bool present;
+    if (source->kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
+        if (!qa_q2_wire_entity_read((qa_q2_game *)source->source.game,slot,&value.source.builtin,error)) return false;
+        present=value.source.builtin.binding.in_use;
+        value.actor=value.source.builtin.binding.actor;
+    } else {
+        if (!qa_native_host_q2_wire_entity((qa_native_host *)source->source.original.host,
+                slot,&value.source.original,error)) return false;
+        present=value.source.original.in_use && value.source.original.binding.kind!=QA_NATIVE_SLOT_FREE;
+        value.actor=value.source.original.binding.actor;
+    }
+    if (!qa_application_native_q2_presentation_current(app,source) ||
+        (present && !qa_actors_get(qa_session_actors(source->session),value.actor)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 entity prefix changed its physical frame or actor");
+    *found=present;
+    if (present) *out=value;
+    return true;
+}
+
+static uint32_t source_solid_part(float value, uint32_t minimum, uint32_t maximum)
+{
+    if (value <= (float)minimum) return minimum;
+    if (value >= (float)maximum) return maximum;
+    return (uint32_t)value;
+}
+
+bool qa_application_native_q2_presentation_sample(qa_application *app,
+    const qa_application_native_q2_presentation *source, uint32_t slot,
+    qa_application_native_q2_entity_sample *out, bool *found, qa_error *error)
+{
+    qa_application_native_q2_entity_prefix prefix;
+    bool present;
+    if (!out || !found)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 entity sample requires its Source output");
+    if (!qa_application_native_q2_presentation_entity(app,source,slot,&prefix,&present,error)) return false;
+    *found=false;
+    if (!present) return true;
+    qa_application_native_q2_entity_sample value={.actor=prefix.actor,.source_slot=slot};
+    uint32_t solid=0;
+    if (source->kind==QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
+        const qa_q2_entity *state=&prefix.source.original.state;
+        value.origin=qa_v3(state->origin[0],state->origin[1],state->origin[2]);
+        value.angles=qa_v3(state->angles[0],state->angles[1],state->angles[2]);
+        solid=state->solid;
+    } else {
+        const qa_q2_wire_source_entity *state=&prefix.source.builtin;
+        value.origin=state->body.origin; value.angles=state->body.angles;
+        if (!qa_vec_finite(state->body.bounds.mins) || !qa_vec_finite(state->body.bounds.maxs))
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 Source solid has nonfinite bounds");
+        if (state->solid==QA_PHYSICS_BRUSH) solid=31;
+        else if (state->solid==QA_PHYSICS_BOX && !(state->server_flags&2u)) {
+            qa_bounds bounds=state->body.bounds;
+            if (source->edition==QA_Q2_CLASSIC)
+                solid=source_solid_part(bounds.maxs.x/8,1,31) |
+                    (source_solid_part(-bounds.mins.z/8,1,31)<<5) |
+                    (source_solid_part((bounds.maxs.z+32)/8,1,63)<<10);
+            else if (bounds.mins.x!=bounds.maxs.x || bounds.mins.y!=bounds.maxs.y || bounds.mins.z!=bounds.maxs.z) {
+                solid=source_solid_part(bounds.maxs.x,1,255) |
+                    (source_solid_part(bounds.maxs.y,1,255)<<8) |
+                    (source_solid_part(-bounds.mins.z,0,255)<<16) |
+                    (source_solid_part(bounds.maxs.z+32,0,255)<<24);
+                if (solid==31) solid=0;
+            }
+        }
+    }
+    if (!qa_vec_finite(value.origin) || !qa_vec_finite(value.angles))
+        return application_fail(error,QA_ERROR_FORMAT,"Q2 Source sample has a nonfinite pose");
+    if (solid && solid!=31) {
+        float x,y,down,up;
+        if (source->edition==QA_Q2_CLASSIC) {
+            x=(float)(solid&31u)*8; y=x;
+            down=(float)((solid>>5)&31u)*8; up=(float)((solid>>10)&63u)*8-32;
+        } else {
+            x=(float)(solid&255u); y=(float)((solid>>8)&255u);
+            down=(float)((solid>>16)&255u); up=(float)((solid>>24)&255u)-32;
+        }
+        value.solid_bounds=(qa_bounds){qa_v3(-x,-y,-down),qa_v3(x,y,up)};
+        value.solid_radius=qa_vec_length(qa_vec_sub(value.solid_bounds.maxs,value.solid_bounds.mins))*.5f;
+    }
+    *out=value; *found=true;
+    return true;
 }

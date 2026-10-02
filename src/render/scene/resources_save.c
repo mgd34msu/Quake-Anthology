@@ -47,9 +47,14 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
     qa_scene_vec4 border = reading ? (qa_scene_vec4){0} : source->border;
     size_t levels = reading ? 0 : source->level_count;
     bool source_q3 = reading ? false : source->source_q3, source_mipmap = reading ? false : source->source_mipmap;
+    uint32_t source_format = reading ? (uint32_t)QA_Q3_TEXTURE_RGBA8 : (uint32_t)source->source_format;
     bool recipient_upload_pixels = reading ? false : source->recipient_upload_pixels;
     bool recipient_mipmap = reading ? false : source->recipient_mipmap;
     uint32_t source_texture_unit = reading ? 0 : source->source_texture_unit;
+    bool source_after_upload_border = reading ? false : source->source_after_upload_border;
+    bool source_dlight = reading ? false : source->source_dlight;
+    qa_scene_vec4 source_upload_border = reading ? (qa_scene_vec4){0} : source->source_upload_border;
+    qa_image recipient = reading ? (qa_image){0} : ((const owned_image *)source)->recipient_source;
     bool ok = name_field(io, &name, &owned_name) && qa_source_save_u32(io, &kind) && kind <= QA_SCENE_DEPTH32F &&
         qa_source_save_u32(io, &wrap) && wrap <= QA_SCENE_CLAMP && qa_source_save_u32(io, &filter) && filter <= QA_SCENE_LINEAR_MIPMAP_LINEAR &&
         qa_source_save_u64(io, &revision) && revision && qa_source_save_u64(io, lineage_revision) && *lineage_revision >= revision &&
@@ -65,6 +70,17 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         (recipient_upload_pixels || !recipient_mipmap);
     if (ok && version >= 4) ok = qa_source_save_u32(io, &source_texture_unit) &&
         source_texture_unit <= 1 && (source_q3 || !source_texture_unit);
+    if (ok && version >= 7) ok = qa_source_save_u32(io, &source_format) &&
+        source_format <= QA_Q3_TEXTURE_RGB4_S3TC && (source_q3 || source_format == QA_Q3_TEXTURE_RGB);
+    if (ok && version >= 5) ok = qa_source_save_bool(io, &source_after_upload_border) &&
+        qa_source_save_bool(io, &source_dlight) && (source_q3 || !source_dlight) &&
+        qa_source_save_f32(io, &source_upload_border.x) && qa_source_save_f32(io, &source_upload_border.y) &&
+        qa_source_save_f32(io, &source_upload_border.z) && qa_source_save_f32(io, &source_upload_border.w) &&
+        isfinite(source_upload_border.x) && isfinite(source_upload_border.y) &&
+        isfinite(source_upload_border.z) && isfinite(source_upload_border.w) &&
+        (source_q3 || !source_after_upload_border) &&
+        (source_after_upload_border || (!source_upload_border.x && !source_upload_border.y &&
+         !source_upload_border.z && !source_upload_border.w));
     qa_scene_image_level *decoded = reading && ok ? calloc(levels, sizeof(*decoded)) : NULL;
     if (reading && ok && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
     for (size_t i = 0; ok && i < levels; ++i) {
@@ -88,26 +104,51 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
             }
         } else ok = qa_source_save_bytes(io, (void *)level.pixels, level.bytes);
     }
+    if (ok && version >= 6) {
+        bool present = recipient.rgba.size != 0;
+        ok = qa_source_save_bool(io, &present) && (!present || source_q3);
+        if (ok && present) {
+            size_t bytes = recipient.rgba.size;
+            ok = qa_source_save_u32(io, &recipient.width) && recipient.width &&
+                qa_source_save_u32(io, &recipient.height) && recipient.height &&
+                qa_source_save_count(io, &bytes, reading ? io->input.size - io->offset : SIZE_MAX) &&
+                (uint64_t)recipient.width * recipient.height <= SIZE_MAX / 4 &&
+                bytes == (size_t)recipient.width * recipient.height * 4;
+            if (reading && ok) {
+                recipient.rgba.data = malloc(bytes); recipient.rgba.size = bytes;
+                if (!recipient.rgba.data) {
+                    qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Restoring original Source upload pixels"); ok = false;
+                }
+            }
+            if (ok) ok = qa_source_save_bytes(io, recipient.rgba.data, bytes);
+        }
+    }
     if (reading && ok) {
         ok = qa_scene_image_create(owner, name, (qa_scene_image_kind)kind, decoded, levels,
             (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
         if (ok) {
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
             (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;
+            (*out)->source_format = source_q3 ? (qa_q3_texture_format)source_format : QA_Q3_TEXTURE_RGB;
             (*out)->source_texture_unit = source_texture_unit;
+            (*out)->source_after_upload_border = source_after_upload_border;
+            (*out)->source_dlight = source_dlight;
+            (*out)->source_upload_border = source_upload_border;
             (*out)->recipient_upload_pixels = recipient_upload_pixels;
             (*out)->recipient_mipmap = recipient_mipmap;
             ((owned_image *)*out)->lineage->revision = *lineage_revision;
+            ((owned_image *)*out)->recipient_source = recipient; recipient = (qa_image){0};
         }
     }
     if (decoded) for (size_t i = 0; i < levels; ++i) free((void *)decoded[i].pixels);
+    if (reading) qa_image_free(&recipient);
     free(decoded); free(owned_name); return ok;
 }
 static bool signature(qa_source_save_io *io, uint32_t *version)
 {
     uint8_t magic[4] = {'Q','A','I','M'};
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAIM", 4) &&
-        qa_source_save_u32(io, version) && *version >= 1 && *version <= 4;
+        qa_source_save_u32(io, version) && *version >= 1 && *version <= 7;
 }
 bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t count, qa_buffer *out, qa_error *error)
 {
@@ -124,7 +165,7 @@ bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t 
     size_t at = 0;
     for (size_t i = 0; i < count; ++i) for (const owned_image *image = owners[i]->names->images; image; image = image->next) images[at++] = image;
     qa_source_save_io io = {0}; size_t owner_count = count;
-    uint32_t version = 4;
+    uint32_t version = 7;
     bool ok = at == total && qa_source_save_writer(&io, NULL, error) && signature(&io, &version) &&
         qa_source_save_count(&io, &owner_count, SIZE_MAX) && qa_source_save_count(&io, &total, SIZE_MAX);
     at = 0;

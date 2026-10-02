@@ -2,6 +2,7 @@
 #define QA_MATERIAL_H
 #include "qa/scene.h"
 #include "qa/material_source_scratch.h"
+float qa_material_fog_factor(float s, float t);
 
 typedef struct qa_material_order_entry qa_material_order_entry;
 /* One renderer owner spans independently mounted provider libraries. All
@@ -46,7 +47,7 @@ typedef struct qa_material_stage {
     char **image_names;
     char *video_name;
     uint64_t video_identity;
-    bool lightmap, is_lightmap, clamp, detail, video, retain_texture, invalid_blend;
+    bool lightmap, is_lightmap, vertex_lightmap, clamp, detail, video, retain_texture, invalid_blend;
     qa_scene_fog_effect fog_adjustment;
     qa_material_color_kind rgb, alpha;
     qa_scene_vec4 constant;
@@ -159,6 +160,10 @@ typedef struct qa_material_context {
     void (*source_model_release)(void *);
     void *source_model_context;
     qa_q3_presentation_assets *source_model_assets;
+    bool source_cell_geometry;
+    bool (*source_entity_surface)(void *, const qa_q3_ref_entity *, const qa_material *,
+        struct qa_material_context *, qa_scene_frame *, qa_scene_mesh *, bool *direct, qa_error *);
+    void *source_entity_surface_context;
     bool (*source_surface)(void *, const qa_material *, const qa_material *,
         const qa_scene_mesh *, const struct qa_material_context *, qa_scene_frame *, qa_error *);
     void *source_surface_context;
@@ -189,6 +194,9 @@ bool qa_material_library_set_profile(qa_material_library *, const qa_material_pr
 bool qa_material_library_set_source_profile(qa_material_library *, const qa_material_profile *, qa_error *);
 bool qa_material_library_has_source_profile(const qa_material_library *);
 bool qa_material_library_source_profile_read(const qa_material_library *, qa_material_profile *, qa_error *);
+/* Actual Source initialization, after script loading and before scene admission. */
+bool qa_material_library_source_shaders_initialize(qa_material_library *,
+    const qa_scene_image_options *, qa_error *);
 typedef bool (*qa_material_source_upload_fn)(void *, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *, qa_error *);
 /* Bind the actual Source renderer's current upload producer. Restored image

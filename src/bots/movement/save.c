@@ -1,126 +1,204 @@
 #include "internal.h"
 #include "../save_fields.h"
 #include "qa/bot_movement_save.h"
+#include "qa/bots_allocator_save.h"
+#include "../checkpoint_internal.h"
 
-static const uint8_t magic[8] = {'Q', 'A', 'B', 'M', 'O', 'V', 'E', 0};
+static const uint8_t magic[8]={'Q','A','B','M','O','V','E',1};
 
-static bool state_fields(qa_source_save_io *io, qa_bot_move_state *state)
-{
-    qa_bot_move_input *input = &state->input;
-    bool ok = qa_source_save_vec3(io, &input->origin) &&
-        qa_source_save_vec3(io, &input->velocity) && qa_source_save_vec3(io, &input->view_offset) &&
-        qa_source_save_i32(io, &input->entity) && qa_source_save_i32(io, &input->client) &&
-        qa_source_save_f32(io, &input->think_time) && qa_source_save_u32(io, &input->presence) &&
-        qa_source_save_vec3(io, &input->view_angles) && qa_source_save_u32(io, &input->flags) &&
-        qa_source_save_u32(io, &state->area) && qa_source_save_u32(io, &state->last_area) &&
-        qa_source_save_u32(io, &state->last_goal_area) && qa_source_save_u32(io, &state->last_reachability) &&
-        qa_source_save_u32(io, &state->reach_area) && qa_source_save_u32(io, &state->jump_reach) &&
-        qa_source_save_vec3(io, &state->last_origin) && qa_source_save_f32(io, &state->grapple_visible_time) &&
-        qa_source_save_f32(io, &state->last_grapple_distance) && qa_source_save_f32(io, &state->reachability_time) &&
-        qa_source_save_u32(io, &state->avoid_reachability) && qa_source_save_f32(io, &state->avoid_time) &&
-        qa_source_save_i32(io, &state->avoid_tries);
-    for (size_t i = 0; ok && i < QA_BOT_AVOID_SPOTS; ++i)
-        ok = qa_source_save_vec3(io, &state->avoid_spots[i].origin) &&
-            qa_source_save_f32(io, &state->avoid_spots[i].radius) &&
-            qa_source_save_i32(io, &state->avoid_spots[i].type);
-    if (ok)
-        ok = qa_source_save_u32(io, &state->avoid_count) && state->avoid_count <= QA_BOT_AVOID_SPOTS &&
-            qa_source_save_bool(io, &state->walk_progress) && qa_source_save_u32(io, &state->walk_edge);
-    if (!ok && !io->failed)
-        return bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot movement state");
-    return ok;
+static bool same_allocation(qa_bot_memory_allocation a,qa_bot_memory_allocation b) {
+    return a.owner==b.owner && a.slot==b.slot && a.generation==b.generation;
 }
-
-bool qa_bot_moves_save_capture(const qa_bot_moves *moves, qa_buffer *out, qa_error *error)
-{
-    if (!moves || moves->busy || !out || !moves->maximum || !moves->slots || !isfinite(moves->time)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot movement owner is absent, active or inconsistent");
-        return false;
-    }
-    qa_source_save_io io = {0};
-    uint32_t maximum = moves->maximum;
-    float time = moves->time;
-    bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) &&
-        qa_source_save_u32(&io, &maximum) && qa_source_save_f32(&io, &time);
-    for (size_t i = 0; ok && i < BOT_MOVE_VARIABLE_COUNT; ++i) {
-        const char *name = moves->variables[i] ? moves->variables[i]->name : NULL;
-        if (name && moves->variables[i] != qa_bot_library_variable(moves->library,
-                bot_move_variable_name((bot_move_variable)i)))
-            ok = bot_save_fail(&io, QA_ERROR_FORMAT, "Bot movement variable has another source role");
-        if (ok)
-            ok = bot_save_text(&io, &name);
-    }
-    for (uint32_t i = 0; ok && i < maximum; ++i) {
-        bot_move_slot slot = moves->slots[i];
-        ok = qa_source_save_bool(&io, &slot.used) && state_fields(&io, &slot.state);
-    }
-    if (ok)
-        ok = qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io);
-    return ok;
+static bool empty(const qa_bot_moves *m) {
+    for(uint32_t i=0;i<m->maximum;++i) if(m->slots[i].used) return false;
+    return true;
 }
-
-bool qa_bot_moves_save_restore(qa_bot_moves *moves, qa_bytes bytes, qa_error *error)
-{
-    if (!moves || moves->busy || !moves->library || !moves->services.navigation) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached bot movement owner is absent or active");
-        return false;
+static int32_t client_read(const qa_bot_memory_span *bytes) {
+    const uint8_t *at=bytes->data+BM_CLIENT;
+    uint32_t value=(uint32_t)at[0]|(uint32_t)at[1]<<8|(uint32_t)at[2]<<16|(uint32_t)at[3]<<24;
+    return value<=INT32_MAX?(int32_t)value:-1-(int32_t)(UINT32_MAX-value);
+}
+bool qa_bot_moves_save_capture(const qa_bot_moves *m,qa_buffer *out,qa_error *e) {
+    if(!m || m->busy || !out || !m->memory || !m->maximum)
+        return bot_move_fail(e,"Bot movement capture requires its actual idle owner");
+    qa_source_save_io io={0};
+    uint32_t maximum=m->maximum;float time=m->time;
+    bool ok=qa_source_save_writer(&io,NULL,e) && bot_save_signature(&io,magic) &&
+            qa_source_save_u32(&io,&maximum) && qa_source_save_f32(&io,&time);
+    for(size_t i=0;ok && i<BOT_MOVE_VARIABLE_COUNT;++i) {
+        const char *name=m->variables[i]?m->variables[i]->name:NULL;
+        if(name && m->variables[i]!=qa_bot_library_variable(m->library,bot_move_variable_name((bot_move_variable)i)))
+            ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Movement variable differs from its actual LibVar role");
+        if(ok) ok=bot_save_text(&io,&name);
     }
-    qa_source_save_io io = {0};
-    uint32_t maximum = 0;
-    float time = 0;
-    const qa_bot_variable *variables[BOT_MOVE_VARIABLE_COUNT] = {0};
-    bot_move_slot *slots = NULL;
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) &&
-        qa_source_save_u32(&io, &maximum) && maximum == moves->maximum &&
-        (!maximum || sizeof(*slots) <= SIZE_MAX / maximum) && qa_source_save_f32(&io, &time) && isfinite(time);
-    for (size_t i = 0; ok && i < BOT_MOVE_VARIABLE_COUNT; ++i) {
-        const char *name = NULL;
-        ok = bot_save_text(&io, &name);
-        if (ok && name) {
-            variables[i] = qa_bot_library_variable(moves->library,
-                bot_move_variable_name((bot_move_variable)i));
-            ok = variables[i] && !strcmp(variables[i]->name, name);
+    for(uint32_t i=0;ok && i<maximum;++i) {
+        const bot_move_slot *slot=&m->slots[i];
+        bool used=slot->used;
+        ok=qa_source_save_bool(&io,&used);
+        if(!ok || !used) continue;
+        qa_bot_memory_span bytes;size_t reference=0;
+        bool progress=slot->state.walk_progress;uint32_t edge=slot->state.walk_edge;
+        ok=slot->state.owner==m && bot_move_record_span(&slot->state,&bytes,e) &&
+           qa_bot_memory_reference(m->memory,slot->state.allocation,&reference,e) &&
+           qa_source_save_count(&io,&reference,SIZE_MAX) &&
+           qa_source_save_bool(&io,&progress) && qa_source_save_u32(&io,&edge);
+        for(uint32_t j=0;ok && j<i;++j)
+            if(m->slots[j].used && same_allocation(m->slots[j].state.allocation,slot->state.allocation))
+                ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Movement handles share one source allocation");
+    }
+    if(ok) ok=qa_source_save_finish(&io,out);
+    if(!ok && (!e || e->code==QA_OK)) bot_save_fail(&io,QA_ERROR_FORMAT,"Invalid movement source aliases");
+    qa_source_save_dispose(&io);return ok;
+}
+bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
+    if(!bot_move_mutable(m,e) || !empty(m))
+        return bot_move_fail(e,"Movement import requires an empty handle store after MEMORY import");
+    qa_source_save_io io={0};uint32_t maximum=0;float time=0;
+    const qa_bot_variable *variables[BOT_MOVE_VARIABLE_COUNT]={0};
+    bot_move_slot *slots=NULL;
+    int32_t *clients=NULL;
+    bool ok=qa_source_save_reader(&io,NULL,saved,e) && bot_save_signature(&io,magic) &&
+        qa_source_save_u32(&io,&maximum) && maximum==m->maximum &&
+        qa_source_save_f32(&io,&time);
+    for(size_t i=0;ok && i<BOT_MOVE_VARIABLE_COUNT;++i) {
+        const char *name=NULL;
+        ok=bot_save_text(&io,&name);
+        if(ok && name) {
+            variables[i]=qa_bot_library_variable(m->library,bot_move_variable_name((bot_move_variable)i));
+            ok=variables[i] && !strcmp(variables[i]->name,name);
         }
         free((void *)name);
     }
-    if (ok && maximum > (io.input.size - io.offset) / 778)
-        ok = bot_save_fail(&io, QA_ERROR_FORMAT, "Truncated bot movement handle table");
-    if (ok) {
-        slots = calloc(maximum, sizeof(*slots));
-        if (!slots)
-            ok = bot_save_fail(&io, QA_ERROR_MEMORY, "Restoring bot movement handles");
+    if(ok && (io.offset>io.input.size || maximum>io.input.size-io.offset))
+        ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Truncated movement handle table");
+    if(ok) {
+        slots=calloc(maximum,sizeof(*slots));clients=calloc(maximum,sizeof(*clients));
+        if(!slots || !clients) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Restoring movement allocation references");
     }
-    for (uint32_t i = 0; ok && i < maximum; ++i)
-        ok = qa_source_save_bool(&io, &slots[i].used) && state_fields(&io, &slots[i].state);
-    if (ok)
-        ok = qa_source_save_finish(&io, NULL);
-    if (ok) {
-        moves->busy = true;
-        for (uint32_t i = 0; ok && i < maximum; ++i) {
-            const qa_bot_move_state *state = &slots[i].state;
-            if (!slots[i].used || !state->walk_progress)
-                continue;
-            qa_bot_navigation *navigation = moves->services.navigation(moves->services.context, state->input.client);
-            ok = navigation && qa_navigation_edge(qa_bot_navigation_runtime(navigation), state->walk_edge);
+    for(uint32_t i=0;ok && i<maximum;++i) {
+        bot_move_slot *slot=&slots[i];
+        ok=qa_source_save_bool(&io,&slot->used);
+        if(!ok || !slot->used) continue;
+        size_t reference=0;qa_bot_memory_span bytes;
+        slot->state.owner=m;
+        ok=qa_source_save_count(&io,&reference,SIZE_MAX) &&
+           qa_bot_memory_resolve(m->memory,reference,&slot->state.allocation,e) &&
+           bot_move_record_span(&slot->state,&bytes,e) &&
+           qa_source_save_bool(&io,&slot->state.walk_progress) &&
+           qa_source_save_u32(&io,&slot->state.walk_edge);
+        if(ok) clients[i]=client_read(&bytes);
+        for(uint32_t j=0;ok && j<i;++j)
+            if(slots[j].used && same_allocation(slots[j].state.allocation,slot->state.allocation))
+                ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Restored movement handles share one source allocation");
+    }
+    if(ok) ok=qa_source_save_finish(&io,NULL);
+    m->busy=true;
+    for(uint32_t i=0;ok && i<maximum;++i) if(slots[i].used && slots[i].state.walk_progress) {
+        qa_bot_navigation *navigation=m->services.navigation(m->services.context,clients[i]);
+        ok=navigation && qa_navigation_edge(qa_bot_navigation_runtime(navigation),slots[i].state.walk_edge);
+    }
+    /* Navigation callbacks may invalidate the actual aliases; publication must
+     * not bind an allocation that disappeared while resolving managed edges. */
+    for(uint32_t i=0;ok && i<maximum;++i) if(slots[i].used) {
+        qa_bot_memory_span bytes;ok=bot_move_record_span(&slots[i].state,&bytes,e);
+    }
+    m->busy=false;
+    if(ok) {
+        memcpy(m->slots,slots,(size_t)maximum*sizeof(*slots));
+        memcpy(m->variables,variables,sizeof(variables));m->time=time;
+        qa_nav_prediction_result_free(&m->prediction);qa_nav_route_free(&m->trajectory);
+        m->point_count=0;m->visit_generation=0;
+        if(m->visited) memset(m->visited,0,m->visited_capacity*sizeof(*m->visited));
+    } else if(!e || e->code==QA_OK)
+        qa_error_set(e,QA_ERROR_FORMAT,io.offset,"Invalid movement reference or selected walk edge");
+    qa_source_save_dispose(&io);free(slots);free(clients);return ok;
+}
+
+struct bot_move_history {
+    qa_bot_moves *owner;
+    qa_bot_memory *memory;
+    uint32_t maximum;
+    bot_move_slot *slots;
+    int32_t *clients;
+    const qa_bot_variable *variables[BOT_MOVE_VARIABLE_COUNT];
+    float time;
+};
+struct bot_move_history_restore {
+    qa_bot_moves *owner;
+    bot_move_history state;
+};
+void bot_move_history_destroy(bot_move_history *image) {
+    if(!image) return;
+    free(image->slots);free(image->clients);free(image);
+}
+bool bot_move_history_capture(qa_bot_moves *m,bot_move_history **out,qa_error *e) {
+    if(!bot_move_mutable(m,e) || !out || *out)
+        return bot_move_fail(e,"Movement history requires its actual idle owner and empty output");
+    bot_move_history *image=calloc(1,sizeof(*image));
+    if(!image) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining MovementState allocation aliases");return false;}
+    image->owner=m;image->memory=m->memory;image->maximum=m->maximum;image->time=m->time;
+    image->slots=malloc((size_t)m->maximum*sizeof(*image->slots));
+    image->clients=calloc(m->maximum,sizeof(*image->clients));
+    if(!image->slots || !image->clients) {
+        bot_move_history_destroy(image);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining movement handle history");return false;
+    }
+    memcpy(image->slots,m->slots,(size_t)m->maximum*sizeof(*m->slots));
+    memcpy(image->variables,m->variables,sizeof(m->variables));
+    for(uint32_t i=0;i<m->maximum;++i) if(image->slots[i].used) {
+        qa_bot_memory_span bytes;
+        if(image->slots[i].state.owner!=m || !bot_move_record_span(&image->slots[i].state,&bytes,e)) {
+            bot_move_history_destroy(image);return false;
         }
-        moves->busy = false;
+        image->clients[i]=client_read(&bytes);
+        for(uint32_t j=0;j<i;++j) if(image->slots[j].used &&
+            same_allocation(image->slots[j].state.allocation,image->slots[i].state.allocation)) {
+            bot_move_history_destroy(image);return bot_move_fail(e,"Movement history has duplicated raw allocation ownership");
+        }
     }
-    if (ok) {
-        free(moves->slots);
-        moves->slots = slots;
-        slots = NULL;
-        moves->time = time;
-        memcpy(moves->variables, variables, sizeof(variables));
-        qa_nav_prediction_result_free(&moves->prediction);
-        qa_nav_route_free(&moves->trajectory);
-        free(moves->candidates); moves->candidates = NULL; moves->candidate_capacity = 0;
-        free(moves->points); moves->points = NULL; moves->point_count = moves->point_capacity = 0;
-        free(moves->visited); moves->visited = NULL; moves->visit_generation = 0; moves->visited_capacity = 0;
+    *out=image;return true;
+}
+bool bot_move_history_validate(qa_bot_moves *m,const bot_move_history *image,qa_error *e) {
+    if(!m || !image || image->owner!=m || image->memory!=m->memory || image->maximum!=m->maximum)
+        return bot_move_fail(e,"Movement history belongs to another owner or capacity");
+    for(size_t i=0;i<BOT_MOVE_VARIABLE_COUNT;++i)
+        if(image->variables[i] && image->variables[i]!=qa_bot_library_variable(m->library,
+            bot_move_variable_name((bot_move_variable)i)))
+            return bot_move_fail(e,"Movement history LibVar identity was replaced");
+    for(uint32_t i=0;i<m->maximum;++i) if(image->slots[i].used && image->slots[i].state.walk_progress) {
+        qa_bot_navigation *navigation=m->services.navigation(m->services.context,image->clients[i]);
+        if(!navigation || !qa_navigation_edge(qa_bot_navigation_runtime(navigation),image->slots[i].state.walk_edge))
+            return bot_move_fail(e,"Movement history walk edge is absent from selected navigation");
     }
-    if (!ok && (!error || error->code == QA_OK))
-        qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Invalid bot movement continuation or imported dependency");
-    qa_source_save_dispose(&io);
-    free(slots);
-    return ok;
+    return true;
+}
+bool bot_move_history_prepare(qa_bot_moves *m,const bot_move_history *image,
+    const qa_bot_memory_prepared *memory,bot_move_history_restore **out,qa_error *e) {
+    if(!m || !image || image->owner!=m || image->memory!=m->memory || image->maximum!=m->maximum ||
+       !memory || !out || *out || !m->busy)
+        return bot_move_fail(e,"Movement restore requires its captured owner and prepared MEMORY");
+    bot_move_history_restore *plan=malloc(sizeof(*plan));
+    if(!plan) {qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing MovementState allocation aliases");return false;}
+    plan->owner=m;plan->state=*image;
+    plan->state.slots=malloc((size_t)m->maximum*sizeof(*plan->state.slots));
+    plan->state.clients=NULL;
+    if(!plan->state.slots) {
+        free(plan);qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing movement handle aliases");return false;
+    }
+    memcpy(plan->state.slots,image->slots,(size_t)m->maximum*sizeof(*image->slots));
+    for(uint32_t i=0;i<m->maximum;++i) if(plan->state.slots[i].used &&
+        !qa_bot_memory_checkpoint_resolve(memory,plan->state.slots[i].state.allocation,
+             &plan->state.slots[i].state.allocation,e)) {free(plan->state.slots);free(plan);return false;}
+    *out=plan;return true;
+}
+void bot_move_history_finish(bot_move_history_restore *plan,bool commit) {
+    if(!plan) return;
+    if(commit) {
+        qa_bot_moves *m=plan->owner;
+        memcpy(m->slots,plan->state.slots,(size_t)m->maximum*sizeof(*m->slots));
+        memcpy(m->variables,plan->state.variables,sizeof(m->variables));m->time=plan->state.time;
+        qa_nav_prediction_result_free(&m->prediction);qa_nav_route_free(&m->trajectory);
+        m->point_count=0;m->visit_generation=0;
+        if(m->visited) memset(m->visited,0,m->visited_capacity*sizeof(*m->visited));
+    }
+    free(plan->state.slots);free(plan);
 }

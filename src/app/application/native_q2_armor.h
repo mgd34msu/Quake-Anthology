@@ -35,10 +35,13 @@ bool application_native_q2_field_value(qa_native_value_type,double,qa_error *);
 bool application_native_q2_armor_create(const application_native_q2_armor_options *,
     qa_json_id regular,qa_json_id power,bool q2,application_native_q2_armor **,qa_error *);
 bool application_native_q2_armor_read(application_native_q2_armor *,qa_actor_id,qa_armor *,qa_error *);
+bool application_native_q2_armor_normalize_legacy(application_native_q2_armor *,qa_actor_id,
+    const qa_armor *,qa_armor *,qa_error *);
 bool application_native_q2_armor_validate(application_native_q2_armor *,qa_actor_id,const qa_armor *,qa_error *);
 bool application_native_q2_armor_write(application_native_q2_armor *,qa_actor_id,const qa_armor *,qa_error *);
 bool application_native_q2_armor_observe(application_native_q2_armor *,qa_actor_id,
     application_native_q2_armor_changed_fn,void *,application_native_q2_armor_watch **,qa_error *);
 bool application_native_q2_armor_observe_end(application_native_q2_armor_watch **,qa_error *);
+bool application_native_q2_armor_observe_cancel(application_native_q2_armor_watch *,qa_error *);
 bool application_native_q2_armor_destroy(application_native_q2_armor **,qa_error *);
 #endif

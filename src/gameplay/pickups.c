@@ -94,6 +94,37 @@ static bool registration_current(qa_pickups *service, pickup_registration *regis
     return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
 }
 
+static bool write_retained(qa_pickups *service,const pickup_registration *registration,
+                           const qa_pickup_write *write,uint64_t serial)
+{
+    if (!registration->active || !qa_actors_get(service->actors, registration->actor)) return false;
+    if (write->resource.kind == QA_PICKUP_INVENTORY)
+        return qa_inventory_pickup_storage_current(service->inventory, registration->actor,
+            write->resource.item, registration, serial, registration->owner);
+    qa_actor_owner owner; uint64_t current_serial;
+    return qa_combat_protection_owner(service->combat, registration->actor, write->resource.channel,
+        &owner, &current_serial) && owner == registration->owner && current_serial == serial &&
+        qa_combat_protection_bound(service->combat,
+            (qa_protection_lease){registration->actor, serial, write->resource.channel});
+}
+
+static bool rule_retained(qa_pickups *service,const pickup_registration *registration,
+                          const pickup_rule *rule)
+{
+    bool inventory = false;
+    for (size_t i = 0; i < rule->rule.write_count; ++i) {
+        if (!write_retained(service, registration, rule->rule.writes + i, rule->storage[i])) return false;
+        inventory |= rule->rule.writes[i].resource.kind == QA_PICKUP_INVENTORY;
+    }
+    if (inventory) for (size_t i = 0; i < registration->count; ++i)
+        for (size_t j = 0; j < registration->rules[i].rule.write_count; ++j) {
+            const qa_pickup_write *write = registration->rules[i].rule.writes + j;
+            if (write->resource.kind == QA_PICKUP_INVENTORY &&
+                !write_retained(service, registration, write, registration->rules[i].storage[j])) return false;
+        }
+    return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
+}
+
 bool qa_pickups_checkpoint_write_current(qa_pickups *service, pickup_registration *registration,
                                          const qa_pickup_write *write, uint64_t serial)
 { return write_current(service, registration, write, serial); }
@@ -354,6 +385,30 @@ bool qa_pickups_bind(qa_pickups *service, qa_actor_id actor, qa_actor_owner owne
     --service->calls; sweep(service); return ok;
 }
 
+bool qa_pickups_registration_current(qa_pickups *service,qa_pickup_lease lease,qa_actor_owner owner)
+{
+    if (!service || !lease.serial) return false;
+    for (pickup_registration *registration = service->registrations; registration; registration = registration->next)
+        if (registration->serial == lease.serial && registration->owner == owner &&
+            qa_actor_id_equal(registration->actor, lease.actor)) {
+            for (size_t i = 0; i < registration->count; ++i)
+                for (size_t j = 0; j < registration->rules[i].rule.write_count; ++j)
+                    if (!write_retained(service, registration, registration->rules[i].rule.writes + j,
+                        registration->rules[i].storage[j])) return false;
+            return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
+        }
+    return false;
+}
+
+bool qa_pickups_registration_owned(const qa_pickups *service,qa_pickup_lease lease,qa_actor_owner owner)
+{
+    if (!service || !lease.serial) return false;
+    for (const pickup_registration *registration = service->registrations; registration; registration = registration->next)
+        if (registration->active && registration->serial == lease.serial && registration->owner == owner &&
+            qa_actor_id_equal(registration->actor, lease.actor)) return true;
+    return false;
+}
+
 bool qa_pickups_close(qa_pickups *service, qa_pickup_lease lease, qa_error *e)
 {
     if (!service) return fail(e, QA_ERROR_ARGUMENT, "Missing pickup service");
@@ -379,11 +434,14 @@ bool qa_pickup_current(const qa_pickup_execution *execution)
 
 bool qa_pickup_recipient_is(const qa_pickup_execution *execution,qa_actor_id actor)
 {
-    return execution&&!execution->failed&&qa_pickup_current(execution)&&
-        qa_actor_id_equal(execution->offer.recipient,actor);
+    return execution&&!execution->failed&&scope_current(execution)&&
+        qa_actor_id_equal(execution->offer.recipient,actor)&&
+        (execution->selection!=QA_PICKUP_SELECT_REPLACEMENT||
+         (execution->registration&&execution->rule&&
+          rule_retained(execution->service,execution->registration,execution->rule)));
 }
 
-bool qa_pickups_execution_read(qa_pickups *service,qa_actor_id actor,
+bool qa_pickups_execution_read(qa_pickups *service,qa_actor_id actor,qa_actor_owner owner,
                               const qa_pickup_execution **out,bool *found,qa_error *e)
 {
     if (!service || !out || !found)
@@ -391,11 +449,16 @@ bool qa_pickups_execution_read(qa_pickups *service,qa_actor_id actor,
     *out = NULL; *found = false;
     for (qa_pickup_execution *execution = service->scopes; execution; execution = execution->previous) {
         if (!qa_actor_id_equal(execution->offer.recipient, actor)) continue;
+        if (owner && (execution->selection != QA_PICKUP_SELECT_REPLACEMENT ||
+            !execution->registration || !execution->rule || execution->registration->owner != owner)) continue;
         if (execution->failed) {
             if (e) *e = execution->failure;
             return false;
         }
-        if (execution->service != service || !qa_pickup_current(execution))
+        if (execution->service != service || !scope_current(execution) ||
+            (execution->selection == QA_PICKUP_SELECT_REPLACEMENT &&
+             (!execution->registration || !execution->rule ||
+              !rule_retained(service, execution->registration, execution->rule))))
             return fail(e, QA_ERROR_ARGUMENT, "Pickup execution is no longer current");
         *out = execution; *found = true; return true;
     }

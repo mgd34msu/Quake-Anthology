@@ -9,7 +9,7 @@ static bool view_fields(const qa_bot_move_goal_source *goal,
 }
 static bool view_target(qa_bot_moves *, uint32_t, const qa_bot_move_goal_source *, uint32_t,
                          float, const qa_bot_vector_target *, bool base, bool *, qa_error *);
-bool qa_bot_moves_view_target(qa_bot_moves *m, uint32_t handle, const qa_bot_goal *goal,
+static bool qa_bot_moves_view_target_operation(qa_bot_moves *m, uint32_t handle, const qa_bot_goal *goal,
                               uint32_t flags, float ahead, qa_vec3 *out, bool *found, qa_error *e) {
     if (!goal || !out || !qa_vec_finite(goal->origin) || !isfinite(ahead))
         return bot_move_fail(e, "invalid bot view target query");
@@ -17,7 +17,7 @@ bool qa_bot_moves_view_target(qa_bot_moves *m, uint32_t handle, const qa_bot_goa
     qa_bot_vector_target target = {.value = out};
     return view_target(m, handle, &source, flags, ahead, &target, false, found, e);
 }
-bool qa_bot_moves_view_target_from(qa_bot_moves *m, uint32_t handle,
+static bool qa_bot_moves_view_target_from_operation(qa_bot_moves *m, uint32_t handle,
                                    const qa_bot_move_goal_source *goal, uint32_t flags,
                                    float ahead, const qa_bot_vector_target *out, bool *found,
                                    qa_error *e) {
@@ -29,21 +29,20 @@ static bool view_target(qa_bot_moves *m, uint32_t handle, const qa_bot_move_goal
     if (!bot_move_mutable(m, e))
         return false;
     if(!found) return bot_move_fail(e,"missing bot view result");
-    qa_bot_move_state *state = bot_move_source_state(m, handle);
+    bot_move_record *state = bot_move_source_state(m, handle);
     if (!state) {*found=false;return true;}
     if (!view_fields(goal, out, found, e)) return false;
     *found = false;
     m->busy = true;
     bot_travel t;
     uint32_t area, goal_area;
-    qa_bot_vector_source origin = {.value = &state->input.origin};
-    qa_bot_move_state query_state = {.input = {.client = -1}};
-    bool ok = bot_travel_begin(m, base ? &query_state : state, &t, e) &&
-              qa_bot_navigation_point(t.navigation, state->input.origin, &area, e) &&
+    qa_bot_vector_source origin = bot_move_origin_source(state);
+    bool ok = (base ? bot_travel_begin_client(m,-1,&t,e) : bot_travel_begin(m,state,&t,e)) &&
+              qa_bot_navigation_point(t.navigation, bot_move_vector(state,BM_ORIGIN), &area, e) &&
               bot_goal_area(goal, &goal_area, e) &&
               bot_travel_points(&t, &origin, area, goal_area, flags, found, e);
     if (ok && *found) {
-        qa_vec3 start = state->input.origin;
+        qa_vec3 start = bot_move_vector(state,BM_ORIGIN);
         qa_bot_vector_source end = bot_goal_origin(goal);
         for (size_t i = 0; i <= m->point_count; ++i) {
             qa_bot_vector_source next = i == m->point_count ? end :
@@ -87,11 +86,10 @@ bool qa_bot_moves_visible_position_from(qa_bot_moves *m, int32_t client,
         return bot_move_fail(e, "missing bot visible-position origin fields");
     *found = false;
     m->busy = true;
-    qa_bot_move_state state = {.input = {.client = client}};
     bot_travel t;
     uint32_t goal_area;
     bool route;
-    bool ok = bot_goal_area(goal, &goal_area, e) && bot_travel_begin(m, &state, &t, e) &&
+    bool ok = bot_goal_area(goal, &goal_area, e) && bot_travel_begin_client(m,client,&t,e) &&
               bot_travel_points(&t, origin, area, goal_area, flags, &route, e);
     if (ok && route) {
         qa_bot_vector_source end = bot_goal_origin(goal);
@@ -114,4 +112,12 @@ bool qa_bot_moves_visible_position_from(qa_bot_moves *m, int32_t client,
     }
     m->busy = false;
     return ok;
+}
+
+bool qa_bot_moves_view_target(qa_bot_moves *m, uint32_t handle, const qa_bot_goal *goal, uint32_t flags, float ahead, qa_vec3 *out, bool *found, qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,qa_bot_moves_view_target_operation(m,handle,goal,flags,ahead,out,found,e));
+}
+
+bool qa_bot_moves_view_target_from(qa_bot_moves *m, uint32_t handle, const qa_bot_move_goal_source *goal, uint32_t flags, float ahead, const qa_bot_vector_target *out, bool *found, qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,qa_bot_moves_view_target_from_operation(m,handle,goal,flags,ahead,out,found,e));
 }

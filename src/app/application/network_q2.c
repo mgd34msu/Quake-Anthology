@@ -57,6 +57,8 @@ bool qa_application_network_q2_host_source(qa_application *app, qa_net_protocol_
 bool application_network_q2_current(qa_application_network_q2 *owner, qa_error *error)
 {
     qa_application_network_q2_host actual;
+    if (owner && owner->archival)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Retired Q2 publication retains custody only");
     if (!owner || !qa_application_network_q2_host_source(owner->app, owner->host.protocol, &actual, error)) return false;
     const qa_application_native_q2_presentation *saved = &owner->host.source, *now = &actual.source;
     bool same = saved->session == now->session && saved->publication == now->publication &&
@@ -88,18 +90,20 @@ bool application_network_q2_config(qa_application_network_q2 *owner, uint32_t in
 
 bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *error)
 {
-    bool rr = owner->host.protocol.kind == QA_NET_Q2REPRO_1038 || owner->host.protocol.kind == QA_NET_Q2KEX_2023 ||
-        owner->host.protocol.kind == QA_NET_Q2PRIVATE_4038;
-    owner->config_count = rr ? 12448 : 2080;
-    owner->item_base = rr ? 11326 : 1056; owner->skin_base = rr ? 11582 : 1312;
-    owner->light_base = rr ? 10814 : 800; owner->checksum_index = rr ? 61 : 31;
-    owner->clients_index = rr ? 60 : 30; owner->air_index = rr ? 59 : 29;
-    owner->n64_index = rr ? 12103 : UINT32_MAX;
-    const uint32_t bases[] = {rr ? 62u : 32u, rr ? 8254u : 288u, rr ? 10302u : 544u};
-    const uint32_t maximum[] = {rr ? 8192u : 256u, rr ? 2048u : 256u, rr ? 512u : 256u};
+    qa_q2_codec codec; qa_q2_config_layout layout;
+    if (!qa_q2_codec_init(&codec, owner->host.protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    owner->config_count = layout.max_configs;
+    owner->item_base = layout.items; owner->skin_base = layout.player_skins;
+    owner->light_base = layout.lights; owner->checksum_index = layout.map_checksum;
+    owner->clients_index = layout.max_clients; owner->air_index = layout.air_accelerate;
+    bool rr = owner->host.protocol.kind == QA_NET_Q2REPRO_1038 || owner->host.protocol.kind == QA_NET_Q2KEX_2023;
+    owner->n64_index = rr ? 12103u : UINT32_MAX;
+    const uint32_t bases[] = {layout.models, layout.sounds, layout.images};
+    const uint32_t maximum[] = {layout.max_models, layout.max_sounds, layout.max_images};
     owner->configs = calloc(owner->config_count, sizeof(*owner->configs));
     owner->entries = calloc(owner->config_count, sizeof(*owner->entries));
-    if (!owner->configs || !owner->entries) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
+    owner->layouts = calloc((size_t)owner->host.client_slots + 1, sizeof(*owner->layouts));
+    if (!owner->configs || !owner->entries || !owner->layouts) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
         owner->resources[i].paths = calloc(maximum[i], sizeof(char *));
@@ -112,6 +116,8 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
 {
     if (owner->configs) for (uint32_t i = 0; i < owner->config_count; ++i) free(owner->configs[i]);
     free(owner->configs); free(owner->entries);
+    if (owner->layouts) for (uint32_t i = 1; i <= owner->host.client_slots; ++i) free(owner->layouts[i].text);
+    free(owner->layouts); owner->layouts = NULL;
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
         if (table->paths) for (uint32_t j = 1; j <= table->count; ++j) free(table->paths[j]);
@@ -125,23 +131,121 @@ bool application_network_q2_resource(qa_application_network_q2 *owner, unsigned 
 {
     if (!out || kind > 2) return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q2 source resource kind");
     if (!path || !*path) { *out = 0; return true; }
-    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
-        application_provider *provider = application_network_q2_provider(owner);
-        struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-        if (!application_native_q2_wire_resource(engine, kind, path, out, error)) return false;
-        return application_network_q2_config(owner, owner->resources[kind].base + *out, path, error);
-    }
     application_q2_resource_table *table = &owner->resources[kind];
     for (uint32_t i = 1; i <= table->count; ++i)
-        if (!strcmp(table->paths[i], path)) { *out = i; return true; }
-    if (table->count + 1 >= table->maximum)
+        if (table->paths[i] && !strcmp(table->paths[i], path)) { *out = i; return true; }
+    uint32_t index = table->count + 1;
+    /* 255 is the actual player/weapon appearance sentinel in both GAME APIs. */
+    if (!kind && index == 255) ++index;
+    if (index >= table->maximum)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source resource table is full");
     char *copy = application_network_q2_copy(path, error);
-    uint32_t index = table->count + 1;
     if (!copy) return false;
     if (!application_network_q2_config(owner, table->base + index, path, error)) { free(copy); return false; }
     table->paths[index] = copy; table->count = index; *out = index;
     return true;
+}
+
+static struct application_native_q2 *source_engine(qa_application_network_q2 *owner)
+{
+    application_provider *provider = application_network_q2_provider(owner);
+    return provider && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL ?
+        provider->state.native.q2_engine : NULL;
+}
+
+bool application_network_q2_source_resource(qa_application_network_q2 *owner, unsigned kind,
+    uint32_t index, uint32_t *out, qa_error *error)
+{
+    struct application_native_q2 *engine = source_engine(owner);
+    if (!engine || !out || kind > 2 || index >= engine->resource_limit[kind])
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 resource lost its actual Source API index");
+    if (!index) { *out = 0; return true; }
+    const char *path = engine->configstrings[engine->resource_base[kind] + index];
+    if (!path || !*path)
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 published resource has no actual Source registration");
+    return application_network_q2_resource(owner, kind, path, out, error);
+}
+
+bool application_network_q2_source_config(qa_application_network_q2 *owner, uint32_t index,
+    uint32_t *out, qa_error *error)
+{
+    struct application_native_q2 *engine = source_engine(owner);
+    if (!engine || !out || index >= engine->configstring_count)
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 config lost its actual Source API index");
+    bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
+    uint32_t air = rr ? 59u : 29u;
+    if (index < air && index < owner->air_index) { *out = index; return true; }
+    if (index == air) { *out = owner->air_index; return true; }
+    if (index == air + 1) { *out = owner->clients_index; return true; }
+    if (index == air + 2) { *out = owner->checksum_index; return true; }
+    for (unsigned kind = 0; kind < 3; ++kind) {
+        uint32_t base = engine->resource_base[kind];
+        if (index >= base && index - base < engine->resource_limit[kind]) {
+            uint32_t resource;
+            if (!application_network_q2_source_resource(owner, kind, index - base, &resource, error)) return false;
+            *out = owner->resources[kind].base + resource; return true;
+        }
+    }
+    const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
+        rr ? 11582u : 1312u, rr ? 11838u : 1568u};
+    const uint32_t target[] = {owner->light_base, owner->item_base,
+        owner->skin_base, owner->skin_base + 256};
+    for (unsigned range = 0; range < 4; ++range) {
+        uint32_t count = range == 3 ? 512u : 256u;
+        if (index >= source[range] && index - source[range] < count) {
+            *out = target[range] + index - source[range];
+            return *out < owner->config_count ||
+                application_fail(error, QA_ERROR_FORMAT, "Q2 Source config exceeds its target range");
+        }
+    }
+    if (rr && owner->item_base - owner->light_base >= 512 && index >= 11070 && index < 11326) {
+        *out = owner->light_base + index - 10814; return true;
+    }
+    if (rr && owner->config_count == engine->configstring_count && index >= 12350) {
+        *out = index; return true;
+    }
+    return application_fail(error, QA_ERROR_FORMAT, "Q2 Source config has no field in the admitted wire layout");
+}
+
+static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
+{
+    struct application_native_q2 *engine = source_engine(owner);
+    if (!engine || !engine->configstrings)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 publication lost its actual config owner");
+    bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
+    uint32_t source_air = rr ? 59u : 29u;
+    uint32_t shared = source_air < owner->air_index ? source_air : owner->air_index;
+    for (uint32_t i = 0; i < shared; ++i)
+        if (!application_network_q2_config(owner, i, engine->configstrings[i] ? engine->configstrings[i] : "", error)) return false;
+    bool ok = true;
+    for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
+    const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
+        rr ? 11582u : 1312u, rr ? 11838u : 1568u};
+    for (unsigned range = 0; ok && range < 4; ++range) {
+        uint32_t count = range == 3 ? 512u : 256u;
+        for (uint32_t i = 0; ok && i < count; ++i) {
+            uint32_t target;
+            ok = application_network_q2_source_config(owner, source[range] + i, &target, error) &&
+                application_network_q2_config(owner, target,
+                    engine->configstrings[source[range] + i] ? engine->configstrings[source[range] + i] : "", error);
+        }
+    }
+    if (rr && owner->item_base - owner->light_base >= 512)
+        for (uint32_t i = 0; ok && i < 256; ++i)
+            ok = application_network_q2_config(owner, owner->light_base + 256 + i,
+                engine->configstrings[11070 + i] ? engine->configstrings[11070 + i] : "", error);
+    if (rr && owner->config_count == engine->configstring_count)
+        for (uint32_t i = 12350; ok && i < owner->config_count; ++i)
+            ok = application_network_q2_config(owner, i, engine->configstrings[i] ? engine->configstrings[i] : "", error);
+    /* The map and vwep declarations establish actual client constructors before frames. */
+    uint32_t mapped;
+    if (ok && engine->configstrings[engine->resource_base[0] + 1])
+        ok = application_network_q2_source_resource(owner, 0, 1, &mapped, error);
+    for (uint32_t i = 1; ok && i < engine->resource_limit[0]; ++i) {
+        const char *path = engine->configstrings[engine->resource_base[0] + i];
+        if (path && path[0] == '#') ok = application_network_q2_source_resource(owner, 0, i, &mapped, error);
+    }
+    return ok;
 }
 
 static application_player_record *roster_player(qa_application_network_q2 *owner, qa_actor_id actor)
@@ -195,6 +299,23 @@ bool qa_application_network_q2_player(qa_application_network_q2 *owner, qa_actor
     return true;
 }
 
+bool qa_application_network_q2_event_layout(qa_application_network_q2 *owner, qa_actor_id actor,
+    qa_native_profile profile, const char *layout, qa_error *error)
+{
+    qa_network_q2_player physical;
+    if ((profile != QA_NATIVE_Q2_GAME_API3 && profile != QA_NATIVE_Q2_GAME_API2023) ||
+        !layout || strlen(layout) >= APPLICATION_Q2_LAYOUT_BYTES)
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 layout exceeds its actual Source message domain");
+    if (!qa_application_network_q2_player(owner, actor, &physical, error)) return false;
+    qa_hud_q2_stat_references references;
+    if (!qa_hud_q2_layout_stat_references(layout, profile == QA_NATIVE_Q2_GAME_API2023, &references, error)) return false;
+    char *text = application_network_q2_copy(layout, error);
+    if (!text) return false;
+    application_q2_layout_receipt *row = &owner->layouts[physical.source_slot];
+    free(row->text); *row = (application_q2_layout_receipt){actor, text, references, profile};
+    return true;
+}
+
 bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id protocol,
     int32_t server_count, qa_application_network_q2 **out, qa_error *error)
 {
@@ -203,7 +324,14 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating actual Q2 publication owner");
     owner->app = app; owner->server_count = server_count;
     bool ok = qa_application_network_q2_host_source(app, protocol, &owner->host, error);
-    if (ok) owner->identity = owner->host.source.launch->identity;
+    if (ok) {
+        owner->identity = owner->host.source.launch->identity;
+        owner->map_identity = *qa_resource_digest(app->map_resource);
+        const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
+        owner->source_instance = application_network_q2_copy(owner->host.source.launch->selection.instance, error);
+        owner->source_map = map ? application_network_q2_copy(map, error) : NULL;
+        ok = owner->source_instance && owner->source_map;
+    }
     if (ok) ok = application_network_q2_layout(owner, error);
     if (ok) {
         owner->entity_capacity = owner->host.entity_slots;
@@ -281,6 +409,24 @@ bool qa_application_network_q2_material_capability(qa_application_network_q2 *ow
     return true;
 }
 
+bool qa_application_network_q2_metadata_read(const qa_application_network_q2 *owner,
+    qa_application_network_q2_metadata *out, qa_error *error)
+{
+    if (!owner || !out || !owner->source_instance || !owner->source_map)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 metadata has no retained publication owner");
+    const qa_application_native_q2_presentation *source = &owner->host.source;
+    *out = (qa_application_network_q2_metadata){.source_owner = source->source_owner, .kind = source->kind,
+        .edition = source->edition, .protocol = owner->host.protocol, .client_slots = owner->host.client_slots,
+        .entity_slots = owner->host.entity_slots, .server_count = owner->server_count,
+        .identity = owner->identity, .map_identity = owner->map_identity,
+        .instance = owner->source_instance, .map = owner->source_map,
+        .clock_config = source->clock_config, .clock = source->clock, .server_time_ns = source->server_time_ns,
+        .publication_generation = source->publication_generation, .map_revision = source->map_revision,
+        .archival = owner->archival, .materials_bound = owner->materials_bound,
+        .materials_capability = owner->materials_capability};
+    return true;
+}
+
 void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
 {
     if (!owner) return;
@@ -290,7 +436,19 @@ void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
     free(owner->entities); free(owner->baselines); free(owner->status_players); free(owner->status_names);
     free(owner->motion_rows);
     free(owner->event_actors); free(owner->events);
+    free(owner->source_instance); free(owner->source_map);
     qa_buffer_free(&owner->status_info); free(owner);
+}
+
+bool qa_application_network_q2_configs(qa_application_network_q2 *owner,
+    const qa_q2_config_entry **out, size_t *count, qa_error *error)
+{
+    if (!out || !count || !application_network_q2_current(owner, error) ||
+        !application_network_q2_observe(owner, error)) return false;
+    size_t found = 0;
+    for (uint32_t i = 0; i < owner->config_count; ++i)
+        if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, owner->configs[i]};
+    *out = owner->entries; *count = found; return true;
 }
 
 bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
@@ -332,7 +490,7 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
     owner->baseline_count = 0;
     for (size_t i = 0; i < owner->entity_count; ++i) {
         const qa_q2_entity *entity = &owner->entities[i];
-        if (entity->modelindex || entity->modelindex2 || entity->modelindex3 || entity->modelindex4 || entity->sound || entity->effects)
+        if (entity->modelindex || entity->modelindex2 || entity->modelindex3 || entity->modelindex4 || entity->sound || entity->effects || entity->morefx)
             owner->baselines[owner->baseline_count++] = *entity;
     }
     if (!qa_application_native_q2_presentation_current(owner->app, &owner->host.source))
@@ -498,12 +656,15 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     application_provider *provider = application_network_q2_provider(owner);
     if (!provider || !owner->app->map_resource) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its source map content");
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
-        struct application_native_q2 *engine = provider->state.native.q2_engine;
-        if (!engine || engine->configstring_count != owner->config_count)
-            return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Source config layout differs from its wire dialect");
-        for (uint32_t i = 0; i < owner->config_count; ++i)
-            if (!application_network_q2_config(owner, i, engine->configstrings[i] ? engine->configstrings[i] : "", error)) return false;
+        if (!observe_original(owner, error)) return false;
     } else if (!owner->initialized && !initialize_builtin(owner, error)) return false;
+    for (uint32_t slot = 1; slot <= owner->host.client_slots; ++slot) if (owner->layouts[slot].text) {
+        qa_application_network_q2_client_slot client;
+        if (!qa_application_network_q2_slot(owner, slot, &client, error)) return false;
+        if (!client.connected || !qa_actor_id_equal(client.actor, owner->layouts[slot].actor)) {
+            free(owner->layouts[slot].text); owner->layouts[slot] = (application_q2_layout_receipt){0};
+        }
+    }
     if (!config_number(owner, owner->checksum_index, qa_block_checksum(qa_resource_bytes(owner->app->map_resource)), error) ||
         !config_number(owner, owner->clients_index, owner->host.client_slots, error)) return false;
     const qa_cvar_view *air = qa_cvars_find(owner->host.cvars, "sv_airaccelerate");
@@ -538,7 +699,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             if (!qa_q2_wire_lightstyle_read(game, style, &pattern, error) ||
                 !application_network_q2_config(owner, owner->light_base + style, source_text(owner, pattern), error)) return false;
         }
-        if (owner->host.source.edition == QA_Q2_RERELEASE) {
+        if (owner->host.source.edition == QA_Q2_RERELEASE && owner->item_base - owner->light_base >= 512) {
             for (uint32_t index = 0; index < 256; ++index) {
                 qa_q2_wire_shadow_light light;
                 char config[512] = {0};

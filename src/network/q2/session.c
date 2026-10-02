@@ -8,9 +8,36 @@ bool qa_network_q2_retirement_pending(const qa_network_peer *peer)
 {
     if (!qa_network_q2_peer(peer) || !peer->state) return false;
     const q2_session *session = peer->state;
-    if (!session->server || !session->retiring) return false;
+    if (!session->retiring) return false;
+    if (!session->server) return session->state.client.drop_reason && !session->state.client.drop_hook_done;
     const q2_server *server = &session->state.server;
-    return server->drop_reason && (!server->drop_sent || !server->drop_hook_done);
+    return server->drop_reason && ((server->drop_notice && !server->drop_sent) || !server->drop_hook_done);
+}
+bool qa_network_q2_delivery_pending(const qa_network_peer *peer)
+{
+    if (!qa_network_q2_peer(peer) || !peer->state) return false;
+    const q2_session *session = peer->state;
+    return !session->server && !session->retiring && session->state.client.sent_pending;
+}
+bool qa_network_q2_timeout(qa_network_peer *peer, const char *reason, qa_error *error)
+{
+    if (!qa_network_q2_peer(peer) || !peer->state || !reason)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 timeout requires its actual Source peer and reason");
+    q2_session *session = peer->state;
+    if (!session->runtime->pumping || !session->runtime->callback || session->busy)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 timeout requires its returned pump callback");
+    session->busy = true;
+    bool complete = false, ok;
+    if (session->server) {
+        ok = q2_server_drop_request(session, reason, error);
+        if (ok && session->state.server.drop_reason)
+            ok = q2_server_drop_progress(session, session->runtime->now_ns, &complete, error);
+        else if (ok) complete = true;
+    } else {
+        ok = q2_client_drop_progress(session, reason, error); complete = ok;
+    }
+    session->busy = false;
+    return ok && complete;
 }
 bool q2_server_hooks_valid(const qa_network_q2_server_hooks *hooks)
 {
@@ -125,6 +152,8 @@ static bool flush(void *state, qa_network_runtime *runtime, qa_net_client_id id,
             bool complete;
             return q2_server_drop_progress(session, now, &complete, error);
         }
+        if (!session->server && session->state.client.drop_reason)
+            return q2_client_drop_progress(session, NULL, error);
         return true;
     }
     if (!session->server) return q2_client_send(session, now, error);
@@ -152,7 +181,8 @@ static bool rebind(void *state, const qa_net_address *endpoint, qa_error *error)
 static bool pending(const void *state)
 {
     const q2_session *session = state;
-    return !session->server && (session->state.client.receive_held || session->state.client.preparation_held);
+    return !session->server && !session->retiring &&
+        (session->state.client.receive_held || session->state.client.preparation_held || session->state.client.sent_pending);
 }
 static void close_session(void *state)
 {
@@ -227,8 +257,9 @@ bool qa_network_q2_server_event(qa_network_runtime *runtime, qa_net_client_id id
 bool qa_network_q2_server_codec(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q2_codec **out, qa_error *error)
 {
-    q2_session *session = q2_get(runtime, id, true, error);
-    if (!session || !out)
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    q2_session *session = qa_network_q2_peer(peer) ? peer->state : NULL;
+    if (!session || !session->server || !out)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 outbound codec has no actual server connection");
     *out = &session->codec; return true;
 }

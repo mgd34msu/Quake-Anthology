@@ -20,9 +20,12 @@ typedef struct qa_scene_model qa_scene_model;
 typedef struct qa_scene_geometry qa_scene_geometry;
 typedef struct qa_material_source_scratch qa_material_source_scratch;
 typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
+typedef struct qa_q3_ref_entity qa_q3_ref_entity;
 typedef struct qa_scene_source_diagnostics {
-    int32_t debug_sort, stencil_bits, fast_sky;
-    bool show_triangles, show_normals, show_sky, no_bind;
+    int32_t debug_sort, stencil_bits, fast_sky, lightmap;
+    int32_t rail_core_width, rail_width;
+    float rail_segment_length;
+    bool show_triangles, show_normals, show_sky, no_bind, vertex_lighting;
     float polygon_offset_factor, polygon_offset_units;
 } qa_scene_source_diagnostics;
 typedef bool (*qa_scene_source_diagnostics_read_fn)(void *, qa_scene_source_diagnostics *, qa_error *);
@@ -61,7 +64,11 @@ typedef struct qa_scene_image {
     size_t animation_count;
     size_t references;
     bool source_q3, source_mipmap;
+    qa_q3_texture_format source_format;
     uint32_t source_texture_unit;
+    bool source_after_upload_border;
+    bool source_dlight;
+    qa_scene_vec4 source_upload_border;
     /* Original decoded embedded model/BSP pixels may admit a recipient upload;
      * dynamic cinematic and generated control surfaces retain their identity. */
     bool recipient_upload_pixels, recipient_mipmap;
@@ -147,6 +154,8 @@ bool qa_scene_resource_policy_dependencies(qa_scene_resource_policy *,
  * Procedural images retain their genuine original producer. NOT_FOUND is
  * reported to the binding owner, which owns its authored fallback policy. */
 bool qa_scene_resource_policy_image(qa_scene_resource_policy *, const qa_scene_image *,
+    qa_scene_image **, qa_error *);
+bool qa_scene_resource_policy_dependency_image(qa_scene_resource_policy *, const qa_scene_image *,
     qa_scene_image **, qa_error *);
 bool qa_scene_resource_policy_ready(qa_scene_resource_policy *, qa_error *);
 bool qa_scene_resource_policy_ready_is(const qa_scene_resource_policy *);
@@ -276,18 +285,45 @@ bool qa_scene_image_decode_retained(qa_scene_resources *, const char *request, c
 typedef struct qa_scene_image_load_receipt {
     qa_resource *source, *logical_source;
     qa_mount_id source_mount, logical_mount;
+    char *logical_path;
+    qa_vfs_acquisition source_opening, logical_opening;
+    qa_resource *palette_source;
+    qa_vfs_acquisition palette_opening;
+    bool palette_attempted;
+    qa_status palette_error;
 } qa_scene_image_load_receipt;
 /* Observes the ordinary load winner even if its decode is rejected. Both real
  * resources remain retained until disposal; a missing search leaves it empty. */
 bool qa_scene_image_load_observed(qa_scene_resources *, const char *, const qa_scene_image_options *,
     qa_scene_image **, qa_scene_image_load_receipt *empty_receipt, qa_error *);
 void qa_scene_image_load_receipt_dispose(qa_scene_image_load_receipt *);
+typedef struct qa_scene_image_alias_source {
+    const qa_resource *source, *logical_source, *palette_source;
+    const qa_vfs_acquisition *source_opening, *logical_opening, *palette_opening;
+    const char *request, *source_path, *logical_path;
+    qa_scene_image_options decode_options;
+    qa_status source_error;
+    bool palette_attempted;
+    qa_status palette_error;
+} qa_scene_image_alias_source;
+/* Bind an actual transported immutable admission. The bank owns copied
+ * receipts/options and retained resources. Sampling and recipient upload come
+ * from the reached shader stage; original decode/palette and logical-size
+ * decisions remain this source's. A NULL source is an explicit missing row. */
+bool qa_scene_image_alias_bind(qa_scene_resources *, const char *alias,
+                              const qa_scene_image_alias_source *, qa_error *);
 /* Normalize an authored external model image path within its content root.
  * The caller owns the result. This is the same admission used by model images. */
 char *qa_scene_model_image_path(const char *, qa_error *);
 bool qa_scene_resources_source_q3_initialize(qa_scene_resources *, const qa_q3_image_upload_options *, qa_error *);
 const qa_scene_image *qa_scene_source_q3_white(const qa_scene_resources *);
 const qa_scene_image *qa_scene_source_q3_missing(const qa_scene_resources *);
+const qa_scene_image *qa_scene_source_q3_dlight(const qa_scene_resources *);
+const qa_scene_image *qa_scene_source_q3_fog(const qa_scene_resources *);
+const qa_scene_image *qa_scene_source_q3_scratch(const qa_scene_resources *, size_t);
+bool qa_scene_image_source_scratch_is(const qa_scene_resources *, size_t, const qa_scene_image *);
+bool qa_scene_image_source_scratch_version(qa_scene_resources *, size_t,
+    const qa_scene_image *previous, const qa_image *, qa_scene_image **, qa_error *);
 typedef struct qa_scene_image_request {
     const char *name;
     qa_scene_image_options options;
@@ -301,6 +337,13 @@ bool qa_scene_image_request_read(const qa_scene_resources *, const qa_scene_imag
  * upload for a Source recipient. Raw playback/procedural images stay live. */
 bool qa_scene_image_source_q3_variant(qa_scene_resources *, const qa_scene_image *,
     const qa_q3_image_upload_options *, qa_scene_image **, qa_error *);
+/* Keep the first upload for the bank's exact installed Source receiver until
+ * an actual Source restart replaces its recipient correspondence roots. */
+bool qa_scene_image_source_q3_recipient_variant(qa_scene_resources *, const qa_scene_image *,
+    const qa_q3_image_upload_options *, qa_scene_source_image_admit_fn, const void *,
+    qa_scene_image **, qa_error *);
+bool qa_scene_image_generic_variant(qa_scene_resources *, const qa_scene_image *,
+    bool mipmap, qa_scene_image **, qa_error *);
 bool qa_scene_image_replace(qa_scene_resources *, const qa_scene_image *, size_t level,
                            const qa_scene_image_level *, qa_scene_image **, qa_error *);
 bool qa_scene_image_sample(qa_scene_resources *, const qa_scene_image *, bool mipmap,
@@ -359,7 +402,7 @@ typedef enum qa_scene_blend {
     QA_BLEND_SRC_ALPHA_SATURATE
 } qa_scene_blend;
 typedef enum qa_scene_depth { QA_DEPTH_ALWAYS, QA_DEPTH_LEQUAL, QA_DEPTH_EQUAL, QA_DEPTH_LESS,
-    QA_DEPTH_GEQUAL } qa_scene_depth;
+    QA_DEPTH_GEQUAL, QA_DEPTH_DISABLED } qa_scene_depth;
 typedef enum qa_scene_alpha { QA_ALPHA_NONE, QA_ALPHA_GT0, QA_ALPHA_LT128, QA_ALPHA_GE128 } qa_scene_alpha;
 typedef enum qa_scene_cull { QA_CULL_NONE, QA_CULL_FRONT, QA_CULL_BACK } qa_scene_cull;
 typedef enum qa_scene_stencil_op { QA_STENCIL_KEEP, QA_STENCIL_ZERO, QA_STENCIL_REPLACE, QA_STENCIL_INCREMENT, QA_STENCIL_DECREMENT, QA_STENCIL_INVERT } qa_scene_stencil_op;
@@ -407,7 +450,7 @@ typedef enum qa_scene_light_pass { QA_LIGHT_PASS_TEXTURE, QA_LIGHT_PASS_LIGHTMAP
     QA_LIGHT_PASS_MATERIAL_LIGHTMAP, QA_LIGHT_PASS_MODEL } qa_scene_light_pass;
 typedef enum qa_scene_source_direct {
     QA_SOURCE_DIRECT_NONE, QA_SOURCE_DIRECT_BEAM, QA_SOURCE_DIRECT_AXIS, QA_SOURCE_DIRECT_SKY,
-    QA_SOURCE_DIRECT_SHADOW_FINISH, QA_SOURCE_DIRECT_SHADOW_VOLUME_END
+    QA_SOURCE_DIRECT_SHADOW_FINISH, QA_SOURCE_DIRECT_SHADOW_VOLUME_END, QA_SOURCE_DIRECT_RAW
 } qa_scene_source_direct;
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
@@ -498,6 +541,7 @@ typedef struct qa_scene_frame {
     bool source_backend, source_skip_backend, source_clear_draw_buffer;
     bool source_begin_frame;
     int32_t source_stereo_frame;
+    bool source_front_buffer;
     /* Borrowed renderer registration owner. Libraries and their material
      * records outlive preparation of every pending source group. */
     qa_material_order *material_order;

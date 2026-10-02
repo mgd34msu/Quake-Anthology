@@ -22,6 +22,11 @@ struct frontend_client_source {
     size_t references;
     unsigned calls;
     bool constructing, ready, closing, app_attached, commands_verified, programme_retired;
+    bool retiring, retirement_entered;
+    bool restore_finished;
+    bool release_programmes;
+    bool imported_release_discarded;
+    const frontend_client_source_state *constructor_state;
 };
 static bool linked(const frontend_client_source *s)
 {
@@ -40,10 +45,37 @@ static bool tuple(const qa_command_context *a, const qa_command_context *b, bool
         a->console_text == b->console_text && a->registry == b->registry && a->generation == b->generation &&
         qa_actor_id_equal(a->actor, b->actor) && (!script || a->script == b->script);
 }
+static bool console_tuple(const qa_command_context *command,const qa_command_context *physical)
+{
+    if(!command||!physical) return false;
+    qa_command_context expected=*physical;
+    if(command->origin==QA_COMMAND_REMOTE) {
+        expected.origin=QA_COMMAND_REMOTE; expected.direct=false; expected.console_text=true;
+    } else if(command->origin==QA_COMMAND_SEAT&&command->script&&
+        !strcmp(command->script,"key-binding")) {
+        expected.direct=false;
+    }
+    return tuple(command,&expected,false);
+}
+static bool physical_current(void *,const qa_launch_instance *,qa_console *,qa_cvars *,const qa_command_context *);
 bool frontend_client_source_retain(frontend_client_source *s, qa_error *error)
 {
-    if (!linked(s) || s->closing || s->frontend->resource_inventory || s->frontend->capture || s->references == SIZE_MAX)
+    if (!linked(s) || s->closing || s->retiring || s->frontend->resource_inventory || s->frontend->capture || s->references == SIZE_MAX)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source callback owner is retiring");
+    ++s->references; return true;
+}
+bool frontend_client_source_checkpoint_retain(frontend_client_source *s,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if(!linked(s)||s->closing||s->constructing||!s->app_attached||!source||
+        (!s->frontend->capture&&!s->frontend->source_restoring)||s->frontend->resource_inventory||
+        s->references==SIZE_MAX||!frontend_client_source_idle(s)||
+        source->context.lifetime!=s->application.context.lifetime||
+        !qa_application_client_associated(s->frontend->application,source)||
+        !physical_current(s,source->descriptor,source->context.console,source->context.cvars,&source->context.command)||
+        (!qa_application_client_current(s->frontend->application,source)&&
+         !qa_application_client_retirement_current(s->frontend->application,source)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT checkpoint borrow lost its actual physical custody");
     ++s->references; return true;
 }
 bool frontend_client_source_release(frontend_client_source *s, qa_error *error)
@@ -87,6 +119,14 @@ static bool connection_current(void *context, const qa_application_client_source
     bool ok = s->options.connection_current(s->options.context, source);
     --s->calls; return ok;
 }
+static bool retirement_custody(void *context,const qa_application_client_source *source)
+{
+    frontend_client_source *s=context;
+    if(!linked(s)||s->closing||s->calls==UINT_MAX||!s->options.retirement_current) return false;
+    ++s->calls;
+    bool held=s->options.retirement_current(s->options.context,source);
+    --s->calls; return held;
+}
 static bool entity_current(void *context, const qa_application_client_source *source,
     uint32_t number, uint64_t *generation)
 {
@@ -99,9 +139,9 @@ static bool entity_current(void *context, const qa_application_client_source *so
 static bool active(void *context, const qa_command_context *command)
 {
     frontend_client_source *s = context;
-    return linked(s) && !s->closing && !s->frontend->resource_inventory && !s->frontend->capture &&
+    return linked(s) && !s->closing && (!s->retiring||s->retirement_entered) && !s->frontend->resource_inventory && !s->frontend->capture &&
         !s->frontend->source_restoring &&
-        s->calls != UINT_MAX && tuple(command, &s->command, false) &&
+        s->calls != UINT_MAX && console_tuple(command, &s->command) &&
         qa_application_command_context_active(s->frontend->application, command);
 }
 static bool capture(void *context, const qa_command_context *command,
@@ -115,7 +155,7 @@ static bool capture(void *context, const qa_command_context *command,
 static void print(void *context, const qa_command_context *command, const char *text)
 {
     frontend_client_source *s = context;
-    if (!linked(s) || s->closing || !tuple(command, &s->command, false) || s->calls == UINT_MAX) return;
+    if (!linked(s) || s->closing || (s->retiring&&!s->retirement_entered) || !console_tuple(command, &s->command) || s->calls == UINT_MAX) return;
     ++s->calls; s->options.print(s->options.context, command, text); --s->calls;
 }
 static void cvar_print(void *context, const char *text)
@@ -205,7 +245,8 @@ static qa_application_client_options app_options(frontend_client_source *s)
         .console = s->console, .cvars = registry(s), .command = s->command,
         .owner = {.context = s, .retain = retain, .release = app_release,
             .current = physical_current, .idle = physical_idle, .connection_current = connection_current,
-            .entity_current = s->options.entity_current ? entity_current : NULL}};
+            .entity_current = s->options.entity_current ? entity_current : NULL,
+            .retirement_current=s->options.retirement_current?retirement_custody:NULL}};
 }
 static uint32_t capabilities(const frontend_client_source_options *o)
 {
@@ -216,7 +257,7 @@ static uint32_t capabilities(const frontend_client_source_options *o)
         (o->install ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
         (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u) |
         (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u) |
-        (o->configuration_advance ? 131072u : 0u);
+        (o->configuration_advance ? 131072u : 0u) | (o->retirement_current ? 262144u : 0u);
 }
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
@@ -281,10 +322,15 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     s->console = qa_console_create(&console, error);
     if (!s->console) goto done;
     qa_application_client_options actual = app_options(s);
+    s->constructor_state=state;
     ok = state ? qa_application_client_create_restored(f->application, &actual, &state->application, &s->application, error) :
         qa_application_client_create(f->application, &actual, &s->application, error);
+    s->constructor_state=NULL;
     if (!ok) goto done;
     s->app_attached = true;
+    if(state&&state->retiring&&!qa_application_client_retirement_current(f->application,&s->application)) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Restored CLIENT retirement lacks its actual disconnect custody"); goto done;
+    }
     if (options->install) {
         ++s->calls;
         ok = options->install(options->context, &s->application, state != NULL, error);
@@ -292,16 +338,27 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         if (!ok) goto done;
     }
     if (state) {
+        s->ready=state->ready; s->retiring=state->retiring;
+        s->programme_retired=state->programme_retired;
+        s->release_programmes=state->release_programmes;
+        if(s->release_programmes&&(!s->retiring||
+            !qa_application_client_retirement_current(f->application,&s->application))) {
+            frontend_fail(error,QA_ERROR_FORMAT,"CLIENT release import lacks actual retiring custody"); goto done;
+        }
         s->imported_commands.data = malloc(state->console.size);
         if (!s->imported_commands.data) {
             frontend_fail(error, QA_ERROR_MEMORY, "Retaining genuine CLIENT command import receipt"); goto done;
         }
         s->imported_commands.size = state->console.size;
         memcpy(s->imported_commands.data, state->console.data, state->console.size);
-        if (!qa_console_save_restore(s->console, qa_application_session(f->application), resolvers,
-            (qa_bytes){state->console.data, state->console.size}, error)) goto done;
-        if (!qa_console_save_capture(s->console, qa_application_session(f->application), &s->imported_current, error)) goto done;
-        s->ready = state->ready; success = true;
+        qa_bytes bytes={state->console.data,state->console.size};
+        ok=s->release_programmes?qa_console_release_save_restore(s->console,qa_application_session(f->application),resolvers,bytes,error):
+            qa_console_save_restore(s->console,qa_application_session(f->application),resolvers,bytes,error);
+        if(!ok) goto done;
+        ok=s->release_programmes?qa_console_release_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error):
+            qa_console_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error);
+        if(!ok) goto done;
+        success = true;
     } else {
         s->constructing = false;
         success = frontend_client_source_advance(s, &s->ready, error);
@@ -322,7 +379,7 @@ bool frontend_client_source_restore(qa_frontend *f, const frontend_client_source
 }
 bool frontend_client_source_advance(frontend_client_source *s, bool *ready, qa_error *error)
 {
-    if (!ready || !frontend_client_source_idle(s) || s->closing || !s->app_attached ||
+    if (!ready || !frontend_client_source_idle(s) || s->closing || s->retiring || !s->app_attached ||
         s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration requires its returned physical constructor");
     if (!s->ready) {
@@ -340,7 +397,7 @@ bool frontend_client_source_configuration_advance(frontend_client_source *s,
     qa_application_client_preparation *token,bool *complete,qa_error *e)
 {
     const qa_application_client_source *held=qa_application_client_prepare_source(token);
-    if(!s||!complete||!held||!frontend_client_source_idle(s)||s->closing||!s->app_attached||
+    if(!s||!complete||!held||!frontend_client_source_idle(s)||s->closing||s->retiring||!s->app_attached||
         s->frontend->resource_inventory||s->frontend->capture||s->frontend->source_restoring||
         qa_application_client_prepare_application(token)!=s->frontend->application||
         !qa_application_client_prepare_entered(token,QA_CLIENT_PREPARE_CONFIGURATION)||
@@ -380,6 +437,25 @@ bool frontend_client_source_metadata_read(const frontend_client_source *s,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT topology leaves its retained physical constructor");
     *out = (frontend_client_source_view){s, s->application, s->ready}; return true;
 }
+bool frontend_client_source_preinstall_current(const frontend_client_source *s,
+    const qa_application_client_source *source,qa_error *error)
+{
+    const frontend_client_source_state *state=s?s->constructor_state:NULL;
+    if(!linked(s)||!s->constructing||s->app_attached||!s->calls||!state||!source||
+        !source->context.lifetime||source->context.session!=qa_application_session(s->frontend->application)||
+        source->context.receiver!=s->receiver||source->context.entity_owner!=state->application.entity_owner||
+        !source->context.entity_definition||source->context.seat!=s->options.metadata.seat||
+        source->context.physical_seat!=s->options.physical_seat||source->runtime!=s->options.runtime||
+        source->configuration_generation!=s->configuration_generation||
+        !qa_net_client_id_equal(source->client,state->application.client)||
+        source->network_seat.owner!=state->application.network_seat.owner||
+        source->network_seat.index!=state->application.network_seat.index||
+        source->connection_epoch!=state->application.connection_epoch||
+        !physical_current((void *)s,source->descriptor,source->context.console,
+            source->context.cvars,&source->context.command))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT candidate leaves its entered restored physical constructor");
+    return true;
+}
 bool frontend_client_source_current(const frontend_client_source_view *view)
 {
     frontend_client_source_view actual; qa_error error = {0};
@@ -389,18 +465,78 @@ bool frontend_client_source_current(const frontend_client_source_view *view)
 bool frontend_client_source_bind(frontend_client_source *s, qa_net_client_id client,
     qa_net_seat_id seat, uint64_t epoch, qa_error *error)
 {
-    if (!frontend_client_source_idle(s) || s->closing || !s->ready || !s->app_attached || s->application.client.owner ||
+    if (!frontend_client_source_idle(s) || s->closing || s->retiring || !s->ready || !s->app_attached || s->application.client.owner ||
         s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT bind requires its completed pending constructor");
     qa_application_client_source actual;
     if (!qa_application_client_bind(s->frontend->application, &s->application, client, seat, epoch, &actual, error)) return false;
     s->application = actual; return true;
 }
+bool frontend_client_source_epoch_adopt(frontend_client_source *s,uint64_t epoch,qa_error *error)
+{
+    if(!frontend_client_source_idle(s)||s->closing||s->retiring||!s->app_attached||
+        s->frontend->resource_inventory||s->frontend->capture||s->frontend->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT epoch adoption requires its returned installed source");
+    qa_application_client_source actual;
+    if(!qa_application_client_epoch_adopt(s->frontend->application,&s->application,epoch,&actual,error)) return false;
+    s->application=actual; return true;
+}
 bool frontend_client_source_drain(frontend_client_source *s, size_t budget, size_t *executed, qa_error *error)
 {
-    if (!frontend_client_source_idle(s) || s->closing || !s->app_attached ||
+    if (!frontend_client_source_idle(s) || s->closing || s->retiring || !s->app_attached ||
         s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring) return false;
     ++s->calls; bool ok = qa_console_drain(s->console, budget, executed, error); --s->calls; return ok;
+}
+bool frontend_client_source_remote(frontend_client_source *s,const qa_application_client_source *source,
+    const char *text,qa_error *error)
+{
+    if(!linked(s)||s->closing||s->retiring||!s->app_attached||!s->ready||!source||!text||s->calls==UINT_MAX||
+        s->frontend->resource_inventory||s->frontend->capture||s->frontend->source_restoring||
+        source->context.receiver!=s->receiver||source->context.seat!=s->options.metadata.seat||
+        source->context.console!=s->console||source->context.cvars!=registry(s)||
+        !qa_application_client_current(s->frontend->application,source))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote command left its actual received CLIENT owner");
+    qa_command_context command=s->command;
+    command.origin=QA_COMMAND_REMOTE; command.direct=false; command.console_text=true; command.script=0;
+    ++s->calls;
+    bool ok=qa_console_append(s->console,&command,text,error)&&
+        qa_application_client_current(s->frontend->application,source);
+    --s->calls; return ok;
+}
+bool frontend_client_source_retirement_current(const frontend_client_source *s,
+    const qa_application_client_source *source,const qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    qa_command_context expected=s?s->command:(qa_command_context){0};
+    if(command&&command->script&&!strcmp(command->script,"key-binding")&&!command->direct)
+        expected.direct=false;
+    if(!linked(s)||!s->retiring||!s->retirement_entered||!s->calls||s->closing||
+        !s->app_attached||!source||console!=s->console||!console_tuple(command,&expected)||
+        !qa_application_client_associated(s->frontend->application,source)||
+        source->context.receiver!=s->receiver||source->context.seat!=s->options.metadata.seat||
+        source->context.console!=s->console||source->context.cvars!=registry(s)||
+        !physical_current((void *)s,source->descriptor,s->console,registry(s),&source->context.command))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement left its entered physical source lifetime");
+    return true;
+}
+bool frontend_client_sources_retirement_current(const qa_frontend *f,
+    const qa_application_client_source *source,const qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    if(f&&source) for(const frontend_client_source *s=f->client_sources;s;s=s->next)
+        if(s->receiver==source->context.receiver&&s->options.metadata.seat==source->context.seat&&s->console==console)
+            return frontend_client_source_retirement_current(s,source,console,command,error);
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement has no retained physical source inventory row");
+}
+bool frontend_client_sources_restore_discarded(const qa_frontend *f,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if(f&&source) for(const frontend_client_source *s=f->client_sources;s;s=s->next)
+        if(s->receiver==source->context.receiver&&s->options.metadata.seat==source->context.seat&&
+            s->imported_release_discarded&&!s->restore_finished)
+            return frontend_client_source_retirement_current(s,source,source->context.console,
+                &source->context.command,error);
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT candidate has no reached unclaimed release discard");
 }
 bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *error)
 {
@@ -411,11 +547,17 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
         s->references != expected ||
         (s->app_attached && !qa_application_client_idle(s->frontend->application, &s->application)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source retains an entered or borrowed physical child");
+    if(s->release_programmes&&!s->restore_finished&&s->console&&
+        qa_console_release_restore_unclaimed(s->console)) {
+        if(!qa_console_release_restore_abort(s->console,error)) return false;
+        s->imported_release_discarded=true;
+    }
     if(!s->programme_retired) {
+        s->retiring=true;
         if(s->options.retire) {
-            ++s->calls;
+            ++s->calls;s->retirement_entered=true;
             bool retired=s->options.retire(s->options.context,&s->application,error);
-            --s->calls;
+            s->retirement_entered=false;--s->calls;
             if(!retired) return false;
         }
         s->programme_retired=true;
@@ -476,9 +618,20 @@ bool frontend_client_source_capture(frontend_client_source *s, frontend_client_s
     if (!out || out->application.actors || out->console.data || out->console.size ||
         !frontend_client_source_idle(s) || !s->app_attached || s->closing)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT prefix capture requires its returned actual owner");
-    frontend_client_source_state state = {.command = s->command, .capabilities = capabilities(&s->options), .ready = s->ready};
-    if (!qa_application_client_capture(s->frontend->application, &s->application, &state.application, error) ||
-        !qa_console_save_capture(s->console, qa_application_session(s->frontend->application), &state.console, error)) {
+    frontend_client_source_state state = {.command = s->command, .capabilities = capabilities(&s->options),
+        .ready = s->ready,.retiring=s->retiring,.programme_retired=s->programme_retired};
+    bool retired=qa_application_client_retirement_current(s->frontend->application,&s->application);
+    state.release_programmes=qa_console_release_save_present(s->console);
+    if(state.release_programmes&&(!s->retiring||!retired))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT release capture lacks actual retiring custody");
+    if(s->retiring&&!retired)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement capture lost its retained disconnect receipt");
+    bool captured=retired?qa_application_client_capture_retired(s->frontend->application,&s->application,&state.application,error):
+        qa_application_client_capture(s->frontend->application,&s->application,&state.application,error);
+    bool queued=captured&&(state.release_programmes?
+        qa_console_release_save_capture(s->console,qa_application_session(s->frontend->application),&state.console,error):
+        qa_console_save_capture(s->console,qa_application_session(s->frontend->application),&state.console,error));
+    if (!queued) {
         frontend_client_source_state_free(&state); return false;
     }
     *out = state; return true;
@@ -534,11 +687,11 @@ static bool buffer_fields(qa_source_save_io *io, qa_buffer *buffer)
 }
 static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
 {
-    uint8_t magic[4] = {'Q','F','C','S'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','F','C','S'}; uint32_t version = 3;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     qa_application_client_state *a = &p->state.application;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QFCS", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u64(io, &p->catalog) || !p->catalog ||
         !qa_source_save_u64(io, &p->content) || !p->content ||
         !qa_source_save_u32(io, &p->profile) || !p->profile ||
@@ -566,8 +719,13 @@ static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
         if (!qa_source_save_u64(io, &a->actors[i].generation) || !qa_source_save_u32(io, &a->actors[i].slot)) return false;
     if (!command_fields(io, &p->state.command) || p->state.command.seat != a->seat ||
         p->state.command.owner != a->receiver || !qa_source_save_u32(io, &p->state.capabilities) ||
-        (p->state.capabilities & ~262143u) || (p->state.capabilities & 15u) != 15u ||
+        (p->state.capabilities & ~524287u) || (p->state.capabilities & 15u) != 15u ||
         !qa_source_save_bool(io, &p->state.ready) ||
+        !qa_source_save_bool(io,&p->state.retiring)||!qa_source_save_bool(io,&p->state.programme_retired)||
+        !qa_source_save_bool(io,&p->state.release_programmes)||
+        (p->state.release_programmes&&!p->state.retiring)||
+        (p->state.programme_retired&&!p->state.retiring)||
+        (p->state.retiring&&(!(p->state.capabilities&262144u)||!a->client.owner))||
         (!p->state.ready && a->client.owner) || !buffer_fields(io, &p->state.console)) return false;
     if (reading) {
         p->selection.runtime = QA_PROGRAM_BUILTIN; p->selection.artifact = ""; p->selection.component = "";
@@ -672,6 +830,14 @@ static frontend_client_source *commands_owner(const qa_frontend *f, const qa_app
 bool frontend_client_source_commands_owned(const qa_frontend *f, const qa_application *app,
     const qa_application_console_scope *scope, const qa_console *console)
 { return commands_owner(f, app, scope, console) != NULL; }
+static bool commands_capture(frontend_client_source *s,bool releases,qa_buffer *out,qa_error *error)
+{
+    if(releases&&(!s->retiring||!qa_application_client_retirement_current(s->frontend->application,&s->application)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT release queue lost its actual retirement custody");
+    qa_session *session=qa_application_session(s->frontend->application);
+    return releases?qa_console_release_save_capture(s->console,session,out,error):
+        qa_console_save_capture(s->console,session,out,error);
+}
 bool frontend_client_source_commands_capture(qa_frontend *f, qa_application *app,
     const qa_application_console_scope *scope, const qa_console *console, qa_buffer *out, qa_error *error)
 {
@@ -679,12 +845,12 @@ bool frontend_client_source_commands_capture(qa_frontend *f, qa_application *app
     if (!s || !out || out->data || out->size || !frontend_client_source_idle(s) ||
         !qa_application_client_idle(app, &s->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT command capture has no exact physical source owner");
-    return qa_console_save_capture(console, qa_application_session(app), out, error);
+    return commands_capture(s,qa_console_release_save_present(console),out,error);
 }
 static bool imported_commands_unchanged(frontend_client_source *s, qa_error *error)
 {
     qa_buffer current = {0};
-    bool ok = qa_console_save_capture(s->console, qa_application_session(s->frontend->application), &current, error);
+    bool ok = commands_capture(s,s->release_programmes,&current,error);
     if (ok && (current.size != s->imported_current.size ||
         memcmp(current.data, s->imported_current.data, current.size)))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "CLIENT command queue changed after its actual prefix import");
@@ -709,12 +875,18 @@ bool frontend_client_sources_finish_restore(qa_frontend *f, qa_error *error)
     for (frontend_client_source *s = f->client_sources; s; s = s->next)
         if (!frontend_client_source_idle(s) || !s->app_attached || !s->imported_commands.data ||
             !s->imported_current.data || !s->commands_verified ||
-            !qa_application_client_current(f->application, &s->application))
+            (!qa_application_client_current(f->application, &s->application)&&
+             !qa_application_client_retirement_current(f->application,&s->application)))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source finish lost an imported physical owner");
     for (frontend_client_source *s = f->client_sources; s; s = s->next)
         if (!imported_commands_unchanged(s, error)) return false;
+    for (frontend_client_source *s = f->client_sources; s; s = s->next)
+        if(s->release_programmes&&!qa_console_release_restore_finish(s->console,error)) return false;
     for (frontend_client_source *s = f->client_sources; s; s = s->next) {
         qa_buffer_free(&s->imported_commands); qa_buffer_free(&s->imported_current);
+        s->restore_finished=true;
     }
     return true;
 }
+bool frontend_client_source_restore_finished(const frontend_client_source *s)
+{ return linked(s)&&s->restore_finished&&!s->closing; }

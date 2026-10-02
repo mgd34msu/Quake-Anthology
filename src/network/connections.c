@@ -1,5 +1,6 @@
 #include "qa/network.h"
 #include "qa/network_save.h"
+#include "connections_internal.h"
 #include "q3/save_fields.h"
 
 #include <stdlib.h>
@@ -188,7 +189,7 @@ bool qa_net_connections_received(qa_net_connections *table, qa_net_client_id id,
     return true;
 }
 
-bool qa_net_connections_restart(qa_net_connections *table, qa_net_client_id id,
+bool qa_net_connections_restart_ready(qa_net_connections *table, qa_net_client_id id,
                                  const qa_sha256_digest *composition, qa_error *error)
 {
     client_slot *slot = lookup(table, id);
@@ -201,9 +202,20 @@ bool qa_net_connections_restart(qa_net_connections *table, qa_net_client_id id,
     table->admitting = true;
     bool admitted = table->admit(table->context, &request, error);
     table->admitting = false;
-    if (!admitted) return false;
+    return admitted;
+}
+void qa_net_connections_restart_commit(qa_net_connections *table,qa_net_client_id id,
+    const qa_sha256_digest *composition)
+{
+    client_slot *slot=lookup(table,id);
     slot->client.composition = *composition;
     slot->client.phase = QA_NET_CONNECTED;
+}
+bool qa_net_connections_restart(qa_net_connections *table,qa_net_client_id id,
+    const qa_sha256_digest *composition,qa_error *error)
+{
+    if(!qa_net_connections_restart_ready(table,id,composition,error)) return false;
+    qa_net_connections_restart_commit(table,id,composition);
     return true;
 }
 

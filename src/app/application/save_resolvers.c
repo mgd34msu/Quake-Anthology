@@ -2,6 +2,8 @@
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
+#include "native_q2_callbacks.h"
+#include "native_q2_source_actors.h"
 #include "qa/application_network.h"
 #include "qa/frontend.h"
 #include "qa/game_q1_checkpoint.h"
@@ -37,6 +39,11 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
     if (source && source->game && source->game->combat)
         return application_q3_combat_binding(source->game->combat, actor, serial, out, error);
     if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+        provider->state.native.q2_engine &&
+        application_native_q2_source_actors_declared(provider->state.native.q2_engine))
+        return application_native_q2_source_actors_combat_binding(provider->state.native.q2_engine,
+            actor,serial,out,error);
+    if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE &&
         provider->state.native.q2_engine)
         return application_native_q2_combat_binding(provider, actor, serial, out, error);
     struct application_q3_guest *guest = provider ? q3g_engine(provider) : NULL;
@@ -63,6 +70,11 @@ static bool protection(void *opaque,qa_actor_id actor,qa_protection_channel chan
 {
     qa_application *app=opaque;
     if(!claim) return application_fail(error,QA_ERROR_ARGUMENT,"Saved protection has no actual source claim");
+    application_provider *provider=source_owner(app,claim->owner);
+    if(provider&&provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
+        provider->state.native.q2_engine->callbacks)
+        return application_native_q2_callbacks_protection_saved_binding(provider->state.native.q2_engine,
+            actor,channel,claim,out,error);
     application_q3_component_publication row;
     if(!application_q3_components_event_source_read(app,claim->owner,&row,error)) return false;
     return application_q3_mod_protection_saved_binding(application_q3_component_mod(row.game),actor,channel,claim,out,error);
@@ -94,6 +106,9 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
         (qa_bytes){(const uint8_t *)"application:modes", sizeof("application:modes") - 1});
     if (app->modes && modes_owner && saved->owner == modes_owner)
         return qa_modes_inventory_group(app->modes, actor, serial, saved, out, error);
+    application_q3_component_publication component={0}; bool found=false;
+    if(!application_q3_components_checkpoint_publication_read(app,saved->owner,&component,&found,error)) return false;
+    if(found) return application_q3_component_inventory_group(component.game,actor,serial,saved,out,error);
     application_provider *provider = source_owner(app, saved->owner);
     if (provider) {
         if (provider->kind == APPLICATION_PROVIDER_Q1)
@@ -102,6 +117,8 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
             return qa_q2_game_inventory_group(provider->state.q2, actor, serial, saved, out, error);
         if (provider->kind == APPLICATION_PROVIDER_Q3)
             return qa_q3_game_inventory_group(provider->state.q3, actor, serial, saved, out, error);
+        if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&provider->state.native.q2_engine->callbacks)
+            return application_native_q2_callbacks_inventory_group(provider->state.native.q2_engine,actor,serial,saved,out,error);
     }
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "Saved inventory group has no restored source callback owner");
@@ -128,6 +145,11 @@ static bool pickup_rule(void *opaque,qa_actor_id actor,qa_actor_owner owner,
     uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *error)
 {
     qa_application *app = opaque;
+    application_provider *provider=source_owner(app,owner);
+    if(provider&&provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
+        provider->state.native.q2_engine->callbacks)
+        return application_native_q2_callbacks_pickup_saved_rule(provider->state.native.q2_engine,
+            actor,owner,serial,id,out,error);
     return application_supplies_pickup_rule(app->supplies,actor,owner,serial,id,out,error);
 }
 

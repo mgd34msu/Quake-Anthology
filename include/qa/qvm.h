@@ -266,11 +266,17 @@ typedef struct qa_qvm_write_range { uint32_t offset; size_t length; } qa_qvm_wri
 typedef struct qa_qvm_committed_range { uint32_t offset; qa_bytes before, after; } qa_qvm_committed_range;
 typedef struct qa_qvm_committed_write { uint64_t sequence; const qa_qvm_committed_range *ranges; size_t count; } qa_qvm_committed_write;
 typedef bool (*qa_qvm_write_observer)(void *, qa_qvm *, const qa_qvm_committed_write *, qa_error *);
+typedef void (*qa_qvm_write_dispose)(void *, const qa_qvm_committed_write *);
 /* Publish callbacks may only perform bookkeeping. After-publication callbacks
  * may reenter the VM; event byte snapshots remain stable for the delivery. */
 bool qa_qvm_observe_writes(qa_qvm *, const qa_qvm_write_range *, size_t,
                           qa_qvm_write_observer publish, qa_qvm_write_observer after,
                           void *, qa_qvm_binding *, qa_error *);
+/* Retire source-owned event bookkeeping even when publication or a later
+ * delivery fails. Dispose is no-fail and runs under the publication guard. */
+bool qa_qvm_observe_writes_owned(qa_qvm *, const qa_qvm_write_range *, size_t,
+    qa_qvm_write_observer publish, qa_qvm_write_observer after,
+    qa_qvm_write_dispose, void *, qa_qvm_binding *, qa_error *);
 bool qa_qvm_unobserve_writes(qa_qvm *, qa_qvm_binding, qa_error *);
 
 /* Checkpoints are portable explicit envelopes; no host structs or suspended

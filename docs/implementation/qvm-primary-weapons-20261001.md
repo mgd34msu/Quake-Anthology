@@ -132,10 +132,31 @@ seat, GAME namespace and registry before lazy registration. It retains the
 CG's own view, held and HUD paths, including its submitted refs, animation and
 effects; it requires no separate equipment override declaration. This applies
 only while that matching CG actually enters Draw. The foreign-arsenal
-companion Draw caller remains open: current application and frontend
-presentation schedule the selected HUD CG, so an independently selected
-arsenal companion still needs genuine Draw and output composition. Registered
-handles alone do not establish custom animation or continuous-flash policy.
+companion now enters genuine CG Draw through the application arsenal-client
+receipt and frontend private capture before recipient presentation. Source
+scene completion retains raw refs, polygon vertices and lights with its real
+material clock. The actual declared weapon-function scope attributes outputs to full actors and distinguishes
+view from held calls through its player-state argument; absent scopes retain
+unknown attribution. Pure entity, polygon and light cursors read actual Source
+scene-bank membership and capacity. If the body hook suppresses a Source ref,
+its exact pending ordinal is cancelled after successful body handling, even
+when a body replacement advances the renderer queue. No model handle supplies
+a world-held actor identity.
+
+The Source and native-Q3 equipment consumer borrows that completed capture,
+reserves actual entity slots and submits selected refs in the recipient's
+entered primary view. Captured view poses map between the two real camera
+bases; world-held poses retain their authoritative world coordinates. The
+actual Source frames, shaders, colors, flags and material clock survive this
+composition. Attributed polygons retain real vertices, fog and shader handles;
+attributed lights enter the recipient's actual lighting span before world and
+entity lighting. View-scoped positions use the same camera mapping. Successful
+uncancelled weapon-helper completions also survive capture, so an intentionally
+empty held result can suppress the outgoing weapon through a real Source
+receipt. Where attribution is absent, only registered first-person model refs
+qualify against the actual local CG receipt. Generic native-Q1/Q2 supplement
+callers remain open; registered handles alone do not establish effects or
+actor ownership.
 
 `application_q3_weapon_models_role_create` builds the real retained companion
 CG/GAME module after host construction and before Init. Its lifetime qualifier

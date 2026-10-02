@@ -61,6 +61,7 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     frame->sequence = sequence;
     frame->source_backend = false;
     frame->source_skip_backend = false;
+    frame->source_front_buffer = false;
     frame->source_clear_draw_buffer = false;
     frame->source_begin_frame=false;
     frame->source_stereo_frame=0;

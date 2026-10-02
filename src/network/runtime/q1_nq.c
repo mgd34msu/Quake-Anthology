@@ -249,6 +249,15 @@ bool qa_network_nq_retirement_pending(const qa_network_peer *peer)
     const nq_server *source = peer->state;
     return source->retiring && !source->retirement.marked;
 }
+bool qa_network_nq_timeout(qa_network_peer *owner,const char *reason,qa_error *error)
+{
+    if (!qa_network_nq_peer(owner) || !reason)
+        return qa_network_fail(error,"NetQuake timeout requires its actual source peer and reason");
+    nq_server *peer=owner->state;
+    if (!peer->runtime->pumping || !peer->runtime->callback || peer->signon_active)
+        return qa_network_fail(error,"NetQuake timeout requires its genuine returned pump callback");
+    return retire(peer,reason,true,error);
+}
 const qa_q1_peer *qa_network_nq_server_view(qa_network_runtime *runtime, qa_net_client_id id)
 { nq_server *peer = get(runtime, id, NULL); return peer ? &peer->native : NULL; }
 bool qa_network_nq_server_policy_read(qa_network_runtime *runtime, qa_net_client_id id,

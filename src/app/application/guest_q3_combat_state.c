@@ -75,7 +75,7 @@ static bool exact_float(int32_t word, float *out, qa_error *error)
     return (double)*out == (double)word ||
         fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 integer exceeds exact shared combat representation");
 }
-static bool integer(float value, int32_t *out, qa_error *error)
+static bool integer(double value, int32_t *out, qa_error *error)
 {
     if (!isfinite(value) || trunc((double)value) != value || value < INT32_MIN || (double)value > INT32_MAX)
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat store requires a signed integer");
@@ -120,8 +120,9 @@ bool application_q3_combat_armor_read(const application_q3_combat_actor *a,
         const application_q3_combat_definition *d = definition(a);
         armor.regular.kind = QA_ARMOR_Q3;
         if (!application_q3_combat_word_read(a, a->player + 184 + d->armor.points_stat * 4, &points, error) ||
-            !exact_float(points, &armor.regular.points, error) || !active_tiers(a, &active, error) ||
+            !active_tiers(a, &active, error) ||
             !protection(a, active, &armor.regular.protection.q3_protection, error)) return false;
+        armor.regular.points = points;
     }
     *out = armor; return true;
 }
@@ -171,7 +172,7 @@ bool application_q3_combat_health_write(void *opaque, float health, qa_error *er
         (!a->player || application_q3_combat_word_write(a,
             a->player + 184 + d->state.health_stat * 4, value, error));
 }
-bool application_q3_combat_empty_armor(void *opaque, float points,
+bool application_q3_combat_empty_armor(void *opaque, double points,
     qa_regular_armor *out, bool *selected, qa_error *error)
 {
     application_q3_combat_actor *a = opaque; qa_armor armor; int32_t value;

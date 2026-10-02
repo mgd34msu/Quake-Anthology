@@ -1,6 +1,7 @@
 #include "session_internal.h"
 #include "frames_internal.h"
 #include "channel_internal.h"
+#include "../connections_internal.h"
 #include <errno.h>
 #include <stdio.h>
 #include <limits.h>
@@ -20,30 +21,24 @@ static bool signon_integer(const char *text, int64_t *out, qa_error *error)
         return q2_fail(error, QA_ERROR_FORMAT, "Q2 signon number exceeds its Source range");
     *out = (int64_t)value; return true;
 }
-static bool stuff(q2_session *session, const char *name, int32_t start, bool page, qa_error *error)
+static bool stuff_write(qa_q2_codec *codec, qa_net_writer *writer, int32_t server_count,
+    const char *name, int32_t start, bool page)
 {
     char text[96];
-    if (page) snprintf(text, sizeof(text), "cmd %s %d %d\n", name, session->state.server.policy.server_count, start);
-    else snprintf(text, sizeof(text), "%s %d\n", name, session->state.server.policy.server_count);
+    if (page) snprintf(text, sizeof(text), "cmd %s %d %d\n", name, server_count, start);
+    else snprintf(text, sizeof(text), "%s %d\n", name, server_count);
     qa_q2_server_event event = {.kind = QA_Q2_SVC_COMMAND, .data.print = {.text = text}};
-    return q2_queue_event(session, &event, 0, true, error);
+    return qa_q2_server_event_write(codec, writer, &event);
 }
 static bool new_client(q2_session *session, qa_error *error)
 {
     q2_server *server = &session->state.server;
     const qa_net_client *client = qa_net_connections_get(session->runtime->connections, session->id);
     if (!client) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 signon lost its physical connection");
-    if (client->phase != QA_NET_CONNECTED) {
-        qa_sha256_digest composition = client->composition;
-        if (!qa_net_connections_restart(session->runtime->connections, session->id, &composition, error)) return false;
-        qa_network_history_clear(&session->runtime->peers[session->id.slot]);
-    }
-    q2_download_close(server); session->active = false;
-    qa_q2_frame_history_clear(server->frames); qa_buffer_free(&server->datagram);
-    server->has_source_frame = false; server->wire_frame = 1;
-    for (size_t i = 0; i < session->seats; ++i) {
-        qa_q2_command_replay_init(&server->replay[i]);
-    }
+    bool restart = client->phase != QA_NET_CONNECTED;
+    qa_sha256_digest composition = client->composition;
+    if (restart && !qa_net_connections_restart_ready(session->runtime->connections,
+        session->id, &composition, error)) return false;
     qa_q2_game_state borrowed = {0};
     if (!server->hooks.game_state(server->hooks.context, session->id, &borrowed, error)) return false;
     q2_game_state state = {0};
@@ -62,9 +57,32 @@ static bool new_client(q2_session *session, qa_error *error)
         }
         state.view.data.clientnum = state.view.data.clientnums[0];
     }
-    q2_game_state_free(&server->signon); server->signon = state; server->signon_started = true;
+    qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
+    uint8_t *bytes = malloc(status.capacity);
+    if (!bytes) { q2_game_state_free(&state); return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 initial signon"); }
+    qa_net_writer writer; qa_net_writer_init(&writer, bytes, status.capacity, error);
+    qa_q2_codec codec = session->codec;
+    codec.server_clientnum = state.view.data.clientnum;
+    codec.has_server_clientnum = true;
     qa_q2_server_event event = {.kind = QA_Q2_SVC_SERVERDATA, .data.serverdata = state.view.data};
-    return q2_queue_event(session, &event, 0, true, error) && stuff(session, "configstrings", 0, true, error);
+    bool ok = qa_q2_server_event_write(&codec, &writer, &event) &&
+        stuff_write(&codec, &writer, server->policy.server_count, "configstrings", 0, true) &&
+        q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, 0, true, error);
+    free(bytes);
+    if (!ok) { q2_game_state_free(&state); return false; }
+    if (restart) {
+        qa_net_connections_restart_commit(session->runtime->connections, session->id, &composition);
+        qa_network_history_clear(&session->runtime->peers[session->id.slot]);
+    }
+    q2_download_close(server); session->active = false;
+    qa_q2_frame_history_clear(server->frames); qa_buffer_free(&server->datagram);
+    server->has_source_frame = false; server->wire_frame = 1;
+    for (size_t i = 0; i < session->seats; ++i) qa_q2_command_replay_init(&server->replay[i]);
+    q2_game_state_free(&server->signon); server->signon = state; server->signon_started = true;
+    session->codec = codec;
+    if (server->hooks.game_state_accepted)
+        server->hooks.game_state_accepted(server->hooks.context, session->id);
+    return true;
 }
 static bool page(q2_session *session, bool configs, int64_t start, qa_error *error)
 {
@@ -73,9 +91,11 @@ static bool page(q2_session *session, bool configs, int64_t start, qa_error *err
     if (start < 0) return q2_fail(error, QA_ERROR_FORMAT, "Q2 signon request has a negative record index");
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
     if (status.capacity <= 96) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 signon channel cannot hold its continuation");
-    size_t limit = status.capacity - 96, used = 0;
-    uint8_t *bytes = malloc(status.capacity);
+    size_t limit = status.capacity - 96;
+    uint8_t *bytes = malloc(status.capacity * 2);
     if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 signon page");
+    qa_net_writer packet; qa_net_writer_init(&packet, bytes, status.capacity, error);
+    qa_q2_codec codec = session->codec;
     size_t count = configs ? server->signon.view.config_count : server->signon.view.baselines.count;
     size_t i = 0;
     while (i < count && (configs ? (uint64_t)server->signon.configs[i].index : server->signon.baselines[i].number) < (uint64_t)start) ++i;
@@ -84,21 +104,25 @@ static bool page(q2_session *session, bool configs, int64_t start, qa_error *err
         qa_q2_server_event event = {.kind = configs ? QA_Q2_SVC_CONFIGSTRING : QA_Q2_SVC_BASELINE};
         if (configs) { event.data.config.index = server->signon.configs[i].index; event.data.config.value = server->signon.configs[i].value; }
         else event.data.baseline = server->signon.baselines[i];
-        qa_net_writer writer; qa_net_writer_init(&writer, bytes, status.capacity, error);
-        if (!qa_q2_server_event_write(&session->codec, &writer, &event)) { ok = false; break; }
+        qa_q2_codec next_codec = codec;
+        qa_net_writer writer; qa_net_writer_init(&writer, bytes + status.capacity, status.capacity, error);
+        if (!qa_q2_server_event_write(&next_codec, &writer, &event)) { ok = false; break; }
         size_t length = qa_net_writer_size(&writer);
         if (length > limit) { ok = q2_fail(error, QA_ERROR_ARGUMENT, "A Q2 signon record exceeds the channel page"); break; }
-        if (length > limit - used) break;
-        if (!qa_q2_channel_queue(session->channel, (qa_bytes){bytes, length}, error)) { ok = false; break; }
-        used += length;
+        if (length > limit - qa_net_writer_size(&packet)) break;
+        if (!qa_net_write_data(&packet, bytes + status.capacity, length)) { ok = false; break; }
+        codec = next_codec;
     }
-    free(bytes);
-    if (!ok) return false;
-    if (i < count) {
+    if (ok && i < count) {
         int32_t next = (int32_t)(configs ? server->signon.configs[i].index : server->signon.baselines[i].number);
-        return stuff(session, configs ? "configstrings" : "baselines", next, true, error);
-    }
-    return configs ? stuff(session, "baselines", 0, true, error) : stuff(session, "precache", 0, false, error);
+        ok = stuff_write(&codec, &packet, server->policy.server_count,
+            configs ? "configstrings" : "baselines", next, true);
+    } else if (ok) ok = stuff_write(&codec, &packet, server->policy.server_count,
+        configs ? "baselines" : "precache", 0, configs);
+    if (ok) ok = q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&packet)}, 0, true, error);
+    free(bytes);
+    if (ok) session->codec = codec;
+    return ok;
 }
 static bool begin(q2_session *session, qa_error *error)
 {
@@ -127,9 +151,12 @@ static bool string_command(q2_session *session, uint8_t seat, const char *text, 
     if (!qa_command_tokenize(text, QA_CONSOLE_Q2, false, &tokens, error)) { qa_buffer_free(&expanded); return false; }
     const char *name = token(&tokens, 0); bool ok = true;
     if (!strcmp(name, "disconnect")) {
-        session->retiring = true; session->active = false;
-        q2_download_close(server);
-        ok = session->state.server.hooks.drop(session->state.server.hooks.context, session->id, "client disconnected", error);
+        ok = q2_server_drop_request(session, "client disconnected", error);
+        if (ok) {
+            bool complete;
+            server->drop_notice = false;
+            ok = q2_server_drop_progress(session, session->runtime->now_ns, &complete, error);
+        }
     } else if (!strcmp(name, "new")) ok = new_client(session, error);
     else if (!strcmp(name, "download")) ok = q2_download_begin(session, token(&tokens, 1), token(&tokens, 2), error);
     else if (!strcmp(name, "nextdl")) ok = q2_download_next(session, error);
@@ -275,7 +302,7 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
 {
     q2_server *server = &session->state.server;
     *complete = false;
-    if (!server->drop_queued) {
+    if (server->drop_notice && !server->drop_queued) {
         size_t length = strlen(server->drop_reason);
         if (length > SIZE_MAX - 2) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect text extent overflows");
         char *text = malloc(length + 2);
@@ -292,7 +319,7 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
         if (!ok) return false;
         server->drop_queued = true;
     }
-    if (!server->drop_sent) {
+    if (server->drop_notice && !server->drop_sent) {
         if (!q2_send(session, (qa_bytes){0}, now, NULL, error)) return false;
         if (session->channel->queued_size || session->channel->sending_size) return true;
         server->drop_sent = true;
@@ -303,13 +330,9 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
     }
     *complete = true; return true;
 }
-bool qa_network_q2_server_drop(qa_network_runtime *runtime, qa_net_client_id id,
-    const char *reason, uint64_t now, qa_error *error)
+bool q2_server_drop_request(q2_session *session, const char *reason, qa_error *error)
 {
-    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
-    if (!qa_network_q2_peer(peer) || !((q2_session *)peer->state)->server)
-        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect lost its exact hosted channel");
-    q2_session *session = peer->state; q2_server *server = &session->state.server;
+    q2_server *server = &session->state.server;
     if (session->retiring && !server->drop_reason) return true;
     if (!server->drop_reason) {
         if (!reason) reason = "server disconnected";
@@ -318,24 +341,49 @@ bool qa_network_q2_server_drop(qa_network_runtime *runtime, qa_net_client_id id,
         server->drop_reason = malloc(length + 1);
         if (!server->drop_reason) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 disconnect source reason");
         memcpy(server->drop_reason, reason, length + 1);
+        server->drop_notice = true;
         session->retiring = true; session->active = false; q2_download_close(server);
     }
+    return true;
+}
+bool qa_network_q2_server_request_drop(qa_network_runtime *runtime, qa_net_client_id id,
+    const char *reason, qa_error *error)
+{
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    if (!qa_network_q2_peer(peer) || !((q2_session *)peer->state)->server)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect lost its exact hosted channel");
+    return q2_server_drop_request(peer->state, reason, error);
+}
+bool qa_network_q2_server_drop(qa_network_runtime *runtime, qa_net_client_id id,
+    const char *reason, uint64_t now, qa_error *error)
+{
+    if (!qa_network_q2_server_request_drop(runtime, id, reason, error)) return false;
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    q2_session *session = peer->state;
+    if (!session->state.server.drop_reason) return true;
     bool complete;
     if (!q2_server_drop_progress(session, now, &complete, error)) return false;
-    return complete || q2_fail(error, QA_ERROR_IO, "Q2 disconnect retains its native reliable continuation");
+    return complete;
 }
 bool q2_server_restart(q2_session *session, qa_error *error)
 {
     q2_server *server = &session->state.server;
     if (server->policy.server_count == INT32_MAX) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 server generation exhausted");
+    qa_q2_server_event changing = {.kind = QA_Q2_SVC_COMMAND, .data.print = {.text = "changing\n"}};
+    qa_q2_server_event reconnect = {.kind = QA_Q2_SVC_RECONNECT};
+    uint8_t packet[64]; qa_net_writer writer;
+    qa_net_writer_init(&writer, packet, sizeof(packet), error);
+    qa_q2_codec codec = session->codec;
+    if (!qa_q2_server_event_write(&codec, &writer, &changing) ||
+        !qa_q2_server_event_write(&codec, &writer, &reconnect) ||
+        !q2_queue_bytes(session, (qa_bytes){packet, qa_net_writer_size(&writer)}, 0, true, error)) return false;
+    session->codec = codec;
     ++server->policy.server_count; session->active = false; server->signon_started = false;
     q2_download_close(server); q2_game_state_free(&server->signon); qa_q2_frame_history_clear(server->frames);
     qa_buffer_free(&server->datagram);
     server->has_source_frame = false; server->wire_frame = 1;
     for (size_t i = 0; i < session->seats; ++i) qa_q2_command_replay_init(&server->replay[i]);
-    qa_q2_server_event changing = {.kind = QA_Q2_SVC_COMMAND, .data.print = {.text = "changing\n"}};
-    qa_q2_server_event reconnect = {.kind = QA_Q2_SVC_RECONNECT};
-    return q2_queue_event(session, &changing, 0, true, error) && q2_queue_event(session, &reconnect, 0, true, error);
+    return true;
 }
 void q2_server_clear(q2_server *server)
 {

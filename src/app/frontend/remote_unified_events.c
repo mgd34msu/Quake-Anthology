@@ -43,10 +43,13 @@ struct frontend_unified_events {
     unified_event_link *links;
     size_t link_count, link_capacity;
     qa_hud *hud;
+    qa_ui *hud_ui;
+    qa_application *hud_application;
+    uint32_t hud_seat;
     uint32_t epoch;
     uint64_t frame, prepared_frame;
     double seconds, prepared_seconds, presentation_sequence, simulation_sequence;
-    bool has_frame, prepared, busy, failed, owns_audio;
+    bool has_frame, prepared, busy, failed, owns_audio, families_ready;
 };
 static qa_json_id field(const qa_json_document *j, qa_json_id row, const char *key)
 { return qa_json_get(j, row, key); }
@@ -61,7 +64,7 @@ static bool current(frontend_unified_events *o, qa_error *e)
 }
 static bool execution_current(frontend_unified_events *o,qa_error *e)
 {
-    if (!o || o->frontend->capture || o->frontend->source_restoring || o->frontend->resource_inventory)
+    if (!o || !o->families_ready || o->frontend->capture || o->frontend->source_restoring || o->frontend->resource_inventory)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event delivery overlaps private graph capture or restore");
     return current(o,e);
 }
@@ -69,6 +72,13 @@ static bool scalar(const qa_unified_document *d, qa_json_id row, double *v, qa_e
 {
     if (!qa_unified_document_number(d, row, v, e)) return false;
     return isfinite(*v) || frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified event scalar is not finite");
+}
+static bool sequence_value(double value,double minimum)
+{ return isfinite(value) && value>=minimum && value<=(double)QA_UNIFIED_SAFE_INTEGER && trunc(value)==value; }
+static bool sequence_read(const qa_unified_document *d,qa_json_id row,double *out,qa_error *e)
+{
+    if (!scalar(d,row,out,e)) return false;
+    return sequence_value(*out,0) || frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified event sequence is outside its actual source counter");
 }
 static bool real(const qa_unified_document *d, qa_json_id row, float *v, qa_error *e)
 {
@@ -99,7 +109,9 @@ static bool actor(frontend_unified_events *o,const qa_unified_document *d,qa_jso
     if (!qa_json_u64(j,field(j,row,"slot"),&slot,e) || slot>UINT32_MAX ||
         !qa_json_u64(j,field(j,row,"generation"),&generation,e))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified event actor exceeds its wire identity domain");
-    return frontend_remote_unified_actor(o->replica,(uint32_t)slot,generation,out,e);
+    return o->frontend->capture || o->frontend->source_restoring?
+        frontend_remote_unified_actor_retained(o->replica,(uint32_t)slot,generation,out,e):
+        frontend_remote_unified_actor(o->replica,(uint32_t)slot,generation,out,e);
 }
 static bool component_identity(const qa_unified_document *d,qa_json_id row,qa_buffer *provider,uint64_t *generation,qa_error *e)
 {
@@ -205,8 +217,18 @@ static bool hud_read(void *ctx,const qa_hud_frame *f,qa_hud_data *out,qa_error *
 static qa_hud_options hud_options(frontend_unified_events *o)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    return (qa_hud_options){.ui=o->frontend->seats[d->physical_seat].ui,
+    o->hud_ui=o->frontend->seats[d->physical_seat].ui;
+    o->hud_application=d->application; o->hud_seat=d->physical_seat;
+    return (qa_hud_options){.ui=o->hud_ui,
         .application=d->application,.seat=d->physical_seat,.context=o,.read=hud_read};
+}
+static bool hud_current(frontend_unified_events *o,qa_error *e)
+{
+    if (!execution_current(o,e)) return false;
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    return (d && d->physical_seat==o->hud_seat && d->application==o->hud_application &&
+        o->frontend->seats[d->physical_seat].ui==o->hud_ui) ||
+        frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print changed its actual CLIENT HUD or UI");
 }
 static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified *r,
     frontend_unified_media *m,const frontend_unified_event_options *opts,qa_error *e)
@@ -219,6 +241,7 @@ static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified 
     if (!o) { frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating private unified event ledger"); return NULL; }
     o->frontend=f; o->replica=r; o->media=m; o->options=*opts;
     o->epoch=frontend_remote_unified_epoch(r); o->tail=&o->pending;
+    o->families_ready=true;
     o->presentation_sequence=-1; o->simulation_sequence=-1; return o;
 }
 bool frontend_unified_events_create(qa_frontend *f,frontend_remote_unified *r,
@@ -280,14 +303,14 @@ static bool declare_resources(frontend_unified_events *o,const qa_unified_docume
     }
     return true;
 }
-static bool rows_valid(frontend_unified_events *o,const qa_unified_document *d,bool simulation,qa_error *e)
+static bool rows_valid(frontend_unified_events *o,const qa_unified_document *d,bool simulation,bool children,qa_error *e)
 {
     const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
     if (qa_json_type(j,root)!=QA_JSON_ARRAY || qa_json_size(j,root)>65536)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified event delivery is not a bounded array");
     for (size_t i=0;i<qa_json_size(j,root);++i) {
         qa_json_id row=qa_json_at(j,root,i); double sequence;
-        if (!scalar(d,field(j,row,"sequence"),&sequence,e)) return false;
+        if (!sequence_read(d,field(j,row,"sequence"),&sequence,e)) return false;
         if (!simulation) {
             qa_json_id recipient=field(j,row,"recipient");
             if (recipient!=QA_JSON_NONE && qa_json_type(j,recipient)!=QA_JSON_NULL) {
@@ -337,16 +360,17 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_document *d,b
             }
             if (qa_json_string_equal(j,kind,"message")) {
                 qa_json_id event=field(j,p,"event"),ek=field(j,event,"kind");
-                if (qa_json_string_equal(j,ek,"print") || qa_json_string_equal(j,ek,"center-print")) {
+                if (qa_json_string_equal(j,ek,"print") || qa_json_string_equal(j,ek,"center-print") ||
+                    qa_json_string_equal(j,ek,"command-text")) {
                     qa_buffer t={0}; bool okay=text(d,field(j,event,"text"),&t,e);
                     qa_buffer_free(&t); if (!okay) return false;
                     qa_json_id link=field(j,p,"sourcePresentationSequence");
-                    if (link!=QA_JSON_NONE && !scalar(d,link,&value,e)) return false;
-                    continue;
+                    if (link!=QA_JSON_NONE && !sequence_read(d,link,&value,e)) return false;
+                    if (!qa_json_string_equal(j,ek,"command-text")) continue;
                 }
             }
         }
-        if (!o->options.validate(o->options.context,simulation,d,row,e)) return false;
+        if (children && !o->options.validate(o->options.context,simulation,d,row,e)) return false;
     }
     return true;
 }
@@ -368,7 +392,7 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         qa_unified_document_bytes(doc,field(j,value,"simulation"),&s,e) &&
         qa_unified_document_decode(QA_UNIFIED_EVENTS_DOCUMENT,(qa_bytes){p.data,p.size},&b->presentation,e) &&
         qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){s.data,s.size},&b->simulation,e) &&
-        rows_valid(o,b->presentation,false,e) && rows_valid(o,b->simulation,true,e) && current(o,e);
+        rows_valid(o,b->presentation,false,true,e) && rows_valid(o,b->simulation,true,true,e) && current(o,e);
     qa_buffer_free(&p); qa_buffer_free(&s);
     if (!okay) { batch_free(b); return false; }
     *o->tail=b; o->tail=&b->next; return true;
@@ -538,11 +562,11 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
     if (!o || o->busy || o->prepared || !execution_current(o,e)) return false;
     if (!o->has_frame) return true;
     o->busy=true; bool okay=true;
-    while (okay && o->pending && o->pending->frame<=o->frame) {
+    while (okay && !o->replica->retired && o->pending && o->pending->frame<=o->frame) {
         unified_event_batch *b=o->pending;
         const qa_json_document *j=qa_unified_document_json(b->presentation);
         qa_json_id root=qa_unified_document_root(b->presentation);
-        while (okay && b->presentation_at<qa_json_size(j,root)) {
+        while (okay && !o->replica->retired && b->presentation_at<qa_json_size(j,root)) {
             qa_json_id row=qa_json_at(j,root,b->presentation_at); double sequence;
             okay=scalar(b->presentation,field(j,row,"sequence"),&sequence,e);
             if (okay && sequence>o->presentation_sequence) {
@@ -553,8 +577,9 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             }
             if (okay) ++b->presentation_at;
         }
+        bool presentation_done=b->presentation_at==qa_json_size(j,root);
         j=qa_unified_document_json(b->simulation); root=qa_unified_document_root(b->simulation);
-        while (okay && b->simulation_at<qa_json_size(j,root)) {
+        while (okay && !o->replica->retired && b->simulation_at<qa_json_size(j,root)) {
             qa_json_id row=qa_json_at(j,root,b->simulation_at); double sequence;
             okay=scalar(b->simulation,field(j,row,"sequence"),&sequence,e);
             if (okay && sequence>o->simulation_sequence) {
@@ -563,7 +588,9 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             }
             if (okay) ++b->simulation_at;
         }
-        if (okay) { o->pending=b->next; batch_free(b); if (!o->pending) o->tail=&o->pending; }
+        if (okay && presentation_done && b->simulation_at==qa_json_size(j,root)) {
+            o->pending=b->next; batch_free(b); if (!o->pending) o->tail=&o->pending;
+        }
     }
     if (!okay) o->failed=true;
     if (okay && o->link_count>4096) {
@@ -573,6 +600,20 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
         o->link_count=n;
     }
     o->busy=false; return okay;
+}
+bool frontend_unified_events_center_print(frontend_unified_events *o,const char *text_value,
+    double source_milliseconds,double duration_milliseconds,qa_error *e)
+{
+    if (!o || !text_value || !isfinite(source_milliseconds) || !isfinite(duration_milliseconds))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print requires finite Source clocks and text");
+    if (o->busy || o->prepared || !o->has_frame || !o->hud || !qa_hud_idle(o->hud))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print overlaps a CLIENT callback or unpublished frame");
+    if (!hud_current(o,e)) return false;
+    o->busy=true;
+    bool okay=qa_hud_center_print(o->hud,text_value,clock_ns(source_milliseconds/1000),
+        clock_ns(duration_milliseconds/1000),true,0,e);
+    o->busy=false;
+    return okay && qa_hud_idle(o->hud) && hud_current(o,e);
 }
 bool frontend_unified_events_draw(frontend_unified_events *o,const qa_scene_view *view,qa_scene_frame *frame,qa_error *e)
 {
@@ -636,8 +677,8 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
         !qa_source_save_bool(io,&o->has_frame) || !qa_source_save_u64(io,&o->frame) ||
         !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) ||
         (!o->has_frame && (o->frame || o->seconds)) ||
-        !qa_source_save_f64(io,&o->presentation_sequence) || !isfinite(o->presentation_sequence) ||
-        !qa_source_save_f64(io,&o->simulation_sequence) || !isfinite(o->simulation_sequence) ||
+        !qa_source_save_f64(io,&o->presentation_sequence) || !sequence_value(o->presentation_sequence,-1) ||
+        !qa_source_save_f64(io,&o->simulation_sequence) || !sequence_value(o->simulation_sequence,-1) ||
         !qa_source_save_bool(io,&o->failed)) return false;
     bool capabilities[]={o->options.validate!=NULL,o->options.presentation!=NULL,
         o->options.simulation!=NULL,o->options.audio_actor!=NULL};
@@ -724,7 +765,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
     }
     for (size_t i=0;i<count;++i) {
         unified_event_link *l=o->links+i;
-        if (!qa_source_save_f64(io,&l->sequence) || !isfinite(l->sequence) ||
+        if (!qa_source_save_f64(io,&l->sequence) || !sequence_value(l->sequence,0) ||
             l->sequence>o->presentation_sequence || (i && l->sequence<=o->links[i-1].sequence) ||
             !qa_source_save_bool(io,&l->mirrored)) return false;
     }
@@ -748,7 +789,8 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
         size_t sn=qa_json_size(sj,qa_unified_document_root(b->simulation));
         if (b->presentation_at>pn || b->simulation_at>sn ||
             (b->presentation_at<pn && b->simulation_at) ||
-            !rows_valid(o,b->presentation,false,io->error) || !rows_valid(o,b->simulation,true,io->error)) return false;
+            !rows_valid(o,b->presentation,false,!reading,io->error) ||
+            !rows_valid(o,b->simulation,true,!reading,io->error)) return false;
         if (!reading) b=b->next;
     }
     qa_buffer hud={0}; bool okay;
@@ -784,17 +826,28 @@ bool frontend_unified_events_restore(qa_frontend *f,frontend_remote_unified *rep
     if (!refs || !refs->asset_decode || !out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event candidate needs actual asset graph references");
     frontend_unified_events *o=allocate(f,replica,media,opts,e);
     if (!o) return false;
+    o->families_ready=false;
     if (!frontend_remote_unified_checkpoint_current(replica,e)) { free(o); return false; }
+    *out=o;
     qa_source_save_io io={0};
     bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,o,refs) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (!okay) {
         qa_error ignored={0};
-        frontend_unified_events_destroy(&o,&ignored);
+        frontend_unified_events_destroy(out,&ignored);
         if (e && e->code==QA_OK) frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid unified event ledger");
         return false;
     }
-    *out=o; return true;
+    return true;
+}
+bool frontend_unified_events_restore_finish(frontend_unified_events *o,qa_error *e)
+{
+    if (!o || !o->frontend->source_restoring || !frontend_unified_events_idle(o) ||
+        !frontend_remote_unified_checkpoint_current(o->replica,e))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event import needs its returned family owners");
+    for (unified_event_batch *b=o->pending;b;b=b->next)
+        if (!rows_valid(o,b->presentation,false,true,e) || !rows_valid(o,b->simulation,true,true,e)) return false;
+    o->families_ready=true; return true;
 }
 void frontend_unified_events_adopt(frontend_unified_events *o)
 { if (o && !o->busy && !o->prepared) o->owns_audio=true; }

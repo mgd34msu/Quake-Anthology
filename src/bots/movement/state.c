@@ -3,9 +3,11 @@
 #include <stdio.h>
 
 bool bot_move_record_span(const bot_move_record *record, qa_bot_memory_span *out, qa_error *e) {
+    qa_bot_memory_kind kind;
     if (!record || !record->owner ||
-        !qa_bot_memory_bytes(record->owner->memory, record->allocation, out, e)) return false;
-    return out->size == BOT_MOVE_STATE_BYTES ? true :
+        !qa_bot_memory_bytes(record->owner->memory, record->allocation, out, e) ||
+        !qa_bot_memory_kind_read(record->owner->memory,record->allocation,&kind,e)) return false;
+    return out->size == BOT_MOVE_STATE_BYTES && kind==QA_BOT_MEMORY_HEAP ? true :
         bot_move_fail(e, "MovementState source allocation must contain exactly 772 bytes");
 }
 static uint8_t *record_bytes(const bot_move_record *record, uint32_t offset, uint32_t bytes) {
@@ -36,8 +38,10 @@ float bot_move_float(const bot_move_record *r, bot_move_field field) {
     uint32_t bits=bot_move_word(r,field);float value;memcpy(&value,&bits,4);return value;
 }
 qa_vec3 bot_move_vector(const bot_move_record *r, bot_move_field field) {
-    return qa_v3(bot_move_float(r,field), bot_move_float(r,(bot_move_field)(field+4)),
-                 bot_move_float(r,(bot_move_field)(field+8)));
+    float x=bot_move_float(r,field);
+    float y=bot_move_float(r,(bot_move_field)(field+4));
+    float z=bot_move_float(r,(bot_move_field)(field+8));
+    return qa_v3(x,y,z);
 }
 void bot_move_write_word(bot_move_record *r, bot_move_field field, uint32_t value) {
     write_word(record_bytes(r,(uint32_t)field,4),value);
@@ -50,17 +54,20 @@ void bot_move_write_vector(bot_move_record *r, bot_move_field field, qa_vec3 val
     bot_move_write_float(r,(bot_move_field)(field+4),value.y);
     bot_move_write_float(r,(bot_move_field)(field+8),value.z);
 }
-qa_bot_avoid_spot bot_move_spot(const bot_move_record *r,int32_t index) {
+void bot_move_spot_admit(const bot_move_record *r,int32_t index) {
     if(index<0 || index>=QA_BOT_AVOID_SPOTS) {
         bot_move_fail(r->owner->scope->error,"MovementState avoid spot index is outside its source array");
         longjmp(r->owner->scope->jump,1);
     }
+}
+qa_bot_avoid_spot bot_move_spot(const bot_move_record *r,int32_t index) {
+    bot_move_spot_admit(r,index);
     bot_move_field at=(bot_move_field)(BM_AVOID_SPOTS+index*20);
     return (qa_bot_avoid_spot){bot_move_vector(r,at),bot_move_float(r,(bot_move_field)(at+12)),
                              bot_move_integer(r,(bot_move_field)(at+16))};
 }
 void bot_move_write_spot(bot_move_record *r,int32_t index,qa_bot_avoid_spot spot) {
-    (void)bot_move_spot(r,index);
+    bot_move_spot_admit(r,index);
     bot_move_field at=(bot_move_field)(BM_AVOID_SPOTS+index*20);
     bot_move_write_vector(r,at,spot.origin);
     bot_move_write_float(r,(bot_move_field)(at+12),spot.radius);
@@ -86,6 +93,13 @@ bool qa_bot_moves_active(const qa_bot_moves *m) { return m && m->busy; }
 bool qa_bot_moves_has_handle(const qa_bot_moves *m, uint32_t id) {
     return m && id && id <= m->maximum && m->slots[id - 1].used;
 }
+qa_bot_memory *qa_bot_moves_memory(const qa_bot_moves *m) { return m?m->memory:NULL; }
+bool qa_bot_moves_allocation(const qa_bot_moves *m,uint32_t id,qa_bot_memory_allocation *out,qa_error *e) {
+    if(!out) return bot_move_fail(e,"missing movement allocation output");
+    bot_move_record *record=bot_move_state(m,id,e);qa_bot_memory_span bytes;
+    if(!record || !bot_move_record_span(record,&bytes,e)) return false;
+    *out=record->allocation;return true;
+}
 bot_move_record *bot_move_state(const qa_bot_moves *m, uint32_t id, qa_error *e) {
     if (!m || !id || id > m->maximum || !m->slots[id - 1].used) {
         bot_move_fail(e, "invalid bot movement state handle");
@@ -103,7 +117,7 @@ bot_move_record *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
 }
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actions *actions,
                          const qa_bot_move_services *services, qa_bot_moves **out, qa_error *e) {
-    if (!maximum || maximum > BOT_MOVE_MAX_STATES || !library || !actions ||
+    if (!maximum || SIZE_MAX/maximum<sizeof(bot_move_slot) || !library || !actions ||
         !services || !services->navigation || !services->random.next || !out || *out)
         return bot_move_fail(e, "invalid bot movement services/capacity");
     qa_bot_moves *m = calloc(1, sizeof(*m));
@@ -128,7 +142,7 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
 void qa_bot_moves_destroy(qa_bot_moves *m) {
     if (!m || m->busy)
         return;
-    if (!qa_bot_moves_shutdown(m,NULL) || !qa_bot_memory_release(m->memory,NULL)) return;
+    if (!qa_bot_memory_release(m->memory,NULL)) return;
     qa_nav_prediction_result_free(&m->prediction);
     qa_nav_route_free(&m->trajectory);
     qa_nav_workspace_destroy(m->workspace);
@@ -240,161 +254,199 @@ static bool input_vector(const qa_bot_move_init_source *source, qa_bot_move_init
     *out = value;
     return true;
 }
-bool qa_bot_moves_initialize_from(qa_bot_moves *m, uint32_t id,
-                                  const qa_bot_move_init_source *source, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
-    qa_bot_move_state *s = bot_move_source_state(m, id);
-    if (!s)
-        return true;
-    if (!source || (!source->value &&
-        (!source->integer || !source->vector || !source->think_time)))
-        return bot_move_fail(e, "missing bot movement input reader");
-    const qa_bot_move_input *input = source->value;
-    if (input && (!qa_vec_finite(input->origin) || !qa_vec_finite(input->velocity) ||
-        !qa_vec_finite(input->view_offset) || !qa_vec_finite(input->view_angles) ||
-        !isfinite(input->think_time)))
-        return bot_move_fail(e, "invalid bot movement input");
-    m->busy = true;
-    int32_t word;
-    bool ok = input_integer(source, QA_BOT_INIT_FLAGS, &word, e);
-    if (!ok) goto done;
-    if ((uint32_t)word & QA_BOT_MOVE_TELEPORTED)
-        s->walk_progress = false;
-    if (!(ok = input_vector(source, QA_BOT_INIT_ORIGIN, &s->input.origin, e)) ||
-        !(ok = input_vector(source, QA_BOT_INIT_VELOCITY, &s->input.velocity, e)) ||
-        !(ok = input_vector(source, QA_BOT_INIT_VIEW_OFFSET, &s->input.view_offset, e)) ||
-        !(ok = input_integer(source, QA_BOT_INIT_ENTITY, &s->input.entity, e)) ||
-        !(ok = input_integer(source, QA_BOT_INIT_CLIENT, &s->input.client, e))) goto done;
-    if (input) s->input.think_time = input->think_time;
-    else if (!(ok = source->think_time(source->context, &s->input.think_time, e))) goto done;
-    if (!(ok = input_integer(source, QA_BOT_INIT_PRESENCE, &word, e))) goto done;
-    s->input.presence = (uint32_t)word;
-    if (!(ok = input_vector(source, QA_BOT_INIT_VIEW_ANGLES, &s->input.view_angles, e)) ||
-        !(ok = input_integer(source, QA_BOT_INIT_FLAGS, &word, e))) goto done;
-    uint32_t mask = QA_BOT_MOVE_ON_GROUND | QA_BOT_MOVE_TELEPORTED | QA_BOT_MOVE_WATER_JUMP |
-                    QA_BOT_MOVE_WALK | QA_BOT_MOVE_GRAPPLE_PULL;
-    s->input.flags = (s->input.flags & ~mask) | ((uint32_t)word & mask);
-done:
-    m->busy = false;
-    return ok;
-}
-bool qa_bot_moves_reset(qa_bot_moves *m, uint32_t id, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
-    qa_bot_move_state *s = bot_move_source_state(m, id);
-    if (!s)
-        return true;
-    *s = (qa_bot_move_state){0};
-    return true;
-}
-bool qa_bot_moves_reset_avoid(qa_bot_moves *m, uint32_t id, bool last, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
-    qa_bot_move_state *s = bot_move_source_state(m, id);
-    if (!s)
-        return true;
-    if (!last) {
-        s->avoid_reachability = 0;
-        s->avoid_time = 0;
-        s->avoid_tries = 0;
-    } else if (s->avoid_time > 0) {
-        s->avoid_time = 0;
-        /* The donor defines the release32 probe into the first spot's x word.
-         * Express that value deliberately without an out-of-bounds C access. */
-        int32_t probe;
-        memcpy(&probe, &s->avoid_spots[0].origin.x, sizeof(probe));
-        if (probe > 0) {
-            uint32_t word = (uint32_t)s->avoid_tries - 1;
-            memcpy(&s->avoid_tries, &word, sizeof(word));
-        }
-    }
-    return true;
-}
-void bot_move_avoid(qa_bot_moves *m, qa_bot_move_state *s, uint32_t reach, float duration) {
-    if (s->avoid_reachability == reach) {
-        uint32_t tries = s->avoid_time > m->time ? (uint32_t)s->avoid_tries + 1 : 1;
-        memcpy(&s->avoid_tries, &tries, sizeof(tries));
-        s->avoid_time = m->time + duration;
-    } else if (s->avoid_time < m->time) {
-        s->avoid_reachability = reach;
-        s->avoid_time = m->time + duration;
-        s->avoid_tries = 1;
-    }
-}
-void bot_move_set_reach(qa_bot_move_state *s, uint32_t reach) {
-    if (s->last_reachability != reach)
-        s->walk_progress = false;
-    s->last_reachability = reach;
-}
-bool qa_bot_moves_avoid_spot(qa_bot_moves *m, uint32_t id, const qa_bot_avoid_spot *spot,
-                             qa_error *e) {
-    if (!spot || !qa_vec_finite(spot->origin) || !isfinite(spot->radius))
-        return bot_move_fail(e, "invalid bot avoid spot");
-    qa_bot_vector_source source = {.value = &spot->origin};
-    return qa_bot_moves_avoid_spot_from(m, id, &source, spot->radius, spot->type, e);
-}
-bool qa_bot_moves_avoid_spot_from(qa_bot_moves *m, uint32_t id,
-                                  const qa_bot_vector_source *source, float radius,
-                                  int32_t type, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
-    qa_bot_move_state *s = bot_move_source_state(m, id);
-    if (!s)
-        return true;
-    if (!source || (!source->value && !source->read))
-        return bot_move_fail(e, "missing bot avoid-spot origin fields");
-    if (!type)
-        s->avoid_count = 0;
-    else if (s->avoid_count < QA_BOT_AVOID_SPOTS) {
-        m->busy = true;
-        qa_bot_avoid_spot spot = {.radius = radius, .type = type};
-        bool ok = qa_bot_vector_read(source, &spot.origin, e);
-        if (ok) s->avoid_spots[s->avoid_count++] = spot;
-        m->busy = false;
-        return ok;
-    }
-    return true;
-}
-bool qa_bot_moves_capture(const qa_bot_moves *m, uint32_t id, qa_bot_move_state *out, qa_error *e) {
-    qa_bot_move_state *s = bot_move_state(m, id, e);
-    if (!s)
-        return false;
-    if (!out)
-        return bot_move_fail(e, "missing move checkpoint output");
-    *out = *s;
-    return true;
-}
-bool qa_bot_moves_restore(qa_bot_moves *m, uint32_t id, const qa_bot_move_state *state,
-                          qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
+static bool initialize_from(qa_bot_moves *m,uint32_t id,const qa_bot_move_init_source *source,qa_error *e) {
+    if(!bot_move_mutable(m,e)) return false;
+    bot_move_record *s=bot_move_source_state(m,id);
+    if(!s) return true;
+    if(!source || (!source->value && (!source->integer || !source->vector || !source->think_time)))
+        return bot_move_fail(e,"missing bot movement input reader");
     m->busy=true;
-    bool ok=bot_move_restore_validate(m,id,state,e);
-    if (ok) bot_move_restore_commit(m,id,state);
-    m->busy=false;
-    return ok;
+    int32_t word;qa_vec3 vector;float think;
+    if(!input_integer(source,QA_BOT_INIT_FLAGS,&word,e)) return false;
+    if((uint32_t)word&QA_BOT_MOVE_TELEPORTED) s->walk_progress=false;
+    if(!input_vector(source,QA_BOT_INIT_ORIGIN,&vector,e)) return false;
+    bot_move_write_vector(s,BM_ORIGIN,vector);
+    if(!input_vector(source,QA_BOT_INIT_VELOCITY,&vector,e)) return false;
+    bot_move_write_vector(s,BM_VELOCITY,vector);
+    if(!input_vector(source,QA_BOT_INIT_VIEW_OFFSET,&vector,e)) return false;
+    bot_move_write_vector(s,BM_VIEW_OFFSET,vector);
+    if(!input_integer(source,QA_BOT_INIT_ENTITY,&word,e)) return false;
+    bot_move_write_word(s,BM_ENTITY,(uint32_t)word);
+    if(!input_integer(source,QA_BOT_INIT_CLIENT,&word,e)) return false;
+    bot_move_write_word(s,BM_CLIENT,(uint32_t)word);
+    if(source->value) think=source->value->think_time;
+    else if(!source->think_time(source->context,&think,e)) return false;
+    bot_move_write_float(s,BM_THINK_TIME,think);
+    if(!input_integer(source,QA_BOT_INIT_PRESENCE,&word,e)) return false;
+    bot_move_write_word(s,BM_PRESENCE,(uint32_t)word);
+    if(!input_vector(source,QA_BOT_INIT_VIEW_ANGLES,&vector,e)) return false;
+    bot_move_write_vector(s,BM_VIEW_ANGLES,vector);
+    uint32_t flags=bot_move_word(s,BM_FLAGS);
+    if(!input_integer(source,QA_BOT_INIT_FLAGS,&word,e)) return false;
+    uint32_t mask=QA_BOT_MOVE_ON_GROUND|QA_BOT_MOVE_TELEPORTED|QA_BOT_MOVE_WATER_JUMP|
+                  QA_BOT_MOVE_WALK|QA_BOT_MOVE_GRAPPLE_PULL;
+    bot_move_write_word(s,BM_FLAGS,(flags&~mask)|((uint32_t)word&mask));
+    return true;
 }
-void bot_move_restore_lock(qa_bot_moves *m, bool locked) { m->busy=locked; }
-bool bot_move_restore_validate(qa_bot_moves *m, uint32_t id, const qa_bot_move_state *state,
-                                qa_error *e) {
-    if (!id || id > m->maximum || !state || state->avoid_count > QA_BOT_AVOID_SPOTS ||
-        !qa_vec_finite(state->input.origin) || !qa_vec_finite(state->input.velocity) ||
-        !qa_vec_finite(state->input.view_offset) || !qa_vec_finite(state->input.view_angles) ||
-        !qa_vec_finite(state->last_origin) || !isfinite(state->input.think_time) ||
-        !isfinite(state->grapple_visible_time) || !isfinite(state->last_grapple_distance) ||
-        !isfinite(state->reachability_time) || !isfinite(state->avoid_time))
-        return bot_move_fail(e, "invalid bot movement checkpoint");
-    for (size_t i = 0; i < state->avoid_count; ++i)
-        if (!qa_vec_finite(state->avoid_spots[i].origin) || !isfinite(state->avoid_spots[i].radius))
-            return bot_move_fail(e, "invalid saved avoid spot");
-    if (state->walk_progress) {
-        qa_bot_navigation *n = m->services.navigation(m->services.context, state->input.client);
-        if (!n || !qa_navigation_edge(qa_bot_navigation_runtime(n), state->walk_edge))
-            return bot_move_fail(e, "saved movement edge is absent from selected navigation");
+bool qa_bot_moves_initialize_from(qa_bot_moves *m,uint32_t id,const qa_bot_move_init_source *source,qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,initialize_from(m,id,source,e));
+}
+static bool reset(qa_bot_moves *m,uint32_t id,qa_error *e) {
+    if(!bot_move_mutable(m,e)) return false;
+    bot_move_record *s=bot_move_source_state(m,id);
+    if(!s) return true;
+    s->walk_progress=false;
+    memset(record_bytes(s,0,BOT_MOVE_STATE_BYTES),0,BOT_MOVE_STATE_BYTES);
+    return true;
+}
+bool qa_bot_moves_reset(qa_bot_moves *m,uint32_t id,qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,reset(m,id,e));
+}
+static bool reset_avoid(qa_bot_moves *m,uint32_t id,bool last,qa_error *e) {
+    if(!bot_move_mutable(m,e)) return false;
+    bot_move_record *s=bot_move_source_state(m,id);
+    if(!s) return true;
+    if(!last) {
+        bot_move_write_word(s,BM_AVOID_REACHABILITY,0);
+        bot_move_write_float(s,BM_AVOID_TIME,0);
+        bot_move_write_word(s,BM_AVOID_TRIES,0);
+    } else if(bot_move_float(s,BM_AVOID_TIME)>0) {
+        bot_move_write_float(s,BM_AVOID_TIME,0);
+        if(bot_move_integer(s,BM_AVOID_SPOTS)>0)
+            bot_move_write_word(s,BM_AVOID_TRIES,bot_move_word(s,BM_AVOID_TRIES)-1u);
     }
     return true;
 }
-void bot_move_restore_commit(qa_bot_moves *m, uint32_t id, const qa_bot_move_state *state) {
-    m->slots[id-1]=(bot_move_slot){.used=true,.state=*state};
+bool qa_bot_moves_reset_avoid(qa_bot_moves *m,uint32_t id,bool last,qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,reset_avoid(m,id,last,e));
+}
+void bot_move_avoid(qa_bot_moves *m,bot_move_record *s,uint32_t reach,float duration) {
+    if(bot_move_word(s,BM_AVOID_REACHABILITY)==reach) {
+        uint32_t tries=bot_move_float(s,BM_AVOID_TIME)>m->time ? bot_move_word(s,BM_AVOID_TRIES)+1u : 1u;
+        bot_move_write_word(s,BM_AVOID_TRIES,tries);
+        bot_move_write_float(s,BM_AVOID_TIME,m->time+duration);
+    } else if(bot_move_float(s,BM_AVOID_TIME)<m->time) {
+        bot_move_write_word(s,BM_AVOID_REACHABILITY,reach);
+        bot_move_write_float(s,BM_AVOID_TIME,m->time+duration);
+        bot_move_write_word(s,BM_AVOID_TRIES,1);
+    }
+}
+void bot_move_set_reach(bot_move_record *s,uint32_t reach) {
+    if(bot_move_word(s,BM_LAST_REACHABILITY)!=reach) s->walk_progress=false;
+    bot_move_write_word(s,BM_LAST_REACHABILITY,reach);
+}
+bool qa_bot_moves_avoid_spot(qa_bot_moves *m,uint32_t id,const qa_bot_avoid_spot *spot,qa_error *e) {
+    if(!spot) return bot_move_fail(e,"missing bot avoid spot");
+    qa_bot_vector_source source={.value=&spot->origin};
+    return qa_bot_moves_avoid_spot_from(m,id,&source,spot->radius,spot->type,e);
+}
+static bool avoid_spot_from(qa_bot_moves *m,uint32_t id,const qa_bot_vector_source *source,
+                             float radius,int32_t type,qa_error *e) {
+    if(!bot_move_mutable(m,e)) return false;
+    bot_move_record *s=bot_move_source_state(m,id);
+    if(!s) return true;
+    if(!type) bot_move_write_word(s,BM_AVOID_COUNT,0);
+    else {
+        int32_t count=bot_move_integer(s,BM_AVOID_COUNT);
+        if(count>=QA_BOT_AVOID_SPOTS) return true;
+        /* Source validates its array index before evaluating origin components. */
+        bot_move_spot_admit(s,count);
+        if(!source || (!source->value && !source->read)) return bot_move_fail(e,"missing bot avoid-spot origin fields");
+        m->busy=true;
+        qa_bot_avoid_spot spot={.radius=radius,.type=type};
+        if(!qa_bot_vector_read(source,&spot.origin,e)) return false;
+        bot_move_write_spot(s,count,spot);
+        bot_move_write_word(s,BM_AVOID_COUNT,bot_move_word(s,BM_AVOID_COUNT)+1u);
+    }
+    return true;
+}
+bool qa_bot_moves_avoid_spot_from(qa_bot_moves *m,uint32_t id,const qa_bot_vector_source *source,
+                                  float radius,int32_t type,qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,avoid_spot_from(m,id,source,radius,type,e));
+}
+void bot_move_record_snapshot(const bot_move_record *s,qa_bot_move_state *out) {
+    *out=(qa_bot_move_state){0};
+    out->input.origin=bot_move_vector(s,BM_ORIGIN);
+    out->input.velocity=bot_move_vector(s,BM_VELOCITY);
+    out->input.view_offset=bot_move_vector(s,BM_VIEW_OFFSET);
+    out->input.entity=bot_move_integer(s,BM_ENTITY);
+    out->input.client=bot_move_integer(s,BM_CLIENT);
+    out->input.think_time=bot_move_float(s,BM_THINK_TIME);
+    out->input.presence=bot_move_word(s,BM_PRESENCE);
+    out->input.view_angles=bot_move_vector(s,BM_VIEW_ANGLES);
+    out->input.flags=bot_move_word(s,BM_FLAGS);
+    out->area=bot_move_word(s,BM_AREA);
+    out->last_area=bot_move_word(s,BM_LAST_AREA);
+    out->last_goal_area=bot_move_word(s,BM_LAST_GOAL_AREA);
+    out->last_reachability=bot_move_word(s,BM_LAST_REACHABILITY);
+    out->last_origin=bot_move_vector(s,BM_LAST_ORIGIN);
+    out->reach_area=bot_move_word(s,BM_REACH_AREA);
+    out->jump_reach=bot_move_word(s,BM_JUMP_REACH);
+    out->grapple_visible_time=bot_move_float(s,BM_GRAPPLE_VISIBLE_TIME);
+    out->last_grapple_distance=bot_move_float(s,BM_LAST_GRAPPLE_DISTANCE);
+    out->reachability_time=bot_move_float(s,BM_REACHABILITY_TIME);
+    out->avoid_reachability=bot_move_word(s,BM_AVOID_REACHABILITY);
+    out->avoid_time=bot_move_float(s,BM_AVOID_TIME);
+    out->avoid_tries=bot_move_integer(s,BM_AVOID_TRIES);
+    for(int32_t i=0;i<QA_BOT_AVOID_SPOTS;++i) out->avoid_spots[i]=bot_move_spot(s,i);
+    out->avoid_count=bot_move_word(s,BM_AVOID_COUNT);
+    out->walk_progress=s->walk_progress;out->walk_edge=s->walk_edge;
+}
+static bool capture(qa_bot_moves *m,uint32_t id,qa_bot_move_state *out,qa_error *e) {
+    bot_move_record *s=bot_move_state(m,id,e);
+    if(!s) return false;
+    if(!out) return bot_move_fail(e,"missing move checkpoint output");
+    bot_move_record_snapshot(s,out);return true;
+}
+bool qa_bot_moves_capture(const qa_bot_moves *owner,uint32_t id,qa_bot_move_state *out,qa_error *e) {
+    qa_bot_moves *m=(qa_bot_moves *)owner;
+    BOT_MOVE_OPERATION(m,e,capture(m,id,out,e));
+}
+void bot_move_restore_lock(qa_bot_moves *m,bool locked) { m->busy=locked; }
+static bool bot_move_restore_validate(qa_bot_moves *m,uint32_t id,const qa_bot_move_state *state,qa_error *e) {
+    bot_move_record *record=bot_move_state(m,id,e);qa_bot_memory_span bytes;
+    if(!record || !state || !bot_move_record_span(record,&bytes,e)) return false;
+    if(state->walk_progress) {
+        qa_bot_navigation *n=m->services.navigation(m->services.context,state->input.client);
+        if(!n || !qa_navigation_edge(qa_bot_navigation_runtime(n),state->walk_edge))
+            return bot_move_fail(e,"saved movement edge is absent from selected navigation");
+    }
+    return true;
+}
+static void bot_move_restore_commit(qa_bot_moves *m,uint32_t id,const qa_bot_move_state *state) {
+    bot_move_record *s=&m->slots[id-1].state;
+    bot_move_write_vector(s,BM_ORIGIN,state->input.origin);
+    bot_move_write_vector(s,BM_VELOCITY,state->input.velocity);
+    bot_move_write_vector(s,BM_VIEW_OFFSET,state->input.view_offset);
+    bot_move_write_word(s,BM_ENTITY,(uint32_t)state->input.entity);
+    bot_move_write_word(s,BM_CLIENT,(uint32_t)state->input.client);
+    bot_move_write_float(s,BM_THINK_TIME,state->input.think_time);
+    bot_move_write_word(s,BM_PRESENCE,state->input.presence);
+    bot_move_write_vector(s,BM_VIEW_ANGLES,state->input.view_angles);
+    bot_move_write_word(s,BM_AREA,state->area);
+    bot_move_write_word(s,BM_LAST_AREA,state->last_area);
+    bot_move_write_word(s,BM_LAST_GOAL_AREA,state->last_goal_area);
+    bot_move_set_reach(s,state->last_reachability);
+    bot_move_write_vector(s,BM_LAST_ORIGIN,state->last_origin);
+    bot_move_write_word(s,BM_REACH_AREA,state->reach_area);
+    bot_move_write_word(s,BM_FLAGS,state->input.flags);
+    bot_move_write_word(s,BM_JUMP_REACH,state->jump_reach);
+    bot_move_write_float(s,BM_GRAPPLE_VISIBLE_TIME,state->grapple_visible_time);
+    bot_move_write_float(s,BM_LAST_GRAPPLE_DISTANCE,state->last_grapple_distance);
+    bot_move_write_float(s,BM_REACHABILITY_TIME,state->reachability_time);
+    bot_move_write_word(s,BM_AVOID_REACHABILITY,state->avoid_reachability);
+    bot_move_write_float(s,BM_AVOID_TIME,state->avoid_time);
+    bot_move_write_word(s,BM_AVOID_TRIES,(uint32_t)state->avoid_tries);
+    for(int32_t i=0;i<QA_BOT_AVOID_SPOTS;++i) bot_move_write_spot(s,i,state->avoid_spots[i]);
+    bot_move_write_word(s,BM_AVOID_COUNT,state->avoid_count);
+    s->walk_progress=state->walk_progress;s->walk_edge=state->walk_edge;
+}
+static bool restore(qa_bot_moves *m,uint32_t id,const qa_bot_move_state *state,qa_error *e) {
+    if(!bot_move_mutable(m,e)) return false;
+    m->busy=true;
+    if(!bot_move_restore_validate(m,id,state,e)) return false;
+    bot_move_restore_commit(m,id,state);return true;
+}
+bool qa_bot_moves_restore(qa_bot_moves *m,uint32_t id,const qa_bot_move_state *state,qa_error *e) {
+    BOT_MOVE_OPERATION(m,e,restore(m,id,state,e));
 }

@@ -2,7 +2,7 @@
 #define QA_INVENTORY_H
 #include "qa/gameplay.h"
 
-typedef enum qa_inventory_count_policy { QA_COUNT_STACK, QA_COUNT_SOURCE_FLOAT, QA_COUNT_SOURCE_INT32 } qa_inventory_count_policy;
+typedef enum qa_inventory_count_policy { QA_COUNT_STACK, QA_COUNT_SOURCE_FLOAT, QA_COUNT_SOURCE_INT32, QA_COUNT_SOURCE_DOUBLE } qa_inventory_count_policy;
 /* Double API values retain every signed int32 counter exactly. SOURCE_FLOAT
  * stores round to native float; this is not a selectable arithmetic backend. */
 typedef struct qa_inventory_entry { qa_item_id item; double count, capacity; qa_inventory_count_policy policy; } qa_inventory_entry;
@@ -82,6 +82,10 @@ bool qa_inventory_replace_definitions(qa_inventory *, qa_actor_id, qa_actor_owne
 bool qa_inventory_lease_current(qa_inventory *, qa_inventory_lease);
 bool qa_inventory_close_items(qa_inventory *, qa_inventory_lease, qa_error *);
 bool qa_inventory_source_stored(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t, qa_error *);
+/* retired_token identifies failure at a source lease retirement guard, not a
+ * failure returned by a source reader or a configure callback. */
+bool qa_inventory_source_stored_ex(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t,
+    bool *retired_token, qa_error *);
 bool qa_inventory_entry_read(qa_inventory *, qa_actor_id, qa_item_id, qa_inventory_entry *, qa_error *);
 /* A current actor with no store or a missing item has count zero. Retired
  * actors and changes to storage or item ownership during a read fail. */

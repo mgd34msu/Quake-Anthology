@@ -74,6 +74,7 @@ typedef enum qa_q2_temp_field_name {
 typedef struct qa_q2_temp_field {
     qa_q2_temp_field_kind kind;
     qa_q2_temp_field_name name;
+    size_t offset; /* Byte offset from temporary.raw, captured by the actual read. */
     union { int32_t integer; float vector[3]; } value;
 } qa_q2_temp_field;
 typedef struct qa_q2_temp_entity {

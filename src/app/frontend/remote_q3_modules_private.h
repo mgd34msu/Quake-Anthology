@@ -35,6 +35,7 @@ typedef struct remote_module_lease {
     frontend_network_browser_binding browser;
     qa_q3_host_client_context constructor;
     qa_q3_presentation *presentation;
+    qa_q3_cinematic_source *cinematics;
     frontend_equipment_source *equipment;
     qa_audio_music *music;
     char *music_intro, *music_loop;
@@ -45,7 +46,7 @@ typedef struct remote_module_lease {
     qa_command_context command;
     size_t callbacks, movie_references;
     qa_vfs *media_views[1];
-    bool released, preparing, music_attached, music_looping, has_listener;
+    bool released, preparing, music_attached, music_looping, has_listener, legacy_cinematics;
 } remote_module_lease;
 
 typedef enum remote_module_basis { REMOTE_MODULE_DECODED, REMOTE_MODULE_INITIAL } remote_module_basis;
@@ -71,6 +72,7 @@ bool frontend_remote_modules_released_drain(frontend_remote_q3_modules *, qa_err
 remote_module_saved *frontend_remote_modules_saved(frontend_remote_q3_modules *, qa_qvm_role, uint64_t);
 void frontend_remote_modules_saved_dispose(remote_module_saved *, size_t);
 bool frontend_remote_modules_music_restore_origin(remote_module_lease *, qa_error *);
+bool frontend_remote_modules_restore_renderer_parameters(frontend_remote_q3_modules *, qa_error *);
 bool frontend_remote_modules_construct_restored(qa_frontend *, frontend_remote_q3 *,
     frontend_remote_q3_initial *, remote_module_saved **, size_t, qa_bytes, qa_bytes,
     frontend_remote_q3_modules **, qa_error *);

@@ -5,9 +5,10 @@ typedef struct equipment_scope {
     struct equipment_scope *previous;
     qa_qvm_source_frame frame;
     uint32_t gun;
+    size_t source_ordinal;
     void *token;
     qa_actor_id actor;
-    bool replacing, view;
+    bool replacing, view, source_pending;
 } equipment_scope;
 typedef struct equipment_hook {
     struct application_q3_equipment *owner;
@@ -156,7 +157,9 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     int32_t state, parent_pointer, entity_pointer;
     const application_q3_equipment_profile *profile = owner->profile;
     if (!qa_qvm_call_argument(call, profile->state_argument, &state, error)) return false;
-    if (state && !owner->services.held_source) return qa_qvm_proceed(call, result, error);
+    bool observing = owner->services.held_source || owner->services.held_source_poly ||
+        owner->services.held_source_light || owner->services.held_source_completed;
+    if (state && !observing) return qa_qvm_proceed(call, result, error);
     qa_bytes parent_bytes, entity_bytes;
     qa_q3_ref_entity parent;
     if (!qa_qvm_call_argument(call, profile->parent_argument, &parent_pointer, error) ||
@@ -180,7 +183,7 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         if (scope.token) owner->services.held_release(owner->services.context, scope.token);
         return false;
     }
-    if (!replace && !owner->services.held_source) {
+    if (!replace && !observing) {
         if (scope.token) owner->services.held_release(owner->services.context, scope.token);
         return qa_qvm_proceed(call, result, error);
     }
@@ -197,6 +200,8 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
         if (ok && !cancelled && replace)
             ok = owner->services.held_submit(owner->services.context, scope.token, error);
+        if (ok && !cancelled && !replace && owner->services.held_source_completed)
+            ok = owner->services.held_source_completed(owner->services.context, scope.actor, scope.view, error);
     }
     if (scope.token) owner->services.held_release(owner->services.context, scope.token);
     return ok;
@@ -214,14 +219,62 @@ bool application_q3_equipment_source_entity(void *context, const qa_qvm_call *ca
     bool active;
     if (!selected(owner, &active, error)) return false;
     (void)active;
-    if (!scope->replacing)
-        return owner->services.held_source(owner->services.context, scope->actor, scope->view, entity, error);
+    if (!scope->replacing) {
+        scope->source_pending = false;
+        if (!owner->services.held_source) return true;
+        return owner->services.held_source(owner->services.context, scope->actor, scope->view,
+            entity, &scope->source_ordinal, &scope->source_pending, error);
+    }
     if (pointer < 0 || (uint32_t)pointer < scope->frame.start ||
         (uint64_t)(uint32_t)pointer + 140 > scope->frame.end) return true;
     if ((uint32_t)pointer == scope->gun &&
         !owner->services.held_pass(owner->services.context, scope->token, entity, error)) return false;
     *suppress = true;
     return true;
+}
+
+bool application_q3_equipment_source_entity_cancel(application_q3_equipment *owner,
+    const qa_qvm_call *call, qa_error *error)
+{
+    if (!owner || !call || call->vm != owner->module.vm)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Held source cancellation requires its actual executor");
+    equipment_scope *scope = owner->scopes;
+    if (!scope || scope->replacing || !scope->source_pending) return true;
+    bool active;
+    if (!selected(owner, &active, error)) return false;
+    (void)active;
+    if (!owner->services.held_source_cancel(owner->services.context, scope->actor,
+            scope->view, scope->source_ordinal, error)) return false;
+    scope->source_pending = false;
+    return true;
+}
+
+bool application_q3_equipment_source_poly(void *context, const qa_qvm_call *call,
+    size_t vertices, qa_error *error)
+{
+    application_q3_equipment *owner = context;
+    if (!owner || !call || call->vm != owner->module.vm)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Held Source polygon requires its actual executor");
+    equipment_scope *scope = owner->scopes;
+    if (!scope || scope->replacing || !owner->services.held_source_poly) return true;
+    bool active;
+    if (!selected(owner, &active, error)) return false;
+    (void)active;
+    return owner->services.held_source_poly(owner->services.context, scope->actor,
+        scope->view, vertices, error);
+}
+
+bool application_q3_equipment_source_light(void *context, const qa_qvm_call *call, qa_error *error)
+{
+    application_q3_equipment *owner = context;
+    if (!owner || !call || call->vm != owner->module.vm)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Held Source light requires its actual executor");
+    equipment_scope *scope = owner->scopes;
+    if (!scope || scope->replacing || !owner->services.held_source_light) return true;
+    bool active;
+    if (!selected(owner, &active, error)) return false;
+    (void)active;
+    return owner->services.held_source_light(owner->services.context, scope->actor, scope->view, error);
 }
 
 bool application_q3_equipment_idle(const application_q3_equipment *owner)
@@ -269,7 +322,9 @@ bool application_q3_equipment_create_module(const application_q3_equipment_modul
         (module->profile->present && (!module->client.context || !module->client.source_actor)) ||
         !out || *out || !services || !services->context || !services->prepare || !services->current ||
         !services->release_draw || !services->held_begin || !services->held_pass ||
-        !services->held_submit || !services->held_release || !qa_qvm_can_destroy(module->vm))
+        !services->held_submit || !services->held_release ||
+        ((services->held_source != NULL) != (services->held_source_cancel != NULL)) ||
+        !qa_qvm_can_destroy(module->vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source constructor requires actual cgame/media owners");
     application_q3_equipment *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original equipment boundary owner");

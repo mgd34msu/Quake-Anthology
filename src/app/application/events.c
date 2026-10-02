@@ -9,6 +9,7 @@
 #include "unified_q2_events.h"
 #include "unified_q2_native_events.h"
 #include "guest_q3_weapons_services.h"
+#include "guest_native_q2_private.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -679,9 +680,20 @@ static bool emit_protocol(application_provider *provider,
     copied.dialect = provider->launch->selection.clock.kind;
     if (provider->kind != APPLICATION_PROVIDER_Q1) {
         qa_clock_state clock;
-        if (!qa_session_clock(application->session, provider->owner, &clock))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol lost its genuine emission clock");
-        copied.time_ns = clock.frame.time_ns;
+        if (qa_session_clock(application->session, provider->owner, &clock)) copied.time_ns = clock.frame.time_ns;
+        else {
+            const struct application_native_q2 *engine=provider->kind==APPLICATION_PROVIDER_NATIVE?
+                provider->state.native.q2_engine:NULL;
+            bool entering=provider->product && provider->product->family==QA_GAME_Q2 &&
+                !provider->constructed && engine && engine->provider==provider &&
+                (engine->profile==QA_NATIVE_Q2_GAME_API3 || engine->profile==QA_NATIVE_Q2_GAME_API2023) &&
+                engine->prepared && engine->calls && engine->host_constructing &&
+                (!delivery || !delivery->audience.captured);
+            for (size_t i=0;entering && i<sizeof(engine->clients)/sizeof(*engine->clients);++i)
+                if (engine->clients[i].connected) entering=false;
+            if (!entering)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol lost its genuine emission clock");
+        }
     }
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;

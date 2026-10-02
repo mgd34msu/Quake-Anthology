@@ -3,6 +3,7 @@
 
 #include "qa/common.h"
 #include "qa/movement.h"
+#include "qa/bots_allocator.h"
 
 typedef enum qa_bot_action_flag {
     QA_BOT_ATTACK = 0x0000001, QA_BOT_USE = 0x0000002, QA_BOT_RESPAWN = 0x0000008,
@@ -31,20 +32,30 @@ typedef struct qa_bot_action_services {
 typedef struct qa_bot_actions qa_bot_actions;
 bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *, qa_bot_actions **,
                            qa_error *);
+/* Deferred source owner. NULL memory creates a standalone allocator. */
+bool qa_bot_actions_create_source(qa_bot_memory *,const qa_bot_action_services *,qa_bot_actions **,qa_error *);
 void qa_bot_actions_destroy(qa_bot_actions *);
 uint32_t qa_bot_actions_capacity(const qa_bot_actions *);
-/* Setup replaces and zeroes records only on successful allocation. Shutdown
- * releases records, preserving services for a subsequent setup. */
+bool qa_bot_actions_idle(const qa_bot_actions *);
+qa_bot_memory *qa_bot_actions_memory(const qa_bot_actions *);
+/* Setup publishes a cleared HUNK allocation, retaining earlier HUNK blocks.
+ * Shutdown frees the current source alias before dropping it. */
 bool qa_bot_actions_setup(qa_bot_actions *, uint32_t clients, qa_error *);
-void qa_bot_actions_shutdown(qa_bot_actions *);
+bool qa_bot_actions_shutdown(qa_bot_actions *,qa_error *);
+void qa_bot_actions_dispose_resources(qa_bot_actions *);
 bool qa_bot_actions_add(qa_bot_actions *, uint32_t client, uint32_t flags, qa_error *);
 bool qa_bot_actions_weapon(qa_bot_actions *, uint32_t client, int32_t weapon, qa_error *);
 bool qa_bot_actions_jump(qa_bot_actions *, uint32_t client, bool delayed, qa_error *);
 bool qa_bot_actions_move(qa_bot_actions *, uint32_t client, qa_vec3 direction, float speed,
                          qa_error *);
 bool qa_bot_actions_view(qa_bot_actions *, uint32_t client, qa_vec3 angles, qa_error *);
+typedef bool (*qa_bot_action_vector_read)(void *,qa_vec3 *,qa_error *);
+/* Resolve the current source input before reading a lazy guest vector. */
+bool qa_bot_actions_move_from(qa_bot_actions *,uint32_t,qa_bot_action_vector_read,void *,float,qa_error *);
+bool qa_bot_actions_view_from(qa_bot_actions *,uint32_t,qa_bot_action_vector_read,void *,qa_error *);
 bool qa_bot_actions_input(qa_bot_actions *, uint32_t client, float think_time, qa_bot_input *,
                           qa_error *);
+bool qa_bot_actions_input_bytes(qa_bot_actions *,uint32_t client,float think_time,qa_bytes *,qa_error *);
 bool qa_bot_actions_read(const qa_bot_actions *, uint32_t client, qa_bot_input *, qa_error *);
 bool qa_bot_actions_restore(qa_bot_actions *, uint32_t client, const qa_bot_input *, qa_error *);
 bool qa_bot_actions_reset(qa_bot_actions *, uint32_t client, qa_error *);

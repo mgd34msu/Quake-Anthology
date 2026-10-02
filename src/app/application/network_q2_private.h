@@ -14,14 +14,39 @@
 #include "native_q2_wire_engine.h"
 #include "qa/material.h"
 #include "qa/material_library_save.h"
+#include "qa/hud_q2.h"
+
+enum { APPLICATION_Q2_LAYOUT_BYTES = 65536 };
+
+typedef struct application_q2_layout_receipt {
+    qa_actor_id actor;
+    char *text;
+    qa_hud_q2_stat_references references;
+    qa_native_profile profile;
+} application_q2_layout_receipt;
 
 typedef enum application_q2_held_kind {
     APPLICATION_Q2_HELD_MODEL,
     APPLICATION_Q2_HELD_DEPENDENCY,
     APPLICATION_Q2_HELD_MATERIAL,
     APPLICATION_Q2_HELD_EVENT,
-    APPLICATION_Q2_HELD_IMAGE
+    APPLICATION_Q2_HELD_IMAGE,
+    APPLICATION_Q2_HELD_ALIAS,
+    APPLICATION_Q2_HELD_IMAGE_RECEIPT
 } application_q2_held_kind;
+typedef struct application_q2_image_receipt {
+    const char *request, *path;
+    const qa_resource *source;
+    const qa_vfs_acquisition *opening;
+    const char *logical_path;
+    const qa_resource *logical_source;
+    const qa_vfs_acquisition *logical_opening;
+    const qa_scene_image_options *options;
+    qa_bytes palette_rgb;
+    const qa_scene_palette_source *palette_source;
+    bool palette_attempted;
+    qa_status rejection, palette_error;
+} application_q2_image_receipt;
 typedef struct application_q2_held_resource {
     qa_actor_owner provider;
     char *instance, *path, *wire_path;
@@ -31,6 +56,9 @@ typedef struct application_q2_held_resource {
     qa_vfs_acquisition opening;
     application_q2_held_kind kind;
     bool missing;
+    bool model_scope;
+    char *model_scope_path;
+    qa_buffer model_scope_bytes;
     qa_sha256_digest authority;
     qa_buffer wire_bytes;
     size_t *dependencies, dependency_count;
@@ -46,6 +74,12 @@ typedef struct application_q2_held_resource {
     qa_buffer image_palette, image_translation;
     size_t image_palette_dependency;
     qa_sha256_digest image_palette_source;
+    char *image_request, *image_logical_path;
+    size_t image_logical_dependency;
+    qa_sha256_digest image_logical_source;
+    bool image_palette_attempted;
+    qa_status image_rejection, image_palette_error;
+    qa_sha256_digest receipt_source;
 } application_q2_held_resource;
 
 typedef struct application_q2_resource_table {
@@ -56,12 +90,15 @@ struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
     qa_sha256_digest identity;
+    qa_sha256_digest map_identity;
+    char *source_instance, *source_map;
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
     uint32_t checksum_index, clients_index, air_index, n64_index;
     char **configs;
     application_q2_resource_table resources[3];
     qa_q2_config_entry *entries;
+    application_q2_layout_receipt *layouts;
     qa_q2_entity *entities, *baselines;
     qa_q2_source_entity_motion *motion_rows;
     qa_q2_source_motion motion;
@@ -73,10 +110,10 @@ struct qa_application_network_q2 {
     qa_actor_id *event_actors;
     uint32_t *events;
     uint64_t event_frame;
-    bool initialized, restored;
+    bool initialized, restored, archival;
     bool materials_bound, materials_capability;
     qa_application_network_q2_bindings bindings;
-    struct application_native_q2 *recipient_engine;
+    struct application_q2_recipient_binding *recipient_binding;
     application_q2_held_resource *held_resources;
     size_t held_resource_count, held_resource_capacity;
 };
@@ -89,12 +126,17 @@ void application_network_q2_free_tables(qa_application_network_q2 *);
 application_provider *application_network_q2_provider(qa_application_network_q2 *);
 bool application_network_q2_resource(qa_application_network_q2 *, unsigned,
     const char *, uint32_t *, qa_error *);
+bool application_network_q2_source_resource(qa_application_network_q2 *, unsigned,
+    uint32_t, uint32_t *, qa_error *);
+bool application_network_q2_source_config(qa_application_network_q2 *, uint32_t,
+    uint32_t *, qa_error *);
 bool application_network_q2_observe(qa_application_network_q2 *, qa_error *);
 bool application_network_q2_entities(qa_application_network_q2 *, qa_error *);
 bool application_network_q2_player_state(qa_application_network_q2 *, qa_actor_id,
     qa_q2_player *, qa_error *);
 char *application_network_q2_copy(const char *, qa_error *);
 void application_network_q2_unbind(qa_application_network_q2 *);
+void application_network_q2_retire_bindings(struct application_native_q2 *);
 bool application_network_q2_visual_resource(qa_application_network_q2 *,
     const qa_application_visual_view *, unsigned, uint32_t *, qa_error *);
 bool application_network_q2_download_resource(void *, const char *, const qa_vfs **,
@@ -112,6 +154,12 @@ bool application_network_q2_dependency_image(qa_application_network_q2 *,
     qa_bytes derived_png, size_t *, qa_error *);
 bool application_network_q2_materials_image_validate(const qa_application_network_q2 *,
     const application_q2_held_resource *, qa_error *);
+bool application_network_q2_dependency_alias(qa_application_network_q2 *,
+    const application_q2_held_resource *, const application_q2_image_receipt *, size_t *, qa_error *);
+bool application_network_q2_dependency_image_receipt(qa_application_network_q2 *,
+    const application_q2_held_resource *, size_t alias_index, size_t *, qa_error *);
+bool application_network_q2_materials_alias_validate(const qa_application_network_q2 *,
+    const application_q2_held_resource *, qa_error *);
 bool application_network_q2_dependency_of(const application_q2_held_resource *,
     const application_q2_held_resource *);
 bool application_network_q2_material_resource(qa_application_network_q2 *,
@@ -124,8 +172,12 @@ bool application_network_q2_sky_dependencies(qa_application_network_q2 *,
     size_t [6], char [64], qa_error *);
 bool application_network_q2_sky_group_valid(const application_q2_held_resource *,
     const application_q2_held_resource *const [6]);
+bool application_network_q2_sky_aliases(qa_application_network_q2 *,
+    const application_q2_held_resource *, const char *, const application_q2_image_receipt [6],
+    size_t [6], char [64], qa_error *);
 void application_network_q2_resources_free(qa_application_network_q2 *);
 bool application_network_q2_resources_capture(qa_application_network_q2 *, qa_buffer *, qa_error *);
+bool application_network_q2_resources_capture_retained(qa_application_network_q2 *, qa_buffer *, qa_error *);
 bool application_network_q2_resources_restore(qa_application_network_q2 *, qa_bytes, qa_error *);
 
 #endif

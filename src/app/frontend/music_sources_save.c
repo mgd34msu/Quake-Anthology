@@ -48,7 +48,7 @@ static bool origin_fields(qa_source_save_io *io, frontend_music_sources *owner) 
     const qa_sha256_digest *recipe_identity = !reading && owner->origin_recipe ? qa_executable_recipe_digest(origin->recipe) : NULL;
     qa_sha256_digest identity = reading ? (qa_sha256_digest){0} : descriptor ? descriptor->identity :
         recipe_identity ? *recipe_identity : (qa_sha256_digest){0};
-    bool ok = (reading || (owner->origin_bound && origin->current(origin->context, origin))) &&
+    bool ok = (reading || frontend_music_sources_origin_checkpoint_current(owner)) &&
         qa_source_save_u32(io, &kind) && kind <= FRONTEND_MUSIC_COMPONENT &&
         qa_source_save_bool(io, &owner->origin_recipe) && (!owner->origin_recipe || kind == FRONTEND_MUSIC_COMPONENT || kind == FRONTEND_MUSIC_REMOTE) &&
         qa_source_save_u32(io, &origin->physical_seat) && origin->physical_seat < owner->frontend->options.seats &&
@@ -211,7 +211,7 @@ bool frontend_music_sources_restore_prepare(qa_frontend *f, qa_application_conte
 bool frontend_music_sources_restore_finish(frontend_music_sources *owner, qa_error *e) {
     if (!frontend_music_sources_current(owner) || !owner->restoring || owner->busy || !owner->frontend->source_restoring)
         return frontend_fail(e, QA_ERROR_ARGUMENT, "Music source import lost its real retained candidate");
-    if (owner->has_origin ? !owner->origin_bound || !owner->origin.current(owner->origin.context, &owner->origin) :
+    if (owner->has_origin ? !frontend_music_sources_origin_checkpoint_current(owner) :
         owner->policies[FRONTEND_MUSIC_WORLD] && !frontend_music_world_current(owner))
         return frontend_fail(e, QA_ERROR_FORMAT, "Saved WORLD music does not own the actual restored entity source/map");
     if (!owner->has_origin && owner->policies[FRONTEND_MUSIC_WORLD]) {

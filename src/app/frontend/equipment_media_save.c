@@ -1,6 +1,8 @@
 #include "equipment_media_save.h"
 #include "equipment_media_private.h"
 #include "save_private.h"
+#include "qa/material_library_save.h"
+#include "qa/scene_resource_save.h"
 
 #include <limits.h>
 
@@ -115,16 +117,45 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
         !qa_source_save_u64(io, &row->gear_service_owner) ||
         (!row->gear_namespace != !row->gear_service_owner) ||
         (row->gear_namespace && family != QA_GAME_Q3) ||
-        !qa_source_save_string(io, &row->item) || !frontend_save_text(io, &row->view_path) ||
-        !row->view_path || !*row->view_path ||
-        !qa_source_save_count(io, &row->saved_owner, SIZE_MAX)) return false;
-    if (family != QA_GAME_Q3 && (!qa_source_save_count(io, &row->saved_view, SIZE_MAX) ||
+        !qa_source_save_string(io, &row->item) || !qa_source_save_bool(io,&row->source_slot) ||
+        (row->source_slot&&(!row->item||!qa_source_save_u64(io,&row->source_generation)||row->gear_namespace||row->gear_service_owner)) ||
+        !frontend_save_text(io, &row->view_path) || !row->view_path ||
+        (row->source_slot?*row->view_path!=0:!*row->view_path))return false;
+    if(row->source_slot) {
+        uint64_t view=io->direction==QA_SOURCE_SAVE_WRITE?qa_application_content_view_id(graph,row->owner.mounts):0;
+        size_t bytes=row->source_held.size;
+        if(!qa_source_save_u64(io,&view)||!view||!qa_source_save_count(io,&bytes,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX))return false;
+        if(io->direction==QA_SOURCE_SAVE_READ){
+            row->source_held.data=bytes?malloc(bytes):NULL;row->source_held.size=bytes;
+            if(bytes&&!row->source_held.data)return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring actual item held declaration");
+            if(!qa_application_content_claim_view(graph,view,&row->owner.mounts,io->error))return false;
+        }
+        if(!qa_source_save_bytes(io,row->source_held.data,bytes))return false;
+        bytes=row->source_icon.size;
+        if(!qa_source_save_count(io,&bytes,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX))return false;
+        if(io->direction==QA_SOURCE_SAVE_READ){row->source_icon.data=bytes?malloc(bytes):NULL;row->source_icon.size=bytes;
+            if(bytes&&!row->source_icon.data)return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring actual item icon declaration");}
+        if(!qa_source_save_bytes(io,row->source_icon.data,bytes)||(!bytes&&!row->source_held.size))return false;
+        if(bytes) {
+            if(io->direction==QA_SOURCE_SAVE_WRITE){
+                bool found=false;
+                for(size_t i=0;i<qa_material_library_record_count(row->owner.materials);++i)
+                    if(qa_material_library_record_at(row->owner.materials,i)==row->icon){row->saved_icon=i;found=true;break;}
+                if(!found)return false;
+            }
+            const qa_resource *source=row->icon_source;
+            if(!qa_source_save_count(io,&row->saved_icon,SIZE_MAX)||!resource_fields(io,graph,&source))return false;
+            if(io->direction==QA_SOURCE_SAVE_READ)row->icon_source=(qa_resource *)source;
+        }
+    } else if(!qa_source_save_count(io,&row->saved_owner,SIZE_MAX))return false;
+    if (!row->source_slot && family != QA_GAME_Q3 && (!qa_source_save_count(io, &row->saved_view, SIZE_MAX) ||
         !resource_fields(io, graph, &row->view.resource) || !row->view.resource)) return false;
     if (!declaration_fields(io, graph, &row->declaration) ||
-        (family == QA_GAME_Q3 && !row->declaration.source)) return false;
+        (family == QA_GAME_Q3 && !row->source_slot && !row->declaration.source) ||
+        (row->source_slot&&(row->declaration.source||(!row->source_held.size&&!row->declaration.none)))) return false;
     row->family = (qa_game_family)family;
     if (row->declaration.none) return true;
-    return qa_source_save_count(io, &row->saved_parent, SIZE_MAX) &&
+    return (row->source_slot||qa_source_save_count(io, &row->saved_parent, SIZE_MAX)) &&
         frontend_save_text(io, &row->saved_parent_path) && row->saved_parent_path && *row->saved_parent_path &&
         resource_fields(io, graph, &row->held_parent.resource) && row->held_parent.resource &&
         transform_fields(io, &row->held.alignment) && qa_source_save_u32(io, &row->held.reference_frame) &&
@@ -133,6 +164,9 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
 
 static bool physical_refs(const qa_frontend *frontend, frontend_equipment_media *row)
 {
+    if(row->source_slot)return !row->view.resource&&!row->view.model&&!row->view.scene&&
+        row->owner.mounts&&row->owner.images&&row->owner.materials&&
+        (row->declaration.none||(row->held_parent.resource&&row->held_parent.model&&row->held.model));
     for (size_t i = 0; i < frontend_visual_owner_count(frontend); ++i) {
         frontend_visual_owner_view owner;
         if (!frontend_visual_owner_read(frontend, i, &owner)) return false;
@@ -165,7 +199,7 @@ bool frontend_equipment_topology_checkpoint(const qa_frontend *frontend, qa_buff
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
     if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment capture requires the leased actual content graph");
     qa_source_save_io io = {0}; size_t count = frontend_equipment_media_count(frontend);
-    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 3;
+    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 5;
     bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &schema) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
@@ -195,14 +229,26 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
     qa_source_save_io io = {0}; size_t count = 0; uint8_t magic[4]; uint32_t schema = 0;
     bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFET", sizeof(magic)) &&
-        qa_source_save_u32(&io, &schema) && schema == 3 && qa_source_save_count(&io, &count, bytes.size / 32);
+        qa_source_save_u32(&io, &schema) && schema == 5 && qa_source_save_count(&io, &count, bytes.size / 32);
     for (size_t i = 0; ok && i < count; ++i) {
         frontend_equipment_media *row = calloc(1, sizeof(*row));
         if (!row) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing restored physical equipment media row"); break; }
         if (owner->tail) owner->tail->next = row; else owner->media = row;
         owner->tail = row; row->restoring = true;
         ok = row_fields(&io, graph, row);
-        if (ok) ok = frontend_visual_owner_read(frontend, row->saved_owner, &row->owner) &&
+        if(ok&&row->source_slot) {
+            row->frontend=frontend;
+            row->owner.owner=row->provider;
+            row->owner.family=row->family==QA_GAME_Q1?QA_SCENE_Q1:row->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+            row->owner.images=qa_scene_resources_create_detached(row->owner.mounts,error);
+            row->owner.materials=row->owner.images?qa_material_library_create_detached(row->owner.images,error):NULL;
+            row->media=row->owner.materials?qa_media_library_create(row->owner.images,error):NULL;
+            ok=row->owner.images&&row->owner.materials&&row->media&&
+                (!row->icon_source||qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),qa_resource_id(row->icon_source))==row->icon_source)&&
+                (row->declaration.none||qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
+                    qa_resource_id(row->held_parent.resource))==row->held_parent.resource);
+        }
+        if (ok&&!row->source_slot) ok = frontend_visual_owner_read(frontend, row->saved_owner, &row->owner) &&
             row->owner.owner == row->provider && row->owner.family ==
                 (row->family == QA_GAME_Q3 ? QA_SCENE_Q3 : row->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1) &&
             frontend_equipment_media_namespace_current(frontend, row) &&
@@ -215,14 +261,20 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
         for (const frontend_equipment_media *prior = owner->media; ok && prior != row; prior = prior->next)
             if (prior->provider == row->provider && prior->family == row->family && prior->item == row->item &&
                 prior->gear_namespace == row->gear_namespace && prior->gear_service_owner == row->gear_service_owner &&
-                prior->view.resource == row->view.resource && !strcmp(prior->view_path, row->view_path)) ok = false;
+                prior->view.resource == row->view.resource && !strcmp(prior->view_path, row->view_path) &&
+                prior->source_slot==row->source_slot && (!row->source_slot||
+                    (prior->source_generation==row->source_generation&&
+                     prior->source_held.size==row->source_held.size&&prior->source_icon.size==row->source_icon.size&&
+                     (!row->source_held.size||!memcmp(prior->source_held.data,row->source_held.data,row->source_held.size))&&
+                     (!row->source_icon.size||!memcmp(prior->source_icon.data,row->source_icon.data,row->source_icon.size))))) ok = false;
     }
     ok = ok && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!ok) {
         while (owner->media) {
-            frontend_equipment_media *row = owner->media; owner->media = row->next;
-            frontend_equipment_media_dispose(row);
+            frontend_equipment_media *row = owner->media,*next=row->next;
+            if(!frontend_equipment_media_dispose(row,error)){frontend->equipment=owner;return false;}
+            owner->media=next;
         }
         free(owner);
         if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Invalid saved physical equipment media topology");
@@ -235,6 +287,13 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
 static bool restored_refs(const qa_frontend *frontend, const frontend_equipment_media *row,
     frontend_visual_model_view *view, frontend_visual_model_view *parent)
 {
+    if(row->source_slot){
+        if(row->source_icon.size){qa_material_library_record_view icon;
+            if(!qa_material_library_record_read(row->owner.materials,row->saved_icon,&icon)||
+                icon.kind!=QA_MATERIAL_PICTURE||!icon.material)return false;}
+        return row->owner.mounts&&row->owner.images&&row->owner.materials&&
+        (row->declaration.none||(row->held_parent.resource&&row->saved_parent_path&&
+        (!strcmp(row->saved_parent_path,row->declaration.path)||(row->declaration.fallback&&!strcmp(row->saved_parent_path,row->declaration.fallback)))));}
     if (row->family != QA_GAME_Q3 && (!frontend_visual_model_read(frontend, row->saved_owner, row->saved_view, view) ||
         view->resource != row->view.resource || strcmp(view->path, row->view_path))) return false;
     if (row->declaration.none) return true;
@@ -266,7 +325,10 @@ bool frontend_equipment_media_bind_restored(qa_frontend *frontend, qa_error *err
     for (frontend_equipment_media *row = frontend->equipment->media; row; row = row->next) {
         frontend_visual_model_view view = {0}, parent = {0};
         if (!restored_refs(frontend, row, &view, &parent)) return false;
-        row->view = view; row->held_parent = parent; row->bound = true;
+        if(!row->source_slot){row->view = view; row->held_parent = parent;}
+        else {row->held_parent.path=row->saved_parent_path;
+            if(row->source_icon.size)row->icon=qa_material_library_record_at(row->owner.materials,row->saved_icon);}
+        row->bound = true;
     }
     return true;
 }
@@ -327,12 +389,23 @@ bool frontend_equipment_media_attach_restored(qa_frontend *frontend, size_t ordi
         qa_scene_model_material_owner(scene) != row->owner.materials ||
         row->held.reference_frame >= model->frame_count)
         return frontend_fail(error, QA_ERROR_FORMAT, "Equipment root differs from its actual prepared destructor and media owners");
+    frontend_model_lease *lease=NULL;frontend_model_source source={0};
+    if(!frontend_model_retain(models,model,&lease,error))return false;
+    if(!frontend_model_lease_source(lease,&source)){frontend_model_release(lease);return false;}
+    if(row->source_slot)row->held_parent.model=source.parent?source.parent:model;
+    const qa_sha256_digest *digest=qa_resource_digest(row->held_parent.resource);
+    bool digest_valid=!row->declaration.has_digest||qa_sha256_equal(&row->declaration.digest,digest);
+    if(row->declaration.part_digest_count) {
+        bool matched=false;
+        for(size_t i=0;i<row->declaration.part_digest_count;++i)
+            if(qa_sha256_equal(row->declaration.part_digests+i,digest))matched=true;
+        digest_valid=digest_valid&&matched&&row->held_parent.model->format==QA_MODEL_MDL&&row->held_parent.model->mesh_count==1;
+    }
+    if(!digest_valid){frontend_model_release(lease);return frontend_fail(error,QA_ERROR_FORMAT,"Restored held model differs from its actual declared digest");}
     if ((!row->declaration.part_digest_count && model != row->held_parent.model) ||
         (row->declaration.part_digest_count && !subset_matches(row, model)))
-        return frontend_fail(error, QA_ERROR_FORMAT, "Equipment root loses its real full or subset parsed-holder identity");
-    frontend_model_lease *lease = NULL; frontend_model_source source = {0};
-    if (!frontend_model_retain(models, model, &lease, error)) return false;
-    if (!frontend_model_lease_source(lease, &source) || source.resource != row->held_parent.resource ||
+        {frontend_model_release(lease);return frontend_fail(error, QA_ERROR_FORMAT, "Equipment root loses its real full or subset parsed-holder identity");}
+    if (source.resource != row->held_parent.resource ||
         source.files != row->owner.mounts || source.parent !=
             (row->declaration.part_digest_count ? row->held_parent.model : NULL)) {
         frontend_model_release(lease);
@@ -348,10 +421,15 @@ bool frontend_equipment_topology_ready(const qa_frontend *frontend, qa_error *er
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment topology qualification requires idle actual media");
     for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
             row; row = row->next) {
-        if (!row->bound || !qa_application_provider_instance(frontend->application, row->provider) ||
+        if (!row->bound || (!row->source_slot&&!qa_application_provider_instance(frontend->application, row->provider)) ||
             !frontend_equipment_media_namespace_current(frontend, row) ||
-            (row->family != QA_GAME_Q3 && (!row->view.model || !row->view.scene)) ||
-            (row->family == QA_GAME_Q3 && (!row->declaration.source || row->view.resource ||
+            (row->source_slot&&(!row->media||
+                (!(row->restoring&&frontend->source_restoring&&!row->movies)&&
+                 (!row->movies||!frontend_material_movies_current(row->movies))))) ||
+            (row->source_slot&&((row->source_icon.size!=0)!=(row->icon!=NULL)||
+                (row->icon&&row->icon->library!=row->owner.materials))) ||
+            (!row->source_slot && row->family != QA_GAME_Q3 && (!row->view.model || !row->view.scene)) ||
+            (row->family == QA_GAME_Q3 && ((!row->source_slot&&!row->declaration.source) || row->view.resource ||
                 row->view.model || row->view.scene)) || (!row->declaration.none &&
                 (!row->held.model || !row->held_scene || (row->restoring && !row->held_lease))))
             return frontend_fail(error, QA_ERROR_FORMAT, "Equipment topology omits an actual source cache or held root");

@@ -59,6 +59,8 @@ bool qa_inventory_storage_token(qa_inventory *, qa_actor_id, qa_item_id,
                                 uint64_t *, qa_error *);
 bool qa_inventory_pickup_claim(qa_inventory *, qa_actor_id, qa_item_id, const void *, qa_error *);
 bool qa_inventory_pickup_current(qa_inventory *, qa_actor_id, qa_item_id, const void *);
+bool qa_inventory_pickup_storage_current(const qa_inventory *,qa_actor_id,qa_item_id,
+                                        const void *,uint64_t,qa_actor_owner);
 void qa_inventory_pickup_release(qa_inventory *, qa_actor_id, const void *);
 void qa_inventory_hold(qa_inventory *);
 void qa_inventory_unhold(qa_inventory *);

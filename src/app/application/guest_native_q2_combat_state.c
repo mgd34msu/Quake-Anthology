@@ -285,9 +285,9 @@ static bool pointer_read(const application_q2_combat_profile *p, qa_native_addre
     *out = p->target.pointer_bytes == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes); return true;
 }
 static bool integer_write(const application_q2_combat_profile *p, qa_native_address at,
-    float value, qa_error *error)
+    double value, qa_error *error)
 {
-    if (!isfinite(value) || truncf(value) != value || (double)value < INT32_MIN || (double)value > INT32_MAX)
+    if (!isfinite(value) || trunc(value) != value || value < INT32_MIN || value > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native combat store requires an exact int32 source value");
     uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)(int32_t)value);
     return qa_native_write(native(p), at, (qa_bytes){bytes, sizeof(bytes)}, error);
@@ -321,13 +321,11 @@ bool application_q2_combat_actor_valid(application_q2_combat_actor *a, qa_error 
     return true;
 }
 static bool count(const application_q2_combat_profile *p, qa_native_address client,
-    uint32_t index, float *out, qa_error *error)
+    uint32_t index, double *out, qa_error *error)
 {
     int64_t value;
     if (index >= p->inventory_count || !integer_read(p, client + p->inventory + (uint64_t)index * 4, 4, &value, error)) return false;
-    /* Shared float armor cannot faithfully hold every int32 counter. */
-    *out = (float)value;
-    return (double)*out == (double)value || application_fail(error, QA_ERROR_UNSUPPORTED, "Native armor counter exceeds exact shared armor representation");
+    *out = (double)value; return true;
 }
 static bool classic_skin(const char *info, char *out, size_t capacity, qa_error *error)
 {
@@ -374,7 +372,7 @@ bool application_q2_combat_armor_read(application_q2_combat_actor *a, qa_armor *
     if (!pointer_read(p, a->address + p->client_pointer, &client, error)) return false;
     if (!client) return true;
     for (size_t i = 0; i < p->regular_count; ++i) {
-        float points;
+        double points;
         if (!count(p, client, p->regular[i].index, &points, error)) return false;
         if (points <= 0) continue;
         if (!definition(p, p->regular[i].index, &out->regular, error)) return false;
@@ -382,7 +380,7 @@ bool application_q2_combat_armor_read(application_q2_combat_actor *a, qa_armor *
     }
     if (!integer_read(p, a->address + p->flags, p->kex ? 8 : 4, &flags, error)) return false;
     if ((uint64_t)flags & p->power_armor) {
-        float shield, screen;
+        double shield, screen;
         if (!count(p, client, p->shield, &shield, error) || !count(p, client, p->screen, &screen, error)) return false;
         out->powered.kind = shield > 0 ? QA_POWER_SHIELD : screen > 0 ? QA_POWER_SCREEN : QA_POWER_NONE;
         if (out->powered.kind != QA_POWER_NONE && !count(p, client, p->cells, &out->powered.cells, error)) return false;
@@ -414,9 +412,9 @@ bool application_q2_combat_armor_validate(void *opaque, const qa_armor *armor, q
         }
         if (!found) return application_fail(error, QA_ERROR_UNSUPPORTED, "Native armor changes its original tier protection");
     }
-    float numbers[] = {armor->regular.points, armor->powered.cells};
+    double numbers[] = {armor->regular.points, armor->powered.cells};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
-        if (truncf(numbers[i]) != numbers[i] || (double)numbers[i] > INT32_MAX)
+        if (trunc(numbers[i]) != numbers[i] || numbers[i] < INT32_MIN || numbers[i] > INT32_MAX)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native armor cannot encode fractional or overflowing counters");
     return true;
 }
@@ -433,15 +431,15 @@ bool application_q2_combat_armor_write(void *opaque, const qa_armor *armor, qa_e
         application_q2_armor_row row = p->regular[i];
         if (armor->regular.kind == QA_ARMOR_Q2 && actual.regular.kind == QA_ARMOR_Q2 &&
             armor->regular.item == actual.regular.item && row.item != actual.regular.item) continue;
-        float value = armor->regular.kind == QA_ARMOR_Q2 && armor->regular.item == row.item ? armor->regular.points : 0;
-        float before;
+        double value = armor->regular.kind == QA_ARMOR_Q2 && armor->regular.item == row.item ? armor->regular.points : 0;
+        double before;
         if (!count(p, client, row.index, &before, error) ||
             (before != value && !integer_write(p, client + p->inventory + (uint64_t)row.index * 4, value, error))) return false;
     }
     return armor->powered.kind == QA_POWER_NONE ||
         integer_write(p, client + p->inventory + (uint64_t)p->cells * 4, armor->powered.cells, error);
 }
-bool application_q2_combat_empty_armor(void *opaque, float points, qa_regular_armor *out,
+bool application_q2_combat_empty_armor(void *opaque, double points, qa_regular_armor *out,
     bool *selected, qa_error *error)
 {
     application_q2_combat_actor *a = opaque;
@@ -540,12 +538,12 @@ static qa_q2_classic_cause_profile classic_product(const application_q2_combat_p
     if (qa_json_string_equal(p->document, id, "ctf")) return QA_Q2_NATIVE_CTF;
     return QA_Q2_NATIVE_BASE;
 }
-bool application_q2_combat_cause_read(const application_q2_combat_profile *p,
+bool application_q2_native_cause_read(bool rerelease,qa_q2_classic_cause_profile product,
     const qa_native_value *value, uint32_t flags, qa_damage_cause *out, qa_error *error)
 {
     *out = (qa_damage_cause){.kind = QA_CAUSE_Q2}; out->source.q2.flags = flags;
     uint32_t id;
-    if (p->kex) {
+    if (rerelease) {
         if (value->type != QA_NATIVE_BYTES || value->as.bytes.size != 3 || !value->as.bytes.data)
             return application_fail(error, QA_ERROR_FORMAT, "Native KEX damage lacks its exact source mod_t");
         const uint8_t *mod = value->as.bytes.data;
@@ -561,7 +559,6 @@ bool application_q2_combat_cause_read(const application_q2_combat_profile *p,
         if (value->type != QA_NATIVE_I32 || value->as.i32 < 0)
             return application_fail(error, QA_ERROR_FORMAT, "Native classic damage lacks its exact source MOD word");
         uint32_t raw = (uint32_t)value->as.i32; id = raw & ~UINT32_C(0x08000000);
-        qa_q2_classic_cause_profile product = classic_product(p);
         if (!(id <= 33 || (product == QA_Q2_NATIVE_XATRIX && id <= 39) ||
             (product == QA_Q2_NATIVE_ROGUE && id >= 40 && id <= 55) || (product == QA_Q2_NATIVE_CTF && id == 34)))
             return application_fail(error, QA_ERROR_UNSUPPORTED, "Native classic damage cause is outside its qualified product roster");
@@ -573,45 +570,45 @@ bool application_q2_combat_cause_read(const application_q2_combat_profile *p,
     }
     return true;
 }
-bool application_q2_combat_cause_lower(const application_q2_combat_profile *p,
+bool application_q2_native_cause_lower(bool rerelease,qa_q2_classic_cause_profile classic,
     const qa_damage_cause *cause, uint8_t mod[3], qa_native_value *out, qa_error *error)
 {
     /* The original foreign-cause contract lowers an unclassified other-game
      * hit to MOD_UNKNOWN. The shared request retains its original cause. */
     qa_damage_cause lowered = {.kind = QA_CAUSE_Q2};
     if (cause->kind == QA_CAUSE_Q2) {
-        if ((p->kex && cause->source.q2.native == QA_Q2_CAUSE_RERELEASE) ||
-            (!p->kex && cause->source.q2.native == QA_Q2_CAUSE_CLASSIC &&
-             cause->source.q2.classic_product == (uint32_t)classic_product(p))) {
-            qa_native_value original = p->kex
+        if ((rerelease && cause->source.q2.native == QA_Q2_CAUSE_RERELEASE) ||
+            (!rerelease && cause->source.q2.native == QA_Q2_CAUSE_CLASSIC &&
+             cause->source.q2.classic_product == (uint32_t)classic)) {
+            qa_native_value original = rerelease
                 ? (qa_native_value){.type = QA_NATIVE_BYTES, .as.bytes = {mod, 3}}
                 : (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = cause->source.q2.native_value};
-            if (p->kex) {
+            if (rerelease) {
                 if (cause->source.q2.native_value < 0 || cause->source.q2.native_value > 58)
                     return application_fail(error, QA_ERROR_FORMAT, "Native KEX cause exceeds its source mod_t");
                 mod[0] = (uint8_t)cause->source.q2.native_value;
                 mod[1] = cause->source.q2.friendly_fire; mod[2] = cause->source.q2.no_point_loss;
             }
             qa_damage_cause classified;
-            if (!application_q2_combat_cause_read(p, &original, cause->source.q2.flags, &classified, error)) return false;
+            if (!application_q2_native_cause_read(rerelease,classic, &original, cause->source.q2.flags, &classified, error)) return false;
             if (classified.source.q2.means_of_death == cause->source.q2.means_of_death) lowered = *cause;
             else return application_fail(error, QA_ERROR_FORMAT, "Native saved cause differs from its canonical classification");
         }
         else {
-            qa_q2_product product = classic_product(p) == QA_Q2_NATIVE_XATRIX ? QA_Q2_XATRIX :
-                classic_product(p) == QA_Q2_NATIVE_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE;
-            lowered = qa_q2_damage_cause(p->kex ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            qa_q2_product product = classic == QA_Q2_NATIVE_XATRIX ? QA_Q2_XATRIX :
+                classic == QA_Q2_NATIVE_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE;
+            lowered = qa_q2_damage_cause(rerelease ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
                 product, cause->source.q2.means_of_death, cause->source.q2.flags);
-            if (!p->kex && classic_product(p) == QA_Q2_NATIVE_CTF &&
+            if (!rerelease && classic == QA_Q2_NATIVE_CTF &&
                 lowered.source.q2.native == QA_Q2_CAUSE_CLASSIC &&
                 (((uint32_t)lowered.source.q2.native_value & ~UINT32_C(0x08000000)) <= 33))
                 lowered.source.q2.classic_product = QA_Q2_NATIVE_CTF;
             if (lowered.source.q2.native == QA_Q2_CAUSE_NONE ||
-                (!p->kex && lowered.source.q2.classic_product != (uint32_t)classic_product(p)))
+                (!rerelease && lowered.source.q2.classic_product != (uint32_t)classic))
                 lowered = (qa_damage_cause){.kind = QA_CAUSE_Q2};
         }
     }
-    if (p->kex) {
+    if (rerelease) {
         if (lowered.source.q2.native_value < 0 || lowered.source.q2.native_value > 58)
             return application_fail(error, QA_ERROR_FORMAT, "Native KEX cause exceeds its source mod_t");
         mod[0] = (uint8_t)lowered.source.q2.native_value;
@@ -619,4 +616,14 @@ bool application_q2_combat_cause_lower(const application_q2_combat_profile *p,
         *out = (qa_native_value){.type = QA_NATIVE_BYTES, .as.bytes = {mod, 3}};
     } else *out = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = lowered.source.q2.native_value};
     return true;
+}
+bool application_q2_combat_cause_read(const application_q2_combat_profile *p,
+    const qa_native_value *value,uint32_t flags,qa_damage_cause *out,qa_error *error)
+{
+    return application_q2_native_cause_read(p->kex,classic_product(p),value,flags,out,error);
+}
+bool application_q2_combat_cause_lower(const application_q2_combat_profile *p,
+    const qa_damage_cause *cause,uint8_t mod[3],qa_native_value *out,qa_error *error)
+{
+    return application_q2_native_cause_lower(p->kex,classic_product(p),cause,mod,out,error);
 }

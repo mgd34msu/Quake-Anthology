@@ -9,9 +9,14 @@
 
 typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
+struct qa_q3_cinematic_source;
 struct qa_q3_model_opening;
 /* Pure parent-lifetime admission, including actual retained child captures. */
 bool qa_q3_presentation_idle(const qa_q3_presentation *);
+/* Bind the reconstructed source before importing its shared movie record.
+ * This transfers one real source user; it never creates or replays movies. */
+bool qa_q3_presentation_cinematics_bind(qa_q3_presentation *,struct qa_q3_cinematic_source *,qa_error *);
+bool qa_q3_presentation_renderer_parameters_set(qa_q3_presentation *,float near_clip,float identity_light,qa_error *);
 typedef struct qa_q3_presentation_provider {
     qa_vfs *mounts;
     qa_scene_resources *images;
@@ -109,7 +114,12 @@ typedef struct qa_q3_system_movie {
     bool (*end)(void *, qa_cinematic_end, qa_error *);
     void (*release)(void *);
 } qa_q3_system_movie;
-typedef struct qa_q3_movie_request { const char *path; bool loop, hold, silent; } qa_q3_movie_request;
+typedef struct qa_q3_movie_request {
+    const char *path;
+    bool loop, hold, silent;
+    struct qa_q3_cinematic_source *numeric_source;
+    int32_t numeric_handle;
+} qa_q3_movie_request;
 /* An actual entered UI/CGAME host supplies its own lifetime-qualified opener;
  * the shared presentation context cannot identify a requesting role. The
  * successful opener transfers one complete system handle to the numeric slot.
@@ -128,9 +138,24 @@ typedef struct qa_q3_scene_options {
     bool split_screen, supplemental_weapon;
     bool no_entities, no_portals, portal_only, no_refresh;
 } qa_q3_scene_options;
+typedef struct qa_q3_picture_receipt {
+    bool source_raw;
+    qa_q3_presentation_assets *assets;
+    const qa_material *material;
+    const qa_scene_image *image;
+    int32_t shader, milliseconds;
+    qa_scene_rect_f rect;
+    qa_scene_vec4 uv, color;
+    qa_scene_rect viewport;
+    uint32_t seat;
+    float identity_light;
+} qa_q3_picture_receipt;
 typedef struct qa_q3_presentation_options {
     qa_q3_presentation_assets *assets;
     qa_audio_engine *audio;
+    /* Original Source UI/CG and videoMap share the frontend's actual numeric
+     * cinematic source. Selected application movies retain their own owner. */
+    struct qa_q3_cinematic_source *cinematics;
     qa_material_source_scratch *source_scratch;
     qa_material_source_scratch *(*source_state)(void *, qa_error *);
     bool source_scene_membership;
@@ -156,6 +181,8 @@ typedef struct qa_q3_presentation_options {
     bool (*prepare_view)(void *, const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);
     bool (*submit_view)(void *, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
     bool (*prepare_picture)(void *, qa_material_context *, qa_error *);
+    /* Borrowed exact command values before geometry or physical Source entry. */
+    bool (*picture_capture)(void *, const qa_q3_picture_receipt *, qa_error *);
     /* Borrowed only during the successful RenderScene call, before its Source
      * membership advances. The receiver owns any retained snapshot. */
     bool (*scene_completed)(void *, const qa_q3_refdef *, const qa_q3_scene_options *,
@@ -211,6 +238,15 @@ bool qa_q3_presentation_render(qa_q3_presentation *, const qa_q3_refdef *, qa_er
  * finishing another view, redrawing the world, or presenting a surface. */
 struct qa_q3_source_scene_bank;
 bool qa_q3_presentation_supplement(qa_q3_presentation *,struct qa_q3_source_scene_bank *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
+typedef struct qa_q3_supplement qa_q3_supplement;
+/* Admission captures genuine queued refs once. A failed prepare retains its
+ * partial receipt; release it before destroying either parent or scene bank. */
+bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *,struct qa_q3_source_scene_bank *,
+    qa_scene_frame *,qa_q3_supplement **,qa_error *);
+bool qa_q3_presentation_supplement_draw(const qa_q3_supplement *,const qa_q3_scene_options *,
+    qa_scene_frame *,qa_error *);
+bool qa_q3_presentation_supplement_current(const qa_q3_supplement *,const qa_scene_frame *);
+void qa_q3_presentation_supplement_release(qa_q3_supplement **);
 bool qa_q3_presentation_lights_read(const qa_q3_presentation *, const qa_scene_light **, size_t *, qa_error *);
 /* Only the actual submit_view callback may submit a retained selected model.
  * The scene, decoded source and transform remain owned by its content owner. */
@@ -261,9 +297,21 @@ bool qa_q3_presentation_source_body_material_equal(qa_q3_presentation *,
 bool qa_q3_presentation_source_component_entity(qa_q3_presentation *,
     const qa_q3_presentation_assets *, const qa_q3_ref_entity *, int32_t source_time_ms,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+/* Returned companion references enter only their genuine idle presentation
+ * registry and the caller's already prepared native view. */
+bool qa_q3_presentation_completed_entity(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, qa_scene_world *recipient_world, const qa_q3_ref_entity *, int32_t source_time_ms,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_completed_poly(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, qa_scene_world *recipient_world, int32_t shader, const qa_scene_vertex *, size_t count,
+    const qa_scene_fog_volume *, int32_t source_time_ms, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 bool qa_q3_presentation_source_component_poly(qa_q3_presentation *,
     const qa_q3_presentation_assets *, int32_t shader, const qa_scene_vertex *, size_t count,
     const qa_scene_fog_volume *, int32_t source_time_ms, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_poly_cursor(const qa_q3_presentation *, size_t vertices,
+    size_t *index, bool *available, qa_error *);
+bool qa_q3_presentation_light_cursor(const qa_q3_presentation *,
+    size_t *index, bool *available, qa_error *);
 /* Captured selected output uses its own model/shader namespace and actual
  * source material clock during the primary submit_view lease. Lights must be
  * added before RenderScene. Default model zero retains selected materials. */
@@ -289,6 +337,10 @@ bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *,
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);
+bool qa_q3_presentation_selected_picture(qa_q3_presentation *, const qa_q3_picture_receipt *,
+    const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_completed_picture(qa_q3_presentation *, const qa_q3_picture_receipt *,
+    qa_scene_frame *, qa_error *);
 bool qa_q3_presentation_remap(qa_q3_presentation *, const char *, const char *, float, qa_error *);
 
 /* Sound validity is separate from playback so guest adapters can preserve

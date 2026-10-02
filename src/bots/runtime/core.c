@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "../library/internal.h"
 #include "../checkpoint_internal.h"
 #include "source_weapon_setup.h"
 #include "../library/internal.h"
@@ -14,7 +13,7 @@ bool bot_runtime_mutable(qa_bot_runtime *r, qa_error *e) {
 }
 bool qa_bot_runtime_can_destroy(const qa_bot_runtime *r) {
     return !r || (!r->busy && !r->observation_leases && !r->owner_leases && qa_bot_log_can_destroy(r->log) &&
-        qa_bot_memory_idle(r->memory) && qa_bot_library_idle(r->library) &&
+        qa_bot_memory_idle(r->memory) && qa_bot_library_idle(r->library) && qa_bot_actions_idle(r->actions) &&
         !qa_bot_moves_active(r->moves) && !qa_bot_goals_active(r->goals) &&
         !qa_bot_chat_system_active(r->chat_system));
 }
@@ -33,7 +32,7 @@ void qa_bot_runtime_lease_end(qa_bot_runtime *r) {
 }
 bool bot_runtime_restore_begin(qa_bot_runtime *r, qa_error *e) {
     if (!bot_runtime_mutable(r,e) || !r->goals || !r->moves || !r->actions ||
-        qa_bot_goals_active(r->goals) || qa_bot_moves_active(r->moves) ||
+        qa_bot_goals_active(r->goals) || qa_bot_moves_active(r->moves) || !qa_bot_actions_idle(r->actions) ||
         qa_bot_chat_system_active(r->chat_system))
         return bot_runtime_fail(e,"bot checkpoint owners are unavailable or active");
     r->busy=true;
@@ -129,14 +128,20 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     *out = r;
     return true;
 }
-static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
+static bool close(qa_bot_runtime *r,bool source,qa_bot_runtime_source_shutdown sources,
+    void *source_context,qa_error *error) {
     if(source) {
         r->busy=true;
         bool ok=bot_runtime_chat_shutdown(r,error);
         r->busy=false;
         if(!ok) return false;
     }
-    if (!qa_bot_moves_shutdown(r->moves,error)) return false;
+    if (source) {
+        r->busy=true;
+        bool ok=qa_bot_moves_shutdown(r->moves,error);
+        r->busy=false;
+        if(!ok) return false;
+    }
     qa_bot_moves_destroy(r->moves); r->moves = NULL;
     if(source && !qa_bot_goals_shutdown(r->goals,error)) return false;
     qa_bot_goals_destroy(r->goals); r->goals = NULL;
@@ -161,11 +166,22 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
     bot_runtime_handles_close(r);
     qa_bot_chat_system_destroy(r->chat_system); r->chat_system = NULL;
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;
-    qa_bot_actions_shutdown(r->actions);
+    if(source) {
+        r->busy=true;
+        bool ok=qa_bot_actions_shutdown(r->actions,error);
+        r->busy=false;
+        if(!ok) return false;
+    } else qa_bot_actions_dispose_resources(r->actions);
     if (!r->closed) {
         qa_bot_library_variables_clear(r->library);
         qa_script_defines_clear(r->globals);
         if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}
+    }
+    if(source && sources) {
+        r->busy=true;
+        bool ok=sources(source_context,error);
+        r->busy=false;
+        if(!ok) return false;
     }
     qa_bot_library_destroy(r->library); r->library = NULL;
     if(r->memory && !qa_bot_memory_dispose(r->memory,error)) return false;
@@ -183,7 +199,7 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
 bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     if (!r) return true;
     if (!bot_runtime_owners_idle(r, e)) return false;
-    (void)close(r,false,NULL);
+    if(!close(r,false,NULL,NULL,e)) return false;
     qa_bot_log_destroy(r->log);
     qa_bot_actions_destroy(r->actions);
     bot_runtime_observations_close(r);
@@ -198,10 +214,14 @@ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     return true;
 }
 bool qa_bot_runtime_shutdown(qa_bot_runtime *r, qa_error *e) {
+    return qa_bot_runtime_shutdown_with_sources(r,NULL,NULL,e);
+}
+bool qa_bot_runtime_shutdown_with_sources(qa_bot_runtime *r,qa_bot_runtime_source_shutdown sources,
+    void *context,qa_error *e) {
     if (r && r->closed) return true;
     if (!bot_runtime_mutable(r, e)) return false;
     if (!bot_runtime_owners_idle(r, e)) return false;
-    return close(r,true,e);
+    return close(r,true,sources,context,e);
 }
 bool qa_bot_runtime_initialized(const qa_bot_runtime *r) { return r && r->initialized && !r->closed; }
 bool qa_bot_runtime_loaded(const qa_bot_runtime *r) { return r && r->loaded && !r->closed; }

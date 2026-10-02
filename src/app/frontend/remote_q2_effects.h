@@ -12,9 +12,14 @@ typedef enum frontend_remote_q2_effects_profile {
     FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC=1, FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE
 } frontend_remote_q2_effects_profile;
 typedef struct frontend_remote_q2_effects_controls {
-    int32_t muzzlelight_milliseconds;
+    int32_t muzzlelight_milliseconds, gun;
+    float gun_fov;
     bool rerelease_effects, muzzleflashes;
     uint32_t dlight_hacks, disable_particles, disable_explosions;
+    int32_t rail_type, rail_width;
+    double rail_seconds;
+    float rail_radius;
+    uint32_t rail_core_rgba, rail_spiral_rgba;
 } frontend_remote_q2_effects_controls;
 typedef struct frontend_remote_q2_effects_pose {
     qa_actor_id actor;
@@ -26,6 +31,17 @@ typedef struct frontend_remote_q2_effects_pose {
     float radius, scale;
     bool bounds_present, model_present;
 } frontend_remote_q2_effects_pose;
+typedef struct frontend_remote_q2_effects_shadow_light {
+    qa_actor_id actor;
+    qa_vec3 origin, color, direction;
+    float radius, intensity, fade_start, fade_end, cos_half_angle;
+    int32_t resolution, lightstyle;
+    bool visible, cone;
+} frontend_remote_q2_effects_shadow_light;
+typedef enum frontend_remote_q2_effects_presentation_kind {
+    FRONTEND_REMOTE_Q2_ORDINARY_BEAM, FRONTEND_REMOTE_Q2_MONSTER_BEAM, FRONTEND_REMOTE_Q2_ALL_BEAMS,
+    FRONTEND_REMOTE_Q2_SHADOW_LIGHT, FRONTEND_REMOTE_Q2_SOURCE_LIGHT, FRONTEND_REMOTE_Q2_FLASHLIGHT
+} frontend_remote_q2_effects_presentation_kind;
 typedef struct frontend_remote_q2_effects_source {
     qa_session *session;
     uint64_t identity, content_generation;
@@ -45,6 +61,7 @@ typedef struct frontend_remote_q2_effects_source {
     bool (*current)(void *, const struct frontend_remote_q2_effects_source *, qa_error *);
     bool (*actor)(void *, uint32_t received_number, frontend_remote_q2_effects_pose *, qa_error *);
     bool (*actor_pose)(void *, qa_actor_id, frontend_remote_q2_effects_pose *, qa_error *);
+    bool (*actor_live)(void *, qa_actor_id, bool *, qa_error *);
     bool (*viewer)(void *, qa_actor_id *, qa_error *);
     /* acquire=false reads the already retained model cache, including genuine
      * missing-resource receipts. Restore and readiness never register models. */
@@ -70,6 +87,7 @@ typedef struct frontend_remote_q2_effects_sample {
     qa_vec3 viewer_origin;
     bool viewer_origin_present;
     qa_vec3 gun_offset;
+    float player_fov;
     int32_t hand;
     bool hardware, per_pixel_lighting;
     float frame_seconds;
@@ -82,7 +100,11 @@ typedef struct frontend_remote_q2_effects_refs {
     bool (*image_decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
     bool (*actor_encode)(void *, qa_actor_id, qa_saved_actor_id *, qa_error *);
     bool (*actor_decode)(void *, qa_saved_actor_id, qa_actor_id *, qa_error *);
+    bool (*light_encode)(void *, uint64_t identity, uint64_t *, qa_error *);
+    bool (*light_decode)(void *, uint64_t saved, uint64_t *, qa_error *);
 } frontend_remote_q2_effects_refs;
+
+bool frontend_remote_q2_effects_color(const char *, uint32_t *rgba);
 
 bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *,
     frontend_remote_q2_effects **, qa_error *);
@@ -126,6 +148,28 @@ bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *,
 bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *,
     const char *recipe, qa_actor_id, qa_vec3 start, qa_vec3 end, double duration_seconds,
     double milliseconds, qa_error *);
+bool frontend_remote_q2_effects_source_beam(frontend_remote_q2_effects *, qa_actor_id,
+    qa_vec3 start, qa_vec3 end, float width, uint32_t color, bool visible, qa_error *);
+bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *, qa_actor_id,
+    qa_vec3 start, qa_vec3 end, double milliseconds, qa_error *);
+bool frontend_remote_q2_effects_shadow_light_set(frontend_remote_q2_effects *,
+    const frontend_remote_q2_effects_shadow_light *, qa_error *);
+bool frontend_remote_q2_effects_source_light(frontend_remote_q2_effects *, qa_actor_id,
+    qa_vec3 origin, qa_vec3 color, float radius, bool visible, qa_error *);
+bool frontend_remote_q2_effects_flashlight(frontend_remote_q2_effects *, qa_actor_id,
+    bool enabled, int32_t hand, qa_error *);
+bool frontend_remote_q2_effects_retire_presentation(frontend_remote_q2_effects *, qa_error *);
+bool frontend_remote_q2_effects_remove_actor_presentation(frontend_remote_q2_effects *, qa_actor_id,
+    frontend_remote_q2_effects_presentation_kind, qa_error *);
+/* Reads retained semantic keys in physical order without source dispatch. */
+bool frontend_remote_q2_effects_presentation_actor_at(const frontend_remote_q2_effects *,
+    frontend_remote_q2_effects_presentation_kind, size_t, qa_actor_id *);
+size_t frontend_remote_q2_effects_light_identity_count(const frontend_remote_q2_effects *);
+bool frontend_remote_q2_effects_light_identity_at(const frontend_remote_q2_effects *, size_t, uint64_t *);
+/* Rebuilds only view-dependent light metadata from returned Source receipts;
+ * it does not sample particles, roll beam models, emit audio or advance time. */
+bool frontend_remote_q2_effects_view_lights(frontend_remote_q2_effects *,
+    const frontend_remote_q2_effects_sample *, const qa_scene_light **, size_t *, qa_error *);
 bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *,
     const frontend_remote_q2_effects_sample *, qa_error *);
 bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *,

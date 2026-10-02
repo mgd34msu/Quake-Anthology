@@ -3,6 +3,7 @@
 #include "client_source.h"
 #include "config_scripts.h"
 #include "qa/input.h"
+#include "qa/inventory.h"
 #include "qa/application_client_prepare.h"
 #include "view_settings.h"
 
@@ -32,10 +33,23 @@ bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *,const qa_
 bool frontend_neutral_config_read(const frontend_neutral_configs *, const qa_console *,
     frontend_neutral_config_view *, qa_error *);
 bool frontend_neutral_config_current(const frontend_neutral_config_view *);
+/* Returned capture/import namespace custody only; this does not admit live input. */
+bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *,const qa_console *,
+    frontend_neutral_config_view *,qa_error *);
+bool frontend_neutral_config_checkpoint_current(const frontend_neutral_config_view *,qa_error *);
+bool frontend_neutral_config_retired_recipient(const frontend_neutral_configs *,
+    const qa_application_client_source *,bool *,qa_error *);
 bool frontend_neutral_config_startup_read(const frontend_neutral_configs *,qa_application_client_source *,bool *,qa_error *);
+bool frontend_neutral_config_reset_bindings(frontend_neutral_configs *,uint32_t,int32_t,bool *,qa_error *);
+bool frontend_neutral_config_select_bindings(frontend_neutral_configs *,uint32_t,qa_strings *,
+    const qa_item_definition *,size_t,int32_t,bool *,qa_error *);
 bool frontend_config_store_neutral_startup_read(const frontend_config_store *,qa_application_client_source *,bool *,qa_error *);
 bool frontend_config_store_neutral_read(const frontend_config_store *, const qa_console *,
     frontend_neutral_config_view *, qa_error *);
+bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *,const qa_console *,
+    frontend_neutral_config_view *,qa_error *);
+bool frontend_config_store_neutral_retired_recipient(const frontend_config_store *,
+    const qa_application_client_source *,bool *,qa_error *);
 bool frontend_config_store_neutral_options(frontend_config_store *,uint32_t physical_seat,
     qa_movement_kind actual_movement,frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_pending_options(frontend_config_store *,uint32_t physical_seat,

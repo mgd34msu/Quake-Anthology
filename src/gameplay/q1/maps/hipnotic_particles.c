@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_wire.h"
 #include <limits.h>
 
 static bool voice(qa_q1_game *g, q1_actor *entity, unsigned index, qa_error *error) {
@@ -61,8 +62,18 @@ bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error
             body.origin = qa_vec_add(body.origin, qa_v3(8000, 8000, 8000));
         break;
     case Q1_MAP_WALL_SPRITE: {
+        qa_actor_id id = entity->id;
         if (!q1_map_text(g, entity->model) && !q1_model(g, entity, "progs/s_blood1.spr", error))
             return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map) return true;
+        const char *model = qa_strings_cstr(qa_session_strings(g->services.session), entity->model);
+        if (!qa_q1_wire_declare_model(g, model, error)) return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map) return true;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map) return true;
         if (!body.angles.x && !body.angles.z) {
             if (body.angles.y == -1)
                 body.angles = qa_v3(-90, 0, 0);

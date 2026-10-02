@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/q3_presentation_save.h"
+#include "scene_fields_save.h"
 #include "qa/hash.h"
 
 #define FIELD(type, object, name) do { if (!qa_source_save_##type(io, &(object)->name)) return false; } while (0)
@@ -158,6 +159,10 @@ static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
     return arrays(io,p);
 }
 #undef FIELD
+bool q3p_packet_entity_fields(qa_source_save_io *io,qa_q3_ref_entity *value) { return entity(io,value); }
+bool q3p_packet_vertex_fields(qa_source_save_io *io,qa_scene_vertex *value) { return vertex(io,value); }
+bool q3p_packet_view_fields(qa_source_save_io *io,qa_scene_view *value) { return view(io,value); }
+bool q3p_packet_fog_fields(qa_source_save_io *io,qa_scene_fog_volume *value) { return fog(io,value); }
 bool qa_q3_presentation_scene_checkpoint(const qa_q3_presentation *p, qa_buffer *out, qa_error *error)
 {
     if (!p || !out || out->data || out->size) return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 scene capture requires an empty output");

@@ -1,6 +1,5 @@
 #include "native_q2_armor.h"
 #include "qa/native_observe.h"
-#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +13,7 @@ typedef struct armor_regular {
     qa_item_id item;
     armor_selection selection;
     application_native_q2_field points;
-    float normal,energy;
+    double normal,energy;
 } armor_regular;
 typedef struct armor_power {
     qa_item_id item;
@@ -50,6 +49,7 @@ struct application_native_q2_armor_watch {
     size_t count;
     qa_armor previous;
     unsigned entered;
+    bool closing;
 };
 static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_FORMAT,0,"%s",text); return false; }
@@ -189,7 +189,7 @@ static bool fields_valid(application_native_q2_armor *o,qa_error *e)
     }
     return true;
 }
-bool application_native_q2_armor_create(const application_native_q2_armor_options *options,
+static bool create_layout(const application_native_q2_armor_options *options,
     qa_json_id regular,qa_json_id power,bool q2,application_native_q2_armor **out,qa_error *e)
 {
     if(!options||!out||*out||!options->callbacks||!options->strings||!options->owner) return fail(e,"Native armor requires its actual callback owner");
@@ -211,9 +211,9 @@ bool application_native_q2_armor_create(const application_native_q2_armor_option
         if(q2) {
             double normal,energy;
             if(!r->item||!qa_json_number(d,qa_json_get(d,row,"normalProtection"),&normal,e)||
-                !qa_json_number(d,qa_json_get(d,row,"energyProtection"),&energy,e)||!isfinite(normal)||!isfinite(energy)||
-                fabs(normal)>FLT_MAX||fabs(energy)>FLT_MAX) return fail(e,"Native Q2 armor protection is not finite");
-            r->normal=(float)normal; r->energy=(float)energy;
+                !qa_json_number(d,qa_json_get(d,row,"energyProtection"),&energy,e)||!isfinite(normal)||!isfinite(energy))
+                return fail(e,"Native Q2 armor protection is not finite");
+            r->normal=normal; r->energy=energy;
         }
         for(size_t j=0;j<i;++j) if(o->regular[j].item==r->item) return fail(e,"Native regular armor selection repeats an item");
     }
@@ -234,6 +234,17 @@ bool application_native_q2_armor_create(const application_native_q2_armor_option
         for(size_t j=0;j<i;++j) if(o->power[j].kind==p->kind) return fail(e,"Native powered armor selection repeats a kind");
     }
     return fields_valid(o,e);
+}
+bool application_native_q2_armor_create(const application_native_q2_armor_options *options,
+    qa_json_id regular,qa_json_id power,bool q2,application_native_q2_armor **out,qa_error *e)
+{
+    if(!out||*out) return fail(e,"Native armor construction requires an empty destination");
+    application_native_q2_armor *o=NULL;
+    if(!create_layout(options,regular,power,q2,&o,e)) {
+        /* Layout parsing installs no actors or write subscriptions. */
+        (void)application_native_q2_armor_destroy(&o,NULL);return false;
+    }
+    *out=o;return true;
 }
 static bool raw(application_native_q2_armor *o,qa_actor_id actor,const application_native_q2_field *field,
     const armor_store *stores,size_t count,double *out,qa_error *e)
@@ -256,8 +267,8 @@ static bool capture(application_native_q2_armor *o,qa_actor_id actor,const armor
         armor_regular *r=o->regular+i; bool active; double points;
         if(!selected(o,actor,&r->selection,stores,count,&active,e)) return false;
         if(!active) continue;
-        if(!raw(o,actor,&r->points,stores,count,&points,e)||fabs(points)>FLT_MAX) return fail(e,"Native armor points exceed canonical scalar storage");
-        armor.regular=(qa_regular_armor){.kind=o->q2?QA_ARMOR_Q2:QA_ARMOR_SOURCE,.item=r->item,.points=(float)points};
+        if(!raw(o,actor,&r->points,stores,count,&points,e)) return false;
+        armor.regular=(qa_regular_armor){.kind=o->q2?QA_ARMOR_Q2:QA_ARMOR_SOURCE,.item=r->item,.points=points};
         armor.regular.protection.q2.normal=r->normal; armor.regular.protection.q2.energy=r->energy; break;
     }
     for(size_t i=0;i<o->power_count;++i) {
@@ -269,13 +280,29 @@ static bool capture(application_native_q2_armor *o,qa_actor_id actor,const armor
             uint64_t bits=enabled<0?(uint64_t)(int64_t)enabled:(uint64_t)enabled; active=(bits&p->mask)!=0;
         }
         if(!active) continue;
-        if(!raw(o,actor,&p->cells,stores,count,&cells,e)||fabs(cells)>FLT_MAX) return fail(e,"Native armor cells exceed canonical scalar storage");
-        armor.powered=(qa_powered_armor){.kind=p->kind,.cells=(float)cells,.source_owner=o->options.owner,.source_kind=QA_POWER_SOURCE_GENERIC}; break;
+        if(!raw(o,actor,&p->cells,stores,count,&cells,e)) return false;
+        armor.powered=(qa_powered_armor){.kind=p->kind,.cells=cells,.source_owner=o->options.owner,.source_kind=QA_POWER_SOURCE_GENERIC}; break;
     }
     *out=armor; return true;
 }
 bool application_native_q2_armor_read(application_native_q2_armor *o,qa_actor_id actor,qa_armor *out,qa_error *e)
 { return o&&out&&capture(o,actor,NULL,0,out,e); }
+bool application_native_q2_armor_normalize_legacy(application_native_q2_armor *o,qa_actor_id actor,
+    const qa_armor *input,qa_armor *out,qa_error *e)
+{
+    if(!o||!input||!out) return fail(e,"Native armor normalization requires its retained declaration");
+    *out=*input;
+    const armor_power *power=NULL;
+    for(size_t i=0;i<o->power_count;++i) if(o->power[i].kind==input->powered.kind) {power=o->power+i;break;}
+    if(!power) return true;
+    qa_armor actual;
+    if(!application_native_q2_armor_read(o,actor,&actual,e)) return false;
+    if(actual.regular.kind==QA_ARMOR_NONE&&input->regular.kind==QA_ARMOR_Q2&&input->regular.item==power->item&&
+        input->regular.points==0&&input->regular.protection.q2.normal==0&&input->regular.protection.q2.energy==0&&
+        input->powered.kind!=QA_POWER_NONE&&input->powered.kind==actual.powered.kind&&input->powered.cells==actual.powered.cells)
+        out->regular=(qa_regular_armor){0};
+    return true;
+}
 static bool store(application_native_q2_armor *o,qa_actor_id actor,const application_native_q2_field *field,
     double value,armor_store *stores,size_t *count,qa_error *e)
 {
@@ -334,11 +361,15 @@ static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor
         if(ok&&(before.powered.kind!=next->powered.kind||before.powered.cells!=next->powered.cells)) ok=store(o,actor,&power->cells,next->powered.cells,stores,&count,e);
     }
     if(ok) ok=capture(o,actor,stores,count,&after,e);
-    bool empty=next->regular.kind==QA_ARMOR_NONE||(regular&&next->regular.points==0&&!regular->selection.enumeration&&
+    double requested_points=regular?next->regular.points:0;
+    double requested_cells=power?next->powered.cells:0;
+    if(regular&&regular->points.encoding==QA_NATIVE_F32) requested_points=(float)requested_points;
+    if(power&&power->cells.encoding==QA_NATIVE_F32) requested_cells=(float)requested_cells;
+    bool empty=next->regular.kind==QA_ARMOR_NONE||(regular&&requested_points==0&&!regular->selection.enumeration&&
         regular->selection.field.offset==regular->points.offset&&strcmp(regular->selection.field.record,regular->points.record)==0);
-    if(ok) ok=(after.powered.kind==next->powered.kind&&after.powered.cells==next->powered.cells&&
+    if(ok) ok=(after.powered.kind==next->powered.kind&&after.powered.cells==requested_cells&&
         (empty?after.regular.kind==QA_ARMOR_NONE:after.regular.kind==next->regular.kind&&after.regular.item==next->regular.item)&&
-        after.regular.points==(empty?0:next->regular.points))||fail(e,"Native source selections cannot represent the requested armor");
+        after.regular.points==requested_points)||fail(e,"Native source selections cannot represent the requested armor");
     if(!ok) { free(stores); return false; } *out=stores; *out_count=count; return true;
 }
 bool application_native_q2_armor_validate(application_native_q2_armor *o,qa_actor_id actor,const qa_armor *next,qa_error *e)
@@ -358,6 +389,7 @@ bool application_native_q2_armor_write(application_native_q2_armor *o,qa_actor_i
 static bool watched(void *context,qa_native_instance *instance,const qa_native_write_event *event,qa_error *e)
 {
     armor_watch_field *field=context; application_native_q2_armor_watch *watch=field->owner; qa_native_address address;
+    if(watch->closing) return true;
     if(instance!=application_native_q2_callbacks_instance(watch->owner->options.callbacks)||
         !application_native_q2_field_address(watch->owner->options.callbacks,watch->actor,field->field,&address,e)||address!=field->address)
         return fail(e,"Native armor watch lost its actual source field");
@@ -390,11 +422,19 @@ bool application_native_q2_armor_observe_end(application_native_q2_armor_watch *
     if(!owner||!*owner) return true;
     application_native_q2_armor_watch *watch=*owner;
     if(watch->entered) return fail(e,"Native armor observation is entered");
+    watch->closing=true;
     if(watch->fields) for(size_t i=watch->count;i>0;--i) {
         armor_watch_field *f=watch->fields+i-1;
         if(f->binding) { if(!qa_native_unobserve_writes(f->binding,e)) return false; f->binding=NULL; }
     }
     --watch->owner->watch_count; free(watch->fields); free(watch); *owner=NULL; return true;
+}
+bool application_native_q2_armor_observe_cancel(application_native_q2_armor_watch *watch,qa_error *e)
+{
+    if(!watch) return true;
+    if(watch->entered) return fail(e,"Native armor observation is entered");
+    watch->closing=true;
+    return true;
 }
 bool application_native_q2_armor_destroy(application_native_q2_armor **owner,qa_error *e)
 {

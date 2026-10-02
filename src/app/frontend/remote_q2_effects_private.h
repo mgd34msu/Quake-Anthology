@@ -3,7 +3,7 @@
 #include "remote_q2_effects.h"
 #include "selected_effects_particles.h"
 
-enum { Q2FX_POOL = 32, Q2FX_LIGHT_CAPACITY = 32 };
+enum { Q2FX_POOL = 32, Q2FX_LASER_CAPACITY = 256, Q2FX_LIGHT_CAPACITY = 32 };
 typedef enum q2fx_model {
     Q2FX_EXPLODE, Q2FX_SMOKE, Q2FX_FLASH, Q2FX_PARASITE, Q2FX_CABLE,
     Q2FX_ROCKET, Q2FX_BFG, Q2FX_LIGHTNING, Q2FX_HEAT, Q2FX_BIG,
@@ -32,8 +32,8 @@ typedef struct q2fx_beam {
 typedef struct q2fx_laser {
     bool active;
     qa_vec3 start, end;
-    double die;
-    uint32_t color;
+    double born, die;
+    uint32_t color, rgba;
     float width;
 } q2fx_laser;
 typedef struct q2fx_light {
@@ -73,6 +73,22 @@ typedef struct q2fx_weapon_muzzle {
     float roll, scale;
     double start;
 } q2fx_weapon_muzzle;
+typedef struct q2fx_source_beam {
+    q2fx_beam beam;
+    float width;
+    uint32_t color;
+    bool persistent;
+} q2fx_source_beam;
+typedef struct q2fx_source_light {
+    frontend_remote_q2_effects_shadow_light light;
+    uint64_t identity, revision;
+    bool shadow;
+} q2fx_source_light;
+typedef struct q2fx_flashlight {
+    qa_actor_id actor;
+    uint64_t identity;
+    int32_t hand;
+} q2fx_flashlight;
 struct frontend_remote_q2_effects {
     frontend_remote_q2_effects_source source;
     frontend_remote_q2_effects_policy *pending;
@@ -84,14 +100,20 @@ struct frontend_remote_q2_effects {
     bool model_admitted[Q2FX_MODEL_COUNT];
     q2fx_explosion explosions[Q2FX_POOL];
     q2fx_beam beams[Q2FX_POOL], player_beams[Q2FX_POOL];
-    q2fx_laser lasers[Q2FX_POOL];
+    q2fx_laser lasers[Q2FX_LASER_CAPACITY];
     q2fx_light lights[Q2FX_POOL];
     q2fx_sustain sustains[Q2FX_POOL];
     q2fx_trail *trails;
     size_t trail_count;
     size_t sampled_particle_count;
-    qa_scene_light sampled_lights[Q2FX_LIGHT_CAPACITY];
-    size_t light_count;
+    qa_scene_light *sampled_lights;
+    size_t light_count, light_capacity, transient_light_count;
+    q2fx_source_beam *source_beams;
+    size_t source_beam_count, source_beam_capacity;
+    q2fx_source_light *source_lights;
+    size_t source_light_count, source_light_capacity;
+    q2fx_flashlight *flashlights;
+    size_t flashlight_count, flashlight_capacity;
     q2fx_model_draw *draws;
     size_t draw_count, draw_capacity;
     double time, server_time;
@@ -102,6 +124,8 @@ struct frontend_remote_q2_effects {
     qa_error event_error;
     q2fx_weapon_muzzle weapon_muzzle;
     uint32_t sampled_dlight_hacks, sampled_disable_particles;
+    int32_t sampled_gun;
+    float sampled_gun_fov;
     uint32_t slow_bin, slow_base, slow_seed;
     uint64_t slow_frame, render_frame;
 };
@@ -114,6 +138,14 @@ bool q2fx_frame_milliseconds(frontend_remote_q2_effects *, double *, qa_error *)
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *);
 bool q2fx_model_admit(frontend_remote_q2_effects *, q2fx_model, qa_error *);
 bool q2fx_state_fields(qa_source_save_io *, frontend_remote_q2_effects *, const frontend_remote_q2_effects_refs *);
+bool q2fx_actor_fields(qa_source_save_io *, qa_actor_id *, const frontend_remote_q2_effects_refs *);
+bool q2fx_light_identity_fields(qa_source_save_io *, uint64_t *, const frontend_remote_q2_effects_refs *);
+bool q2fx_semantic_fields(qa_source_save_io *, frontend_remote_q2_effects *, const frontend_remote_q2_effects_refs *);
+bool q2fx_semantic_prepare(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *,
+    const frontend_remote_q2_effects_controls *, bool, qa_error *);
+bool q2fx_prepare_beams(frontend_remote_q2_effects *, q2fx_beam *, size_t,
+    const frontend_remote_q2_effects_sample *, const frontend_remote_q2_effects_controls *, bool, qa_error *);
+bool q2fx_semantic_draw(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *, qa_scene_frame *, qa_error *);
 bool q2fx_entities(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *,
     q2fx_trail *, bool advance, qa_error *);
 void q2fx_sampled_light(frontend_remote_q2_effects *, qa_vec3, float, qa_vec3, float);

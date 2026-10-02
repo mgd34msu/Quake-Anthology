@@ -49,6 +49,38 @@ void qa_roq_scratch_clear(qa_roq_scratch *scratch, bool books) {
     if (books)
         memset(&scratch->books, 0, sizeof(scratch->books));
 }
+bool qa_roq_scratch_capture(const qa_roq_scratch *scratch, qa_buffer *out, qa_error *error) {
+    if (!scratch || !scratch->references || !out || out->data || out->size)
+        return roq_fail(error, "Missing retained RoQ scratch checkpoint owner");
+    qa_buffer saved = {.size = ROQ_SAVED_BYTES + 8u};
+    saved.data = malloc(saved.size);
+    if (!saved.data) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Saving shared RoQ physical buffers");
+        return false;
+    }
+    memcpy(saved.data, "QRSB", 4);
+    qa_store_u32le(saved.data + 4, 1);
+    uint8_t *bytes = saved.data + 8;
+    memcpy(bytes, scratch->file, ROQ_FILE_BYTES);
+    bytes += ROQ_FILE_BYTES;
+    memcpy(bytes, &scratch->books, sizeof(scratch->books));
+    bytes += sizeof(scratch->books);
+    memcpy(bytes, scratch->frames, ROQ_FRAME_BYTES);
+    *out = saved;
+    return true;
+}
+bool qa_roq_scratch_restore(qa_roq_scratch *scratch, qa_bytes saved, qa_error *error) {
+    if (!scratch || !scratch->references || !saved.data || saved.size != ROQ_SAVED_BYTES + 8u ||
+        memcmp(saved.data, "QRSB", 4) || qa_load_u32le(saved.data + 4) != 1)
+        return roq_fail(error, "Invalid shared RoQ physical-buffer checkpoint");
+    const uint8_t *bytes = saved.data + 8;
+    memcpy(scratch->file, bytes, ROQ_FILE_BYTES);
+    bytes += ROQ_FILE_BYTES;
+    memcpy(&scratch->books, bytes, sizeof(scratch->books));
+    bytes += sizeof(scratch->books);
+    memcpy(scratch->frames, bytes, ROQ_FRAME_BYTES);
+    return true;
+}
 bool qa_roq_decoder_create(qa_media_input *input, const qa_roq_decoder_options *options,
                            qa_roq_decoder **out, qa_error *error) {
     if (!input || !options || !out ||
@@ -336,6 +368,20 @@ bool qa_roq_decoder_rewind(qa_roq_decoder *decoder, qa_error *error) {
     decoder->unknown = 0;
     decoder->faulted = false;
     return true;
+}
+bool qa_roq_decoder_scratch_rebind_ready(const qa_roq_decoder *decoder,
+    const qa_roq_scratch *scratch, qa_error *error) {
+    if (!decoder || decoder->busy || decoder->stream.pending || !scratch ||
+        !scratch->references || (scratch != decoder->scratch && scratch->references == SIZE_MAX))
+        return roq_fail(error, "RoQ scratch adoption requires returned physical owners");
+    return true;
+}
+void qa_roq_decoder_scratch_rebind(qa_roq_decoder *decoder, qa_roq_scratch *scratch) {
+    if (scratch == decoder->scratch) return;
+    qa_roq_scratch_retain(scratch);
+    qa_roq_scratch_release(decoder->scratch);
+    decoder->scratch = scratch;
+    decoder->stream.file = scratch->file;
 }
 uint16_t qa_roq_decoder_rate(const qa_roq_decoder *decoder) { return decoder->rate; }
 void qa_roq_decoder_dimensions(const qa_roq_decoder *decoder, uint32_t *width, uint32_t *height) {

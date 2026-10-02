@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../connections_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -145,7 +146,8 @@ uint64_t qa_network_epoch(const qa_network_runtime *runtime, qa_net_client_id id
 static bool receive_pending(const qa_network_runtime *runtime) {
     for (uint32_t i = 0; i < runtime->options.clients; ++i) {
         const qa_network_peer *peer = &runtime->peers[i];
-        if (peer->occupied && peer->ops.receive_pending && peer->ops.receive_pending(peer->state)) return true;
+        if (peer->occupied && !qa_unified_session_peer(peer) && peer->ops.receive_pending &&
+            peer->ops.receive_pending(peer->state)) return true;
     }
     return false;
 }
@@ -177,9 +179,13 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         }
         runtime->callback = true;
         if (target) {
-            if (!target->ops.receive(target->state, runtime, target->id, &packet, error)) {
+            qa_error issue={0};
+            if (!target->ops.receive(target->state, runtime, target->id, &packet, &issue)) {
                 runtime->callback = false;
-                if(!retirement_pending(target)) retire(runtime, target, "receive failed");
+                bool pending=retirement_pending(target);
+                if(pending && issue.code==QA_OK) continue;
+                if(!pending && !qa_network_q2_delivery_pending(target)) retire(runtime, target, "receive failed");
+                if(error) *error=issue;
                 ok = false; break;
             }
         } else if (runtime->options.hooks.connectionless &&
@@ -194,13 +200,32 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         if (!client) continue;
         if (!qa_unified_session_peer(peer) && !retirement_pending(peer) && runtime->options.timeout_ns &&
             qa_net_client_expired(client, now, runtime->options.timeout_ns)) {
+            bool native=qa_network_nq_peer(peer) || qa_network_qw_peer(peer) ||
+                qa_network_q1_client_peer(peer) || qa_network_q2_peer(peer);
+            if(native) {
+                qa_error issue={0};
+                runtime->callback=true;
+                bool complete=qa_network_nq_peer(peer) ? qa_network_nq_timeout(peer,"connection timed out",&issue) :
+                    qa_network_qw_peer(peer) ? qa_network_qw_timeout(peer,"connection timed out",&issue) :
+                    qa_network_q1_client_peer(peer) ? qa_network_q1_client_timeout(peer,"connection timed out",&issue) :
+                    qa_network_q2_timeout(peer,"connection timed out",&issue);
+                runtime->callback=false;
+                if(!complete) {
+                    if(issue.code!=QA_OK) { if(error) *error=issue; ok=false; }
+                    continue;
+                }
+            }
             retire(runtime, peer, "connection timed out"); continue;
         }
         runtime->callback = true;
-        bool sent = peer->ops.flush(peer->state, runtime, peer->id, now, error);
+        qa_error issue={0};
+        bool sent = peer->ops.flush(peer->state, runtime, peer->id, now, &issue);
         runtime->callback = false;
         if (!sent) {
-            if(!retirement_pending(peer)) retire(runtime, peer, "send failed");
+            bool pending=retirement_pending(peer);
+            if(pending && issue.code==QA_OK) continue;
+            if(!pending && !qa_network_q2_delivery_pending(peer)) retire(runtime, peer, "send failed");
+            if(error) *error=issue;
             ok = false;
         }
     }
@@ -213,6 +238,16 @@ bool qa_network_restart(qa_network_runtime *runtime, qa_net_client_id id,
     qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
     if (!peer) return false;
     if (peer->epoch == UINT64_MAX) return qa_network_fail(error, "Network epoch exhausted");
+    if(qa_unified_session_peer(peer) || qa_network_q2_peer(peer)) {
+        if(!qa_net_connections_restart_ready(runtime->connections,id,composition,error)) return false;
+        runtime->callback=true;
+        bool prepared=peer->ops.restart(peer->state,peer->epoch+1,composition,error);
+        runtime->callback=false;
+        if(!prepared) return false;
+        qa_net_connections_restart_commit(runtime->connections,id,composition);
+        ++peer->epoch; qa_network_history_clear(peer);
+        return true;
+    }
     if (!qa_net_connections_restart(runtime->connections, id, composition, error)) return false;
     ++peer->epoch; qa_network_history_clear(peer);
     runtime->callback = true;

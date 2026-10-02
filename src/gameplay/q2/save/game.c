@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(24)
+#define Q2_SAVE_VERSION UINT32_C(25)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -58,8 +58,9 @@ static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e
 static bool header(q2_save_io *io) {
     uint32_t magic = Q2_SAVE_MAGIC, version = Q2_SAVE_VERSION;
     if (!q2_save_u32(io, &magic) || !q2_save_u32(io, &version)) return false;
-    return (magic == Q2_SAVE_MAGIC && version == Q2_SAVE_VERSION) ||
-           q2_save_fail(io, "Unsupported Q2 continuation schema");
+    if (magic != Q2_SAVE_MAGIC || version < 24 || version > Q2_SAVE_VERSION)
+        return q2_save_fail(io, "Unsupported Q2 continuation schema");
+    io->schema = version; return true;
 }
 bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
     if (!g || !out || g->continuation_pending || g->continuation_failed || !q2_checkpoint_idle(g, e)) {

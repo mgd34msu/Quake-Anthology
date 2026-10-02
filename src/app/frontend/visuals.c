@@ -1097,6 +1097,38 @@ bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provide
     *out = (frontend_visual_model_view){model->path, model->resource, model->model, model->scene};
     return true;
 }
+bool frontend_visual_model_admission(void *context, qa_application *application,
+    const qa_application_model_admission_request *request, qa_application_model_admission *out, qa_error *error)
+{
+    qa_frontend *frontend = context;
+    if (!frontend || frontend->application != application || !request || !out || !request->resource ||
+        !request->opening || !request->view || !request->request || !request->opening->opening_present ||
+        request->opening->resource_id != qa_resource_id(request->resource) ||
+        !qa_vfs_acquisition_retained(request->view, request->opening, error))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission requires its actual frontend BODY acquisition");
+    frontend_visual_owner *owner;
+    if (!live_owner(frontend, request->provider, request->family, &owner, error)) return false;
+    if (!qa_vfs_lookup_equal(request->view, owner->mounts))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission differs from its actual appearance scope");
+    frontend_model *model;
+    if (!model_read(frontend, owner, request->request, request->resource, request->opening,
+        request->family == QA_GAME_Q1 && request->has_player_colors, request->player_colors, &model, error)) return false;
+    const qa_scene_image_options *images = qa_scene_model_image_options(model->scene);
+    if (!images) return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission lost its real scene constructor");
+    qa_application_model_admission result = {.images = *images};
+    qa_scene_family family = model->model->format == QA_MODEL_MDL || model->model->format == QA_MODEL_SPR ?
+        QA_SCENE_Q1 : owner->family;
+    if (images->palette_rgb.size) {
+        if (!qa_scene_resources_palette_read(owner->images, family, &result.palette_rgb) ||
+            !qa_scene_resources_palette_source_read(owner->images, family, &result.palette_source) ||
+            result.palette_rgb.size != images->palette_rgb.size ||
+            memcmp(result.palette_rgb.data, images->palette_rgb.data, result.palette_rgb.size))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission lacks its constructor's actual palette receipt");
+        result.palette_view = owner->mounts;
+    }
+    *out = result; return true;
+}
+
 static qa_model_transform transform(const qa_application_visual_view *view)
 {
     qa_model_transform value;

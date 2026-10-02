@@ -59,7 +59,7 @@ static bool capture(void *context,const char *instance,uint64_t source,
     if (owner->retiring || owner->count==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Native capability graph is retiring or exhausted");
     for (native_resource_row *row=owner->first;row;row=row->next)
-        if (!strcmp(row->instance,instance))
+        if (row->source==source && !strcmp(row->instance,instance))
             return fail(error,QA_ERROR_FORMAT,"Native provider capture appears twice in its graph");
     native_resource_row *row=calloc(1,sizeof(*row));
     if (!row) return fail(error,QA_ERROR_MEMORY,"Retaining native provider capability row");

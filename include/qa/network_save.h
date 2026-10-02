@@ -37,8 +37,15 @@ typedef struct qa_network_checkpoint_refs {
     bool (*source_unified)(void *, qa_network_runtime *, const qa_net_client *, qa_unified_session_hooks *, qa_error *);
     bool (*source_q1_client)(void *,qa_network_runtime *,const qa_net_client *,qa_network_q1_client_policy *,
         qa_network_q1_client_hooks *,qa_error *);
-    bool (*source_local)(void *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
+    bool (*source_local)(void *,qa_network_runtime *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 } qa_network_checkpoint_refs;
+typedef struct qa_network_saved_policy {
+    uint32_t clients,packets_per_pump;
+    uint64_t timeout_ns;
+} qa_network_saved_policy;
+/* Reads the actual captured constructor policy. Full connection/Source
+ * admission remains the restore operation's responsibility. */
+bool qa_network_connections_saved_policy(qa_bytes,qa_network_saved_policy *,qa_error *);
 
 /* Transport is an explicitly prepared candidate binding. Source callback
  * descriptors must borrow the candidate, never the active application.

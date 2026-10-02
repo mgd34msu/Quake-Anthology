@@ -35,6 +35,14 @@ typedef struct guest_run {
     bool recording_failed;
     qa_error failure;
 } guest_run;
+typedef struct guest_callback_recovery {
+    struct guest_callback_recovery *previous;
+    const void *invocation;
+    bool (*accepts)(void *, const qa_error *);
+    void *context;
+    qa_error failure;
+    bool cancelled, restored, resolved;
+} guest_callback_recovery;
 struct qa_native_guest {
     qa_native_guest_options options;
     uc_engine *cpu;
@@ -52,13 +60,14 @@ struct qa_native_guest {
     size_t callback_count, callback_capacity;
     uint64_t next_mapping, next_backing, allocation_cursor;
     guest_run *run;
+    guest_callback_recovery *recovery;
     qa_native_guest_commit_fn observe;
     void *observe_context;
     qa_native_guest_instruction_fn instruction_observer;
     void *instruction_context;
     void (*dispatch_started)(void *);
     void *dispatch_context;
-    unsigned callback_depth, publication_depth;
+    unsigned callback_depth, publication_depth, stopped_write_calls, stopped_write_bindings;
     bool stepping, failed, restoring, faulting;
     bool has_memory_fault;
     qa_native_guest_fault memory_fault;
@@ -78,6 +87,9 @@ bool guest_backend_change(qa_native_guest *, const qa_native_guest_mapping *, ui
 bool guest_file_access(const qa_native_guest *, const qa_native_guest_mapping *,
     uint64_t, size_t, qa_error *);
 bool guest_publish(qa_native_guest *, const qa_native_guest_commit *, qa_error *);
+bool guest_callback_failure(qa_native_guest *, const qa_error *);
+bool guest_call_prepared(const qa_native_guest *);
+bool guest_callback_cancelled(const qa_native_guest *, const qa_error *);
 bool guest_create(const qa_native_guest_options *, bool, qa_native_guest **, qa_error *);
 bool guest_cpu_open(qa_native_guest *, bool, qa_error *);
 bool guest_cpu_transfer(qa_native_guest *, qa_native_guest_cpu *, bool, qa_error *);

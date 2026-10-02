@@ -1,5 +1,6 @@
 #include "session_internal.h"
 #include "messages_internal.h"
+#include "channel_internal.h"
 #include <stdio.h>
 #include <errno.h>
 #include <limits.h>
@@ -8,6 +9,25 @@ static bool current(q2_session *session, qa_error *error)
 {
     return !session->retiring && session->state.client.hooks.current(
         session->state.client.hooks.context, session->id, error);
+}
+static bool sent_continue(q2_session *session, qa_error *error)
+{
+    q2_client *client = &session->state.client;
+    if (!client->sent_pending) return true;
+    while (client->sent_cursor < session->seats) {
+        size_t seat = client->sent_cursor;
+        const qa_net_client *connection = qa_net_connections_get(session->runtime->connections, session->id);
+        if (!connection || !current(session, error) ||
+            !client->hooks.sent(client->hooks.context, session->id, connection->seats[seat].seat,
+                client->sent_sequence, client->sent.number, &client->sent.commands[seat], client->sent_ns, error) ||
+            !current(session, error)) return false;
+        client->oldest[seat] = client->previous[seat];
+        client->previous[seat] = client->sent.commands[seat];
+        ++client->sent_cursor;
+    }
+    client->sent = (q2_command_group){0}; client->sent_sequence = 0;
+    client->sent_ns = 0; client->sent_cursor = 0; client->sent_pending = false;
+    return true;
 }
 static bool cancel(q2_session *session, qa_error *error)
 {
@@ -18,6 +38,61 @@ static bool cancel(q2_session *session, qa_error *error)
     ++client->loading_generation; client->selecting_server_data = false; client->preparing_game_state = false; client->preparation_held = false;
     q2_game_state_free(&client->preparing); return true;
 }
+static bool retire_client(q2_session *session, const char *reason, bool notice, bool notify,
+    bool records, uint64_t now, qa_error *error)
+{
+    q2_client *client = &session->state.client;
+    if (!client->drop_reason && !sent_continue(session, error)) return false;
+    if (!client->drop_reason) {
+        if (!reason) reason = "connection timed out";
+        size_t length = strlen(reason);
+        if (length == SIZE_MAX) return q2_fail(error, QA_ERROR_MEMORY, "Q2 CLIENT retirement reason extent overflows");
+        size_t size = length + 1;
+        client->drop_reason = malloc(size);
+        if (!client->drop_reason) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 CLIENT timeout reason");
+        memcpy(client->drop_reason, reason, size);
+        client->drop_notice = notice; client->drop_notify = notify; client->drop_records_needed = records;
+        session->retiring = true; session->active = false;
+    }
+    if (client->drop_notice && !client->drop_queued) {
+        uint8_t *bytes = malloc(session->channel->capacity);
+        if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 CLIENT disconnect command");
+        qa_q2_client_event disconnect = {.kind = QA_Q2_CLC_COMMAND, .data.text = "disconnect"};
+        qa_net_writer writer; qa_net_writer_init(&writer, bytes, session->channel->capacity, error);
+        bool ok = qa_q2_client_event_write(&session->codec, &writer, &disconnect, 0) &&
+            qa_q2_channel_queue(session->channel, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+        free(bytes); if (!ok) return false;
+        client->drop_queued = true;
+    }
+    if (client->drop_notice && !client->drop_sent) {
+        if (!q2_send(session, (qa_bytes){0}, now, NULL, error)) return false;
+        if (session->channel->queued_size || session->channel->sending_size) return false;
+        client->drop_sent = true;
+    }
+    if (!client->drop_canceled) {
+        if (client->loading_generation == UINT64_MAX)
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 loading generation exhausted during timeout");
+        if (!client->hooks.current(client->hooks.context, session->id, error) ||
+            !client->hooks.cancel_loading(client->hooks.context, session->id, error) ||
+            !client->hooks.current(client->hooks.context, session->id, error)) return false;
+        ++client->loading_generation;
+        client->selecting_server_data = false; client->preparing_game_state = false; client->preparation_held = false;
+        q2_game_state_free(&client->preparing); client->drop_canceled = true;
+    }
+    if (client->drop_records_needed && !client->drop_records_done) {
+        if (!client->hooks.records(client->hooks.context, session->id, client->batch.records,
+            client->batch.count, error)) return false;
+        client->drop_records_done = true;
+    }
+    if (!client->drop_hook_done) {
+        if (client->drop_notify && !client->hooks.drop(client->hooks.context, session->id, client->drop_reason, error)) return false;
+        client->drop_hook_done = true;
+    }
+    q2_records_free(&client->batch); client->receive_held = false; client->acknowledgement_held = false;
+    return true;
+}
+bool q2_client_drop_progress(q2_session *session, const char *reason, qa_error *error)
+{ return retire_client(session, reason, false, true, false, session->runtime->now_ns, error); }
 static bool loading(q2_session *session, qa_error *error)
 {
     const qa_net_client *connection = qa_net_connections_get(session->runtime->connections, session->id);
@@ -75,9 +150,7 @@ static bool prepare(q2_session *session, bool *waiting, qa_error *error)
     }
     if ((unsigned)result > QA_Q2_PREPARATION_RECEIVING) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source preparation returned an invalid state");
     if (result == QA_Q2_PREPARATION_CANCELED) {
-        if (!cancel(session, error)) return false;
-        session->active = false; session->retiring = true;
-        if (!client->hooks.drop(client->hooks.context, session->id, "loading canceled", error)) return false;
+        if (!retire_client(session, "loading canceled", false, true, false, session->runtime->now_ns, error)) return false;
     }
     client->preparation_held = false; *waiting = false; return true;
 }
@@ -85,11 +158,11 @@ static bool retain_game_state(q2_session *session, qa_error *error)
 {
     q2_client *client = &session->state.client; qa_q2_messages *messages = client->messages;
     size_t count = 0;
-    for (size_t i = 0; i < messages->options.config_strings; ++i) if (messages->configs[i]) ++count;
+    for (size_t i = 0; i < messages->config_capacity; ++i) if (messages->configs[i]) ++count;
     qa_q2_config_entry *entries = count ? malloc(count * sizeof(*entries)) : NULL;
     if (count && !entries) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 streamed configuration");
     size_t index = 0;
-    for (size_t i = 0; i < messages->options.config_strings; ++i)
+    for (size_t i = 0; i < messages->config_capacity; ++i)
         if (messages->configs[i]) entries[index++] = (qa_q2_config_entry){(uint16_t)i, messages->configs[i]};
     qa_q2_game_state state = {.data = client->server_data, .configs = entries, .config_count = count,
         .baselines = {messages->baselines, messages->baseline_count}};
@@ -161,8 +234,8 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
     if (!session || !qa_network_callbacks_idle(runtime) || session->busy)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source delivery requires its idle enclosing runtime");
     q2_client *client = &session->state.client; session->busy = true; runtime->callback = true;
-    bool ok = true, waiting = false;
-    if (client->acknowledgement_held) {
+    bool ok = sent_continue(session, error), waiting = false;
+    if (ok && client->acknowledgement_held) {
         client->acknowledgement_held = false;
         ok = current(session, error) && client->hooks.acknowledged(client->hooks.context, id,
             client->acknowledged, client->batch.received_ns, error) && current(session, error);
@@ -205,10 +278,7 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
             break;
         }
         case QA_Q2_SVC_DISCONNECT:
-            ok = cancel(session, error);
-            if (ok) ok = client->hooks.records(client->hooks.context, id, client->batch.records,
-                client->batch.count, error) && current(session, error);
-            if (ok) { session->retiring = true; session->active = false; ok = client->hooks.drop(client->hooks.context, id, "server disconnected", error); }
+            ok = retire_client(session, "server disconnected", false, true, true, runtime->now_ns, error);
             break;
         default: break;
         }
@@ -217,10 +287,11 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
     if (ok && !waiting && !session->retiring && client->receive_held && client->batch.cursor == client->batch.count)
         ok = current(session, error) && client->hooks.records(client->hooks.context, id, client->batch.records,
             client->batch.count, error) && current(session, error);
-    if (!waiting && (session->retiring || !ok || client->batch.cursor == client->batch.count)) {
+    if (!waiting && !(client->drop_reason && !client->drop_hook_done) &&
+        (session->retiring || !ok || client->batch.cursor == client->batch.count)) {
         q2_records_free(&client->batch); client->receive_held = false;
     }
-    if (!ok) session->retiring = true;
+    if (!ok && !client->sent_pending) session->retiring = true;
     runtime->callback = false; session->busy = false; return ok;
 }
 static bool queue_commands(q2_session *session, const qa_q2_usercmd *commands, size_t seats, qa_error *error)
@@ -257,6 +328,7 @@ bool q2_client_submit(q2_session *session, const qa_network_command *command, qa
 bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
 {
     q2_client *client = &session->state.client;
+    if (!sent_continue(session, error)) return false;
     if (client->receive_held || client->preparation_held) return true;
     if (client->command_count) {
         qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
@@ -275,13 +347,9 @@ bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
                 (const qa_q2_usercmd (*)[3])group, session->seats) &&
                 q2_send(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, now, &included, error);
             if (!ok || !included) break;
-            uint64_t command_number = client->commands[consumed++].number;
-            if (ok) for (size_t i = 0; ok && i < session->seats; ++i) {
-                const qa_net_client *connection = qa_net_connections_get(session->runtime->connections, session->id);
-                ok = connection && current(session, error) && client->hooks.sent(client->hooks.context, session->id,
-                    connection->seats[i].seat, sequence, command_number, &group[i][2], now, error) && current(session, error);
-                if (ok) { client->oldest[i] = client->previous[i]; client->previous[i] = group[i][2]; }
-            }
+            client->sent = client->commands[consumed++]; client->sent_sequence = sequence;
+            client->sent_ns = now; client->sent_cursor = 0; client->sent_pending = true;
+            ok = sent_continue(session, error);
         }
         free(bytes);
         client->command_count -= consumed;
@@ -300,11 +368,14 @@ bool qa_network_q2_client_send(qa_network_runtime *runtime, qa_net_client_id id,
 }
 bool qa_network_q2_client_disconnect(qa_network_runtime *runtime, qa_net_client_id id, uint64_t now, qa_error *error)
 {
-    q2_session *session = q2_get(runtime, id, false, error);
-    if (!session || !qa_network_callbacks_idle(runtime)) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect requires idle enclosing ownership");
-    if (!qa_network_q2_client_command(runtime, id, "disconnect", 0, error) || !q2_send(session, (qa_bytes){0}, now, NULL, error)) return false;
-    runtime->callback = true; bool ok = cancel(session, error); runtime->callback = false;
-    session->retiring = true; session->active = false; return ok;
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    if (!qa_network_q2_peer(peer) || ((q2_session *)peer->state)->server || !qa_network_callbacks_idle(runtime))
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect requires its exact returned CLIENT owner");
+    q2_session *session = peer->state;
+    if (session->busy) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT disconnect is already entered");
+    session->busy = true; runtime->callback = true;
+    bool ok = retire_client(session, "client disconnected", true, false, false, now, error);
+    runtime->callback = false; session->busy = false; return ok;
 }
 bool qa_network_q2_client_request_full_frame(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
@@ -325,7 +396,7 @@ bool qa_network_q2_client_serverdata(qa_network_runtime *runtime, qa_net_client_
 }
 bool q2_client_restart(q2_session *session, qa_error *error)
 {
-    if (!cancel(session, error)) return false;
+    if (!sent_continue(session, error) || !cancel(session, error)) return false;
     q2_client *client = &session->state.client; session->active = false; client->last_frame = -1;
     client->command_count = 0; client->command_number = 0; client->command_offset = 0; client->has_server_data = false;
     q2_records_free(&client->batch); client->receive_held = client->acknowledgement_held = false;
@@ -337,5 +408,5 @@ bool q2_client_restart(q2_session *session, qa_error *error)
 void q2_client_clear(q2_client *client)
 {
     q2_records_free(&client->batch); q2_game_state_free(&client->preparing);
-    qa_q2_messages_destroy(client->messages); free(client->commands);
+    qa_q2_messages_destroy(client->messages); free(client->commands); free(client->drop_reason);
 }

@@ -12,6 +12,7 @@ typedef struct frontend_remote_q2_restore_refs {
     frontend_scene_namespace *scene;
     qa_download_checkpoint_refs downloads;
 } frontend_remote_q2_restore_refs;
+bool frontend_remote_q2_download_refs(frontend_remote_q2 *, qa_download_checkpoint_refs *, qa_error *);
 /* Parent resource dictionaries encode genuine image/material/font/audio/world
  * owners. This leaf preserves their actual cache references and CLIENT state. */
 bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *,

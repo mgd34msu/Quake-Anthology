@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_wire.h"
 #include <float.h>
 #include <limits.h>
 
@@ -305,20 +306,30 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
             e->map->style = 10;
         return q1_map_ambient(g, body.origin, "ambience/buzz1.wav", .5f, error);
     }
-    e->frame = q1_classnamed(g, id, "light_flame_large_yellow") ? 1 : 0;
-    if (!q1_model(g, e, q1_classnamed(g, id, "light_torch_small_walltorch")
-                              ? "progs/flame.mdl" : "progs/flame2.mdl", error))
+    const char *model = q1_classnamed(g, id, "light_torch_small_walltorch")
+        ? "progs/flame.mdl" : "progs/flame2.mdl";
+    if (!q1_model(g, e, model, error))
         return false;
     e = visual(g, id);
     if (!e)
         return true;
+    if (!qa_q1_wire_declare_model(g, model, error)) return false;
+    e = visual(g, id);
+    if (!e) return true;
+    if (q1_classnamed(g, id, "light_flame_large_yellow")) e->frame = 1;
     if (e->spawnflags & 4) {
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!visual(g, id)) return true;
         body.angles = qa_v3(180, 0, 0);
         if (!qa_world_body_write(g->services.world, id, &body, error))
             return false;
     }
     if (!visual(g, id))
         return true;
+    if (!qa_q1_wire_declare_sound(g, "ambience/fire1.wav", error)) return false;
+    if (!visual(g, id)) return true;
+    if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+    if (!visual(g, id)) return true;
     if (!q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error))
         return false;
     e = visual(g, id);
@@ -334,6 +345,11 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!isfinite(e->delay))
             return q1_map_fail(error, "Q1 light ramp period is too small");
         return q1_map_schedule(g, e, .1, Q1_MAP_LIGHT_RAMP_INIT, error);
+    }
+    if (kind == Q1_MAP_CANDLE) {
+        if (!qa_q1_wire_declare_model(g, "progs/candle.mdl", error)) return false;
+        e = visual(g, id);
+        if (!e) return true;
     }
     if (!q1_model(g, e, kind == Q1_MAP_ROPE ? "progs/ropex.mdl"
                              : kind == Q1_MAP_CANDLE ? "progs/candle.mdl" : "progs/flame3.mdl", error))

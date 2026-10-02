@@ -883,6 +883,12 @@ bool frontend_config_store_primary_legacy_current(const frontend_config_store *m
 bool frontend_config_store_select_bindings(frontend_config_store *manager,uint32_t logical,
     qa_strings *strings,const qa_item_definition *items,size_t count,int32_t controller,qa_error *error)
 {
+    bool present=false;
+    if (manager) {
+        if (!frontend_neutral_config_select_bindings(manager->neutral,logical,strings,items,count,
+            controller,&present,error)) return false;
+        if (present) return true;
+    }
     qa_application *application=manager && manager->frontend?manager->frontend->application:NULL;
     frontend_config_source *source=application?published_primary(manager,application):NULL;
     size_t ordinal=source?seat_index(source,logical):0;
@@ -895,6 +901,11 @@ bool frontend_config_store_select_bindings(frontend_config_store *manager,uint32
 bool frontend_config_store_reset_bindings(frontend_config_store *manager,uint32_t logical,
     int32_t controller,qa_error *error)
 {
+    bool present=false;
+    if (manager) {
+        if (!frontend_neutral_config_reset_bindings(manager->neutral,logical,controller,&present,error)) return false;
+        if (present) return true;
+    }
     if (manager && frontend_network_remote(manager->frontend)) {
         frontend_remote_config_view view;
         if (!frontend_network_client_configuration(manager->frontend,logical,&view,error)) return false;
@@ -2727,6 +2738,16 @@ bool frontend_config_store_neutral_read(const frontend_config_store *manager,con
     frontend_neutral_config_view *out,qa_error *error)
 {
     return manager && frontend_neutral_config_read(manager->neutral,console,out,error);
+}
+bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *manager,const qa_console *console,
+    frontend_neutral_config_view *out,qa_error *error)
+{
+    return manager && frontend_neutral_config_checkpoint_read(manager->neutral,console,out,error);
+}
+bool frontend_config_store_neutral_retired_recipient(const frontend_config_store *manager,
+    const qa_application_client_source *source,bool *retained,qa_error *error)
+{
+    return manager && frontend_neutral_config_retired_recipient(manager->neutral,source,retained,error);
 }
 bool frontend_config_store_neutral_startup_read(const frontend_config_store *manager,
     qa_application_client_source *out,bool *found,qa_error *error)

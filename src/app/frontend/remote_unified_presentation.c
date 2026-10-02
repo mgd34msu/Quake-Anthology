@@ -12,6 +12,8 @@
 #include "remote_unified_presentation_save.h"
 #include "remote_unified_prediction_save.h"
 #include "remote_unified_input_save.h"
+#include "unified_q3_runtime_factory.h"
+#include "qa/source_frame_time.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -22,12 +24,19 @@ typedef struct unified_audio_identity {
     qa_actor_id actor;
     uint64_t audio;
 } unified_audio_identity;
+typedef struct unified_presentation unified_presentation;
 typedef struct unified_q3_client_row {
     struct unified_q3_client_row *next;
     frontend_unified_q3_client *client;
     frontend_unified_q3_client_frame *frame;
-    uint64_t receiver;
-    bool selected, born;
+    frontend_unified_q3_runtime_factory *factory;
+    frontend_unified_q3_source_retirement *retirement;
+    unified_presentation *owner;
+    uint64_t receiver,audio_owner;
+    bool selected, born, factory_built, factory_initialized, initialization_attempted, cg_prepared;
+    bool factory_restored,factory_bound;
+    bool primary_view;
+    bool retirement_bound;
 } unified_q3_client_row;
 typedef enum unified_child_kind {
     UNIFIED_MEDIA,UNIFIED_PENDING_MEDIA,UNIFIED_EVENTS,UNIFIED_Q1,UNIFIED_Q2,UNIFIED_Q3,
@@ -35,18 +44,22 @@ typedef enum unified_child_kind {
     UNIFIED_CHILD_COUNT
 } unified_child_kind;
 typedef struct unified_saved_q3_client {
+    unified_presentation *owner;
     size_t source;
-    uint64_t receiver;
-    qa_buffer bytes;
+    uint64_t receiver,audio_owner;
+    const qa_resource *animations[64];
+    qa_buffer bytes,factory,retirement;
+    bool factory_imported,factory_bound;
+    bool retired;
 } unified_saved_q3_client;
 typedef struct unified_presentation_import {
     qa_buffer child[UNIFIED_CHILD_COUNT];
     unified_saved_q3_client *clients;
     size_t client_count;
     bool imported[UNIFIED_CHILD_COUNT];
-    bool received, decoded, media_prepared, roots, media_roots, pending_roots, components_finished, q1_finished;
+    bool received, decoded, media_prepared, roots, media_roots, pending_roots, components_finished, q1_finished, q2_finished, events_finished;
 } unified_presentation_import;
-typedef struct unified_presentation {
+struct unified_presentation {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
     frontend_unified_media *media, *candidate_media;
@@ -62,17 +75,49 @@ typedef struct unified_presentation {
     frontend_unified_component_frame *component_frame;
     frontend_unified_q3_sources *q3_sources;
     frontend_unified_q3_source_frame *q3_source_frame;
-    unified_q3_client_row *q3_clients;
+    unified_q3_client_row *q3_clients,*retired_q3;
     unified_presentation_import *import;
     unified_audio_identity *audio;
-    qa_scene_light *draw_lights;
+    qa_scene_light *draw_lights,*reflected_lights;
+    size_t q2_light_offset,q2_light_count,draw_light_count;
+    uint64_t light_frame;
     uint64_t audio_owner;
     qa_unified_vec3 pending_angles;
     qa_actor_id pending_view_actor;
     bool pending_view;
     bool received, frame_prepared, busy;
     bool restore_complete;
-} unified_presentation;
+    frontend_unified_recipient_clock clock;
+    bool clock_started;
+};
+static bool input(void *,frontend_remote_unified *,const qa_unified_input *,double,qa_error *);
+static bool q3_row_source(const unified_q3_client_row *,bool,frontend_unified_q3_source_view *,qa_error *);
+static unified_q3_client_row *q3_roster_at(const unified_presentation *p,size_t index)
+{
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) if (!row->born && !index--) return row;
+    for (unified_q3_client_row *row=p->retired_q3;row;row=row->next) if (!index--) return row;
+    return NULL;
+}
+static bool q3_retirement_drain(unified_presentation *p,qa_error *error)
+{
+    while (p->retired_q3) {
+        unified_q3_client_row *row=p->retired_q3;
+        if (!frontend_unified_q3_runtime_factory_destroy(&row->factory,error) ||
+            !frontend_unified_q3_client_destroy(&row->client,error)) return false;
+        row->retirement_bound=false;
+        if (!frontend_unified_q3_source_retirement_return(&row->retirement,error)) return false;
+        p->retired_q3=row->next; free(row);
+    }
+    return true;
+}
+static bool q3_retirement_rollback(unified_q3_client_row *row,qa_error *error)
+{
+    if (row->retirement_bound) {
+        if (!frontend_unified_q3_client_retirement_unbind(row->client,row->retirement,error)) return false;
+        row->retirement_bound=false;
+    }
+    return frontend_unified_q3_source_retirement_return(&row->retirement,error);
+}
 
 static bool audio_actor(void *context, qa_actor_id actor, uint64_t *out, qa_error *error)
 {
@@ -157,7 +202,11 @@ static bool idle(void *context, const frontend_remote_unified *replica)
 {
     unified_presentation *p = context;
     if (p) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
-        if (!frontend_unified_q3_client_idle(row->client)) return false;
+        if (!frontend_unified_q3_client_idle(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
+    if (p) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next)
+        if (!frontend_unified_q3_client_idle(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
     return p && (!p->replica || p->replica == replica) && !p->busy &&
         frontend_unified_media_idle(p->media) && frontend_unified_media_idle(p->candidate_media) &&
         frontend_unified_render_idle(p->render) && frontend_unified_render_idle(p->candidate_render) &&
@@ -174,7 +223,10 @@ static void import_free(unified_presentation_import *saved)
 {
     if (!saved) return;
     for (size_t i=0;i<UNIFIED_CHILD_COUNT;++i) qa_buffer_free(saved->child+i);
-    if (saved->clients) for (size_t i=0;i<saved->client_count;++i) qa_buffer_free(&saved->clients[i].bytes);
+    if (saved->clients) for (size_t i=0;i<saved->client_count;++i) {
+        qa_buffer_free(&saved->clients[i].bytes); qa_buffer_free(&saved->clients[i].factory);
+        qa_buffer_free(&saved->clients[i].retirement);
+    }
     free(saved->clients); free(saved);
 }
 static void frame_abort(unified_presentation *p)
@@ -182,9 +234,13 @@ static void frame_abort(unified_presentation *p)
     unified_q3_client_row **slot=&p->q3_clients;
     while (*slot) {
         unified_q3_client_row *row=*slot;
+        if (row->factory && row->frame)
+            frontend_unified_q3_runtime_factory_rebind_abort(row->factory,row->frame);
         frontend_unified_q3_client_abort(&row->frame);
+        q3_retirement_rollback(row,NULL);
         row->selected=false;
-        if (row->born && frontend_unified_q3_client_destroy(&row->client,NULL)) {
+        if (row->born && frontend_unified_q3_runtime_factory_destroy(&row->factory,NULL) &&
+            frontend_unified_q3_client_destroy(&row->client,NULL)) {
             *slot=row->next; free(row);
         } else slot=&row->next;
     }
@@ -201,9 +257,13 @@ static bool close_children(unified_presentation *p, qa_error *error)
     frame_abort(p);
     if (!idle(p,p->replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified CLIENT children have not returned");
+    if (!q3_retirement_drain(p,error)) return false;
     while (p->q3_clients) {
         unified_q3_client_row *row=p->q3_clients;
-        if (!frontend_unified_q3_client_destroy(&row->client,error)) return false;
+        if (!frontend_unified_q3_runtime_factory_destroy(&row->factory,error) ||
+            !frontend_unified_q3_client_destroy(&row->client,error)) return false;
+        row->retirement_bound=false;
+        if (!frontend_unified_q3_source_retirement_return(&row->retirement,error)) return false;
         p->q3_clients=row->next; free(row);
     }
     if (!frontend_unified_input_destroy(&p->physical,error) ||
@@ -220,6 +280,8 @@ static bool close_children(unified_presentation *p, qa_error *error)
     if (!frontend_unified_media_destroy(p->media,error)) return false;
     p->media = NULL; p->received = false;
     free(p->draw_lights); p->draw_lights=NULL;
+    free(p->reflected_lights); p->reflected_lights=NULL;
+    p->q2_light_offset=0; p->q2_light_count=0; p->draw_light_count=0;
     while (p->audio) { unified_audio_identity *row = p->audio; p->audio = row->next; free(row); }
     p->audio_owner = 0; p->pending_view=false;
     import_free(p->import); p->import=NULL; p->restore_complete=false;
@@ -273,14 +335,18 @@ static bool prepare(void *context, frontend_remote_unified *replica, qa_executab
     if (!p || !ready || p->busy || (p->replica && p->replica != replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media preparation changed its physical CLIENT");
     p->replica = replica;
+    if (p->candidate_media && !frontend_unified_media_ready(p->candidate_media)) {
+        if (!frontend_unified_media_destroy(p->candidate_media,error)) return false;
+        p->candidate_media=NULL;
+    }
     if (!p->candidate_media && !frontend_unified_media_create(p->frontend,recipe,&p->candidate_media,error)) return false;
-    *ready = true; return true;
+    *ready = frontend_unified_media_ready(p->candidate_media); return *ready;
 }
 static bool offer_publish(void *context, frontend_remote_unified *replica, qa_executable_recipe *recipe, qa_error *error)
 {
     unified_presentation *p = context;
     if (!p || p->replica != replica || !p->candidate_media || !recipe ||
-        !frontend_unified_media_current(p->candidate_media) || !close_children(p,error)) return false;
+        !frontend_unified_media_ready(p->candidate_media) || !close_children(p,error)) return false;
     p->media = p->candidate_media; p->candidate_media = NULL; return true;
 }
 static bool offer_ready(void *context, frontend_remote_unified *replica, qa_executable_recipe *recipe, qa_error *error)
@@ -319,7 +385,10 @@ static bool control(void *context, frontend_remote_unified *replica, const qa_un
 }
 static bool q3_clients_prepare(unified_presentation *p,qa_error *error)
 {
-    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) row->selected=false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        if (row->retirement && !q3_retirement_rollback(row,error)) return false;
+        row->selected=false;
+    }
     for (size_t i=0;i<frontend_unified_q3_source_frame_count(p->q3_source_frame);++i) {
         frontend_unified_q3_source_view view;
         if (!frontend_unified_q3_source_frame_read(p->q3_source_frame,i,&view,error)) return false;
@@ -329,13 +398,26 @@ static bool q3_clients_prepare(unified_presentation *p,qa_error *error)
         if (!row) {
             row=calloc(1,sizeof(*row));
             if (!row) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining a per-Source compiled CLIENT");
-            if (!frontend_source_identity_allocate(p->frontend,&row->receiver,error)) { free(row); return false; }
-            row->born=true; row->next=p->q3_clients; p->q3_clients=row;
+            if (!frontend_source_identity_allocate(p->frontend,&row->receiver,error) ||
+                !frontend_source_identity_allocate(p->frontend,&row->audio_owner,error)) { free(row); return false; }
+            row->born=true; row->owner=p;
+            unified_q3_client_row **tail=&p->q3_clients;
+            while (*tail) tail=&(*tail)->next;
+            *tail=row;
             if (!frontend_unified_q3_client_create(p->replica,p->q3_sources,&view,row->receiver,&row->client,error)) return false;
         } else if (!row->born && !row->frame &&
             !frontend_unified_q3_client_prepare(row->client,&view,&row->frame,error)) return false;
+        if (row->factory && row->frame &&
+            !frontend_unified_q3_runtime_factory_rebind_prepare(row->factory,row->frame,error)) return false;
         if (row->selected) return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled Source repeats its actual CLIENT activation");
         row->selected=true;
+    }
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) if (!row->selected) {
+        frontend_unified_q3_source_view old;
+        if (!q3_row_source(row,false,&old,error) ||
+            !frontend_unified_q3_source_retirement_prepare(&old,&row->retirement,error) ||
+            !frontend_unified_q3_client_retirement_bind(row->client,row->retirement,error)) return false;
+        row->retirement_bound=true;
     }
     return true;
 }
@@ -346,32 +428,370 @@ static bool q3_clients_ready(const unified_presentation *p)
         if (row->selected) {
             if (row->born ? !frontend_unified_q3_client_current(row->client) :
                 !frontend_unified_q3_client_ready(row->frame)) return false;
-        } else if (!frontend_unified_q3_client_idle(row->client)) return false;
+            if (row->factory && row->frame &&
+                !frontend_unified_q3_runtime_factory_rebind_ready(row->factory,row->frame)) return false;
+        } else if (!row->retirement || !row->retirement_bound ||
+            !frontend_unified_q3_source_retirement_current(row->retirement) ||
+            !frontend_unified_q3_client_retirement_current(row->client) ||
+            !frontend_unified_q3_client_idle(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
     }
     return true;
 }
-static bool q3_clients_commit(unified_presentation *p,qa_error *error)
+static void q3_clients_commit(unified_presentation *p)
 {
     unified_q3_client_row **slot=&p->q3_clients;
     while (*slot) {
         unified_q3_client_row *row=*slot;
         if (row->selected) {
+            if (row->factory && row->frame)
+                frontend_unified_q3_runtime_factory_rebind_commit(row->factory,row->frame);
             frontend_unified_q3_client_commit(&row->frame);
             row->selected=false; row->born=false; slot=&row->next;
         } else {
-            if (!frontend_unified_q3_client_destroy(&row->client,error)) return false;
-            *slot=row->next; free(row);
+            *slot=row->next; row->next=NULL;
+            unified_q3_client_row **tail=&p->retired_q3;
+            while (*tail) tail=&(*tail)->next;
+            *tail=row;
         }
     }
-    return true;
 }
 static bool events_enter(unified_presentation *p,qa_error *error)
 {
     if (p->events && !frontend_unified_events_enter(p->events,error)) return false;
+    if (p->replica->retired) return true;
     if (p->frame_prepared) return true;
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
         if (!row->born && !frontend_unified_q3_client_seal(row->client,error)) return false;
     return true;
+}
+static bool q3_row_source(const unified_q3_client_row *row,bool checkpoint,
+    frontend_unified_q3_source_view *out,qa_error *error)
+{
+    const unified_presentation *p=row?row->owner:NULL;
+    if (!p || !row->client || !p->q3_sources || !out)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG row has no retained CLIENT Source");
+    if (row->retirement) {
+        if (!checkpoint || !frontend_unified_q3_source_retirement_checkpoint_current(row->retirement))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Removed compiled Source grants only retained cold custody");
+        return frontend_unified_q3_source_retirement_read(row->retirement,out,error);
+    }
+    size_t count=checkpoint?frontend_unified_q3_sources_count(p->q3_sources):
+        frontend_unified_q3_sources_committed_count(p->q3_sources);
+    for (size_t i=0;i<count;++i) {
+        frontend_unified_q3_source_view source;
+        if (!(checkpoint?frontend_unified_q3_sources_checkpoint_read(p->q3_sources,i,&source,error):
+            frontend_unified_q3_sources_committed_read(p->q3_sources,i,&source,error))) return false;
+        if (checkpoint?frontend_unified_q3_client_checkpoint_matches(row->client,&source):
+            frontend_unified_q3_client_matches(row->client,&source)) { *out=source; return true; }
+    }
+    return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG row lost its genuine Source activation");
+}
+static bool q3_factory_current(void *context,const frontend_unified_q3_runtime_factory_options *options,
+    bool checkpoint)
+{
+    unified_q3_client_row *row=context;
+    unified_presentation *p=row?row->owner:NULL;
+    if (!p || !options || options->frontend!=p->frontend || options->replica!=p->replica ||
+        options->media!=p->media || options->client!=row->client || options->receiver!=row->receiver ||
+        options->events!=p->events || options->prediction!=p->prediction || options->audio_context!=p ||
+        options->audio_owner!=row->audio_owner || options->audio_actor!=audio_actor || options->primary_view!=row->primary_view) return false;
+    bool linked=false;
+    for (const unified_q3_client_row *candidate=p->q3_clients;candidate;candidate=candidate->next)
+        if (candidate==row) { linked=true; break; }
+    if (checkpoint) for (const unified_q3_client_row *candidate=p->retired_q3;candidate;candidate=candidate->next)
+        if (candidate==row) { linked=true; break; }
+    frontend_unified_q3_source_view source;
+    return linked && q3_row_source(row,checkpoint,&source,NULL) &&
+        source.provider==options->source.provider && source.files==options->source.files &&
+        source.assets==options->source.assets && source.product==options->source.product &&
+        options->source.instance && options->source.content &&
+        !strcmp(source.instance,options->source.instance) && !strcmp(source.content,options->source.content) &&
+        (checkpoint?frontend_unified_q3_client_checkpoint_current(row->client):
+            frontend_unified_q3_client_current(row->client));
+}
+static bool q3_factory_retirement_current(void *context,
+    const frontend_unified_q3_runtime_factory_options *options)
+{
+    unified_q3_client_row *row=context;
+    unified_presentation *p=row?row->owner:NULL;
+    if (!p || !options || options->frontend!=p->frontend || options->replica!=p->replica ||
+        options->media!=p->media || options->client!=row->client || options->receiver!=row->receiver ||
+        options->events!=p->events || options->audio_owner!=row->audio_owner ||
+        frontend_unified_media_recipe(p->media)!=p->replica->recipe ||
+        !frontend_unified_q3_client_idle(row->client)) return false;
+    bool linked=false,bank_found=false;
+    for (const unified_q3_client_row *candidate=p->q3_clients;candidate;candidate=candidate->next)
+        if (candidate==row) { linked=true; break; }
+    for (const unified_q3_client_row *candidate=p->retired_q3;candidate;candidate=candidate->next)
+        if (candidate==row) { linked=true; break; }
+    if (row->retirement && (!frontend_unified_q3_source_retirement_current(row->retirement) ||
+        !frontend_unified_q3_client_retirement_current(row->client))) return false;
+    for (size_t i=0;i<frontend_unified_media_bank_count(p->media);++i) {
+        frontend_unified_bank_view bank;
+        if (!frontend_unified_media_bank_read(p->media,i,&bank)) return false;
+        if (bank.files==options->source.files && bank.q3_assets==options->source.assets &&
+            bank.content && (!options->source.content || !strcmp(bank.content,options->source.content))) {
+            bank_found=true; break;
+        }
+    }
+    return linked && bank_found;
+}
+static bool q3_input_read(void *context,frontend_remote_unified *replica,
+    frontend_unified_input **out,qa_error *error)
+{
+    unified_q3_client_row *row=context;
+    unified_presentation *p=row?row->owner:NULL;
+    if (!p || !out || p->replica!=replica || !p->physical)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG input has no published physical CLIENT builder");
+    *out=p->physical; return true;
+}
+static bool q3_send_client(void *context,frontend_unified_q3_client *client,
+    const qa_command_context *origin,const char *text,qa_error *error)
+{
+    unified_q3_client_row *row=context;
+    unified_presentation *p=row?row->owner:NULL;
+    frontend_unified_q3_source_view source;
+    if (!p || row->client!=client || !origin || !text || origin->owner!=row->receiver ||
+        !q3_row_source(row,false,&source,error) || !qa_actor_id_equal(origin->actor,source.viewer) ||
+        !frontend_remote_unified_current(p->replica,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled client command changed its actual lexical Source");
+    if (!p->replica->options.source_command)
+        return frontend_unified_fail(error,QA_ERROR_UNSUPPORTED,"Compiled Source command channel has no installed scoped emitter");
+    qa_command_tokens arguments={0};
+    if (!qa_command_tokenize(text,QA_CONSOLE_Q3,false,&arguments,error)) return false;
+    bool okay=p->replica->options.source_command(p->replica->options.context,
+        &p->replica->options.domain,source.instance,source.publication,source.map_revision,origin,&arguments,error);
+    qa_command_tokens_free(&arguments);
+    return okay && frontend_remote_unified_current(p->replica,error);
+}
+bool frontend_remote_unified_presentation_source_command_current(const frontend_remote_unified *replica,
+    const char *instance,uint64_t publication,uint64_t map_revision,const qa_command_context *origin,qa_error *error)
+{
+    if (!replica || !instance || !origin || replica->options.consumers.input!=input ||
+        !frontend_remote_unified_current(replica,error)) return false;
+    unified_presentation *p=replica->options.consumers.context;
+    if (!p || p->replica!=replica) return false;
+    for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        frontend_unified_q3_source_view source;
+        if (!q3_row_source(row,false,&source,error)) return false;
+        if (strcmp(source.instance,instance)) continue;
+        const qa_command_context *actual=frontend_unified_q3_client_context(row->client);
+        return (actual && source.publication==publication && source.map_revision==map_revision &&
+            origin->owner==row->receiver && origin->session==actual->session && origin->client==actual->client &&
+            origin->seat==actual->seat && origin->registry==actual->registry && origin->generation==actual->generation &&
+            origin->dialect==QA_CONSOLE_Q3 && origin->origin==actual->origin && qa_actor_id_equal(origin->actor,source.viewer)) ||
+            frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source command lost its real compiled CLIENT origin");
+    }
+    return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source command has no published compiled CLIENT namespace");
+}
+static bool q3_primary_view(unified_presentation *p,const frontend_unified_q3_source_view *source,
+    bool *primary,qa_error *error)
+{
+    const qa_recipe_choices *choices=qa_executable_recipe_choices(frontend_remote_unified_recipe(p->replica));
+    const qa_recipe_binding *binding=NULL;
+    if (!choices || !source || !source->provider || !source->provider->selection.instance || !primary)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled Source view has no real immutable world binding");
+    for (size_t i=0;i<choices->binding_count;++i) {
+        const qa_recipe_binding *candidate=choices->bindings+i;
+        if (candidate->scope.kind!=QA_SCOPE_WORLD || candidate->role!=QA_ROLE_ENTITIES ||
+            (candidate->selector && candidate->selector[0])) continue;
+        if (binding) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled camera world binding is ambiguous");
+        binding=candidate;
+    }
+    *primary=binding && binding->instance && !strcmp(binding->instance,source->provider->selection.instance);
+    return true;
+}
+static bool q3_view_replacement(void *context,const q3n_frame *frame,const qa_q3_player *player,
+    bool *consumed,qa_error *error)
+{
+    unified_q3_client_row *row=context;
+    unified_presentation *p=row?row->owner:NULL;
+    bool linked=false;
+    if (p) for (const unified_q3_client_row *actual=p->q3_clients;actual;actual=actual->next)
+        if (actual==row) { linked=true; break; }
+    if (!linked || !p->render || !frame || !frame->compiled || !consumed ||
+        frame->compiled->source.basis.receiver!=row->receiver ||
+        frontend_unified_q3_runtime_entered(frontend_unified_q3_runtime_factory_runtime(row->factory))!=frame->compiled)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"View equipment callback has no actual entered Source factory");
+    frontend_unified_render_equipment before={0},after={0}; bool present=false,retained=false,result=false;
+    qa_actor_id viewer=frame->compiled->source.basis.viewer;
+    if (!frontend_unified_render_equipment_read(p->render,viewer,&before,&present,error) ||
+        !frontend_unified_q3_equipment_replacement(p->q3,frame,player,&before,present,&result,error) ||
+        !frontend_unified_render_equipment_read(p->render,viewer,&after,&retained,error) ||
+        present!=retained || (present && (before.input!=after.input || before.provider!=after.provider ||
+            before.instance!=after.instance || before.slot!=after.slot || before.visible!=after.visible ||
+            before.source_frame!=after.source_frame || before.scene_sequence!=after.scene_sequence)))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"View equipment callback changed its published renderer receipt");
+    *consumed=result; return true;
+}
+static frontend_unified_q3_runtime_factory_options q3_factory_options(unified_q3_client_row *row,
+    const frontend_unified_q3_source_view *source,bool primary)
+{
+    unified_presentation *p=row->owner;
+    return (frontend_unified_q3_runtime_factory_options){.frontend=p->frontend,.replica=p->replica,
+        .media=p->media,.client=row->client,.source=*source,.input_read=q3_input_read,
+        .prediction=p->prediction,.events=p->events,.receiver=row->receiver,.audio_owner=row->audio_owner,.primary_view=primary,
+        .audio_context=p,.audio_actor=audio_actor,.context=row,.current=q3_factory_current,
+        .retirement_current=q3_factory_retirement_current,
+        .send_client=q3_send_client,.view_replacement=q3_view_replacement,.composition={.context=p->q3,
+            .body_hidden=frontend_unified_q3_body_hidden,.body_submit=frontend_unified_q3_body_submit,
+            .player_weapon=frontend_unified_q3_player_weapon}};
+}
+static bool q3_factories_ensure(unified_presentation *p,qa_error *error)
+{
+    if (!p->q3_clients) return true;
+    if (!p->received || p->frame_prepared || !events_enter(p,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG construction precedes its published Source baseline");
+    if (!p->physical && !frontend_unified_input_create(p->frontend,p->replica,p->prediction,&p->physical,error)) return false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        frontend_unified_q3_source_view source;
+        bool primary=false;
+        if (!q3_row_source(row,false,&source,error) || !q3_primary_view(p,&source,&primary,error)) return false;
+        if (row->factory && !row->factory_built) {
+            if (!frontend_unified_q3_runtime_factory_destroy(&row->factory,error)) return false;
+            row->factory_built=false; row->initialization_attempted=false;
+        }
+        if (row->factory && row->initialization_attempted && !row->factory_initialized) {
+            if (!frontend_unified_q3_runtime_factory_constructor_abort(&row->factory,error)) return false;
+            row->factory_built=false; row->initialization_attempted=false;
+        }
+        if (!row->factory) {
+            row->primary_view=primary;
+            frontend_unified_q3_runtime_factory_options options=q3_factory_options(row,&source,primary);
+            if (!frontend_unified_q3_runtime_factory_create(&options,&row->factory,error)) return false;
+            row->factory_built=true;
+        }
+        if (!row->factory_built)
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG construction retains an incomplete checked child");
+        if (!row->factory_initialized) {
+            row->initialization_attempted=true;
+            if (!frontend_unified_q3_runtime_factory_initialize(row->factory,error)) return false;
+            row->factory_initialized=true;
+        }
+    }
+    return true;
+}
+typedef struct unified_q3_prediction_mapping {
+    unified_q3_client_row *row;
+    int32_t message;
+    const qa_q3_snapshot *snapshot;
+} unified_q3_prediction_mapping;
+static bool q3_prediction_current(void *context,qa_error *error)
+{
+    unified_q3_prediction_mapping *mapping=context;
+    const qa_q3_snapshot *snapshot=NULL;
+    return mapping && mapping->row && frontend_unified_q3_runtime_factory_current(mapping->row->factory) &&
+        frontend_unified_q3_client_snapshot(mapping->row->client,mapping->message,&snapshot,error) &&
+        snapshot==mapping->snapshot && snapshot && snapshot->valid;
+}
+static bool q3_prediction_number(void *context,qa_actor_id actor,uint32_t *number,bool *found,qa_error *error)
+{
+    unified_q3_prediction_mapping *mapping=context;
+    if (!number || !found || !q3_prediction_current(mapping,error)) return false;
+    *found=false;
+    for (uint32_t i=0;i<QA_Q3_ENTITY_WORLD;++i) {
+        qa_actor_id candidate; bool present;
+        if (!frontend_unified_q3_client_snapshot_actor(mapping->row->client,mapping->message,i,
+            &candidate,&present,error)) return false;
+        if (present && qa_actor_id_equal(candidate,actor)) { *number=i; *found=true; break; }
+    }
+    return q3_prediction_current(mapping,error);
+}
+static bool q3_factory_prediction_prepare(unified_q3_client_row *row,qa_error *error)
+{
+    unified_presentation *p=row->owner;
+    frontend_unified_q3_source_view source;
+    bool active=false;
+    if (!row->factory || row->cg_prepared || !q3_row_source(row,false,&source,error) ||
+        !frontend_unified_q3_runtime_factory_prepare(row->factory,0,error)) return false;
+    row->cg_prepared=true;
+    if (!frontend_unified_q3_runtime_factory_process(row->factory,source.time,&active,error)) return false;
+    if (active && row->primary_view) {
+        frontend_unified_q3_runtime_prediction_baseline baseline;
+        frontend_unified_prediction_view predicted;
+        qa_native_q3_client_cvar no_predict,synchronous;
+        if (!frontend_unified_q3_runtime_factory_prediction_baseline(row->factory,&baseline,error) ||
+            !frontend_remote_unified_prediction_read(p->prediction,&predicted,error) ||
+            !frontend_unified_q3_client_cvar_read(row->client,"cg_nopredict",&no_predict,error) ||
+            !frontend_unified_q3_client_cvar_read(row->client,"cg_synchronousClients",&synchronous,error)) return false;
+        frontend_unified_q3_prediction_receipt receipt={.baseline_revision=predicted.authoritative_frame,
+            .command_receipt=predicted.sequence,.outcome=FRONTEND_UNIFIED_Q3_INTERPOLATED};
+        qa_q3_player player=baseline.player;
+        if (!(player.pmFlags&4096) && !no_predict.integer && !synchronous.integer) {
+            unified_q3_prediction_mapping mapping={.row=row,.message=baseline.message};
+            frontend_unified_q3_prediction_source mapper={.context=&mapping,
+                .current=q3_prediction_current,.number=q3_prediction_number};
+            if (!frontend_unified_q3_client_snapshot(row->client,baseline.message,&mapping.snapshot,error) ||
+                !frontend_remote_unified_prediction_merged_q3(p->prediction,&baseline.player,baseline.viewer,
+                    &mapper,&player,&predicted,error)) return false;
+            receipt.outcome=predicted.status==FRONTEND_UNIFIED_PREDICTION_EXHAUSTED?FRONTEND_UNIFIED_Q3_EXHAUSTED:
+                predicted.status==FRONTEND_UNIFIED_PREDICTION_ACTIVE?FRONTEND_UNIFIED_Q3_MOVED:FRONTEND_UNIFIED_Q3_UNMOVED;
+            if (receipt.outcome==FRONTEND_UNIFIED_Q3_MOVED) {
+                frontend_unified_prediction_view boundary; bool matched=false;
+                if (!frontend_remote_unified_prediction_read_command_boundary(p->prediction,
+                    baseline.previous_command_time,&boundary,&matched,error) ||
+                    boundary.authoritative_frame!=predicted.authoritative_frame || boundary.sequence!=predicted.sequence)
+                    return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled prediction boundary changed its actual replay receipt");
+                receipt.teleport_consumed=matched;
+            }
+        }
+        if (!frontend_unified_q3_runtime_factory_prediction(row->factory,&player,&receipt,
+            baseline.correction,baseline.correction_time,baseline.hyperspace,error)) return false;
+    }
+    return true;
+}
+static bool q3_factories_prediction_prepare(unified_presentation *p,qa_error *error)
+{
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (!q3_factory_prediction_prepare(row,error)) return false;
+    return true;
+}
+static bool camera(void *context,qa_scene_view *view,float *fov,bool *owned,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!view || !fov || !owned)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled camera has no admitted world bindings");
+    *owned=false;
+    unified_q3_client_row *primary=NULL;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        frontend_unified_q3_source_view source;
+        if (!q3_row_source(row,false,&source,error)) return false;
+        bool selected=false;
+        if (!q3_primary_view(p,&source,&selected,error)) return false;
+        if (!selected) continue;
+        if (primary) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled camera has multiple clients for its primary Source");
+        primary=row;
+    }
+    if (!primary) return true;
+    frontend_unified_q3_runtime_camera receipt; bool active=false;
+    if (!primary->cg_prepared ||
+        !frontend_unified_q3_runtime_factory_camera_prepare(primary->factory,&receipt,&active,error)) return false;
+    if (!active) return true;
+    const qa_q3_refdef *r=&receipt.refdef;
+    if (r->x<0 || r->y<0 || r->width<=0 || r->height<=0 ||
+        !(r->fov_x>0 && r->fov_x<180 && r->fov_y>0 && r->fov_y<180) ||
+        !(receipt.near_clip>0 && receipt.far_clip>receipt.near_clip))
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled camera returned an invalid actual refdef");
+    int64_t x=(int64_t)receipt.viewport.x+r->x,y=(int64_t)receipt.viewport.y+r->y;
+    if (x<INT32_MIN || x>INT32_MAX || y<INT32_MIN || y>INT32_MAX)
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled camera viewport exceeds its physical rectangle");
+    qa_scene_view selected=*view;
+    selected.viewport=(qa_scene_rect){(int32_t)x,(int32_t)y,(uint32_t)r->width,(uint32_t)r->height};
+    selected.origin=r->origin; memcpy(selected.axis,r->axis,sizeof(selected.axis));
+    selected.projection=qa_scene_projection(r->fov_x,r->fov_y,receipt.near_clip,receipt.far_clip);
+    *view=selected; *fov=r->fov_x; *owned=true; return true;
+}
+static bool q3_factories_frame_end(unified_presentation *p,bool completed,qa_error *error)
+{
+    bool okay=true;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (row->cg_prepared) {
+            qa_error child_error={0};
+            if (frontend_unified_q3_runtime_factory_frame_end(row->factory,completed,&child_error)) row->cg_prepared=false;
+            else { if (okay && error) *error=child_error; okay=false; }
+        }
+    return okay;
 }
 static bool frame(void *context, frontend_remote_unified *replica, const qa_unified_document *doc,
     const qa_unified_document *prediction, frontend_unified_frame_preparation *state, qa_error *error)
@@ -379,6 +799,11 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
     unified_presentation *p = context;
     if (!p || p->replica != replica || !state || !p->events || !p->q1 || !p->q2 || !p->q3)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame has incomplete actual CLIENT children");
+    if (p->physical && frontend_unified_input_pending(p->physical)) {
+        *state=FRONTEND_UNIFIED_FRAME_WAIT;
+        return true;
+    }
+    if (!q3_retirement_drain(p,error)) return false;
     if (p->frame_prepared) { *state=FRONTEND_UNIFIED_FRAME_READY; return true; }
     bool component_ready=false;
     if (!frontend_unified_components_frame_prepare(p->components,doc,&p->component_frame,&component_ready,error)) {
@@ -420,7 +845,7 @@ static bool publish(void *context, frontend_remote_unified *replica, const qa_un
     frontend_unified_q3_frame_commit(p->q3); frontend_unified_events_frame_commit(p->events);
     frontend_unified_components_frame_commit(&p->component_frame);
     frontend_unified_q3_sources_commit(&p->q3_source_frame);
-    if (!q3_clients_commit(p,error)) return false;
+    q3_clients_commit(p);
     /* Retirement was qualified above; no callback or allocation separates that
      * check from this owned HUD/frame disposal. */
     if (!frontend_unified_render_destroy(&p->render,error)) return false;
@@ -439,7 +864,40 @@ static bool input(void *context, frontend_remote_unified *replica, const qa_unif
 static bool sample(void *context, frontend_remote_unified *replica, uint64_t now, qa_error *error)
 {
     unified_presentation *p = context; (void)now;
-    return p && p->replica == replica && events_enter(p,error);
+    return p && p->replica == replica && q3_retirement_drain(p,error) && events_enter(p,error);
+}
+static bool clock_read(void *context,const frontend_remote_unified *replica,
+    frontend_unified_recipient_clock *out,qa_error *error)
+{
+    const unified_presentation *p=context;
+    if (!p || p->replica!=replica || !out || !p->clock_started ||
+        p->clock.begin_generation!=p->frontend->recipient_begin_generation ||
+        p->clock.physical_frame!=p->frontend->frame_number ||
+        p->clock.wall_time_ns!=p->frontend->wall_time_ns ||
+        !frontend_remote_unified_current(replica,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock has no committed physical frame");
+    *out=p->clock; return true;
+}
+static bool begin_frame(void *context,frontend_remote_unified *replica,uint64_t now,
+    uint64_t elapsed,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!p || p->replica!=replica || p->busy || now!=p->frontend->wall_time_ns || elapsed>now)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock changed its physical frame receipt");
+    if (p->clock_started && p->clock.begin_generation==p->frontend->recipient_begin_generation)
+        return (p->clock.physical_frame==p->frontend->frame_number &&
+            p->clock.wall_time_ns==now && p->clock.wall_elapsed_ns==elapsed) ||
+            frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient begin retry changed its genuine frame tuple");
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
+    double duration=(double)elapsed/1000000.0;
+    if (!domain || !qa_source_frame_time_sample(domain->cvars,duration,false,false,&duration,error)) return false;
+    double time=(p->clock_started?p->clock.milliseconds:(double)(now-elapsed)/1000000.0)+duration;
+    if (!isfinite(time) || !isfinite(duration) || duration<0)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock exceeds its real source time range");
+    p->clock=(frontend_unified_recipient_clock){.milliseconds=time,.source_elapsed_ms=duration,
+        .begin_generation=p->frontend->recipient_begin_generation,
+        .physical_frame=p->frontend->frame_number,.wall_time_ns=now,.wall_elapsed_ns=elapsed};
+    p->clock_started=true; return true;
 }
 static bool physical_ready(void *context, frontend_remote_unified *replica,
     uint64_t *sequence, bool *needed, qa_error *error)
@@ -468,39 +926,123 @@ static bool physical_input(void *context, frontend_remote_unified *replica,
     unified_presentation *p=context;
     if (!p || p->replica != replica || !p->physical || !p->received || p->busy)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified physical sample has no authoritative input owner");
-    return frontend_unified_input_build(p->physical,sample_value,sequence,source_elapsed_ms,error);
+    frontend_unified_recipient_clock clock;
+    (void)source_elapsed_ms;
+    if (!clock_read(p,replica,&clock,error)) return false;
+    return frontend_unified_input_build(p->physical,sample_value,sequence,clock.source_elapsed_ms,error);
 }
 static bool world(void *context, const qa_scene_view *view, const qa_scene_world_input *input,
     qa_scene_frame *frame, qa_error *error)
 {
     unified_presentation *p = context;
-    return frontend_unified_q1_world(p->q1,view,input,frame,error) &&
-        frontend_unified_q2_world(p->q2,view,input,frame,error) && frontend_unified_q3_world(p->q3,view,input,frame,error) &&
+    return frontend_unified_q2_world(p->q2,view,input,frame,error) && frontend_unified_q3_world(p->q3,view,input,frame,error) &&
         frontend_unified_components_world(p->components,view,input,frame,error) &&
         frontend_unified_events_draw(p->events,view,frame,error);
+}
+static bool reflected_world(void *context,const qa_scene_world_input *input_value,
+    qa_scene_frame *frame_value,qa_error *error)
+{
+    unified_presentation *p=context;
+    return frontend_unified_q3_reflected_world(p->q3,input_value,frame_value,error);
 }
 static bool lights(void *context, const qa_scene_view *view, const qa_scene_world_input *input,
     const qa_scene_light **out, size_t *count, qa_error *error)
 {
     unified_presentation *p = context;
+    frontend_unified_recipient_clock clock;
     const qa_scene_light *q2=NULL,*q3=NULL,*components=NULL; size_t n=0,m=0,k=0;
-    if (!frontend_unified_components_prepare_draw(p->components,view,p->frontend->frame.sequence,error) ||
-        !frontend_unified_components_lights(p->components,&components,&k,error) ||
+    qa_q3_source_scene_bank *bank=NULL;
+    if (!clock_read(p,p->replica,&clock,error) ||
+        !frontend_unified_components_prepare_draw(p->components,view,p->frontend->frame.sequence,&clock,error) ||
         !frontend_unified_q2_lights(p->q2,view,input,&q2,&n,error) ||
-        !frontend_unified_q3_lights(p->q3,view,input,&q3,&m,error)) return false;
-    if (!n && !m && !k) { *out=input->lights; *count=input->light_count; return true; }
+        !frontend_unified_q3_lights(p->q3,view,input,&q3,&m,error) ||
+        !frontend_unified_q3_scene_bank_read(p->q3,&p->frontend->frame,&bank,error)) return false;
+    size_t native_count=0;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        const qa_scene_light *span; size_t length;
+        bool active=false;
+        if (!row->cg_prepared ||
+            (!row->primary_view && !frontend_unified_q3_runtime_factory_scene_camera(row->factory,view,error)) ||
+            !frontend_unified_q3_runtime_factory_scene_prepare(row->factory,bank,&active,error) ||
+            !frontend_unified_q3_runtime_factory_scene_lights(row->factory,&span,&length,error)) return false;
+        if (length>SIZE_MAX-native_count)
+            return frontend_unified_fail(error,QA_ERROR_MEMORY,"Compiled Source light spans exceed draw storage");
+        native_count+=length;
+    }
+    if (!frontend_unified_components_lights_bank(p->components,bank,&components,&k,error)) return false;
+    p->q2_light_offset=input->light_count; p->q2_light_count=n;
+    p->light_frame=p->frontend->frame.sequence;
+    if (!n && !m && !k && !native_count) {
+        p->draw_light_count=0; *out=input->lights; *count=input->light_count; return true;
+    }
     size_t limit=SIZE_MAX/sizeof(*q2);
     if (input->light_count>limit || n>limit-input->light_count || m>limit-input->light_count-n ||
-        k>limit-input->light_count-n-m)
+        k>limit-input->light_count-n-m || native_count>limit-input->light_count-n-m-k)
         return frontend_unified_fail(error,QA_ERROR_MEMORY,"Unified light pool exceeds actual draw storage");
-    size_t total=n+m+k+input->light_count;
+    size_t total=n+m+k+native_count+input->light_count;
     qa_scene_light *joined=malloc(total*sizeof(*joined));
     if (!joined) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Joining received family light pools");
     if (input->light_count) memcpy(joined,input->lights,input->light_count*sizeof(*joined));
     if (n) memcpy(joined+input->light_count,q2,n*sizeof(*joined));
     if (m) memcpy(joined+input->light_count+n,q3,m*sizeof(*joined));
     if (k) memcpy(joined+input->light_count+n+m,components,k*sizeof(*joined));
-    free(p->draw_lights); p->draw_lights=joined; *out=joined; *count=total; return true;
+    size_t offset=input->light_count+n+m+k;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        const qa_scene_light *span; size_t length;
+        if (!frontend_unified_q3_runtime_factory_scene_lights(row->factory,&span,&length,error)) {
+            free(joined); return false;
+        }
+        if (length) memcpy(joined+offset,span,length*sizeof(*joined));
+        offset+=length;
+    }
+    free(p->draw_lights); p->draw_lights=joined; p->draw_light_count=total;
+    *out=joined; *count=total; return true;
+}
+static bool reflected_lights(void *context,qa_scene_world_input *input,qa_scene_frame *frame,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!p || !input || frame!=&p->frontend->frame || p->light_frame!=frame->sequence ||
+        (p->draw_light_count && (input->lights!=p->draw_lights || input->light_count!=p->draw_light_count)))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Reflected lights lost their retained normal-view ranges");
+    if (!p->q2_light_count) return true;
+    const qa_scene_light *q2=NULL; size_t count=0;
+    if (!frontend_unified_q2_lights(p->q2,&input->view,input,&q2,&count,error)) return false;
+    size_t tail=p->draw_light_count-p->q2_light_offset-p->q2_light_count;
+    if (count>SIZE_MAX/sizeof(*q2)-p->q2_light_offset-tail)
+        return frontend_unified_fail(error,QA_ERROR_MEMORY,"Reflected Source lights exceed draw storage");
+    size_t total=p->q2_light_offset+count+tail;
+    qa_scene_light *joined=total?malloc(total*sizeof(*joined)):NULL;
+    if (total && !joined) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining reflected Source light metadata");
+    if (p->q2_light_offset) memcpy(joined,p->draw_lights,p->q2_light_offset*sizeof(*joined));
+    if (count) memcpy(joined+p->q2_light_offset,q2,count*sizeof(*joined));
+    if (tail) memcpy(joined+p->q2_light_offset+count,
+        p->draw_lights+p->q2_light_offset+p->q2_light_count,tail*sizeof(*joined));
+    free(p->reflected_lights); p->reflected_lights=joined;
+    input->lights=joined; input->light_count=total; return true;
+}
+static bool world_models(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!frontend_unified_q1_world_models(p->q1,input_value,frame_value,error) ||
+        !frontend_unified_q2_world_models(p->q2,input_value,frame_value,error)) return false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (!row->cg_prepared ||
+            !frontend_unified_q3_runtime_factory_scene_submit(row->factory,input_value,frame_value,error)) return false;
+    return true;
+}
+static bool particles(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_error *error)
+{
+    unified_presentation *p=context;
+    return frontend_unified_q1_world_particles(p->q1,input_value,frame_value,error) &&
+        frontend_unified_q2_world_particles(p->q2,input_value,frame_value,error);
+}
+static bool dlights(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_scene_vec4 *overlay,qa_error *error)
+{
+    return frontend_unified_q1_world_dlights(((unified_presentation *)context)->q1,input_value,frame_value,overlay,error);
+}
+static bool blend(void *context,const qa_scene_world_input *input_value,qa_scene_vec4 overlay,qa_scene_frame *frame_value,qa_error *error)
+{
+    return frontend_unified_q1_world_blend(((unified_presentation *)context)->q1,input_value,overlay,frame_value,error);
 }
 static bool world_input(void *context, qa_scene_world_input *input, qa_error *error)
 {
@@ -508,12 +1050,24 @@ static bool world_input(void *context, qa_scene_world_input *input, qa_error *er
     return frontend_unified_q1_world_input(p->q1,input,error) &&
         frontend_unified_q2_world_input(p->q2,input,error);
 }
+static bool view_origin(void *context,qa_actor_id actor,qa_vec3 origin,float fov,qa_error *error)
+{
+    return frontend_unified_q2_view_origin(((unified_presentation *)context)->q2,actor,origin,fov,error);
+}
 static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame *frame, qa_error *error)
 {
     unified_presentation *p = context;
-    return frontend_unified_q1_hud(p->q1,ui,viewport,frame,error) &&
+    qa_q3_presentation *recipient=NULL;
+    if (!(frontend_unified_q1_hud(p->q1,ui,viewport,frame,error) &&
         frontend_unified_q2_hud(p->q2,ui,viewport,frame,error) &&
-        frontend_unified_components_hud(p->components,ui,viewport,frame,error);
+        frontend_unified_components_hud(p->components,ui,viewport,frame,error) &&
+        frontend_unified_q3_hud_recipient_read(p->q3,frame,&recipient,error) &&
+        frontend_unified_components_pictures(p->components,recipient,frame,error))) return false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        bool rendered=false;
+        if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_hud(row->factory,&rendered,error)) return false;
+    }
+    return true;
 }
 static bool model(void *context, qa_actor_id actor, const char *content, const char *path,
     qa_scene_model_input *input, qa_error *error)
@@ -522,11 +1076,60 @@ static bool model(void *context, qa_actor_id actor, const char *content, const c
     return frontend_unified_q1_model(p->q1,actor,content,path,input,error) &&
         frontend_unified_q2_model(p->q2,actor,content,path,input,error);
 }
+static bool source_model(void *context,qa_actor_id actor,uint32_t provider,const char *instance,
+    bool *owned,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!p || !instance || !provider || !owned)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source model has no actual rendering namespace");
+    *owned=false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        frontend_unified_q3_source_view source;
+        if (!q3_row_source(row,false,&source,error)) return false;
+        if (source.provider->source_owner!=provider || strcmp(source.instance,instance)) continue;
+        frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
+        if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_scene_actor(row->factory,actor,&receipt,&present,error)) return false;
+        if (present && (receipt.provider!=provider || !receipt.instance || strcmp(receipt.instance,instance) ||
+            !qa_actor_id_equal(receipt.actor,actor)))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source model admission changed its full actor or rendering namespace");
+        *owned=present; return true;
+    }
+    return true;
+}
+static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,const char *instance,
+    bool slot,bool *owned,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!p || !instance || !provider || !owned)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"View equipment has no actual rendering namespace");
+    *owned=false;
+    if (slot) return true;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        frontend_unified_q3_source_view source;
+        if (!q3_row_source(row,false,&source,error)) return false;
+        if (source.provider->source_owner!=provider || strcmp(source.instance,instance)) continue;
+        if (!row->cg_prepared) return true;
+        frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
+        if (!frontend_unified_q3_runtime_factory_scene_view_weapon(row->factory,actor,&receipt,&present,error)) return false;
+        if (present && (receipt.provider!=provider || !receipt.instance || strcmp(receipt.instance,instance) ||
+            receipt.publication!=source.publication || receipt.map_revision!=source.map_revision ||
+            !qa_actor_id_equal(receipt.actor,actor)))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Native viewgun admission changed its actual equipment namespace");
+        *owned=present; return true;
+    }
+    return true;
+}
 static bool model_after(void *context,qa_actor_id actor,const char *content,const char *path,
     const qa_scene_model_input *input_value,qa_scene_frame *frame_value,qa_error *error)
 {
     return frontend_unified_q2_model_after(((unified_presentation *)context)->q2,actor,content,path,
         input_value,frame_value,error);
+}
+static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_scene_vec4 *value,
+    bool damage_present,const qa_scene_vec4 *damage,qa_scene_rect viewport,qa_scene_frame *frame_value,qa_error *error)
+{
+    unified_presentation *p=context;
+    return frontend_unified_q2_player_blend(p->q2,actor,present,value,damage_present,damage,viewport,frame_value,error);
 }
 static bool draw(void *context, frontend_remote_unified *replica, float stereo, qa_audio_listener *listener, qa_error *error)
 {
@@ -534,11 +1137,26 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
     if (!p || p->replica != replica || !p->render || !p->received)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified drawing awaits its actual received frame");
     frontend_unified_prediction_view prediction;
-    frontend_unified_render_children children = {.context=p,.world_input=world_input,.lights=lights,.world=world,.hud=hud,.model=model,.model_after=model_after};
-    if (!frontend_remote_unified_prediction_read(p->prediction,&prediction,error) ||
-        !events_enter(p,error) ||
-        !frontend_unified_render_draw(p->render,&prediction,&children,stereo,listener,error)) return false;
-    return audio_actor(p,prediction.actor,&listener->actor,error);
+    bool source_listener=false;
+    frontend_unified_render_children children = {.context=p,.camera=camera,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
+        .world=world,.reflected_world=reflected_world,.world_models=world_models,.particles=particles,.dlights=dlights,.blend=blend,
+        .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after};
+    bool okay=frontend_remote_unified_prediction_read(p->prediction,&prediction,error) &&
+        events_enter(p,error) && q3_factories_ensure(p,error) && q3_factories_prediction_prepare(p,error) &&
+        frontend_unified_render_draw(p->render,&prediction,&children,stereo,listener,error);
+    if (okay) for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        if (!row->primary_view) continue;
+        qa_audio_listener received; bool present=false;
+        if (!frontend_unified_q3_runtime_factory_listener(row->factory,&received,&present,error)) { okay=false; break; }
+        if (present) { *listener=received; source_listener=true; }
+    }
+    qa_error returned={0};
+    if (!q3_factories_frame_end(p,okay,&returned)) {
+        if (okay && error) *error=returned;
+        okay=false;
+    }
+    if (!okay) return false;
+    return source_listener || audio_actor(p,prediction.actor,&listener->actor,error);
 }
 static bool close(void *context, frontend_remote_unified *replica, qa_error *error)
 {
@@ -562,7 +1180,7 @@ static frontend_remote_unified_consumers consumers(unified_presentation *p)
 {
     return (frontend_remote_unified_consumers){.context=p,.prepare=prepare,.offer_publish=offer_publish,
         .offer_ready=offer_ready,.control=control,.frame=frame,.publish=publish,.input=input,
-        .physical_ready=physical_ready,.physical_input=physical_input,.sample=sample,.draw=draw,
+        .physical_ready=physical_ready,.physical_input=physical_input,.begin_frame=begin_frame,.clock_read=clock_read,.sample=sample,.draw=draw,
         .idle=idle,.close=close,.content_visit=content_visit,.dispose=dispose};
 }
 bool frontend_remote_unified_presentation_create(qa_frontend *frontend,
@@ -630,6 +1248,7 @@ size_t frontend_remote_unified_presentation_q3_client_count(const frontend_remot
     size_t count=0;
     if (p && p->replica==replica) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
         if (!row->born) ++count;
+    if (p && p->replica==replica) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next) ++count;
     return count;
 }
 frontend_unified_q3_client *frontend_remote_unified_presentation_q3_client(
@@ -638,9 +1257,44 @@ frontend_unified_q3_client *frontend_remote_unified_presentation_q3_client(
     if (!replica || replica->options.consumers.input!=input) return NULL;
     const unified_presentation *p=replica->options.consumers.context;
     if (!p || p->replica!=replica) return NULL;
-    for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
-        if (!row->born && !index--) return row->client;
-    return NULL;
+    const unified_q3_client_row *row=q3_roster_at(p,index);
+    return row?row->client:NULL;
+}
+frontend_unified_q3_runtime_factory *frontend_remote_unified_presentation_q3_factory(
+    const frontend_remote_unified *replica,size_t index)
+{
+    if (!replica || replica->options.consumers.input!=input) return NULL;
+    const unified_presentation *p=replica->options.consumers.context;
+    if (!p || p->replica!=replica) return NULL;
+    const unified_q3_client_row *row=q3_roster_at(p,index);
+    return row?row->factory:NULL;
+}
+bool frontend_remote_unified_presentation_q3_row_read(const frontend_remote_unified *replica,size_t index,
+    frontend_unified_presentation_q3_row *out,qa_error *error)
+{
+    if (!replica || !out || replica->options.consumers.input!=input)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG roster has no actual Unified factory");
+    const unified_presentation *p=replica->options.consumers.context;
+    if (!p || p->replica!=replica || p->busy || replica->busy)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG roster overlaps an actual factory callback");
+    bool checkpoint=p->frontend->capture!=NULL || p->frontend->source_restoring;
+    const unified_q3_client_row *row=q3_roster_at(p,index);
+    if (row) {
+        frontend_unified_q3_source_view source;
+        if (!(row->retirement?frontend_unified_q3_source_retirement_read(row->retirement,&source,error):
+            q3_row_source(row,checkpoint,&source,error))) return false;
+        for (size_t i=0;i<frontend_unified_media_bank_count(p->media);++i) {
+            frontend_unified_bank_view bank;
+            if (!frontend_unified_media_bank_read(p->media,i,&bank)) return false;
+            if (bank.files==source.files && bank.q3_assets==source.assets) {
+                *out=(frontend_unified_presentation_q3_row){.client=row->client,.factory=row->factory,
+                    .media=p->media,.source=source,.bank=i,.receiver=row->receiver,.audio_owner=row->audio_owner,
+                    .retired=row->retirement!=NULL};
+                return true;
+            }
+        }
+    }
+    return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG roster lost its true bank or CLIENT ordinal");
 }
 bool frontend_remote_unified_presentation_restore_media(frontend_remote_unified *replica,
     frontend_unified_media **installed,frontend_unified_media **pending,qa_error *error)
@@ -708,6 +1362,17 @@ bool frontend_remote_unified_presentation_body(const frontend_remote_unified *re
     if (!p || p->replica!=replica || !p->received || p->busy)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified body awaits a returned authoritative prediction scene");
     return frontend_remote_unified_prediction_body_read(p->prediction,actor,out,error);
+}
+
+bool frontend_remote_unified_presentation_point_contents(const frontend_remote_unified *replica,
+    const qa_point_query *query,qa_point_contents *out,qa_error *error)
+{
+    if (!replica || replica->options.consumers.input!=input)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified contents has no actual CLIENT collision owner");
+    const unified_presentation *p=replica->options.consumers.context;
+    if (!p || p->replica!=replica || !p->received || p->busy)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified contents awaits a returned authoritative prediction scene");
+    return frontend_remote_unified_prediction_point_contents(p->prediction,query,out,error);
 }
 
 static unified_presentation *presentation_owner(const frontend_remote_unified *replica)
@@ -778,17 +1443,49 @@ static bool child_capture(unified_presentation *p,unified_child_kind kind,
     }
     return false;
 }
+static bool animation_encode(void *context,const qa_resource *resource,uint64_t *key,qa_error *error)
+{
+    unified_saved_q3_client *saved=context;
+    if (!saved || !resource || !key || !frontend_remote_unified_checkpoint_current(saved->owner->replica,error)) return false;
+    for (size_t i=0;i<64;++i) if (saved->animations[i]==resource) { *key=i+1; return true; }
+    return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled animation leaves its actual Source cache inventory");
+}
+static bool animation_decode(void *context,uint64_t key,const qa_resource **resource,qa_error *error)
+{
+    unified_saved_q3_client *saved=context;
+    if (!saved || !resource || !key || key>64 || !saved->animations[key-1] ||
+        !frontend_remote_unified_checkpoint_current(saved->owner->replica,error))
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled animation has no retained content graph resource");
+    *resource=saved->animations[key-1]; return true;
+}
+static bool factory_refs(unified_presentation *p,unified_saved_q3_client *saved,size_t index,bool importing,
+    const frontend_unified_presentation_refs *refs,frontend_unified_q3_runtime_factory_refs *out,qa_error *error)
+{
+    q3n_client_refs clients={saved,animation_encode,animation_decode};
+    if (!refs->factory_refs)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled runtime capsule has no actual movie and audio graph resolver");
+    if (!refs->factory_refs(refs->factory_context,p->replica,index,importing,&clients,out,error)) return false;
+    return out->clients.context==clients.context && out->clients.resource_encode==clients.resource_encode &&
+        out->clients.resource_decode==clients.resource_decode;
+}
 static bool presentation_fields(unified_presentation *p,unified_presentation_import *saved,
     const frontend_unified_presentation_refs *refs,qa_source_save_io *io)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    char magic[4]={'Q','U','P','C'}; uint32_t version=1,epoch=p->replica->epoch;
+    char magic[4]={'Q','U','P','C'}; uint32_t version=6,epoch=p->replica->epoch;
     uint32_t physical=p->replica->options.domain.physical_seat;
     uint64_t frame_number=p->replica->frame_number;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUPC",sizeof(magic)) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&epoch) || epoch!=p->replica->epoch ||
+        !qa_source_save_u32(io,&version) || version!=6 || !qa_source_save_u32(io,&epoch) || epoch!=p->replica->epoch ||
         !qa_source_save_u32(io,&physical) || physical!=p->replica->options.domain.physical_seat ||
         !qa_source_save_u64(io,&frame_number) || frame_number!=p->replica->frame_number ||
+        !qa_source_save_bool(io,&p->clock_started) ||
+        !qa_source_save_f64(io,&p->clock.milliseconds) || !isfinite(p->clock.milliseconds) ||
+        !qa_source_save_f64(io,&p->clock.source_elapsed_ms) || !isfinite(p->clock.source_elapsed_ms) || p->clock.source_elapsed_ms<0 ||
+        !qa_source_save_u64(io,&p->clock.begin_generation) ||
+        !qa_source_save_u64(io,&p->clock.physical_frame) ||
+        !qa_source_save_u64(io,&p->clock.wall_time_ns) ||
+        !qa_source_save_u64(io,&p->clock.wall_elapsed_ns) || p->clock.wall_elapsed_ns>p->clock.wall_time_ns ||
         !qa_source_save_bool(io,&saved->received) || (saved->received && !p->replica->frame) ||
         !qa_source_save_u64(io,&p->audio_owner) || (p->audio_owner && !saved_identity(p->frontend,p->audio_owner)) ||
         !qa_source_save_bool(io,&p->pending_view) || !qa_source_save_f64(io,&p->pending_angles.x) ||
@@ -811,33 +1508,73 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
         if (i!=UNIFIED_PENDING_MEDIA && i!=UNIFIED_INPUT && !saved->child[i].size) return false;
     if (!saved->received && (saved->child[UNIFIED_RENDER].size || saved->child[UNIFIED_INPUT].size)) return false;
     if (!reading) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next) ++saved->client_count;
-    if (!qa_source_save_count(io,&saved->client_count,reading?(io->input.size-io->offset)/24:SIZE_MAX) ||
+    if (!reading) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next) ++saved->client_count;
+    if (!qa_source_save_count(io,&saved->client_count,reading?(io->input.size-io->offset)/32:SIZE_MAX) ||
         saved->client_count>SIZE_MAX/sizeof(*saved->clients)) return false;
     if (saved->client_count) {
         saved->clients=calloc(saved->client_count,sizeof(*saved->clients));
         if (!saved->clients) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining per-Source compiled CLIENT capsule order");
     }
-    const unified_q3_client_row *row=p->q3_clients;
     for (size_t i=0;i<saved->client_count;++i) {
+        const unified_q3_client_row *row=reading?NULL:q3_roster_at(p,i);
         unified_saved_q3_client *client=saved->clients+i;
+        client->owner=p;
         if (!reading) {
-            if (!row || row->born || row->frame) return false;
-            client->receiver=row->receiver; bool found=false;
-            for (size_t n=0;n<frontend_unified_q3_sources_count(p->q3_sources);++n) {
+            if (!row || row->born || row->frame || row->cg_prepared ||
+                (row->factory && (!row->factory_built || !row->factory_initialized)))
+                return frontend_unified_fail(io->error,QA_ERROR_ARGUMENT,"Compiled runtime capture requires its complete returned actual child");
+            client->receiver=row->receiver; client->audio_owner=row->audio_owner;
+            client->retired=row->retirement!=NULL; bool found=client->retired;
+            if (client->retired && !frontend_unified_q3_source_retirement_checkpoint(row->retirement,&client->retirement,io->error)) return false;
+            for (size_t n=0;!client->retired && n<frontend_unified_q3_sources_count(p->q3_sources);++n) {
                 frontend_unified_q3_source_view view;
                 if (!frontend_unified_q3_sources_checkpoint_read(p->q3_sources,n,&view,io->error)) return false;
                 if (frontend_unified_q3_client_checkpoint_matches(row->client,&view)) { client->source=n; found=true; break; }
             }
             if (!found || !frontend_unified_q3_client_checkpoint(row->client,&client->bytes,io->error)) return false;
-            row=row->next;
+            if (row->factory) {
+                frontend_unified_q3_runtime_factory_topology topology;
+                q3n_media *native_media=NULL; q3n_clients *clients=NULL;
+                if (!frontend_unified_q3_runtime_factory_topology_read(row->factory,&topology,io->error)) return false;
+                if (topology.services &&
+                    !frontend_unified_q3_runtime_services_caches(topology.services,&native_media,&clients,io->error)) return false;
+                for (uint32_t n=0;clients && n<64;++n) {
+                    const qa_vfs_acquisition *receipt=NULL;
+                    if (!q3n_clients_animation_holder(clients,n,client->animations+n,&receipt,io->error)) return false;
+                }
+                frontend_unified_q3_runtime_factory_refs actual;
+                if (!factory_refs(p,client,i,false,refs,&actual,io->error) ||
+                    !frontend_unified_q3_runtime_factory_checkpoint(row->factory,&actual,&client->factory,io->error)) return false;
+            }
         }
-        if (!qa_source_save_count(io,&client->source,SIZE_MAX) || !qa_source_save_u64(io,&client->receiver) ||
+        if (!qa_source_save_bool(io,&client->retired) || !saved_blob(io,&client->retirement) ||
+            (client->retired!=(client->retirement.size!=0)) ||
+            !qa_source_save_count(io,&client->source,SIZE_MAX) || (client->retired && client->source) ||
+            !qa_source_save_u64(io,&client->receiver) ||
+            !qa_source_save_u64(io,&client->audio_owner) || !saved_identity(p->frontend,client->audio_owner) ||
+            client->audio_owner==client->receiver || client->audio_owner==p->audio_owner ||
             !saved_identity(p->frontend,client->receiver) || client->receiver==p->audio_owner ||
             !saved_blob(io,&client->bytes) || !client->bytes.size) return false;
+        if (reading && i && saved->clients[i-1].retired && !client->retired) return false;
+        for (size_t n=0;n<64;++n) {
+            uint64_t pool=0,resource=0;
+            if ((!reading && client->animations[n] &&
+                    !qa_application_content_resource_id(refs->media.content,client->animations[n],&pool,&resource)) ||
+                !qa_source_save_u64(io,&pool) || !qa_source_save_u64(io,&resource) || (!!pool!=!!resource)) return false;
+            if (reading) {
+                client->animations[n]=resource?qa_application_content_resource(refs->media.content,pool,resource):NULL;
+                if (resource && !client->animations[n]) return false;
+            }
+        }
+        if (!saved_blob(io,&client->factory)) return false;
+        if (!client->factory.size) for (size_t n=0;n<64;++n) if (client->animations[n]) return false;
         for (size_t n=0;n<i;++n)
-            if (saved->clients[n].source==client->source || saved->clients[n].receiver==client->receiver) return false;
+            if ((!client->retired && !saved->clients[n].retired && saved->clients[n].source==client->source) ||
+                saved->clients[n].receiver==client->receiver ||
+                saved->clients[n].audio_owner==client->audio_owner || saved->clients[n].audio_owner==client->receiver ||
+                saved->clients[n].receiver==client->audio_owner) return false;
         for (const unified_audio_identity *alias=p->audio;alias;alias=alias->next)
-            if (alias->audio==client->receiver) return false;
+            if (alias->audio==client->receiver || alias->audio==client->audio_owner) return false;
     }
     return !saved->client_count || saved->child[UNIFIED_Q3_SOURCES].size;
 }
@@ -863,7 +1600,7 @@ bool frontend_remote_unified_presentation_restore_prepare(frontend_remote_unifie
 {
     unified_presentation *p=presentation_owner(replica);
     if (!p || !refs || !refs->media.content || !replica->restore_pending || !p->frontend->source_restoring ||
-        p->import || p->media || p->candidate_media || p->events || p->prediction || p->audio || p->q3_clients)
+        p->import || p->media || p->candidate_media || p->events || p->prediction || p->audio || p->q3_clients || p->retired_q3)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT child import requires its empty actual recipe prefix");
     p->import=calloc(1,sizeof(*p->import));
     if (!p->import) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining unified CLIENT cold prefix");
@@ -935,6 +1672,100 @@ static bool child_import(unified_presentation *p,unified_child_kind kind,
     if (okay) p->import->imported[kind]=true;
     return okay;
 }
+bool frontend_remote_unified_presentation_restore_components(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !replica->restore_pending || !p->frontend->source_restoring ||
+        !p->import || !p->import->decoded || !p->import->media_prepared)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified component topology needs its decoded media prefix");
+    return child_import(p,UNIFIED_COMPONENTS,refs,error);
+}
+
+bool frontend_remote_unified_presentation_restore_audio_prefix(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !replica->restore_pending || !p->frontend->source_restoring ||
+        !p->import || !p->import->decoded || !p->import->roots)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified music topology needs its imported media roots");
+    if ((p->media && frontend_unified_media_importing(p->media) &&
+            !frontend_unified_media_restore_finish(p->media,&refs->media,error)) ||
+        (p->candidate_media && frontend_unified_media_importing(p->candidate_media) &&
+            !frontend_unified_media_restore_finish(p->candidate_media,&refs->pending_media,error))) return false;
+    if (!child_import(p,UNIFIED_EVENTS,refs,error) || !child_import(p,UNIFIED_Q1,refs,error) ||
+        !child_import(p,UNIFIED_Q2,refs,error)) return false;
+    return !p->q1 || !p->events || frontend_unified_q1_events(p->q1,p->events,error);
+}
+static bool q3_clients_import(unified_presentation *p,qa_error *error)
+{
+    unified_q3_client_row **active=&p->q3_clients,**retired=&p->retired_q3;
+    for (size_t i=0;i<p->import->client_count;++i) {
+        unified_saved_q3_client *saved=p->import->clients+i;
+        unified_q3_client_row **tail=saved->retired?retired:active;
+        frontend_unified_q3_source_view source;
+        if (!*tail) {
+            *tail=calloc(1,sizeof(**tail));
+            if (!*tail) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Importing actual per-Source compiled CLIENT history");
+            (*tail)->receiver=saved->receiver; (*tail)->audio_owner=saved->audio_owner; (*tail)->owner=p;
+        }
+        if (saved->retired) {
+            if (!(*tail)->retirement && !frontend_unified_q3_source_retirement_restore(p->q3_sources,
+                (qa_bytes){saved->retirement.data,saved->retirement.size},&(*tail)->retirement,error)) return false;
+            if (!frontend_unified_q3_source_retirement_read((*tail)->retirement,&source,error)) return false;
+        } else if (!frontend_unified_q3_sources_checkpoint_read(p->q3_sources,saved->source,&source,error)) return false;
+        if (!source.has_client) return false;
+        if (!(*tail)->client) {
+            bool okay=saved->retired?frontend_unified_q3_client_restore_retired(p->replica,p->q3_sources,
+                (*tail)->retirement,saved->receiver,(qa_bytes){saved->bytes.data,saved->bytes.size},&(*tail)->client,error):
+                frontend_unified_q3_client_restore(p->replica,p->q3_sources,&source,saved->receiver,
+                (qa_bytes){saved->bytes.data,saved->bytes.size},&(*tail)->client,error);
+            if (!okay) return false;
+            (*tail)->retirement_bound=saved->retired;
+        }
+        if ((*tail)->receiver!=saved->receiver || (*tail)->audio_owner!=saved->audio_owner ||
+            !frontend_unified_q3_client_checkpoint_matches((*tail)->client,&source) ||
+            !frontend_unified_q3_client_checkpoint_current((*tail)->client)) return false;
+        for (size_t n=0;n<64;++n) if (saved->animations[n] &&
+            qa_resource_pool_find(qa_vfs_resources(source.files),qa_resource_id(saved->animations[n]))!=saved->animations[n])
+            return frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled animation resource leaves its actual Source content pool");
+        if (saved->retired) retired=&(*tail)->next;
+        else active=&(*tail)->next;
+    }
+    return (!*active && !*retired) || frontend_unified_fail(error,QA_ERROR_FORMAT,"Compiled CLIENT import has extra physical Source rows");
+}
+bool frontend_remote_unified_presentation_restore_factories(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !replica->restore_pending || !p->frontend->source_restoring ||
+        !p->import || !p->import->decoded || !p->import->roots)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG topology requires its genuine imported bank roots");
+    if ((p->media && frontend_unified_media_importing(p->media) &&
+            !frontend_unified_media_restore_finish(p->media,&refs->media,error)) ||
+        !child_import(p,UNIFIED_COMPONENTS,refs,error) || !child_import(p,UNIFIED_EVENTS,refs,error) ||
+        !child_import(p,UNIFIED_Q3_SOURCES,refs,error) || !child_import(p,UNIFIED_PREDICTION,refs,error) ||
+        !child_import(p,UNIFIED_Q3,refs,error) || !q3_clients_import(p,error)) return false;
+    for (size_t i=0;i<p->import->client_count;++i) {
+        unified_q3_client_row *row=q3_roster_at(p,i);
+        unified_saved_q3_client *saved=p->import->clients+i;
+        if (!saved->factory.size) continue;
+        if (row->factory && !row->factory_built)
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG imported prefix retains a failed checked construction");
+        if (!row->factory) {
+            frontend_unified_q3_source_view source;
+            if (!q3_row_source(row,true,&source,error)) return false;
+            bool primary=false;
+            if (!q3_primary_view(p,&source,&primary,error)) return false;
+            row->primary_view=primary;
+            frontend_unified_q3_runtime_factory_options options=q3_factory_options(row,&source,primary);
+            if (!frontend_unified_q3_runtime_factory_create_restored(&options,&row->factory,error)) return false;
+            row->factory_built=true;
+        }
+    }
+    return true;
+}
+
 bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified *replica,
     const frontend_unified_presentation_refs *refs,qa_error *error)
 {
@@ -961,26 +1792,39 @@ bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified
     if (!child_import(p,UNIFIED_Q2,refs,error) || !child_import(p,UNIFIED_Q3_SOURCES,refs,error) ||
         !child_import(p,UNIFIED_PREDICTION,refs,error) || !child_import(p,UNIFIED_Q3,refs,error) ||
         !child_import(p,UNIFIED_RENDER,refs,error) || !child_import(p,UNIFIED_INPUT,refs,error)) return false;
+    if (p->q2 && !p->import->q2_finished) {
+        if (!frontend_unified_q2_restore_finish(p->q2,error)) return false;
+        p->import->q2_finished=true;
+    }
     if (p->q3 && (!frontend_unified_q3_audio(p->q3,p->audio_owner,p,audio_actor,error) ||
         (p->events && !frontend_unified_q3_events(p->q3,p->events,error)) ||
         (p->components && !frontend_unified_q3_components(p->q3,p->components,error)))) return false;
-    unified_q3_client_row **tail=&p->q3_clients;
+    if (!q3_clients_import(p,error)) return false;
     for (size_t i=0;i<p->import->client_count;++i) {
+        unified_q3_client_row *row=q3_roster_at(p,i);
         unified_saved_q3_client *saved=p->import->clients+i;
-        frontend_unified_q3_source_view source;
-        if (!frontend_unified_q3_sources_checkpoint_read(p->q3_sources,saved->source,&source,error) || !source.has_client) return false;
-        if (!*tail) {
-            *tail=calloc(1,sizeof(**tail));
-            if (!*tail) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Importing actual per-Source compiled CLIENT history");
-            (*tail)->receiver=saved->receiver;
-            if (!frontend_unified_q3_client_restore(replica,p->q3_sources,&source,saved->receiver,
-                (qa_bytes){saved->bytes.data,saved->bytes.size},&(*tail)->client,error)) return false;
+        if (!saved->factory.size) continue;
+        if (!row->factory || !row->factory_built)
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG cache topology has not imported before its shared dictionaries");
+        if (!saved->factory_imported) {
+            frontend_unified_q3_runtime_factory_refs actual;
+            if (!factory_refs(p,saved,i,true,refs,&actual,error) ||
+                !frontend_unified_q3_runtime_factory_restore(row->factory,&actual,
+                    (qa_bytes){saved->factory.data,saved->factory.size},error)) return false;
+            saved->factory_imported=true; row->factory_restored=true;
+            row->factory_initialized=true; row->initialization_attempted=true;
         }
-        if ((*tail)->receiver!=saved->receiver || !frontend_unified_q3_client_checkpoint_matches((*tail)->client,&source) ||
-            !frontend_unified_q3_client_checkpoint_current((*tail)->client)) return false;
-        tail=&(*tail)->next;
+        if (!frontend_unified_q3_runtime_factory_restore_ready(row->factory,error)) return false;
     }
-    if (*tail || !idle(p,replica)) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified imported CLIENT descendants have not returned");
+    if (p->events && !p->import->events_finished) {
+        if (!frontend_unified_events_restore_finish(p->events,error)) return false;
+        p->import->events_finished=true;
+    }
+    if (!idle(p,replica)) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified imported CLIENT descendants have not returned");
+    if (p->clock_started && (!p->clock.begin_generation ||
+        p->clock.begin_generation>p->frontend->recipient_begin_generation ||
+        p->clock.physical_frame>p->frontend->frame_number || p->clock.wall_time_ns>p->frontend->wall_time_ns))
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified recipient clock exceeds its restored authentic frontend begin receipt");
     p->received=p->import->received;
     import_free(p->import); p->import=NULL; p->restore_complete=true;
     return frontend_remote_unified_presentation_restore_ready(replica,error);
@@ -988,12 +1832,49 @@ bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified
 bool frontend_remote_unified_presentation_restore_ready(const frontend_remote_unified *replica,qa_error *error)
 {
     unified_presentation *p=presentation_owner(replica);
+    if (p) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (row->factory && (!row->factory_restored ||
+            (!row->factory_bound && !frontend_unified_q3_runtime_factory_restore_ready(row->factory,error)))) return false;
+    if (p) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next)
+        if (row->factory && (!row->factory_restored ||
+            (!row->factory_bound && !frontend_unified_q3_runtime_factory_restore_ready(row->factory,error)))) return false;
     return (p && p->restore_complete && !p->import && !p->frame_prepared &&
         !p->candidate_render && !p->candidate_prediction && idle(p,replica) &&
         (!p->received || (p->media && p->render && p->prediction && p->events && p->q1 &&
             p->q2 && p->q3 && p->components && p->q3_sources)) &&
         frontend_remote_unified_checkpoint_current(replica,error)) ||
         frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT saved children have not finished their actual graph import");
+}
+bool frontend_remote_unified_presentation_restore_activate(frontend_remote_unified *replica,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !p->restore_complete || p->import || replica->restore_pending ||
+        !p->frontend->source_restoring)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG activation requires the genuinely bound restored replica");
+    for (unified_q3_client_row *row=p->retired_q3;row;row=row->next)
+        if (row->factory && !row->factory_bound) {
+            if (!row->factory_restored ||
+                !frontend_unified_q3_runtime_factory_restore_passive_finish(row->factory,error)) return false;
+            row->factory_bound=true;
+        }
+    if (replica->retired) {
+        if (!frontend_remote_unified_presentation_restore_ready(replica,error) ||
+            !frontend_remote_unified_checkpoint_current(replica,error)) return false;
+        for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+            if (row->factory && !row->factory_bound) {
+                if (!row->factory_restored ||
+                    !frontend_unified_q3_runtime_factory_restore_passive_finish(row->factory,error)) return false;
+                row->factory_bound=true;
+            }
+        return true;
+    }
+    if (!frontend_remote_unified_current(replica,error)) return false;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (row->factory && !row->factory_bound) {
+            if (!row->factory_restored || !frontend_unified_q3_runtime_factory_restore_bind(row->factory,error)) return false;
+            row->factory_bound=true;
+        }
+    return true;
 }
 void frontend_remote_unified_presentation_adopt(frontend_remote_unified *replica)
 {

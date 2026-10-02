@@ -1,3 +1,4 @@
+#include "source_cinematics.h"
 #include "renderer_materials.h"
 #include "source_acoustics.h"
 #include "source_client_registry.h"
@@ -35,6 +36,7 @@
 #include "save_private.h"
 #include "audio_identity_save.h"
 #include "network_q3_restart.h"
+#include "network_local_groups.h"
 #include "equipment_source.h"
 #include "equipment_q3.h"
 #include "equipment_gear.h"
@@ -166,12 +168,21 @@ static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
 static bool companion_capture(qa_frontend *,uint32_t,qa_scene_rect,qa_error *);
+static void companion_packet_free(source_companion_packet *packet)
+{
+    if (!packet) return;
+    free((void *)packet->view.entities); free((void *)packet->view.entity_actors);
+    free((void *)packet->view.entity_views); free((void *)packet->view.polygons);
+    free((void *)packet->view.polygon_actors); free((void *)packet->view.polygon_views);
+    free((void *)packet->view.vertices); free((void *)packet->view.lights);
+    free((void *)packet->view.light_actors); free((void *)packet->view.light_views);
+    free((void *)packet->view.weapons); free(packet);
+}
 static void companion_clear(source_companion *capture)
 {
     while (capture && capture->first) {
         source_companion_packet *packet=capture->first; capture->first=packet->next;
-        free((void *)packet->view.entities); free((void *)packet->view.entity_actors);
-        free((void *)packet->view.entity_views); free(packet);
+        companion_packet_free(packet);
     }
     if (capture) { capture->last=NULL; capture->view.packet_count=0; capture->completed=false; }
 }
@@ -849,6 +860,10 @@ static bool prepare_picture(void *context,qa_material_context *material,qa_error
     frontend_source *source=context;
     if (!source || !source->constructed || !source->leases || source->application!=source->frontend->application)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Picture scratch lost its actual Source presentation");
+    if (source->companion && source->companion->entered) {
+        material->source_scratch=NULL;
+        return frontend_q3_material_diagnostics_read(source->frontend,&material->source_diagnostics,error);
+    }
     material->source_scratch=source_scratch(source,error);
     material->source_diagnostics_read=diagnostics_read; material->source_diagnostics_context=source;
     return material->source_scratch && frontend_q3_material_diagnostics_read(source->frontend,&material->source_diagnostics,error);
@@ -881,7 +896,10 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     options->world.source_diagnostics_read=diagnostics_read; options->world.source_diagnostics_context=source;
     if (!body_scene_prepare(scope->lease,options,error)) return false;
     if (!options->world.source_scratch) return false;
-    if (source->companion && source->companion->entered) options->world.no_world=true;
+    if (source->companion && source->companion->entered) {
+        options->world.no_world=true;
+        options->world.source_scratch=NULL;
+    }
     if (scope->lease->role==QA_QVM_CGAME &&
         !frontend_q3_shadow_mode_read(scope->lease->cvars,&options->shadow_mode,error)) return false;
     return render_current(source,scope) ||
@@ -917,26 +935,69 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
     const qa_scene_vertex *vertices,size_t vertex_count,const qa_scene_light *lights,size_t light_count,qa_error *error)
 {
     frontend_source *source=context; source_render_scope *scope=source->render_scope;
-    (void)options; (void)entities; (void)entity_count; (void)polygons; (void)polygon_count;
-    (void)vertices; (void)vertex_count; (void)lights; (void)light_count;
+    (void)options;
     if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene completion lost its actual reached render scope");
     if (source->companion && source->companion->entered) {
         source_companion *capture=source->companion;
-        if (entity_count>SIZE_MAX/sizeof(*entities) || (entity_count && !entities) || capture->view.packet_count==SIZE_MAX)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Companion packet exceeds its genuine Source entity span");
+        if (entity_count>SIZE_MAX/sizeof(*entities) || (entity_count && !entities) ||
+            polygon_count>SIZE_MAX/sizeof(*polygons) || (polygon_count && !polygons) ||
+            vertex_count>SIZE_MAX/sizeof(*vertices) || (vertex_count && !vertices) ||
+            light_count>SIZE_MAX/sizeof(*lights) || (light_count && !lights) ||
+            capture->view.packet_count==SIZE_MAX)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Companion packet exceeds its genuine Source spans");
+        for(size_t i=0;i<polygon_count;++i)
+            if(polygons[i].first>vertex_count || polygons[i].count>vertex_count-polygons[i].first)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Companion polygon exceeds its actual vertex span");
         source_companion_packet *packet=calloc(1,sizeof(*packet));
         if (!packet) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion Draw packet");
         qa_q3_ref_entity *refs=entity_count?malloc(entity_count*sizeof(*refs)):NULL;
         qa_actor_id *actors=entity_count?calloc(entity_count,sizeof(*actors)):NULL;
         bool *views=entity_count?calloc(entity_count,sizeof(*views)):NULL;
-        if (entity_count && (!refs || !actors || !views)) {
-            free(refs); free(actors); free(views); free(packet);
-            return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion entity poses");
+        qa_q3_scene_polygon *polys=polygon_count?malloc(polygon_count*sizeof(*polys)):NULL;
+        qa_actor_id *poly_actors=polygon_count?calloc(polygon_count,sizeof(*poly_actors)):NULL;
+        bool *poly_views=polygon_count?calloc(polygon_count,sizeof(*poly_views)):NULL;
+        qa_scene_vertex *verts=vertex_count?malloc(vertex_count*sizeof(*verts)):NULL;
+        qa_scene_light *lit=light_count?malloc(light_count*sizeof(*lit)):NULL;
+        qa_actor_id *lit_actors=light_count?calloc(light_count,sizeof(*lit_actors)):NULL;
+        bool *lit_views=light_count?calloc(light_count,sizeof(*lit_views)):NULL;
+        packet->view=(frontend_source_companion_packet){.definition=*definition,.entities=refs,
+            .entity_actors=actors,.entity_views=views,.entity_count=entity_count,
+            .polygons=polys,.polygon_actors=poly_actors,.polygon_views=poly_views,.polygon_count=polygon_count,
+            .vertices=verts,.vertex_count=vertex_count,.lights=lit,.light_actors=lit_actors,
+            .light_views=lit_views,.light_count=light_count};
+        if ((entity_count && (!refs || !actors || !views)) ||
+            (polygon_count && (!polys || !poly_actors || !poly_views)) ||
+            (vertex_count && !verts) || (light_count && (!lit || !lit_actors || !lit_views))) {
+            companion_packet_free(packet);
+            return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion scene values");
         }
         if (entity_count) memcpy(refs,entities,entity_count*sizeof(*refs));
-        packet->view=(frontend_source_companion_packet){.definition=*definition,.entities=refs,
-            .entity_actors=actors,.entity_views=views,.entity_count=entity_count};
+        if (polygon_count) memcpy(polys,polygons,polygon_count*sizeof(*polys));
+        if (vertex_count) memcpy(verts,vertices,vertex_count*sizeof(*verts));
+        if (light_count) memcpy(lit,lights,light_count*sizeof(*lit));
+        if (scope->lease->equipment &&
+            (!frontend_equipment_source_scene_actors(scope->lease->equipment,entity_count,actors,error) ||
+             !frontend_equipment_source_scene_views(scope->lease->equipment,entity_count,views,error) ||
+             !frontend_equipment_source_scene_polygons(scope->lease->equipment,polygon_count,poly_actors,poly_views,error) ||
+             !frontend_equipment_source_scene_lights(scope->lease->equipment,light_count,lit_actors,lit_views,error))) {
+            companion_packet_free(packet); return false;
+        }
+        const qa_application_q3_equipment_source_weapon *weapons=NULL;
+        size_t weapon_count=0;
+        if (scope->lease->equipment && !frontend_equipment_source_scene_weapons(scope->lease->equipment,
+            &weapons,&weapon_count,error)) { companion_packet_free(packet); return false; }
+        if (weapon_count>SIZE_MAX/sizeof(*weapons) || (weapon_count && !weapons)) {
+            companion_packet_free(packet);
+            return frontend_fail(error,QA_ERROR_FORMAT,"Companion completed weapon scopes exceed their actual span");
+        }
+        qa_application_q3_equipment_source_weapon *held=weapon_count?malloc(weapon_count*sizeof(*held)):NULL;
+        if (weapon_count && !held) {
+            companion_packet_free(packet);
+            return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed companion weapon scopes");
+        }
+        if (weapon_count) memcpy(held,weapons,weapon_count*sizeof(*held));
+        packet->view.weapons=held; packet->view.weapon_count=weapon_count;
         if (capture->last) capture->last->next=packet; else capture->first=packet;
         capture->last=packet; ++capture->view.packet_count;
     }
@@ -954,18 +1015,21 @@ bool frontend_q3_configuration(qa_frontend *frontend,uint8_t out[11332],qa_error
     memset(out, 0, 11332);
     const qa_gl_capabilities *caps = qa_gl_capabilities_get(frontend->gl);
     qa_cpu_capabilities cpu={0}; qa_q3_color_device color;
+    int32_t hardware=0; uint32_t maximum=0;
     if ((!caps && !qa_cpu_capabilities_read(frontend->cpu,&cpu,error)) ||
-        !frontend_q3_source_color_device_read(frontend,&color,error)) return false;
+        !frontend_q3_source_color_device_read(frontend,&color,error) ||
+        !frontend_q3_renderer_hardware_read(frontend,&hardware,&maximum,error)) return false;
     snprintf((char *)out, 1024, "%s", caps ? caps->renderer : "Quake Anthology CPU renderer");
     snprintf((char *)out + 1024, 1024, "%s", caps ? caps->vendor : "Quake Anthology");
     snprintf((char *)out + 2048, 1024, "%s", caps ? caps->version : "retained scene renderer");
     /* CPU has no native texture-size limit declaration; the ABI converts
      * that absent value to zero. Buffer bit counts come from the real surface. */
-    qa_store_u32le(out + 11264, caps ? caps->maximum_texture_size : 0);
+    qa_store_u32le(out + 11264, maximum);
     qa_store_u32le(out + 11268, caps ? caps->texture_units : 1);
     qa_store_u32le(out + 11272, caps ? caps->color_bits : cpu.color_bits);
     qa_store_u32le(out + 11276, caps ? caps->depth_bits : cpu.depth_bits);
     qa_store_u32le(out + 11280, caps ? caps->stencil_bits : cpu.stencil_bits);
+    qa_store_u32le(out + 11288,(uint32_t)hardware);
     qa_store_u32le(out + 11292, color.hardware_gamma);
     qa_store_u32le(out + 11304, display.drawable_width);
     qa_store_u32le(out + 11308, display.drawable_height);
@@ -985,6 +1049,11 @@ static bool update_screen(void *context, qa_error *error)
 {
     frontend_source *source=context;
     qa_frontend *frontend=source->frontend;
+    if (source->companion && source->companion->entered) {
+        bool drawn=false;
+        return qa_application_q3_source_loading_screen(source->application,source->owner,
+            source->launch_seat,&drawn,error);
+    }
     if (!frontend_q3_source_output(frontend,source->materials,frontend_viewport(frontend,source->seat),error)) return false;
     bool drawn=false;
     if (!qa_application_q3_source_loading_screen(source->application,source->owner,
@@ -1077,8 +1146,9 @@ static bool source_free(frontend_source *source)
     if (!source) return true;
     qa_frontend *frontend = source->frontend;
     qa_error retirement_error={0};
+    if (frontend->capture || frontend->resource_inventory || source->retired_leases) return false;
     if (source->world_retirement && !qa_q3_presentation_retire_world_dispose(&source->world_retirement,&retirement_error)) return false;
-    if (frontend->capture || frontend->resource_inventory || source->retired_leases || !source_idle(source) ||
+    if (!source_idle(source) ||
         !frontend_selected_effects_idle(frontend)) return false;
     qa_error error = {0};
     if (source->companion) {
@@ -1243,9 +1313,12 @@ bool frontend_source_movies_restore(qa_frontend *f,size_t index,const frontend_m
     frontend_source *source=f?f->sources:NULL;
     while (source && index--) source=source->next;
     frontend_material_movie_source view;
-    return source && f->source_restoring && frontend_source_movie_source_read(f,ordinal,&view,error) ?
-        frontend_material_movies_restore(&view,refs,bytes,&source->shader_movies,error) :
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Source candidate");
+    if (!source || !f->source_restoring || !frontend_source_movie_source_read(f,ordinal,&view,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Source candidate");
+    qa_q3_cinematic_source *cinematics=NULL;
+    return frontend_material_movies_restore(&view,refs,bytes,&source->shader_movies,error) &&
+        frontend_material_movies_cinematic_read(source->shader_movies,&cinematics,error) &&
+        (!cinematics || qa_q3_presentation_cinematics_bind(source->presentation,cinematics,error));
 }
 static bool construct_source(frontend_source *source, const qa_q3_host_options *host,
     frontend_key_profile *profile,bool restoring, qa_error *error)
@@ -1277,12 +1350,15 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
             .materials=source->materials,.media=source->movies,.context=source,.current=shader_movies_current};
         if (!frontend_q3_material_profile_initialize(frontend,source->materials,error) ||
             !qa_material_library_set_source_upload(source->materials,frontend_q3_source_upload_read,frontend,error) ||
-            !frontend_material_movies_create(&movie,&source->shader_movies,error)) return false;
+            !frontend_material_movies_create(&movie,&source->shader_movies,error) ||
+            !frontend_source_cinematics_ensure(frontend,source->images,error) ||
+            !frontend_material_movies_cinematic_attach(source->shader_movies,frontend->source_cinematics,source->seat,source->identity,error)) return false;
     }
     qa_scene_image_options images = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = -1};
     bool ok = source->mounts && source->images && source->materials && source->fonts && source->movies &&
-        (restoring || qa_material_library_load_scripts(source->materials, source->mounts, &images, error)) &&
+        (restoring || (qa_material_library_load_scripts(source->materials, source->mounts, &images, error) &&
+            qa_material_library_source_shaders_initialize(source->materials,&images,error))) &&
         qa_audio_bank_create(source->mounts, &source->sounds, error) &&
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
     if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
@@ -1299,6 +1375,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .prepare_view = prepare_view, .submit_view = submit_view, .scene_cleared=scene_cleared,.scene_completed=scene_completed,
         .prepare_picture=prepare_picture,.video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .remap = source_remap, .print = print_source};
+    if (ok && source->shader_movies) ok=frontend_material_movies_cinematic_read(source->shader_movies,&presentation.cinematics,error);
     if (ok && !restoring) ok=frontend_q3_renderer_options_read(frontend,&presentation,error);
     if (ok && qa_cvars_find(host->cvars,"cg_shadows"))
         ok=frontend_q3_shadow_mode_read(host->cvars,&presentation.shadow_mode,error);
@@ -2194,6 +2271,132 @@ bool frontend_source_publish_world(qa_frontend *frontend, qa_error *error)
     source_worlds_bind(frontend,frontend->scene_world,false);
     return true;
 }
+static frontend_source_lease *companion_lease(const qa_frontend *f,
+    const qa_application_q3_arsenal_client *receipt)
+{
+    if (!f || !receipt) return NULL;
+    for (frontend_source *source=f->sources;source;source=source->next)
+        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if (receipt->client.context.frontend_lifetime==lease && !lease->released &&
+                source->constructed && source->frontend==f && source->application==f->application &&
+                source->owner==receipt->client.source.receiver && source->launch_seat==receipt->client.source.seat &&
+                lease->role==QA_QVM_CGAME && lease->source==source &&
+                lease->service_owner==receipt->client.context.service_owner &&
+                lease->console==receipt->client.context.console && lease->cvars==receipt->client.context.cvars)
+                return lease;
+    return NULL;
+}
+static bool companion_capture(qa_frontend *f,uint32_t physical,qa_scene_rect rect,qa_error *error)
+{
+    for (frontend_source *row=f->sources;row;row=row->next)
+        if (row->seat==physical && row->companion) {
+            if (row->companion->entered || row->companion->frame.source_pending)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion output still owns its previous Draw queue");
+            companion_clear(row->companion);
+        }
+    qa_actor_id actor; uint32_t seat;
+    if (!frontend_seat_launch_id_read(f,physical,&seat) ||
+        !qa_application_player_actor(f->application,seat,&actor)) return true;
+    qa_application_q3_arsenal_client receipt; bool present=false;
+    if (!qa_application_q3_arsenal_client_read(f->application,actor,seat,&receipt,&present,error)) return false;
+    if (!present) return true;
+    frontend_source_lease *lease=companion_lease(f,&receipt);
+    if (!lease || lease->source->seat!=physical || lease->status_host || lease->time_busy ||
+        lease->source->role_operations || !qa_application_q3_arsenal_client_current(f->application,&receipt))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion Draw lost its genuine physical CGAME lease");
+    frontend_source *source=lease->source;
+    qa_q3_presentation_binding previous;
+    if (!qa_q3_presentation_binding_read(source->presentation,&previous,error)) return false;
+    if (!source->companion) {
+        source->companion=calloc(1,sizeof(*source->companion));
+        if (!source->companion) return frontend_fail(error,QA_ERROR_MEMORY,"Creating private companion output");
+        qa_scene_frame_init(&source->companion->frame,source->identity);
+    }
+    source_companion *capture=source->companion;
+    qa_scene_frame_reset(&capture->frame,f->frame_number);
+    if (!qa_scene_frame_material_order(&capture->frame,f->order,error) ||
+        !qa_q3_presentation_frame(source->presentation,&capture->frame,rect,error)) return false;
+    capture->view=(frontend_source_companion_view){.receipt=receipt,.assets=source->assets,
+        .frame_sequence=f->frame_number,.source_time_ms=receipt.client.source.source_milliseconds};
+    bool backend=f->frame.source_backend,skip=f->frame.source_skip_backend,clear=f->frame.source_clear_draw_buffer;
+    bool visible=lease->status_visible;
+    lease->status_visible=false; lease->status_host=receipt.client.host;
+    ++lease->time_busy; ++source->role_operations; capture->entered=true;
+    qa_error draw_error={0},close_error={0};
+    bool drawn=qa_application_q3_arsenal_client_draw(f->application,&receipt,&draw_error);
+    capture->entered=false;
+    bool closed=true;
+    if (capture->frame.source_pending)
+        closed=qa_material_source_frame_end(capture->frame.source_pending,&capture->frame,false,&close_error);
+    if (closed && !qa_q3_presentation_frame(source->presentation,previous.frame,previous.options.viewport,&close_error)) closed=false;
+    f->frame.source_backend=backend; f->frame.source_skip_backend=skip; f->frame.source_clear_draw_buffer=clear;
+    lease->status_visible=visible;
+    if (closed && (!qa_application_q3_arsenal_client_current(f->application,&receipt) ||
+        !qa_q3_host_cvar_cache_refresh(receipt.client.host,&close_error))) {
+        closed=false;
+        if (!close_error.code) frontend_fail(&close_error,QA_ERROR_ARGUMENT,"Companion Draw changed its actual host on return");
+    }
+    lease->status_host=NULL; time_leave(lease);
+    capture->completed=drawn && closed;
+    if (!capture->completed) {
+        if (error) *error=drawn?close_error:draw_error;
+        return false;
+    }
+    return true;
+}
+bool frontend_source_companion_current(const qa_frontend *f,const frontend_source_companion_view *view)
+{
+    frontend_source_lease *lease=view?companion_lease(f,&view->receipt):NULL;
+    source_companion *capture=lease?lease->source->companion:NULL;
+    return capture && capture->completed && !capture->entered && !capture->frame.source_pending &&
+        capture->view.frame_sequence==f->frame_number && view->frame_sequence==capture->view.frame_sequence &&
+        view->assets==capture->view.assets && view->assets==lease->source->assets &&
+        view->source_time_ms==capture->view.source_time_ms && view->packet_count==capture->view.packet_count &&
+        capture->view.receipt.client.host==view->receipt.client.host &&
+        qa_actor_id_equal(capture->view.receipt.actor,view->receipt.actor) &&
+        qa_application_q3_arsenal_client_current(f->application,&view->receipt);
+}
+bool frontend_source_companion_presentation_read(const qa_frontend *f,const frontend_source_companion_view *view,
+    qa_q3_presentation **out,qa_error *error)
+{
+    if (out) *out=NULL;
+    frontend_source_lease *lease=view?companion_lease(f,&view->receipt):NULL;
+    qa_q3_presentation_binding binding;
+    if (!out || !lease || !frontend_source_companion_current(f,view) ||
+        !qa_q3_presentation_binding_read(lease->source->presentation,&binding,error) ||
+        binding.options.assets!=view->assets || binding.frame!=&f->frame ||
+        binding.options.seat!=lease->source->seat)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion receiver lost its genuine returned presentation and physical frame");
+    *out=lease->source->presentation;
+    return true;
+}
+bool frontend_source_companion_read(const qa_frontend *f,uint32_t physical,qa_actor_id actor,
+    frontend_source_companion_view *out,bool *present,qa_error *error)
+{
+    if (!f || !out || !present || physical>=f->options.seats)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion output requires its actual physical recipient");
+    *present=false; *out=(frontend_source_companion_view){0};
+    for (frontend_source *source=f->sources;source;source=source->next) {
+        source_companion *capture=source->companion;
+        if (source->seat!=physical || !capture || !capture->completed ||
+            !qa_actor_id_equal(capture->view.receipt.actor,actor)) continue;
+        if (*present || !frontend_source_companion_current(f,&capture->view))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion output has a stale or ambiguous completed Source packet");
+        *out=capture->view; *present=true;
+    }
+    return true;
+}
+bool frontend_source_companion_packet_read(const qa_frontend *f,const frontend_source_companion_view *view,
+    size_t ordinal,frontend_source_companion_packet *out,qa_error *error)
+{
+    if (!out || !frontend_source_companion_current(f,view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion packet lost its completed Source receipt");
+    frontend_source_lease *lease=companion_lease(f,&view->receipt);
+    const source_companion_packet *packet=lease->source->companion->first;
+    while (packet && ordinal--) packet=packet->next;
+    if (!packet) return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion packet ordinal exceeds actual completed scenes");
+    *out=packet->view; return true;
+}
 bool frontend_source_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rect rect, qa_error *error)
 {
     if (!frontend || frontend->capture || !frontend_sources_idle(frontend))
@@ -2213,6 +2416,21 @@ static bool present_without_cgame_lease(qa_frontend *f,uint32_t seat,uint32_t re
     qa_material_source_scratch *scratch=controls?qa_render_controls_source_scratch(controls,&flush):NULL;
     bool flushed=scratch && qa_material_source_frame_end(scratch,&f->frame,drawn,&flush);
     if (!drawn || !flushed) { if (error) *error=drawn?flush:draw; return false; }
+    return true;
+}
+static bool component_pictures(frontend_source_lease *lease,qa_error *error)
+{
+    qa_frontend *f=lease->source->frontend; qa_actor_id viewer;
+    if (!frontend_seat_actor_read(f,lease->source->seat,&viewer)) return true;
+    for(size_t i=0;i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view row;
+        if (!frontend_component_scene_read(f,i,&row,error)) return false;
+        if (row.retired || row.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL || !row.begun ||
+            row.physical_seat!=lease->source->seat || !qa_actor_id_equal(row.viewer,viewer)) continue;
+        if (!qa_application_q3_component_scene_hud(f->application,row.identity,row.physical_seat,
+            viewer,row.sequence,error)) return false;
+        if (!frontend_component_scene_pictures(f,row.identity,row.sequence,lease->source->presentation,&f->frame,error)) return false;
+    }
     return true;
 }
 bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
@@ -2258,9 +2476,11 @@ bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
     ++lease->time_busy; ++lease->source->role_operations;
     qa_error draw_error={0},refresh_error={0};
     bool drawn=qa_application_present(f->application,seat,real_time,client_time,&draw_error);
+    if (drawn) drawn=component_pictures(lease,&draw_error);
     qa_error flush_error={0};
     qa_material_source_scratch *scratch=source_scratch(lease->source,&flush_error);
     bool flushed=scratch && qa_material_source_frame_end(scratch,&f->frame,drawn,&flush_error);
+    if (!f->frame.source_pending && !frontend_component_scene_pictures_finish(f,physical,drawn && flushed,&flush_error)) flushed=false;
     if (!flushed && drawn) { drawn=false; draw_error=flush_error; }
     lease->status_visible=previous;
     bool retained=network?qa_application_network_q3_cgame_host_current(f->application,&remote):
@@ -2287,6 +2507,7 @@ bool frontend_before_world_change(void *context, qa_application *application, qa
     qa_frontend *frontend = context; (void)application;
     if (!frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World retirement requires idle frontend child owners");
+    if (!frontend_network_local_groups_retire(frontend,error)) return false;
     if (frontend->music_sources && !frontend_music_sources_world_retire(frontend->music_sources,error)) return false;
     return frontend_campaign_ready(frontend) && frontend_tools_before_world_change(frontend, error) &&
         frontend_campaign_destroy(frontend,error);
@@ -2344,9 +2565,14 @@ bool frontend_source_cgame_recipient(const qa_frontend *frontend,uint32_t seat,q
     if (!frontend || !frontend->application || !out || seat>=frontend->options.seats ||
         frontend->capture || frontend->source_restoring)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CGAME recipient requires its installed physical frontend seat");
+    uint32_t launch_seat; qa_application_presentation_view selected;
+    if (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
+        !qa_application_presentation_read(frontend->application,launch_seat,&selected)) {
+        *out=0; return true;
+    }
     qa_actor_owner receiver=0;
     for (const frontend_source *source=frontend->sources;source;source=source->next) {
-        if (source->seat!=seat || !source->leases) continue;
+        if (source->seat!=seat || source->launch_seat!=launch_seat || source->owner!=selected.hud || !source->leases) continue;
         for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
             if (lease->role!=QA_QVM_CGAME) continue;
             if (!source->constructed || source->frontend!=frontend || source->application!=frontend->application ||
@@ -2488,10 +2714,10 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
         return frontend_fail(error,QA_ERROR_FORMAT,"Q3 source policy differs from its genuine installed frontend group");
     return true;
 }
-bool frontend_source_group_role_read(const qa_frontend *frontend, size_t group, size_t index,
-    frontend_source_role_identity *out)
+static bool source_group_role_read(const qa_frontend *frontend,size_t group,size_t index,
+    frontend_source_role_identity *out,const frontend_video_guests *video)
 {
-    if (!frontend || !out || frontend->stepping) return false;
+    if (!frontend || !out || (video?!frontend_video_guests_resources_associated(frontend,video):frontend->stepping)) return false;
     const frontend_source *source = frontend->sources;
     while (source && group--) source = source->next;
     if (!source || !source->constructed || source->frontend != frontend || source->application != frontend->application)
@@ -2501,6 +2727,12 @@ bool frontend_source_group_role_read(const qa_frontend *frontend, size_t group, 
     if (!lease || lease->source != source || !lease->service_owner) return false;
     *out = (frontend_source_role_identity){lease->role, lease->service_owner}; return true;
 }
+bool frontend_source_group_role_read(const qa_frontend *frontend,size_t group,size_t index,
+    frontend_source_role_identity *out)
+{ return source_group_role_read(frontend,group,index,out,NULL); }
+bool frontend_source_group_role_video_read(const qa_frontend *frontend,size_t group,size_t index,
+    frontend_source_role_identity *out,const frontend_video_guests *video)
+{ return video && source_group_role_read(frontend,group,index,out,video); }
 bool frontend_source_registry_scope_read(const qa_frontend *frontend,const qa_cvars *registry,
     qa_application_console_scope *out)
 {

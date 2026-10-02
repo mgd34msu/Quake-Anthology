@@ -472,7 +472,7 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
                                        .item = jacket,
                                        .protection.q2 = {.normal = .3f, .energy = 0}};
         } else
-            armor.points = fminf(200, armor.points + (float)(heart / 3));
+            armor.points = fminf(200, (float)armor.points + (float)(heart / 3));
         return qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e) &&
                mode_sound(m, v, actor, "ctf/regen.wav", 1, e);
     }
@@ -490,7 +490,7 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         can_armor = armor.kind != QA_ARMOR_NONE &&
                     (armor.kind != QA_ARMOR_Q1 || armor.protection.q1_absorption > 0);
     if (can_armor && armor.points < 150) {
-        armor.points = fminf(150, armor.points + 5);
+        armor.points = fminf(150, (float)armor.points + 5);
         if (!qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e))
             return false;
         delay += MODE_SECOND / 2;

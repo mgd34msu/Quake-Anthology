@@ -43,7 +43,7 @@ static bool authority_identity(qa_network_runtime *runtime, qa_net_client_id id,
     qa_net_seat_id seat_id, qa_actor_id actor, uint64_t epoch, qa_movement_kind movement,
     qa_bytes arsenal, qa_network_peer **peer, qa_network_seat **seat, qa_error *error)
 {
-    if (!runtime || !actor.registry || !actor.generation || (unsigned)movement > QA_MOVEMENT_Q3)
+    if (!runtime || !actor.registry || (unsigned)movement > QA_MOVEMENT_Q3)
         return qa_network_fail(error, "Invalid network command owner");
     *peer = qa_network_peer_get(runtime, id, error);
     if (!*peer || epoch != (*peer)->epoch)

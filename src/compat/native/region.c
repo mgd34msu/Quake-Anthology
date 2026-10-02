@@ -100,6 +100,9 @@ bool native_process_region_instruction(void *context, qa_native_guest *guest,
     qa_native_instance *instance = context;
     if (!instance || guest != instance->guest)
         return native_fail(error, QA_ERROR_ARGUMENT, instruction, "native region instruction lost its actual owner");
+    bool redirected = false;
+    if (!native_region_scopes_instruction(instance, instruction, &redirected, error)) return false;
+    if (redirected) return true;
     if (instruction < instance->image_base) return true;
     uint64_t rva = instruction - instance->image_base;
     for (size_t i = 0; i < instance->region_count; ++i) {

@@ -138,17 +138,16 @@ static bool part(const qa_json_document *doc, qa_json_id id, frontend_held_decla
     return true;
 }
 
-bool frontend_held_declaration_read(qa_resource *source, frontend_held_declaration *out,
-    qa_error *error)
+static bool declaration_read(qa_bytes bytes,bool file, frontend_held_declaration *out,qa_error *error)
 {
-    if (!source || !out) return fail(error, QA_ERROR_ARGUMENT, "Held declaration requires retained source");
+    if (!out) return fail(error, QA_ERROR_ARGUMENT, "Held declaration requires output");
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(qa_resource_bytes(source), &doc, error)) return false;
+    if (!qa_json_parse(bytes, &doc, error)) return false;
     frontend_held_declaration result = {0};
     qa_json_id root = qa_json_root(doc), kind = qa_json_get(doc, root, "kind");
     uint32_t version;
-    bool ok = index(doc, qa_json_get(doc, root, "version"), &version, error);
-    if (ok && version != 1) ok = fail(error, QA_ERROR_FORMAT, "Unsupported held declaration version");
+    bool ok = !file || index(doc, qa_json_get(doc, root, "version"), &version, error);
+    if (ok && file && version != 1) ok = fail(error, QA_ERROR_FORMAT, "Unsupported held declaration version");
     if (ok && qa_json_string_equal(doc, kind, "none")) result.none = true;
     else if (ok && qa_json_string_equal(doc, kind, "model")) {
         qa_json_id model = qa_json_get(doc, root, "model"), fallback = qa_json_get(doc, model, "fallback"),
@@ -164,9 +163,18 @@ bool frontend_held_declaration_read(qa_resource *source, frontend_held_declarati
     } else if (ok) ok = fail(error, QA_ERROR_FORMAT, "Held declaration requires none or model");
     qa_json_destroy(doc);
     if (!ok) { frontend_held_declaration_free(&result); return false; }
-    result.source = source; qa_resource_retain(source);
     *out = result;
     return true;
+}
+
+bool frontend_held_declaration_value(qa_bytes bytes,frontend_held_declaration *out,qa_error *error)
+{ return declaration_read(bytes,false,out,error); }
+
+bool frontend_held_declaration_read(qa_resource *source,frontend_held_declaration *out,qa_error *error)
+{
+    if(!source)return fail(error,QA_ERROR_ARGUMENT,"Held declaration requires retained source");
+    if(!declaration_read(qa_resource_bytes(source),true,out,error))return false;
+    out->source=source;qa_resource_retain(source);return true;
 }
 
 void frontend_held_model_free(frontend_held_model *model)

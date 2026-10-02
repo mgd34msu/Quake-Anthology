@@ -5,6 +5,9 @@
 
 bool qa_q3_image_upload_options_codec(qa_source_save_io *io, qa_q3_image_upload_options *upload)
 {
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        upload->texture_bits=0; upload->s3tc=false; upload->lightmap=false;
+    }
     qa_q3_color_inputs *color=&upload->color;
     return qa_source_save_bool(io,&color->device.hardware_gamma) &&
         qa_source_save_bool(io,&color->device.fullscreen) && qa_source_save_i32(io,&color->device.color_bits) &&
@@ -14,6 +17,13 @@ bool qa_q3_image_upload_options_codec(qa_source_save_io *io, qa_q3_image_upload_
         qa_source_save_bool(io,&upload->simple_mips) && qa_source_save_bool(io,&upload->color_mips) &&
         qa_source_save_bool(io,&upload->allow_picmip) && qa_source_save_bool(io,&upload->mipmap) &&
         qa_q3_image_upload_options_valid(upload,io->error);
+}
+
+bool qa_q3_image_upload_options_precision_codec(qa_source_save_io *io,qa_q3_image_upload_options *upload)
+{
+    return qa_q3_image_upload_options_codec(io,upload) &&
+        qa_source_save_i32(io,&upload->texture_bits) && qa_source_save_bool(io,&upload->s3tc) &&
+        qa_source_save_bool(io,&upload->lightmap) && qa_q3_image_upload_options_valid(upload,io->error);
 }
 
 bool qa_q3_color_lighting_read(const qa_q3_color_device *device, int32_t requested,

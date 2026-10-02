@@ -765,6 +765,64 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
     return okay;
 }
 
+bool application_unified_source_command(qa_application *app,qa_net_client_id client,
+    qa_net_seat_id seat,const qa_unified_source_command *value,qa_error *error)
+{
+    application_unified_source source;
+    qa_unified_session_player player;
+    if (!value || !value->instance || !value->arguments ||
+        !value->argument_count || value->argument_count>128 ||
+        !application_unified_source_read(app,&source,error) ||
+        !application_unified_player_read(app,client,seat,&player,error)) return false;
+    if (value->publication!=source.publication || value->map_revision!=source.map_revision)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source command belongs to a retired activation");
+    application_provider *provider=NULL;
+    for (size_t i=0;i<app->provider_count;++i) {
+        application_provider *candidate=app->providers[i];
+        if (!candidate->launch || strcmp(candidate->launch->selection.instance,value->instance)) continue;
+        if (provider) return application_fail(error,QA_ERROR_FORMAT,"Source command instance has duplicate installed providers");
+        provider=candidate;
+    }
+    if (!provider || provider->application!=app || !provider->constructed || !provider->attached ||
+        provider->close_pending || provider->kind!=APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
+        qa_launch_snapshot_find(source.launch,value->instance)!=provider->launch)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source command has no installed compiled GAME activation");
+    uint32_t slot;
+    qa_q3_native_client native;
+    qa_q3_source_binding binding;
+    if (!qa_q3_native_client_slot(provider->state.q3,player.actor,&slot,error) ||
+        !qa_q3_source_binding_read(provider->state.q3,slot,&binding,error) || !binding.in_use ||
+        binding.client_slot!=(int32_t)slot || !qa_actor_id_equal(binding.actor,player.actor) ||
+        !qa_q3_client_read(provider->state.q3,player.actor,&native,error) || native.connected!=QA_Q3_CLIENT_CONNECTED)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source command lost its admitted full physical GAME client");
+    size_t extent=0;
+    for (size_t i=0;i<value->argument_count;++i) {
+        if (!value->arguments[i] || strlen(value->arguments[i])>8192 || (!i && !value->arguments[i][0]))
+            return application_fail(error,QA_ERROR_FORMAT,"Source command has an invalid lexical argument");
+        if (i) extent+=strlen(value->arguments[i])+(i>1);
+    }
+    char *tail=malloc(extent+1);
+    if (!tail) return application_fail(error,QA_ERROR_MEMORY,"Retaining scoped Source command arguments");
+    size_t offset=0;
+    for (size_t i=1;i<value->argument_count;++i) {
+        if (i>1) tail[offset++]=' ';
+        size_t length=strlen(value->arguments[i]); memcpy(tail+offset,value->arguments[i],length); offset+=length;
+    }
+    tail[offset]=0;
+    const application_player_record *row=remote(app,client,seat);
+    qa_command_invocation command={.console=app->console,.argc=value->argument_count,
+        .argv=value->arguments,.args_text=tail,.context={.origin=QA_COMMAND_REMOTE,
+        .owner=provider->owner,.actor=player.actor,.seat=row->seat,.dialect=QA_CONSOLE_Q3}};
+    bool handled=false;
+    bool okay=qa_application_capture_command_context(app,&command.context,&command.context,error) &&
+        application_native_q3_source_client_command(provider,player.actor,&command,&handled,error);
+    free(tail);
+    if (!okay) { application_fault(app,error); return false; }
+    return (handled && application_unified_source_current(app,&source) &&
+        application_unified_player_current(app,client,&player)) ||
+        application_fail(error,QA_ERROR_ARGUMENT,"Source command changed its actual admitted activation");
+}
+
 bool application_unified_player_admit(qa_application *app,
     qa_network_runtime *runtime, const qa_application_remote_player_request *request,
     qa_unified_session_player *out, qa_error *error)

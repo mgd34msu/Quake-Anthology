@@ -12,6 +12,7 @@ typedef struct frontend_remote_q1_restore_refs {
     const qa_audio_asset_inventory *assets;
     const qa_audio_checkpoint_refs *audio;
     uint64_t owner;
+    uint64_t effects_owner;
 } frontend_remote_q1_restore_refs;
 bool frontend_remote_q1_checkpoint(const frontend_remote_q1 *, const frontend_remote_q1_restore_refs *, qa_buffer *, qa_error *);
 bool frontend_remote_q1_restore_prepare(qa_frontend *, const frontend_remote_q1_options *,

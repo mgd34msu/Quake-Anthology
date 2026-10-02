@@ -44,5 +44,6 @@ struct application_unified_server {
     int64_t acknowledged;
     bool bound, admitted, player_attached, admitted_receipt, preparing_frame, entered, closed;
     bool restore_pending;
+    bool source_dropped;
 };
 #endif

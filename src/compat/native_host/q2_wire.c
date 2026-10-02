@@ -23,6 +23,43 @@ static bool import_ready(qa_native_host *host, qa_error *error)
             "Q2 import observation requires its actual executing GAME callback");
 }
 
+typedef enum q2_observation {
+    Q2_OBSERVE_IDLE, Q2_OBSERVE_IMPORT, Q2_OBSERVE_END_FRAME
+} q2_observation;
+
+static bool stage_ready(qa_native_host *host, qa_source_frame *out, qa_error *error)
+{
+    qa_source_frame frame;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !host->instance || !host->edict ||
+        host->destroying || host->restoring || host->reconstruction || host->callback_depth ||
+        host->filter_depth || qa_native_terminal(host->instance) || !qa_native_can_destroy(host->instance) ||
+        !host->world.session || !host->world.world ||
+        !qa_session_active_frame(host->world.session, host->world.owner, &frame) ||
+        frame.provider != host->world.owner || frame.phase != QA_CLIENT_END_FRAME)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+            "Q2 Source observation requires its returned end-frame GAME stage");
+    if (out) *out = frame;
+    return true;
+}
+
+static bool stage_current(qa_native_host *host, const qa_source_frame *before, qa_error *error)
+{
+    qa_source_frame after;
+    if (!stage_ready(host, &after, error)) return false;
+    return (after.provider == before->provider && after.kind == before->kind &&
+        after.phase == before->phase && after.number == before->number &&
+        after.start_ns == before->start_ns && after.elapsed_ns == before->elapsed_ns &&
+        after.time_ns == before->time_ns) || native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+            "Q2 Source end-frame changed during observation");
+}
+
+static bool observation_ready(qa_native_host *host, q2_observation mode, qa_error *error)
+{
+    if (mode == Q2_OBSERVE_IMPORT) return import_ready(host, error);
+    if (mode == Q2_OBSERVE_END_FRAME) return stage_ready(host, NULL, error);
+    return ready(host, error);
+}
+
 static bool binding_equal(qa_native_slot_binding a, qa_native_slot_binding b)
 {
     return a.kind == b.kind && a.slot == b.slot && a.owner == b.owner &&
@@ -51,10 +88,10 @@ static bool binding_current(qa_native_host *host, uint32_t slot,
 }
 
 static bool table_current(qa_native_host *host, const qa_native_entity_table *before,
-    bool importing, qa_error *error)
+    q2_observation mode, qa_error *error)
 {
     qa_native_entity_table after;
-    return (importing ? import_ready(host, error) : ready(host, error)) &&
+    return observation_ready(host, mode, error) &&
         qa_native_entity_table_get(host->instance, &after, error) &&
         ((after.base == before->base && after.stride == before->stride &&
             after.count == before->count && after.capacity == before->capacity) ||
@@ -90,11 +127,12 @@ static bool entity_finite(const qa_q2_entity *state, qa_bounds bounds)
 }
 
 static bool entity_read(qa_native_host *host, uint32_t slot,
-    qa_native_host_q2_entity *out, bool importing, qa_error *error)
+    qa_native_host_q2_entity *out, q2_observation mode, qa_error *error)
 {
     qa_native_entity_table table;
     qa_native_host_q2_entity value = {0};
-    if (!out || !(importing ? import_ready(host, error) : ready(host, error)) ||
+    bool importing = mode == Q2_OBSERVE_IMPORT;
+    if (!out || !observation_ready(host, mode, error) ||
         !qa_native_entity_table_get(host->instance, &table, error)) return false;
     if (slot >= (importing ? table.capacity : table.count) || table.stride < host->edict->bytes)
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
@@ -103,7 +141,7 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
     if (value.binding.kind == QA_NATIVE_SLOT_FREE) {
         if (importing) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 import entity has no actual Source actor binding");
-        if (!table_current(host, &table, false, error)) return false;
+        if (!table_current(host, &table, mode, error)) return false;
         *out = value;
         return true;
     }
@@ -177,7 +215,7 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_FORMAT, slot,
             "Q2 public entity contains non-finite wire coordinates");
     qa_native_slot_binding after;
-    if (!table_current(host, &table, importing, error) || !binding_current(host, slot, &after, error)) return false;
+    if (!table_current(host, &table, mode, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(value.binding, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 public entity binding changed during observation");
@@ -187,11 +225,80 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
 
 bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
-{ return entity_read(host, slot, out, false, error); }
+{ return entity_read(host, slot, out, Q2_OBSERVE_IDLE, error); }
 
 bool qa_native_host_q2_wire_entity_import(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
-{ return entity_read(host, slot, out, true, error); }
+{ return entity_read(host, slot, out, Q2_OBSERVE_IMPORT, error); }
+
+bool qa_native_host_q2_wire_entity_stage(qa_native_host *host, uint32_t slot,
+    qa_native_host_q2_entity *out, qa_error *error)
+{
+    qa_source_frame frame;
+    qa_native_host_q2_entity value;
+    if (!out || !stage_ready(host, &frame, error) ||
+        !entity_read(host, slot, &value, Q2_OBSERVE_END_FRAME, error) ||
+        !stage_current(host, &frame, error)) return false;
+    *out = value; return true;
+}
+
+static bool visible_binding(qa_native_host *host, uint32_t slot, qa_actor_id actor,
+    bool viewer, qa_native_slot_binding *binding, qa_native_address *address, qa_error *error)
+{
+    qa_native_entity_table table;
+    uint8_t inuse, pointer[8];
+    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    if ((viewer && !slot) || slot >= table.count || table.stride < host->edict->bytes ||
+        !binding_current(host, slot, binding, error) || binding->kind == QA_NATIVE_SLOT_FREE ||
+        !qa_actor_id_equal(binding->actor, actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+            "Q2 visibility lost its actual full Source edict binding");
+    if (!qa_native_entity_address(host->instance, slot, address, error) ||
+        !native_host_read_u8(host, *address + host->edict->inuse, &inuse, error)) return false;
+    if (!inuse) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+        "Q2 visibility names an inactive Source edict");
+    if (viewer) {
+        if (!native_host_read(host, *address + NATIVE_Q2_RR_CLIENT, pointer, host->pointer_bytes, error)) return false;
+        qa_native_address client = host->pointer_bytes == 4 ? qa_load_u32le(pointer) : qa_load_u64le(pointer);
+        if (!client) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+            "Q2 visibility viewer has no actual Source client");
+    }
+    return true;
+}
+
+bool qa_native_host_q2_entity_visible(qa_native_host *host, uint32_t entity_slot,
+    qa_actor_id entity, uint32_t viewer_slot, qa_actor_id viewer, bool *out, qa_error *error)
+{
+    qa_source_frame frame;
+    if (!out || !host || host->profile != QA_NATIVE_Q2_GAME_API2023 || !entity.registry || !viewer.registry ||
+        !host->engine.source_frame || !stage_ready(host, &frame, error))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, entity_slot,
+            "Q2 visibility requires its real API2023 Source end-frame");
+    uint64_t source_frame = host->engine.source_frame(host->engine.context);
+    if (!qa_native_host_source_reconcile(host, error) || !stage_current(host, &frame, error)) return false;
+    if (host->engine.source_frame(host->engine.context) != source_frame)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, entity_slot,
+            "Q2 visibility reconciliation changed its actual Source counter");
+    qa_native_slot_binding entity_before, viewer_before, entity_after, viewer_after;
+    qa_native_address entity_address, viewer_address, current_entity, current_viewer;
+    if (!visible_binding(host, entity_slot, entity, false, &entity_before, &entity_address, error) ||
+        !visible_binding(host, viewer_slot, viewer, true, &viewer_before, &viewer_address, error)) return false;
+    qa_native_value arguments[] = {
+        {.type = QA_NATIVE_ADDRESS, .as.address = entity_address},
+        {.type = QA_NATIVE_ADDRESS, .as.address = viewer_address}
+    }, result = {0};
+    if (!qa_native_call(host->instance, "Entity_IsVisibleToPlayer", arguments, 2, &result, error) ||
+        !qa_native_host_source_reconcile(host, error) ||
+        !stage_current(host, &frame, error) ||
+        !visible_binding(host, entity_slot, entity, false, &entity_after, &current_entity, error) ||
+        !visible_binding(host, viewer_slot, viewer, true, &viewer_after, &current_viewer, error)) return false;
+    if (host->engine.source_frame(host->engine.context) != source_frame ||
+        !binding_equal(entity_before, entity_after) || !binding_equal(viewer_before, viewer_after) ||
+        result.type != QA_NATIVE_U8)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, entity_slot,
+            "Q2 visibility callback changed its actual Source frame or actors");
+    *out = result.as.u8 != 0; return true;
+}
 
 static bool character_returned(qa_native_host *host, qa_error *error)
 {
@@ -303,7 +410,7 @@ bool qa_native_host_q2_wire_player(qa_native_host *host, uint32_t slot,
     qa_buffer_free(&bytes);
     if (!player_finite(&value, host->profile == QA_NATIVE_Q2_GAME_API3))
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Q2 public player contains invalid Source wire fields");
-    if (!table_current(host, &table, false, error) || !binding_current(host, slot, &after, error)) return false;
+    if (!table_current(host, &table, Q2_OBSERVE_IDLE, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(before, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 public player binding changed during observation");
@@ -331,7 +438,7 @@ bool qa_native_host_q2_wire_ping(qa_native_host *host, uint32_t slot,
     size_t offset = host->profile == QA_NATIVE_Q2_GAME_API2023 ? 296u : 184u;
     if (!client || client > UINT64_MAX - offset ||
         !native_host_read(host, client + offset, bytes, sizeof(bytes), error) ||
-        !table_current(host, &table, false, error) || !binding_current(host, slot, &after, error)) return false;
+        !table_current(host, &table, Q2_OBSERVE_IDLE, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(before, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 ping lost its actual source player");
     *out = qa_load_i32le(bytes);

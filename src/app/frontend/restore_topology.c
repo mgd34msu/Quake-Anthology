@@ -12,6 +12,7 @@ struct frontend_restore_topology {
     bool dedicated, ui_images, fonts, order, images, materials, sounds, audio;
     bool mods[QA_INPUT_LOCAL_SEATS];
     uint64_t time_ns, wall_time_ns, frame_number, configuration, map_revision, next_source_id, next_audio_id;
+    uint64_t recipient_begin_generation;
     uint64_t silent_audio_remainder, ui_view, world_view;
     qa_audio_output_format output;
     frontend_source_group_plan *groups;
@@ -41,6 +42,7 @@ static bool flags(qa_source_save_io *io, struct frontend_restore_topology *p)
         qa_source_save_bool(io, &p->sounds) && qa_source_save_bool(io, &p->audio) &&
         qa_source_save_u64(io, &p->time_ns) && qa_source_save_u64(io, &p->wall_time_ns) &&
         qa_source_save_u64(io, &p->frame_number) &&
+        qa_source_save_u64(io, &p->recipient_begin_generation) &&
         qa_source_save_u64(io, &p->configuration) && qa_source_save_u64(io, &p->map_revision) &&
         qa_source_save_u64(io, &p->next_source_id) && qa_source_save_u64(io, &p->next_audio_id) &&
         qa_source_save_u64(io, &p->silent_audio_remainder) &&
@@ -75,9 +77,9 @@ static bool portals_fields(qa_source_save_io *io,frontend_source_group_plan *gro
 static bool fields(qa_source_save_io *io, qa_application *app, struct frontend_restore_topology *p)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 5;
+    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 6;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFTP", 4) ||
-        !qa_source_save_u32(io, &version) || version != 5 || !flags(io, p)) return false;
+        !qa_source_save_u32(io, &version) || version != 6 || !flags(io, p)) return false;
     for (size_t i = 0; i < p->seats; ++i)
         if (!qa_source_save_bool(io, &p->mods[i]) || (p->dedicated && p->mods[i])) return false;
     if (!qa_source_save_count(io, &p->group_count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(*p->groups))) return false;
@@ -143,6 +145,7 @@ bool frontend_topology_checkpoint(const qa_frontend *f, qa_buffer *out, qa_error
         .sounds = f->sounds != NULL, .audio = f->audio != NULL, .time_ns = f->time_ns,
         .wall_time_ns = f->wall_time_ns,
         .frame_number = f->frame_number, .configuration = f->configuration, .map_revision = f->map_revision,
+        .recipient_begin_generation=f->recipient_begin_generation,
         .next_source_id = f->next_source_id, .next_audio_id = f->next_audio_id,
         .silent_audio_remainder = f->silent_audio_remainder,
         .output=f->audio_output_format,
@@ -207,6 +210,7 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
         return frontend_fail(error, QA_ERROR_FORMAT, "frontend topology views are absent from preloaded graph");
     f->width = p->width; f->height = p->height; f->time_ns = p->time_ns;
     f->wall_time_ns = p->wall_time_ns; f->frame_number = p->frame_number;
+    f->recipient_begin_generation=p->recipient_begin_generation;
     f->configuration = p->configuration; f->map_revision = p->map_revision; f->next_source_id = p->next_source_id;
     f->next_audio_id = p->next_audio_id; f->silent_audio_remainder = p->silent_audio_remainder;
     f->audio_output_format=p->output;

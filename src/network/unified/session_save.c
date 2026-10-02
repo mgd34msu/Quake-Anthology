@@ -202,6 +202,13 @@ bool qa_unified_session_source_retired(const qa_unified_session *s)
 {
     return qa_unified_session_idle(s) && !s->bound_source;
 }
+bool qa_unified_session_source_close_pending(const qa_unified_session *s)
+{
+    return qa_unified_session_idle(s) && s->server && s->timeout_pending &&
+        s->close_cause == 2 && !s->closing && !s->disconnected && s->timeout_delivery &&
+        !s->timeout_delivery->source_finished &&
+        qa_unified_session_kind(s->timeout_delivery->document, "disconnect");
+}
 
 static bool flag(qa_net_reader *r, bool *out)
 {

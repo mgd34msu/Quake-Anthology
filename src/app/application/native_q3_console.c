@@ -2,6 +2,8 @@
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_source.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -48,6 +50,7 @@ struct application_native_q3_console {
     qa_cvars *cvars;
     size_t calls;
     bool settings_bound;
+    application_native_q3_source_command_scope *source_command;
 };
 
 bool application_native_q3_console_settings_bound(const application_provider *provider)
@@ -129,6 +132,62 @@ void application_native_q3_console_release(application_provider *provider)
 {
     if (provider && provider->native_q3_console && provider->native_q3_console->calls)
         --provider->native_q3_console->calls;
+}
+static bool source_command_current(const application_native_q3_source_command_scope *scope)
+{
+    application_provider *p=scope?scope->provider:NULL;
+    qa_application *app=p?p->application:NULL;
+    uint32_t slot;
+    qa_q3_source_binding binding;
+    qa_q3_native_client client;
+    return app&&!app->destroy_requested&&p->constructed&&p->attached&&!p->close_pending&&
+        p->kind==APPLICATION_PROVIDER_Q3&&p->state.q3==scope->game&&p->launch==scope->launch&&
+        app->publication_generation==scope->publication_generation&&
+        app->command_generation==scope->command_generation&&app->map_revision==scope->map_revision&&
+        qa_launch_snapshot_find(qa_application_launch(app),scope->launch->selection.instance)==scope->launch&&
+        qa_actors_get(qa_session_actors(app->session),scope->actor)&&
+        qa_q3_native_client_slot(scope->game,scope->actor,&slot,NULL)&&slot==scope->slot&&
+        qa_q3_source_binding_read(scope->game,slot,&binding,NULL)&&binding.in_use&&
+        binding.client_slot==(int32_t)slot&&qa_actor_id_equal(binding.actor,scope->actor)&&
+        qa_q3_client_read(scope->game,scope->actor,&client,NULL)&&client.connected==QA_Q3_CLIENT_CONNECTED;
+}
+bool application_native_q3_source_command_entered(const application_provider *provider)
+{
+    const struct application_native_q3_console *owner=provider?provider->native_q3_console:NULL;
+    return owner&&owner->calls&&owner->source_command&&source_command_current(owner->source_command);
+}
+bool application_native_q3_source_command_begin(application_provider *provider,qa_actor_id actor,
+    const qa_command_invocation *command,application_native_q3_source_command_scope *scope,qa_error *error)
+{
+    qa_application *app=provider?provider->application:NULL;
+    if(!app||!scope||provider->kind!=APPLICATION_PROVIDER_Q3||!provider->state.q3||
+        !provider->launch||!provider->launch->selection.instance||!command||!command->argc||!command->argv||
+        !command->args_text||command->context.owner!=provider->owner||
+        command->context.origin!=QA_COMMAND_REMOTE||command->context.dialect!=QA_CONSOLE_Q3||
+        !qa_actor_id_equal(command->context.actor,actor)||
+        !qa_application_command_context_active(app,&command->context))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command lacks its actual captured client invocation");
+    for(size_t i=0;i<command->argc;++i) if(!command->argv[i])
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command argument is absent");
+    *scope=(application_native_q3_source_command_scope){.provider=provider,.game=provider->state.q3,
+        .launch=provider->launch,.actor=actor,.publication_generation=app->publication_generation,
+        .command_generation=app->command_generation,.map_revision=app->map_revision};
+    if(!qa_q3_native_client_slot(scope->game,actor,&scope->slot,error)||!source_command_current(scope))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command lost its installed full client binding");
+    if(!application_native_q3_console_borrow(provider,error)) return false;
+    scope->previous=provider->native_q3_console->source_command;
+    provider->native_q3_console->source_command=scope; return true;
+}
+bool application_native_q3_source_command_end(application_native_q3_source_command_scope *scope,qa_error *error)
+{
+    struct application_native_q3_console *owner=scope&&scope->provider?scope->provider->native_q3_console:NULL;
+    if(!owner||owner->source_command!=scope)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command scope is not the entered invocation");
+    bool current=source_command_current(scope);
+    owner->source_command=scope->previous;
+    application_native_q3_console_release(scope->provider);
+    *scope=(application_native_q3_source_command_scope){0};
+    return current||application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command retired its captured client");
 }
 
 static bool capture(void *context, const qa_command_context *source,

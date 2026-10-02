@@ -1,5 +1,6 @@
 #include "unified_components_save.h"
 #include "unified_components_internal.h"
+#include "network_unified_private.h"
 #include "native_q2_publication.h"
 #include "map_players_private.h"
 #include "unified_save_internal.h"
@@ -188,16 +189,20 @@ bool application_unified_components_checkpoint(const application_unified_compone
     if (!recipient_read(p, &source, &player, e)) return false;
     return application_unified_components_checkpoint_retained(p, &source, &source, &player, out, e);
 }
-bool application_unified_components_checkpoint_retained(const application_unified_component_publisher *p,
+static bool publisher_checkpoint(const application_unified_component_publisher *p,
     const application_unified_source *source, const application_unified_source *retained,
-    const qa_unified_session_player *player, qa_buffer *out, qa_error *e)
+    const qa_unified_session_player *player, const application_unified_server *drop,
+    qa_buffer *out, qa_error *e)
 {
     bool obsolete = application_unified_save_source_obsolete(source, retained);
     if (!p || !source || !retained || !player || !out || out->data || out->size ||
+        (drop && (!application_unified_server_source_drop_current(drop, e) ||
+            drop->components != p || drop->application != p->application ||
+            !qa_net_client_id_equal(drop->client, p->recipient))) ||
         !(application_unified_source_current(p->application, source) ||
             application_unified_source_checkpoint_current(p->application, source)) ||
-        (!obsolete && !source_current(p->application, retained, p->recipient, player)) ||
-        (obsolete && p->pending) ||
+        (!obsolete && !drop && !source_current(p->application, retained, p->recipient, player)) ||
+        ((obsolete || drop) && p->pending) ||
         (p->pending && (!p->pending->sealed || !application_unified_components_current(p->pending))))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component checkpoint lacks its actual current or historical recipient");
     if (!qa_actor_id_equal(player->actor, p->actor)) return bad(e, "Component publisher recipient changed");
@@ -215,6 +220,19 @@ bool application_unified_components_checkpoint_retained(const application_unifie
     qa_source_save_dispose(&io);
     return ok;
 }
+bool application_unified_components_checkpoint_retained(const application_unified_component_publisher *p,
+    const application_unified_source *source, const application_unified_source *retained,
+    const qa_unified_session_player *player, qa_buffer *out, qa_error *e)
+{
+    return publisher_checkpoint(p, source, retained, player, NULL, out, e);
+}
+bool application_unified_components_checkpoint_dropped(const application_unified_component_publisher *p,
+    const application_unified_server *drop, qa_buffer *out, qa_error *e)
+{
+    application_unified_source source;
+    if (!drop || !application_unified_save_source_read(drop->application, &source, e)) return false;
+    return publisher_checkpoint(p, &source, &drop->offered, &drop->admitted_player, drop, out, e);
+}
 
 bool application_unified_components_restore(qa_bytes bytes, qa_application *app,
     const application_unified_source *source, qa_net_client_id client, const qa_unified_session_player *player,
@@ -222,15 +240,17 @@ bool application_unified_components_restore(qa_bytes bytes, qa_application *app,
 {
     return application_unified_components_restore_retained(bytes, app, source, source, client, player, out, e);
 }
-bool application_unified_components_restore_retained(qa_bytes bytes, qa_application *app,
+static bool publisher_restore(qa_bytes bytes, qa_application *app,
     const application_unified_source *source, const application_unified_source *retained,
     qa_net_client_id client, const qa_unified_session_player *player,
-    application_unified_component_publisher **out, qa_error *e)
+    const application_unified_server *drop, application_unified_component_publisher **out, qa_error *e)
 {
     bool obsolete = application_unified_save_source_obsolete(source, retained);
     if (!source || !retained || !player || !out || *out ||
+        (drop && (!application_unified_server_source_drop_current(drop, e) ||
+            drop->application != app || !qa_net_client_id_equal(drop->client, client))) ||
         !(application_unified_source_current(app, source) || application_unified_source_checkpoint_current(app, source)) ||
-        (!obsolete && !source_current(app, retained, client, player)))
+        (!obsolete && !drop && !source_current(app, retained, client, player)))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component restore requires its genuine imported recipient");
     application_unified_component_publisher *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(e, QA_ERROR_MEMORY, "Restoring recipient component publisher");
@@ -240,12 +260,27 @@ bool application_unified_components_restore_retained(qa_bytes bytes, qa_applicat
     bool ok = qa_source_save_reader(&io, source->session, bytes, e) && source_fields(&io, app, source, &saved, player) &&
         publisher_fields(&io, p) && qa_source_save_finish(&io, NULL) &&
         owners_valid(app, source, p->rows, p->count, &p->native, false, obsolete, e) &&
-        (obsolete || source_current(app, retained, client, player));
+        (obsolete || drop || source_current(app, retained, client, player));
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component publisher differs from its imported Source");
     qa_source_save_dispose(&io);
     if (!ok) { free(p->rows); free(p); return false; }
     *out = p;
     return true;
+}
+bool application_unified_components_restore_retained(qa_bytes bytes, qa_application *app,
+    const application_unified_source *source, const application_unified_source *retained,
+    qa_net_client_id client, const qa_unified_session_player *player,
+    application_unified_component_publisher **out, qa_error *e)
+{
+    return publisher_restore(bytes, app, source, retained, client, player, NULL, out, e);
+}
+bool application_unified_components_restore_dropped(qa_bytes bytes, const application_unified_server *drop,
+    application_unified_component_publisher **out, qa_error *e)
+{
+    application_unified_source source;
+    if (!drop || !application_unified_save_source_read(drop->application, &source, e)) return false;
+    return publisher_restore(bytes, drop->application, &source, &drop->offered, drop->client,
+        &drop->admitted_player, drop, out, e);
 }
 
 static bool owner_json(const qa_json_document *json, qa_json_id value, qa_session *session,

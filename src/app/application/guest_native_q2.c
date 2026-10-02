@@ -1,6 +1,9 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_client_stages.h"
+#include "native_q2_source_actors.h"
 #include "native_q2_wire_engine.h"
+#include "native_q2_visibility.h"
 #include "save_native_q2_record.h"
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
@@ -33,8 +36,10 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
 static bool owner_returned(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
+    return !engine || (!engine->baseline && !engine->calls && !engine->source_invocation && qa_world_idle(engine->world) &&
         application_native_q2_callbacks_idle(engine->callbacks) &&
+        application_native_q2_stages_idle(engine->stages) &&
+        application_native_q2_source_actors_returned(engine->source_actors) &&
         application_native_q2_inventory_scanner_returned(engine->inventory_scanner) &&
         application_native_q2_inventory_rows_idle(engine->inventory_rows) &&
         (!engine->console || qa_console_idle(engine->console)) &&
@@ -44,7 +49,8 @@ static bool owner_returned(const application_provider *provider)
 bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine=provider?provider->state.native.q2_engine:NULL;
-    return owner_returned(provider)&&(!engine||application_native_q2_inventory_scanner_idle(engine->inventory_scanner));
+    return owner_returned(provider)&&(!engine||(application_native_q2_inventory_scanner_idle(engine->inventory_scanner)&&
+        application_native_q2_source_actors_idle(engine->source_actors)));
 }
 
 static bool frontend_owner_idle(void *context)
@@ -59,6 +65,8 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     struct application_native_q2 *engine = state;
     engine->frame = *frame;
     if (!engine->map_ready) return true;
+    application_native_q2_visibility_invalidate(engine);
+    if (engine->callbacks) return true;
     ++engine->calls;
     bool ok = engine->profile != QA_NATIVE_Q2_GAME_API2023 ||
         qa_native_host_prep_frame(engine->provider->state.native.host, error);
@@ -71,17 +79,23 @@ static bool end_frame(void *state, qa_session *session, const qa_source_frame *f
     (void)session; (void)frame;
     struct application_native_q2 *engine = state;
     if (!engine->map_ready) return true;
+    application_native_q2_visibility_invalidate(engine);
+    if (engine->callbacks) return application_native_q2_stages_advance(engine, frame, error) &&
+        application_native_q2_visibility_complete(engine, error);
     ++engine->calls;
     bool ok = qa_native_host_run_frame(engine->provider->state.native.host, true, error);
     --engine->calls;
-    return ok;
+    return ok && application_native_q2_visibility_complete(engine, error);
 }
 
 static void actor_released(void *state, qa_session *session, qa_actor_record actor)
 {
     (void)session;
     struct application_native_q2 *engine = state;
+    application_native_q2_stages_released(engine, actor.id);
+    application_native_q2_source_actors_released(engine, actor.id);
     application_native_q2_wire_released(engine, actor.id);
+    application_native_q2_visibility_released(engine, actor.id);
     application_native_q2_attack_released(engine, actor.id);
     application_native_q2_combat_released(engine, actor.id);
     application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor.id);
@@ -93,6 +107,7 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
         if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
             engine->clients[i].actor = (qa_actor_id){0};
             engine->clients[i].connected = engine->clients[i].begun = false;
+            engine->clients[i].denied = false;
             engine->clients[i].inventory_bound = false;
             engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
             engine->clients[i].protocol_fog_actor = (qa_actor_id){0};
@@ -426,6 +441,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     instance.process = &engine->process.process;
     bool ok;
     ++engine->calls;
+    engine->host_constructing = true;
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
         qa_native_host_q2_cgame_options options = {.instance = instance,
             .engine = application_native_q2_services(engine), .application = application_native_q2_import,
@@ -433,7 +449,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             .console = engine->console, .command_context = engine->command_context};
         uint32_t seat = UINT32_MAX;
         for (size_t i = 1; i < 257; ++i) if (engine->clients[i].reserved) {
-            if (seat != UINT32_MAX) { --engine->calls; return application_fail(error, QA_ERROR_ARGUMENT,
+            if (seat != UINT32_MAX) { engine->host_constructing = false; --engine->calls; return application_fail(error, QA_ERROR_ARGUMENT,
                 "Native Q2 cgame requires an explicitly admitted seat instance"); }
             seat = engine->clients[i].seat;
         }
@@ -456,6 +472,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         ok = qa_native_host_create_q2_game(provider->state.native.module, &options,
             &provider->state.native.host, error);
     }
+    engine->host_constructing = false;
     --engine->calls;
     /* The constructor copied the actual capsule and its deferred HOST bytes.
      * No enclosing recipe keeps this temporary snapshot storage borrowed. */
@@ -516,8 +533,11 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     }
     if (!application_native_q2_combat_load(engine, error)) return false;
     application_native_q2_wire_destroy(&engine->wire_engine);
+    application_native_q2_visibility_destroy(&engine->visibility);
     ++engine->calls;
-    bool ok = application_native_q2_callbacks_validate(engine, error);
+    bool ok = application_native_q2_callbacks_validate(engine, error) &&
+        (provider->application->operation == APPLICATION_PERSISTING ||
+         application_native_q2_stages_prepare(engine, error));
     if (ok && !engine->initialized) {
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         if (ok) engine->initialized = true;
@@ -545,13 +565,16 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     qa_buffer_free(&declared_entities);
     if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
     if (ok && engine->callbacks && provider->application->operation != APPLICATION_PERSISTING) {
-        bool accepted;
-        application_native_callback_value values[] = {
-            {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.time_ns/1e9},
-            {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.elapsed_ns/1e9}
-        };
-        application_native_callback_inputs inputs={values,2,{0}};
-        ok = application_native_q2_callbacks_run(engine, "initialize", &inputs, &accepted, error);
+        bool accepted;qa_source_frame frame;
+        ok=application_native_q2_stages_time_read(engine,&frame,error);
+        if(ok) {
+            application_native_callback_value values[] = {
+                {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.time_ns/1e9},
+                {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.elapsed_ns/1e9}
+            };
+            application_native_callback_inputs inputs={values,2,{0}};
+            ok = application_native_q2_callbacks_run(engine, "initialize", &inputs, &accepted, error);
+        }
     }
     --engine->calls;
     if (ok) {
@@ -569,6 +592,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
+    if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && provider->state.native.host) {
@@ -609,7 +633,9 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
         if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
     if (!application_q2_control_suspend(engine, error)) return false;
     if (!application_native_q2_callbacks_suspend(engine, error)) return false;
+    if (!application_native_q2_source_actors_suspend(engine, error)) return false;
     if (!application_native_q2_publication_retire(engine->publication, error)) return false;
+    application_native_q2_visibility_destroy(&engine->visibility);
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
     return true;
@@ -619,9 +645,12 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
+    if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
     if (!application_native_q2_combat_suspend(engine, error)) return false;
+    if (!application_native_q2_stages_close(engine, error)) return false;
+    if (!application_native_q2_source_actors_close(engine, error)) return false;
     if(!application_native_q2_inventory_scanner_destroy(engine->inventory_scanner,error)) return false;
     engine->inventory_scanner=NULL;
     if(!application_native_q2_inventory_rows_destroy(engine->inventory_rows,error)) return false;
@@ -673,10 +702,12 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     application_native_q2_publication_destroy(&engine->publication);
     application_native_q2_wire_destroy(&engine->wire_engine);
+    application_native_q2_visibility_destroy(&engine->visibility);
     qa_native_declaration_destroy(engine->declaration);
     qa_command_tokens_free(&engine->arguments);
     if (engine->configstrings)
         for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
+    application_network_q2_retire_bindings(engine);
     free(engine->configstrings); free(engine->entity_text); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;

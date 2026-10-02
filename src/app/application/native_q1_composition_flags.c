@@ -533,7 +533,7 @@ bool application_native_q1_ctf_regenerate(application_provider *source, qa_actor
     if (okay && combat.armor.regular.kind != QA_ARMOR_NONE && combat.armor.regular.points < 150 &&
         (combat.armor.regular.kind != QA_ARMOR_Q1 || combat.armor.regular.protection.q1_absorption > 0)) {
         okay = qa_combat_set_regular_points(call.app->combat, actor,
-            fminf(150, combat.armor.regular.points + 5), NULL, error) &&
+            fminf(150, (float)combat.armor.regular.points + 5), NULL, error) &&
             player_current(&call, actor, &observer, error);
         if (okay) delay += .5;
     }

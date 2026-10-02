@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=16;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=17;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==16?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==17?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -127,14 +127,12 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     if (!bot_save_text(io,&name)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_name=(char *)name;
     if (state->view.actor.registry && (!character || !name)) return false;
-    F(state->stand_until); F(state->stand_enemy_time); F(state->respawn_time); F(state->respawn_chat_time);
-    F(state->chase_time); F(state->enemy_visible_time); F(state->enemy_sight_time); F(state->check_time);
-    F(state->attack_crouch_time); F(state->attack_jump_time); F(state->attack_strafe_time); F(state->fire_wait_time);
-    F(state->fire_until); F(state->weapon_change_time); F(state->enemy_death_time); F(state->state_time); F(state->chase_until);
-    F(state->teleport_time); F(state->last_air_time); F(state->last_chat_time);
+    F(state->stand_until); F(state->stand_enemy_time);
+    F(state->chase_time); F(state->check_time);
+    F(state->state_time); F(state->chase_until);
     F(state->blocked_time); F(state->not_blocked_time);
-    U(state->last_enemy_area); B(state->respawn_wait); B(state->suicidal); B(state->strafe_right);
-    B(state->team_arena); B(state->retired); B(state->attacked);
+    U(state->last_enemy_area);
+    B(state->team_arena); B(state->retired);
     L(state->command_sequence); U(state->activation_count);
     if (state->activation_count > 8) return false;
     for (size_t i = 0; i < 8; ++i) {

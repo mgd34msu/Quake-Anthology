@@ -1,4 +1,5 @@
 #include "capture.h"
+#include "seat_save.h"
 #include "q3_color_policy.h"
 #include "visual_restore.h"
 #include "source_restore.h"
@@ -11,6 +12,7 @@
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "unified_media_inventory.h"
+#include "source_cinematics.h"
 #include "qa/q3_assets_custody.h"
 #include "qa/material_source_scratch.h"
 #include "qa/render_controls.h"
@@ -36,6 +38,7 @@
 #include "client_source.h"
 #include "component_scene.h"
 #include "renderer_materials.h"
+#include "renderer_registries.h"
 #include "renderer_worlds.h"
 #include "remote_unified.h"
 #include "qa/scene_resource_save.h"
@@ -120,6 +123,7 @@ struct frontend_resource_inventory {
     const qa_launch_snapshot *launch, *candidate;
     const qa_application_client_preparation *client;
     const frontend_video_guests *video;
+    qa_q3_cinematic_handles_stage *cinematics;
     qa_console *root_console;
     qa_cvars *root_cvars;
     bool engine_only;
@@ -193,6 +197,16 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
         if (!qa_input_release_idle(f->seats[i].input)) return false;
     return true;
 }
+bool frontend_seat_callbacks_checkpoint_ready(const qa_frontend *f,qa_error *error)
+{
+    if(!frontend_seat_callbacks_returned(f)) return false;
+    if(f->seats) for(unsigned i=0;i<f->options.seats;++i) {
+        frontend_seat *seat=f->seats+i;
+        qa_input_checkpoint_refs refs=frontend_seat_input_refs(seat);
+        if(seat->input && !qa_input_seat_checkpoint_ready(seat->input,&refs,error)) return false;
+    }
+    return true;
+}
 static bool owners_returned(const qa_frontend *f,const frontend_video_guests *video)
 {
     if(video && !frontend_video_guests_resources_returned(f,video,NULL)) return false;
@@ -208,7 +222,9 @@ static bool owners_returned(const qa_frontend *f,const frontend_video_guests *vi
         (f->global_settings_storage && !frontend_global_settings_storage_idle(f->global_settings_storage)) ||
         (f->music_sources && !frontend_music_sources_idle(f->music_sources)) ||
         (f->q1_sky && !frontend_q1_sky_idle(f->q1_sky)) || !movies_idle(f) ||
+        (f->source_cinematics && !qa_q3_cinematic_handles_idle(f->source_cinematics)) ||
         !frontend_renderer_materials_idle(f->renderer_materials) || !frontend_renderer_worlds_idle(f->renderer_worlds) ||
+        !frontend_renderer_registries_idle(f->renderer_registries) ||
         !frontend_qc_messages_idle(f->qc_messages) ||
         !frontend_selected_character_idle(f) || !frontend_selected_effects_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
@@ -371,7 +387,8 @@ static bool resource_scopes(frontend_resource_inventory *inventory,qa_error *err
         size_t roles=(size_t)v.roles[QA_QVM_CGAME]+v.roles[QA_QVM_UI];
         for (size_t j=0;j<roles;++j) {
             frontend_source_role_identity role;
-            if (!frontend_source_group_role_read(f,i,j,&role) || !scope_add(inventory,(resource_scope){
+            if (!(inventory->video?frontend_source_group_role_video_read(f,i,j,&role,inventory->video):
+                frontend_source_group_role_read(f,i,j,&role)) || !scope_add(inventory,(resource_scope){
                 .kind=RESOURCE_SOURCE_ROLE,.ordinal=j,.owner=v.presentation,.provider=v.owner,
                 .service_owner=role.service_owner,.identity=v.identity,.seat=v.seat,.launch_seat=v.launch_seat,
                 .source_files=v.source_files,.mounts=v.mounts,.roles={role.role,0,0}},error)) return false;
@@ -574,6 +591,8 @@ static bool heaps(qa_frontend *f, bool video, owner_append append, void *context
         if (!frontend_equipment_media_at(f,i,&media) || !media.declaration || !media.held ||
             (!media.declaration->none && (!media.held_scene || !media.held->model)))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture equipment media is incomplete");
+        if(media.source_slot && (!append(context,CAPTURE_IMAGES,media.owner.images,error) ||
+            !append(context,CAPTURE_LIBRARY,media.owner.materials,error))) return false;
         if (media.declaration->none) continue;
         if (!append(context,CAPTURE_MODEL,media.held_scene,error)) return false;
     }
@@ -671,6 +690,14 @@ static bool registries(qa_frontend *f, bool video, owner_append append, void *co
             qa_scene_resources *images=qa_scene_image_resource_owner(image);
             ok=images && append(context,CAPTURE_IMAGES,images,error);
         }
+        size_t texture_count=0;
+        if(!qa_render_controls_source_texture_metadata(controls,&texture_count,error)) return false;
+        for(size_t i=0;ok && i<texture_count;++i) {
+            const qa_scene_image *image=NULL;
+            if(!qa_render_controls_source_texture_level_metadata(controls,i,&image,error) || !image) return false;
+            qa_scene_resources *images=qa_scene_image_resource_owner(image);
+            ok=images && append(context,CAPTURE_IMAGES,images,error);
+        }
         for(size_t i=0;ok && i<qa_material_source_library_count(source);++i) {
             const qa_material_library *library=qa_material_source_library_at(source,i);
             ok=library && append(context,CAPTURE_LIBRARY,library,error) &&
@@ -686,6 +713,10 @@ static bool registries(qa_frontend *f, bool video, owner_append append, void *co
             qa_q3_presentation_assets *assets=qa_q3_source_scene_bank_registry_at(bank,i);
             ok=assets && append(context,CAPTURE_ASSETS,assets,error);
         }
+    }
+    if(ok && f->source_cinematics) {
+        qa_q3_cinematic_handles_options pool;
+        ok=frontend_source_cinematics_read(f,&pool,error) && append(context,CAPTURE_IMAGES,pool.images,error);
     }
     return ok;
 }
@@ -764,10 +795,14 @@ static bool remote_capture_heaps(frontend_capture *capture,qa_error *error)
     const frontend_remote_q3_initial_view *owner=&capture->initial;
     if(capture->has_initial && (!add(capture,CAPTURE_IMAGES,owner->images,error) ||
         !add(capture,CAPTURE_LIBRARY,owner->materials,error) || !add(capture,CAPTURE_FONTS,owner->fonts,error))) return false;
-    frontend_renderer_materials_view retained; bool present=false;
-    if(!frontend_renderer_materials_read(capture->frontend,&retained,&present,error) || (present &&
-        (!add(capture,CAPTURE_IMAGES,retained.images,error) || !add(capture,CAPTURE_LIBRARY,retained.library,error) ||
-         !add(capture,CAPTURE_IMAGES,retained.lightmap_images,error)))) return false;
+    size_t retained_count=0;
+    if(!frontend_renderer_materials_count(capture->frontend,&retained_count,error)) return false;
+    for(size_t i=0;i<retained_count;++i) {
+        frontend_renderer_materials_view retained;
+        if(!frontend_renderer_materials_read_at(capture->frontend,i,&retained,error) ||
+            !add(capture,CAPTURE_IMAGES,retained.images,error) || !add(capture,CAPTURE_LIBRARY,retained.library,error) ||
+            !add(capture,CAPTURE_IMAGES,retained.lightmap_images,error)) return false;
+    }
     frontend_renderer_worlds_view world; bool has_world=false;
     return frontend_renderer_worlds_read(capture->frontend,&world,&has_world,error) && (!has_world ||
         (add(capture,CAPTURE_WORLD,world.world,error) && add(capture,CAPTURE_IMAGES,world.images,error) &&
@@ -848,11 +883,15 @@ static bool resource_collect(frontend_resource_inventory *inventory,qa_error *er
         !resource_add(inventory,CAPTURE_IMAGES,initial.images,error) ||
         !resource_add(inventory,CAPTURE_LIBRARY,initial.materials,error) ||
         !resource_add(inventory,CAPTURE_FONTS,initial.fonts,error))) return false;
-    frontend_renderer_materials_view retained; bool has_retained=false;
-    if(!frontend_renderer_materials_read(f,&retained,&has_retained,error) || (has_retained &&
-        (!resource_add(inventory,CAPTURE_IMAGES,retained.images,error) ||
-         !resource_add(inventory,CAPTURE_LIBRARY,retained.library,error) ||
-         !resource_add(inventory,CAPTURE_IMAGES,retained.lightmap_images,error)))) return false;
+    size_t retained_count=0;
+    if(!frontend_renderer_materials_count(f,&retained_count,error)) return false;
+    for(size_t i=0;i<retained_count;++i) {
+        frontend_renderer_materials_view retained;
+        if(!frontend_renderer_materials_read_at(f,i,&retained,error) ||
+            !resource_add(inventory,CAPTURE_IMAGES,retained.images,error) ||
+            !resource_add(inventory,CAPTURE_LIBRARY,retained.library,error) ||
+            !resource_add(inventory,CAPTURE_IMAGES,retained.lightmap_images,error)) return false;
+    }
     frontend_renderer_worlds_view retained_world; bool has_world=false;
     if(!frontend_renderer_worlds_read(f,&retained_world,&has_world,error) || (has_world &&
         (!resource_add(inventory,CAPTURE_WORLD,retained_world.world,error) ||
@@ -917,7 +956,7 @@ static bool resource_parent_matches(const frontend_resource_inventory *inventory
 {
     const qa_frontend *f=inventory?inventory->frontend:NULL;
     bool publishing=consuming && inventory && !inventory->engine_only;
-    if (!f || f->resource_inventory!=inventory || f->application!=inventory->application ||
+    if (!f || inventory->cinematics || f->resource_inventory!=inventory || f->application!=inventory->application ||
         (f->stepping && !inventory->video) || f->round || f->shutdown || f->capture || f->source_restoring ||
         f->scene_world!=inventory->scene_world || f->map_resource!=inventory->map_resource ||
         &f->frame!=inventory->frame || f->seats!=inventory->seats || f->options.seats!=inventory->seat_count ||
@@ -1027,12 +1066,41 @@ bool frontend_resource_inventory_collect_client(qa_frontend *f,const qa_applicat
 bool frontend_resource_inventory_collect_video(qa_frontend *f,const frontend_video_guests *video,
     frontend_resource_inventory **out,qa_error *error)
 { return resource_inventory_collect(f,f?f->application:NULL,NULL,NULL,video,out,error); }
+static bool resource_cinematics_associated(const frontend_resource_inventory *inventory)
+{
+    if(!inventory || !inventory->frontend) return false;
+    qa_q3_cinematic_handles *pool=inventory->frontend->source_cinematics;
+    if(!inventory->cinematics) return !pool || qa_q3_cinematic_handles_idle(pool);
+    qa_q3_cinematic_handles_options options;
+    if(!pool || qa_q3_cinematic_handles_stage_owner(inventory->cinematics)!=pool ||
+        !qa_q3_cinematic_handles_stage_associated(pool) || !qa_q3_cinematic_handles_read(pool,&options) ||
+        qa_scene_resource_policy_source(qa_q3_cinematic_handles_stage_bank(inventory->cinematics))!=options.images) return false;
+    for(size_t i=0;i<inventory->count;++i)
+        if(inventory->rows[i].kind==CAPTURE_IMAGES && inventory->rows[i].owner==options.images) return true;
+    return false;
+}
+bool frontend_resource_inventory_cinematics(frontend_resource_inventory *inventory,
+    qa_q3_cinematic_handles_stage *stage,qa_error *error)
+{
+    if(!inventory || inventory->frontend->resource_inventory!=inventory ||
+        (stage && inventory->cinematics && inventory->cinematics!=stage)) return false;
+    if(!stage) {
+        qa_q3_cinematic_handles *pool=inventory->frontend->source_cinematics;
+        if(pool && !qa_q3_cinematic_handles_idle(pool))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Global cinematic child has not returned from checked cleanup");
+        inventory->cinematics=NULL; return true;
+    }
+    qa_q3_cinematic_handles_stage *previous=inventory->cinematics; inventory->cinematics=stage;
+    if(resource_cinematics_associated(inventory)) return true;
+    inventory->cinematics=previous;
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"Global cinematic child differs from the retained pool and bank roster");
+}
 static bool resource_roster_matches(const frontend_resource_inventory *inventory,bool metadata_only)
 {
     frontend_resource_inventory current={.frontend=inventory->frontend,.checking=inventory,
         .rows=inventory->rows,.count=inventory->count,.metadata_only=metadata_only,
         .client=inventory->client,.video=inventory->video}; qa_error error={0};
-    return resource_collect(&current,&error) && current.observation_cursor==inventory->observation_count &&
+    return resource_cinematics_associated(inventory) && resource_collect(&current,&error) && current.observation_cursor==inventory->observation_count &&
         current.scope_cursor==inventory->scope_count;
 }
 bool frontend_resource_inventory_current(const frontend_resource_inventory *inventory)
@@ -1070,7 +1138,7 @@ bool frontend_resource_inventory_release(frontend_resource_inventory **address,q
     if (!address || !*address) return true;
     frontend_resource_inventory *inventory=*address;
     qa_frontend *f=inventory->frontend;
-    if (!f || f->resource_inventory!=inventory || f->application!=inventory->application ||
+    if (!f || inventory->cinematics || f->resource_inventory!=inventory || f->application!=inventory->application ||
         (f->stepping && (!inventory->video || !frontend_video_guests_resources_associated(f,inventory->video))) ||
         f->round || f->shutdown || f->capture || f->source_restoring ||
         !frontend_seat_callbacks_returned(f))
@@ -1106,18 +1174,23 @@ const qa_scene_world *frontend_resource_inventory_world_at(const frontend_resour
 { return resource_owner_at(i,CAPTURE_WORLD,n); }
 const qa_scene_model *frontend_resource_inventory_model_at(const frontend_resource_inventory *i,size_t n)
 { return resource_owner_at(i,CAPTURE_MODEL,n); }
+static bool retain_registry(void *context,capture_kind kind,const void *owner,qa_error *error)
+{
+    return kind!=CAPTURE_ASSETS || !owner ||
+        frontend_renderer_registries_include(context,(qa_q3_presentation_assets *)owner,error);
+}
 bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *error)
 {
-    if (f && f->component_scenes)
-        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Component scene roots require their actual saved namespace inventory");
     if(f && (!frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
         !f->application || qa_application_client_prepare_active(f->application) ||
-        !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
+        !frontend_owners_idle(f) || !frontend_seat_callbacks_checkpoint_ready(f,error) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");
     if (!frontend_q3_source_color_publication_finish(f,error) ||
-        !frontend_selected_character_refresh(f,error)) return false;
+        !frontend_selected_character_refresh(f,error) ||
+        !frontend_renderer_registries_refresh(f,error) ||
+        !registries(f,false,retain_registry,f,error)) return false;
     frontend_capture *capture=calloc(1,sizeof(*capture));
     if (!capture) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the frontend capture lease");
     capture->frontend=f; f->capture=capture;

@@ -22,6 +22,13 @@ typedef struct cpu_target {
 typedef struct cpu_vertex {
   double clip[4], color[4], uv[2][2], world[3], normal[3];
 } cpu_vertex;
+#define CPU_SOURCE_IMAGES_QA 2048u
+typedef struct cpu_source_image {
+  const qa_scene_image *image;
+  qa_scene_resources *owner;
+  qa_scene_filter filter;
+  qa_render_source_texture texture;
+} cpu_source_image;
 struct qa_cpu_renderer {
   qa_cpu_options options;
   qa_render_controls controls;
@@ -34,7 +41,7 @@ struct qa_cpu_renderer {
   float clear_depth;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
-  bool preblend_gamma;
+  bool preblend_gamma, source_frame;
   bool executing, presenting, capturing;
   qa_cpu_surface_ticket *surface_ticket;
   bool destroy_pending;
@@ -44,6 +51,8 @@ struct qa_cpu_renderer {
   struct cpu_vertex *vertices;
   size_t vertex_capacity;
   const qa_scene_image *bound[2];
+  cpu_source_image source_images[CPU_SOURCE_IMAGES_QA];
+  uint32_t source_image_count;
 };
 typedef struct cpu_derivative {
   double dudx, dvdx, dudy, dvdy;

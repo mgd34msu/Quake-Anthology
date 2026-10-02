@@ -6,6 +6,8 @@
 #include "source_player.h"
 #include "source_view.h"
 #include "source_storage.h"
+#include "source_timers.h"
+#include "source_flags.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -134,6 +136,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+    if(ok) bot_ai_flag_set(s,BOT_AI_IDEAL_VIEW_SET,false);
     if (ok) {
         bool intermission,observer;
         ok=bot_ai_source_intermission(b,s,&intermission,e);
@@ -155,7 +158,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
             int32_t contents;
             if(ok) ok = navigation && qa_bot_navigation_contents(navigation, s->player.eye, &contents, e);
             if (ok && (bot_ai_inventory_value(s,QA_BOT_INV_ENVIRO) > 0 || !(contents & (8 | 16 | 32))))
-                s->last_air_time = b->time;
+                bot_ai_last_air_time_set(s,b->time);
         }
         if (ok) ok = bot_ai_messages(b, s, e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;

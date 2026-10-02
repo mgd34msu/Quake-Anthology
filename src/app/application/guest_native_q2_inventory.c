@@ -382,28 +382,47 @@ bool application_native_q2_inventory_source_current(struct application_native_q2
         actual.cursor_offset == source->cursor_offset && actual.client_bytes == source->client_bytes && actual.empty == source->empty
         ? true : application_fail(error, QA_ERROR_ARGUMENT, "Native inventory source receipt changed its physical client or layout");
 }
-bool application_native_q2_weapon_request(application_provider *provider, qa_actor_id actor,
-    qa_item_id item, bool *admitted, qa_error *error)
+static bool weapon_accepts_source(application_provider *provider,qa_actor_id actor,
+    qa_item_id item,application_native_q2_inventory_source *source,bool *admitted,
+    bool *already_selected,uint32_t *index,qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !admitted || !item || !engine->primary_inventory || !engine->map_ready ||
         application_provider_for(provider->application, actor, QA_ROLE_ARSENAL, NULL) != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native weapon request requires its actual selected original owner");
     *admitted = false;
-    application_native_q2_inventory_source source;
-    if (!application_native_q2_inventory_source_read(engine, actor, &source, error)) return false;
+    *already_selected=false;
+    if (!application_native_q2_inventory_source_read(engine, actor, source, error)) return false;
     qa_item_id active;
-    if (!application_native_q2_attack_weapon_read(engine, source.slot, actor, &active, error)) return false;
-    if (active == item) { *admitted = true; return true; }
+    if (!application_native_q2_attack_weapon_read(engine, source->slot, actor, &active, error)) return false;
+    if (active == item) {
+        if(!application_native_q2_inventory_source_current(engine,source,error)) return false;
+        *admitted=true;*already_selected=true;return true;
+    }
     bool weapon;
     if (!application_native_q2_attack_weapon_contains(engine, item, &weapon, error)) return false;
     if (!weapon) return true;
-    uint32_t index;
     int32_t count;
-    if (!application_native_q2_inventory_index(engine, item, &index, error) ||
-        !scalar_read(engine, source.client + engine->primary_inventory->inventory_offset + (uint64_t)index * 4,
+    if (!application_native_q2_inventory_index(engine, item, index, error) ||
+        !scalar_read(engine, source->client + engine->primary_inventory->inventory_offset + (uint64_t)*index * 4,
             4, &count, error)) return false;
-    if (count <= 0) return true;
+    if(!application_native_q2_inventory_source_current(engine,source,error)) return false;
+    *admitted=count>0;return true;
+}
+bool application_native_q2_weapon_accepts(application_provider *provider,qa_actor_id actor,
+    qa_item_id item,bool *admitted,qa_error *error)
+{
+    application_native_q2_inventory_source source;bool selected;uint32_t index;
+    return weapon_accepts_source(provider,actor,item,&source,admitted,&selected,&index,error);
+}
+bool application_native_q2_weapon_request(application_provider *provider,qa_actor_id actor,
+    qa_item_id item,bool *admitted,qa_error *error)
+{
+    application_native_q2_inventory_source source;bool selected;uint32_t index;
+    if(!weapon_accepts_source(provider,actor,item,&source,admitted,&selected,&index,error)) return false;
+    if(!*admitted||selected) return true;
+    *admitted=false;
+    struct application_native_q2 *engine=provider->state.native.q2_engine;
     uint32_t base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
     if (index > UINT32_MAX - base || base + index >= engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");

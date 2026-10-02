@@ -13,7 +13,7 @@ static bool entry_fields(qa_source_save_io *io, qa_inventory_entry *entry)
     qa_inventory_entry normalized;
     if (!qa_source_save_string(io, &entry->item) || !entry->item ||
         !qa_source_save_f64(io, &entry->count) || !qa_source_save_f64(io, &entry->capacity) ||
-        !qa_source_save_u32(io, &policy) || policy > QA_COUNT_SOURCE_INT32) return false;
+        !qa_source_save_u32(io, &policy) || policy > QA_COUNT_SOURCE_DOUBLE) return false;
     entry->policy = (qa_inventory_count_policy)policy;
     return qa_inventory_validate_entry(entry, &normalized, io->error) &&
         normalized.count == entry->count && normalized.capacity == entry->capacity;

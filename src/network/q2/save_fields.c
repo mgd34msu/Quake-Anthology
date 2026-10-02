@@ -52,6 +52,9 @@ bool qa_q2_save_codec(qa_source_save_io *io, qa_q2_codec *value)
             (value->protocol.revision >= 1024 ? UINT16_MAX : 7u)))
         return invalid(io, "Invalid saved Q2 mutable codec identity");
     U32(value->wire_flags); U32(value->frame_extra); BOOL(value->demo26); BOOL(value->frame_player_pending);
+    I32(value->server_clientnum); BOOL(value->has_server_clientnum);
+    if (!value->has_server_clientnum && value->server_clientnum)
+        return invalid(io, "Saved Q2 codec has an unowned server player identity");
     COUNT(value->split_players, QA_Q2_MAX_SEATS); RAW(value->kex_nonzero_solid);
     return (value->split_players && (value->protocol.kind != QA_NET_Q2PRO_36 ||
         value->protocol.flags == value->wire_flags)) || invalid(io, "Saved Q2 codec state differs from its negotiated flags");
@@ -84,7 +87,8 @@ static bool pmove(qa_source_save_io *io, qa_q2_pmove *value)
 }
 bool qa_q2_save_player(qa_source_save_io *io, qa_q2_player *value)
 {
-    I32(value->clientnum); RAW(value->fog.color); RAW(value->fog.height_start_color); RAW(value->fog.height_end_color);
+    I32(value->clientnum); BOOL(value->clientnum_present);
+    RAW(value->fog.color); RAW(value->fog.height_start_color); RAW(value->fog.height_end_color);
     U16(value->fog.density); U16(value->fog.sky_factor); U16(value->fog.height_density); U16(value->fog.height_falloff);
     I32(value->fog.height_start_distance); I32(value->fog.height_end_distance);
     if (!pmove(io, &value->pmove)) return false;

@@ -48,6 +48,9 @@ typedef struct qa_application_client_owner {
      * authenticated receiver currently holds no admitted frame. */
     bool (*entity_publication)(void *, const qa_application_client_source *,
         qa_application_client_entity_publication *);
+    /* Explicit retained disconnect receipt. This certifies physical custody
+     * for cold continuation, never a live transport connection. */
+    bool (*retirement_current)(void *, const qa_application_client_source *);
 } qa_application_client_owner;
 typedef struct qa_application_client_options {
     const qa_launch_instance *descriptor;
@@ -84,6 +87,9 @@ bool qa_application_client_read(qa_application *, qa_actor_owner, uint32_t,
 bool qa_application_client_physical_read(qa_application *, qa_actor_owner, uint32_t,
     qa_application_client_source *, qa_error *);
 bool qa_application_client_current(qa_application *, const qa_application_client_source *);
+bool qa_application_client_retirement_current(qa_application *, const qa_application_client_source *);
+bool qa_application_client_epoch_adopt(qa_application *,const qa_application_client_source *,
+    uint64_t,qa_application_client_source *,qa_error *);
 /* Retained physical row/provider association only; invokes no callbacks. */
 bool qa_application_client_associated(const qa_application *, const qa_application_client_source *);
 /* Called only with the genuine successful Network attach receipt. The owner

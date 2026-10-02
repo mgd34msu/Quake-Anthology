@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest/internal.h"
 
 typedef union native_scalar_storage {
     int8_t i8;
@@ -383,11 +384,13 @@ void native_latch_error(qa_native_instance *instance, const qa_error *error) {
         native_runner_child_failure(instance, &instance->failure);
         return;
     }
-    instance->failed = true;
     instance->failure = error ? *error : (qa_error){.code = QA_ERROR_ARGUMENT};
     if (!instance->failure.message[0])
         snprintf(instance->failure.message, sizeof(instance->failure.message),
                  "native import callback failed");
+    if(instance->backend==QA_NATIVE_BACKEND_OWNED_PROCESS&&instance->guest&&
+        guest_callback_failure(instance->guest,&instance->failure)) return;
+    instance->failed = true;
     native_runner_child_failure(instance, &instance->failure);
 }
 

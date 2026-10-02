@@ -31,6 +31,10 @@ typedef struct frontend_music_origin {
     qa_audio_music *music;
     void *context;
     bool (*current)(void *, const struct frontend_music_origin *);
+    /* Optional retained caller proof for capture and isolated cold binding.
+     * It proves this exact declaration/player after connection retirement;
+     * ordinary playback continues to require current. */
+    bool (*checkpoint_current)(void *, const struct frontend_music_origin *);
     bool (*stop)(void *, qa_error *);
 } frontend_music_origin;
 /* Fresh construction selects independent menu mounts from the actual initial

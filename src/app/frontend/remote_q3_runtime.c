@@ -4,6 +4,7 @@
 #include "shared_render_controls.h"
 #include "q3_render_policy.h"
 #include "music_sources.h"
+#include "material_movies.h"
 #include "qa/audio_music_prepare.h"
 #include "capture.h"
 #include "save_private.h"
@@ -805,6 +806,14 @@ bool frontend_remote_q3_runtime_owners_read(const frontend_remote_q3_runtime *o,
        !qa_native_q3_remote_client_current(o->services.client))return fail(e,QA_ERROR_ARGUMENT,"Remote child projection requires its retained actual CLIENT");
     *out=o->children; return true;
 }
+bool frontend_remote_q3_runtime_cinematics_restore(frontend_remote_q3_runtime *o,
+    qa_q3_cinematic_source *source,qa_error *e)
+{
+    if (!attached(o) || !o->restoring || !o->frontend->source_restoring || o->frontend->capture ||
+        o->frontend->resource_inventory || !o->complete || !frontend_remote_q3_runtime_idle(o))
+        return fail(e,QA_ERROR_ARGUMENT,"Remote cinematic import lost its actual returned runtime and provider");
+    return qa_q3_presentation_cinematics_bind(o->children.presentation,source,e);
+}
 static frontend_remote_q3_frame_callbacks frame_callbacks(frontend_remote_q3_runtime *o)
 {
     return (frontend_remote_q3_frame_callbacks){.context=o,.reached=reached,.respawn=respawn,.reset_player=reset_player,
@@ -837,6 +846,9 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=o,.audio_actor=actor,.listener=listener,.music=music,.frame_number=frame_number,.milliseconds=milliseconds,
         .audio_bus=audio_bus,.prepare_view=prepare_view,.prepare_picture=prepare_picture,.remap=remap,.print=print};
+    frontend_material_movies *shader_movies=NULL;
+    if (!restoring && (!frontend_material_movies_library_owner(r->materials,&shader_movies,e) ||
+        !frontend_material_movies_cinematic_read(shader_movies,&backend.cinematics,e))) return false;
     q3n_weapon_options weapons={.assets=r->assets,.product=basis.product,.context=o,
         .particle_explosion=particle_explosion};
     q3n_event_options events={.assets=r->assets,.product=basis.product,.context=o,.print=print,.center_print=center,

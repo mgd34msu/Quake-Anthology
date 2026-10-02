@@ -21,8 +21,9 @@ static bool text(qa_source_save_io *io, char **value)
     return qa_source_save_bytes(io, *value, length) &&
         (!memchr(*value, 0, length) || invalid(io, "Saved Q2 text contains a terminator"));
 }
-static bool options(qa_source_save_io *io, qa_q2_message_options *value)
+bool qa_q2_save_message_options(qa_source_save_io *io, qa_q2_message_options *value, bool decoder_owned)
 {
+    if (!io || !value) return false;
     if (!qa_source_save_count(io, &value->config_strings, UINT16_MAX) ||
         !qa_source_save_count(io, &value->inventory_slots, 32768) ||
         !qa_source_save_count(io, &value->history_capacity, SIZE_MAX / sizeof(qa_q2_wire_frame)) ||
@@ -35,7 +36,8 @@ static bool options(qa_source_save_io *io, qa_q2_message_options *value)
     if (!qa_source_save_bool(io, &bound)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && bound != (value->private_read != NULL))
         return invalid(io, "Saved Q2 private services lack their actual candidate reader");
-    return value->config_strings && value->inventory_slots && value->history_capacity && value->max_inflated_bytes;
+    return !decoder_owned || (value->config_strings && value->inventory_slots &&
+        value->history_capacity && value->max_inflated_bytes);
 }
 static bool same_options(const qa_q2_message_options *a, const qa_q2_message_options *b)
 {
@@ -55,7 +57,7 @@ bool qa_q2_save_messages(qa_source_save_io *io, const qa_q2_message_options *can
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     qa_q2_codec codec = reading ? (qa_q2_codec){0} : (*owner)->codec;
     qa_q2_message_options policy = reading ? *candidate : (*owner)->options;
-    if (!qa_q2_save_codec(io, &codec) || !options(io, &policy)) return false;
+    if (!qa_q2_save_codec(io, &codec) || !qa_q2_save_message_options(io, &policy, true)) return false;
     if (reading && !same_options(&policy, candidate)) return invalid(io, "Q2 decoder candidate layout differs from its saved Source owner");
     qa_q2_messages *messages = reading ? NULL : *owner;
     qa_net_protocol_id admitted = codec.protocol;
@@ -70,7 +72,23 @@ bool qa_q2_save_messages(qa_source_save_io *io, const qa_q2_message_options *can
         ok = invalid(io, "Saved Q2 stream or recipient marker is invalid");
     if (ok && reading) messages->stream = stream;
     if (ok) ok = qa_source_save_count(io, &messages->inflated_this_read, messages->options.max_inflated_bytes);
-    for (size_t i = 0; ok && i < policy.config_strings; ++i) ok = text(io, &messages->configs[i]);
+    size_t configs = messages->config_capacity;
+    if (ok) ok = qa_source_save_count(io, &configs, UINT16_MAX) && configs != 0;
+    if (ok && codec.has_server_clientnum) {
+        qa_q2_config_layout layout;
+        ok = qa_q2_config_layout_read(&codec, &layout, io->error) && configs == layout.max_configs;
+    } else if (ok && configs != policy.config_strings) {
+        /* Reset clears SERVERDATA's player seed, while keeping the actual
+         * allocated namespace from the preceding negotiated map. */
+        qa_q2_config_layout layout;
+        ok = qa_q2_config_layout_read(&codec, &layout, io->error) && configs == layout.max_configs;
+    }
+    if (ok && reading && configs != messages->config_capacity) {
+        char **values = calloc(configs, sizeof(*values));
+        if (!values) ok = invalid(io, "Cannot restore actual SERVERDATA config namespace");
+        else { free(messages->configs); messages->configs = values; messages->config_capacity = configs; }
+    }
+    for (size_t i = 0; ok && i < configs; ++i) ok = text(io, &messages->configs[i]);
     if (ok) ok = qa_source_save_count(io, &messages->baseline_capacity, UINT16_MAX) &&
         qa_source_save_count(io, &messages->baseline_count, messages->baseline_capacity);
     if (ok && reading && messages->baseline_capacity) {

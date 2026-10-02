@@ -9,7 +9,7 @@ enum { FRONTEND_FX_PARTICLE_CAPACITY = 4096 };
 typedef struct frontend_fx_q2_particle {
     double spawn_milliseconds;
     qa_vec3 origin, velocity, acceleration;
-    uint32_t color;
+    uint32_t color, rgba;
     float alpha, alpha_velocity;
 } frontend_fx_q2_particle;
 typedef struct frontend_fx_particles {
@@ -63,6 +63,8 @@ void frontend_fx_q2_blaster_trail(frontend_fx_particles *, qa_builtin_random *, 
 int32_t frontend_fx_q2_diminishing_trail(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3,
     double, int32_t count, frontend_fx_q2_trail);
 void frontend_fx_q2_rail(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3, double);
+void frontend_fx_q2_rail_spiral(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3,
+    double seconds, double lifetime_seconds, float radius, uint32_t rgba);
 void frontend_fx_q2_bubbles(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3, double);
 /* Pure fields. Decode into detached candidate state before owner adoption. */
 bool frontend_fx_particles_fields(qa_source_save_io *, frontend_fx_particles *);

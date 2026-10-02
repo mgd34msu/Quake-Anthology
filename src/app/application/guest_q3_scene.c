@@ -80,9 +80,8 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
         int32_t ptr; return argument(call, 0, &ptr, e) && qa_qvm_write_gamestate(s->vm, ptr, true, s->game_state, e);
     }
     if (code == 51) {
-        int32_t a, b; qa_bytes span;
-        if (!argument(call, 0, &a, e) || !argument(call, 1, &b, e) ||
-            !qa_qvm_span(s->vm, a, 0, 4, &span, e) || !qa_qvm_span(s->vm, b, 0, 4, &span, e)) return false;
+        int32_t a, b;
+        if (!argument(call, 0, &a, e) || !argument(call, 1, &b, e)) return false;
         int32_t time = s->snapshot_number ? s->snapshots[(uint32_t)s->snapshot_number % 32].value.server_time : 0;
         return store(s, qa_qvm_mask_address(s->vm, a), s->snapshot_number, e) && store(s, qa_qvm_mask_address(s->vm, b), time, e);
     }
@@ -108,9 +107,21 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
         if (code == 7) { *result = (int32_t)t->count; return true; }
         int32_t index = 0, ptr, cap;
         if (code == 8 && !argument(call, 0, &index, e)) return false;
-        if (!argument(call, code == 8 ? 1 : 0, &ptr, e) || !argument(call, code == 8 ? 2 : 1, &cap, e) || cap < 0) return false;
-        const char *value = code == 9 ? (t->args_text ? t->args_text : "") :
-            index >= 0 && (size_t)index < t->count ? t->values[index] : "";
+        if (!argument(call, code == 8 ? 1 : 0, &ptr, e) || !argument(call, code == 8 ? 2 : 1, &cap, e)) return false;
+        if (cap < 0) return q3scene_fail(e, QA_ERROR_ARGUMENT, "Component argument destination has a negative extent");
+        char joined[1024];
+        const char *value;
+        if (code == 9) {
+            size_t used = 0;
+            for (size_t i = 1; i < t->count; ++i) {
+                size_t size = strlen(t->values[i]), separator = i > 1 ? 1u : 0u;
+                if (separator + size >= sizeof(joined) - used)
+                    return q3scene_fail(e, QA_ERROR_FORMAT, "Cmd_Args exceeds its source buffer");
+                if (separator) joined[used++] = ' ';
+                memcpy(joined + used, t->values[i], size); used += size;
+            }
+            joined[used] = 0; value = joined;
+        } else value = index >= 0 && (size_t)index < t->count ? t->values[index] : "";
         return qa_qvm_write_string(s->vm, ptr, (qa_bytes){(const uint8_t *)value, strlen(value)}, (size_t)cap, e);
     }
     return s->lower.syscall(s->lower.context, call, trap, result, e);
@@ -155,8 +166,6 @@ static bool camera(application_q3_scene *s, qa_error *e)
     if (c->time_ms < 0 || c->frame_ms < 0 || !qa_vec_finite(c->origin) ||
         !qa_vec_finite(c->axis[0]) || !qa_vec_finite(c->axis[1]) || !qa_vec_finite(c->axis[2]))
         return q3scene_fail(e, QA_ERROR_FORMAT, "Component camera or time is outside its source ABI");
-    for (size_t i = 0; i < p->time.count; ++i) if (!store(s, p->time.rows[i], c->time_ms, e)) return false;
-    for (size_t i = 0; i < p->frame_time.count; ++i) if (!store(s, p->frame_time.rows[i], c->frame_ms, e)) return false;
     float origin[] = {c->origin.x,c->origin.y,c->origin.z}, axis[] = {c->axis[0].x,c->axis[0].y,c->axis[0].z,
         c->axis[1].x,c->axis[1].y,c->axis[1].z,c->axis[2].x,c->axis[2].y,c->axis[2].z};
     const double degrees = 57.295779513082320876;
@@ -204,13 +213,17 @@ static bool acquire(application_q3_scene *s, bool baseline, qa_error *e)
     if (!s->options.source.acquire(s->options.source.context,baseline,&c,e)) return false;
     s->context=c; s->acquired=true;
     if (!q3scene_current(s) || !c.game_state || !c.snapshot || c.game_state_revision<0 ||
-        c.game_state_revision<s->revision || c.revision<0 || c.revision<s->scene_revision ||
+        c.game_state_revision<s->revision || c.revision<0 || c.revision<s->scene_revision || c.time_ms<0 || c.frame_ms<0 ||
         c.client_number<0 || (uint32_t)c.client_number>=s->options.profile->capacity ||
         c.actor_count>s->options.profile->capacity || (c.actor_count&&!c.actors) || (c.command_count&&!c.commands) ||
         c.snapshot->entity_count>256 || (c.snapshot->entity_count&&!c.snapshot->entities))
         return q3scene_fail(e, QA_ERROR_FORMAT, "Component publication is incomplete or moved backwards");
     *s->game_state=*c.game_state;
     if (c.game_state_revision!=s->revision && !qa_qvm_write_gamestate(s->vm,(int32_t)s->options.profile->game_state,true,s->game_state,e)) return false;
+    for (size_t i=0;i<s->options.profile->time.count;++i)
+        if(!store(s,s->options.profile->time.rows[i],c.time_ms,e)) return false;
+    for (size_t i=0;i<s->options.profile->frame_time.count;++i)
+        if(!store(s,s->options.profile->frame_time.rows[i],c.frame_ms,e)) return false;
     return camera(s,e);
 }
 bool application_q3_scene_entered_context(const application_q3_scene *s,application_q3_scene_context *out)

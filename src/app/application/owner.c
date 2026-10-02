@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "save_private.h"
 #include "save_native_q2.h"
+#include "native_q2_callbacks.h"
 #include "save_content.h"
 #include "control_frame.h"
 #include "bots_round.h"
@@ -169,6 +170,7 @@ static bool create_application(const qa_application_options *options,
     application->q3_round_services = options->q3_round_services;
     application->ranking_effect = options->ranking_effect;
     application->native_q2_services = options->native_q2_services;
+    application->model_admission = options->model_admission;
     application->world_change_ready = options->world_change_ready;
     application->before_world_change = options->before_world_change;
     application->world_retired = options->world_retired;
@@ -920,6 +922,7 @@ bool qa_application_retire_sources(qa_application *application, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "CLIENT preparation still retains the application");
     if (!retire_control_inputs(application, error)) return false;
+    if (!application_native_q2_callbacks_drain_application(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing || application->destroy_requested ||
         !qa_console_idle(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
@@ -960,6 +963,7 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "CLIENT preparation still retains the application");
     if (!retire_control_inputs(application, error)) return false;
+    if (!application_native_q2_callbacks_drain_application(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         !qa_console_destroy_ready(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||

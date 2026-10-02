@@ -178,6 +178,8 @@ bool qa_q3_host_system_movie_scope_current(const qa_q3_host *, const qa_qvm_call
 bool qa_q3_host_ref_entity_decode(qa_bytes, qa_q3_ref_entity *, qa_error *);
 typedef bool (*qa_q3_host_source_entity_fn)(void *, const qa_qvm_call *,
     int32_t original_pointer, const qa_q3_ref_entity *, bool *suppress, qa_error *);
+typedef bool (*qa_q3_host_source_poly_fn)(void *, const qa_qvm_call *, size_t vertices, qa_error *);
+typedef bool (*qa_q3_host_source_light_fn)(void *, const qa_qvm_call *, qa_error *);
 
 typedef struct qa_q3_host_options {
     qa_qvm_role role;
@@ -241,6 +243,10 @@ typedef struct qa_q3_host_options {
      * unmasked signed pointer. The source role owns this callback/context. */
     qa_q3_host_source_entity_fn source_entity;
     void *source_entity_context;
+    qa_q3_host_source_poly_fn source_poly;
+    void *source_poly_context;
+    qa_q3_host_source_light_fn source_light;
+    void *source_light_context;
     /* Successful create consumes this lease. A failed create leaves it with
      * the caller. Release runs once after all host users and source teardown. */
     void *frontend_lifetime;

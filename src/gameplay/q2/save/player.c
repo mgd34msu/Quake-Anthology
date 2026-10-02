@@ -1,17 +1,28 @@
 #include "internal.h"
 
+static bool armor_number(q2_save_io *io, double *value) {
+    if (io->schema >= 25) return q2_save_f64(io, value);
+    float legacy = (float)*value;
+    if (!q2_save_f32(io, &legacy)) return false;
+    if (io->reading) *value = legacy;
+    return true;
+}
 static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
     Q2F(health); Q2F(maximum_health); Q2U(armor.regular.kind);
-    Q2F(armor.regular.points); Q2N(armor.regular.item);
+    if (!armor_number(io, &s->armor.regular.points)) return false;
+    Q2N(armor.regular.item);
     switch (s->armor.regular.kind) {
     case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
     case QA_ARMOR_Q1: Q2F(armor.regular.protection.q1_absorption); break;
     case QA_ARMOR_Q2:
-        Q2F(armor.regular.protection.q2.normal); Q2F(armor.regular.protection.q2.energy); break;
+        if (!armor_number(io, &s->armor.regular.protection.q2.normal) ||
+            !armor_number(io, &s->armor.regular.protection.q2.energy)) return false;
+        break;
     case QA_ARMOR_Q3: Q2F(armor.regular.protection.q3_protection); break;
     default: return q2_save_fail(io, "Invalid Q2 carry armor kind");
     }
-    Q2U(armor.powered.kind); Q2F(armor.powered.cells);
+    Q2U(armor.powered.kind);
+    if (!armor_number(io, &s->armor.powered.cells)) return false;
     Q2N(armor.powered.source_owner); Q2U(armor.powered.source_edition);
     Q2U(armor.powered.source_kind);
     if (!qa_armor_validate(&s->armor, io->error)) return false;

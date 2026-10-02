@@ -34,7 +34,9 @@ bool q3items_read(item_actor *a,const item_storage *s,const qa_qvm_committed_wri
     int32_t word;if(!q3items_scalar(a,s->field,previous,&word,e))return false;
     if(!s->bits){int32_t capacity;if(count!=1||!q3items_capacity(a,&s->capacity,previous,&capacity,e))return false;
         *out=(qa_inventory_entry){s->item,word,capacity,QA_COUNT_SOURCE_INT32};return true;}
-    if(count!=s->count)return false;uint32_t mask=s->private_mask;for(size_t i=0;i<count;++i)mask|=s->items[i].mask;
+    if(count!=s->count)return false;
+    uint32_t mask=s->private_mask;
+    for(size_t i=0;i<count;++i)mask|=s->items[i].mask;
     if((uint32_t)word&~mask)return q3mod_fail(e,QA_ERROR_FORMAT,"Original QVM inventory contains undeclared bits");
     for(size_t i=0;i<count;++i)out[i]=(qa_inventory_entry){s->items[i].item,((uint32_t)word&s->items[i].mask)?1:0,1,QA_COUNT_STACK};
     return true;

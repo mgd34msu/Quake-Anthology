@@ -133,7 +133,7 @@ typedef struct gl_api {
 typedef struct gl_stage_uniforms {
     GLint mvp, model, normal_matrix;
     GLint clip_enabled, clip_plane;
-    GLint primary, primary_enabled, secondary, secondary_mode, alpha_mode;
+    GLint primary, primary_enabled, secondary, secondary_mode, secondary_alpha, alpha_mode;
     GLint preblend_gamma, preblend_table;
     GLint fog_mode, fog_color, fog_amount;
     GLint lighting_mode, luminance_alpha, light_count;
@@ -171,6 +171,8 @@ typedef struct gl_texture_entry {
     GLuint name;
     qa_scene_resources *source_owner;
     uint32_t source_ordinal;
+    qa_scene_filter source_filter;
+    qa_render_source_texture source_texture;
     bool source_admitted;
     struct gl_texture_entry *next;
 } gl_texture_entry;
@@ -234,7 +236,7 @@ struct qa_gl_renderer {
     uint64_t sequence;
     uint32_t presented_width, presented_height;
     bool overdraw, closed, presented, executing, capturing, preparing, detached;
-    bool preblend_gamma;
+    bool preblend_gamma, source_frame;
     qa_gl_surface_ticket *surface_ticket;
     bool destroy_pending;
     gl_restore_storage *restore;

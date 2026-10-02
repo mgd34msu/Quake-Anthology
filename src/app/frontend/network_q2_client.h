@@ -18,6 +18,8 @@ typedef struct frontend_network_q2_client_options {
     void *context;
     bool (*current)(void *, const frontend_network_q2_client *);
     bool (*download_nonce)(void *, uint64_t *, qa_error *);
+    bool (*restore_stage)(void *, qa_fs_root *, const char *, uint64_t, qa_bytes,
+        qa_fs_stage **, uint64_t *, qa_error *);
     bool (*records)(void *, const qa_application_client_source *,
         const qa_q2_server_record *, size_t, qa_error *);
 } frontend_network_q2_client_options;
@@ -27,6 +29,7 @@ bool frontend_network_q2_client_receive(frontend_network_q2_client *,
     const qa_net_datagram *, bool *, qa_error *);
 bool frontend_network_q2_client_tick(frontend_network_q2_client *, uint64_t, qa_error *);
 bool frontend_network_q2_client_idle(const frontend_network_q2_client *);
+bool frontend_network_q2_client_retired(const frontend_network_q2_client *);
 bool frontend_network_q2_client_owns_input(const frontend_network_q2_client *,uint32_t physical_seat);
 bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_client *,
     const qa_application_client_source *);
@@ -34,6 +37,10 @@ bool frontend_network_q2_client_configuration_advance(frontend_network_q2_client
     qa_application_client_preparation *,bool *,qa_error *);
 bool frontend_network_q2_client_configuration_read(const frontend_network_q2_client *,
     qa_application_client_source *,bool *ready,qa_error *);
+bool frontend_network_q2_client_retired_recipient_read(const frontend_network_q2_client *,
+    qa_application_client_source *,bool *ready,qa_error *);
+bool frontend_network_q2_client_retirement_current(const frontend_network_q2_client *,
+    const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
 bool frontend_network_q2_client_admit(frontend_network_q2_client *,
     const qa_net_connect *, bool *recognized, qa_error *);
 void frontend_network_q2_client_disconnected(frontend_network_q2_client *, qa_net_client_id);
@@ -59,6 +66,7 @@ typedef struct frontend_network_q2_client_state {
     qa_q2_connect_request negotiated;
     qa_network_q2_client_policy policy;
     qa_sha256_digest composition;
+    bool retired;
     qa_buffer receiver, bootstrap;
 } frontend_network_q2_client_state;
 bool frontend_network_q2_client_capture(frontend_network_q2_client *,
@@ -70,6 +78,7 @@ typedef struct frontend_network_q2_client_restore {
     qa_q2_connect_request negotiated;
     qa_network_q2_client_policy policy;
     qa_sha256_digest composition;
+    bool retired;
     qa_bytes bootstrap;
 } frontend_network_q2_client_restore;
 bool frontend_network_q2_client_restore_prepare(const frontend_network_q2_client_options *,
@@ -77,7 +86,7 @@ bool frontend_network_q2_client_restore_prepare(const frontend_network_q2_client
 bool frontend_network_q2_client_importing(const frontend_network_q2_client *);
 bool frontend_network_q2_client_restore_hooks(frontend_network_q2_client *,qa_network_runtime *,
     const qa_net_client *,qa_network_q2_client_policy *,qa_network_q2_client_hooks *,qa_error *);
-bool frontend_network_q2_client_source_read(const frontend_network_q2_client *,
+bool frontend_network_q2_client_physical_read(const frontend_network_q2_client *,
     frontend_remote_q2_source_view *,qa_error *);
 bool frontend_network_q2_client_content_visit(const frontend_network_q2_client *,
     const qa_application_content_visitor *,qa_error *);

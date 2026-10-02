@@ -18,5 +18,18 @@ qa_cvars *application_native_q3_console_registry(const application_provider *);
 bool application_native_q3_console_settings_bound(const application_provider *);
 void application_native_q3_console_settings_commit(application_provider *);
 qa_cvars *application_native_q3_cvar_owner(const application_provider *, const char *);
+typedef struct application_native_q3_source_command_scope {
+    struct application_native_q3_source_command_scope *previous;
+    application_provider *provider;
+    qa_q3_game *game;
+    const qa_launch_instance *launch;
+    qa_actor_id actor;
+    uint32_t slot;
+    uint64_t publication_generation,command_generation,map_revision;
+} application_native_q3_source_command_scope;
+bool application_native_q3_source_command_begin(application_provider *,qa_actor_id,
+    const qa_command_invocation *,application_native_q3_source_command_scope *,qa_error *);
+bool application_native_q3_source_command_entered(const application_provider *);
+bool application_native_q3_source_command_end(application_native_q3_source_command_scope *,qa_error *);
 
 #endif

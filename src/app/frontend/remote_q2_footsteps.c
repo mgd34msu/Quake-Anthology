@@ -114,7 +114,7 @@ bool frontend_q2_footsteps_create(const frontend_q2_footstep_source *source,
 bool remote_q2_footsteps_prepare(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || row->footsteps || !row->map || !row->geometry || !row->sounds) return false;
-    if (row->layout.max_models != 8192) return true;
+    if (!remote_q2_rerelease_presentation(row)) return true;
     frontend_q2_footstep_source source = source_read(row);
     return frontend_q2_footsteps_create(&source, &row->footsteps, error);
 }
@@ -241,7 +241,7 @@ bool frontend_q2_footsteps_current(const frontend_q2_footsteps *owner, const fro
 }
 bool remote_q2_footsteps_current(const frontend_remote_q2 *row, qa_error *error)
 {
-    if (!row || !row->footsteps) return row && (row->layout.max_models != 8192 || !row->media_ready);
+    if (!row || !row->footsteps) return row && (!remote_q2_rerelease_presentation(row) || !row->media_ready);
     frontend_q2_footstep_source source = source_read((frontend_remote_q2 *)row);
     return frontend_q2_footsteps_current(row->footsteps, &source, error);
 }
@@ -323,8 +323,8 @@ bool frontend_q2_footsteps_restore(const frontend_q2_footstep_source *source, qa
 }
 bool remote_q2_footsteps_restore(frontend_remote_q2 *row, qa_application_content_graph *graph, qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.size) return row->layout.max_models != 8192 || !row->restore_media_ready;
-    if (row->footsteps || !row->importing || !row->frontend->source_restoring || !row->geometry || row->layout.max_models != 8192) return false;
+    if (!bytes.size) return !remote_q2_rerelease_presentation(row) || !row->restore_media_ready;
+    if (row->footsteps || !row->importing || !row->frontend->source_restoring || !row->geometry || !remote_q2_rerelease_presentation(row)) return false;
     frontend_q2_footstep_source source = source_read(row);
     return frontend_q2_footsteps_restore(&source, graph, bytes, &row->footsteps, error);
 }

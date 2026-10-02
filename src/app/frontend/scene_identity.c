@@ -9,6 +9,8 @@
 #include "renderer_materials.h"
 #include "renderer_worlds.h"
 #include "unified_media_inventory.h"
+#include "component_scene.h"
+#include "equipment_media.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_geometry_save.h"
 #include "qa/source_save.h"
@@ -122,8 +124,15 @@ static bool images_owner(frontend_scene_namespace *space, qa_frontend *frontend,
     if (!qa_scene_resources_images(owner, scratch, &images, &count, error)) return false;
     for (size_t i = count; i; --i) {
         const qa_scene_image *image = images[i - 1]; uint64_t ordinal = 0;
-        if (!image || !image->identity || !frontend_image_index(frontend, image, &ordinal, error) ||
-            ordinal != space->image_count || !pointer_add(space, (scene_row){.kind = SCENE_IMAGE,
+        if (!image || !image->identity || !frontend_image_index(frontend, image, &ordinal, error)) return false;
+        if(ordinal<space->image_count) {
+            bool found=false;
+            for(size_t j=0;j<space->count;++j) if(space->rows[j].kind==SCENE_IMAGE &&
+                space->rows[j].pointer==image && space->rows[j].ordinal==ordinal) found=true;
+            if(!found) return false;
+            continue;
+        }
+        if (ordinal != space->image_count || !pointer_add(space, (scene_row){.kind = SCENE_IMAGE,
                 .origin = SCENE_IMAGES, .ordinal = ordinal, .saved = image->identity,
                 .installed = image->identity, .pointer = image, .qualified = true}, error)) return false;
         ++space->image_count;
@@ -174,10 +183,14 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
         ok=frontend_remote_q2_metadata_read(frontend_remote_q2_at(f,i),&owner,error) &&
             images_owner(space,f,owner.images,&scratch,error);
     }
-    frontend_renderer_materials_view retained; bool present=false;
-    if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
-    if(ok && present) ok=images_owner(space,f,retained.images,&scratch,error);
-    if(ok && present) ok=images_owner(space,f,retained.lightmap_images,&scratch,error);
+    size_t retained_count=0;
+    if(ok) ok=frontend_renderer_materials_count(f,&retained_count,error);
+    for(size_t i=0;ok && i<retained_count;++i) {
+        frontend_renderer_materials_view retained;
+        ok=frontend_renderer_materials_read_at(f,i,&retained,error) &&
+            images_owner(space,f,retained.images,&scratch,error) &&
+            images_owner(space,f,retained.lightmap_images,&scratch,error);
+    }
     frontend_renderer_worlds_view world; bool has_world=false;
     if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
     if(ok && has_world && world.private_heaps) ok=images_owner(space,f,world.images,&scratch,error);
@@ -190,6 +203,16 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
             frontend_unified_bank_view bank;
             ok=frontend_unified_media_bank_read(media,j,&bank) && images_owner(space,f,bank.images,&scratch,error);
         }
+    }
+    for(size_t i=0;ok && i<frontend_component_scene_count(f);++i) {
+        frontend_component_scene_view component;
+        ok=frontend_component_scene_metadata_read(f,i,&component,error) &&
+            images_owner(space,f,component.images,&scratch,error);
+    }
+    for(size_t i=0;ok && i<frontend_equipment_media_count(f);++i) {
+        frontend_equipment_media_view row;
+        ok=frontend_equipment_media_at(f,i,&row);
+        if(ok && row.source_slot) ok=images_owner(space,f,row.owner.images,&scratch,error);
     }
     qa_arena_destroy(&scratch);
     if (ok) space->images_captured = true;
@@ -412,6 +435,7 @@ NUMBER_RESOLVERS(image, SCENE_IMAGE)
 NUMBER_RESOLVERS(world, SCENE_WORLD)
 NUMBER_RESOLVERS(mesh, SCENE_MESH)
 NUMBER_RESOLVERS(light, SCENE_LIGHT)
+NUMBER_RESOLVERS(static_audio, SCENE_STATIC_AUDIO)
 #undef NUMBER_RESOLVERS
 static bool install(frontend_scene_identity_scope *scope, scene_row_kind kind,
     scene_origin origin, size_t node, size_t ordinal, uint64_t saved, uint64_t *out, qa_error *error)

@@ -34,9 +34,9 @@ paths remain available.
 
 Actual Source stage producers set `source_primitives`. Direct outer sky,
 beam, stencil volume and finish draws retain their independent paths. CPU
-schema twelve and GL schema thirteen retain the physical controls, scratch,
+schema seventeen and GL schema seventeen retain the physical controls, scratch,
 scene bank, shader/world/image holds and reached pipeline state. Frame schema
-ten retains Source provenance, policy, direct draws, output domains and the
+eleven retains Source provenance, policy, direct draws, output domains and the
 actual allocated vertex extent. Earlier admitted schemas decode their own
 layouts; frame schema two has no primitive-provenance byte.
 
@@ -132,22 +132,47 @@ the full Source storage instead of filling inactive cells with new values.
 Actual successful present/swap flushes pending Source UI before rollover.
 The stable frontend callback reads the current physical `r_skipBackEnd` into
 that reached frame; skip preserves pending cells and avoids native Swap.
+The renderer retains actual Source frame scope through generic overlay chunks,
+so generic-only presentation does not consume Source skip policy. A reached
+Source `GL_FRONT` frame completes its logical End without a native buffer swap.
 Successful rollover advances the real scene bank and resets only frame
 membership and 2D projection state.
 
 `r_textureMode` initializes before Source images and applies modified values
-at genuine frame begin. Source GL image admission uploads immediately,
+at genuine frame begin. Source image admission registers immediately,
 records constructor order, retains the actual bank and distinguishes a
 cached requested image from raw object zero after upload. Texture-mode
 traversal uses that registry and the retained texture unit/cache. Recovery
 saves both cache state and actual-empty state and rebuilds registered order.
-CPU creation preserves the family's callback-free CPU image behavior.
+CPU admission retains real image storage and bank ownership in the same
+creation-order registry. Both backends enforce the authentic 2048-image
+limit. CPU texture-mode traversal updates the actual bound image's sampler;
+a cached raw-zero binding preserves the registered image's prior filter.
+
+Actual object storage retains each uploaded mip level separately from its
+requested image. A reached `r_nobind` upload can replace dynamic-light or
+default-object levels while preserving higher levels that were not written.
+Sampler state and internal base format follow the actual object. Source draw
+resolution reads that storage; incomplete units do not participate in the
+CPU or GL combiner. Recovery includes object zero's native pixels and sampler,
+the named objects' actual storage, and the immutable image and bank holds.
+Pure metadata observers expose those image roots without native callbacks.
+
+Cinematic uploads bind the genuine registered scratch slot even for a clean
+frame. A size change writes RGB8 level zero and selects linear/clamp sampling;
+a dirty subimage preserves the selected object's prior format and sampler.
+These reached uploads do not repeat constructor raw-unbind behavior.
 
 Prepared resource rebuilds expose only genuinely new completed Source
 uploads, with their original constructor sequence and texture unit. The
-renderer image child uploads separate native objects and restores preparation
-state without changing active cache/surface receipts. Abort retires those
-objects; publication transfers them after resource-bank and surface transfer.
+renderer image child simulates no-bind selection in actual constructor order.
+It retains separate CPU storage or prepares replacement native GL objects.
+Preparing object zero holds the renderer image lease and retains the installed
+storage for checked rollback; capture and execution exclude that lease.
+Abort restores object zero and retires candidate objects. Publication transfers
+them after resource-bank and surface transfer. A genuine Source renderer
+restart replaces its registry and counts the rebuilt roster against 2048;
+ordinary resource updates append only completed new registrations.
 The final compositor publishes native image admission after its actual
 surface/gamma transfer and disposes the child before the bank tickets.
 

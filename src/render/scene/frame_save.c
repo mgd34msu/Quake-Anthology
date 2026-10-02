@@ -41,7 +41,7 @@ static bool fog(qa_source_save_io *io, qa_scene_fog *value)
 static bool state(qa_source_save_io *io, qa_scene_state *value)
 {
     ENUM(qa_scene_blend,value,blend_source,QA_BLEND_SRC_ALPHA_SATURATE); ENUM(qa_scene_blend,value,blend_destination,QA_BLEND_SRC_ALPHA_SATURATE);
-    ENUM(qa_scene_depth,value,depth_test,QA_DEPTH_GEQUAL); ENUM(qa_scene_alpha,value,alpha_test,QA_ALPHA_GE128);
+    ENUM(qa_scene_depth,value,depth_test,QA_DEPTH_DISABLED); ENUM(qa_scene_alpha,value,alpha_test,QA_ALPHA_GE128);
     ENUM(qa_scene_cull,value,cull,QA_CULL_BACK);
     FIELD(bool,value,depth_write); FIELD(bool,value,color_write); FIELD(bool,value,polygon_offset); FIELD(bool,value,wireframe);
     FIELD(f32,value,depth_near); FIELD(f32,value,depth_far); FIELD(f32,value,offset_factor); FIELD(f32,value,offset_units); FIELD(f32,value,line_width);
@@ -227,7 +227,7 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
     if (schema>=3) { FIELD(bool,value,source_primitives); }
     if (schema>=5) {
-        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_SHADOW_VOLUME_END);
+        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_RAW);
         FIELD(bool,value,source_retain_depth_range);
     }
     if (schema>=6) {
@@ -297,9 +297,9 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=10;
+    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=11;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
-        (schema<2 || schema>10)) return false;
+        (schema<2 || schema>11)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
     if (schema>=3) {
         FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);
@@ -313,6 +313,10 @@ static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualif
         if (frame->source_stereo_frame<0 || frame->source_stereo_frame>2 ||
             (frame->source_begin_frame ? !frame->source_backend : frame->source_stereo_frame!=0)) return false;
     }
+    if (schema>=11) {
+        FIELD(bool,frame,source_front_buffer);
+        if (frame->source_front_buffer && !frame->source_backend) return false;
+    } else frame->source_front_buffer=false;
     if (frame->owner!=qualified_owner || !owners(io,frame,refs)) return false;
     bool reading=io->direction==QA_SOURCE_SAVE_READ; size_t count=frame->command_count;
     if (!qa_source_save_count(io,&count,reading?io->input.size/4:SIZE_MAX)) return false;

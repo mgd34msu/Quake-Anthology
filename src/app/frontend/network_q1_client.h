@@ -43,6 +43,8 @@ bool frontend_network_q1_client_admit(frontend_network_q1_client *, const qa_net
     bool *recognized, qa_error *);
 void frontend_network_q1_client_disconnected(frontend_network_q1_client *, qa_net_client_id);
 bool frontend_network_q1_client_idle(const frontend_network_q1_client *);
+bool frontend_network_q1_client_owns_input(const frontend_network_q1_client *,uint32_t physical_seat);
+bool frontend_network_q1_client_retired(const frontend_network_q1_client *);
 bool frontend_network_q1_client_destroy(frontend_network_q1_client **, qa_error *);
 bool frontend_network_q1_client_source_read(const frontend_network_q1_client *,
     frontend_remote_q1_source_view *, qa_error *);

@@ -590,7 +590,7 @@ static bool inventory_field(qa_source_save_io *io, qa_inventory_entry *entry)
     uint32_t policy = entry->policy;
     if (!qa_source_save_string(io, &entry->item) || !entry->item ||
         !qa_source_save_f64(io, &entry->count) || !qa_source_save_f64(io, &entry->capacity) ||
-        !enum_field(io, &policy, QA_COUNT_SOURCE_INT32)) return false;
+        !enum_field(io, &policy, QA_COUNT_SOURCE_DOUBLE)) return false;
     entry->policy = (qa_inventory_count_policy)policy;
     qa_inventory_entry normalized;
     if (!qa_inventory_validate_entry(entry, &normalized, io->error)) {
@@ -819,7 +819,7 @@ static void dispose_store(event_store *store)
         qa_vfs_acquisition_dispose(&store->resources[i].opening);
         qa_vfs_destroy(store->resources[i].view);
         qa_resource_pool_destroy(store->resources[i].pool);
-        for (size_t j = 0; j < store->resources[i].custody_count; ++j) {
+        for (size_t j = 0; store->resources[i].custodies && j < store->resources[i].custody_count; ++j) {
             application_unified_event_resource_custody *held = store->resources[i].custodies + j;
             qa_resource_release(held->resource); qa_vfs_acquisition_dispose(&held->opening);
             qa_vfs_destroy(held->view); qa_resource_pool_destroy(held->pool);
@@ -1139,7 +1139,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             if (row->custody_count > (io->input.size - io->offset) / 64 ||
                 (row->custody_capacity && (row->custody_capacity < 4 ||
                     (row->custody_capacity & (row->custody_capacity - 1)) ||
-                    row->custody_capacity > (row->custody_count ? row->custody_count * 2 : 4))))
+                    row->custody_capacity > (row->custody_count < 2 ? 4 : row->custody_count * 2))))
                 return event_fail(io, QA_ERROR_FORMAT, "Source custody allocation exceeds its actual growth or document");
             row->custodies = row->custody_capacity ? calloc(row->custody_capacity, sizeof(*row->custodies)) : NULL;
             if (row->custody_capacity && !row->custodies)

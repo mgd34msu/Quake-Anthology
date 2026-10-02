@@ -488,7 +488,7 @@ static bool player_authority_read(const qa_q3_game *game, uint32_t slot, qa_acto
     unsigned shift = game->options.product == QA_Q3_TEAM_ARENA ? 1u : 0u;
     value->stats[0] = q3_source_float_to_int(combat.health);
     value->stats[3 + shift] = combat.armor.regular.kind == QA_ARMOR_NONE ? 0
-        : q3_source_float_to_int(combat.armor.regular.points);
+        : q3_source_float_to_int((float)combat.armor.regular.points);
     value->stats[2 + shift] = 0;
     for (unsigned i = 1; i < QA_Q3_WEAPON_COUNT; ++i) {
         double owned;
@@ -1274,7 +1274,7 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
             const qa_armor *before = &outcome->mutations[i].value.armor.before;
             const qa_armor *after = &outcome->mutations[i].value.armor.after;
             if (before->regular.kind != QA_ARMOR_NONE && after->regular.kind != QA_ARMOR_NONE)
-                armor_saved += before->regular.points - after->regular.points;
+                armor_saved += (float)before->regular.points - (float)after->regular.points;
         }
     if (!outcome->result.applied_damage && !armor_mutation) return true;
     uint32_t target_slot, attacker_slot;
@@ -1314,7 +1314,7 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
     qa_q3_player *followed = q3_client_follow_player(game, attacker_slot);
     client->hits = q3_add_time(followed ? followed->persistant[1] : client->hits, same_team ? -1 : 1);
     int32_t previous_armor = q3_source_float_to_int(
-        (target_client ? combat.armor.regular.points : 0) + armor_saved);
+        (target_client ? (float)combat.armor.regular.points : 0) + armor_saved);
     client->attackee_armor = word(((uint32_t)q3_source_float_to_int(previous_health) << 8) |
                                   (uint32_t)previous_armor);
     if (followed) {

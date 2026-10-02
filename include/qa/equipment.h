@@ -135,10 +135,12 @@ bool qa_equipment_weapon_request(qa_equipment *, qa_actor_id, qa_actor_owner,
     qa_item_id, bool *accepted, qa_error *);
 bool qa_equipment_weapon_selected(qa_equipment *, qa_actor_id, qa_actor_owner);
 bool qa_equipment_weapon_presented(qa_equipment *, qa_actor_id, qa_actor_owner);
+bool qa_equipment_weapon_binding_is(qa_equipment *, qa_actor_id, qa_actor_owner, const void *exact_context);
 bool qa_equipment_primary_selected(qa_equipment *, qa_actor_id);
 size_t qa_equipment_weapon_presentation_count(qa_equipment *, qa_actor_id);
 bool qa_equipment_weapon_presentation_read(qa_equipment *, qa_actor_id, size_t,
     qa_weapon_presentation *, bool *found, qa_error *);
+bool qa_equipment_weapon_presentation_current(qa_equipment *, const qa_weapon_presentation *);
 bool qa_equipment_reconcile(qa_equipment *,qa_actor_id,qa_error *);
 bool qa_equipment_step(qa_equipment *, qa_actor_id, uint64_t now_ns, uint64_t elapsed_ns,
                        qa_q2_hand_lifecycle, qa_error *);

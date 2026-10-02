@@ -22,6 +22,8 @@ bool application_native_q3_client_disconnect(application_provider *, qa_actor_id
 bool application_native_q3_client_userinfo_changed(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q3_client_command(application_provider *, qa_actor_id,
     const qa_command_invocation *, bool *handled, qa_error *);
+bool application_native_q3_source_client_command(application_provider *,qa_actor_id,
+    const qa_command_invocation *,bool *handled,qa_error *);
 bool application_native_q3_client_text(application_provider *, qa_actor_id, const char *, qa_error *);
 bool application_native_q3_client_scoreboard(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q3_mode_client_slot(void *, qa_mode_id, qa_actor_id,

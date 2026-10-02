@@ -8,6 +8,7 @@
 #include "qa/material.h"
 #include "qa/hash.h"
 #include "qa/scene_world_save.h"
+#include "qa/scene_model_save.h"
 #include "qa/network_q2_materials.h"
 #include <math.h>
 #include <stdlib.h>
@@ -21,6 +22,66 @@ static qa_scene_image_options image_options(qa_scene_image_usage usage)
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = usage != QA_IMAGE_USAGE_PICTURE,
         .transparent = true, .transparent_index = 255};
 }
+bool remote_q2_model_scope_required(const char *path, qa_bytes bytes)
+{
+    return path && (!strncmp(path, "models/qa/", 10) || !strncmp(path, "players/qa/", 11)) &&
+        bytes.data && bytes.size >= 4 && (!memcmp(bytes.data, "IDPO", 4) || !memcmp(bytes.data, "IDSP", 4));
+}
+static bool model_scope_options(const frontend_remote_q2 *row, const remote_q2_model *m,
+    qa_q2_material_model_scope *scope, qa_scene_image_options *options, qa_error *error)
+{
+    if (!row->options.material_scripts || !m->scope || !m->palette)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model lost its retained Source palette companion");
+    if (!qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path,
+        qa_resource_bytes(m->resource), scope, error)) return false;
+    if (!m->scope_opening.path || strcmp(m->scope_opening.path, scope->companion_path) ||
+        !m->palette_opening.path || strcmp(m->palette_opening.path, scope->palette_alias))
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model companion addresses another retained opening");
+    if (!qa_q2_material_model_scope_apply(scope, qa_resource_bytes(m->palette), options, error)) return false;
+    const qa_resource *resources[] = {m->scope, m->palette};
+    const qa_vfs_acquisition *receipts[] = {&m->scope_opening, &m->palette_opening};
+    for (size_t i = 0; i < 2; ++i)
+        if (qa_resource_pool_find(qa_vfs_resources(row->content.mounts), qa_resource_id(resources[i])) != resources[i] ||
+            receipts[i]->resource_id != qa_resource_id(resources[i]) ||
+            !qa_vfs_acquisition_retained(row->content.mounts, receipts[i], error)) return false;
+    return true;
+}
+bool remote_q2_model_scope_current(const frontend_remote_q2 *row, const remote_q2_model *m, qa_error *error)
+{
+    if (!row || !m || !m->resource) return false;
+    if (!remote_q2_model_scope_required(m->path, qa_resource_bytes(m->resource)))
+        return (!m->scope && !m->palette) ||
+            remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 unscoped model has unrelated palette custody");
+    qa_q2_material_model_scope scope; qa_scene_image_options expected;
+    if (!model_scope_options(row, m, &scope, &expected, error)) return false;
+    if (!m->scene) return true;
+    const qa_scene_image_options *actual = qa_scene_model_image_options(m->scene);
+    bool valid = actual && actual->family == expected.family && actual->wrap == expected.wrap && actual->filter == expected.filter &&
+        actual->usage == expected.usage && actual->mipmap == expected.mipmap && actual->transparent == expected.transparent &&
+        actual->fullbright_only == expected.fullbright_only && actual->transparent_index == expected.transparent_index &&
+        actual->source_q3 == expected.source_q3 &&
+        (!actual->source_q3 || qa_q3_image_upload_options_equal(&actual->source_upload, &expected.source_upload)) &&
+        actual->palette_rgb.size == expected.palette_rgb.size && actual->translation.size == expected.translation.size &&
+        (!actual->palette_rgb.size || (actual->palette_rgb.data &&
+            !memcmp(actual->palette_rgb.data, expected.palette_rgb.data, actual->palette_rgb.size))) &&
+        (!actual->translation.size || (actual->translation.data &&
+            !memcmp(actual->translation.data, expected.translation.data, actual->translation.size)));
+    return valid || remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model constructor options differ from its retained Source companion");
+}
+static bool model_scope_acquire(frontend_remote_q2 *row, remote_q2_model *m,
+    qa_q2_material_model_scope *scope, qa_scene_image_options *options, qa_error *error)
+{
+    if (!remote_q2_model_scope_required(m->path, qa_resource_bytes(m->resource))) return true;
+    char companion[1024];
+    if (!row->options.material_scripts)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model companion was not explicitly negotiated");
+    if (!qa_q2_material_model_scope_path(m->path, companion, error) ||
+        !qa_vfs_acquire_receipt(row->content.mounts, companion, &m->scope, &m->scope_opening, error) ||
+        !qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path,
+            qa_resource_bytes(m->resource), scope, error) ||
+        !qa_vfs_acquire_receipt(row->content.mounts, scope->palette_alias, &m->palette, &m->palette_opening, error)) return false;
+    return model_scope_options(row, m, scope, options, error);
+}
 static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_error *error)
 {
     if (model->format != QA_MODEL_MD3) return true;
@@ -28,14 +89,18 @@ static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_e
         for (size_t j = 0; j < model->meshes[i].shader_count; ++j) {
             const char *name = model->meshes[i].shaders[j].name;
             size_t length = strlen(name);
-            if (length < 7 || strcmp(name + length - 7, ".shader")) continue;
+            bool image_receipt = length >= 4 && !strcmp(name + length - 4, ".qai");
+            if (!image_receipt && (length < 7 || strcmp(name + length - 7, ".shader"))) continue;
             if (!row->options.material_scripts)
                 return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model material was not explicitly negotiated");
             qa_resource *script = NULL; qa_vfs_acquisition opening = {0};
             if (!qa_vfs_acquire_receipt(row->content.mounts, name, &script, &opening, error)) return false;
             qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
-            bool ok = qa_vfs_acquisition_retained(row->content.mounts, &opening, error) &&
-                qa_q2_material_script_import(row->materials, name, qa_resource_bytes(script), &options, error);
+            bool ok = qa_vfs_acquisition_retained(row->content.mounts, &opening, error);
+            if (ok) ok = image_receipt ? qa_q2_material_image_import(row->images, row->content.mounts,
+                name, qa_resource_bytes(script), error) :
+                qa_q2_material_script_import(row->materials, row->images, row->content.mounts,
+                    name, qa_resource_bytes(script), &options, error);
             qa_vfs_acquisition_dispose(&opening); qa_resource_release(script);
             if (!ok) return false;
         }
@@ -43,7 +108,7 @@ static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_e
 }
 bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_model **out, qa_error *error)
 {
-    if (!row || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
+    if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 model registration requires its live source resource owner");
     *out = NULL;
     for (remote_q2_model *m = row->models; m; m = m->next)
@@ -55,12 +120,15 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     m->path = malloc(strlen(path) + 1);
     if (m->path) strcpy(m->path, path);
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
+    qa_q2_material_model_scope scope;
     bool ok = m->path && qa_vfs_acquire_receipt(row->content.mounts, path, &m->resource, &m->opening, error) &&
-        qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) && model_materials(row, &m->decoded, error);
+        qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) && model_materials(row, &m->decoded, error) &&
+        model_scope_acquire(row, m, &scope, &options, error);
     if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_SCENE_Q3;
     if (ok) ok = qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
         frontend_visual_model_opening_initialize(row->frontend, options.family, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
+    if (ok) ok = remote_q2_model_scope_current(row, m, error);
     if (!ok) {
         if (!m->resource && m->path && error && error->code == QA_ERROR_NOT_FOUND) {
             remote_q2_missing_model *missing = calloc(1, sizeof(*missing));
@@ -70,14 +138,23 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
             } else remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining absent Q2 model admission");
         }
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
+        qa_resource_release(m->scope); qa_resource_release(m->palette);
+        qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
     m->source = &m->decoded; m->next = row->models; row->models = m; *out = m; return true;
 }
+bool remote_q2_image_direct(const frontend_remote_q2 *row, const char *name)
+{
+    if (!row || !name) return false;
+    if (name[0] == '/' || name[0] == '\\') return true;
+    const char *slash = strrchr(name, '/'), *extension = strrchr(name, '.');
+    return remote_q2_rerelease_presentation(row) && slash && extension && extension > slash && extension[1];
+}
 const qa_scene_image *remote_q2_picture_read(void *context, const char *name, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
+    if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 picture registration requires its live resource owner"); return NULL;
     }
     for (remote_q2_picture *p = row->pictures; p; p = p->next) if (!strcmp(p->name, name)) return p->image;
@@ -86,13 +163,39 @@ const qa_scene_image *remote_q2_picture_read(void *context, const char *name, qa
     char *path = malloc(length + 11);
     remote_q2_picture *p = calloc(1, sizeof(*p));
     if (!path || !p) { free(path); free(p); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 picture"); return NULL; }
-    if (name[0] == '/') strcpy(path, name + 1); else snprintf(path, length + 11, "pics/%s.pcx", name);
+    bool direct = remote_q2_image_direct(row, name);
+    if (direct) strcpy(path, name + (name[0] == '/' || name[0] == '\\')); else snprintf(path, length + 11, "pics/%s.pcx", name);
     qa_scene_image *image = NULL; qa_scene_image_options options = image_options(QA_IMAGE_USAGE_PICTURE);
+    if (direct && name[0] != '/' && name[0] != '\\') {
+        options.usage = !strncmp(name, "sprites/", 8) ? QA_IMAGE_USAGE_SPRITE : QA_IMAGE_USAGE_SKIN;
+        options.mipmap = options.usage != QA_IMAGE_USAGE_SPRITE;
+        options.filter = options.mipmap ? QA_SCENE_LINEAR_MIPMAP_LINEAR : QA_SCENE_LINEAR;
+    }
     bool ok = qa_scene_image_load(row->images, path, &options, &image, error); free(path);
     if (!ok) { free(p); return NULL; }
     p->name = malloc(length + 1);
     if (!p->name) { qa_scene_image_release(image); free(p); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 picture name"); return NULL; }
     strcpy(p->name, name); p->image = image; p->next = row->pictures; row->pictures = p; return image;
+}
+const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char *path, qa_error *error)
+{
+    if (!row || !path || !*path || row->retiring || row->image_policy || row->frontend->resource_inventory ||
+        row->frontend->capture || row->frontend->source_restoring) {
+        remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 sprite registration requires its actual live media owner"); return NULL;
+    }
+    size_t length = strlen(path);
+    if (length > SIZE_MAX - 9) return NULL;
+    char *key = malloc(length + 9);
+    if (!key) { remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite cache key"); return NULL; }
+    memcpy(key, "#sprite:", 8); memcpy(key + 8, path, length + 1);
+    for (remote_q2_picture *p = row->pictures; p; p = p->next) if (!strcmp(p->name, key)) { free(key); return p->image; }
+    remote_q2_picture *p = calloc(1, sizeof(*p));
+    if (!p) { free(key); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite"); return NULL; }
+    qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SPRITE);
+    options.wrap = QA_SCENE_CLAMP; options.filter = QA_SCENE_LINEAR; options.mipmap = false; options.transparent_index = -1;
+    qa_scene_image *image = NULL;
+    if (!qa_scene_image_load(row->images, path, &options, &image, error)) { free(p); free(key); return NULL; }
+    p->name = key; p->image = image; p->next = row->pictures; row->pictures = p; return image;
 }
 bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 {
@@ -110,6 +213,8 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
+        qa_resource_release(m->scope); qa_resource_release(m->palette);
+        qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m);
     }
     while (row->missing_models) {

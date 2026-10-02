@@ -413,6 +413,8 @@ typedef struct qa_native_entity_table {
  * byte array is only the module's private shadow. */
 bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_entity_table *out,
                                 qa_error *error);
+/* Reads the actual original export table without invoking a source entry. */
+bool qa_native_entity_table_refresh(qa_native_instance *, qa_native_entity_table *, qa_error *);
 /* Last parent-owned table metadata only, after an isolated runner has become
  * terminal and all source callbacks have drained. Addresses cannot be used
  * for source memory operations; this supports actual actor-release cleanup. */

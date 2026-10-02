@@ -71,10 +71,14 @@ static bool named(const char *a,const char *b)
 }
 static bool parent(const frontend_network_q1_client *o)
 { return o && !o->closing && o->options.current(o->options.context,o); }
+bool frontend_network_q1_client_owns_input(const frontend_network_q1_client *o,uint32_t physical)
+{ return o && !o->closing && o->options.physical_seat==physical; }
+bool frontend_network_q1_client_retired(const frontend_network_q1_client *o)
+{ return o && o->retired; }
 static bool connection(void *context,const qa_application_client_source *source)
 {
     frontend_network_q1_client *o=context;
-    if(!parent(o) || source->runtime!=o->options.runtime || source->context.physical_seat!=o->options.physical_seat)
+    if(!parent(o) || o->retired || source->runtime!=o->options.runtime || source->context.physical_seat!=o->options.physical_seat)
         return false;
     if(!source->client.owner) return !o->client.owner && !source->client.generation && !source->client.slot &&
         !source->connection_epoch && !source->network_seat.owner && !source->network_seat.index;
@@ -86,6 +90,31 @@ static bool connection(void *context,const qa_application_client_source *source)
         same_protocol(client->protocol,o->options.protocol) &&
         qa_net_address_equal(&client->endpoint,&o->attachment.endpoint,true) &&
         qa_sha256_equal(&client->composition,&o->attachment.composition);
+}
+static bool retirement(void *context,const qa_application_client_source *source)
+{
+    frontend_network_q1_client *o=context;
+    frontend_client_source_view held;
+    if (!o || o->closing || !o->retired || !o->physical || !source ||
+        source->runtime!=o->options.runtime || !qa_net_client_id_equal(source->client,o->client) ||
+        source->connection_epoch!=o->epoch || source->network_seat.owner!=o->binding.seat.owner ||
+        source->network_seat.index!=o->binding.seat.index) return false;
+    if (frontend_client_source_preinstall_current(o->physical,source,NULL)) return true;
+    if (!frontend_client_source_metadata_read(o->physical,&held,NULL) ||
+        !qa_application_client_associated(o->options.frontend->application,source)) return false;
+    const qa_application_client_source *actual=&held.source;
+    return source->descriptor==actual->descriptor && source->runtime==o->options.runtime &&
+        source->runtime==actual->runtime && qa_net_client_id_equal(source->client,o->client) &&
+        qa_net_client_id_equal(source->client,actual->client) && source->connection_epoch==o->epoch &&
+        source->connection_epoch==actual->connection_epoch && source->network_seat.owner==o->binding.seat.owner &&
+        source->network_seat.index==o->binding.seat.index &&
+        source->network_seat.owner==actual->network_seat.owner && source->network_seat.index==actual->network_seat.index &&
+        source->configuration_generation==actual->configuration_generation &&
+        source->context.session==actual->context.session && source->context.receiver==actual->context.receiver &&
+        source->context.entity_owner==actual->context.entity_owner && source->context.entity_definition==actual->context.entity_definition &&
+        source->context.seat==actual->context.seat && source->context.physical_seat==o->options.physical_seat &&
+        source->context.physical_seat==actual->context.physical_seat && source->context.console==actual->context.console &&
+        source->context.cvars==actual->context.cvars && source->context.lifetime==actual->context.lifetime;
 }
 static bool entity(void *context,const qa_application_client_source *source,uint32_t number,uint64_t *generation)
 { frontend_network_q1_client *o=context; return connection(o,source) && o->source &&
@@ -273,7 +302,8 @@ static frontend_client_source_options physical_options(frontend_network_q1_clien
     frontend_client_source_options c=o->options.configuration;
     c.context=o; c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
     c.initialize=initialize; c.configure=configure; c.install=install; c.print=print;
-    c.connection_current=connection; c.entity_current=entity; c.command=command; c.forward=forward;
+    c.connection_current=connection; c.retirement_current=retirement;
+    c.entity_current=entity; c.command=command; c.forward=forward;
     c.allow_command=allow;
     if(c.cvar_owner) c.cvar_owner=cvar_owner;
     if(c.visible_cvars) c.visible_cvars=visible;
@@ -773,7 +803,9 @@ bool frontend_network_q1_client_capture(frontend_network_q1_client *o,
     const frontend_remote_q1_restore_refs *refs,frontend_network_q1_client_state *out,qa_error *error)
 {
     if(!o || !out || out->physical.data || out->receiver.data || out->handshake.data || out->controller.data ||
-        !refs || !refs->content || !o->options.frontend->capture || o->importing ||
+        !refs || !refs->content || !o->options.frontend->capture ||
+        (o->importing && (!o->restore_finished ||
+            !frontend_network_q1_client_qualified(o,o->options.runtime,true,error))) ||
         !frontend_network_q1_client_idle(o) || !o->physical) return false;
     frontend_network_q1_client_state state={0}; qa_source_save_io io;
     if(!qa_source_save_writer(&io,qa_application_session(o->options.frontend->application),error)) return false;

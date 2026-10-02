@@ -20,6 +20,8 @@
 #include "qa/persistence_content.h"
 #include "qa/launch_save.h"
 #include "qa/script_defines_save.h"
+#include "qa/native_module_save.h"
+#include "qa/persistence_application.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -385,6 +387,9 @@ enum { ROLE_INITIALIZED = 1, ROLE_RETIRED = 2, ROLE_READY = 4,
 typedef struct saved_artifact {
     char *path;
     uint32_t kind, abi;
+    bool qvm;
+    qa_bytes module;
+    qa_buffer module_storage;
     qa_sha256_digest digest, primary_digest, equipment_digest;
     size_t descriptor;
     uint64_t pool, resource;
@@ -454,8 +459,9 @@ typedef struct saved_role {
     qa_command_tokens arguments;
     saved_projection *projections;
     size_t projection_count;
-    qa_bytes input, executor, services;
-    qa_buffer input_storage, executor_storage, service_storage;
+    qa_bytes input, executor, services, native_host, resources;
+    qa_bytes lower_resources;
+    qa_buffer input_storage, executor_storage, service_storage, native_host_storage, resource_storage;
     q3g_role *actual;
 } saved_role;
 typedef struct q3g_restore {
@@ -482,6 +488,7 @@ static void saved_free(q3g_restore *saved)
     if (!saved) return;
     for (size_t i = 0; saved->artifacts && i < saved->artifact_count; ++i) {
         qa_buffer_free(&saved->artifacts[i].body_storage);
+        qa_buffer_free(&saved->artifacts[i].module_storage);
         if (saved->owns_text) {
             free(saved->artifacts[i].path);
             qa_vfs_acquisition_dispose(&saved->artifacts[i].acquisition);
@@ -519,6 +526,8 @@ static void saved_free(q3g_restore *saved)
         qa_buffer_free(&role->input_storage);
         qa_buffer_free(&role->executor_storage);
         qa_buffer_free(&role->service_storage);
+        qa_buffer_free(&role->native_host_storage);
+        qa_buffer_free(&role->resource_storage);
     }
     if (saved->owns_text) free(saved->entity_text);
     free(saved->artifacts); free(saved->roles);
@@ -724,9 +733,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 13;
+    uint32_t version = 14;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 13 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 14 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
@@ -747,6 +756,8 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         if (!owned_text(io, &artifact->path) || !artifact->path || !*artifact->path ||
             !qa_source_save_u32(io, &artifact->kind) || artifact->kind > QA_QVM_UI ||
             !qa_source_save_u32(io, &artifact->abi) || artifact->abi > QA_QVM_Q3_116N ||
+            !qa_source_save_bool(io, &artifact->qvm) ||
+            (!artifact->qvm && !blob(io, &artifact->module, 12)) ||
             !qa_source_save_bytes(io, artifact->digest.bytes, 32) ||
             !qa_source_save_bytes(io, artifact->primary_digest.bytes, 32) ||
             !qa_source_save_bytes(io, artifact->equipment_digest.bytes, 32) ||
@@ -764,11 +775,11 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              !qa_source_save_bytes(io, artifact->items_digest.bytes, 32) ||
              !acquisition(io, &artifact->items_acquisition) ||
              artifact->items_resource != artifact->items_acquisition.resource_id ||
-             strcmp(artifact->items_acquisition.path, "qvm-items.json"))))
+             strcmp(artifact->items_acquisition.path, artifact->qvm ? "qvm-items.json" : "native-q3-items.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained Q3 item catalog declaration");
         bool body = artifact->body_resource != 0;
         if (!qa_source_save_bool(io, &body) || (body &&
-            (artifact->kind != QA_QVM_CGAME ||
+            (!artifact->qvm || artifact->kind != QA_QVM_CGAME ||
              !qa_source_save_u64(io, &artifact->body_pool) || !artifact->body_pool ||
              !qa_source_save_u64(io, &artifact->body_resource) || !artifact->body_resource ||
              !qa_source_save_bytes(io, artifact->body_digest.bytes, 32) ||
@@ -776,13 +787,13 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              artifact->body_resource != artifact->body_acquisition.resource_id ||
              strcmp(artifact->body_acquisition.path, "cgame-presentation.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained CGAME body declaration");
-        if (artifact->kind == QA_QVM_CGAME && !blob(io, &artifact->body_profile, 12)) return false;
-        if (artifact->kind == QA_QVM_CGAME &&
+        if (artifact->qvm && artifact->kind == QA_QVM_CGAME && !blob(io, &artifact->body_profile, 12)) return false;
+        if (artifact->qvm && artifact->kind == QA_QVM_CGAME &&
             (!qa_source_save_bytes(io, artifact->collision_digest.bytes, 32) ||
              !collision_fields(io, &artifact->collision_profile))) return false;
         bool models = artifact->models_resource != 0;
         if (!qa_source_save_bool(io, &models) || (models &&
-            (artifact->kind != QA_QVM_CGAME ||
+            (!artifact->qvm || artifact->kind != QA_QVM_CGAME ||
              !qa_source_save_u64(io, &artifact->models_pool) || !artifact->models_pool ||
              !qa_source_save_u64(io, &artifact->models_resource) || !artifact->models_resource ||
              !qa_source_save_bytes(io, artifact->models_digest.bytes, 32) ||
@@ -859,9 +870,11 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         }
         for (size_t j = 0; j < 256; ++j)
             if (!qa_source_save_bool(io, &role->keys[j])) return false;
-        if (!tokens(io, &role->arguments) || !blob(io, &role->input, 13) ||
+        if (!tokens(io, &role->arguments) || !blob(io, &role->input, artifact->qvm ? 13 : 0) ||
             !blob(io, &role->services, 12) ||
             !qa_source_save_count(io, &role->projection_count, SIZE_MAX / sizeof(*role->projections))) return false;
+        if (!artifact->qvm && role->input.size)
+            return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role contains a QVM callback child");
         if (io->direction == QA_SOURCE_SAVE_READ && role->projection_count) {
             if (role->projection_count > (io->input.size - io->offset) / 26)
                 return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 source projection inventory");
@@ -879,7 +892,16 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
                 if (qa_actor_id_equal(role->projections[k].actor, projection->actor))
                     return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 source projection actor");
         }
-        if (!blob(io, &role->executor, 160) || !portable_executor(role->executor, io->error)) return false;
+        if (artifact->qvm) {
+            if (!blob(io, &role->executor, 160) || !portable_executor(role->executor, io->error)) return false;
+        } else {
+            bool committed = (role->flags & ROLE_COMMITTED) != 0;
+            if (!blob(io, &role->executor, committed ? 12 : 0) ||
+                !blob(io, &role->native_host, committed ? 72 : 0) ||
+                (!committed && (role->executor.size || role->native_host.size)) ||
+                !blob(io, &role->resources, 12) || role->projection_count)
+                return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role changes its actual process/resource presence");
+        }
     }
     for (size_t i = 0; i < saved->registry_count; ++i) {
         bool canonical = false;
@@ -940,10 +962,21 @@ static size_t descriptor_index(const q3g_restore *saved, const qa_launch_instanc
     return 0;
 }
 
-static bool saved_collect(application_provider *provider, q3g_restore **out, qa_error *error)
+static bool native_role_plain(const q3g_role *role, qa_error *error)
 {
-    if (provider->kind != APPLICATION_PROVIDER_QVM)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 module private data requires its actual relocation owner");
+    return (role && !role->vm && !role->image && role->module && !role->input &&
+        !role->projection && !role->weapons && !role->weapon_services && !role->combat &&
+        !role->pickups && !role->equipment && !role->body && !role->weapon_models) ||
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 role retains an unencoded application callback owner");
+}
+
+static bool saved_collect(application_provider *provider,
+    const qa_application_native_resource_refs *resources, const q3g_restore *expected,
+    q3g_restore **out, qa_error *error)
+{
+    if (provider->kind != APPLICATION_PROVIDER_QVM &&
+        !(provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 capture requires its actual original provider");
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_restore *saved = calloc(1, sizeof(*saved));
     if (!saved) return application_fail(error, QA_ERROR_MEMORY, "Capturing Q3 source inventory");
@@ -1007,8 +1040,11 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     }
     size_t i = 0;
     for (q3g_artifact *a = engine->artifacts; a; a = a->next, ++i) {
-        if (!a->qvm || !a->image || a->module || a->declaration) {
-            saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 native artifact cache requires its actual module owner");
+        if (a->qvm ? !a->image || a->module || a->declaration :
+            !a->module || a->image || a->declaration || a->primary.size || a->equipment_presentation.size ||
+            a->body_resource || a->body_profile.present || a->weapon_models_resource || a->weapon_models_profile.present ||
+            a->collision_profile.present || a->collision_scene.size || a->grapple_profile || a->combat_profile) {
+            saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 artifact lacks its actual immutable backend continuation");
         }
         if (a->grapple_profile && (a->kind != QA_QVM_GAME ||
             application_q3_grapple_profile_image(a->grapple_profile) != a->image ||
@@ -1016,14 +1052,24 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
                 "GAME grapple metadata leaves its retained immutable artifact");
         }
+        if (!a->resource || !qa_resource_digest(a->resource)) {
+            saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact lost its retained immutable bytes");
+        }
         saved->artifacts[i] = (saved_artifact){.path = a->path, .kind = a->kind,
-            .abi = a->abi, .digest = *qa_qvm_image_digest(a->image), .actual = a,
+            .abi = a->abi, .qvm = a->qvm, .digest = *qa_resource_digest(a->resource), .actual = a,
             .descriptor = descriptor_index(saved, qa_launch_instance_lease_view(a->descriptor)),
             .acquisition = a->acquisition};
         if (!a->resource || !qa_vfs_acquisition_retained(a->view, &a->acquisition, error) ||
             !qa_application_content_resource_id(graph, a->resource,
                 &saved->artifacts[i].pool, &saved->artifacts[i].resource)) {
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact leaves its actual opening inventory");
+        }
+        if (!a->qvm) {
+            saved_artifact *row = saved->artifacts + i;
+            if (!qa_native_module_checkpoint(a->module, qa_resource_bytes(a->resource), &row->module_storage, error)) {
+                saved_free(saved); return false;
+            }
+            row->module = (qa_bytes){row->module_storage.data, row->module_storage.size};
         }
         qa_sha256((qa_bytes){a->primary.data, a->primary.size}, &saved->artifacts[i].primary_digest);
         qa_sha256((qa_bytes){a->equipment_presentation.data, a->equipment_presentation.size},
@@ -1033,7 +1079,7 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             row->items_acquisition = a->items_acquisition;
             row->items_digest = *qa_resource_digest(a->items_resource);
             if (a->kind != QA_QVM_GAME || a->primary.size ||
-                strcmp(a->items_acquisition.path, "qvm-items.json") ||
+                strcmp(a->items_acquisition.path, a->qvm ? "qvm-items.json" : "native-q3-items.json") ||
                 qa_resource_id(a->items_resource) != a->items_acquisition.resource_id ||
                 !qa_vfs_acquisition_retained(a->view, &a->items_acquisition, error) ||
                 !qa_application_content_resource_id(graph, a->items_resource,
@@ -1043,7 +1089,7 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
                     "Q3 item catalog leaves its actual retained opening");
             }
         }
-        if (a->kind == QA_QVM_CGAME) {
+        if (a->qvm && a->kind == QA_QVM_CGAME) {
             saved_artifact *row = saved->artifacts + i;
             if (a->weapon_models_resource) {
                 row->models_acquisition = a->weapon_models_acquisition;
@@ -1092,7 +1138,8 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     for (q3g_role *r = engine->roles; r; r = r->next, ++i) {
         saved_role *row = &saved->roles[i];
         if (!client_topology(r, error)) { saved_free(saved); return false; }
-        if (!r->vm || !r->image || r->native || r->module || r->activation_failed || r->arguments_scoped || r->shutdown_entry) {
+        if ((r->artifact->qvm ? !r->vm || !r->image || r->native || r->module :
+            !native_role_plain(r, error)) || r->activation_failed || r->arguments_scoped || r->shutdown_entry) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source role has an unqualified native executor or command scope");
         }
         size_t a = 0;
@@ -1164,9 +1211,43 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             }
             row->projections[j] = (saved_projection){p->actor, p->slot, p->inventory_lease.serial, p->inventory_bound};
         }
-        if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
-            !application_guest_q3_functions_checkpoint(r, &row->input_storage, error) ||
-            !qa_qvm_checkpoint(r->vm, &row->executor_storage, error)) { saved_free(saved); return false; }
+        if (r->artifact->qvm) {
+            if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
+                !application_guest_q3_functions_checkpoint(r, &row->input_storage, error) ||
+                !qa_qvm_checkpoint(r->vm, &row->executor_storage, error)) { saved_free(saved); return false; }
+        } else {
+            if (!r->process.resources || ((r->native != NULL) != r->committed) ||
+                (r->native && qa_native_get_backend(qa_native_host_instance(r->native)) != QA_NATIVE_BACKEND_OWNED_PROCESS)) {
+                saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED,
+                    "Native Q3 continuation requires its actual retained owned process and bridge");
+            }
+            if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
+                (r->native && (!qa_native_host_checkpoint(r->native, &row->native_host_storage, error) ||
+                    !qa_native_process_checkpoint(qa_native_host_instance(r->native), &row->executor_storage, error)))) {
+                saved_free(saved); return false;
+            }
+            const saved_role *prior = NULL;
+            for (size_t j = 0; expected && j < expected->role_count; ++j)
+                if (expected->roles[j].owner == row->owner) prior = expected->roles + j;
+            if (prior) {
+                qa_bytes lower = prior->lower_resources;
+                const qa_native_process_resources *held = NULL;
+                if (!lower.size && (!resources || !resources->resolve ||
+                    !resources->resolve(resources->context, provider->launch->selection.instance,
+                        row->owner, prior->resources, &held, &lower, error))) { saved_free(saved); return false; }
+                if (!qa_native_process_resources_validate(r->process.resources, lower, error)) { saved_free(saved); return false; }
+                row->resources = prior->resources;
+            } else {
+                if (!resources || !resources->capture || !resources->resolve || !resources->attach) {
+                    saved_free(saved); return application_fail(error, QA_ERROR_ARGUMENT,
+                        "Native Q3 role capture requires its historical external capability graph");
+                }
+                if (!resources->capture(resources->context, provider->launch->selection.instance,
+                    row->owner, r->process.resources, &row->resource_storage, error)) { saved_free(saved); return false; }
+                row->resources = (qa_bytes){row->resource_storage.data, row->resource_storage.size};
+            }
+            row->native_host = (qa_bytes){row->native_host_storage.data, row->native_host_storage.size};
+        }
         row->services = (qa_bytes){row->service_storage.data, row->service_storage.size};
         row->input = (qa_bytes){row->input_storage.data, row->input_storage.size};
         row->executor = (qa_bytes){row->executor_storage.data, row->executor_storage.size};
@@ -1225,29 +1306,80 @@ static bool clients_agree(application_provider *provider, qa_error *error)
     return true;
 }
 
-static bool capture_body(application_provider *provider, qa_buffer *out, qa_error *error)
+static bool capture_body(application_provider *provider,
+    const qa_application_native_resource_refs *resources, const q3g_restore *expected,
+    qa_buffer *out, qa_error *error)
 {
     if (!out || !owner(provider, error)) return false;
     q3g_restore *saved = NULL;
     qa_source_save_io io = {0};
-    bool ok = clients_agree(provider, error) && saved_collect(provider, &saved, error) &&
+    bool ok = clients_agree(provider, error) && saved_collect(provider, resources, expected, &saved, error) &&
         qa_source_save_writer(&io, provider->application->session, error) &&
         saved_fields(&io, saved) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); saved_free(saved);
     return ok;
 }
 
-bool application_guest_q3_save_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+bool application_guest_q3_save_capture(application_provider *provider,
+    const qa_application_native_resource_refs *resources, qa_buffer *out, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || engine->restore_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source continuation is not published");
-    return capture_body(provider, out, error);
+    return capture_body(provider, resources, NULL, out, error);
 }
 
 static bool equal_bytes(qa_bytes a, qa_bytes b)
 {
     return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
+}
+
+bool application_guest_q3_save_matches(application_provider *provider, qa_bytes bytes,
+    const qa_application_native_resource_refs *resources, qa_error *error)
+{
+    qa_bytes body;
+    if (!application_guest_checkpoint_body(provider, bytes, &body, error)) return false;
+    q3g_restore *expected = calloc(1, sizeof(*expected));
+    if (!expected) return application_fail(error, QA_ERROR_MEMORY, "Qualifying native Q3 capability references");
+    expected->owns_text = true;
+    qa_source_save_io io = {0};
+    qa_buffer actual = {0};
+    bool ok = qa_source_save_reader(&io, provider->application->session, body, error) &&
+        saved_fields(&io, expected) && qa_source_save_finish(&io, NULL) &&
+        capture_body(provider, resources, expected, &actual, error) &&
+        equal_bytes(body, (qa_bytes){actual.data, actual.size});
+    qa_source_save_dispose(&io);
+    qa_buffer_free(&actual);
+    saved_free(expected);
+    return ok || application_fail(error, QA_ERROR_FORMAT, "Q3 retained provider continuation changed");
+}
+
+bool application_guest_q3_native_restore_recipe(q3g_role *role,
+    const qa_native_process_resources **capture, qa_bytes *recipe, qa_bytes *executor, qa_error *error)
+{
+    q3g_restore *saved = role && role->engine ? role->engine->restoration : NULL;
+    application_provider *provider = role && role->engine ? role->engine->provider : NULL;
+    const qa_application_native_resource_refs *refs = provider ? provider->application->native_restore_resources : NULL;
+    if (!saved || !capture || !recipe || !executor || !refs || !refs->resolve ||
+        !role->engine->restore_pending || provider->application->operation != APPLICATION_PERSISTING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 restore requires its retained decoded capability graph");
+    saved_role *found = NULL;
+    for (size_t i = 0; i < saved->role_count; ++i)
+        if (saved->roles[i].owner == role->service_owner) {
+            if (found) return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role capability owner is duplicated");
+            found = saved->roles + i;
+        }
+    if (!found || found->sequence != role->service_sequence || found->seat != role->seat ||
+        found->artifact >= saved->artifact_count || saved->artifacts[found->artifact].actual != role->artifact ||
+        saved->artifacts[found->artifact].qvm)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role leaves its decoded artifact and capability recipe");
+    if (!refs->resolve(refs->context, provider->launch->selection.instance, found->owner,
+        found->resources, capture, recipe, error)) return false;
+    if (!*capture || !recipe->data || !recipe->size)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 capability resolver returned no retained owner");
+    found->lower_resources = *recipe;
+    *executor = found->executor;
+    return true;
 }
 
 static const qa_launch_instance *saved_source(application_provider *provider,
@@ -1347,7 +1479,7 @@ static bool prepare_artifact(application_provider *provider, struct application_
     if (!artifact) return application_fail(error, QA_ERROR_MEMORY, "Restoring immutable Q3 artifact owner");
     artifact->path = q3g_copy_text(saved->path, error);
     if (!artifact->path) { free(artifact); return false; }
-    artifact->kind = (qa_qvm_role)saved->kind; artifact->qvm = true;
+    artifact->kind = (qa_qvm_role)saved->kind; artifact->qvm = saved->qvm;
     /* Attach before source qualification so every partial retained image has
      * the same lifetime as the isolated provider. */
     q3g_artifact **tail = &engine->artifacts;
@@ -1382,6 +1514,28 @@ static bool prepare_artifact(application_provider *provider, struct application_
         qa_resource_retain(artifact->weapon_models_resource);
         if (!artifact->weapon_models_resource ||
             !q3g_acquisition_copy(&saved->models_acquisition, &artifact->weapon_models_acquisition, error)) return false;
+    }
+    if (!saved->qvm) {
+        qa_sha256_digest empty;
+        qa_sha256((qa_bytes){0}, &empty);
+        if (!qa_sha256_equal(&saved->primary_digest, &empty) ||
+            !qa_sha256_equal(&saved->equipment_digest, &empty) || saved->body_resource ||
+            saved->models_resource || saved->collision_profile.present)
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q3 artifact contains a QVM-only declaration child");
+        if (!qa_native_module_restore(saved->module, qa_resource_bytes(artifact->resource),
+            &artifact->module, error)) return false;
+        artifact->abi = (qa_qvm_abi)saved->abi;
+        qa_native_module_info actual = qa_native_module_describe(artifact->module);
+        if (actual.profile != QA_NATIVE_Q3_VMMAIN || !actual.source || strcmp(actual.source, artifact->path) ||
+            artifact->abi != QA_QVM_Q3_MODERN || !qa_sha256_equal(&actual.image.digest, &saved->digest))
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q3 cache changed its actual module profile, opening or ABI");
+        if (primary && source == provider->launch) {
+            if (provider->kind != APPLICATION_PROVIDER_NATIVE || provider->state.native.module)
+                return application_fail(error, QA_ERROR_FORMAT, "Native Q3 primary cache changed its actual provider backend");
+            qa_native_module_retain(artifact->module);
+            provider->state.native.module = artifact->module;
+        }
+        return true;
     }
     if (primary && source == provider->launch) {
         artifact->image = provider->state.qvm.image;
@@ -1484,17 +1638,21 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
 {
     if (!provider || !provider->application || !provider->launch || !product || !choices || !record ||
         !world || product->family != QA_GAME_Q3 || choices->seat_count > 64 ||
-        provider->kind != APPLICATION_PROVIDER_QVM || !provider->state.qvm.image || q3g_engine(provider) ||
+        (provider->kind != APPLICATION_PROVIDER_QVM && provider->kind != APPLICATION_PROVIDER_NATIVE) ||
+        (provider->kind == APPLICATION_PROVIDER_QVM ? !provider->state.qvm.image : provider->state.native.module != NULL) ||
+        q3g_engine(provider) ||
         provider->application->operation != APPLICATION_PERSISTING ||
         record->owner.kind != QA_SAVE_PROVIDER || !record->owner.instance ||
         strcmp(record->owner.instance, provider->launch->selection.instance) ||
         !qa_sha256_equal(&record->owner.content, &provider->launch->identity) ||
-        !record->owner.schema || strcmp(record->owner.schema, "qa.q3.qvm") ||
-        record->owner.schema_version != 1 || !record->owner.backend || strcmp(record->owner.backend, "qvm"))
+        !record->owner.schema || strcmp(record->owner.schema,
+            provider->kind == APPLICATION_PROVIDER_QVM ? "qa.q3.qvm" : "qa.q3.external-native") ||
+        record->owner.schema_version != 1 || !record->owner.backend || strcmp(record->owner.backend,
+            provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" : "native-owned"))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 restored construction requires its qualified provider record");
     qa_bytes payload = record->payload, body;
     if (!payload.data || payload.size < 32 || memcmp(payload.data, "QAPV", 4) ||
-        qa_load_u32le(payload.data + 4) != 1 || qa_load_u32le(payload.data + 8) != APPLICATION_PROVIDER_QVM ||
+        qa_load_u32le(payload.data + 4) != 1 || qa_load_u32le(payload.data + 8) != (uint32_t)provider->kind ||
         qa_load_u32le(payload.data + 12) > 1 || qa_load_u64le(payload.data + 24) != payload.size - 32 ||
         !application_guest_checkpoint_body(provider, (qa_bytes){payload.data + 32, payload.size - 32}, &body, error))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 restored provider wrapper differs from its actual source");
@@ -1530,7 +1688,8 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
                         break;
                     }
             }
-            if (strcmp(artifact->path, source->selection.artifact) ||
+            if (artifact->qvm != (provider->kind == APPLICATION_PROVIDER_QVM) ||
+                strcmp(artifact->path, source->selection.artifact) ||
                 artifact->kind != (uint32_t)q3g_primary_role(source->selection.artifact) ||
                 role->seat != seat)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q3 primary role differs from its selected source artifact");
@@ -1691,10 +1850,21 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
     for (size_t i = 0; i < saved->role_count; ++i) {
         saved_role *row = saved->roles + i; q3g_role *role = row->actual;
         if (!client_topology(role, error)) return false;
-        if (!portable_executor(row->executor, error) ||
-            !application_guest_q3_functions_restore(role, row->input, row->executor, error) ||
-            !qa_qvm_restore_candidate(role->vm, row->executor, error) ||
-            !q3g_role_catalog_refresh(role, error)) return false;
+        if (role->vm) {
+            if (!portable_executor(row->executor, error) ||
+                !application_guest_q3_functions_restore(role, row->input, row->executor, error) ||
+                !qa_qvm_restore_candidate(role->vm, row->executor, error) ||
+                !q3g_role_catalog_refresh(role, error)) return false;
+        } else if (row->flags & ROLE_COMMITTED) {
+            if (!role->native || !qa_native_process_restore_pending(qa_native_host_instance(role->native)) ||
+                !qa_native_process_restore_host(qa_native_host_instance(role->native), row->native_host, error)) return false;
+            if ((qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED) !=
+                ((row->flags & ROLE_INITIALIZED) != 0))
+                return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role Init state differs from its actual process lifecycle");
+            if (role->catalog && (row->flags & ROLE_INITIALIZED) &&
+                !application_q3_catalog_native_restore_validate(role->catalog, role, error)) return false;
+        } else if (role->native || row->executor.size || row->native_host.size)
+            return application_fail(error, QA_ERROR_FORMAT, "Uncommitted native Q3 role acquired an executor during import");
         qa_command_tokens_free(&role->arguments);
         role->arguments = row->arguments; row->arguments = (qa_command_tokens){0};
         memcpy(role->input_keys, row->keys, sizeof(role->input_keys));
@@ -1758,8 +1928,13 @@ bool application_guest_q3_save_finish(application_provider *provider, qa_error *
         if (!qa_q3_host_finish_restore(saved->roles[i].actual->host, error)) return false;
     for (size_t i = 0; i < saved->role_count; ++i)
         if (!application_q3_weapon_models_qualify(saved->roles[i].actual->weapon_models, error)) return false;
+    for (size_t i = 0; i < saved->role_count; ++i) {
+        q3g_role *role = saved->roles[i].actual;
+        if (role->module && !qa_native_process_resources_options_read(role->process.resources,
+            &role->process.process, error)) return false;
+    }
     qa_buffer actual = {0};
-    bool ok = capture_body(provider, &actual, error) &&
+    bool ok = capture_body(provider, provider->application->native_restore_resources, saved, &actual, error) &&
         equal_bytes((qa_bytes){actual.data, actual.size}, (qa_bytes){saved->storage.data, saved->storage.size});
     qa_buffer_free(&actual);
     if (!ok) return application_fail(error, QA_ERROR_FORMAT, "Q3 candidate source continuation differs after owner reconnection");

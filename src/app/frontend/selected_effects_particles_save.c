@@ -25,10 +25,12 @@ bool frontend_fx_particles_fields(qa_source_save_io *io, frontend_fx_particles *
             if (!qa_source_save_f64(io, &value->spawn_milliseconds) ||
                 !qa_source_save_vec3(io, &value->origin) || !qa_source_save_vec3(io, &value->velocity) ||
                 !qa_source_save_vec3(io, &value->acceleration) || !qa_source_save_u32(io, &value->color) ||
+                !qa_source_save_u32(io, &value->rgba) ||
                 !qa_source_save_f32(io, &value->alpha) || !qa_source_save_f32(io, &value->alpha_velocity) ||
                 !isfinite(value->spawn_milliseconds) || !qa_vec_finite(value->origin) ||
                 !qa_vec_finite(value->velocity) || !qa_vec_finite(value->acceleration) ||
-                !isfinite(value->alpha) || !isfinite(value->alpha_velocity)) return false;
+                !isfinite(value->alpha) || !isfinite(value->alpha_velocity) ||
+                (value->color != UINT32_MAX && value->rgba)) return false;
         }
     }
     return true;

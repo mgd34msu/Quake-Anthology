@@ -16,12 +16,20 @@ bool qa_persistence_combat_admission(const qa_combat *combat, qa_actor_id actor,
     *out = entry->admission; return true;
 }
 
-static bool armor(qa_source_save_io *io, qa_armor *value)
+static bool armor_number(qa_source_save_io *io, double *value, uint32_t schema)
+{
+    if (schema >= 5) return qa_source_save_f64(io, value);
+    float legacy = (float)*value;
+    if (!qa_source_save_f32(io, &legacy)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = legacy;
+    return true;
+}
+static bool armor(qa_source_save_io *io, qa_armor *value, uint32_t schema)
 {
     uint32_t regular = value->regular.kind, powered = value->powered.kind,
         edition = value->powered.source_edition, source_kind = value->powered.source_kind;
     if (!qa_source_save_u32(io, &regular) || regular > QA_ARMOR_SOURCE ||
-        !qa_source_save_f32(io, &value->regular.points) ||
+        !armor_number(io, &value->regular.points, schema) ||
         !qa_source_save_string(io, &value->regular.item)) return false;
     value->regular.kind = (qa_regular_armor_kind)regular;
     switch (value->regular.kind) {
@@ -29,8 +37,8 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
         if (!qa_source_save_f32(io, &value->regular.protection.q1_absorption)) return false;
         break;
     case QA_ARMOR_Q2:
-        if (!qa_source_save_f32(io, &value->regular.protection.q2.normal) ||
-            !qa_source_save_f32(io, &value->regular.protection.q2.energy)) return false;
+        if (!armor_number(io, &value->regular.protection.q2.normal, schema) ||
+            !armor_number(io, &value->regular.protection.q2.energy, schema)) return false;
         break;
     case QA_ARMOR_Q3:
         if (!qa_source_save_f32(io, &value->regular.protection.q3_protection)) return false;
@@ -38,7 +46,7 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
     default: break;
     }
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
-        !qa_source_save_f32(io, &value->powered.cells) ||
+        !armor_number(io, &value->powered.cells, schema) ||
         !qa_source_save_string(io, &value->powered.source_owner) ||
         !qa_source_save_u32(io, &edition) || !qa_source_save_u32(io, &source_kind)) return false;
     value->powered.kind = (qa_power_kind)powered;
@@ -47,10 +55,10 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
     return qa_armor_validate(value, io->error);
 }
 
-static bool state(qa_source_save_io *io, qa_combat_state *value)
+static bool state(qa_source_save_io *io, qa_combat_state *value, uint32_t schema)
 {
     return qa_source_save_f32(io, &value->health) && isfinite(value->health) &&
-        qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && armor(io, &value->armor) &&
+        qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && armor(io, &value->armor, schema) &&
         qa_source_save_bool(io, &value->can_take_damage) && qa_source_save_bool(io, &value->invulnerable) &&
         qa_source_save_bool(io, &value->no_knockback) && qa_source_save_string(io, &value->team);
 }
@@ -111,6 +119,24 @@ static bool same_state(const qa_combat_state *a, const qa_combat_state *b)
         a->can_take_damage == b->can_take_damage && a->invulnerable == b->invulnerable &&
         a->no_knockback == b->no_knockback && a->team == b->team;
 }
+static qa_armor saved_armor_shape(qa_armor value, uint32_t schema)
+{
+    if (schema < 5) {
+        value.regular.points = (float)value.regular.points;
+        value.powered.cells = (float)value.powered.cells;
+        if (value.regular.kind == QA_ARMOR_Q2) {
+            value.regular.protection.q2.normal = (float)value.regular.protection.q2.normal;
+            value.regular.protection.q2.energy = (float)value.regular.protection.q2.energy;
+        }
+    }
+    return value;
+}
+static bool same_saved_state(const qa_combat_state *saved, const qa_combat_state *observed, uint32_t schema)
+{
+    qa_combat_state encoded = *observed;
+    encoded.armor = saved_armor_shape(encoded.armor, schema);
+    return same_state(saved, &encoded);
+}
 
 static bool same_attack(const qa_attack *a, const qa_attack *b)
 {
@@ -168,13 +194,13 @@ static bool source_protection(qa_combat *combat, const qa_protection_binding *bi
     --combat->active_calls; return ok;
 }
 
-static bool signature(qa_source_save_io *io)
+static bool signature(qa_source_save_io *io, uint32_t *version)
 {
     unsigned char actual[8] = {'Q','A','C','O','M','B','A','T'};
     static const unsigned char expected[8] = {'Q','A','C','O','M','B','A','T'};
-    uint32_t version = 4;
+    *version = 5;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 4;
+        qa_source_save_u32(io, version) && *version >= 4 && *version <= 5;
 }
 
 static bool policies(qa_source_save_io *io, qa_combat *combat)
@@ -193,7 +219,7 @@ static bool policies(qa_source_save_io *io, qa_combat *combat)
 }
 
 static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inventory,
-                   qa_combat_record *entry, const qa_persistence_gameplay_resolvers *resolve)
+                   qa_combat_record *entry, const qa_persistence_gameplay_resolvers *resolve, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     bool admission = entry->admission.admit != NULL;
@@ -203,7 +229,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
     if (!reading && !qa_combat_read_traits(combat, entry->actor, &primary, io->error)) return false;
     if (!qa_source_save_actor(io, &entry->actor) || !qa_source_save_u64(io, &entry->serial) ||
         !entry->serial || !qa_actors_get(combat->actors, entry->actor) ||
-        !qa_source_save_bool(io, &entry->external) || !state(io, &primary) ||
+        !qa_source_save_bool(io, &entry->external) || !state(io, &primary, schema) ||
         !qa_source_save_bool(io, &entry->has_last_attack) ||
         (entry->has_last_attack && !attack(io, &entry->last_attack)) ||
         !qa_source_save_bool(io, &admission) || !qa_source_save_bool(io, &fuel) ||
@@ -223,12 +249,13 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
             qa_combat_state observed;
             if (!resolve || !resolve->combat || !resolve->combat(resolve->context, entry->actor, entry->serial, &entry->binding, io->error) ||
                 binding_mask(&entry->binding) != mask || (mask & 7u) != 7u ||
-                !source_primary(combat, &entry->binding, &observed, io->error) || !same_state(&primary, &observed))
+                !source_primary(combat, &entry->binding, &observed, io->error) || !same_saved_state(&primary, &observed, schema))
                 return fail(io->error, "Restored source combat authority differs from saved primary");
             for (size_t i = 0; i < 2; ++i)
                 if (entry->binding.source_armor_stages[i] != source_stages[i] ||
                     entry->binding.has_primary_protection[i] != has_primary[i] || entry->binding.primary_protection[i] != owners[i])
                     return fail(io->error, "Restored combat primary protection ownership differs");
+            primary = observed; entry->state = observed;
         }
     } else if (primary.armor.regular.kind == QA_ARMOR_SOURCE)
         return fail(io->error, "Local combat cannot own source armor");
@@ -249,7 +276,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
             !qa_source_save_bool(io, &slot->bound)) return false;
         slot->claim.admission = (qa_protection_admission)mode;
         if (!slot->bound) continue;
-        if (!qa_source_save_u32(io, &callbacks) || !armor(io, &reservoir)) return false;
+        if (!qa_source_save_u32(io, &callbacks) || !armor(io, &reservoir, schema)) return false;
         if (channel == QA_PROTECTION_POWERED && reservoir.powered.kind != QA_POWER_NONE &&
             reservoir.powered.source_kind == QA_POWER_SOURCE_GENERIC && reservoir.powered.source_owner != slot->claim.owner)
             return fail(io->error, "Generic powered reservoir differs from its actual absorption owner");
@@ -260,8 +287,11 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
                                      &slot->claim, &slot->binding, io->error) ||
                 protection_mask(&slot->binding) != callbacks || callbacks != 15u ||
                 !source_protection(combat, &slot->binding, &observed, io->error) ||
-                (channel == QA_PROTECTION_REGULAR ? !qa_regular_armor_equal(reservoir.regular, observed.regular) :
-                    !qa_powered_armor_equal(reservoir.powered, observed.powered)))
+                !qa_armor_validate(&observed, io->error))
+                return fail(io->error, "Restored protection reservoir differs from saved source authority");
+            observed = saved_armor_shape(observed, schema);
+            if (channel == QA_PROTECTION_REGULAR ? !qa_regular_armor_equal(reservoir.regular, observed.regular) :
+                !qa_powered_armor_equal(reservoir.powered, observed.powered))
                 return fail(io->error, "Restored protection reservoir differs from saved source authority");
         }
     }
@@ -286,12 +316,13 @@ bool qa_persistence_combat_capture(qa_session *session, qa_combat *combat, qa_in
     size_t count = 0;
     for (uint32_t i = 0; i < capacity; ++i) if (combat->records[i].active) ++count;
     uint64_t next = combat->next_serial;
-    bool ok = signature(&io) && qa_source_save_u64(&io, &next) && policies(&io, combat) &&
+    uint32_t schema = 0;
+    bool ok = signature(&io, &schema) && qa_source_save_u64(&io, &next) && policies(&io, combat) &&
         qa_source_save_count(&io, &count, capacity);
     for (uint32_t i = 0; ok && i < capacity; ++i) if (combat->records[i].active) {
         qa_combat_record copy = combat->records[i];
         if (copy.active_admissions || copy.power_admitting) ok = fail(error, "Combat actor is admitting a mutation");
-        else ok = record(&io, combat, inventory, &copy, NULL);
+        else ok = record(&io, combat, inventory, &copy, NULL, schema);
         const qa_combat_record *current = combat->records + i;
         if (ok && (!current->active || !qa_actor_id_equal(copy.actor, current->actor) ||
             copy.serial != current->serial || copy.external != current->external ||
@@ -322,12 +353,13 @@ bool qa_persistence_combat_restore(qa_session *session, qa_combat *combat, qa_in
     uint64_t next = 0;
     uint64_t *serials = NULL; size_t serial_count = 0, serial_capacity = 0;
     size_t count = 0;
-    bool ok = signature(&io) && qa_source_save_u64(&io, &next) && next && policies(&io, combat) &&
+    uint32_t schema = 0;
+    bool ok = signature(&io, &schema) && qa_source_save_u64(&io, &next) && next && policies(&io, combat) &&
         qa_source_save_count(&io, &count, capacity);
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_combat_record entry = {0};
-        ok = record(&io, combat, inventory, &entry, resolve);
+        ok = record(&io, combat, inventory, &entry, resolve, schema);
         if (ok && ((i && entry.actor.slot <= previous) || entry.serial >= next))
             ok = fail(error, "Saved combat records are unordered or have invalid ownership serials");
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, entry.serial, next - 1, error);
@@ -355,7 +387,7 @@ bool qa_persistence_combat_validate(qa_combat *combat, qa_inventory *inventory, 
         if (entry->power_inventory) {
             qa_inventory_entry fuel;
             if (entry->power_inventory != inventory ||
-                !qa_inventory_entry_read(inventory, entry->actor, entry->power_item, &fuel, error) || !isfinite((float)fuel.count))
+                !qa_inventory_entry_read(inventory, entry->actor, entry->power_item, &fuel, error) || !isfinite(fuel.count))
                 return fail(error, "Saved combat power inventory has no compatible restored reservoir");
         }
     }

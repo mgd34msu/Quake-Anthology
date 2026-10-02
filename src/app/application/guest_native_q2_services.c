@@ -1,4 +1,6 @@
 #include "guest_native_q2_private.h"
+#include "native_q2_client_stages.h"
+#include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
 #include "control_frame.h"
 #include "native_q2_delivery.h"
@@ -332,12 +334,12 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
 
 static uint32_t server_frame(void *opaque)
 {
-    return (uint32_t)((struct application_native_q2 *)opaque)->frame.number;
+    return (uint32_t)application_native_q2_stages_frame(opaque);
 }
 
 static uint64_t source_frame(void *opaque)
 {
-    return ((struct application_native_q2 *)opaque)->frame.number;
+    return application_native_q2_stages_frame(opaque);
 }
 
 static bool entity_number(void *opaque, qa_actor_id actor, uint32_t *out, qa_error *error)
@@ -481,5 +483,7 @@ bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slo
     struct application_native_q2 *engine = opaque;
     return qa_session_bind_execution(engine->provider->application->session, actor,
         engine->provider->owner, error) &&
-        application_native_q2_combat_admit(engine, slot, actor, true, error);
+        (application_native_q2_source_actors_declared(engine) ?
+         application_native_q2_source_actors_admit(engine, slot, actor, error) :
+         application_native_q2_combat_admit(engine, slot, actor, true, error));
 }

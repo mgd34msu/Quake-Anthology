@@ -281,6 +281,21 @@ bool qa_roq_playback_restart(qa_roq_playback *playback, qa_media_clock clock, bo
 const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *playback) {
     return playback->has_frame ? &playback->frame : NULL;
 }
+bool qa_roq_playback_scratch_rebind_ready(const qa_roq_playback *playback,
+    const qa_roq_scratch *scratch, qa_error *error) {
+    if (!playback || playback->busy || !playback->options.scratch || !scratch ||
+        (scratch != playback->scratch && scratch->references > SIZE_MAX - 2u))
+        return roq_fail(error, "RoQ scratch adoption requires an explicit returned playback owner");
+    return qa_roq_decoder_scratch_rebind_ready(playback->decoder, scratch, error);
+}
+void qa_roq_playback_scratch_rebind(qa_roq_playback *playback, qa_roq_scratch *scratch) {
+    if (scratch == playback->scratch) return;
+    qa_roq_scratch_retain(scratch);
+    qa_roq_decoder_scratch_rebind(playback->decoder, scratch);
+    qa_roq_scratch_release(playback->scratch);
+    playback->scratch = scratch;
+    playback->options.scratch = scratch;
+}
 bool qa_roq_playback_image(qa_roq_playback *playback, bool shader, uint32_t draw_width,
                            uint32_t draw_height, bool dirty, qa_media_frame *out, qa_error *error) {
     if (!playback || !out || !playback->has_frame || !draw_width || !draw_height)

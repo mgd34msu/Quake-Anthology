@@ -196,7 +196,7 @@ static void install(frontend_seat *seat, player_record *row)
 bool frontend_players_checkpoint(qa_frontend *f, qa_buffer *out, qa_error *error)
 {
     if (!f || !f->application || !f->capture || f->stepping || !out || out->data || out->size ||
-        !f->options.seats || f->options.seats > QA_INPUT_LOCAL_SEATS || !frontend_seat_callbacks_idle(f))
+        !f->options.seats || f->options.seats > QA_INPUT_LOCAL_SEATS || !frontend_seat_callbacks_checkpoint_ready(f,error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Player projection capture requires its held frontend and empty output");
     qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && header(&io, f);

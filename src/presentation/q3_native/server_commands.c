@@ -216,7 +216,7 @@ static bool create(const q3n_server_command_options *options, unsigned domain,
 {
     const qa_native_q3_client_services *services = options ? qa_native_q3_client_services_read(options->client) : NULL;
     bool compiled=domain==2,remote=domain==1;
-    if (!options || !out || *out ||
+    if (!options || !out || *out || (!compiled && options->compiled_scene_only) ||
         (compiled?(!options->compiled_source || options->client || options->reader || options->remote_client || options->remote_source ||
             !options->compiled_cvars || !options->compiled_context.owner || !options->compiled_current || !options->compiled_cvar_read ||
             !options->compiled_register || !options->compiled_console || !options->compiled_center_print):
@@ -499,11 +499,12 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
     o->state.server_command_sequence = sequence;
     uint32_t inline_models = 0;
     bool mission = o->options.product == QA_Q3_TEAM_ARENA;
+    bool primary = !o->options.compiled_scene_only;
     bool ok = q3n_media_loading_graphics(o->options.media, e) && q3nc_current(o, f, e) &&
         (o->options.compiled_source?o->options.compiled_register(o->options.context,f,e):
          o->options.remote_client ? qa_native_q3_remote_client_register(o->options.remote_client, e) :
             qa_native_q3_client_register(o->options.client, e)) && q3nc_current(o, f, e) &&
-        stage(o, f, Q3N_INIT_CONSOLE_COMMANDS, &inline_models, e);
+        (!primary || stage(o, f, Q3N_INIT_CONSOLE_COMMANDS, &inline_models, e));
     if (ok) {
         if (!f->weapons || !q3n_weapons_idle(f->weapons)) ok = q3nc_fail(e, QA_ERROR_ARGUMENT, "CG_Init weapon selection requires its actual native child");
         else { q3n_weapons_set_selected(f->weapons, 2, 0);
@@ -547,14 +548,14 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
          f->remote ? q3n_clients_remote_sync(o->options.clients, &f->remote->source, &client_settings, e) :
             q3n_clients_sync(o->options.clients, f->application, &f->source, &client_settings, e)) && q3nc_current(o, f, e);
     if (ok) spectators(o);
-    if (ok && mission) ok = stage(o, f, Q3N_INIT_MISSION_ASSETS, &inline_models, e) &&
+    if (ok && mission && primary) ok = stage(o, f, Q3N_INIT_MISSION_ASSETS, &inline_models, e) &&
         stage(o, f, Q3N_INIT_HUD_MENU, &inline_models, e);
     if (ok) {
         q3n_events_round(o->options.events);
-        ok = initial_config(o, f, e) && music(o, f, e) && loading(o, f, "", -1, e);
+        ok = initial_config(o, f, e) && (!primary || music(o, f, e)) && loading(o, f, "", -1, e);
     }
-    if (ok && mission) ok = stage(o, f, Q3N_INIT_TEAM_CHAT, &inline_models, e);
-    if (ok) ok = shader_state(o, f, e) && qa_q3_presentation_clear_loops(o->options.presentation, true, e) && q3nc_current(o, f, e);
+    if (ok && mission && primary) ok = stage(o, f, Q3N_INIT_TEAM_CHAT, &inline_models, e);
+    if (ok) ok = (!primary || shader_state(o, f, e)) && qa_q3_presentation_clear_loops(o->options.presentation, true, e) && q3nc_current(o, f, e);
     if (ok) o->initialized = true;
     return end(o, ok);
 }

@@ -1,4 +1,6 @@
 #include "network_unified_client.h"
+#include "remote_unified_presentation.h"
+#include "remote_unified_save.h"
 #include "internal.h"
 #include "qa/source_save.h"
 #include "qa/source_frame_time.h"
@@ -16,25 +18,33 @@ struct frontend_network_unified_client_service {
     qa_net_client_id client;
     uint64_t epoch;
     qa_buffer userinfo;
-    bool binding, configuration_released;
+    bool binding, configuration_released, restored, published, retired;
 };
 static bool parent(const frontend_network_unified_client_service *o)
 { return o && o->options.current(o->options.context,o); }
-static bool connection(void *context,const qa_application_client_source *source)
+static bool connection_tuple(const frontend_network_unified_client_service *o,
+    const qa_application_client_source *source,bool absent_retired)
 {
-    frontend_network_unified_client_service *o=context;
     if (!parent(o) || !source || source->runtime!=o->options.runtime ||
         source->context.physical_seat!=o->options.physical_seat) return false;
     if (!source->client.owner) return (!o->client.owner || o->binding) &&
         !source->client.slot && !source->client.generation && !source->connection_epoch &&
         !source->network_seat.owner && !source->network_seat.index;
     const qa_net_client *peer=qa_net_connections_get(qa_network_connections(o->options.runtime),source->client);
+    if(!peer) return absent_retired&&o->retired&&
+        qa_net_client_id_equal(source->client,o->client)&&source->connection_epoch==o->epoch&&o->epoch&&
+        source->network_seat.owner==o->options.seat.owner&&source->network_seat.index==o->options.seat.index;
     return peer && qa_net_client_id_equal(source->client,o->client) &&
         source->connection_epoch==o->epoch && qa_network_epoch(o->options.runtime,o->client)==o->epoch &&
         source->network_seat.owner==o->options.seat.owner && source->network_seat.index==o->options.seat.index &&
         peer->protocol.kind==QA_NET_UNIFIED_1 && !peer->protocol.revision && !peer->protocol.flags &&
         peer->seat_count==1 && qa_net_client_owns_seat(peer,source->network_seat) &&
         !peer->seats[0].remote_index && qa_net_address_equal(&peer->endpoint,&o->options.remote,true);
+}
+static bool connection(void *context,const qa_application_client_source *source)
+{
+    frontend_network_unified_client_service *o=context;
+    return o&&!o->retired&&connection_tuple(o,source,false);
 }
 static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cvars *variables,
     const qa_command_context *command,qa_error *e)
@@ -104,6 +114,13 @@ static bool configure(void *context,const qa_application_client_source *source,b
 {
     frontend_network_unified_client_service *o=context;
     return parent(o) && o->options.configuration.configure(o->options.configuration.context,source,ready,e) && parent(o);
+}
+static bool configuration_advance(void *context,const qa_application_client_source *source,
+    qa_application_client_preparation *preparation,bool *complete,qa_error *e)
+{
+    frontend_network_unified_client_service *o=context;
+    return parent(o)&&o->options.configuration.configuration_advance&&
+        o->options.configuration.configuration_advance(o->options.configuration.context,source,preparation,complete,e)&&parent(o);
 }
 static bool install(void *context,const qa_application_client_source *source,bool restoring,qa_error *e)
 {
@@ -190,7 +207,9 @@ static frontend_client_source_options physical_options(frontend_network_unified_
     frontend_client_source_options c=o->options.configuration;
     c.context=o; c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
     c.initialize=initialize; c.configure=configure; c.install=install; c.print=print;
-    c.connection_current=connection; c.entity_current=NULL; c.command=command; c.forward=forward;
+    if(c.configuration_advance) c.configuration_advance=configuration_advance;
+    c.connection_current=connection;c.retirement_current=frontend_network_unified_client_retirement_current;
+    c.entity_current=NULL; c.command=command; c.forward=forward;
     c.allow_command=allow;
     if (c.cvar_owner) c.cvar_owner=route;
     if (c.visible_cvars) c.visible_cvars=visible;
@@ -207,11 +226,26 @@ static bool same_command(const qa_command_context *a,const qa_command_context *b
         a->console_text==b->console_text && a->registry==b->registry && a->generation==b->generation &&
         qa_actor_id_equal(a->actor,b->actor) && !a->script && !b->script;
 }
+static bool domain_namespace(const frontend_network_unified_client_service *o,
+    const frontend_remote_unified_domain *d,const frontend_client_source_view *v)
+{
+    return d&&d->application==o->options.frontend->application&&d->runtime==o->options.runtime&&
+        d->seat.owner==o->options.seat.owner&&d->seat.index==o->options.seat.index&&
+        d->physical_seat==o->options.physical_seat&&d->catalog==qa_launch_instance_catalog(v->source.descriptor)&&
+        d->resources==qa_application_resources(d->application)&&d->console==v->source.context.console&&
+        d->cvars==v->source.context.cvars&&same_command(&d->command_context,&v->source.context.command);
+}
 static bool domain_current(void *context,const frontend_remote_unified_domain *d,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
     frontend_client_source_view v;
-    if (!d || !parent(o) || !frontend_client_source_read(o->physical,&v,e) || !v.ready) return false;
+    if (!d || !parent(o)) return false;
+    if(o->retired) {
+        if(!frontend_client_source_metadata_read(o->physical,&v,e)||
+            !qa_application_client_associated(o->options.frontend->application,&v.source)||
+            !connection_tuple(o,&v.source,true)) return false;
+    } else if(!frontend_client_source_read(o->physical,&v,e)) return false;
+    if(!v.ready) return false;
     bool client=qa_net_client_id_equal(d->client,v.source.client);
     /* remote_bind first qualifies its still-pending stored domain, then the
      * bound candidate. Only that same actual replica may retain this cut. */
@@ -219,17 +253,13 @@ static bool domain_current(void *context,const frontend_remote_unified_domain *d
         const frontend_remote_unified_domain *pending=frontend_remote_unified_domain_read(o->replica);
         client=d==pending && !pending->client.owner && connection(o,&v.source);
     }
-    return client && d->application==o->options.frontend->application && d->runtime==o->options.runtime &&
-        d->seat.owner==o->options.seat.owner && d->seat.index==o->options.seat.index &&
-        d->physical_seat==o->options.physical_seat && d->catalog==qa_launch_instance_catalog(v.source.descriptor) &&
-        d->resources==qa_application_resources(d->application) && d->console==v.source.context.console &&
-        d->cvars==v.source.context.cvars && same_command(&d->command_context,&v.source.context.command);
+    return client&&domain_namespace(o,d,&v);
 }
 static bool userinfo(void *context,const frontend_remote_unified_domain *d,const char **out,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
     qa_buffer value={0};
-    if (!out || !domain_current(o,d,e) || !qa_cvars_info(d->cvars,QA_CVAR_USERINFO,0,&value,e)) return false;
+    if (!out || !o || o->retired || !domain_current(o,d,e) || !qa_cvars_info(d->cvars,QA_CVAR_USERINFO,0,&value,e)) return false;
     if (!domain_current(o,d,e)) { qa_buffer_free(&value); return false; }
     qa_buffer_free(&o->userinfo); o->userinfo=value; *out=(const char *)o->userinfo.data; return true;
 }
@@ -237,8 +267,93 @@ static bool disconnected(void *context,const frontend_remote_unified_domain *d,c
 {
     frontend_network_unified_client_service *o=context; frontend_client_source_view v;
     return reason && domain_current(o,d,e) && frontend_client_source_read(o->physical,&v,e) &&
-        o->options.disconnected(o->options.context,&v.source,reason,e);
+        o->options.disconnected(o->options.context,&v.source,reason,e)&&
+        frontend_network_unified_client_request_retirement(o,&v.source,e);
 }
+bool frontend_network_unified_client_request_retirement(frontend_network_unified_client_service *o,
+    const qa_application_client_source *source,qa_error *e)
+{
+    frontend_client_source_view physical;
+    if(!parent(o)||!source||!o->client.owner||o->binding||
+        !frontend_client_source_metadata_read(o->physical,&physical,e)||!physical.ready||
+        !qa_application_client_associated(o->options.frontend->application,source)||
+        source->runtime!=o->options.runtime||!qa_net_client_id_equal(source->client,o->client)||
+        source->connection_epoch!=o->epoch||source->context.receiver!=physical.source.context.receiver||
+        source->context.seat!=physical.source.context.seat||source->context.lifetime!=physical.source.context.lifetime||
+        source->context.console!=physical.source.context.console||source->context.cvars!=physical.source.context.cvars||
+        source->context.physical_seat!=o->options.physical_seat||
+        source->network_seat.owner!=o->options.seat.owner||source->network_seat.index!=o->options.seat.index||
+        !same_command(&source->context.command,&physical.source.context.command))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified retirement lost its retained physical CLIENT receipt");
+    o->retired=true;return true;
+}
+bool frontend_network_unified_client_retired(const frontend_network_unified_client_service *o)
+{ return o&&o->retired; }
+bool frontend_network_unified_client_retirement_current(void *context,const qa_application_client_source *source)
+{
+    frontend_network_unified_client_service *o=context;
+    return o&&o->retired&&connection_tuple(o,source,true);
+}
+static bool retirement(void *context,const frontend_remote_unified_domain *d,qa_error *e)
+{
+    frontend_network_unified_client_service *o=context;
+    frontend_client_source_view physical;
+    return parent(o)&&d&&frontend_client_source_metadata_read(o->physical,&physical,e)&&physical.ready&&
+        qa_net_client_id_equal(d->client,physical.source.client)&&domain_namespace(o,d,&physical)&&
+        frontend_network_unified_client_request_retirement(o,&physical.source,e);
+}
+static bool command_text(void *context,const frontend_remote_unified_domain *d,const char *text,qa_error *e)
+{
+    frontend_network_unified_client_service *o=context; frontend_client_source_view v;
+    return text&&o&&!o->retired&&domain_current(o,d,e)&&frontend_client_source_read(o->physical,&v,e)&&
+        frontend_network_unified_client_dispatch(o,&v.source,text,e)&&domain_current(o,d,e);
+}
+static bool source_command(void *context,const frontend_remote_unified_domain *d,const char *instance,
+    uint64_t publication,uint64_t map_revision,const qa_command_context *origin,
+    const qa_command_tokens *tokens,qa_error *e)
+{
+    frontend_network_unified_client_service *o=context;
+    frontend_client_source_view physical;
+    qa_unified_session *session=NULL,*after=NULL;
+    if(!o||o->retired||!o->replica||d!=frontend_remote_unified_domain_read(o->replica)||
+        !tokens||!tokens->values||!tokens->count||tokens->count>128||
+        !domain_current(o,d,e)||!frontend_client_source_read(o->physical,&physical,e)||
+        !physical.ready||!connection(o,&physical.source)||
+        !frontend_remote_unified_presentation_source_command_current(o->replica,instance,
+            publication,map_revision,origin,e)||
+        !qa_unified_session_find(d->runtime,d->client,&session,e)) return false;
+    const char *arguments[128];
+    for(size_t i=0;i<tokens->count;++i) arguments[i]=tokens->values[i];
+    const qa_unified_source_command command={.instance=instance,.publication=publication,
+        .map_revision=map_revision,.arguments=arguments,.argument_count=tokens->count};
+    return qa_unified_session_source_command(session,&command,e)&&
+        domain_current(o,d,e)&&connection(o,&physical.source)&&
+        frontend_remote_unified_presentation_source_command_current(o->replica,instance,
+            publication,map_revision,origin,e)&&
+        qa_unified_session_find(d->runtime,d->client,&after,e)&&after==session;
+}
+bool frontend_network_unified_client_restart_adopt(frontend_network_unified_client_service *o,
+    const frontend_remote_unified_domain *d,uint64_t epoch,qa_error *e)
+{
+    frontend_client_source_view v;
+    if(!o||o->retired||!d||!o->replica||d!=frontend_remote_unified_domain_read(o->replica)||
+        !epoch||epoch!=qa_network_epoch(o->options.runtime,o->client)||
+        !frontend_network_unified_client_idle(o)||!parent(o)||
+        !frontend_client_source_metadata_read(o->physical,&v,e)||!v.ready||
+        !qa_net_client_id_equal(d->client,o->client)||!qa_net_client_id_equal(v.source.client,o->client)||
+        d->application!=o->options.frontend->application||d->runtime!=o->options.runtime||
+        d->physical_seat!=o->options.physical_seat||d->seat.owner!=o->options.seat.owner||d->seat.index!=o->options.seat.index||
+        d->catalog!=qa_launch_instance_catalog(v.source.descriptor)||d->resources!=qa_application_resources(d->application)||
+        d->console!=v.source.context.console||d->cvars!=v.source.context.cvars||
+        !same_command(&d->command_context,&v.source.context.command))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT restart lost its actual physical transport namespace");
+    uint64_t previous=o->epoch;
+    o->epoch=epoch;
+    if(!frontend_client_source_epoch_adopt(o->physical,epoch,e)) {o->epoch=previous;return false;}
+    return domain_current(o,d,e);
+}
+static bool transport_restart(void *context,const frontend_remote_unified_domain *d,uint64_t epoch,qa_error *e)
+{ return frontend_network_unified_client_restart_adopt(context,d,epoch,e); }
 bool frontend_network_unified_client_create(const frontend_network_unified_client_options *options,
     frontend_network_unified_client_service **out,qa_error *e)
 {
@@ -272,24 +387,48 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     qa_vfs_destroy(prepared); return ok;
 }
 bool frontend_network_unified_client_advance(frontend_network_unified_client_service *o,bool *ready,qa_error *e)
-{ return parent(o) && frontend_client_source_advance(o->physical,ready,e); }
+{
+    if(!ready||!parent(o)) return false;
+    if(o->retired) {*ready=false;return true;}
+    return frontend_client_source_advance(o->physical,ready,e);
+}
 bool frontend_network_unified_client_drain(frontend_network_unified_client_service *o,size_t budget,
     size_t *executed,qa_error *e)
 {
     frontend_client_source_view v;
+    if(!executed||!parent(o)) return false;
+    if(o->retired) {*executed=0;return true;}
     return frontend_network_unified_client_source_read(o,&v,e) && v.ready &&
         frontend_client_source_drain(o->physical,budget,executed,e);
 }
 bool frontend_network_unified_client_source_read(const frontend_network_unified_client_service *o,
     frontend_client_source_view *out,qa_error *e)
-{ return parent(o) && frontend_client_source_read(o->physical,out,e); }
+{ return parent(o) && !o->retired && frontend_client_source_read(o->physical,out,e); }
+bool frontend_network_unified_client_dispatch(frontend_network_unified_client_service *o,
+    const qa_application_client_source *source,const char *text,qa_error *e)
+{
+    return parent(o)&&source&&text&&connection(o,source)&&
+        frontend_client_source_remote(o->physical,source,text,e)&&parent(o)&&connection(o,source);
+}
 bool frontend_network_unified_client_metadata_read(const frontend_network_unified_client_service *o,
     frontend_network_unified_client_view *out,qa_error *e)
 {
     frontend_client_source_view physical;
     if (!o || !out || o->binding || !frontend_client_source_metadata_read(o->physical,&physical,e)) return false;
-    *out=(frontend_network_unified_client_view){o,physical,o->options.remote,o->options.seat,o->options.profile};
+    *out=(frontend_network_unified_client_view){.owner=o,.physical=physical,.remote=o->options.remote,
+        .seat=o->options.seat,.profile=o->options.profile,.retired=o->retired};
     return true;
+}
+static void options_value(frontend_network_unified_client_service *o,const frontend_client_source_view *v,
+    frontend_remote_unified_options *out)
+{
+    *out=(frontend_remote_unified_options){.domain={.application=o->options.frontend->application,
+        .runtime=o->options.runtime,.client=v->source.client,.seat=o->options.seat,.physical_seat=o->options.physical_seat,
+        .catalog=qa_launch_instance_catalog(v->source.descriptor),.resources=qa_application_resources(o->options.frontend->application),
+        .console=v->source.context.console,.cvars=v->source.context.cvars,.command_context=v->source.context.command},
+        .context=o,.current=domain_current,.userinfo=userinfo,.disconnected=disconnected,.retirement=retirement,
+        .command_text=command_text,.source_command=source_command,
+        .transport_restart=transport_restart,.identity_capacity=65536};
 }
 bool frontend_network_unified_client_options_read(frontend_network_unified_client_service *o,
     frontend_remote_unified_options *out,qa_error *e)
@@ -297,17 +436,42 @@ bool frontend_network_unified_client_options_read(frontend_network_unified_clien
     frontend_client_source_view v;
     if (!out || !frontend_network_unified_client_source_read(o,&v,e) || !v.ready)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT programme has not completed its real physical namespace");
-    *out=(frontend_remote_unified_options){.domain={.application=o->options.frontend->application,
-        .runtime=o->options.runtime,.client=v.source.client,.seat=o->options.seat,.physical_seat=o->options.physical_seat,
-        .catalog=qa_launch_instance_catalog(v.source.descriptor),.resources=qa_application_resources(o->options.frontend->application),
-        .console=v.source.context.console,.cvars=v.source.context.cvars,.command_context=v.source.context.command},
-        .context=o,.current=domain_current,.userinfo=userinfo,.disconnected=disconnected,.identity_capacity=65536};
+    options_value(o,&v,out);return true;
+}
+bool frontend_network_unified_client_import_options_read(frontend_network_unified_client_service *o,
+    frontend_remote_unified_options *out,qa_error *e)
+{
+    frontend_client_source_view v;
+    if(!out||!parent(o)||!frontend_network_unified_client_idle(o)||
+        !((o->restored&&o->options.frontend->source_restoring)||o->options.frontend->capture)||
+        !frontend_client_source_metadata_read(o->physical,&v,e)||!v.ready||
+        !qa_application_client_associated(o->options.frontend->application,&v.source)||
+        !qa_net_client_id_equal(v.source.client,o->client)||v.source.connection_epoch!=o->epoch)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified retained options require their actual capture or import owner");
+    frontend_remote_unified_options value;
+    options_value(o,&v,&value);
+    if(!domain_current(o,&value.domain,e)) return false;
+    *out=value;
+    return true;
+}
+bool frontend_network_unified_client_retirement_options_read(frontend_network_unified_client_service *o,
+    frontend_remote_unified_options *out,qa_error *e)
+{
+    frontend_client_source_view physical;
+    if(!out||!parent(o)||!o->retired||!frontend_network_unified_client_idle(o)||
+        !frontend_client_source_metadata_read(o->physical,&physical,e)||!physical.ready||
+        !qa_application_client_retirement_current(o->options.frontend->application,&physical.source))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified retained options lost their actual retired physical CLIENT custody");
+    frontend_remote_unified_options value;
+    options_value(o,&physical,&value);
+    if(!domain_current(o,&value.domain,e)) return false;
+    *out=value;
     return true;
 }
 bool frontend_network_unified_client_bind(frontend_network_unified_client_service *o,qa_net_client_id client,
     qa_net_seat_id seat,frontend_remote_unified *replica,qa_error *e)
 {
-    if (!parent(o) || !replica || !client.owner || !client.generation ||
+    if (!parent(o) || o->retired || !replica || !client.owner || !client.generation ||
         seat.owner!=o->options.seat.owner || seat.index!=o->options.seat.index || !frontend_network_unified_client_idle(o))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT bind requires its genuine pending physical owner");
     uint64_t epoch=qa_network_epoch(o->options.runtime,client);
@@ -327,6 +491,40 @@ bool frontend_network_unified_client_bind(frontend_network_unified_client_servic
 }
 bool frontend_network_unified_client_idle(const frontend_network_unified_client_service *o)
 { return !o || (!o->binding && (!o->physical || frontend_client_source_idle(o->physical))); }
+bool frontend_network_unified_client_bind_restored(frontend_network_unified_client_service *o,
+    qa_net_client_id client,qa_net_seat_id seat,frontend_remote_unified *replica,qa_error *e)
+{
+    frontend_client_source_view physical;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
+    if(!parent(o)||!o->restored||!o->options.frontend->source_restoring||!replica||
+        (o->replica&&o->replica!=replica)||!frontend_network_unified_client_idle(o)||
+        !qa_net_client_id_equal(client,o->client)||!client.owner||
+        seat.owner!=o->options.seat.owner||seat.index!=o->options.seat.index||
+        !frontend_client_source_metadata_read(o->physical,&physical,e)||!physical.ready||
+        !qa_net_client_id_equal(physical.source.client,client)||physical.source.connection_epoch!=o->epoch||
+        !domain_current(o,domain,e)||!frontend_remote_unified_checkpoint_current(replica,e))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Restored Unified bind changed its retained CLIENT and replica graph");
+    o->replica=replica;
+    return true;
+}
+bool frontend_network_unified_client_publication_ready(const frontend_network_unified_client_service *o,qa_error *e)
+{
+    if(!o) return true;
+    frontend_client_source_view physical;
+    return o->restored&&frontend_network_unified_client_idle(o)&&parent(o)&&
+        frontend_client_source_restore_finished(o->physical)&&
+        frontend_client_source_metadata_read(o->physical,&physical,e)&&
+        physical.source.runtime==o->options.runtime&&physical.source.context.physical_seat==o->options.physical_seat&&
+        qa_net_client_id_equal(physical.source.client,o->client)&&physical.source.connection_epoch==o->epoch&&
+        (o->retired?qa_application_client_associated(o->options.frontend->application,&physical.source)&&
+            connection_tuple(o,&physical.source,true):connection((void *)o,&physical.source));
+}
+void frontend_network_unified_client_publish(frontend_network_unified_client_service *o)
+{ if(o) o->published=true; }
+bool frontend_network_unified_client_imported(const frontend_network_unified_client_service *o)
+{ return o&&o->published&&frontend_network_unified_client_restored_complete(o); }
+bool frontend_network_unified_client_restored_complete(const frontend_network_unified_client_service *o)
+{ return o&&o->restored&&frontend_client_source_restore_finished(o->physical); }
 bool frontend_network_unified_client_destroy(frontend_network_unified_client_service **owned,qa_error *e)
 {
     frontend_network_unified_client_service *o=owned?*owned:NULL;
@@ -337,10 +535,10 @@ bool frontend_network_unified_client_destroy(frontend_network_unified_client_ser
     qa_buffer_free(&o->userinfo); free(o); *owned=NULL; return true;
 }
 static bool capsule_fields(qa_source_save_io *io,qa_net_address *remote,qa_net_seat_id *seat,
-    uint32_t *physical,qa_buffer *encoded,qa_bytes *decoded)
+    uint32_t *physical,bool *retired,qa_buffer *encoded,qa_bytes *decoded)
 {
-    uint8_t magic[8]={'Q','U','S','C',1,0,0,0};
-    const uint8_t expected[8]={'Q','U','S','C',1,0,0,0};
+    uint8_t magic[8]={'Q','U','S','C',2,0,0,0};
+    const uint8_t expected[8]={'Q','U','S','C',2,0,0,0};
     uint32_t kind=(uint32_t)remote->kind;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if (!qa_source_save_bytes(io,magic,8) || memcmp(magic,expected,8) ||
@@ -363,7 +561,8 @@ static bool capsule_fields(qa_source_save_io *io,qa_net_address *remote,qa_net_s
             memchr(remote->host.loopback,0,length-1)) return false;
     } else return false;
     if (!qa_source_save_u64(io,&seat->owner) || !seat->owner ||
-        !qa_source_save_u32(io,&seat->index) || !qa_source_save_u32(io,physical)) return false;
+        !qa_source_save_u32(io,&seat->index) || !qa_source_save_u32(io,physical)||
+        !qa_source_save_bool(io,retired)) return false;
     size_t length=reading?0:encoded->size;
     if (!qa_source_save_count(io,&length,SIZE_MAX) || !length) return false;
     if (!reading) return qa_source_save_bytes(io,encoded->data,length);
@@ -377,34 +576,36 @@ bool frontend_network_unified_client_checkpoint(frontend_network_unified_client_
     qa_buffer physical={0}; qa_source_save_io io={0};
     qa_net_address remote=o->options.remote; qa_net_seat_id seat=o->options.seat;
     uint32_t ordinal=o->options.physical_seat;
+    bool retired=o->retired;
     bool ok=frontend_client_source_checkpoint(o->physical,graph,&physical,e) &&
-        qa_source_save_writer(&io,NULL,e) && capsule_fields(&io,&remote,&seat,&ordinal,&physical,NULL) &&
+        qa_source_save_writer(&io,NULL,e) && capsule_fields(&io,&remote,&seat,&ordinal,&retired,&physical,NULL) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); qa_buffer_free(&physical); return ok;
 }
 static bool capsule_read(qa_bytes bytes,qa_net_address *remote,qa_net_seat_id *seat,
-    uint32_t *physical,qa_bytes *prefix,qa_error *e)
+    uint32_t *physical,bool *retired,qa_bytes *prefix,qa_error *e)
 {
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,e) &&
-        capsule_fields(&io,remote,seat,physical,NULL,prefix) && qa_source_save_finish(&io,NULL);
+        capsule_fields(&io,remote,seat,physical,retired,NULL,prefix) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (!ok && (!e || e->code==QA_OK))
         frontend_fail(e,QA_ERROR_FORMAT,"Invalid retained Unified CLIENT capsule");
     return ok;
 }
 bool frontend_network_unified_client_saved_read(qa_frontend *f,qa_application_content_graph *graph,qa_bytes bytes,
-    frontend_client_source_prefix *out,qa_net_address *remote,qa_net_seat_id *seat,qa_error *e)
+    frontend_client_source_prefix *out,qa_net_address *remote,qa_net_seat_id *seat,bool *retired,qa_error *e)
 {
     qa_bytes prefix={0}; uint32_t physical=0; qa_net_address address={0}; qa_net_seat_id binding={0};
-    if (!f || !out || !remote || !seat || !capsule_read(bytes,&address,&binding,&physical,&prefix,e) ||
+    bool disconnected=false;
+    if (!f || !out || !remote || !seat ||!retired|| !capsule_read(bytes,&address,&binding,&physical,&disconnected,&prefix,e) ||
         !frontend_client_source_prefix_read(f,graph,prefix,out,e)) return false;
-    if (out->state.application.physical_seat!=physical || (out->state.application.client.owner &&
+    if ((disconnected&&!out->state.application.client.owner)||out->state.application.physical_seat!=physical || (out->state.application.client.owner &&
         (out->state.application.network_seat.owner!=binding.owner || out->state.application.network_seat.index!=binding.index))) {
         frontend_client_source_prefix_free(out);
         return frontend_fail(e,QA_ERROR_FORMAT,"Unified CLIENT capsule changes its actual physical seat");
     }
-    *remote=address; *seat=binding; return true;
+    *remote=address; *seat=binding;*retired=disconnected; return true;
 }
 bool frontend_network_unified_client_restore(const frontend_network_unified_client_options *options,
     qa_application_content_graph *graph,const qa_console_save_resolvers *resolvers,qa_bytes bytes,
@@ -420,21 +621,24 @@ bool frontend_network_unified_client_restore(const frontend_network_unified_clie
     *out=o; o->options=*options;
     frontend_client_source_prefix prefix={0}; qa_net_address remote={0}; qa_net_seat_id seat={0};
     qa_bytes physical={0}; uint32_t ordinal=0;
-    bool ok=parent(o) && capsule_read(bytes,&remote,&seat,&ordinal,&physical,e) &&
+    bool ok=parent(o) && capsule_read(bytes,&remote,&seat,&ordinal,&o->retired,&physical,e) &&
         ordinal==options->physical_seat && seat.owner==options->seat.owner && seat.index==options->seat.index &&
         qa_net_address_equal(&remote,&options->remote,true) && frontend_client_source_prefix_read(f,graph,physical,&prefix,e);
-    if (ok) ok=prefix.recipe.profile==options->profile && prefix.recipe.selected==options->profile &&
+    if (ok) ok=(!o->retired||prefix.state.application.client.owner)&&
+        prefix.recipe.profile==options->profile && prefix.recipe.selected==options->profile &&
         prefix.state.application.physical_seat==options->physical_seat &&
         (!prefix.state.application.client.owner ||
             (prefix.state.application.network_seat.owner==options->seat.owner &&
              prefix.state.application.network_seat.index==options->seat.index));
     if (ok) {
         o->client=prefix.state.application.client; o->epoch=prefix.state.application.connection_epoch;
+        o->restored=true;
         frontend_client_source_options source=physical_options(o);
         source.metadata=prefix.recipe; source.input_origin=prefix.state.command;
         ok=frontend_client_source_restore_prefix(f,&source,graph,resolvers,physical,&o->physical,e);
     }
     frontend_client_source_prefix_free(&prefix);
+    if(ok) o->restored=true;
     if (!ok && e && e->code==QA_OK) frontend_fail(e,QA_ERROR_FORMAT,"Saved Unified CLIENT differs from its retained physical namespace");
     return ok;
 }

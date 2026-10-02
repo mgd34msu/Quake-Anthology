@@ -11,6 +11,7 @@ bool qa_q3_source_scene_bank_create(uint32_t polygons, uint32_t vertices,
         return fail(error, QA_ERROR_ARGUMENT, "Source scene bank requires real allocation limits and empty output");
     qa_q3_source_scene_bank *bank = calloc(1, sizeof(*bank));
     if (!bank) return fail(error, QA_ERROR_MEMORY, "Allocating Source scene bank");
+    bank->cycle = 1;
     bank->membership.max_polygons = polygons; bank->membership.max_vertices = vertices;
     bank->polygons = calloc(polygons, sizeof(*bank->polygons));
     bank->vertices = calloc(vertices, sizeof(*bank->vertices));
@@ -34,9 +35,15 @@ void qa_q3_source_scene_bank_destroy(qa_q3_source_scene_bank *bank)
 void qa_q3_source_scene_bank_frame(qa_q3_source_scene_bank *bank)
 {
     if (!bank) return;
+    if (bank->cycle) bank->cycle = bank->cycle == UINT64_MAX ? 0 : bank->cycle + 1;
     bank->membership.entities = bank->membership.first_entity = 0;
     bank->membership.polygons = bank->membership.first_polygon = bank->membership.vertices = 0;
     bank->membership.lights = bank->membership.first_light = 0;
+}
+bool qa_q3_source_scene_bank_cycle(const qa_q3_source_scene_bank *bank, uint64_t *out)
+{
+    if (!bank || !out || !bank->cycle) return false;
+    *out = bank->cycle; return true;
 }
 void qa_q3_source_scene_bank_clear(qa_q3_source_scene_bank *bank)
 {
@@ -49,18 +56,19 @@ bool qa_q3_source_scene_bank_membership(const qa_q3_source_scene_bank *bank,
     qa_q3_source_scene_membership *out)
 { if (!bank || !out) return false; *out = bank->membership; return true; }
 bool qa_q3_source_scene_bank_entity_capacity(const qa_q3_source_scene_bank *bank)
-{ return bank && bank->membership.entities < QA_Q3_SOURCE_ENTITY_LIMIT; }
+{ return bank && bank->cycle && bank->membership.entities < QA_Q3_SOURCE_ENTITY_LIMIT; }
 bool qa_q3_source_scene_bank_poly_capacity(const qa_q3_source_scene_bank *bank, size_t vertices)
-{ return bank && bank->membership.polygons < bank->membership.max_polygons &&
+{ return bank && bank->cycle && bank->membership.polygons < bank->membership.max_polygons &&
     vertices <= bank->membership.max_vertices - bank->membership.vertices; }
 bool qa_q3_source_scene_bank_light_capacity(const qa_q3_source_scene_bank *bank)
-{ return bank && bank->membership.lights < QA_Q3_SOURCE_LIGHT_CAPACITY; }
+{ return bank && bank->cycle && bank->membership.lights < QA_Q3_SOURCE_LIGHT_CAPACITY; }
 bool qa_q3_source_scene_bank_entity(qa_q3_source_scene_bank *bank,
     qa_q3_presentation_assets *assets, const qa_q3_ref_entity *value, uint32_t *ordinal,
     bool *admitted, qa_error *error)
 {
     if (!bank || !value || !ordinal || !admitted)
         return fail(error, QA_ERROR_ARGUMENT, "Source entity admission requires its actual bank and value");
+    if (!bank->cycle) return fail(error, QA_ERROR_ARGUMENT, "Source scene bank frame cycle is exhausted");
     *ordinal = bank->membership.entities; *admitted = false;
     if (*ordinal >= QA_Q3_SOURCE_ENTITY_LIMIT) return true;
     if ((unsigned)value->kind > QA_Q3_REF_PORTAL)
@@ -78,6 +86,7 @@ bool qa_q3_source_scene_bank_entity_range(qa_q3_source_scene_bank *bank,
 {
     if (!bank || !first || !admitted)
         return fail(error, QA_ERROR_ARGUMENT, "Source entity range requires its actual bank and outputs");
+    if (!bank->cycle) return fail(error, QA_ERROR_ARGUMENT, "Source scene bank frame cycle is exhausted");
     *first = bank->membership.entities; *admitted = 0;
     while (*admitted < count && qa_q3_source_scene_bank_entity_capacity(bank)) {
         if (!values) return fail(error, QA_ERROR_ARGUMENT, "Source entity range lacks its actual incoming values");
@@ -94,6 +103,7 @@ bool qa_q3_source_scene_bank_poly(qa_q3_source_scene_bank *bank,
 {
     if (!bank || !admitted || (count && !vertices))
         return fail(error, QA_ERROR_ARGUMENT, "Source polygon admission requires its actual bank and vertices");
+    if (!bank->cycle) return fail(error, QA_ERROR_ARGUMENT, "Source scene bank frame cycle is exhausted");
     *admitted = false;
     qa_q3_source_scene_membership *m = &bank->membership;
     if (!shader || m->polygons >= m->max_polygons || count > m->max_vertices - m->vertices) return true;
@@ -111,6 +121,7 @@ bool qa_q3_source_scene_bank_light(qa_q3_source_scene_bank *bank,
 {
     if (!bank || !value || !admitted)
         return fail(error, QA_ERROR_ARGUMENT, "Source light admission requires its actual bank and value");
+    if (!bank->cycle) return fail(error, QA_ERROR_ARGUMENT, "Source scene bank frame cycle is exhausted");
     *admitted = false;
     if (bank->membership.lights >= QA_Q3_SOURCE_LIGHT_CAPACITY || value->radius <= 0) return true;
     if (!qa_q3_assets_retain(assets, error)) return false;

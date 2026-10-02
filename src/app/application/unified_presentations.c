@@ -41,7 +41,8 @@ static bool stable(qa_application *app, const application_unified_source *source
 
 static bool model(application_unified_json *j, bool *first,
     const qa_application_visual_view *v, const char *path, const char *content,
-    bool source_client, bool view_weapon, qa_error *error)
+    const application_provider *render_source, bool view_weapon,
+    const qa_application_equipment_view *equipment,const qa_launch_instance *equipment_source,qa_error *error)
 {
     static const char *const families[] = {"q1", "q2", "q3"};
     if (!path || !content || (unsigned)v->family >= 3)
@@ -60,7 +61,21 @@ static bool model(application_unified_json *j, bool *first,
         text(j, ",\"scale\":", error) && number(j, v->scale, error) &&
         text(j, v->visible ? ",\"visible\":true" : ",\"visible\":false", error) &&
         text(j, view_weapon ? ",\"viewWeapon\":true" : ",\"viewWeapon\":false", error);
-    if (ok && source_client) ok = text(j, ",\"renderOwner\":\"source-client\"", error);
+    if (ok && render_source) {
+        if(!render_source->owner || !render_source->launch || !render_source->launch->selection.instance)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Unified model lost its emitting Source namespace");
+        ok=text(j,",\"renderOwner\":\"source-client\",\"renderSource\":{\"provider\":",error) &&
+            application_unified_json_natural(j,render_source->owner,error) && text(j,",\"instance\":",error) &&
+            string(j,render_source->launch->selection.instance,error) && text(j,"}",error);
+    }
+    if(ok && equipment) {
+        if(!view_weapon || !equipment->provider || !equipment_source || !equipment_source->selection.instance)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Unified view weapon lost its emitting equipment namespace");
+        ok=text(j,",\"renderEquipment\":{\"provider\":",error) &&
+            application_unified_json_natural(j,equipment->provider,error) && text(j,",\"instance\":",error) &&
+            string(j,equipment_source->selection.instance,error) &&
+            text(j,equipment->equipment_slot?",\"slot\":true}":",\"slot\":false}",error);
+    }
     if (ok && v->family != QA_GAME_Q3 && !view_weapon)
         ok = text(j, ",\"alpha\":", error) && number(j, v->alpha, error);
     if (ok && v->skin_path) ok = text(j, ",\"skinPath\":", error) && string(j, v->skin_path, error);
@@ -159,7 +174,7 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
             !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||
             !stable(app, source, actors, error)) return false;
         for (unsigned i = 0; i < 2; ++i)
-            if (paths[i] && paths[i][0] && !model(j, first, &v, paths[i], product->identity, true, false, error)) return false;
+            if (paths[i] && paths[i][0] && !model(j, first, &v, paths[i], product->identity, provider, false,NULL,NULL,error)) return false;
     }
     int32_t after; uint32_t extent;
     return (stable(app, source, actors, error) && provider->constructed && provider->attached &&
@@ -217,6 +232,9 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     }
     if (!product || !product->identity || (!provider && !gear_selected))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its true selected content owner");
+    const qa_launch_instance *equipment_source=gear_selected?gear.source.descriptor:provider->launch;
+    if(!equipment_source || !equipment_source->selection.instance)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Unified view weapon lost its actual selected descriptor");
     qa_application_camera_view camera;
     if (!qa_application_control_camera(app, actor, &camera))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its actual player camera");
@@ -267,7 +285,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 weapon lost its actual command or motion owner");
         bool firing = (control.buttons & 1u) != 0 && combat.health > 0;
         application_unified_json row = {0}; bool one = true;
-        bool ok = model(&row, &one, &v, e.view_model, product->identity, false, true, error);
+        bool ok = model(&row, &one, &v, e.view_model, product->identity, NULL, true,&e,equipment_source,error);
         if (ok && row.bytes.size) --row.bytes.size;
         if (ok) ok = text(&row, ",\"q3Weapon\":{\"timeMilliseconds\":", error) && number(&row, e.q3_time_ms, error) &&
             text(&row, ",\"torsoAnimation\":", error) && number(&row, local && e.has_q3_source ? e.q3_source.torsoAnim : 0, error) &&
@@ -305,7 +323,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
         if (ok) *first = false;
         return ok;
     }
-    return model(j, first, &v, e.view_model, product->identity, false, true, error);
+    return model(j, first, &v, e.view_model, product->identity, NULL, true,&e,equipment_source,error);
 }
 
 bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,
@@ -379,9 +397,9 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 if (!qa_application_map_read(app, &map)) { ok = false; break; }
                 for (unsigned i = 0; ok && i < 4; ++i)
                     if (v.models[i] && v.models[i][0] && strcmp(v.models[i], qa_resource_path(map.resource)))
-                        ok = model(&models, &first_model, &v, v.models[i], content->identity, false, false, error);
+                        ok = model(&models, &first_model, &v, v.models[i], content->identity, NULL, false,NULL,NULL,error);
                 if (ok && v.q2_flare.present)
-                    ok = model(&models, &first_model, &v, "", content->identity, false, false, error);
+                    ok = model(&models, &first_model, &v, "", content->identity, NULL, false,NULL,NULL,error);
             }
         }
         if (ok && admitted) ok = equipment(app, source, id, player->actor, &models, &first_model, error);

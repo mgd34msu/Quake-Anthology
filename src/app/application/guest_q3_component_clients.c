@@ -22,11 +22,24 @@ bool application_q3_component_client_current(const application_q3_component *c,q
         c->options.clients.current(c->options.clients.context,actor)&&q3records_live(c->records,actor)&&
         application_q3_component_records_live_client(c->records,actor)&&q3component_current((void *)c,&e);
 }
+bool application_q3_component_client_bound(const application_q3_component *c,qa_actor_id actor,bool *present,qa_error *e)
+{
+    if(!c||!present||!q3component_storage((void *)c,e)) return false;
+    *present=false;
+    component_actor *row=q3records_actor(c->records,actor);
+    if(!row||!row->client||!row->admitted) return true;
+    if(!application_q3_component_client_current(c,actor))
+        return q3records_fail(e,QA_ERROR_ARGUMENT,"Component userinfo listener lost its actual admitted client");
+    *present=true; return true;
+}
 bool application_q3_component_admit(application_q3_component *c,qa_actor_id actor,qa_error *e)
 {
     if(!client_current(c,actor,e)) return false;
     component_actor *existing=q3records_actor(c->records,actor);
-    if(existing&&existing->client&&existing->admitted&&!existing->retired) return true;
+    if(existing&&existing->client&&existing->admitted&&!existing->retired) {
+        if(!application_q3_mod_admit(c->mod,actor,e)) return false;
+        return !c->items||application_q3_mod_items_admit(c->items,actor,e);
+    }
     if(!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"New component client admission requires returned source execution");
     c->busy=true; uint32_t slot;
     bool ok=application_q3_component_records_reserve_client(c->records,actor,&slot,e)&&application_q3_mod_reserve(c->mod,actor,e);
@@ -39,12 +52,14 @@ bool application_q3_component_admit(application_q3_component *c,qa_actor_id acto
         application_q3_mod_inputs values=inputs(c,actor,0);
         if(ok) ok=application_q3_mod_stage_run(c->mod,Q3_MOD_CLIENT_ADMIT,&values,e);
     }
-    if(ok) ok=client_current(c,actor,e)&&application_q3_mod_admit(c->mod,actor,e)&&application_q3_component_source_publish(c->source,c->milliseconds,false,e);
+    if(ok) ok=client_current(c,actor,e)&&application_q3_mod_admit(c->mod,actor,e)&&
+        (!c->items||application_q3_mod_items_admit(c->items,actor,e))&&application_q3_component_source_publish(c->source,c->milliseconds,false,e);
     c->busy=false; return ok;
 }
 bool application_q3_component_userinfo(application_q3_component *c,qa_actor_id actor,qa_error *e)
 {
-    if(!application_q3_component_admit(c,actor,e)) return false;
+    if(!client_current(c,actor,e)||!application_q3_component_records_live_client(c->records,actor)||!application_q3_component_idle(c))
+        return q3records_fail(e,QA_ERROR_ARGUMENT,"Component userinfo requires its already admitted returned client");
     c->busy=true; application_q3_mod_inputs values=inputs(c,actor,0);
     bool ok=application_q3_mod_stage_run(c->mod,Q3_MOD_CLIENT_USERINFO,&values,e)&&client_current(c,actor,e)&&application_q3_component_source_publish(c->source,c->milliseconds,false,e);
     c->busy=false; return ok;
@@ -57,6 +72,7 @@ bool application_q3_component_disconnect(application_q3_component *c,qa_actor_id
     bool ok=row->disconnected||application_q3_mod_stage_run(c->mod,Q3_MOD_CLIENT_DISCONNECT,&values,e);
     row=q3records_actor(c->records,actor);
     if(ok&&row) row->disconnected=true;
+    if(ok&&c->items) ok=application_q3_mod_items_release(c->items,actor,e);
     if(ok) ok=application_q3_mod_release_actor(c->mod,actor,e);
     row=q3records_actor(c->records,actor);
     if(ok&&row&&row->projected&&c->entity_record!=SIZE_MAX) {

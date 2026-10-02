@@ -2,8 +2,9 @@
 
 bool nqr_applies(application_native_q2_records *o,const nqr_actor *actor,const nqr_record *record,const nqr_field *field)
 {
+    (void)o;
     return !actor->retired&&(!record->client||actor->client)&&field->kind<=NQR_MAX&&
-        !(actor->client&&field->body_output&&o->options.client_admitted(o->options.context,actor->actor));
+        !(actor->client&&field->body_output);
 }
 static bool observations(application_native_q2_records *o,nqr_observation **out,size_t *count,qa_error *e)
 {
@@ -142,7 +143,8 @@ static application_native_q2_pickup_scope *pickup_current(application_native_q2_
 static bool pickup_ready(application_native_q2_pickup_scope *s,qa_error *e)
 {
     if(!s||s->closing||s->owner->pickup!=s||s->owner->frame!=s->frame||
-        !qa_pickup_recipient_is(s->execution,s->actor)||!nqr_live(s->owner,s->actor))
+        !qa_pickup_recipient_is(s->execution,s->actor)||!qa_pickup_current(s->execution)||
+        !nqr_live(s->owner,s->actor))
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup lost its actual admitted resource execution");
     return nqr_current(s->owner,e);
 }
@@ -355,10 +357,10 @@ bool application_native_q2_records_pickup_end(application_native_q2_records *o,
 {
     if(!scope||!*scope) return true;
     application_native_q2_pickup_scope *s=*scope;
-    if(!o||s->owner!=o||o->pickup!=s)
+    if(!o||s->owner!=o)
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup cleanup requires its returned innermost source scope");
     s->closing=true;
-    if(s->frame!=o->frame||s->frame->committing)
+    if(o->pickup!=s||s->frame!=o->frame||s->frame->committing)
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup cleanup retains its actual nested source frame or commit");
     while(s->count) {
         if(!qa_native_unobserve_writes(s->watches[s->count-1],e)) return false;
@@ -371,7 +373,8 @@ bool application_native_q2_records_pickup_begin(application_native_q2_records *o
     application_native_q2_pickup_scope **out,qa_error *e)
 {
     if(!o||!out||*out||!o->frame||o->closing||o->restoring||o->lifecycle_depth||
-        !qa_pickup_recipient_is(execution,actor)||!nqr_live(o,actor)||!nqr_current(o,e))
+        !qa_pickup_recipient_is(execution,actor)||!qa_pickup_current(execution)||
+        !nqr_live(o,actor)||!nqr_current(o,e))
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup observation requires its actual admitted source transfer");
     size_t write_count=0; const qa_pickup_write *writes=qa_pickup_writes(execution,&write_count);
     if(!write_count||!writes) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup has no actual admitted resource writes");

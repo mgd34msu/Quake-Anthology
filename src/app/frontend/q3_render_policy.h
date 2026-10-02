@@ -10,7 +10,11 @@ bool frontend_q3_material_profile_initialize(qa_frontend *, qa_material_library 
 bool frontend_q3_material_ui_fullscreen_read(void *, bool *, qa_error *);
 bool frontend_q3_material_source_bind(qa_frontend *, qa_material_library *, qa_error *);
 bool frontend_q3_source_image_admit(void *,const qa_scene_image *,uint32_t texture_unit,qa_error *);
+bool frontend_q3_source_no_bind_read(qa_frontend *,const qa_cvars_edit *,bool *,qa_error *);
+bool frontend_q3_source_restart_read(qa_frontend *,const qa_cvars_edit *,
+    qa_render_source_restart_values *,qa_error *);
 bool frontend_q3_renderer_options_read(qa_frontend *, qa_q3_presentation_options *, qa_error *);
+bool frontend_q3_renderer_hardware_read(const qa_frontend *,int32_t *,uint32_t *,qa_error *);
 /* Install live Source view scalars after effectful scene preparation. */
 bool frontend_q3_scene_policy_read(qa_frontend *, qa_q3_scene_options *, qa_error *);
 bool frontend_q3_material_diagnostics_read(qa_frontend *, qa_scene_source_diagnostics *, qa_error *);

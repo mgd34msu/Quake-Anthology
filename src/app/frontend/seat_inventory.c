@@ -163,7 +163,7 @@ bool frontend_seats_checkpoint(qa_frontend *f,frontend_scene_namespace *space,
 {
     if (!f || !f->application || !f->capture || !space || !input || input->data || input->size ||
         !presentation || presentation->data || presentation->size || input==presentation ||
-        !frontend_seat_callbacks_idle(f) || !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
+        !frontend_seat_callbacks_checkpoint_ready(f,error) || !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat capture requires genuine held owners and distinct empty outputs");
     seat_record records[QA_INPUT_LOCAL_SEATS]={0};
     qa_buffer owned[QA_INPUT_LOCAL_SEATS][SEAT_COMPONENTS]={0};

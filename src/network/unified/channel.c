@@ -123,18 +123,38 @@ bool qa_unified_channel_reliable(qa_unified_channel *c, qa_bytes payload,
     return true;
 }
 
+bool qa_unified_channel_reliable_ready(const qa_unified_channel *c, const qa_bytes *payloads,
+                                        size_t count, bool *ready, qa_error *error) {
+    if (!open_channel(c,error) || !ready || (count && !payloads))
+        return error_message(error,QA_ERROR_ARGUMENT,"invalid unified reliable admission owner");
+    *ready=false;
+    if (count>c->limits.queued_reliable_messages ||
+        count>(uint64_t)UINT32_MAX+1-c->next_reliable)
+        return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds permanent sequence or message capacity");
+    size_t bytes=0,fragment_bytes=c->limits.datagram_bytes-QA_UNIFIED_HEADER_BYTES;
+    for (size_t i=0;i<count;++i) {
+        qa_bytes payload=payloads[i];
+        size_t fragments=payload.size?(payload.size-1)/fragment_bytes+1:1;
+        if (payload.size>c->limits.message_bytes || (payload.size && !payload.data) ||
+            fragments>c->limits.fragments || payload.size>c->limits.queued_reliable_bytes-bytes)
+            return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds permanent payload capacity");
+        bytes+=payload.size;
+    }
+    *ready=count<=c->limits.queued_reliable_messages-c->reliable_count &&
+        bytes<=c->limits.queued_reliable_bytes-c->queued_bytes;
+    return true;
+}
+
 bool qa_unified_channel_reliable_batch(qa_unified_channel *c, const qa_bytes *payloads,
                                        size_t count, uint32_t *first, uint32_t *last,
                                        qa_error *error) {
     if (!open_channel(c,error) || !first || !last || (count && !payloads))
         return error_message(error,QA_ERROR_ARGUMENT,"invalid unified reliable batch owner");
-    if (count>c->limits.queued_reliable_messages-c->reliable_count ||
-        count>(uint64_t)UINT32_MAX+1-c->next_reliable)
-        return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds queue or sequence capacity");
+    bool ready=false;
+    if (!qa_unified_channel_reliable_ready(c,payloads,count,&ready,error)) return false;
+    if (!ready) return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch awaits queue capacity");
     size_t bytes=0;
     for (size_t i=0;i<count;++i) {
-        if (payloads[i].size>c->limits.queued_reliable_bytes-c->queued_bytes-bytes)
-            return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds byte capacity");
         bytes+=payloads[i].size;
     }
     outgoing *head=NULL,*tail=NULL;
@@ -172,7 +192,8 @@ static bool elapsed(uint64_t now, uint64_t then, uint64_t duration) { return now
 
 static bool expire(qa_unified_channel *c, uint64_t now, qa_error *error) {
     for (size_t i=0;i<64;++i) {
-        if (c->assemblies[i] && elapsed(now,c->assemblies[i]->started,c->limits.assembly_ns)) {
+        if (c->assemblies[i] && c->assemblies[i]->received_count<c->assemblies[i]->fragments &&
+            elapsed(now,c->assemblies[i]->started,c->limits.assembly_ns)) {
             close_channel(c); return error_message(error,QA_ERROR_IO,"unified reliable assembly timed out");
         }
     }
@@ -245,19 +266,38 @@ static void accept_ack(qa_unified_channel *c, const qa_unified_packet *p) {
     }
 }
 
-static bool deliver_frame(qa_unified_channel *c, qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+static bool deliver_frame(qa_unified_channel *c, qa_unified_admit_delivery_fn admit,
+                           qa_unified_deliver_fn deliver, void *context, qa_error *error) {
     assembly *frame=c->waiting_frame;
     if (!frame || frame->required>c->reliable_received) return true;
     if (frame->sequence>c->frame_received) {
         qa_unified_delivery value={QA_UNIFIED_FRAME,frame->sequence,frame->required,{frame->payload.data,frame->payload.size}};
+        if (admit && !admit(context,&value)) return true;
         if (!deliver(context,&value,error)) { close_channel(c); return false; }
         c->frame_received=frame->sequence;
     }
     c->waiting_frame=NULL; assembly_free(frame); return true;
 }
 
+static bool deliver_ready(qa_unified_channel *c, qa_unified_admit_delivery_fn admit,
+                           qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+    while (c->reliable_received<UINT32_MAX) {
+        assembly **ready_slot=assembly_slot(c,c->reliable_received+1);
+        if (!ready_slot || (*ready_slot)->received_count!=(*ready_slot)->fragments) break;
+        assembly *ready=*ready_slot;
+        qa_unified_delivery value={QA_UNIFIED_RELIABLE,ready->sequence,0,{ready->payload.data,ready->payload.size}};
+        if (admit && !admit(context,&value)) break;
+        if (!deliver(context,&value,error)) { close_channel(c); return false; }
+        c->reliable_received=ready->sequence; c->received_bytes-=ready->payload.size;
+        cumulative_ack(c,ready->sequence,(uint16_t)(ready->fragments-1));
+        *ready_slot=NULL; assembly_free(ready);
+    }
+    return deliver_frame(c,admit,deliver,context,error);
+}
+
 static bool receive_reliable(qa_unified_channel *c, const qa_unified_packet *p, uint64_t now,
-                               qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+                               qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
+                               void *context, qa_error *error) {
     if (p->sequence<=c->reliable_received) { cumulative_ack(c,p->sequence,p->fragment); return true; }
     if ((uint64_t)p->sequence>(uint64_t)c->reliable_received+window(c)) return true;
     assembly **slot=assembly_slot(c,p->sequence);
@@ -275,25 +315,12 @@ static bool receive_reliable(qa_unified_channel *c, const qa_unified_packet *p, 
         c->received_bytes+=p->total_bytes;
     }
     if (!append(*slot,p)) return true;
-    bool delivered=false;
-    while (c->reliable_received<UINT32_MAX) {
-        assembly **ready_slot=assembly_slot(c,c->reliable_received+1);
-        if (!ready_slot || (*ready_slot)->received_count!=(*ready_slot)->fragments) break;
-        assembly *ready=*ready_slot;
-        qa_unified_delivery value={QA_UNIFIED_RELIABLE,ready->sequence,0,{ready->payload.data,ready->payload.size}};
-        if (!deliver(context,&value,error)) { close_channel(c); return false; }
-        c->reliable_received=ready->sequence; c->received_bytes-=ready->payload.size;
-        *ready_slot=NULL; assembly_free(ready); delivered=true;
-    }
-    if (delivered) {
-        cumulative_ack(c,p->sequence,p->fragment);
-        if (!deliver_frame(c,deliver,context,error)) return false;
-    }
-    return true;
+    return deliver_ready(c,admit,deliver,context,error);
 }
 
 static bool receive_frame(qa_unified_channel *c, const qa_unified_packet *p, uint64_t now,
-                           qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+                           qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
+                           void *context, qa_error *error) {
     if (p->sequence<=c->frame_received || p->sequence<c->newest_frame) return true;
     if (p->sequence>c->newest_frame) {
         c->newest_frame=p->sequence; assembly_free(c->frame_assembly); c->frame_assembly=NULL;
@@ -306,13 +333,14 @@ static bool receive_frame(qa_unified_channel *c, const qa_unified_packet *p, uin
     if (!append(c->frame_assembly,p)) return true;
     if (c->frame_assembly->received_count==c->frame_assembly->fragments) {
         assembly_free(c->waiting_frame); c->waiting_frame=c->frame_assembly; c->frame_assembly=NULL;
-        return deliver_frame(c,deliver,context,error);
+        return deliver_frame(c,admit,deliver,context,error);
     }
     return true;
 }
 
-bool qa_unified_channel_receive(qa_unified_channel *c, qa_bytes datagram, uint64_t now,
-                                 qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+bool qa_unified_channel_receive_buffered(qa_unified_channel *c, qa_bytes datagram, uint64_t now,
+                                 qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
+                                 void *context, qa_error *error) {
     if (!open_channel(c,error)) return false;
     if (!deliver) return error_message(error,QA_ERROR_ARGUMENT,"unified channel requires a delivery consumer");
     if (!expire(c,now,error)) return false;
@@ -324,9 +352,23 @@ bool qa_unified_channel_receive(qa_unified_channel *c, qa_bytes datagram, uint64
     if (mismatch || (p.kind!=QA_UNIFIED_ACK &&
         (p.total_bytes>c->limits.message_bytes || p.fragments>c->limits.fragments))) return true;
     c->busy=true; accept_ack(c,&p);
-    bool result=p.kind==QA_UNIFIED_ACK ? true : p.kind==QA_UNIFIED_RELIABLE
-        ? receive_reliable(c,&p,now,deliver,context,error)
-        : receive_frame(c,&p,now,deliver,context,error);
+    bool result=p.kind==QA_UNIFIED_ACK ? deliver_ready(c,admit,deliver,context,error) : p.kind==QA_UNIFIED_RELIABLE
+        ? receive_reliable(c,&p,now,admit,deliver,context,error)
+        : receive_frame(c,&p,now,admit,deliver,context,error);
+    c->busy=false; return result;
+}
+
+bool qa_unified_channel_receive(qa_unified_channel *c, qa_bytes datagram, uint64_t now,
+                                 qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+    return qa_unified_channel_receive_buffered(c,datagram,now,NULL,deliver,context,error);
+}
+
+bool qa_unified_channel_resume(qa_unified_channel *c, qa_unified_admit_delivery_fn admit,
+                               qa_unified_deliver_fn deliver, void *context, qa_error *error) {
+    if (!open_channel(c,error) || !deliver)
+        return error_message(error,QA_ERROR_ARGUMENT,"unified retained delivery requires its idle consumer");
+    c->busy=true;
+    bool result=deliver_ready(c,admit,deliver,context,error);
     c->busy=false; return result;
 }
 

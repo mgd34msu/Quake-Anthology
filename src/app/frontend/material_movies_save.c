@@ -99,8 +99,16 @@ static bool receipts_match(const frontend_material_movies *owner)
         size_t count = qa_material_library_video_receipt_count(owner->source.materials, i);
         for (size_t j = 0; j < count; ++j) {
             const char *source = NULL; const qa_scene_image *image = NULL;
-            if (!qa_material_library_video_receipt_read(owner->source.materials, i, j, &source, &image) || !source || !image)
+            if (!qa_material_library_video_receipt_read(owner->source.materials, i, j, &source, &image) || !source)
                 return false;
+            if (owner->cinematic_mode) {
+                size_t k=0;
+                while (k<owner->cinematic_count &&
+                    (strcmp(owner->cinematic_receipts[k].path,source) || owner->cinematic_receipts[k].image!=image)) ++k;
+                if (k==owner->cinematic_count) return false;
+                continue;
+            }
+            if (!image) return false;
             /* Compare the actual donor normalization without allocation. */
             bool prefix = !strchr(source, '/') && !strchr(source, '\\');
             size_t k = 0;
@@ -112,11 +120,34 @@ static bool receipts_match(const frontend_material_movies *owner)
     }
     return true;
 }
-static bool owner_valid(const frontend_material_movies *owner)
+static bool cinematic_receipts_valid(const frontend_material_movies *owner)
+{
+    if (!owner->cinematic_mode)
+        return !owner->cinematic_source && !owner->cinematic_count && !owner->cinematic_capacity && !owner->cinematic_receipts;
+    qa_q3_cinematic_source *source=NULL;
+    qa_q3_cinematic_handles_options pool;
+    if (owner->count || owner->capacity || owner->rows || owner->next_target!=1 ||
+        owner->cinematic_count>owner->cinematic_capacity ||
+        (owner->cinematic_capacity && !owner->cinematic_receipts) ||
+        !frontend_material_movies_cinematic_read(owner,&source,NULL) || !source ||
+        !qa_q3_cinematic_handles_read(qa_q3_cinematic_source_handles(source),&pool)) return false;
+    const qa_scene_resources *banks[]={pool.images};
+    for (size_t i=0;i<owner->cinematic_count;++i) {
+        const frontend_material_movie_cinematic_receipt *receipt=owner->cinematic_receipts+i;
+        if (!receipt->path || !receipt->path[0] || receipt->handle < -1 || receipt->handle>=16) return false;
+        if (receipt->handle<0) { if (receipt->image) return false; continue; }
+        size_t index=0;
+        const qa_scene_image *root=qa_scene_source_q3_scratch(pool.images,(size_t)receipt->handle);
+        if (!root || !receipt->image || root->identity!=receipt->image->identity ||
+            !qa_scene_image_owner_index(banks,1,receipt->image,&index)) return false;
+    }
+    return true;
+}
+static bool owner_valid(const frontend_material_movies *owner, bool qualify_receipts)
 {
     if (!frontend_material_movies_current(owner) || owner->count > owner->capacity ||
         (owner->capacity && !owner->rows) || !qa_media_library_idle(owner->source.media) ||
-        !registry_matches(owner)) return false;
+        !registry_matches(owner) || !cinematic_receipts_valid(owner)) return false;
     for (size_t i = 0; i < owner->count; ++i) {
         const frontend_material_movie_row *row = owner->rows[i];
         if (!row_valid(owner, row) || (owner->next_target && row->target >= owner->next_target)) return false;
@@ -125,7 +156,7 @@ static bool owner_valid(const frontend_material_movies *owner)
                 (owner->rows[j]->target == row->target || owner->rows[j]->initial == row->initial ||
                     owner->rows[j]->playback == row->playback))) return false;
     }
-    return receipts_match(owner);
+    return !qualify_receipts || receipts_match(owner);
 }
 static bool blob(qa_source_save_io *io, qa_buffer *value)
 {
@@ -275,19 +306,42 @@ static bool row_fields(qa_source_save_io *io, frontend_material_movies *owner,
     qa_cinematic_checkpoint_free(&saved); qa_buffer_free(&frame); qa_buffer_free(&playback); qa_buffer_free(&publication);
     return ok;
 }
+static bool cinematic_header(qa_source_save_io *io, frontend_material_movies *owner,
+    const frontend_material_movies_refs *refs, qa_q3_cinematic_handles **decoded_pool)
+{
+    if (!qa_source_save_bool(io,&owner->cinematic_mode)) return false;
+    if (!owner->cinematic_mode) return true;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint32_t seat=owner->cinematic_seat;
+    qa_buffer descriptor={0};
+    bool ok=qa_source_save_u32(io,&seat) && seat!=QA_AUDIO_WORLD;
+    if (ok && !reading) ok=refs->cinematic_encode &&
+        refs->cinematic_encode(refs->context,owner->cinematic_bus,&descriptor,io->error);
+    if (ok) ok=blob(io,&descriptor) && descriptor.size!=0;
+    if (ok && reading) {
+        uint32_t actual_seat=0; uint64_t bus=0;
+        ok=decoded_pool && refs->cinematic_decode &&
+            refs->cinematic_decode(refs->context,seat,(qa_bytes){descriptor.data,descriptor.size},
+                decoded_pool,&actual_seat,&bus,io->error) && *decoded_pool && actual_seat!=QA_AUDIO_WORLD;
+        if (ok) { owner->cinematic_seat=actual_seat; owner->cinematic_bus=bus; }
+    }
+    qa_buffer_free(&descriptor); return ok;
+}
 static bool fields(qa_source_save_io *io, frontend_material_movies *owner,
-    const frontend_material_movies_refs *refs)
+    const frontend_material_movies_refs *refs, qa_q3_cinematic_handles **decoded_pool)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','M','M'}; uint32_t schema = 1;
+    uint8_t magic[4] = {'Q','F','M','M'}; uint32_t schema = 2;
     size_t count = owner->count, capacity = owner->capacity;
     double anchor = (double)owner->source.frontend->wall_time_ns / 1000000.0;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMM", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
+        !qa_source_save_u32(io, &schema) || schema != 2 ||
+        !cinematic_header(io,owner,refs,decoded_pool) ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(*owner->rows)) ||
         !qa_source_save_count(io, &capacity, SIZE_MAX / sizeof(*owner->rows)) || count > capacity ||
         !qa_source_save_u64(io, &owner->next_target) || !qa_source_save_f64(io, &anchor) ||
-        !isfinite(anchor) || anchor != (double)owner->source.frontend->wall_time_ns / 1000000.0) return false;
+        !isfinite(anchor) || anchor != (double)owner->source.frontend->wall_time_ns / 1000000.0 ||
+        (owner->cinematic_mode && (count || capacity || owner->next_target!=1))) return false;
     if (reading) {
         if (count > (io->input.size - io->offset) / 42) return false;
         owner->rows = capacity ? calloc(capacity, sizeof(*owner->rows)) : NULL;
@@ -307,17 +361,42 @@ static bool fields(qa_source_save_io *io, frontend_material_movies *owner,
     if (ok) ok = blob(io, &registry);
     if (ok && reading) ok = qa_material_movies_restore(owner->source.images,
         (qa_bytes){registry.data, registry.size}, &links, &owner->registry, io->error);
-    qa_buffer_free(&registry); return ok;
+    qa_buffer_free(&registry);
+    if (!ok || !owner->cinematic_mode) return ok;
+    size_t receipts=owner->cinematic_count, receipt_capacity=owner->cinematic_capacity;
+    if (!qa_source_save_count(io,&receipts,SIZE_MAX/sizeof(*owner->cinematic_receipts)) ||
+        !qa_source_save_count(io,&receipt_capacity,SIZE_MAX/sizeof(*owner->cinematic_receipts)) || receipts>receipt_capacity) return false;
+    if (reading) {
+        if (receipts>(io->input.size-io->offset)/21) return false;
+        owner->cinematic_receipts=receipt_capacity?calloc(receipt_capacity,sizeof(*owner->cinematic_receipts)):NULL;
+        if (receipt_capacity && !owner->cinematic_receipts) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring numeric registration receipt extent");
+        owner->cinematic_count=receipts; owner->cinematic_capacity=receipt_capacity;
+    }
+    for (size_t i=0;i<receipts;++i) {
+        frontend_material_movie_cinematic_receipt *receipt=owner->cinematic_receipts+i;
+        uint64_t image=0;
+        if (!text(io,&receipt->path) || !qa_source_save_i32(io,&receipt->handle) ||
+            receipt->handle < -1 || receipt->handle>=16 ||
+            (!reading && receipt->image && !refs->images.encode(refs->images.context,receipt->image,&image,io->error)) ||
+            !qa_source_save_u64(io,&image) || ((receipt->handle>=0)!=(image!=0))) return false;
+        if (reading && image) {
+            const qa_scene_image *decoded=NULL;
+            if (!refs->images.decode(refs->images.context,image,&decoded,io->error) || !decoded) return false;
+            receipt->image=decoded; qa_scene_image_retain(decoded);
+        }
+    }
+    return true;
 }
 bool frontend_material_movies_checkpoint(const frontend_material_movies *owner,
     const frontend_material_movies_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || out->size || !refs_ready(refs) || !frontend_material_movies_idle(owner) ||
-        owner->restore_pending || !owner_valid(owner))
+        owner->restore_pending || !owner_valid(owner,true) ||
+        (owner->cinematic_source && !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(owner->cinematic_source))))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie capture requires its returned complete owner graph");
     frontend_material_movies *held = (frontend_material_movies *)owner; held->busy = true;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, held, refs) && qa_source_save_finish(&io, out);
+    bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, held, refs,NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); held->busy = false;
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Retained shader movie continuation is inconsistent");
     return ok;
@@ -333,11 +412,19 @@ bool frontend_material_movies_restore(const frontend_material_movie_source *sour
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Restoring actual provider shader movies");
     owner->source = *source; owner->restore_pending = true; owner->busy = true;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, owner, refs) && qa_source_save_finish(&io, NULL);
+    qa_q3_cinematic_handles *decoded_pool=NULL;
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, owner, refs,&decoded_pool) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io); owner->busy = false;
     if (ok) ok = qa_material_library_bind_video_start(source->materials, frontend_material_movies_start, owner, error) &&
-        frontend_material_movie_link(owner, error) && owner_valid(owner);
+        frontend_material_movie_link(owner, error);
+    if (ok && owner->cinematic_mode) {
+        ok=frontend_material_movies_cinematic_attach(owner,decoded_pool,owner->cinematic_seat,owner->cinematic_bus,error);
+    }
+    if (ok) ok=owner_valid(owner,!owner->cinematic_mode);
     if (!ok) {
+        if (owner->cinematic_source && !qa_q3_cinematic_source_destroy(&owner->cinematic_source,error)) {
+            *out=owner; return false;
+        }
         if (qa_material_library_video_start_is(source->materials, frontend_material_movies_start, owner))
             qa_material_library_set_video_start(source->materials, NULL, NULL);
         if (owner->linked) frontend_material_movie_unlink(owner, NULL);
@@ -347,6 +434,8 @@ bool frontend_material_movies_restore(const frontend_material_movie_source *sour
             if (!registry_owned && owner->rows[i]) qa_cinematic_restore_discard(owner->rows[i]->playback);
             frontend_material_movie_row_free(owner->rows[i]);
         }
+        for (size_t i=0;i<owner->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(owner->cinematic_receipts+i);
+        free(owner->cinematic_receipts);
         free(owner->rows); free(owner);
         if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Saved shader movies leave their real provider receipts");
         return false;
@@ -355,7 +444,8 @@ bool frontend_material_movies_restore(const frontend_material_movie_source *sour
 }
 bool frontend_material_movies_publish_ready(const frontend_material_movies *owner, qa_error *error)
 {
-    if (!frontend_material_movies_idle(owner) || !owner->restore_pending || !owner_valid(owner) ||
+    if (!frontend_material_movies_idle(owner) || !owner->restore_pending || !owner_valid(owner,true) ||
+        (owner->cinematic_source && !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(owner->cinematic_source))) ||
         !qa_material_movies_publish_ready(owner->registry, error))
         return frontend_fail(error, QA_ERROR_FORMAT, "Cold shader movie graph lost a qualified actual owner");
     return true;

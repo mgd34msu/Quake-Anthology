@@ -264,6 +264,25 @@ void frontend_fx_q2_rail(frontend_fx_particles *state, qa_builtin_random *random
     }
 }
 
+void frontend_fx_q2_rail_spiral(frontend_fx_particles *state, qa_builtin_random *random,
+    qa_vec3 start, qa_vec3 end, double seconds, double lifetime, float radius, uint32_t rgba)
+{
+    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(end, start)), right, up, move = start;
+    float length = qa_vec_length(qa_vec_sub(end, start));
+    basis(direction, &right, &up);
+    for (uint32_t i = 0; (double)i < length && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
+        float rotation = (float)i * .1f;
+        qa_vec3 radial = qa_vec_add(qa_vec_scale(right, cosf(rotation)), qa_vec_scale(up, sinf(rotation)));
+        frontend_fx_q2_particle value = particle(seconds);
+        value.alpha_velocity = (float)(-1 / (lifetime + unit(random) * .2));
+        value.color = UINT32_MAX; value.rgba = rgba;
+        value.origin = qa_vec_add(move, qa_vec_scale(radial, radius));
+        value.velocity = qa_vec_scale(radial, 6);
+        append(state, value);
+        move = qa_vec_add(move, direction);
+    }
+}
+
 void frontend_fx_q2_bubbles(frontend_fx_particles *state, qa_builtin_random *random,
     qa_vec3 start, qa_vec3 end, double seconds)
 {
