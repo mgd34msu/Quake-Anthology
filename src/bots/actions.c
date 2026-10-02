@@ -326,6 +326,15 @@ float qa_bot_angle_difference(float angle, float ideal) {
         difference += 360;
     return difference;
 }
+bool qa_bot_field_of_vision(qa_vec3 view,float degrees,qa_vec3 target) {
+    float from[2]={view.x,view.y},to[2]={target.x,target.y};
+    for(uint32_t i=0;i<2;++i) {
+        float angle=angle_mod(from[i]),ideal=angle_mod(to[i]);
+        float difference=qa_bot_angle_difference(ideal,angle);
+        if(difference>degrees*.5f || difference<-degrees*.5f) return false;
+    }
+    return true;
+}
 float qa_bot_change_angle(float angle, float ideal, float speed) {
     angle = angle_mod(angle);
     ideal = angle_mod(ideal);

@@ -1,5 +1,6 @@
 /* Source ai_cmd.c text orders over the actual botlib and GAME services. */
 #include "internal.h"
+#include "source_goal_record.h"
 #include "source_team_state.h"
 #include "source_timers.h"
 #include "source_orders.h"
@@ -246,14 +247,13 @@ static bool say(qa_bots *b,bot_ai_state *s,const char *text,qa_error *e) {
 static bool action(qa_bots *b,bot_ai_state *s,uint32_t flag,qa_error *e) {
     return !alive(b,s) || qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,flag,e);
 }
-bool bot_ai_source_locate(qa_bots *b,bot_ai_state *s,int32_t client,qa_bot_goal *goal,qa_error *e) {
-    goal->entity=-1;qa_bot_entity_info entity;bool found;
+bool bot_ai_source_locate(qa_bots *b,bot_ai_state *s,int32_t client,uint32_t offset,qa_error *e) {
+    bot_ai_goal_entity_set(s,offset,-1);qa_bot_entity_info entity;bool found;
     if(!qa_bot_runtime_entity(b->runtime,client,&entity,&found,e)) return false;
     if(!found || !entity.valid || !alive(b,s)) return true;
     uint32_t area;if(!bot_ai_point_area(b,s,entity.state.origin,&area,e)) return false;
     if(!area || !alive(b,s)) return true;
-    goal->entity=client;goal->area=(int32_t)area;goal->origin=entity.state.origin;
-    goal->mins=qa_v3(-8,-8,-8);goal->maxs=qa_v3(8,8,8);return true;
+    bot_ai_goal_point_set(s,offset,client,(int32_t)area,entity.state.origin);return true;
 }
 void bot_ai_source_orders_init(bot_source_orders_state *state) {
     memset(state,0,sizeof(*state));state->free_point=-1;
@@ -304,6 +304,22 @@ bool bot_ai_source_message_goal(qa_bots *b,bot_ai_state *s,const char *name,
     } while(index>0);
     int32_t point=find_point(b,s->source_order.checkpoints,name);
     if(point>=0) {*goal=b->source_orders.points[point].goal;*found=true;}
+    return true;
+}
+static bool bot_ai_source_message_goal_record(qa_bots *b,bot_ai_state *s,const char *name,
+                                               uint32_t offset,bool *found,qa_error *e) {
+    *found=false;if(!*name) return true;
+    int32_t index=-1;bool item;
+    do {
+        qa_bot_goal goal=bot_ai_goal_record(s,offset);
+        if(!qa_bot_goals_level_item(qa_bot_runtime_goals(b->runtime),index,name,&goal,&item,e)) return false;
+        if(!item) break;
+        bot_ai_goal_record_set(s,offset,goal);
+        index=bot_ai_goal_record(s,offset).number;
+        if(index>0 && !(bot_ai_goal_record(s,offset).flags&QA_BOT_GOAL_DROPPED)) {*found=true;return true;}
+    } while(index>0);
+    int32_t point=find_point(b,s->source_order.checkpoints,name);
+    if(point>=0) {bot_ai_goal_record_set(s,offset,b->source_orders.points[point].goal);*found=true;}
     return true;
 }
 static bool deadline(qa_bots *b,const qa_bot_chat_match *m,float *out,qa_error *e) {
@@ -382,13 +398,13 @@ static bool help_accompany(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
         return requester_chat(b,s,m,"whois",other?teammate:name,NULL,QA_BOT_CHAT_TELL,e);
     }
     if(client==self) return true;
-    if(!bot_ai_source_locate(b,s,client,&s->team_goal,e)) return false;
-    if(s->team_goal.entity<0 && (m->subtype&MATCH_NEAR_ITEM)) {
+    if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_TEAM_GOAL,e)) return false;
+    if(bot_ai_team_goal(s).entity<0 && (m->subtype&MATCH_NEAR_ITEM)) {
         char item[256];if(!variable(m,VAR_ITEM,item,e) ||
-            !bot_ai_source_message_goal(b,s,item,&s->team_goal,&found,e)) return false;
+            !bot_ai_source_message_goal_record(b,s,item,QA_BOT_SOURCE_TEAM_GOAL,&found,e)) return false;
         if(!found) return true;
     }
-    if(s->team_goal.entity<0) {
+    if(bot_ai_team_goal(s).entity<0) {
         if(!other && !have_name) return bot_ai_fail(e,"Source HelpAccompany reads an uninitialized netname");
         const char *arguments[8]={other?teammate:name,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
         if(!bot_ai_source_initial_chat(b,s,other?"whereis":"whereareyou",arguments,e)) return false;
@@ -419,7 +435,7 @@ static bool named_goal_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match 
     if(!allowed) return true;
     char name[256];bool found;
     if(!variable(m,item?VAR_ITEM:VAR_AREA,name,e) ||
-       !bot_ai_source_message_goal(b,s,name,&s->team_goal,&found,e)) return false;
+       !bot_ai_source_message_goal_record(b,s,name,QA_BOT_SOURCE_TEAM_GOAL,&found,e)) return false;
     if(!found || !alive(b,s)) return true;
     int32_t client;
     if(item) {
@@ -446,16 +462,15 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     if(client<0) return send_chat(b,s,"whois",name,NULL,self,QA_BOT_CHAT_TEAM,e);
     if(!variable(m,VAR_AREA,area,e)) return false;
     if(m->subtype&MATCH_THERE) {
-        s->team_goal.entity=s->view.entity;s->team_goal.area=(int32_t)s->area;
-        s->team_goal.origin=s->player.origin;s->team_goal.mins=qa_v3(-8,-8,-8);s->team_goal.maxs=qa_v3(8,8,8);
+        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)s->area,s->player.origin);
     } else if(m->subtype&MATCH_HERE) {
         if(client==self) return true;
-        if(!bot_ai_source_locate(b,s,client,&s->team_goal,e)) return false;
-        if(s->team_goal.entity<0) {
+        if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_TEAM_GOAL,e)) return false;
+        if(bot_ai_team_goal(s).entity<0) {
             return requester_chat(b,s,m,"whereareyou",name,NULL,QA_BOT_CHAT_TELL,e);
         }
     } else {
-        bool found;if(!bot_ai_source_message_goal(b,s,area,&s->team_goal,&found,e)) return false;
+        bool found;if(!bot_ai_source_message_goal_record(b,s,area,QA_BOT_SOURCE_TEAM_GOAL,&found,e)) return false;
         if(!found) return true;
     }
     if(!ordered(b,s,client,e)) return false;
@@ -640,13 +655,13 @@ static bool doing(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error
     case BOT_LTG_DEFEND:case BOT_LTG_GET_ITEM: {
         const char *name;
         type=bot_ai_long_term_goal(s)==BOT_LTG_DEFEND?"defending":"gettingitem";
-        if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),s->team_goal.number,&name,e)) return false;
+        if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),bot_ai_team_goal(s).number,&name,e)) return false;
         copy_name(text,sizeof(text),name);
         argument=text;break;
     }
     case BOT_LTG_KILL:
         type="killing";
-        if(!bot_ai_client_name(b,s->team_goal.entity,text,sizeof(text),true,e)) return false;
+        if(!bot_ai_client_name(b,bot_ai_team_goal(s).entity,text,sizeof(text),true,e)) return false;
         argument=text;break;
     case BOT_LTG_CAMP:case BOT_LTG_CAMP_ORDER:type="camping";break;
     case BOT_LTG_PATROL:type="patrolling";break;
@@ -680,8 +695,8 @@ static bool lead(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
         if(!have_name) return bot_ai_fail(e,"Source LeadTheWay reads an uninitialized netname");
         return send_chat(b,s,"whois",name,NULL,self,QA_BOT_CHAT_TEAM,e);
     }
-    if(!bot_ai_source_locate(b,s,client,&s->source_order.lead_goal,e)) return false;
-    if(s->team_goal.entity<0) {
+    if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_LEAD_GOAL,e)) return false;
+    if(bot_ai_team_goal(s).entity<0) {
         if(!other && !have_name) return bot_ai_fail(e,"Source LeadTheWay reads an uninitialized teammate name");
         return send_chat(b,s,other?"whereis":"whereareyou",other?teammate:name,NULL,self,QA_BOT_CHAT_TEAM,e);
     }
@@ -700,7 +715,7 @@ static bool kill(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
         return requester_chat(b,s,m,"whois",name,NULL,QA_BOT_CHAT_TELL,e);
     }
     if(!alive(b,s)) return true;
-    s->team_goal.entity=client;
+    bot_ai_goal_entity_set(s,QA_BOT_SOURCE_TEAM_GOAL,client);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
     volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);

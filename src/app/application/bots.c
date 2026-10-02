@@ -755,7 +755,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
             !strcmp(source->product->campaign,"missionpack"),
         .shared=application_builtin_services(application,application->world,application->physics),
         .modes=application->modes,.player=application_bot_player,.inventory=application_bot_inventory_update,
-        .entity=application_bot_entity,
+        .entity=application_bot_entity,.entity_actor=application_bot_actor,
         .entity_extent=bot_entity_extent,.entity_list=bot_entity_list,
         .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
         .source_client=bot_source_client,.source_actor=bot_source_actor,.configuration=bot_configuration,.register_cvar=bot_register_cvar,

@@ -53,14 +53,7 @@ typedef struct bot_ai_state {
     uint32_t last_enemy_area;
     bool team_arena, retired;
     uint64_t command_sequence;
-    uint32_t activation_count;
-    struct {
-        qa_bot_activation activation;
-        qa_bot_decision resume;
-        float until;
-    } activations[8];
     char team_leader_name[32];
-    qa_bot_goal team_goal;
     bot_source_order_state source_order;
     bot_source_team_policy_state source_team_policy;
     bot_source_goal_state source_goal;

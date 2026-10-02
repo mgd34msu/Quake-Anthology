@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_activation.h"
 #include "../checkpoint_internal.h"
 
 typedef struct bot_checkpoint_record {
@@ -92,6 +93,9 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         record->state=*s;
         record->state.admitted_character=NULL;
         record->state.admitted_name=NULL;
+        bot_ai_state captured=record->state;
+        captured.source_span=(qa_bot_source_span){record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
+        if(!bot_ai_activation_validate(&captured,e)) goto failed;
         if(s->view.actor.registry && (!s->admitted_character || !s->admitted_name)) {bot_ai_fail(e,"bot original admission settings are absent");goto failed;}
         size_t path_size=s->admitted_character?strlen(s->admitted_character)+1:0;
         if(path_size) {
@@ -135,6 +139,9 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     for(uint32_t i=0;i<checkpoint->count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
         const bot_ai_state *saved=&record->state;
+        bot_ai_state captured=*saved;
+        captured.source_span=(qa_bot_source_span){(uint8_t *)record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
+        if(!bot_ai_activation_validate(&captured,e)) return false;
         bot_ai_state *live=saved->acquired_source_client<64?b->source_cells[saved->acquired_source_client]:NULL;
         if(!live || live->retired || !qa_actor_id_equal(live->view.actor,saved->view.actor) ||
            live->source_record.offset!=saved->source_record.offset ||

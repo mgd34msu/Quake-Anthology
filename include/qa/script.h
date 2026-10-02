@@ -274,6 +274,8 @@ typedef struct qa_script_checkpoint {
     size_t macro_count, frame_count, stack_count, expansion_count, queue_count, condition_count;
     size_t expansions, outputs;
     uint32_t next_condition_pointer;
+    qa_bytes source_record;
+    size_t source_reference;
     bool empty_expansion;
     qa_script_location last_location;
     qa_script_token raw_token;

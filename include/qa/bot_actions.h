@@ -72,6 +72,7 @@ typedef struct qa_bot_view_state {
     qa_vec3 angles, ideal, velocity;
 } qa_bot_view_state;
 float qa_bot_angle_difference(float angle, float ideal);
+bool qa_bot_field_of_vision(qa_vec3 view_angles,float degrees,qa_vec3 target_angles);
 float qa_bot_change_angle(float angle, float ideal, float speed);
 void qa_bot_change_view(qa_bot_view_state *, float factor, float maximum_degrees_per_second,
                         float elapsed, bool challenge);

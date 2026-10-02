@@ -72,7 +72,8 @@ add_library(qa_script STATIC
     src/core/script/number.c
     src/core/script/quoted.c
     src/core/script/read.c
-    src/core/script/source.c)
+    src/core/script/source.c
+    src/core/script/source_record.c)
 target_link_libraries(qa_script PUBLIC qa_core qa_persistence)
 
 add_library(qa_content STATIC

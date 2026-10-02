@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_event_state.h"
+#include "source_activation.h"
 #include "../runtime/internal.h"
 #include "../save_fields.h"
 #include "qa/bots_population_save.h"
@@ -7,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=20;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=21;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==20?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==21?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -53,7 +54,7 @@ static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *or
     if(!qa_source_save_bytes(io,order->subteam,sizeof(order->subteam)) ||
        !memchr(order->subteam,0,sizeof(order->subteam))) return false;
     I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);I(order->patrol_flags);
-    I(order->lead_teammate);if(!goal_fields(io,&order->lead_goal)) return false;
+    I(order->lead_teammate);
     F(order->lead_visible_time);F(order->lead_message_time);F(order->lead_backup_time);
     F(order->ask_team_leader_time);F(order->last_flag_capture_time);
     I(order->red_flag_status);I(order->blue_flag_status);I(order->neutral_flag_status);I(order->flag_carrier);
@@ -63,7 +64,7 @@ static bool source_policy_fields(qa_source_save_io *io,bot_source_team_policy_st
     F(policy->become_team_leader_time);F(policy->team_give_orders_time);
     F(policy->reached_alt_route_time);F(policy->ctf_roam_time);
     I(policy->num_teammates);I(policy->ctf_strategy);I(policy->own_decision_time);I(policy->team_task_preference);
-    return goal_fields(io,&policy->alternate_goal);
+    return true;
 }
 static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders) {
     I(orders->free_point);I(orders->find_client_maxclients);I(orders->find_enemy_maxclients);
@@ -124,20 +125,8 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     F(state->blocked_time);
     U(state->last_enemy_area);
     B(state->team_arena); B(state->retired);
-    L(state->command_sequence); U(state->activation_count);
-    if (state->activation_count > 8) return false;
-    for (size_t i = 0; i < 8; ++i) {
-        qa_bot_activation *activation = &state->activations[i].activation;
-        uint32_t resume = state->activations[i].resume;
-        A(activation->blocker); A(activation->target);
-        if (!goal_fields(io, &activation->goal)) return false;
-        V(activation->blocker_origin); V(activation->target_origin); V(activation->aim); B(activation->shoot);
-        U(resume); if (resume > QA_BOT_BATTLE_NEARBY) return false;
-        state->activations[i].resume = (qa_bot_decision)resume; F(state->activations[i].until);
-    }
+    L(state->command_sequence);
     if(!qa_source_save_bytes(io,state->team_leader_name,sizeof(state->team_leader_name))) return false;
-
-    if(!goal_fields(io,&state->team_goal)) return false;
 
     I(state->source_enemy);
     if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy)) return false;
@@ -204,6 +193,10 @@ static bool topology(const qa_bots *bots, qa_error *error)
     for (uint32_t source = 0; source < 64; ++source) {
         const bot_ai_state *state = bots->source_cells[source]; if (!state) continue;
         if(state->acquired_source_client!=source) goto invalid;
+        bot_ai_state actual=*state;
+        if(!actual.source_span.data && !qa_bot_source_record_span(&bots->services.memory,
+            actual.source_record,&actual.source_span,error)) goto invalid;
+        if(!bot_ai_activation_validate(&actual,error)) goto invalid;
         if(!state->view.actor.registry) {
             if(state->view.actor.slot || state->view.actor.generation || state->inuse || state->counted ||
                state->character || state->goals || state->weapons || state->chat || state->movement ||
@@ -213,7 +206,7 @@ static bool topology(const qa_bots *bots, qa_error *error)
         }
         uint32_t i=state->view.client;
         if (i>=bots->client_capacity || bots->clients[i]!=state || state->view.actor.slot >= bots->actor_capacity ||
-            bots->actor_clients[state->view.actor.slot] != i + 1 || state->activation_count > 8 ||
+            bots->actor_clients[state->view.actor.slot] != i + 1 ||
             state->view.entity < 0 || state->source_enemy<-1 || state->source_enemy>=BOT_SOURCE_EVENT_ENTITIES ||
             state->view.source_client!=(int32_t)source ||
             (state->inuse && bots->source_clients[state->view.source_client]!=i+1) ||

@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
+#include "source_goal_record.h"
 #include "source_event_state.h"
 #include "source_team_state.h"
 #include "source_timers.h"
@@ -51,13 +52,12 @@ static bool acknowledge(qa_bots *b,bot_ai_state *s,const char *type,const char *
 static bool companion_name(qa_bots *b,int32_t client,char out[36],qa_error *e) {
     return bot_ai_easy_name(b,client,out,36,e);
 }
-static bool companion_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *goal,int32_t client,
+static bool companion_goal(qa_bots *b,bot_ai_state *s,uint32_t offset,int32_t client,
                             qa_vec3 origin,qa_error *e) {
     uint32_t area;
     SOURCE_CALL(bot_ai_point_area(b,s,origin,&area,e));
     if(area && qa_bot_navigation_area(navigation(b,s),area).reach_count) {
-        goal->entity=client;goal->area=(int32_t)area;goal->origin=origin;
-        goal->mins=qa_v3(-8,-8,-8);goal->maxs=qa_v3(8,8,8);
+        bot_ai_goal_point_set(s,offset,client,(int32_t)area,origin);
     }
     return true;
 }
@@ -278,7 +278,7 @@ bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error
     int32_t self;
     SOURCE_CALL(bot_ai_source_client(b,s,&self,e));
     bot_ai_decisionmaker_set(s,self);bot_ai_team_message_time_set(s,0);bot_ai_long_term_goal_set(s,BOT_LTG_CAMP);
-    s->team_goal=best_goal;
+    bot_ai_team_goal_set(s,best_goal);
     SOURCE_CALL(bot_ai_character_float(b,s,BOT_C_CAMPER,0,1,&camper,e));
     if(camper>.99f) bot_ai_team_goal_time_set(s,b->time+99999.0f);
     else {
@@ -364,7 +364,8 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
                 if(random<s->view.think_time*.8f) SOURCE_CALL(roam_view(b,s,e));
             }
             bool air;
-            SOURCE_CALL(bot_ai_source_go_for_air(b,s,&s->team_goal,400,&air,e));
+            qa_bot_goal team_goal=bot_ai_team_goal(s);
+            SOURCE_CALL(bot_ai_source_go_for_air(b,s,&team_goal,400,&air,e));
             if(air) {
                 SOURCE_CALL(qa_bot_moves_reset_avoid(qa_bot_runtime_moves(b->runtime),s->movement,true,e));
                 bot_ai_nearby_until_set(s,b->time+8.0f);s->view.decision=QA_BOT_SEEK_NEARBY;s->state_time=b->time;
@@ -373,8 +374,8 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             return reset_avoid(b,s,e);
         }
     }
-    if(info.valid) SOURCE_CALL(companion_goal(b,s,&s->team_goal,bot_ai_teammate(s),info.state.origin,e));
-    *out=s->team_goal;*found=true;
+    if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_TEAM_GOAL,bot_ai_teammate(s),info.state.origin,e));
+    *out=bot_ai_team_goal(s);*found=true;
     if(bot_ai_teammate_visible_time(s)<b->time-60.0f) {
         SOURCE_CALL(companion_chat(b,s,"accompany_cannotfind",bot_ai_teammate(s),bot_ai_teammate(s),e));
         bot_ai_long_term_goal_set(s,BOT_LTG_NONE);bot_ai_teammate_visible_time_set(s,b->time);
@@ -417,7 +418,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER) SOURCE_CALL(companion_acknowledge(b,s,"camp_start",e));
         bot_ai_team_message_time_set(s,0);
     }
-    *out=s->team_goal;
+    *out=bot_ai_team_goal(s);
     if(bot_ai_team_goal_time(s)<b->time) {
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER)
             SOURCE_CALL(chat(b,s,"camp_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));
@@ -579,23 +580,24 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
             qa_vec3 direction=qa_vec_sub(info.state.origin,s->player.origin);
             if(qa_vec_dot(direction,direction)<100.0f*100.0f) return reset_avoid(b,s,e);
         } else bot_ai_teammate_visible_time_set(s,b->time);
-        if(info.valid) SOURCE_CALL(companion_goal(b,s,&s->team_goal,bot_ai_teammate(s),info.state.origin,e));
-        *out=s->team_goal;*found=true;return true;
+        if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_TEAM_GOAL,bot_ai_teammate(s),info.state.origin,e));
+        *out=bot_ai_team_goal(s);*found=true;return true;
     }
     if(type==BOT_LTG_TEAM_ACCOMPANY && !retreat) return accompany(b,s,out,found,e);
     if(type==BOT_LTG_DEFEND) {
         uint32_t time;
-        SOURCE_CALL(travel_time(b,s,&s->team_goal,SOURCE_DEFAULT_TRAVEL,&time,e));
+        qa_bot_goal team_goal=bot_ai_team_goal(s);
+        SOURCE_CALL(travel_time(b,s,&team_goal,SOURCE_DEFAULT_TRAVEL,&time,e));
         if((float)time>s->source_goal.defend_away_range) bot_ai_defend_away_time_set(s,0);
         if(!retreat && bot_ai_defend_away_time(s)<b->time) {
             const char *name;
-            SOURCE_CALL(qa_bot_goals_name_read(goals(b),s->team_goal.number,&name,e));
+            SOURCE_CALL(qa_bot_goals_name_read(goals(b),bot_ai_team_goal(s).number,&name,e));
             if(bot_ai_team_message_time(s) && bot_ai_team_message_time(s)<b->time) {
                 SOURCE_CALL(chat(b,s,"defend_start",name,0,QA_BOT_CHAT_TEAM,e));
                 SOURCE_CALL(bot_ai_source_voice(b,s,-1,"ondefense",true,e));
                 bot_ai_team_message_time_set(s,0);
             }
-            *out=s->team_goal;*found=true;
+            *out=bot_ai_team_goal(s);*found=true;
             if(bot_ai_team_goal_time(s)<b->time) {
                 SOURCE_CALL(chat(b,s,"defend_stop",name,0,QA_BOT_CHAT_TEAM,e));
                 bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
@@ -612,11 +614,11 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
     }
     if(type==BOT_LTG_KILL && !retreat) {
         if(bot_ai_team_message_time(s) && bot_ai_team_message_time(s)<b->time) {
-            SOURCE_CALL(companion_chat(b,s,"kill_start",s->team_goal.entity,bot_ai_decisionmaker(s),e));
+            SOURCE_CALL(companion_chat(b,s,"kill_start",bot_ai_team_goal(s).entity,bot_ai_decisionmaker(s),e));
             bot_ai_team_message_time_set(s,0);
         }
-        if(bot_ai_last_killed_player(s)==s->team_goal.entity) {
-            SOURCE_CALL(companion_chat(b,s,"kill_done",s->team_goal.entity,bot_ai_decisionmaker(s),e));
+        if(bot_ai_last_killed_player(s)==bot_ai_team_goal(s).entity) {
+            SOURCE_CALL(companion_chat(b,s,"kill_done",bot_ai_team_goal(s).entity,bot_ai_decisionmaker(s),e));
             bot_ai_last_killed_player_set(s,-1);bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
         }
         if(bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
@@ -624,10 +626,10 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
     }
     if(type==BOT_LTG_GET_ITEM && !retreat) {
         const char *name;
-        SOURCE_CALL(qa_bot_goals_name_read(goals(b),s->team_goal.number,&name,e));
+        SOURCE_CALL(qa_bot_goals_name_read(goals(b),bot_ai_team_goal(s).number,&name,e));
         if(bot_ai_team_message_time(s) && bot_ai_team_message_time(s)<b->time)
             SOURCE_CALL(acknowledge(b,s,"getitem_start",name,e));
-        *out=s->team_goal;
+        *out=bot_ai_team_goal(s);
         if(bot_ai_team_goal_time(s)<b->time) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
         qa_bot_source_goal_status status;
         SOURCE_CALL(qa_bot_goals_source_status(goals(b),(int32_t)s->view.client,out,&status,e));
@@ -668,12 +670,12 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         }
         qa_bot_entity_info info;
         SOURCE_CALL(observation(b,order->lead_teammate,&info,e));
-        if(info.valid) SOURCE_CALL(companion_goal(b,s,&order->lead_goal,order->lead_teammate,info.state.origin,e));
+        if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_LEAD_GOAL,order->lead_teammate,info.state.origin,e));
         float visibility;
         SOURCE_CALL(bot_ai_source_entity_visible(b,s,order->lead_teammate,&visibility,e));
         if(visibility!=0) order->lead_visible_time=b->time;
         if(order->lead_visible_time<b->time-1.0f) order->lead_backup_time=b->time+2.0f;
-        qa_vec3 direction=qa_vec_sub(s->player.origin,order->lead_goal.origin);
+        qa_vec3 direction=qa_vec_sub(s->player.origin,bot_ai_lead_goal(s).origin);
         float distance=qa_vec_dot(direction,direction);
         if(order->lead_backup_time>b->time) {
             if(order->lead_message_time<b->time-20.0f) {
@@ -681,7 +683,7 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                 order->lead_message_time=b->time;
             }
             if(distance<100.0f*100.0f) order->lead_backup_time=0;
-            *out=order->lead_goal;*found=true;return true;
+            *out=bot_ai_lead_goal(s);*found=true;return true;
         }
         if(distance>500.0f*500.0f) {
             if(order->lead_message_time<b->time-20.0f) {

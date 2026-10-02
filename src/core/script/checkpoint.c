@@ -186,7 +186,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
         if (!copy_token(arena, &s->queue[i].token, &qs[i].token, e))
             goto fail;
     }
-    if (!script_conditions_capture(s,cs,e)) goto fail;
+    if (!script_source_capture(s,&result,arena,e) || !script_conditions_capture(s,cs,e)) goto fail;
     if (!copy_options(arena, &s->options, &result.options, e) ||
         !copy_location(arena, s->last_location, &result.last_location, e) ||
         !copy_token(arena, &s->raw_token, &result.raw_token, e))
@@ -252,6 +252,9 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         c->queue_count > c->options.maximum_queued_tokens ||
         c->expansions > c->options.maximum_expansions ||
         c->outputs > c->options.maximum_output_tokens || !c->next_condition_pointer ||
+        c->source_record.size!=SCRIPT_SOURCE_BYTES || !c->source_record.data ||
+        !memchr(c->source_record.data,0,1024) || !memchr(c->source_record.data+SCRIPT_SOURCE_INCLUDE,0,1024) ||
+        !c->options.include_path || strcmp(c->options.include_path,(const char *)c->source_record.data+SCRIPT_SOURCE_INCLUDE) ||
         (c->macro_count != 0 && c->macros == NULL) || (c->frame_count != 0 && c->frames == NULL) ||
         (c->stack_count != 0 && c->stack == NULL) ||
         (c->expansion_count != 0 && c->expansion_states == NULL) ||
@@ -325,6 +328,11 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
             qa_load_u32le(condition->bytes+12)!=(i?c->conditions[i-1].pointer:0)) goto bad;
         for(size_t j=0;j<i;++j) if(c->conditions[j].pointer==condition->pointer) goto bad;
     }
+    uint32_t skipping=0;
+    for(size_t i=0;i<c->condition_count;++i) skipping+=(uint32_t)c->conditions[i].skip;
+    if(qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_SKIP)!=skipping ||
+       qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_INDENT)!=(c->condition_count?c->conditions[c->condition_count-1].pointer:0) ||
+       qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_STACK)!=(c->stack_count?c->stack[c->stack_count-1]+1:0)) goto bad;
     return true;
 bad:
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid script checkpoint");
@@ -338,6 +346,9 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
     }
     if (!script_checkpoint_valid(c, e))
         return false;
+    if (!services->memory && c->source_reference!=SIZE_MAX) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Restored source requires its actual MEMORY owner");return false;
+    }
     if (!services->memory) for(size_t i=0;i<c->condition_count;++i)
         if(c->conditions[i].memory_reference!=SIZE_MAX) {
             qa_error_set(e,QA_ERROR_ARGUMENT,i,"Restored indent requires its actual script MEMORY owner");
@@ -427,7 +438,7 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
             c->queue[i].expansion == SIZE_MAX ? NULL : expansions + c->queue[i].expansion;
         ++s->queue_count;
     }
-    if (!script_conditions_restore(s,c,e)) goto fail;
+    if (!script_source_restore(s,c,e) || !script_conditions_restore(s,c,e)) goto fail;
     *out = s;
     return true;
 fail:

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_activation.h"
 
 static bool same_order(const qa_bot_order *a, const qa_bot_order *b) {
     if (a->kind != b->kind) return false;
@@ -13,7 +14,7 @@ static bool set_order(qa_bots *b, qa_actor_id actor, const qa_bot_order *order,
     bot_ai_state *s = bot_ai_actor(b, actor);
     if (!s || !bot_ai_live(b, actor)) return true;
     if (!same_order(&s->view.order, order)) {
-        s->activation_count = 0;
+        if(!bot_ai_activation_clear(b,s,e)) return false;
         if (s->view.decision == QA_BOT_ACTIVATING) s->view.decision = QA_BOT_SEEK_LONG_TERM;
         s->view.order = *order;
         s->view.order.status = QA_BOT_ORDER_ACTIVE;
@@ -44,7 +45,7 @@ bool qa_bots_clear_order(qa_bots *b, qa_actor_id actor, qa_error *e) {
     bot_ai_state *s = bot_ai_actor(b, actor);
     if (!s || !bot_ai_live(b, actor) || s->view.order.kind == QA_BOT_ORDER_NONE) return true;
     if (bot_ai_order_active(s)) {
-        s->activation_count = 0;
+        if(!bot_ai_activation_clear(b,s,e)) return false;
         if (s->view.decision == QA_BOT_ACTIVATING) s->view.decision = QA_BOT_SEEK_LONG_TERM;
     }
     s->view.order = (qa_bot_order){0};

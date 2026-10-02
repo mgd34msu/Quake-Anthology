@@ -21,7 +21,6 @@ typedef struct bot_source_order_state {
     char subteam[32];
     int32_t checkpoints, patrol_points, current_patrol_point, patrol_flags;
     int32_t lead_teammate;
-    qa_bot_goal lead_goal;
     float lead_visible_time, lead_message_time, lead_backup_time;
     float ask_team_leader_time, last_flag_capture_time;
     int32_t red_flag_status, blue_flag_status, neutral_flag_status, flag_carrier;
@@ -46,7 +45,7 @@ bool bot_ai_source_synonym_context(struct qa_bots *, struct bot_ai_state *, uint
 bool bot_ai_source_voice(struct qa_bots *, struct bot_ai_state *, int32_t recipient,
                          const char *voice, bool only, qa_error *);
 bool bot_ai_source_locate(struct qa_bots *, struct bot_ai_state *, int32_t client,
-                          qa_bot_goal *, qa_error *);
+                          uint32_t goal_offset, qa_error *);
 bool bot_ai_source_message_goal(struct qa_bots *, struct bot_ai_state *, const char *,
                                 qa_bot_goal *, bool *, qa_error *);
 /* The policy owner implements this from the retained AAS alternative routes. */

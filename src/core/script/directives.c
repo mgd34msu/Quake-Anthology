@@ -2,17 +2,17 @@
 
 static bool current_condition(qa_script *s, qa_script_location location, script_condition *out,
                               qa_error *e) {
-    if (s->condition_count == 0 || s->stack_count == 0)
+    if (s->condition_count == 0 || script_source_pointer(s) == 0)
         return script_fail(s, location, "Misplaced script conditional", e);
     if (!script_condition_top(s,out,e)) return false;
-    if (out->frame != s->stack[s->stack_count - 1])
+    if (out->frame != script_current_frame(s))
         return script_fail(s, location, "Misplaced script conditional", e);
     return true;
 }
 static bool push_condition(qa_script *s, uint32_t type, bool skip, qa_error *e) {
-    if (s->stack_count == 0)
+    if (script_source_pointer(s) == 0)
         return script_fail(s, qa_script_position(s), "Conditional after end of source", e);
-    return script_condition_push(s,type,skip,s->stack[s->stack_count-1],e);
+    return script_condition_push(s,type,skip,script_current_frame(s),e);
 }
 bool script_evaluate_stream(qa_script *s, qa_script_location location, bool integer_mode,
                             bool dollar, script_eval_value *out, qa_error *e) {
@@ -316,9 +316,9 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         return push_condition(s,otherwise ? 2 : 4,skip,e);
     }
     if (qa_script_token_is(name, "include"))
-        return s->skipping != 0 || include_directive(s, location, e);
+        return script_skipping(s) != 0 || include_directive(s, location, e);
     if (qa_script_token_is(name, "define")) {
-        if (s->skipping != 0)
+        if (script_skipping(s) != 0)
             return true;
         qa_script_token *tokens;
         size_t count;
@@ -335,7 +335,7 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         return ok;
     }
     if (qa_script_token_is(name, "undef")) {
-        if (s->skipping != 0)
+        if (script_skipping(s) != 0)
             return true;
         if (!script_line_token(s, &item, &found, e))
             return false;

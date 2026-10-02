@@ -201,8 +201,17 @@ bool qa_bot_source_record_activation(const qa_bot_source_memory *memory,qa_bot_s
        !qa_bot_source_record_vec3(memory,field,92,&activation->origin,write,error)) return false;
     for(uint32_t i=0;i<32;++i)
         if(!qa_bot_source_record_i32(memory,field,104+i*4,activation->areas+i,write,error)) return false;
-    return qa_bot_source_record_i32(memory,field,232,&activation->area_count,write,error) &&
-        qa_bot_source_record_bool(memory,field,236,&activation->areas_disabled,write,error);
+    if(!qa_bot_source_record_i32(memory,field,232,&activation->area_count,write,error) ||
+       !qa_bot_source_record_bool(memory,field,236,&activation->areas_disabled,write,error)) return false;
+    uint8_t bytes[4];
+    qa_bot_source_record link={field.offset+240,4};
+    if(write) {
+        for(uint32_t i=0;i<4;++i) bytes[i]=(uint8_t)(activation->next>>(i*8));
+        return qa_bot_source_record_write(memory,link,bytes,error);
+    }
+    if(!qa_bot_source_record_read(memory,link,bytes,error)) return false;
+    activation->next=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
+    return true;
 }
 bool qa_bot_source_record_presence(const qa_bot_source_memory *memory,qa_bot_source_record record,
     int32_t *presence,bool write,qa_error *error) {

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_activation.h"
 #include "source_storage.h"
 #include "source_library.h"
 #include <stdio.h>
@@ -24,7 +25,7 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
                     uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !services || !out || !services->shared.session ||
         !services->shared.world || !services->shared.combat || !services->shared.player_info || !services->player ||
-        !services->inventory || !services->entity || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
+        !services->inventory || !services->entity || !services->entity_actor || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
         !services->submit || !services->random || !services->source_client || !services->source_actor ||
         !services->memory.allocate || !services->memory.read || !services->memory.write || !services->memory.borrow_span)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
@@ -111,6 +112,7 @@ bool qa_bots_create_restored(qa_bot_runtime *runtime, const qa_bot_services *ser
 bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (qa_bot_runtime_closed(b->runtime)) {
         bot_ai_source_order_clear(b,s);
+        if(s->view.actor.registry && !bot_ai_activation_clear(b,s,e)) return false;
         free(s->admitted_character);s->admitted_character=NULL;
         free(s->admitted_name);s->admitted_name=NULL;return true;
     }
@@ -125,6 +127,7 @@ bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (s->character && !qa_bot_runtime_character_free(b->runtime, s->character, e)) return false;
     s->character = 0;
     bot_ai_source_order_clear(b,s);
+    if(s->view.actor.registry && !bot_ai_activation_clear(b,s,e)) return false;
     free(s->admitted_character);s->admitted_character=NULL;
     free(s->admitted_name);s->admitted_name=NULL;
     return true;
@@ -157,6 +160,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
 void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
     uint32_t source=s->acquired_source_client;
     qa_bot_source_record record=s->source_record;
+    qa_bot_source_span span=s->source_span;
     if(s->view.actor.registry && s->view.actor.slot<b->actor_capacity &&
        b->actor_clients[s->view.actor.slot]==s->view.client+1)
         b->actor_clients[s->view.actor.slot]=0;
@@ -164,7 +168,7 @@ void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
         b->clients[s->view.client]=NULL;
     b->source_clients[source]=0;
     if(s->counted) --b->count;
-    *s=(bot_ai_state){.acquired_source_client=source,.source_record=record};
+    *s=(bot_ai_state){.acquired_source_client=source,.source_record=record,.source_span=span};
     bot_ai_source_order_init(&s->source_order);
     bot_ai_source_chat_init(&s->source_chat);
 }

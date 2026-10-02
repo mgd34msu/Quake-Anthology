@@ -38,7 +38,7 @@ static script_condition_record *resolve(const qa_script *s,uint32_t pointer)
 bool script_condition_top(qa_script *s,script_condition *out,qa_error *error)
 {
     uint8_t *bytes;
-    if(!s->condition_head || !extent(s,resolve(s,s->condition_head),&bytes,error)) return false;
+    if(!script_indent_head(s) || !extent(s,resolve(s,script_indent_head(s)),&bytes,error)) return false;
     uint32_t frame=qa_load_u32le(bytes+8),type=qa_load_u32le(bytes);
     if(!frame || frame>s->frame_count || (type!=1 && type!=2 && type!=4 && type!=8 && type!=16)) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Conditional script/type pointer is outside its actual source");return false;
@@ -66,9 +66,10 @@ bool script_condition_push(qa_script *s,uint32_t type,bool skip,size_t frame,qa_
     if(s->memory.context) {
         if(!s->memory.allocate(s->memory.context,16,&node->allocation,error)) return false;
         qa_script_memory_span span={0};
-        if(!s->memory.bytes(s->memory.context,node->allocation,&span,error) || span.size!=16) {
+        bool borrowed=s->memory.bytes(s->memory.context,node->allocation,&span,error);
+        if(!borrowed || span.size!=16) {
             (void)s->memory.free(s->memory.context,node->allocation,NULL);
-            if(span.size!=16) qa_error_set(error,QA_ERROR_FORMAT,0,"Allocated indent differs from its source extent");
+            if(borrowed) qa_error_set(error,QA_ERROR_FORMAT,0,"Allocated indent differs from its source extent");
             return false;
         }
         node->bytes=span.data;
@@ -78,24 +79,27 @@ bool script_condition_push(qa_script *s,uint32_t type,bool skip,size_t frame,qa_
     }
     node->pointer=s->next_condition_pointer++;
     qa_store_u32le(node->bytes,type);qa_store_u32le(node->bytes+4,skip);
-    qa_store_u32le(node->bytes+8,(uint32_t)frame+1);qa_store_u32le(node->bytes+12,s->condition_head);
-    s->condition_head=node->pointer;++s->condition_count;if(skip) ++s->skipping;
+    qa_store_u32le(node->bytes+8,(uint32_t)frame+1);qa_store_u32le(node->bytes+12,script_indent_head(s));
+    script_indent_head_set(s,node->pointer);++s->condition_count;
+    if(skip) script_skipping_set(s,script_skipping(s)+1);
     return true;
 }
-bool script_condition_pop(qa_script *s,qa_error *error)
+static bool release_condition(qa_script *s,bool branch,qa_error *error)
 {
-    script_condition_record *node=resolve(s,s->condition_head);uint8_t *bytes;
+    script_condition_record *node=resolve(s,script_indent_head(s));uint8_t *bytes;
     if(!extent(s,node,&bytes,error)) return false;
     uint32_t next=qa_load_u32le(bytes+12);bool skip=qa_load_u32le(bytes+4)!=0;
     if(next && !resolve(s,next)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Conditional next pointer is outside its source");return false;}
     if(s->memory.context) {if(!s->memory.free(s->memory.context,node->allocation,error)) return false;}
     else free(bytes);
-    node->bytes=NULL;s->condition_head=next;--s->condition_count;if(skip) --s->skipping;
+    node->bytes=NULL;script_indent_head_set(s,next);--s->condition_count;
+    if(branch && skip) script_skipping_set(s,script_skipping(s)-1);
     return true;
 }
+bool script_condition_pop(qa_script *s,qa_error *error) {return release_condition(s,true,error);}
 bool script_conditions_capture(const qa_script *s,qa_script_condition_state *out,qa_error *error)
 {
-    uint32_t pointer=s->condition_head;
+    uint32_t pointer=script_indent_head(s);
     for(size_t i=s->condition_count;i;--i) {
         script_condition_record *node=resolve(s,pointer);uint8_t *bytes;
         if(!extent(s,node,&bytes,error)) return false;
@@ -133,14 +137,14 @@ bool script_conditions_restore(qa_script *s,const qa_script_checkpoint *checkpoi
             if(!node->bytes) {qa_error_set(error,QA_ERROR_MEMORY,i,"Restoring detached raw indent");return false;}
             memcpy(node->bytes,saved->bytes,16);node->detached=true;
         }
-        s->condition_head=node->pointer;++s->condition_count;if(saved->skip) ++s->skipping;
+        ++s->condition_count;
     }
     return true;
 }
 void script_conditions_close(qa_script *s,bool source)
 {
     if(source && !s->memory_deferred)
-        while(s->condition_count && script_condition_pop(s,NULL)) {}
+        while(s->condition_count && release_condition(s,false,NULL)) {}
     for(size_t i=0;i<s->condition_records;++i) {
         script_condition_record *node=s->conditions+i;
         if(!node->bytes) continue;
@@ -148,12 +152,13 @@ void script_conditions_close(qa_script *s,bool source)
         else if(source) (void)s->memory.free(s->memory.context,node->allocation,NULL);
     }
     free(s->conditions);
-    if(s->memory.context) s->memory.release(s->memory.context);
+
 }
 
 bool script_memory_enter(qa_script *s,qa_error *error)
 {
     if(!s->memory_deferred) return true;
+    if(!script_source_adopt(s,error)) return false;
     if(s->memory.context) {
         for(size_t i=0;i<s->condition_records;++i) {
             script_condition_record *node=s->conditions+i;

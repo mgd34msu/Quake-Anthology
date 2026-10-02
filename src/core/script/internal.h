@@ -1,6 +1,7 @@
 #ifndef QA_CORE_SCRIPT_INTERNAL_H
 #define QA_CORE_SCRIPT_INTERNAL_H
 #include "qa/arena.h"
+#include "qa/binary.h"
 #include "qa/script.h"
 #include "qa/text.h"
 #include <limits.h>
@@ -74,6 +75,14 @@ typedef struct script_frame {
     size_t condition_base, token_count;
     bool active, owned;
 } script_frame;
+enum { SCRIPT_SOURCE_BYTES=3144, SCRIPT_SOURCE_INCLUDE=1024,
+       SCRIPT_SOURCE_STACK=2052, SCRIPT_SOURCE_INDENT=2068, SCRIPT_SOURCE_SKIP=2072 };
+typedef struct script_source_record {
+    qa_script_memory_allocation allocation;
+    size_t memory_reference;
+    uint8_t *bytes;
+    bool detached;
+} script_source_record;
 typedef struct script_condition_record {
     qa_script_memory_allocation allocation;
     uint32_t pointer;
@@ -96,9 +105,10 @@ struct qa_script {
     script_queued_token *queue;
     size_t queue_count, queue_capacity;
     qa_script_memory memory;
+    script_source_record source_record;
     script_condition_record *conditions;
-    size_t condition_records,condition_count,condition_capacity,skipping;
-    uint32_t condition_head,next_condition_pointer;
+    size_t condition_records,condition_count,condition_capacity;
+    uint32_t next_condition_pointer;
     size_t expansions, outputs;
     bool empty_expansion, memory_deferred;
     qa_script_location last_location;
@@ -110,7 +120,32 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 3 };
+enum { SCRIPT_CHECKPOINT_VERSION = 4 };
+bool script_source_create(qa_script *,qa_error *);
+void script_source_stack(qa_script *);
+bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);
+bool script_source_restore(qa_script *,const qa_script_checkpoint *,qa_error *);
+bool script_source_adopt(qa_script *,qa_error *);
+void script_source_close(qa_script *,bool);
+static inline uint32_t script_source_pointer(const qa_script *s) {
+    return s->source_record.bytes?qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_STACK):
+        (s->stack_count?(uint32_t)s->stack[s->stack_count-1]+1:0);
+}
+static inline size_t script_current_frame(const qa_script *s) {
+    return (size_t)script_source_pointer(s)-1;
+}
+static inline uint32_t script_skipping(const qa_script *s) {
+    return s->source_record.bytes?qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_SKIP):0;
+}
+static inline uint32_t script_indent_head(const qa_script *s) {
+    return qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_INDENT);
+}
+static inline void script_indent_head_set(qa_script *s,uint32_t value) {
+    qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_INDENT,value);
+}
+static inline void script_skipping_set(qa_script *s,uint32_t value) {
+    qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_SKIP,value);
+}
 bool script_memory_bind(qa_script *,qa_error *);
 bool script_memory_enter(qa_script *,qa_error *);
 bool script_condition_top(qa_script *,script_condition *,qa_error *);

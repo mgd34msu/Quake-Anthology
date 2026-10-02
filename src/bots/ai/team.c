@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_goal_record.h"
 #include "source_team_state.h"
 #include "source_timers.h"
 #include "source_inventory.h"
@@ -120,10 +121,10 @@ bool bot_ai_source_goals_load(qa_bots *b,qa_error *e) {
 bool bot_ai_remember_order(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!bot_ai_ordered(s)) return true;
     int32_t decisionmaker=bot_ai_decisionmaker(s),type=bot_ai_long_term_goal(s),teammate=bot_ai_teammate(s);
-    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&decisionmaker,true,e) &&
-        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&type,true,e) &&
-        bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,true,e) &&
-        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&teammate,true,e);
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&decisionmaker,true,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&type,true,e)) return false;
+    bot_ai_goal_record_copy(s,QA_BOT_SOURCE_LAST_TEAM_GOAL,QA_BOT_SOURCE_TEAM_GOAL);
+    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&teammate,true,e);
 }
 bool bot_ai_team_status(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!s->team_arena) return true;
@@ -219,15 +220,13 @@ static bool voice_only(qa_bots *b,bot_ai_state *s,int32_t recipient,const char *
     return qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,QA_BOT_COMMAND,0,command,e);
 }
 static bool locate_requester(qa_bots *b,bot_ai_state *s,int32_t client,bool *found,qa_error *e) {
-    *found=false;s->team_goal.entity=-1;
+    *found=false;bot_ai_goal_entity_set(s,QA_BOT_SOURCE_TEAM_GOAL,-1);
     qa_bot_entity_info entity;bool present;
     if(!qa_bot_runtime_entity(b->runtime,client,&entity,&present,e)) return false;
     if(entity.valid) {
         uint32_t area;if(!bot_ai_point_area(b,s,entity.state.origin,&area,e)) return false;
         if(area) {
-            s->team_goal.entity=client;s->team_goal.area=(int32_t)area;
-            s->team_goal.origin=entity.state.origin;
-            s->team_goal.mins=qa_v3(-8,-8,-8);s->team_goal.maxs=qa_v3(8,8,8);*found=true;
+            bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,client,(int32_t)area,entity.state.origin);*found=true;
         }
     }
     if(*found) return true;
@@ -307,9 +306,9 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
     } else if(command_word(text,"defend") || command_word(text,"defendflag")) {
         if(team!=1 && team!=2) return true;
         if(s->team_arena && (type==6 || type==7))
-            s->team_goal=team==1?b->source_goals.red_obelisk:b->source_goals.blue_obelisk;
+            bot_ai_team_goal_set(s,team==1?b->source_goals.red_obelisk:b->source_goals.blue_obelisk);
         else if(type==4 || (s->team_arena && type==5))
-            s->team_goal=team==1?b->source_goals.red_flag:b->source_goals.blue_flag;
+            bot_ai_team_goal_set(s,team==1?b->source_goals.red_flag:b->source_goals.blue_flag);
         else return true;
         if(!ordered(b,s,client,BOT_LTG_DEFEND,600,e)) return false;
         bot_ai_defend_away_time_set(s,0);

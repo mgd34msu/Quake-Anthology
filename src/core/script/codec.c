@@ -225,7 +225,8 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
     }
     if (!codec_options(c, &value->options) || !codec_string(c, &value->date) ||
         !codec_string(c, &value->time) || !codec_size(c, &value->expansions) ||
-        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_bool(c, &value->empty_expansion) ||
+        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) ||
+        !codec_span(c, &value->source_record) || !codec_index(c, &value->source_reference) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
         !codec_bool(c, &value->source_failure) || !codec_size(c, &value->macro_count))
         return false;

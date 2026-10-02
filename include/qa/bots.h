@@ -109,6 +109,7 @@ typedef struct qa_bot_services {
     bool (*inventory)(void *, qa_actor_id, const qa_bot_player *,
                        const qa_bot_player_state_view *,const qa_bot_inventory_target *, qa_error *);
     bool (*entity)(void *, qa_actor_id, qa_bot_entity *, qa_error *);
+    qa_actor_id (*entity_actor)(void *, int32_t entity_number);
     bool (*entity_extent)(void *, uint32_t *, qa_error *);
     bool (*entity_list)(void *, qa_builtin_actor_snapshot *, qa_error *);
     bool (*arsenal)(void *, qa_actor_id, const qa_bot_weapon_knowledge **, size_t *,

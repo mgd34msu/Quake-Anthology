@@ -64,7 +64,7 @@ read_next:
 accept_token:
     frame = s->reads + s->read_count - 1;
     token = &frame->token;
-    if (s->skipping)
+    if (script_skipping(s))
         goto read_next;
     script_macro *macro =
         token->kind == QA_SCRIPT_NAME ? script_macro_find(&s->macros, token->text) : NULL;

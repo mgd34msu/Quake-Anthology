@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "source_storage.h"
 #include "source_alias.h"
+#include "source_goal_record.h"
+#include "source_activation.h"
 
 static bool span(qa_bots *b,bot_ai_state *s,uint32_t offset,uint32_t size,uint8_t **bytes,qa_error *e) {
     if(!s || offset>QA_BOT_STATE_SOURCE_BYTES || size>QA_BOT_STATE_SOURCE_BYTES-offset)
@@ -67,4 +69,127 @@ bool bot_ai_storage_publish(qa_bots *b,bot_ai_state *s,qa_error *e) {
         bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,true,e) &&
         bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&count,true,e) &&
         bot_ai_storage_f32(b,s,QA_BOT_SOURCE_ENTER_TIME,&time,true,e);
+}
+
+static uint32_t activation_offset(uint32_t index) {
+    return QA_BOT_SOURCE_ACTIVATION_HEAP+index*QA_BOT_SOURCE_ACTIVATION_BYTES;
+}
+static uint32_t activation_address(const bot_ai_state *s,uint32_t index) {
+    return s->source_record.offset+activation_offset(index);
+}
+static bool activation_index(const bot_ai_state *s,uint32_t address,uint32_t *index,qa_error *e) {
+    uint32_t first=activation_address(s,0);
+    if(address<first || address-first>=QA_BOT_SOURCE_ACTIVATION_COUNT*QA_BOT_SOURCE_ACTIVATION_BYTES ||
+       (address-first)%QA_BOT_SOURCE_ACTIVATION_BYTES)
+        return bot_ai_fail(e,"BotState activation link does not name its actual GAME heap row");
+    *index=(address-first)/QA_BOT_SOURCE_ACTIVATION_BYTES;return true;
+}
+bool bot_ai_activation_validate(const bot_ai_state *s,qa_error *e) {
+    if(!s || !s->source_span.data || s->source_span.length!=QA_BOT_STATE_SOURCE_BYTES ||
+       s->source_record.length!=QA_BOT_STATE_SOURCE_BYTES ||
+       s->source_record.offset>QA_BOT_GAME_MEMORY_BYTES-QA_BOT_STATE_SOURCE_BYTES)
+        return bot_ai_fail(e,"BotState activation heap has no complete actual GAME allocation");
+    for(uint32_t i=0;i<QA_BOT_SOURCE_ACTIVATION_COUNT;++i) {
+        const uint8_t *p=s->source_span.data+activation_offset(i);
+        int32_t count=bot_source_i32_read(p+232);uint32_t next=bot_source_word_read(p+240),index;
+        if(count<0 || count>32) return bot_ai_fail(e,"BotState activation area count exceeds its actual row");
+        if(next && !activation_index(s,next,&index,e)) return false;
+    }
+    bool seen[QA_BOT_SOURCE_ACTIVATION_COUNT]={0};
+    uint32_t address=bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK);
+    while(address) {
+        uint32_t index;if(!activation_index(s,address,&index,e)) return false;
+        const uint8_t *p=s->source_span.data+activation_offset(index);
+        if(seen[index] || !bot_source_word_read(p))
+            return bot_ai_fail(e,"BotState activation stack has a cycle or inactive row");
+        seen[index]=true;address=bot_source_word_read(p+240);
+    }
+    return true;
+}
+bool bot_ai_activation_top(const bot_ai_state *s,uint32_t *index,bool *found,qa_error *e) {
+    if(!index || !found || !bot_ai_activation_validate(s,e)) return false;
+    uint32_t address=bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK);
+    *found=address!=0;*index=0;
+    return !address || activation_index(s,address,index,e);
+}
+qa_bot_source_activation bot_ai_activation_read(const bot_ai_state *s,uint32_t index) {
+    const uint8_t *p=s->source_span.data+activation_offset(index);
+    qa_bot_source_activation row={.inuse=bot_source_word_read(p)!=0,
+        .goal=bot_ai_goal_record(s,activation_offset(index)+4),
+        .time=bot_source_f32_read(p+60),.start_time=bot_source_f32_read(p+64),
+        .just_used_time=bot_source_f32_read(p+68),.shoot=bot_source_word_read(p+72)!=0,
+        .weapon=bot_source_i32_read(p+76),.target=bot_source_vec3_read(p+80),
+        .origin=bot_source_vec3_read(p+92),.area_count=bot_source_i32_read(p+232),
+        .areas_disabled=bot_source_word_read(p+236)!=0,.next=bot_source_word_read(p+240)};
+    for(uint32_t i=0;i<32;++i) row.areas[i]=bot_source_i32_read(p+104+i*4);
+    return row;
+}
+void bot_ai_activation_time_set(bot_ai_state *s,uint32_t index,float time) {
+    bot_source_f32_write(s->source_span.data+activation_offset(index)+60,time);
+}
+void bot_ai_activation_weapon_set(bot_ai_state *s,uint32_t index,int32_t weapon) {
+    bot_source_i32_write(s->source_span.data+activation_offset(index)+76,weapon);
+}
+bool bot_ai_activation_contains(const bot_ai_state *s,int32_t entity,float now,bool *found,qa_error *e) {
+    if(!found || !bot_ai_activation_validate(s,e)) return false;
+    *found=false;
+    uint32_t address=bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK);
+    while(address) {
+        uint32_t index;if(!activation_index(s,address,&index,e)) return false;
+        qa_bot_source_activation row=bot_ai_activation_read(s,index);
+        if(!(row.time<now) && row.goal.entity==entity) {*found=true;return true;}
+        address=row.next;
+    }
+    for(uint32_t i=0;i<QA_BOT_SOURCE_ACTIVATION_COUNT;++i) {
+        qa_bot_source_activation row=bot_ai_activation_read(s,i);
+        if(!row.inuse && row.goal.entity==entity && row.just_used_time>now-2) {*found=true;break;}
+    }
+    return true;
+}
+bool bot_ai_activation_push(bot_ai_state *s,const qa_bot_source_activation *row,float now,bool *pushed,qa_error *e) {
+    if(!row || !pushed || !bot_ai_activation_validate(s,e)) return false;
+    *pushed=false;
+    if(row->area_count<0 || row->area_count>32) return bot_ai_fail(e,"Activation producer area count exceeds actual heap row");
+    int32_t best=-1;float best_time=now+9999;
+    for(uint32_t i=0;i<QA_BOT_SOURCE_ACTIVATION_COUNT;++i) {
+        const uint8_t *p=s->source_span.data+activation_offset(i);
+        float used=bot_source_f32_read(p+68);
+        if(!bot_source_word_read(p) && used<best_time) {best_time=used;best=(int32_t)i;}
+    }
+    if(best<0) return true;
+    uint32_t index=(uint32_t)best;uint8_t *p=s->source_span.data+activation_offset(index);
+    bot_source_word_write(p,1);bot_ai_goal_record_set(s,activation_offset(index)+4,row->goal);
+    bot_source_f32_write(p+60,row->time);bot_source_f32_write(p+64,row->start_time);
+    bot_source_f32_write(p+68,row->just_used_time);bot_source_word_write(p+72,row->shoot?1u:0u);
+    bot_source_i32_write(p+76,row->weapon);bot_source_vec3_write(p+80,row->target);bot_source_vec3_write(p+92,row->origin);
+    for(uint32_t i=0;i<32;++i) bot_source_i32_write(p+104+i*4,row->areas[i]);
+    bot_source_i32_write(p+232,row->area_count);bot_source_word_write(p+236,row->areas_disabled?1u:0u);
+    bot_source_word_write(p+240,bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK));
+    bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK,activation_address(s,index));
+    *pushed=true;return true;
+}
+bool bot_ai_activation_pop(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    uint32_t index;bool found;if(!bot_ai_activation_top(s,&index,&found,e)) return false;
+    if(!found) return true;
+    qa_bot_source_activation row=bot_ai_activation_read(s,index);
+    if(row.areas_disabled) {
+        qa_bot_navigation *nav=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
+        for(int32_t i=0;i<row.area_count;++i) {
+            bool previous;
+            if(!qa_bot_navigation_enable(nav,(uint32_t)row.areas[i],true,&previous,e)) return false;
+        }
+        bot_source_word_write(s->source_span.data+activation_offset(index)+236,0);
+    }
+    uint8_t *p=s->source_span.data+activation_offset(index);
+    bot_source_word_write(p,0);bot_source_f32_write(p+68,b->time);
+    bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK,bot_source_word_read(p+240));
+    return true;
+}
+bool bot_ai_activation_clear(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    uint32_t index;bool found;
+    while(true) {
+        if(!bot_ai_activation_top(s,&index,&found,e)) return false;
+        if(!found) return true;
+        if(!bot_ai_activation_pop(b,s,e)) return false;
+    }
 }

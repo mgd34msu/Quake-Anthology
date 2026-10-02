@@ -32,6 +32,9 @@ static bool same_path(const char *a, const char *b) {
     }
 }
 bool script_include(qa_script *s, const qa_script_include *request, qa_error *e) {
+    if(s->frame_count>=UINT32_MAX) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Source script pointer identities exhausted");return false;
+    }
     if (s->stack_count >= s->options.maximum_include_depth)
         return script_fail(s, qa_script_position(s),
                            "Script include depth exceeds configured limit", e);
@@ -80,20 +83,21 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
     s->frames[s->frame_count] = (script_frame){
         .resource = resource, .lexer = lexer, .condition_base = s->condition_count, .active = true};
     s->stack[s->stack_count++] = s->frame_count++;
+    script_source_stack(s);
     return true;
 }
 qa_script_location qa_script_position(const qa_script *s) {
     if (s == NULL)
         return (qa_script_location){0};
-    if (s->stack_count != 0)
-        return qa_script_lexer_position(s->frames[s->stack[s->stack_count - 1]].lexer);
+    if (script_source_pointer(s) && script_source_pointer(s)<=s->frame_count)
+        return qa_script_lexer_position(s->frames[script_current_frame(s)].lexer);
     return s->last_location;
 }
 qa_script_location qa_script_source_position(const qa_script *s) {
     if (!s || !s->frame_count) return (qa_script_location){0};
     qa_script_location location=qa_script_position(s);
-    location.path=s->frames[0].resource.path;
-    if (!s->stack_count) location.line=0;
+    location.path=s->source_record.bytes?(char *)s->source_record.bytes:s->frames[0].resource.path;
+    if (!script_source_pointer(s)) location.line=0;
     return location;
 }
 bool script_push(qa_script *s, script_queued_token token, qa_error *e) {
@@ -111,8 +115,12 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
         *found = true;
         return true;
     }
-    while (s->stack_count != 0) {
-        script_frame *frame = s->frames + s->stack[s->stack_count - 1];
+    while (script_source_pointer(s) != 0) {
+        if(script_current_frame(s)>=s->frame_count || !s->stack_count ||
+           script_current_frame(s)!=s->stack[s->stack_count-1]) {
+            qa_error_set(e,QA_ERROR_FORMAT,0,"Source script pointer does not name its actual active frame");return false;
+        }
+        script_frame *frame = s->frames + script_current_frame(s);
         *out = (script_queued_token){0};
         bool ok = qa_script_lexer_next(frame->lexer, &out->token, found, e);
         if (!ok && !frame->lexer->source_failure)
@@ -128,17 +136,19 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
         while (script_peek(frame->lexer, 0) == 0 && s->condition_count != 0) {
             script_condition condition;
             if (!script_condition_top(s,&condition,e)) return false;
-            if (condition.frame != s->stack[s->stack_count-1]) break;
+            if (condition.frame != script_current_frame(s)) break;
             script_warn(s, s->last_location, "Missing #endif at end of script");
             if (!script_condition_pop(s,e)) return false;
         }
         if (s->stack_count == 1) {
+            frame->active=false;--s->stack_count;script_source_stack(s);
             *found = false;
             s->source_failure = !ok;
             return ok;
         }
         frame->active = false;
         --s->stack_count;
+        script_source_stack(s);
         s->source_failure = false;
         if (e != NULL)
             *e = (qa_error){0};
@@ -275,7 +285,7 @@ bool qa_script_open(const char *path, const qa_script_services *services,
     if (s->options.builtins && !install_builtins(s, e))
         goto fail;
     qa_script_include request = {QA_SCRIPT_ROOT, NULL, path, s->options.include_path};
-    if (!script_include(s, &request, e))
+    if (!script_include(s, &request, e) || !script_source_create(s,e))
         goto fail;
     *out = s;
     return true;
@@ -296,6 +306,8 @@ static void close_source(qa_script *s,bool source) {
     free(s->stack);
     free(s->queue);
     script_conditions_close(s,source);
+    script_source_close(s,source);
+    if(s->memory.context) s->memory.release(s->memory.context);
     free(s->reads);
     qa_arena_destroy(&s->macros.arena);
     qa_arena_destroy(&s->arena);
