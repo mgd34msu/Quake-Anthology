@@ -179,6 +179,38 @@ bool qa_script_unread(qa_script *s, const qa_script_token *token, qa_error *e) {
     }
     return script_push(s, (script_queued_token){.token=*token}, e);
 }
+static bool read_expected(qa_script *s, qa_script_token *token, bool *found, qa_error *e) {
+    if (qa_script_next(s, token, found, e)) return true;
+    if (!qa_script_source_failure(s)) return false;
+    s->source_failure = false;
+    if (e) *e = (qa_error){0};
+    *found = false;
+    return true;
+}
+static bool expected_error(qa_script *s, const char *expected, const qa_script_token *actual,
+                           qa_error *e) {
+    const char *prefix = actual ? "expected " : "couldn't find expected ";
+    const char *separator = actual ? ", found " : "";
+    size_t first = strlen(prefix), size = strlen(expected), middle = strlen(separator);
+    size_t last = actual ? string_size(actual->text) : 0;
+    if (size > SIZE_MAX - first - middle - last - 1) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Expected-token diagnostic exceeds native extent");
+        return false;
+    }
+    char *message = malloc(first + size + middle + last + 1);
+    if (!message) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining expected-token source diagnostic");
+        return false;
+    }
+    memcpy(message, prefix, first);
+    memcpy(message + first, expected, size);
+    memcpy(message + first + size, separator, middle);
+    if (last) memcpy(message + first + size + middle, actual->text.data, last);
+    message[first + size + middle + last] = 0;
+    bool okay = script_fail(s, qa_script_position(s), message, e);
+    free(message);
+    return okay;
+}
 bool qa_script_expect(qa_script *s, const char *text, qa_error *e) {
     if (text == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing expected script token");
@@ -186,13 +218,10 @@ bool qa_script_expect(qa_script *s, const char *text, qa_error *e) {
     }
     qa_script_token token;
     bool found;
-    if (!qa_script_next(s, &token, &found, e))
+    if (!read_expected(s, &token, &found, e))
         return false;
-    if (!found || !qa_script_token_is(&token, text)) {
-        qa_error_set(e, QA_ERROR_FORMAT, qa_script_position(s).offset, "Expected script token %s",
-                     text);
-        return false;
-    }
+    if (!found) return expected_error(s, text, NULL, e);
+    if (!qa_script_token_is(&token, text)) return expected_error(s, text, &token, e);
     return true;
 }
 bool qa_script_check(qa_script *s, const char *text, bool *matched, qa_error *e) {
@@ -202,7 +231,7 @@ bool qa_script_check(qa_script *s, const char *text, bool *matched, qa_error *e)
     }
     qa_script_token token;
     bool found;
-    if (!qa_script_next(s, &token, &found, e))
+    if (!read_expected(s, &token, &found, e))
         return false;
     *matched = found && qa_script_token_is(&token, text);
     if(!found || *matched) return true;
@@ -216,7 +245,7 @@ bool qa_script_skip_until(qa_script *s, const char *text, bool *found, qa_error 
         return false;
     }
     qa_script_token token;
-    while (qa_script_next(s, &token, found, e)) {
+    while (read_expected(s, &token, found, e)) {
         if (!*found || qa_script_token_is(&token, text))
             return true;
     }
