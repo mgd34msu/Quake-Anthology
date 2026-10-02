@@ -3,11 +3,14 @@
 
 #include "qa/game_q1.h"
 
+enum { QA_Q1_SOURCE_MESSAGE_LITERAL = 4u };
+
 typedef struct qa_q1_source_obituary_actor {
     qa_actor_id owner;
     qa_string_id classname, kill_string, death_type;
     const char *name;
     double team, quad_remaining, invulnerable_remaining;
+    double quad_finished;
     qa_q1_weapon weapon;
     qa_physics_motion movement;
     int32_t water_level;

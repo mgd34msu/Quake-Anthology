@@ -116,6 +116,10 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         return false;
     }
     wire->generation = generation + 1;
+    if (g->options.quakeworld) {
+        if (g->wire) wire->qw_fraglog = g->wire->qw_fraglog;
+        else wire->qw_fraglog.sequence = 1;
+    }
     wire->inline_models = inline_models;
     wire->authored_entities = authored_entities;
     wire->edict_limit = g->options.quakeworld ? 768u :
@@ -836,3 +840,93 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
 }
 #undef MODEL
 #undef SOUND
+
+static bool qw_log_owner(const qa_q1_game *g, qa_error *error) {
+    return (g && !g->destroy_pending && !g->continuation_pending && g->options.quakeworld &&
+        g->wire && g->wire->qw_fraglog.sequence) ||
+        fail(error, "QuakeWorld fraglog requires its actual physical Source server");
+}
+bool qa_q1_wire_qw_log_read(const qa_q1_game *g, qa_q1_qw_fraglog_view *out, qa_error *error) {
+    if (!out) return fail(error, "QuakeWorld fraglog read requires an output");
+    if (!qw_log_owner(g, error)) return false;
+    const q1_qw_fraglog *log = &g->wire->qw_fraglog;
+    *out = (qa_q1_qw_fraglog_view){.buffers = {
+        {log->buffers[0], log->sizes[0]}, {log->buffers[1], log->sizes[1]}},
+        .sequence = log->sequence, .time = log->time,
+        .overflowed = {log->overflowed[0], log->overflowed[1]}};
+    return true;
+}
+bool qa_q1_wire_qw_logfrag(qa_q1_game *g, qa_actor_id killer, qa_actor_id victim, qa_error *error) {
+    if (!qw_log_owner(g, error)) return false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    bool okay = true;
+    uint32_t kslot, vslot;
+    qa_q1_source_client_view kclient, vclient;
+    /* PF_logfrag ignores entities outside the physical client edicts. */
+    if (!qa_q1_native_client_slot(g, killer, &kslot, NULL) || kslot >= 32 ||
+        !qa_q1_native_client_slot(g, victim, &vslot, NULL) || vslot >= 32) goto finish;
+    if (!qa_q1_source_client_read(g, killer, &kclient) ||
+        !qa_q1_source_client_read(g, victim, &vclient)) {
+        okay = fail(error, "QuakeWorld logfrag lost its physical client names");
+        goto finish;
+    }
+    size_t klen = strlen(kclient.name), vlen = strlen(vclient.name);
+    if (klen > 1450 - 5 || vlen > 1450 - 5 - klen) {
+        okay = fail(error, "QuakeWorld logfrag record exceeds its Source buffer");
+        goto finish;
+    }
+    uint8_t record[1450];
+    size_t length = klen + vlen + 5;
+    record[0] = '\\'; memcpy(record + 1, kclient.name, klen);
+    record[klen + 1] = '\\'; memcpy(record + klen + 2, vclient.name, vlen);
+    record[length - 3] = '\\'; record[length - 2] = '\n'; record[length - 1] = 0;
+    q1_qw_fraglog *log = &g->wire->qw_fraglog;
+    unsigned index = log->sequence & 1u;
+    uint32_t cursor = log->sizes[index];
+    bool trailing = cursor && !log->buffers[index][cursor - 1];
+    size_t reserved = length - (trailing ? 1u : 0u);
+    bool overflow = reserved > sizeof(log->buffers[index]) - cursor;
+    if (overflow) {
+        if (g->host.source_console_print)
+            g->host.source_console_print(g->host.context, "SZ_GetSpace: overflow\n");
+        if (!qa_q1_game_operation_live(&operation)) {
+            okay = fail(error, "QuakeWorld server retired during fraglog overflow");
+            goto finish;
+        }
+        cursor = 0;
+        log->overflowed[index] = true;
+    }
+    /* Source SZ_Print reserves len-1 and subtracts one even after overflow
+     * clears cursize. Retain the visible buffer slice without its -1 write. */
+    if (overflow && trailing) memcpy(log->buffers[index], record + 1, length - 1);
+    else memcpy(log->buffers[index] + cursor - (trailing ? 1u : 0u), record, length);
+    log->sizes[index] = (uint32_t)(cursor + reserved);
+    q1_wire_changed(g->wire);
+finish:
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+bool qa_q1_wire_qw_log_check(qa_q1_game *g, double realtime, qa_error *error) {
+    if (!qw_log_owner(g, error) || !isfinite(realtime) || realtime < 0)
+        return fail(error, "QuakeWorld log check requires its actual server realtime");
+    q1_qw_fraglog *log = &g->wire->qw_fraglog;
+    if (log->sizes[log->sequence & 1u] <= 4096 &&
+        !(realtime - log->time > 600 && log->sizes[log->sequence & 1u])) return true;
+    if (log->sequence == INT32_MAX) return fail(error, "QuakeWorld fraglog sequence exhausted");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    log->time = realtime;
+    ++log->sequence;
+    log->sizes[log->sequence & 1u] = 0;
+    q1_wire_changed(g->wire);
+    if (g->host.source_console_print) {
+        char text[64];
+        snprintf(text, sizeof(text), "beginning fraglog sequence %u\n", log->sequence);
+        g->host.source_console_print(g->host.context, text);
+    }
+    bool okay = qa_q1_game_operation_live(&operation) ||
+        fail(error, "QuakeWorld server retired during fraglog rotation");
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}

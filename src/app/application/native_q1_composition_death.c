@@ -208,6 +208,167 @@ static bool emit(death_call *call, qa_builtin_event *event, qa_error *error)
     return application_emit(call->app, event, error) && current(call, error);
 }
 
+static bool qw_text(death_call *call, const char *text, qa_error *error)
+{
+    qa_string_id id;
+    return current(call, error) && qa_strings_intern_cstr(
+        qa_session_strings(call->app->session), text, &id, error) &&
+        emit(call, &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE,
+            .text = id, .code = 1, .flags = 2u | QA_Q1_SOURCE_MESSAGE_LITERAL}, error);
+}
+
+static bool qw_name(death_call *call, qa_actor_id actor, qa_error *error)
+{
+    if (!actor.registry) return qw_text(call, "", error);
+    qa_q1_source_obituary_actor raw;
+    return current(call, error) &&
+        qa_q1_source_obituary_read(call->operation.game, actor, &raw, error) &&
+        qw_text(call, raw.name ? raw.name : "", error);
+}
+
+static bool qw_score(death_call *call, qa_actor_id actor, int delta, qa_error *error)
+{
+    return player_current(call, actor, error) &&
+        qa_q1_source_client_add_score(call->operation.game, actor, delta, error) &&
+        player_current(call, actor, error);
+}
+
+static bool qw_log(death_call *call, qa_actor_id killer, qa_actor_id victim, qa_error *error)
+{
+    return current(call, error) &&
+        qa_q1_wire_qw_logfrag(call->operation.game, killer, victim, error) && current(call, error);
+}
+
+static bool qw_is(death_call *call, qa_string_id id, const char *value)
+{
+    const char *text = qa_strings_cstr(qa_session_strings(call->app->session), id);
+    return text && !strcmp(text, value);
+}
+
+static bool qw_team(death_call *call, qa_actor_id actor, qa_string_id *out, qa_error *error)
+{
+    const char *team = NULL;
+    if (actor.registry) (void)qa_q1_source_client_info(call->operation.game, actor, "team", &team);
+    return current(call, error) && qa_strings_intern_cstr(
+        qa_session_strings(call->app->session), team ? team : "", out, error);
+}
+
+/* ClientObituary's locals retain the initial roll and team strings. Its other
+ * entity reads occur at the authored stages, after reached host callbacks. */
+static bool qw_obituary(death_call *call, const qa_q1_obituary_input *input, qa_error *error)
+{
+    float roll = qa_q1_game_random(call->operation.game);
+    qa_actor_id victim = input->victim.actor;
+    qa_actor_id attacker = input->attacker ? input->attacker->actor : (qa_actor_id){0};
+    qa_actor_id owner = input->telefrag_owner ? input->telefrag_owner->actor : (qa_actor_id){0};
+    qa_string_id attacker_team, victim_team;
+    double deathmatch;
+    if (!current(call, error) || !qw_team(call, attacker, &attacker_team, error) ||
+        !qw_team(call, victim, &victim_team, error) ||
+        !source_policy(call, "deathmatch", &deathmatch, error)) return false;
+    bool same_team = attacker_team == victim_team && !qw_is(call, attacker_team, "");
+    qa_string_id type = input->death_type;
+    qa_string_id killer_class = input->attacker ? input->attacker->classname : 0;
+    if (deathmatch > 3 && qw_is(call, type, "selfwater"))
+        return qw_name(call, victim, error) && qw_text(call, " electrocutes himself.\n ", error) &&
+            qw_score(call, victim, -1, error);
+    if (qw_is(call, killer_class, "teledeath"))
+        return qw_name(call, victim, error) && qw_text(call, " was telefragged by ", error) &&
+            qw_name(call, owner, error) && qw_text(call, "\n", error) &&
+            qw_log(call, owner, victim, error) && qw_score(call, owner, 1, error);
+    if (qw_is(call, killer_class, "teledeath2"))
+        return qw_text(call, "Satan's power deflects ", error) && qw_name(call, victim, error) &&
+            qw_text(call, "'s telefrag\n", error) && qw_score(call, victim, -1, error) &&
+            qw_log(call, victim, victim, error);
+    if (qw_is(call, killer_class, "teledeath3"))
+        return qw_name(call, victim, error) && qw_text(call, " was telefragged by ", error) &&
+            qw_name(call, owner, error) && qw_text(call, "'s Satan's power\n", error) &&
+            qw_score(call, victim, -1, error) && qw_log(call, victim, victim, error);
+    if (qw_is(call, type, "squish")) {
+        if (input->teamplay != 0 && same_team && !qa_actor_id_equal(victim, attacker))
+            return qw_log(call, attacker, attacker, error) && qw_score(call, attacker, -1, error) &&
+                qw_name(call, attacker, error) && qw_text(call, " squished a teammate\n", error);
+        if (qw_is(call, killer_class, "player") && !qa_actor_id_equal(victim, attacker))
+            return qw_name(call, attacker, error) && qw_text(call, " squishes ", error) &&
+                qw_name(call, victim, error) && qw_text(call, "\n", error) &&
+                qw_log(call, attacker, victim, error) && qw_score(call, attacker, 1, error);
+        return qw_log(call, victim, victim, error) && qw_score(call, victim, -1, error) &&
+            qw_name(call, victim, error) && qw_text(call, " was squished\n", error);
+    }
+    qa_q1_obituary_actor target, killer;
+    qa_q1_source_obituary_actor raw;
+    if (qw_is(call, killer_class, "player")) {
+        if (qa_actor_id_equal(victim, attacker)) {
+            if (!qw_log(call, attacker, attacker, error) || !qw_score(call, attacker, -1, error) ||
+                !qw_name(call, victim, error) || !actor_read(call, victim, &target, &raw, error)) return false;
+            const char *text = " becomes bored with life\n";
+            if (qw_is(call, type, "grenade")) text = " tries to put the pin back in\n";
+            else if (!qw_is(call, type, "rocket") && target.weapon == QA_Q1_LIGHTNING && target.water_level > 1)
+                text = target.water_type == -4 ? " discharges into the slime\n" :
+                    target.water_type == -5 ? " discharges into the lava\n" : " discharges into the water.\n";
+            return qw_text(call, text, error);
+        }
+        if (input->teamplay == 2 && same_team) {
+            const char *text = roll < .25f ? " mows down a teammate\n" :
+                roll < .50f ? " checks his glasses\n" : roll < .75f ?
+                " gets a frag for the other team\n" : " loses another friend\n";
+            return qw_name(call, attacker, error) && qw_text(call, text, error) &&
+                qw_score(call, attacker, -1, error) && qw_log(call, attacker, attacker, error);
+        }
+        if (!qw_log(call, attacker, victim, error) || !qw_score(call, attacker, 1, error) ||
+            !actor_read(call, attacker, &killer, &raw, error)) return false;
+        double quad_finished = raw.quad_finished;
+        if (!actor_read(call, victim, &target, &raw, error)) return false;
+        const char *first = "", *last = "";
+        if (qw_is(call, type, "nail")) { first = " was nailed by "; last = "\n"; }
+        else if (qw_is(call, type, "supernail")) { first = " was punctured by "; last = "\n"; }
+        else if (qw_is(call, type, "grenade")) {
+            first = target.health < -40 ? " was gibbed by " : " eats ";
+            last = target.health < -40 ? "'s grenade\n" : "'s pineapple\n";
+        } else if (qw_is(call, type, "rocket")) {
+            if (quad_finished > 0 && target.health < -40) {
+                roll = qa_q1_game_random(call->operation.game);
+                if (!current(call, error)) return false;
+                if (roll >= .6f)
+                    return qw_name(call, attacker, error) && qw_text(call, " rips ", error) &&
+                        qw_name(call, victim, error) && qw_text(call, " a new one\n", error);
+                first = roll < .3f ? " was brutalized by " : " was smeared by ";
+                last = "'s quad rocket\n";
+            } else { first = target.health < -40 ? " was gibbed by " : " rides "; last = "'s rocket\n"; }
+        } else if (killer.weapon == QA_Q1_AXE) { first = " was ax-murdered by "; last = "\n"; }
+        else if (killer.weapon == QA_Q1_SHOTGUN) { first = " chewed on "; last = "'s boomstick\n"; }
+        else if (killer.weapon == QA_Q1_SUPER_SHOTGUN) { first = " ate 2 loads of "; last = "'s buckshot\n"; }
+        else if (killer.weapon == QA_Q1_LIGHTNING) {
+            first = " accepts "; last = killer.water_level > 1 ? "'s discharge\n" : "'s shaft\n";
+        }
+        return qw_name(call, victim, error) && qw_text(call, first, error) &&
+            qw_name(call, attacker, error) && qw_text(call, last, error);
+    }
+    if (!qw_log(call, victim, victim, error) || !qw_score(call, victim, -1, error) ||
+        !actor_read(call, victim, &target, &raw, error)) return false;
+    int32_t water_type = target.water_type;
+    if (!qw_name(call, victim, error)) return false;
+    const char *text;
+    if (water_type == -3 || water_type == -4 || water_type == -5) {
+        if (water_type == -5) {
+            if (!actor_read(call, victim, &target, &raw, error)) return false;
+            if (target.health < -15) return qw_text(call, " burst into flames\n", error);
+        }
+        roll = qa_q1_game_random(call->operation.game);
+        if (!current(call, error)) return false;
+        text = water_type == -3 ? (roll < .5f ? " sleeps with the fishes\n" : " sucks it down\n") :
+            water_type == -4 ? (roll < .5f ? " gulped a load of slime\n" : " can't exist on slime alone\n") :
+            roll < .5f ? " turned into hot slag\n" : " visits the Volcano God\n";
+    } else if (qw_is(call, killer_class, "explo_box")) text = " blew up\n";
+    else if (qw_is(call, type, "falling")) text = " fell to his death\n";
+    else if (qw_is(call, type, "nail") || qw_is(call, type, "supernail")) text = " was spiked\n";
+    else if (qw_is(call, type, "laser")) text = " was zapped\n";
+    else if (qw_is(call, killer_class, "fireball")) text = " ate a lavaball\n";
+    else if (qw_is(call, killer_class, "trigger_changelevel")) text = " tried to leave\n";
+    else text = " died\n";
+    return qw_text(call, text, error);
+}
+
 bool application_native_q1_source_before_reaction(qa_application *app,
     const qa_damage_outcome *outcome, qa_error *error)
 {
@@ -293,6 +454,10 @@ bool application_native_q1_source_before_reaction(qa_application *app,
     else if (okay && outcome->request.attack.cause.kind == QA_CAUSE_ENVIRONMENT &&
         outcome->request.attack.cause.source.hazard == QA_HAZARD_FALL)
         okay = qa_strings_intern_cstr(qa_session_strings(app->session), "falling", &input.death_type, error);
+    if (okay && options.quakeworld && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC) {
+        okay = qw_obituary(&call, &input, error) && player_current(&call, actor, error);
+        goto finish;
+    }
     qa_q1_obituary_result result;
     if (okay) okay = qa_q1_obituary(call.operation.game, &input, &result, error) &&
         player_current(&call, actor, error);

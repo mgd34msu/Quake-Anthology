@@ -68,6 +68,22 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         }
     }
     q1_wire_state *wire = g->wire;
+    if (g->options.quakeworld) {
+        q1_qw_fraglog *log = &wire->qw_fraglog;
+        Q1_SAVE(io, u32, log->sequence);
+        Q1_SAVE(io, double, log->time);
+        if (!log->sequence || log->sequence > INT32_MAX || !isfinite(log->time) || log->time < 0)
+            return q1_save_fail(io, "Invalid QuakeWorld server fraglog clock");
+        for (size_t i = 0; i < 2; ++i) {
+            Q1_SAVE(io, u32, log->sizes[i]);
+            Q1_SAVE(io, bool, log->overflowed[i]);
+            if (log->sizes[i] > sizeof(log->buffers[i]) ||
+                !q1_save_bytes(io, log->buffers[i], log->sizes[i]))
+                return q1_save_fail(io, "Invalid QuakeWorld server fraglog extent");
+            if (log->sizes[i] && log->buffers[i][log->sizes[i] - 1])
+                return q1_save_fail(io, "QuakeWorld server fraglog lost its trailing NUL");
+        }
+    }
     Q1_SAVE(io, u64, wire->generation);
     Q1_SAVE(io, string, wire->map_path);
     Q1_SAVE(io, u32, wire->next_dynamic);

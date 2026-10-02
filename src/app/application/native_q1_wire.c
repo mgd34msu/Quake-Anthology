@@ -3,6 +3,7 @@
 #include "native_q1_wire_qw.h"
 #include "map_players_private.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q1_source_obituary.h"
 #include "qa/network_q1_nq.h"
 #include "qa/q1_text.h"
 #include "qa/text.h"
@@ -878,7 +879,8 @@ static bool emit_text(qa_application *app, application_provider *wire,
     const qa_builtin_event *event, qa_nq_svc op, qa_error *error) {
     const char *format = text(app, event->text);
     if (!format) return application_fail(error, QA_ERROR_FORMAT, "Q1 wire text lost its source format");
-    bool formatted = (event->flags & 2u) || event->argument_count || *format == '$';
+    bool formatted = !(event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL) &&
+        ((event->flags & 2u) || event->argument_count || *format == '$');
     const char **arguments = NULL;
     if (event->argument_count > SIZE_MAX / (sizeof(*arguments) + 32))
         return application_fail(error, QA_ERROR_MEMORY, "Q1 wire source text tuple exceeds its extent");

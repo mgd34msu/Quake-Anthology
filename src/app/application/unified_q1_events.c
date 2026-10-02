@@ -3,6 +3,7 @@
 #include "unified_output_json.h"
 #include "native_q1_wire.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q1_source_obituary.h"
 #include "qa/json.h"
 
 #include <stdlib.h>
@@ -221,7 +222,9 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
             arguments(&presentation, app, event, error) &&
             application_unified_json_text(&simulation, center ?
                 "{\"kind\":\"message\",\"event\":{\"kind\":\"center-print\",\"text\":" :
-                "{\"kind\":\"message\",\"event\":{\"kind\":\"print\",\"level\":2,\"text\":", error) &&
+                "{\"kind\":\"message\",\"event\":{\"kind\":\"print\",\"level\":", error) &&
+            (center || (field_number(&simulation, "", event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL ?
+                event->code : 2, error) && application_unified_json_text(&simulation, ",\"text\":", error))) &&
             text_id(&simulation, app, event->text, error) &&
             application_unified_json_text(&simulation, "}}", error);
         linked = true;

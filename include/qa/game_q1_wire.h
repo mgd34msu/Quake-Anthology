@@ -72,6 +72,18 @@ bool qa_q1_wire_world_read(const qa_q1_wire_receipt *, qa_q1_wire_world *);
 bool qa_q1_wire_player_read(const qa_q1_wire_receipt *, qa_actor_id, qa_q1_wire_player *, qa_error *);
 /* QW physical edicts retain source stats after their canonical actor retires.
  * A genuine host.spawn resets that physical row; slots are one-based. */
+/* The physical QW server's two SVS frag buffers persist across map travel.
+ * Views borrow this GAME until its next log mutation or retirement. */
+typedef struct qa_q1_qw_fraglog_view {
+    qa_bytes buffers[2];
+    uint32_t sequence;
+    double time;
+    bool overflowed[2];
+} qa_q1_qw_fraglog_view;
+bool qa_q1_wire_qw_logfrag(qa_q1_game *, qa_actor_id killer, qa_actor_id victim, qa_error *);
+bool qa_q1_wire_qw_log_read(const qa_q1_game *, qa_q1_qw_fraglog_view *, qa_error *);
+/* Called at the genuine SV_CheckLog stage with its actual server realtime. */
+bool qa_q1_wire_qw_log_check(qa_q1_game *, double realtime, qa_error *);
 bool qa_q1_wire_qw_stats_read(const qa_q1_wire_receipt *, uint32_t slot, double [16], qa_error *);
 bool qa_q1_wire_qw_stats_store(const qa_q1_wire_receipt *, uint32_t slot, const double [16], qa_error *);
 bool qa_q1_wire_board_observe(const qa_q1_wire_receipt *, uint32_t client_slot,

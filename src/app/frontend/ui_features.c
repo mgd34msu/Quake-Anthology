@@ -9,6 +9,7 @@
 #include "qa/text.h"
 #include "qa/ui_presentation_prepare.h"
 #include "qa/application_q1_composition.h"
+#include "qa/game_q1_source_obituary.h"
 #include <limits.h>
 
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
@@ -137,7 +138,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     const char *format=qa_strings_cstr(strings,event->text);
     if (!format) return frontend_fail(error,QA_ERROR_FORMAT,"Source message has no actual format string");
     *out=format;
-    if (event->family!=QA_GAME_Q1 ||
+    if (event->family!=QA_GAME_Q1 || (event->flags&QA_Q1_SOURCE_MESSAGE_LITERAL) ||
         (event->kind!=QA_BUILTIN_MESSAGE && event->kind!=QA_BUILTIN_CENTERPRINT) ||
         (!(event->flags&2u) && !event->argument_count && format[0]!='$')) return true;
     if (event->argument_count && !event->arguments)

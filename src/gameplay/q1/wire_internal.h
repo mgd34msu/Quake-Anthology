@@ -24,6 +24,12 @@ typedef struct q1_wire_edict {
     float freetime;
     bool free;
 } q1_wire_edict;
+typedef struct q1_qw_fraglog {
+    uint8_t buffers[2][1450];
+    uint32_t sizes[2], sequence;
+    double time;
+    bool overflowed[2];
+} q1_qw_fraglog;
 typedef struct q1_wire_state {
     q1_wire_table models, sounds;
     q1_wire_damage *damage;
@@ -33,6 +39,7 @@ typedef struct q1_wire_state {
     qa_string_id map_path;
     qa_string_id lightstyles[64];
     double qw_client_stats[32][16];
+    q1_qw_fraglog qw_fraglog;
     q1_wire_edict edicts[768];
     uint32_t next_dynamic, authored_entities, authored_cursor, inline_models, edict_limit;
     bool loading, id1;
