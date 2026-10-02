@@ -465,7 +465,9 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (ok && frontend->terminal) {
         qa_application_startup_source source; bool present=false;
         ok=frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error);
-        if (ok && present && source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME) {
+        if (ok && present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
+            source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+            source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME)) {
             terminal_console=source.console; terminal_context=source.command;
         }
         size_t lines;
