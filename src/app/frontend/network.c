@@ -3496,7 +3496,7 @@ static qa_download_options saved_download_options(qa_frontend_network *n)
 static bool downloads_ready(qa_frontend_network *n, qa_error *error)
 {
     if (n->downloads) return true;
-    if (!n->content && !qa_fs_root_open(n->frontend->options.application.content_root, &n->content, error)) return false;
+    if (!n->content && !qa_fs_root_open(n->frontend->options.application.user_root, &n->content, error)) return false;
     qa_download_options options = saved_download_options(n);
     return qa_downloads_create(frontend_tools_http(n->frontend), n->content, &options, &n->downloads, error);
 }
@@ -5319,7 +5319,7 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
             if(restored_browser!=old_browser) qa_server_browser_destroy(restored_browser);
             qa_server_admin_destroy(restored_admin);
         }
-        if (ok && content) ok = qa_fs_root_open(f->options.application.content_root, &n->content, error);
+        if (ok && content) ok = qa_fs_root_open(f->options.application.user_root, &n->content, error);
         if (ok && downloads) {
             qa_download_options download_options = saved_download_options(n);
             qa_download_checkpoint_refs resources = saved_download_refs(n);
@@ -5432,7 +5432,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         !frontend_network_unified_client_publication_ready(next->unified_client_service,error) ||
         !frontend_network_q2_host_publication_ready(next->q2_host,error))
         return frontend_fail(error, QA_ERROR_FORMAT, "network publication lacks idle qualified endpoint and candidate source ownership");
-    if ((next->content || active->content) && strcmp(candidate->options.application.content_root, published->options.application.content_root))
+    if ((next->content || active->content) && strcmp(candidate->options.application.user_root, published->options.application.user_root))
         return frontend_fail(error, QA_ERROR_FORMAT, "download candidate uses another filesystem namespace");
     if (next->downloads) {
         qa_download_checkpoint_refs candidate_resources = saved_download_refs(next);
