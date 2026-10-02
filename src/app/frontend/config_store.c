@@ -10,6 +10,7 @@
 #include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
 #include "network_config.h"
+#include "network_admin.h"
 #include "native_q3_client.h"
 #include "selected_effects.h"
 #include "shared_settings.h"
@@ -24,6 +25,7 @@
 #include "qa/console_save.h"
 #include "qa/catalog_save.h"
 #include "qa/text.h"
+#include "qa/server_admin.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -61,7 +63,7 @@ struct frontend_config_source {
     uint64_t declaration_owner;
     qa_cvar_archive source_archive,movement_archive,fallback_archive;
     config_seat seats[QA_INPUT_LOCAL_SEATS];
-    size_t seat_count,seat_index,registry_references;
+    size_t seat_count,seat_index,registry_references,admin_registered;
     qa_console_dialect movement_dialect;
     bool primary,published,configured,released,running,write_registered,dump_registered,has_mod;
     bool imported;
@@ -848,6 +850,20 @@ static frontend_config_source *published_primary(const frontend_config_store *ma
     }
     return NULL;
 }
+bool frontend_config_store_primary_server_read(frontend_config_store *manager,
+    qa_application_startup_source *out,bool *present,qa_error *error)
+{
+    if (!manager || !out || !present) return fail(error,QA_ERROR_ARGUMENT,"Server console read requires its actual configuration owner");
+    *out=(qa_application_startup_source){0}; *present=false;
+    frontend_config_source *source=published_primary(manager,manager->frontend->application);
+    if (!source) return true;
+    qa_command_context command;
+    if (!source->configured || !source->console || !source->cvars ||
+        qa_console_cvars(source->console)!=source->cvars || !current_command(source,&command,error)) return false;
+    *out=(qa_application_startup_source){.descriptor=instance(source),.scope=source->scope,
+        .console=source->console,.cvars=source->cvars,.command=command,.declaration_owner=source->declaration_owner};
+    *present=true; return true;
+}
 bool frontend_config_store_primary_legacy_read(const frontend_config_store *manager,uint32_t logical,
     frontend_config_legacy_view *out,bool *present,qa_error *error)
 {
@@ -1514,6 +1530,8 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     if (source->registry_references)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration source retains live client registry callback contexts");
     qa_input_console_destroy(source->bindings); source->bindings=NULL;
+    frontend_network_source_admin_unbind(source->console,source->command.owner,source->admin_registered);
+    source->admin_registered=0;
     if (source->write_registered) qa_console_unregister(source->console,"writeconfig",source->command.owner);
     if (source->dump_registered) qa_console_unregister(source->console,"condump",source->command.owner);
     source->write_registered=source->dump_registered=false;
@@ -1541,6 +1559,10 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
 }
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
+    if (source->primary && !source->imported &&
+        !qa_server_admin_declarations(source->cvars,source->declaration_owner,error)) return false;
+    if (source->primary && !frontend_network_source_admin_bind(source->manager->frontend,source->console,
+        source->command.owner,&source->admin_registered,error)) return false;
     if (source->primary && source->seat_count) {
         qa_input_console_options input={.console=source->console,.owner=source->command.owner,
             .user=source,.seat=binding_seat,.print=print};

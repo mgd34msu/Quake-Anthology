@@ -54,7 +54,7 @@ static bool native_mode(void *context, qa_actor_id actor, qa_q3_wire_mode *out,
     if (!out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire requires its match score output");
     if (!native_source_actor(provider, actor, &slot, error)) return false;
-    bool scoped = application_native_q3_source_command_entered(provider);
+    bool scoped = application_native_q3_source_entered(provider);
     qa_mode_id mode;
     if (scoped) {
         bool found;

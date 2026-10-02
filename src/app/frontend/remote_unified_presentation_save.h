@@ -18,7 +18,10 @@ typedef struct frontend_unified_presentation_refs {
         const q3n_client_refs *,frontend_unified_q3_runtime_factory_refs *,qa_error *);
 } frontend_unified_presentation_refs;
 
-/* The actual shared graph producer supplies the physical dictionaries. */
+/* The actual shared graph producer supplies the physical dictionaries. QUPC7
+ * also retains the received FRAME's offside renderer, prediction and genuine
+ * component/Source/CLIENT tokens. Capture requires returned callback custody;
+ * ordinary drawing remains blocked until that FRAME is published. */
 bool frontend_remote_unified_presentation_checkpoint(frontend_remote_unified *,
     const frontend_unified_presentation_refs *,qa_buffer *,qa_error *);
 /* Replica identities/recipes precede this whole-envelope decode and detached

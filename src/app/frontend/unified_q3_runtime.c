@@ -23,18 +23,32 @@ static bool parent_current(const frontend_unified_q3_runtime *o)
 }
 bool frontend_unified_q3_runtime_current(const frontend_unified_q3_runtime *o)
 { return parent_current(o) && o->complete && !o->faulted; }
-static bool children_idle(const frontend_unified_q3_runtime *o)
+static bool children_returned(const frontend_unified_q3_runtime *o,bool checkpoint)
 {
     const frontend_unified_q3_runtime_owners *c=&o->children;
+    const q3n_compiled_source_rebind_ticket *t=checkpoint&&o->rebind?
+        frontend_unified_q3_client_frame_rebind(o->rebind):NULL;
     return (!c->presentation || qa_q3_presentation_idle(c->presentation)) &&
         (!c->weapons || q3n_weapons_idle(c->weapons)) && (!c->events || q3n_events_idle(c->events)) &&
         (!c->particles || q3n_particles_idle(c->particles)) && (!c->view || q3n_view_idle(c->view)) &&
         (!c->player_state || q3n_player_state_idle(c->player_state)) && (!c->hud || q3n_hud_idle(c->hud)) &&
-        (!c->commands || q3n_server_commands_idle(c->commands)) && (!c->loading || q3n_loading_idle(c->loading)) &&
-        (!c->mission || q3n_mission_hud_idle(c->mission)) && frontend_unified_q3_snapshots_idle(c->snapshots);
+        (!c->commands || (t?q3n_server_commands_rebind_checkpoint_current(c->commands,t):q3n_server_commands_idle(c->commands))) &&
+        (!c->loading || q3n_loading_idle(c->loading)) &&
+        (!c->mission || (t?q3n_mission_hud_rebind_checkpoint_current(c->mission,t):q3n_mission_hud_idle(c->mission))) &&
+        frontend_unified_q3_snapshots_idle(c->snapshots);
 }
 bool frontend_unified_q3_runtime_idle(const frontend_unified_q3_runtime *o)
-{ return !o || (!o->busy && !o->entered && !o->command && !o->rebind && children_idle(o)); }
+{ return !o || (!o->busy && !o->entered && !o->command && !o->rebind && children_returned(o,false)); }
+const frontend_unified_q3_client_frame *frontend_unified_q3_runtime_rebind_frame(const frontend_unified_q3_runtime *o)
+{ return o?o->rebind:NULL; }
+bool frontend_unified_q3_runtime_checkpoint_current(const frontend_unified_q3_runtime *o)
+{
+    return o && !o->busy && !o->entered && !o->command && !o->prepared && !o->video &&
+        frontend_unified_q3_client_checkpoint_stage_current(o->options.client,o->rebind) && children_returned(o,true);
+}
+bool frontend_unified_q3_runtime_rebind_checkpoint_ready(const frontend_unified_q3_runtime *o,
+    const frontend_unified_q3_client_frame *frame)
+{ return o && frame && o->rebind==frame && frontend_unified_q3_runtime_checkpoint_current(o); }
 const q3n_compiled_frame *frontend_unified_q3_runtime_entered(const frontend_unified_q3_runtime *o)
 { return o && o->busy ? o->entered : NULL; }
 static bool cut(frontend_unified_q3_runtime *o,const q3n_frame *f,qa_error *e)
@@ -383,7 +397,7 @@ bool frontend_unified_q3_runtime_destroy(frontend_unified_q3_runtime **out,qa_er
     o->retiring=true; if(!frontend_unified_q3_runtime_close_children(o,e))return false;
     qa_buffer_free(&o->import_bytes); free(o); *out=NULL; return true; }
 bool frontend_unified_q3_runtime_owners_read(const frontend_unified_q3_runtime *o,frontend_unified_q3_runtime_owners *out,qa_error *e)
-{ if(!o || !out || !o->complete || !frontend_unified_q3_runtime_idle(o))return fail(e,"Unified CG owner read requires its returned children");
+{ if(!o || !out || !o->complete || (!frontend_unified_q3_runtime_idle(o)&&!frontend_unified_q3_runtime_checkpoint_current(o)))return fail(e,"Unified CG owner read requires its returned children");
     *out=o->children; return true; }
 static bool initialize(void *ctx,const q3n_compiled_frame *r,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; q3n_frame f; if(!begin(o,r,&f,e))return false;
@@ -945,8 +959,12 @@ bool frontend_unified_q3_runtime_rebind_prepare(frontend_unified_q3_runtime *o,c
 {
     const q3n_compiled_source_rebind_ticket *ticket=frontend_unified_q3_client_frame_rebind(frame);
     const qa_command_context *context=frontend_unified_q3_client_frame_context(frame);
-    if(!o || o->rebind || o->prepared || !frontend_unified_q3_runtime_idle(o) || !ticket || !context)
+    if(!o || !frame || !o->complete || o->retiring || o->restoring || o->rebind || o->prepared ||
+       !frontend_unified_q3_runtime_idle(o) || !context ||
+       !frontend_unified_q3_client_frame_owned(o->options.client,frame) ||
+       !frontend_unified_q3_client_ready(frame))
         return fail(e,"Unified CG round requires the genuine prepared CLIENT cohort");
+    if(!ticket){o->rebind=frame;return true;}
     if(!q3n_server_commands_rebind_prepare(o->children.commands,ticket,context,e))return false;
     if(o->children.mission && !q3n_mission_hud_rebind_prepare(o->children.mission,ticket,context,e)) {
         q3n_server_commands_rebind_abort(o->children.commands,ticket); return false; }
@@ -954,16 +972,35 @@ bool frontend_unified_q3_runtime_rebind_prepare(frontend_unified_q3_runtime *o,c
 }
 bool frontend_unified_q3_runtime_rebind_ready(const frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
-    return o && o->rebind==f && frontend_unified_q3_client_ready(f) && q3n_server_commands_rebind_ready(o->children.commands,t) &&
-        (!o->children.mission || q3n_mission_hud_rebind_ready(o->children.mission,t)); }
+    return o && f && o->rebind==f && frontend_unified_q3_client_frame_owned(o->options.client,f) &&
+        frontend_unified_q3_client_ready(f) && (!t || (q3n_server_commands_rebind_ready(o->children.commands,t) &&
+        (!o->children.mission || q3n_mission_hud_rebind_ready(o->children.mission,t)))); }
+bool frontend_unified_q3_runtime_rebind_restore(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *frame,qa_error *e)
+{
+    if(o && frame && o->restoring && o->restored && o->restored_rebind_expected && o->rebind==frame)
+        return frontend_unified_q3_runtime_rebind_checkpoint_ready(o,frame);
+    const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(frame);
+    const qa_command_context *context=frontend_unified_q3_client_frame_context(frame);
+    if(!o || !frame || !o->restoring || !o->restored || !o->restored_rebind_expected || o->rebind ||
+       !frontend_unified_q3_runtime_idle(o) || !context ||
+       !frontend_unified_q3_client_checkpoint_stage_current(o->options.client,frame))
+        return fail(e,"Imported CG cohort requires its exact restored CLIENT frame");
+    if(t) {
+        if(!q3n_server_commands_rebind_restore(o->children.commands,t,context,e))return false;
+        if(o->children.mission && !q3n_mission_hud_rebind_restore(o->children.mission,t,context,e)) {
+            q3n_server_commands_rebind_abort(o->children.commands,t);return false;
+        }
+    }
+    o->rebind=frame;return true;
+}
 void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { if(!frontend_unified_q3_runtime_rebind_ready(o,f))return;
     const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_commit(o->children.commands,t);
     if(o->children.mission)q3n_mission_hud_rebind_commit(o->children.mission,t);
-    o->rebind=NULL; }
+    o->rebind=NULL;o->restored_rebind_expected=false; }
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { if(!o || o->rebind!=f)return; const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_abort(o->children.commands,t);
     if(o->children.mission)q3n_mission_hud_rebind_abort(o->children.mission,t);
-    o->rebind=NULL; }
+    o->rebind=NULL;o->restored_rebind_expected=false; }

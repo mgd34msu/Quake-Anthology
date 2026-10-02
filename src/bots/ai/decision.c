@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "source_event_state.h"
+#include "source_team_state.h"
 #include "source_inventory.h"
 #include "source_player.h"
 #include "source_view.h"
@@ -421,7 +423,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     bool accepted,nearby_found;
                     if(!bot_ai_source_wants_camp(b,s,&accepted,e)) return false;
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-                    float range=objective_nearby_range(b,s,s->long_term_goal==BOT_LTG_DEFEND?400:150);
+                    float range=objective_nearby_range(b,s,bot_ai_long_term_goal(s)==BOT_LTG_DEFEND?400:150);
                     if(!nearby(b,s,&goal,range,&nearby_found,e)) return false;
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                     if(nearby_found) {
@@ -464,11 +466,11 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(bot_ai_enemy_death_time(s)<b->time-1) {
                         bot_ai_enemy_death_time_set(s,0);
                         bool chat=false;
-                        if(s->source_events.enemy_suicide) {
+                        if(bot_ai_enemy_suicide(s)) {
                             DECISION_CALL(bot_ai_source_chat_enemy_suicide(b,s,&chat,e));
                         }
                         chat=false;
-                        if(s->source_events.last_killed_player==s->source_enemy) {
+                        if(bot_ai_last_killed_player(s)==s->source_enemy) {
                             DECISION_CALL(bot_ai_source_chat_kill(b,s,&chat,e));
                         }
                         if(chat) {

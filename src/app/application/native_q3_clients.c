@@ -97,7 +97,7 @@ static bool source(application_provider *provider, qa_actor_id actor,
     if (!app || app->destroy_requested || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
         ((!app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)&&
-         !application_native_q3_source_command_entered(provider)) ||
+         !application_native_q3_source_entered(provider)) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 client source has retired");
     return qa_q3_native_client_slot(provider->state.q3, actor, slot, error);
@@ -124,7 +124,7 @@ static bool native_rules(application_provider *provider,qa_mode_id mode,qa_mode_
 application_provider *application_native_q3_mode_source_provider(qa_application *app, qa_mode_id mode)
 {
     application_provider *chosen = app ? application_mode_provider(app, mode) : NULL;
-    if (chosen && application_native_q3_source_command_entered(chosen))
+    if (chosen && application_native_q3_source_entered(chosen))
         return application_native_q3_source_mode_current(chosen, mode, NULL) ? chosen : NULL;
     if (!chosen || chosen->kind != APPLICATION_PROVIDER_Q3 || !app->primary_mode_ready ||
         mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation)
@@ -172,7 +172,7 @@ bool application_native_q3_mode_source(void *opaque, qa_mode_id mode, qa_actor_o
     qa_application *app = opaque;
     application_provider *provider = application_native_q3_mode_source_provider(app, mode);
     qa_mode_view view;
-    bool associated=provider&&application_native_q3_source_command_entered(provider)&&
+    bool associated=provider&&application_native_q3_source_entered(provider)&&
         application_native_q3_source_mode_current(provider,mode,NULL);
     if (!owner || !provider || ((!app->primary_mode_ready ||
         mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation)&&!associated) ||
@@ -191,7 +191,7 @@ bool application_native_q3_source_score_bound(void *opaque, qa_mode_id mode,
     if (!app || !owner || app->destroy_requested || !app->modes ||
         !qa_actors_get(qa_session_actors(app->session), actor)) return false;
     application_provider *candidate=application_native_q3_mode_source_provider(app,mode);
-    bool associated=candidate&&application_native_q3_source_command_entered(candidate);
+    bool associated=candidate&&application_native_q3_source_entered(candidate);
     if(associated&&!application_native_q3_source_mode_current(candidate,mode,NULL)) return false;
     application_provider *provider=associated?candidate:application_world_provider(app,QA_ROLE_ENTITIES,"");
     if(!associated&&(!app->primary_mode_ready||mode.slot!=app->primary_mode.slot||
@@ -273,7 +273,7 @@ static bool team_counts(application_provider *provider, qa_mode_id mode,
     if (!app || app->destroy_requested || provider->kind != APPLICATION_PROVIDER_Q3 ||
         !provider->state.q3 || !provider->constructed || provider->close_pending ||
         (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider&&
-         !application_native_q3_source_command_entered(provider)) ||
+         !application_native_q3_source_entered(provider)) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error)) return false;
     counts[0] = counts[1] = 0;
     for (uint32_t slot = 0; slot < maximum; ++slot) {
@@ -411,7 +411,7 @@ static bool slot_source(application_provider *provider, uint32_t slot,
         provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
         ((!app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)&&
-         !application_native_q3_source_command_entered(provider)) ||
+         !application_native_q3_source_entered(provider)) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error) || slot >= maximum ||
         !qa_q3_source_binding_read(provider->state.q3, slot, &binding, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 fixed client source has retired");
@@ -720,7 +720,7 @@ bool application_native_q3_client_respawn(void *opaque, qa_actor_id actor, qa_er
     application_provider *provider = opaque;
     if (provider && provider->application &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider&&
-        !application_native_q3_source_command_entered(provider))
+        !application_native_q3_source_entered(provider))
         return application_players_selected_character_respawn(provider, actor, error);
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
@@ -757,7 +757,7 @@ bool application_native_q3_client_death_items(void *opaque, qa_actor_id actor,
     application_provider *provider = opaque;
     if (provider && provider->application &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider&&
-        !application_native_q3_source_command_entered(provider))
+        !application_native_q3_source_entered(provider))
         return true;
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
@@ -783,13 +783,15 @@ static bool client_disconnect(application_provider *provider,
     qa_q3_native_client client;
     qa_q3_client_session sess;
     qa_application *app = provider ? provider->application : NULL;
+    bool primary = app && app->players && app->players->map_provider == provider &&
+        application_world_provider(app, QA_ROLE_ENTITIES, "") == provider;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
-    bool ok = application_bots_catalog_remove_begin(app, slot, error) &&
+    bool ok = (!primary || application_bots_catalog_remove_begin(app, slot, error)) &&
         source(provider, actor, &slot, error) &&
-        application_rankings_disconnect(app, actor, error) &&
+        (!primary || application_rankings_disconnect(app, actor, error)) &&
         source(provider, actor, &slot, error) &&
-        application_bots_client_shutdown(app, actor, false, error) &&
+        (!primary || application_bots_client_shutdown(app, actor, false, error)) &&
         source(provider, actor, &slot, error) &&
         (!drop_transport || application_native_q3_wire_drop_transport(provider, slot, error)) &&
         source(provider, actor, &slot, error) &&
@@ -856,18 +858,12 @@ bool application_native_q3_client_disconnect(application_provider *provider,
     return client_disconnect(provider, actor, false, error);
 }
 
-bool application_native_q3_clients_drain(qa_application *app, qa_error *error)
+bool application_native_q3_clients_drain_provider(application_provider *provider, qa_error *error)
 {
-    if (!app || app->destroy_requested)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain has no admitted application");
-    application_provider *provider = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3) return true;
-    if (!application_rankings_idle(app) ||
-        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
-         app->operation != APPLICATION_CONFIGURING) || !qa_session_safe(app->session) ||
-        !qa_modes_idle(app->modes) || !qa_world_idle(app->world) || !qa_combat_idle(app->combat))
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain requires released source callbacks");
-    if (!application_native_q3_console_borrow(provider, error)) return false;
+    qa_application *app = provider ? provider->application : NULL;
+    if (!app || app->destroy_requested || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        !provider->state.q3 || !provider->constructed || !provider->attached || provider->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain has no admitted provider");
     uint32_t maximum;
     bool ok = qa_q3_source_max_clients(provider->state.q3, &maximum, error);
     for (uint32_t slot = 0; ok && slot < maximum; ++slot) {
@@ -876,16 +872,46 @@ bool application_native_q3_clients_drain(qa_application *app, qa_error *error)
         bool pending;
         ok = application_native_q3_wire_drop_client_read(provider, slot, &actor, &reason, &pending, error);
         if (!ok || !pending) continue;
+        if (!application_rankings_idle(app) ||
+            (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
+             app->operation != APPLICATION_CONFIGURING) || !qa_session_safe(app->session) ||
+            !qa_modes_idle(app->modes) || !qa_world_idle(app->world) || !qa_combat_idle(app->combat) ||
+            !application_native_q3_console_idle(provider) || !application_native_q3_wire_idle(provider))
+            return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain requires released source callbacks");
+        application_native_q3_source_drop_scope scope;
+        if (!application_native_q3_source_drop_begin(provider, slot, actor, &scope, error)) return false;
         uint32_t actual_slot;
-        ok = source(provider, actor, &actual_slot, error) && actual_slot == slot &&
+        qa_mode_id mode;
+        bool primary = app->players && app->players->map_provider == provider &&
+            application_world_provider(app, QA_ROLE_ENTITIES, "") == provider;
+        ok = client_mode(provider, &mode, error) &&
+             source(provider, actor, &actual_slot, error) && actual_slot == slot &&
              client_disconnect(provider, actor, true, error) &&
-             application_players_native_q3_retire(app, provider, actor, error);
+             application_native_q3_source_drop_disconnected(&scope, error) &&
+             (!primary || application_players_native_q3_retire(app, provider, actor, error));
         if (!ok && (!error || !error->code))
             application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 DROP changed its actual client generation");
+        qa_error close_error = {0};
+        if (!application_native_q3_source_drop_end(&scope, &close_error) && ok) {
+            if (error) *error = close_error;
+            ok = false;
+        }
         (void)reason;
     }
-    application_native_q3_console_release(provider);
     return ok;
+}
+
+bool application_native_q3_clients_drain(qa_application *app, qa_error *error)
+{
+    if (!app || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain has no admitted application");
+    for (size_t index = 0; index < app->provider_count; ++index) {
+        application_provider *provider = app->providers[index];
+        if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->native_q3_wire || !provider->constructed ||
+            !provider->attached || provider->close_pending) continue;
+        if (!application_native_q3_clients_drain_provider(provider, error)) return false;
+    }
+    return true;
 }
 
 bool application_native_q3_client_scoreboard(application_provider *provider,

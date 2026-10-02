@@ -276,7 +276,7 @@ static void q3_ground_trace(qa_q3_step *step) {
     qa_q3_movement_state *state = q3_state(step);
     qa_vec3 down = qa_vec_add(state->origin, qa_v3(0, 0, -0.25f));
     qa_trace_result trace;
-    if (!q3_trace(step, state->origin, down, &trace)) return;
+    if (!q3_move_trace(step, state->origin, down, &trace)) return;
     if (trace.all_solid) {
         bool corrected = false;
         for (int i = -1; i <= 1 && !corrected; ++i) {
@@ -284,9 +284,9 @@ static void q3_ground_trace(qa_q3_step *step) {
                 for (int k = -1; k <= 1; ++k) {
                     qa_vec3 point = qa_vec_add(state->origin, qa_v3((float)i, (float)j, (float)k));
                     qa_trace_result test;
-                    if (!q3_trace(step, point, point, &test)) return;
+                    if (!q3_move_trace(step, point, point, &test)) return;
                     if (!test.all_solid) {
-                        if (!q3_trace(step, state->origin, down, &trace)) return;
+                        if (!q3_move_trace(step, state->origin, down, &trace)) return;
                         corrected = true;
                         break;
                     }
@@ -303,7 +303,7 @@ static void q3_ground_trace(qa_q3_step *step) {
     if (trace.fraction == 1) {
         if (state->ground.hit != QA_TRACE_HIT_NONE) {
             qa_trace_result farther;
-            if (!q3_trace(step, state->origin, qa_vec_add(state->origin, qa_v3(0, 0, -64)), &farther)) return;
+            if (!q3_move_trace(step, state->origin, qa_vec_add(state->origin, qa_v3(0, 0, -64)), &farther)) return;
             if (farther.fraction == 1) q3_jump_animation(step);
         }
         if (q3_active(step)) q3_leave_ground(step);
@@ -408,7 +408,7 @@ static void q3_duck(qa_q3_step *step) {
     else if (state->movement_flags & Q3_DUCKED) {
         context->result->bounds = environment->has_body_bounds ? environment->body_bounds : q3_standing_bounds(step);
         qa_trace_result trace;
-        if (!q3_trace(step, state->origin, state->origin, &trace)) return;
+        if (!q3_move_trace(step, state->origin, state->origin, &trace)) return;
         if (!trace.all_solid) state->movement_flags &= ~(uint32_t)Q3_DUCKED;
     }
     qa_bounds requested = state->movement_flags & Q3_DUCKED ? input->crouched.bounds : q3_standing_bounds(step);

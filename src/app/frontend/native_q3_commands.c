@@ -145,7 +145,10 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
             memcpy(args+used,command->argv[i],n); used+=n;
         }
         args[used]=0; if(used>127)args[127]=0;
-        snprintf(text,128,"%s %i %s",lower((unsigned char)*name)=='v'?"vtell":"tell",client,args); return send(row,text,e);
+        size_t prefix=(size_t)snprintf(text,128,"%s %i ",lower((unsigned char)*name)=='v'?"vtell":"tell",client);
+        size_t message=strlen(args); if(message>127-prefix)message=127-prefix;
+        memcpy(text+prefix,args,message); text[prefix+message]=0;
+        return send(row,text,e);
     }
     if(equal(name,"loaddeferred")) {
         q3n_native_frame_options projected;

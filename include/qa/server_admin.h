@@ -16,6 +16,8 @@ typedef struct qa_admin_hooks {
     uint32_t (*players)(void *);
     uint32_t (*random)(void *);
     void (*record)(void *, const qa_net_address *, qa_admin_result);
+    qa_cvars *(*rate_registry)(void *);
+    void (*print)(void *, const char *);
 } qa_admin_hooks;
 typedef struct qa_admin_options {
     qa_console_dialect dialect;
@@ -25,6 +27,8 @@ typedef struct qa_admin_options {
     qa_admin_hooks hooks;
 } qa_admin_options;
 bool qa_server_admin_create(const qa_admin_options *, qa_server_admin **, qa_error *);
+bool qa_server_admin_declarations(qa_cvars *, uint64_t owner, qa_error *);
+bool qa_server_admin_policy(qa_server_admin *,qa_console_dialect,bool deny_matches,bool public_server,qa_error *);
 void qa_server_admin_destroy(qa_server_admin *);
 bool qa_server_admin_filter(qa_server_admin *, const char *source_mask, bool remove, qa_error *);
 bool qa_server_admin_rejects(const qa_server_admin *, const qa_net_address *);

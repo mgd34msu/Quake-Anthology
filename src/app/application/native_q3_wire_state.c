@@ -11,6 +11,7 @@
 #include "qa/application_native_q3_wire.h"
 #include "qa/application_startup_prepare.h"
 #include "unified_q3_events.h"
+#include "network_unified.h"
 
 #include <limits.h>
 #include <math.h>
@@ -543,6 +544,17 @@ bool application_native_q3_wire_drop_transport(application_provider *provider, u
             return false;
         }
         return true;
+    }
+    if (!wire->server.drop_client) {
+        qa_actor_id actor;
+        qa_net_client_id recipient;
+        qa_net_seat_id seat;
+        bool remote;
+        if (!application_unified_source_drop_recipient(provider->application, provider->owner, slot,
+            client->drop_reason, &actor, &recipient, &seat, &remote, error)) return false;
+        if (remote)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native Q3 remote DROP has no actual transport owner");
     }
     /* Mark entry before invoking a fallible external transport. A failed
      * callback may have committed its peer retirement and must not replay. */

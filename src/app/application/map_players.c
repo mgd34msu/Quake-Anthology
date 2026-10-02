@@ -1356,15 +1356,23 @@ bool application_q3_find_intermission_pose(application_provider *provider,
     qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
 {
     qa_application *app = provider ? provider->application : NULL;
+    bool scoped = application_native_q3_source_entered(provider);
     if (!app || !origin || !angles || provider->kind != APPLICATION_PROVIDER_Q3 ||
         !provider->state.q3 || !provider->constructed || !provider->attached ||
         provider->close_pending || app->destroy_requested || !app->world ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_CONFIGURING &&
          app->operation != APPLICATION_ADVANCING) ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)
+        (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider && !scoped))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 intermission pose requires its actual GAME source");
     if (!application_native_q3_console_borrow(provider, error)) return false;
+    qa_q3_game *game = provider->state.q3;
     bool okay = q3_intermission_pose(provider, origin, angles, error);
+    if (okay && (provider->application != app || provider->state.q3 != game ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        app->destroy_requested || (scoped ? !application_native_q3_source_entered(provider) :
+            application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)))
+        okay = application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 intermission pose lost its actual GAME source during selection");
     application_native_q3_console_release(provider);
     return okay;
 }

@@ -13,6 +13,7 @@ struct frontend_unified_q3_runtime {
     int32_t old_time, frame_milliseconds, client_frame, presentation_time;
     uint32_t stereo;
     bool complete, initialized, busy, faulted, retiring, restoring, restored, passive;
+    bool restored_rebind_expected;
     bool prepared, prediction_prepared, prediction_applied, information_prepared, rendered;
     qa_q3_supplement *supplement;
     struct qa_q3_source_scene_bank *scene_bank;

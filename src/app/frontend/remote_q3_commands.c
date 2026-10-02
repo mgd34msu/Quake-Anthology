@@ -208,7 +208,10 @@ static bool dispatch(frontend_remote_q3_commands *o,const qa_command_invocation 
             memcpy(args+used,call->argv[i],n); used+=n;
         }
         args[used]=0; if(used>127)args[127]=0;
-        snprintf(text,128,"%s %i %s",lower((unsigned char)*name)=='v'?"vtell":"tell",client,args); return send(o,call,text,e);
+        size_t prefix=(size_t)snprintf(text,128,"%s %i ",lower((unsigned char)*name)=='v'?"vtell":"tell",client);
+        size_t message=strlen(args); if(message>127-prefix)message=127-prefix;
+        memcpy(text+prefix,args,message); text[prefix+message]=0;
+        return send(o,call,text,e);
     }
     if(equal(name,"loaddeferred"))return frontend_remote_q3_runtime_load_deferred(o->runtime,f,e);
     if(equal(name,"startOrbit")) {

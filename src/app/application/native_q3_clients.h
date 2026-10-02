@@ -44,6 +44,7 @@ bool application_native_q3_client_pick_team(application_provider *, int32_t igno
 bool application_native_q3_mode_vote_calls(void *, qa_mode_id, qa_actor_id,
     bool team_vote, int32_t *, qa_error *);
 bool application_native_q3_clients_drain(qa_application *, qa_error *);
+bool application_native_q3_clients_drain_provider(application_provider *, qa_error *);
 bool application_native_q3_mode_team_request(void *, qa_mode_id, qa_actor_id, qa_team_id,
     bool spectator, bool automatic, int32_t spectator_state, int32_t spectator_client,
     bool *accepted, bool *changed, qa_error *);

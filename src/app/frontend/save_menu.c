@@ -235,7 +235,7 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
         if (entry->error.code != QA_OK) snprintf(detail, 128, "Unreadable save");
         else if (entry->format==QA_SAVE_SLOT_SHARED) snprintf(detail, 128, "%llu:%02llu elapsed", (unsigned long long)(entry->metadata.elapsed_ns / UINT64_C(60000000000)),
             (unsigned long long)(entry->metadata.elapsed_ns / UINT64_C(1000000000) % 60));
-        else if (state->save_qualification[i].code!=QA_OK) snprintf(detail,128,"%s",state->save_qualification[i].message);
+        else if (state->save_qualification[i].code!=QA_OK) snprintf(detail,128,"%.127s",state->save_qualification[i].message);
         else { char time[32]; if (!qa_format_number(entry->source.time,time,error)) return false;
             snprintf(detail,128,"%s · %ss · kills %s/%s · secrets %s/%s",entry->source.map,time,
                 entry->source.killed_monsters?entry->source.killed_monsters:"?",

@@ -89,7 +89,8 @@ static bool current(const frontend_unified_q3_commands *o,bool checkpoint,q3n_co
     q3n_compiled_source *source=frontend_unified_q3_client_source(o->options.client);
     if(!(checkpoint?q3n_compiled_source_checkpoint_read(source,&actual,e):q3n_compiled_source_read(source,&actual,e)))return false;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->options.replica);
-    const qa_command_context *origin=checkpoint?frontend_unified_q3_client_checkpoint_context(o->options.client):
+    const qa_command_context *origin=checkpoint?frontend_unified_q3_client_checkpoint_stage_context(o->options.client,
+        frontend_unified_q3_runtime_rebind_frame(o->options.runtime)):
         frontend_unified_q3_client_context(o->options.client);
     if(!domain || domain->application!=o->options.frontend->application || domain->console!=o->console ||
         actual.basis.receiver!=o->receiver || actual.basis.product!=o->product || !origin ||

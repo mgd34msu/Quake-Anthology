@@ -43,7 +43,7 @@ static bool source_current(void *context,const application_q3_scene_context *vie
 {
     remote_component *r=context;
     if(!published(r)||!r->frame||!view||view->generation!=r->state.generation) return false;
-    remote_component_frame *frame=view->baseline?r->baseline:r->frame;
+    remote_component_frame *frame=view->baseline&&!r->state.player_events?r->baseline:r->frame;
     if(!frame||view->revision!=frame->context.revision||view->game_state_revision!=frame->context.game_state_revision||
         view->client_number!=frame->context.client_number||
         !qa_actors_get(frontend_remote_unified_registry(r->parent->replica),frame->viewer)) return false;
@@ -80,7 +80,7 @@ static bool presentation_time(remote_component *r,int32_t *time,int32_t *elapsed
 }
 static bool acquire(void *context,bool baseline,application_q3_scene_context *out,qa_error *e)
 {
-    remote_component *r=context; remote_component_frame *f=baseline?r->baseline:r->frame;
+    remote_component *r=context; remote_component_frame *f=baseline&&!r->state.player_events?r->baseline:r->frame;
     if(!published(r)||r->acquired||!f||!out)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component has no entered received Source frame");
     *out=f->context; out->baseline=baseline;

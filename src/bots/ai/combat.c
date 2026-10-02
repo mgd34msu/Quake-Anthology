@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_event_state.h"
 #include "source_inventory.h"
 #include "source_player.h"
 #include "source_view.h"
@@ -241,7 +242,7 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
         qa_bot_entity source_enemy;
         if(!b->services.entity(b->services.context,actor,&source_enemy,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,actor)) return true;
-        s->source_enemy=source_enemy.number;s->source_events.enemy_suicide=false;
+        s->source_enemy=source_enemy.number;bot_ai_enemy_suicide_set(s,false);
         s->view.enemy = actor; bot_ai_enemy_sight_time_set(s,b->time-(previous ? 2 : 0));
         bot_ai_enemy_visible_time_set(s,b->time); bot_ai_enemy_death_time_set(s,0);
         bot_ai_enemy_origin_set(s,player.origin);bot_ai_enemy_velocity_set(s,player.velocity);

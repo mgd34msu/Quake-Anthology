@@ -246,7 +246,7 @@ bool application_native_q3_team_check_hurt_carrier(void *opaque, qa_actor_id tar
     application_provider *provider = opaque;
     if (provider && provider->application &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
-        !application_native_q3_source_command_entered(provider))
+        !application_native_q3_source_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(opaque, &scope, error)) return false;
@@ -274,7 +274,7 @@ bool application_native_q3_source_death_score(void *opaque, qa_actor_id target,
     application_provider *provider = opaque;
     if (provider && provider->application &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
-        !application_native_q3_source_command_entered(provider))
+        !application_native_q3_source_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(provider, &scope, error)) return false;
@@ -421,7 +421,7 @@ bool application_native_q3_team_frag_bonuses(void *opaque, qa_actor_id target,
     application_provider *provider = opaque;
     if (provider && provider->application &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
-        !application_native_q3_source_command_entered(provider))
+        !application_native_q3_source_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(opaque, &scope, error)) return false;

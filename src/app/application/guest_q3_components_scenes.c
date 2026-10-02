@@ -39,7 +39,7 @@ bool q3components_player_event(void *context,const application_q3_scene_player_e
 {
     component_game_row *game=context;
     if(!game||!event||!sequence||!q3components_current(game)) return application_fail(e,QA_ERROR_ARGUMENT,"Player event lost its admitted component Source");
-    if(!application_unified_q3_component_player(game->roster->options.application,&game->publication,event,sequence,e)) return false;
+    if(!application_unified_q3_component_player(game->roster->options.application,&game->publication,event,e)) return false;
     for(component_scene_row *row=game->scenes;row;row=row->next) {
         if(!row->profile||!row->profile->player_events||!row->initialized) continue;
         if(row->event_count==SIZE_MAX/sizeof(*row->events)) return application_fail(e,QA_ERROR_MEMORY,"Player event delivery queue overflows");

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_event_state.h"
 #include "source_match.h"
 
 static const char *const cvar_names[BOT_SOURCE_MATCH_CVARS] = {
@@ -175,8 +176,8 @@ static bool state_current(qa_bots *bots, uint32_t client, qa_actor_id actor,
 
 static float rank(const bot_ai_state *state)
 {
-    return state ? (float)signed_word((uint32_t)state->source_events.num_kills * 2u -
-        (uint32_t)state->source_events.num_deaths) : -1;
+    return state ? (float)signed_word((uint32_t)bot_ai_num_kills(state) * 2u -
+        (uint32_t)bot_ai_num_deaths(state)) : -1;
 }
 
 typedef struct genetic_warning {
@@ -246,7 +247,7 @@ bool bot_ai_source_interbreed_end_match(qa_bots *bots, qa_error *error)
     }
     for (uint32_t client = 0; client < 64; ++client) {
         bot_ai_state *state = source_state(bots, client);
-        if (state) { state->source_events.num_kills = 0; state->source_events.num_deaths = 0; }
+        if (state) { bot_ai_num_kills_set(state,0); bot_ai_num_deaths_set(state,0); }
     }
     return true;
 }

@@ -60,12 +60,9 @@ typedef struct bot_ai_state {
         float until;
     } activations[8];
     char team_leader_name[32];
-    int32_t decisionmaker, long_term_goal, teammate;
     qa_bot_goal team_goal;
-    bool ordered;
     bot_source_order_state source_order;
     bot_source_team_policy_state source_team_policy;
-    bot_source_events_state source_events;
     bot_source_goal_state source_goal;
     bot_source_chat_state source_chat;
     bot_source_setup_state source_setup;

@@ -76,6 +76,8 @@ bool application_unified_server_publish(application_unified_server *,
 bool application_unified_server_publication_complete(const application_unified_server *);
 bool application_unified_server_source_drop(application_unified_server *,qa_actor_owner,
     uint32_t source_slot,const char *reason,bool *matched,qa_error *);
+bool application_unified_source_drop_recipient(qa_application *,qa_actor_owner,uint32_t,
+    const char *,qa_actor_id *,qa_net_client_id *,qa_net_seat_id *,bool *,qa_error *);
 bool application_unified_server_source_drop_finish(application_unified_server *,qa_error *);
 bool application_unified_server_source_drop_current(const application_unified_server *,qa_error *);
 bool application_unified_server_destroy(application_unified_server *, qa_error *);

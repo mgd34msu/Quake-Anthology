@@ -63,7 +63,7 @@ static inline int32_t q3_type(const qa_q3_step *step) {
 }
 
 qa_vec3 q3_clip(qa_vec3, qa_vec3);
-bool q3_trace(qa_q3_step *, qa_vec3, qa_vec3, qa_trace_result *);
+bool q3_move_trace(qa_q3_step *, qa_vec3, qa_vec3, qa_trace_result *);
 bool q3_contact(qa_q3_step *, const qa_trace_result *);
 bool q3_slide(qa_q3_step *, bool gravity);
 void q3_step_slide(qa_q3_step *, bool gravity);

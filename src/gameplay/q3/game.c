@@ -1,10 +1,6 @@
 #include "internal.h"
 #include "source_postgame.h"
 
-bool q3_fail(qa_error *error, const char *message) {
-    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
-    return false;
-}
 bool qa_q3_source_memory_allocate(qa_q3_game *game, uint32_t size, uint32_t *out,
                                   qa_error *error) {
     if (!game || !out || size > INT32_MAX || game->source_restored ||

@@ -32,5 +32,21 @@ bool application_native_q3_source_command_begin(application_provider *,qa_actor_
 bool application_native_q3_source_command_entered(const application_provider *);
 bool application_native_q3_source_command_actor_current(const application_provider *,qa_actor_id);
 bool application_native_q3_source_command_end(application_native_q3_source_command_scope *,qa_error *);
+typedef struct application_native_q3_source_drop_scope {
+    struct application_native_q3_source_drop_scope *previous;
+    application_provider *provider;
+    qa_q3_game *game;
+    const qa_launch_instance *launch;
+    qa_actor_id actor;
+    uint32_t slot;
+    uint64_t publication_generation, command_generation, map_revision;
+    char *reason;
+    bool disconnected;
+} application_native_q3_source_drop_scope;
+bool application_native_q3_source_entered(const application_provider *);
+bool application_native_q3_source_drop_begin(application_provider *,uint32_t,qa_actor_id,
+    application_native_q3_source_drop_scope *,qa_error *);
+bool application_native_q3_source_drop_disconnected(application_native_q3_source_drop_scope *,qa_error *);
+bool application_native_q3_source_drop_end(application_native_q3_source_drop_scope *,qa_error *);
 
 #endif

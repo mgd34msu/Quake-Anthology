@@ -9,6 +9,8 @@
 #include "qa/network_interfaces.h"
 #include "qa/network_kex_transport.h"
 #include "qa/server_admin.h"
+#include "qa/tokenizer.h"
+#include "network_admin.h"
 #include "qa/launch_identity.h"
 #include "qa/network_q3_runtime.h"
 #include "qa/network_q3_download.h"
@@ -1164,9 +1166,25 @@ static bool kex_connectionless(void *context,const qa_net_datagram *packet,bool 
 static const char *password(void *context, bool limited)
 {
     qa_frontend_network *n = context;
-    const qa_cvar_view *v = qa_cvars_find(qa_application_cvars(n->frontend->application),
-        limited ? "rcon_limited_password" : "rcon_password");
+    qa_application_startup_source source; bool present=false;
+    if (!n->frontend->options.network_host ||
+        !frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) || !present) return "";
+    const qa_cvar_view *v = qa_cvars_find(source.cvars,
+        limited ? "lrcon_password" : qa_cvars_dialect(source.cvars)==QA_CONSOLE_Q3?"rconPassword":"rcon_password");
     return v ? v->value : "";
+}
+static qa_cvars *admin_rate_registry(void *context)
+{
+    qa_frontend_network *n=context; qa_application_startup_source source; bool present=false;
+    return n->frontend->options.network_host &&
+        frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) && present?
+        source.cvars:NULL;
+}
+static void admin_print(void *context,const char *text)
+{
+    qa_frontend_network *n=context; qa_application_startup_source source; bool present=false;
+    if (frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) && present)
+        qa_console_emit(source.console,&source.command,text);
 }
 typedef struct captured_output { qa_admin_write_fn write; void *context; qa_error error; } captured_output;
 static void captured_print(void *context, const qa_command_context *source, const char *text)
@@ -1178,11 +1196,14 @@ static bool admin_execute(void *context, const qa_net_address *from, const char 
     qa_admin_write_fn write, void *output, qa_error *error)
 {
     qa_frontend_network *n = context; (void)from; (void)limited;
-    qa_command_context command = {.origin = QA_COMMAND_REMOTE, .direct = true, .console_text = true,
-        .dialect = qa_cvars_dialect(qa_application_cvars(n->frontend->application))};
-    if (!qa_application_capture_command_context(n->frontend->application, &command, &command, error)) return false;
+    qa_application_startup_source source; bool present=false;
+    if (!n->frontend->options.network_host ||
+        !frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,error) || !present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Authenticated administration has no actual hosted Source console");
+    qa_command_context command=source.command;
+    command.direct=true; command.console_text=true; command.script="remote-console";
     captured_output capture = {.write = write, .context = output};
-    bool ok = qa_console_execute_capture(qa_application_console(n->frontend->application), &command,
+    bool ok = qa_console_execute_capture(source.console, &command,
         text, captured_print, &capture, error);
     if (capture.error.code) { if (error) *error = capture.error; return false; }
     return ok;
@@ -1205,6 +1226,29 @@ static uint32_t random_rotation(void *context)
     qa_frontend_network *n = context;
     n->rotation_random = n->rotation_random * UINT32_C(1664525) + UINT32_C(1013904223);
     return n->rotation_random;
+}
+static bool admin_options(qa_frontend_network *n,qa_admin_options *out,qa_error *error)
+{
+    qa_cvars *cvars=qa_application_cvars(n->frontend->application);
+    qa_application_startup_source source; bool present=false;
+    if (n->frontend->options.network_host) {
+        if (!frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,error)) return false;
+        if (!present) return frontend_fail(error,QA_ERROR_ARGUMENT,"Hosting administration has no actual primary Source registry");
+        cvars=source.cvars;
+    }
+    qa_console_dialect dialect=qa_cvars_dialect(cvars);
+    const qa_cvar_view *filter=qa_cvars_find(cvars,"filterban"),*published=qa_cvars_find(cvars,"public"),
+        *dedicated=qa_cvars_find(cvars,"dedicated");
+    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    *out=(qa_admin_options){.dialect=dialect,.filters=1024,.rate_entries=1024,.burst=10,
+        .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),
+        .deny_matches=!filter || filter->integer!=0,
+        .public_server=n->frontend->options.network_host && n->frontend->options.dedicated &&
+            (q2?published && published->number!=0:dialect!=QA_CONSOLE_Q3 || (dedicated && dedicated->integer==2)),
+        .hooks={.context=n,.password=password,.execute=admin_execute,.send=send_address,
+            .travel=travel,.players=player_count,.random=random_rotation,
+            .rate_registry=admin_rate_registry,.print=admin_print}};
+    return true;
 }
 static bool q3_actor(frontend_q3_peer *peer, qa_actor_id *actor, qa_error *error)
 {
@@ -3566,6 +3610,118 @@ static bool operator_print(void *context,const char *text,qa_error *error)
 {
     (void)error; emit(context,text); return true;
 }
+static bool operator_command(qa_frontend_network *n,const qa_command_invocation *call,
+    size_t skip,bool *handled,qa_error *error)
+{
+    const char *name=call->argv[skip]; size_t argc=call->argc-skip;
+    const char *const *argv=call->argv+skip;
+    const char *arguments=call->args_text?call->args_text:"";
+    *handled=true;
+    if (skip) {
+        qa_tokenizer lexer; qa_token token; bool found;
+        if (!qa_tokenizer_init(&lexer,(qa_bytes){(const uint8_t *)arguments,strlen(arguments)},error) ||
+            !qa_tokenizer_next(&lexer,&token,&found,error) || !found) return false;
+        arguments+=lexer.offset;
+        while (*arguments==' ' || *arguments=='\t') ++arguments;
+    }
+    if (!strcmp(name, "addip") || !strcmp(name, "removeip"))
+        return argc == 2 ? qa_server_admin_filter(n->admin, argv[1], !strcmp(name, "removeip"), error) && save_filters(n,error) :
+            frontend_fail(error, QA_ERROR_ARGUMENT, "usage: addip/removeip address-mask");
+    if (!strcmp(name,"listip")) {
+        qa_buffer filters={0};
+        if(!qa_server_admin_filters_text(n->admin,false,call->context.dialect,true,&filters,error)) return false;
+        emit(call,(const char *)filters.data); qa_buffer_free(&filters); return true;
+    }
+    if (!strcmp(name,"writeip")) {
+        const qa_cvar_view *filterban=qa_cvars_find(qa_console_cvars(call->console),"filterban");
+        if (!filterban) return frontend_fail(error,QA_ERROR_ARGUMENT,"Filter write requires the actual Source filterban declaration");
+        qa_buffer filters={0};
+        if (!qa_server_admin_filters_text(n->admin,true,call->context.dialect,filterban->integer!=0,&filters,error)) return false;
+        bool ok=frontend_config_store_write_source_text(n->frontend->config_store,call,"listip.cfg",
+            (qa_bytes){filters.data,filters.size},error);
+        qa_buffer_free(&filters); if (ok) emit(call,"Wrote listip.cfg\n"); return ok;
+    }
+    if (!strcmp(name,"addlrconcmd") || !strcmp(name,"dellrconcmd") || !strcmp(name,"listlrconcmds"))
+        return qa_server_admin_limited_command(n->admin,name,arguments,
+            operator_print,(void *)call,error);
+    if (!strcmp(name, "setmaster")) {
+        bool qw=call->context.dialect==QA_CONSOLE_QW;
+        bool q2=call->context.dialect==QA_CONSOLE_Q2 || call->context.dialect==QA_CONSOLE_Q2_RERELEASE;
+        if (!qw && !q2) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"This Source uses master cvars instead of setmaster");
+        if (q2 && !n->frontend->options.dedicated) { emit(call,"Only dedicated servers use masters.\n"); return true; }
+        qa_net_address masters[8]; size_t count=0,maximum=qw?8:7;
+        if (q2) masters[count++]=(qa_net_address){.kind=QA_NET_IPV4,.port=27900,.host.ipv4={192,246,40,37}};
+        for (size_t i=1;i<argc && i<=maximum;++i) {
+            if (qw && !strcmp(argv[i],"none")) break;
+            qa_error local={0}; qa_net_address address;
+            if (!qa_net_address_resolve(argv[i],qw?27000:27900,4,&address,&local)) {
+                char message[768]; snprintf(message,sizeof(message),"Bad master address %.255s: %.400s\n",argv[i],local.message);
+                emit(call,message); continue;
+            }
+            uint8_t ping[16]; qa_net_writer writer; qa_net_writer_init(&writer,ping,sizeof(ping),error);
+            if (qw) { qa_net_write_u8(&writer,107); qa_net_write_u8(&writer,0); }
+            else if (!qa_q2_oob_write(&writer,"ping")) return false;
+            if (writer.failed || !send_address(n,&address,(qa_bytes){ping,qa_net_writer_size(&writer)},error)) return false;
+            char formatted[256],message[320];
+            if (!qa_net_address_format(&address,formatted,sizeof(formatted),error)) return false;
+            snprintf(message,sizeof(message),"Master server at %s\nSending a ping.\n",formatted); emit(call,message);
+            masters[count++]=address;
+        }
+        return qa_server_admin_masters(n->admin,masters,count,error) &&
+            qa_server_admin_tick(n->admin, n->frontend->wall_time_ns, true, error);
+    }
+    if (!strcmp(name, "heartbeat")) return qa_server_admin_tick(n->admin, n->frontend->wall_time_ns, true, error);
+    if (!strcmp(name, "maprotation")) return qa_server_admin_rotation(n->admin, argv + 1, argc - 1, false, error);
+    if (!strcmp(name, "nextmap")) {
+        qa_application_map_view map; bool rotated;
+        return qa_server_admin_next_map(n->admin,
+            qa_application_map_read(n->frontend->application, &map) ? map.name : NULL, &rotated, error);
+    }
+    *handled=false; return true;
+}
+static const char *const source_admin_names[]={"sv","addip","removeip","listip","writeip",
+    "setmaster","heartbeat","maprotation","nextmap","addlrconcmd","dellrconcmd","listlrconcmds"};
+static bool source_admin_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    qa_frontend *f=context; qa_application_startup_source source; bool present=false;
+    if (!f || !f->network || !call || !call->argc ||
+        !qa_console_invocation_current(call->console,call) ||
+        !frontend_config_store_primary_server_read(f->config_store,&source,&present,error) || !present ||
+        source.console!=call->console || source.command.owner!=call->context.owner ||
+        !qa_application_command_context_active(f->application,&call->context))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source operator command lost its actual hosted console");
+    size_t skip=!strcmp(call->argv[0],"sv")?1:0;
+    if (skip && call->argc<2) { emit(call,"Usage: sv <command>\n"); return true; }
+    bool handled=false;
+    if (!operator_command(f->network,call,skip,&handled,error)) return false;
+    return handled || qa_application_source_command(f->application,call,error);
+}
+bool frontend_network_source_admin_bind(qa_frontend *f,qa_console *console,uint64_t owner,
+    size_t *registered,qa_error *error)
+{
+    if (!f || !console || !owner || !registered)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration handlers require their physical lifetime");
+    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
+    if (dialect==QA_CONSOLE_Q3) return *registered==0;
+    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    size_t first=q2?0:1,count=q2?12:8;
+    if (*registered>count) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration registration extent differs");
+    while (*registered<count) {
+        if (!qa_console_register_owned(console,source_admin_names[first+*registered],
+            "Operate the actual Source network service",owner,owner,true,source_admin_command,f,error)) return false;
+        ++*registered;
+    }
+    return true;
+}
+void frontend_network_source_admin_unbind(qa_console *console,uint64_t owner,size_t registered)
+{
+    if (!console) return;
+    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
+    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    size_t first=q2?0:1,count=q2?12:8;
+    if (dialect==QA_CONSOLE_Q3 || registered>count) return;
+    for (size_t i=0;i<registered;++i) qa_console_unregister(console,source_admin_names[first+i],owner);
+}
 static bool command(void *context, const qa_command_invocation *call, qa_error *error)
 {
     qa_frontend_network *n = context; const char *name = call->argv[0];
@@ -3578,7 +3734,7 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         qa_browser_filter filter = {.text = call->argc > 1 ? call->argv[1] : NULL, .sort = QA_BROWSER_PING};
         if (!qa_server_browser_list(n->browser, &filter, indices, 2048, &count, error)) return false;
         for (size_t i = 0; i < count && i < 2048; ++i) {
-            qa_server_entry entry; char address[256], line[1536];
+            qa_server_entry entry; char address[256], line[sizeof(entry.name)+sizeof(entry.map)+sizeof(address)+96];
             if (!qa_server_browser_at(n->browser, indices[i], &entry) || !qa_net_address_format(&entry.address, address, sizeof(address), error)) return false;
             snprintf(line, sizeof(line), "%s %u/%u %" PRIu64 "ms %s %s\n", address, entry.players, entry.maximum_players,
                 entry.ping_ns / UINT64_C(1000000), entry.name, entry.map); emit(call, line);
@@ -3598,42 +3754,9 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
             n->frontend->wall_time_ns, UINT64_C(5000000000), error);
         return qa_server_browser_query(n->browser, &address, protocol, false, n->frontend->wall_time_ns, UINT64_C(5000000000), error);
     }
-    if (!strcmp(name, "addip") || !strcmp(name, "removeip"))
-        return call->argc == 2 ? qa_server_admin_filter(n->admin, call->argv[1], !strcmp(name, "removeip"), error) && save_filters(n,error) :
-            frontend_fail(error, QA_ERROR_ARGUMENT, "usage: addip/removeip address-mask");
-    if (!strcmp(name,"listip")) {
-        qa_buffer filters={0};
-        if(!qa_server_admin_filters_text(n->admin,false,call->context.dialect,true,&filters,error)) return false;
-        emit(call,(const char *)filters.data); qa_buffer_free(&filters); return true;
-    }
-    if (!strcmp(name,"writeip")) {
-        const qa_cvar_view *filterban=qa_cvars_find(qa_console_cvars(call->console),"filterban");
-        if (!filterban) return frontend_fail(error,QA_ERROR_ARGUMENT,"Filter write requires the actual Source filterban declaration");
-        qa_buffer filters={0};
-        if (!qa_server_admin_filters_text(n->admin,true,call->context.dialect,filterban->integer!=0,&filters,error)) return false;
-        bool ok=frontend_config_store_write_source_text(n->frontend->config_store,call,"listip.cfg",
-            (qa_bytes){filters.data,filters.size},error);
-        qa_buffer_free(&filters); if (ok) emit(call,"Wrote listip.cfg\n"); return ok;
-    }
-    if (!strcmp(name,"addlrconcmd") || !strcmp(name,"dellrconcmd") || !strcmp(name,"listlrconcmds"))
-        return qa_server_admin_limited_command(n->admin,name,call->args_text?call->args_text:"",
-            operator_print,(void *)call,error);
-    if (!strcmp(name, "setmaster")) {
-        if (call->argc > 33) return frontend_fail(error, QA_ERROR_ARGUMENT, "setmaster accepts at most 32 admitted master addresses");
-        qa_net_address masters[32];
-        uint16_t port = n->frontend->options.network_protocol.kind == QA_NET_QW28 ? 27000 : 27950;
-        for (size_t i = 1; i < call->argc; ++i)
-            if (!qa_net_address_parse(call->argv[i], port, false, masters + i - 1, error)) return false;
-        return qa_server_admin_masters(n->admin, masters, (size_t)call->argc - 1, error) &&
-            qa_server_admin_tick(n->admin, n->frontend->wall_time_ns, true, error);
-    }
-    if (!strcmp(name, "heartbeat")) return qa_server_admin_tick(n->admin, n->frontend->wall_time_ns, true, error);
-    if (!strcmp(name, "maprotation")) return qa_server_admin_rotation(n->admin, call->argv + 1, call->argc - 1, false, error);
-    if (!strcmp(name, "nextmap")) {
-        qa_application_map_view map; bool rotated;
-        return qa_server_admin_next_map(n->admin,
-            qa_application_map_read(n->frontend->application, &map) ? map.name : NULL, &rotated, error);
-    }
+    bool handled=false;
+    if (!operator_command(n,call,0,&handled,error)) return false;
+    if (handled) return true;
     if (!strcmp(name, "download")) {
         if (call->argc < 5 || call->argc > 6) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: download path url sha256 bytes [resume-nonce]");
         qa_download_request request = {.path = call->argv[1], .exact_identity = true};
@@ -3792,12 +3915,8 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     if (f->options.network_host && f->options.network_protocol.kind == QA_NET_NQ15 &&
         !frontend_nq_create(f, n->runtime, &n->composition, &n->nq_host, error)) goto failed;
     qa_browser_hooks browser = {.context = n, .send = send_address, .local = local_address};
-    qa_admin_options admin = {.dialect = qa_cvars_dialect(qa_application_cvars(f->application)),
-        .filters = 1024, .rate_entries = 1024, .burst = 10, .rate_interval_ns = UINT64_C(1000000000),
-        .heartbeat_interval_ns = UINT64_C(300000000000), .deny_matches = true,
-        .public_server = f->options.network_host && f->options.network_protocol.kind == QA_NET_QW28,
-        .hooks = {.context = n, .password = password, .execute = admin_execute, .send = send_address,
-            .travel = travel, .players = player_count, .random = random_rotation}};
+    qa_admin_options admin;
+    if (!admin_options(n,&admin,error)) goto failed;
     if (!qa_server_browser_create(frontend_tools_http(f), 16384, &browser, &n->browser, error) ||
         !qa_server_admin_create(&admin, &n->admin, error) || !qa_fs_root_open(f->options.application.user_root, &n->preferences, error)) goto failed;
     qa_fs_file *favorites = NULL; qa_fs_identity identity; qa_buffer bytes = {0}; qa_error local = {0};
@@ -3911,15 +4030,6 @@ static qa_q3_admission_hooks saved_admission_hooks(qa_frontend_network *n)
 { return (qa_q3_admission_hooks){.context = n, .random = random_rotation, .send = send_address,
     .admit = q3_admit, .query = q3_query, .authorize = q3_authorize, .drop_bot = q3_drop_bot,
     .enabled = q3_admission_enabled, .print = q3_authorization_print}; }
-static qa_admin_options saved_admin_options(qa_frontend_network *n)
-{
-    return (qa_admin_options){.dialect = qa_cvars_dialect(qa_application_cvars(n->frontend->application)),
-        .filters = 1024, .rate_entries = 1024, .burst = 10, .rate_interval_ns = UINT64_C(1000000000),
-        .heartbeat_interval_ns = UINT64_C(300000000000), .deny_matches = true,
-        .public_server = n->frontend->options.network_host && n->frontend->options.network_protocol.kind == QA_NET_QW28,
-        .hooks = {.context = n, .password = password, .execute = admin_execute, .send = send_address,
-            .travel = travel, .players = player_count, .random = random_rotation}};
-}
 static bool detached_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     (void)context; (void)to; (void)bytes;
@@ -3966,7 +4076,8 @@ bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error 
     if (!detached_transport(&inert, &transport, error)) goto failed;
     if (!qa_network_create(transport, &options, &n->runtime, error)) { qa_net_transport_close(transport); goto failed; }
     if (!qa_net_interfaces_capture(&n->interfaces,error)) goto failed;
-    qa_browser_hooks browser = saved_browser_hooks(n); qa_admin_options admin = saved_admin_options(n);
+    qa_browser_hooks browser = saved_browser_hooks(n); qa_admin_options admin;
+    if (!admin_options(n,&admin,error)) goto failed;
     if (!qa_server_browser_create(frontend_tools_http(f), 16384, &browser, &n->browser, error) ||
         !qa_server_admin_create(&admin, &n->admin, error) || !qa_fs_root_open(f->options.application.user_root, &n->preferences, error)) goto failed;
     frontend_q3_browser_options ui_browser = browser_options(n);
@@ -5112,14 +5223,15 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
                 }
             }
         }
-        qa_browser_hooks browser_hooks = saved_browser_hooks(n); qa_admin_options admin_options = saved_admin_options(n);
+        qa_browser_hooks browser_hooks = saved_browser_hooks(n); qa_admin_options restored_admin_options;
+        if (ok) ok=admin_options(n,&restored_admin_options,error);
         qa_server_browser *restored_browser = NULL; qa_server_admin *restored_admin = NULL;
         if(ok && menu_prefix.data) restored_browser=old_browser;
         if (ok) ok = (restored_browser ||
             (f->source_restoring ?
                 qa_server_browser_restore_checkpoint_staged(browser,frontend_tools_http(f),16384,&browser_hooks,&restored_browser,error) :
                 qa_server_browser_restore_checkpoint(browser,frontend_tools_http(f),16384,&browser_hooks,&restored_browser,error))) &&
-            qa_server_admin_restore_checkpoint(admin, &admin_options, &restored_admin, error);
+            qa_server_admin_restore_checkpoint(admin, &restored_admin_options, &restored_admin, error);
         if (ok) {
             frontend_q3_browser_destroy(old_ui_browser); n->q3_browser = NULL;
             n->browser = restored_browser; n->admin = restored_admin;
@@ -6313,6 +6425,9 @@ bool frontend_network_pump(qa_frontend *f, qa_error *error)
     if(!unified_tick(n,error)) return false;
     if (n->downloads && (!qa_downloads_pump(n->downloads, error) || !frontend_tools_sync(f, error))) return false;
     if (!q3_prepare(n, error) || !frontend_nq_prepare(n->nq_host, error) || !frontend_qw_prepare(n->qw_host, error)) return false;
+    qa_admin_options policy;
+    if (!admin_options(n,&policy,error) ||
+        !qa_server_admin_policy(n->admin,policy.dialect,policy.deny_matches,policy.public_server,error)) return false;
     ++n->busy;
     if(n->kex_browser && !frontend_kex_browser_pump(n->kex_browser,f->wall_time_ns,error)) { --n->busy; return false; }
     qa_server_browser_expire(n->browser, f->wall_time_ns);

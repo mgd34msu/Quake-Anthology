@@ -434,16 +434,26 @@ bool frontend_network_unified_source_drop(frontend_network_unified *owner, qa_ac
         owner->restore_pending || !frontend_network_unified_idle(owner))
         return fail(error, "Unified Source DROP requires its actual returned transport controller");
     *matched = false;
+    qa_actor_id actor = {0};
+    qa_net_client_id id = {0};
+    qa_net_seat_id seat = {0};
+    bool present = false;
+    if (!application_unified_source_drop_recipient(owner->options.frontend->application, source,
+        slot, reason, &actor, &id, &seat, &present, error)) return false;
+    if (!present) return true;
     unified_peer *recipient = NULL;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         application_unified_server *server = peer->server;
-        if (!server || !server->admitted_receipt || server->admitted_player.source_owner != source ||
-            server->admitted_player.source_slot != slot) continue;
+        if (!server || !qa_net_client_id_equal(peer->client, id)) continue;
         if (recipient) return fail(error, "Unified Source DROP aliases two retained physical recipients");
         qa_unified_session *installed = NULL;
         const qa_net_client *client = qa_net_connections_get(qa_network_connections(owner->options.runtime), peer->client);
-        if (!peer->occupied || peer->staging || !client || client->seat_count != 1 || !client->seats ||
+        if (!peer->occupied || peer->staging || !server->admitted_receipt ||
+            !qa_actor_id_equal(server->admitted_player.actor, actor) ||
+            peer->binding.seat.owner != seat.owner || peer->binding.seat.index != seat.index ||
+            server->seat.owner != seat.owner || server->seat.index != seat.index ||
+            !client || client->seat_count != 1 || !client->seats ||
             client->seats[0].seat.owner != peer->binding.seat.owner ||
             client->seats[0].seat.index != peer->binding.seat.index ||
             server->application != owner->options.frontend->application || server->runtime != owner->options.runtime ||
@@ -452,7 +462,11 @@ bool frontend_network_unified_source_drop(frontend_network_unified *owner, qa_ac
             return fail(error, "Unified Source DROP lost its installed full recipient and seat");
         recipient = peer;
     }
-    if (!recipient) return true;
+    if (!recipient) {
+        const qa_net_client *client = qa_net_connections_get(qa_network_connections(owner->options.runtime), id);
+        if (client && client->protocol.kind != QA_NET_UNIFIED_1) return true;
+        return fail(error, "Unified Source DROP has no installed canonical callback recipient");
+    }
     ++owner->calls;
     bool okay = application_unified_server_source_drop(recipient->server, source, slot, reason, matched, error);
     --owner->calls;

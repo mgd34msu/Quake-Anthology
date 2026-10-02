@@ -347,7 +347,7 @@ static bool nq_water_transition(nq_move *m) {
     if (!q1_contents(&m->base, s->origin, &contents))
         return false;
     qa_q1_water_transition_result transition = qa_q1_water_transition(s->water_type, contents);
-    if (transition.splash && !q1_sound(&m->base, "misc/h2ohit1.wav"))
+    if (transition.splash && !q1_move_sound(&m->base, "misc/h2ohit1.wav"))
         return false;
     s->water_type = transition.water_type;
     s->water_level = transition.water_level;
@@ -432,7 +432,7 @@ static bool nq_physics(nq_move *m) {
                 nq_velocity_bounds(m);
                 q1_fly_result clip;
                 if (!q1_fly(&m->base, m->dt, &clip) || !q1_phase(&m->base, QA_MOVE_LINK_TRIGGERS)) return false;
-                if (hit_sound && (s->flags & Q1_FLAG_ONGROUND) && !q1_sound(&m->base, "demon/dland2.wav")) return false;
+                if (hit_sound && (s->flags & Q1_FLAG_ONGROUND) && !q1_move_sound(&m->base, "demon/dland2.wav")) return false;
             }
             if (!nq_water_transition(m)) return false;
             break;

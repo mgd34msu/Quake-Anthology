@@ -184,7 +184,10 @@ void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, uint16_t *);
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 float q3_initial_alpha(const qa_q3_game *, qa_actor_id);
-bool q3_fail(qa_error *, const char *);
+static inline bool q3_fail(qa_error *error, const char *message) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
+    return false;
+}
 void q3_configstrings_clear(qa_q3_game *);
 bool q3_configstrings_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
 bool q3_configstrings_prepare(const qa_q3_checkpoint *, char ***, qa_error *);

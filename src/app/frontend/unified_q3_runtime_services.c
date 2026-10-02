@@ -41,7 +41,11 @@ static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_ARGUMENT,0,"%s",text);return false; }
 static bool tuple_current(const frontend_unified_q3_runtime_services *o,bool checkpoint)
 {
-    if(!o || !o->source || !(checkpoint?frontend_unified_q3_client_checkpoint_current(o->options.client):
+    const frontend_unified_q3_client_frame *stage=checkpoint && o && o->options.checkpoint_frame?
+        o->options.checkpoint_frame(o->options.operations.context):NULL;
+    if(!o || !o->source || !(checkpoint?(stage?
+        frontend_unified_q3_client_checkpoint_stage_current(o->options.client,stage):
+        frontend_unified_q3_client_checkpoint_current(o->options.client)):
         frontend_unified_q3_client_current(o->options.client)) ||
         !(checkpoint?frontend_remote_unified_checkpoint_current(o->options.replica,NULL):
         frontend_unified_media_current(o->options.media)) ||
@@ -533,9 +537,15 @@ static bool read(frontend_unified_q3_runtime_services *o,bool restoring,
         (restoring && (!o->options.frontend->source_restoring || o->options.frontend->capture)) ||
         !(restoring?q3n_compiled_source_checkpoint_read(o->source,&source,e):q3n_compiled_source_read(o->source,&source,e)))
         return fail(e,"CG options require their actual current service owner");
-    const qa_command_context *origin=restoring?frontend_unified_q3_client_checkpoint_context(o->options.client):
+    const frontend_unified_q3_client_frame *stage=restoring && o->options.checkpoint_frame?
+        o->options.checkpoint_frame(o->options.operations.context):NULL;
+    const qa_command_context *origin=restoring?(stage?
+        frontend_unified_q3_client_checkpoint_stage_context(o->options.client,stage):
+        frontend_unified_q3_client_checkpoint_context(o->options.client)):
         frontend_unified_q3_client_context(o->options.client);
-    qa_cvars *registry=restoring?frontend_unified_q3_client_checkpoint_cvars(o->options.client):
+    qa_cvars *registry=restoring?(stage?
+        frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,stage):
+        frontend_unified_q3_client_checkpoint_cvars(o->options.client)):
         frontend_unified_q3_client_cvars(o->options.client);
     if(!origin || !registry)return fail(e,"CG options lost the retained CLIENT command namespace");
     frontend_unified_q3_runtime_options v=o->options.operations;

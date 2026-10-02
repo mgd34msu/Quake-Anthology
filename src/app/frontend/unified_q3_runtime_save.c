@@ -10,12 +10,11 @@ static bool ready(const frontend_unified_q3_runtime *o,bool reading,qa_error *e)
 {
     q3n_compiled_source_view source; qa_q3_presentation_binding backend;
     const qa_q3_presentation_assets *assets=o?o->options.presentation.assets:NULL;
-    if(!o || !o->complete || o->video || o->prepared ||
+    if(!o || !o->complete || o->video || o->prepared || (!reading && o->restored_rebind_expected && !o->rebind) ||
        (o->restoring!=reading && !(o->restoring && !reading && o->passive &&
            (frontend_remote_unified_retired(o->options.replica) ||
             frontend_unified_q3_client_retirement_departed(o->options.client)))) ||
-       !frontend_unified_q3_runtime_idle(o) || !assets || !assets->capturing || assets->busy!=1 || assets->codec_busy ||
-       !frontend_unified_q3_client_checkpoint_current(o->options.client))
+       !frontend_unified_q3_runtime_checkpoint_current(o) || !assets || !assets->capturing || assets->busy!=1 || assets->codec_busy)
         return fail(e,"Unified CG codec requires its actual imported/captured Source and asset graph");
     if(!q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(o->options.client),&source,e) ||
        !qa_q3_presentation_binding_read(o->children.presentation,&backend,e))return false;
@@ -44,14 +43,17 @@ static uint32_t child_presence(const frontend_unified_q3_runtime *o)
 }
 static bool fields(frontend_unified_q3_runtime *o,qa_source_save_io *io,uint32_t *presence)
 {
-    uint8_t magic[4]={'U','Q','3','R'}; uint32_t version=3;bool scene_only=o->options.scene_only;
+    uint8_t magic[4]={'U','Q','3','R'}; uint32_t version=4;bool scene_only=o->options.scene_only;
+    bool pending=io->direction==QA_SOURCE_SAVE_WRITE?o->rebind!=NULL:false;
     q3n_compiled_source_view source;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"UQ3R",4) &&
-        qa_source_save_u32(io,&version) && version==3 &&
-        qa_source_save_bool(io,&scene_only) && scene_only==o->options.scene_only &&
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"UQ3R",4) ||
+       !qa_source_save_u32(io,&version) || version!=4 || !qa_source_save_bool(io,&pending))return false;
+    if(io->direction==QA_SOURCE_SAVE_READ)o->restored_rebind_expected=pending;
+    return qa_source_save_bool(io,&scene_only) && scene_only==o->options.scene_only &&
         q3n_compiled_source_fields(io,frontend_unified_q3_client_source(o->options.client)) &&
         q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(o->options.client),&source,io->error) &&
         qa_source_save_bool(io,&o->retiring) && qa_source_save_u32(io,presence) &&
+        !(pending&&o->retiring) &&
         (*presence==(source.basis.product==QA_Q3_TEAM_ARENA?4095u:3583u) ||
             (o->retiring && *presence==2049u)) &&
         qa_source_save_bool(io,&o->initialized) && o->initialized==source.basis.initialized &&
@@ -162,6 +164,7 @@ bool frontend_unified_q3_runtime_restore(frontend_unified_q3_runtime *o,qa_bytes
     }
     if(okay) {
         o->initialized=state.initialized; o->faulted=state.faulted; o->retiring=state.retiring;o->video_generation=state.video_generation;
+        o->restored_rebind_expected=state.restored_rebind_expected;
         o->old_time=state.old_time; o->frame_milliseconds=state.frame_milliseconds; o->client_frame=state.client_frame;
         o->presentation_time=state.presentation_time;
         o->stereo=state.stereo; o->refdef=state.refdef; o->view_angles=state.view_angles;
@@ -176,7 +179,7 @@ bool frontend_unified_q3_runtime_restore_ready(const frontend_unified_q3_runtime
 {
     q3n_compiled_source_view source;qa_q3_presentation_binding backend;
     if(!o || !o->restoring || !o->restored || !o->complete || (!o->retiring && !o->children.snapshots) || o->video || o->prepared ||
-       !frontend_unified_q3_runtime_idle(o) || !frontend_unified_q3_client_checkpoint_current(o->options.client) ||
+       (o->restored_rebind_expected && !o->rebind) || !frontend_unified_q3_runtime_checkpoint_current(o) ||
        !frontend_remote_unified_checkpoint_current(o->options.replica,e))
         return fail(e,"Unified CG import has not returned its genuine retained graph");
     if(!q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(o->options.client),&source,e) ||
@@ -189,9 +192,13 @@ bool frontend_unified_q3_runtime_restore_ready(const frontend_unified_q3_runtime
 }
 bool frontend_unified_q3_runtime_restore_bind(frontend_unified_q3_runtime *o,qa_error *e)
 {
-    if(!o || o->retiring || !o->restoring || !o->restored || !o->children.snapshots || !frontend_unified_q3_runtime_idle(o) ||
-       !frontend_remote_unified_current(o->options.replica,e) || !frontend_unified_q3_client_current(o->options.client) ||
-       !o->options.current(o->options.context,&o->options))return fail(e,"Unified CG bind requires its actually installed live parents");
+    if(!o || o->retiring || !o->restoring || !o->restored || !o->children.snapshots ||
+       (o->rebind ? !frontend_unified_q3_runtime_checkpoint_current(o) : !frontend_unified_q3_runtime_idle(o)) ||
+       (o->rebind && (!o->options.frontend->source_restoring || !o->restored_rebind_expected)) ||
+       !frontend_remote_unified_current(o->options.replica,e) ||
+       (o->rebind ? !frontend_unified_q3_client_checkpoint_stage_current(o->options.client,o->rebind) :
+            !frontend_unified_q3_client_current(o->options.client)) ||
+       (!o->rebind && !o->options.current(o->options.context,&o->options)))return fail(e,"Unified CG bind requires its actually installed live parents");
     o->restoring=false; return true;
 }
 bool frontend_unified_q3_runtime_restore_passive_finish(frontend_unified_q3_runtime *o,qa_error *e)

@@ -109,11 +109,22 @@ int q3menu_source_open(const char *path)
 #else
     bool have_time=localtime_r(&now,&local_time)!=NULL;
 #endif
-    if(!have_time || local_time.tm_mon<0 || local_time.tm_mon>=12) {
+    if(!have_time || local_time.tm_mon<0 || local_time.tm_mon>=12 ||
+        local_time.tm_mday<1 || local_time.tm_mday>31 ||
+        local_time.tm_year<-1900 || local_time.tm_year>8099) {
         q3menu_error(0,"Cannot capture authored source builtin date and time"); return 0;
     }
     static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
-    snprintf(context->script_date,sizeof(context->script_date),"%s %2d %04d",months[local_time.tm_mon],local_time.tm_mday,local_time.tm_year+1900);
+    unsigned day = (unsigned)local_time.tm_mday;
+    unsigned year = (unsigned)(local_time.tm_year + 1900);
+    memcpy(context->script_date, months[local_time.tm_mon], 3);
+    context->script_date[3] = ' ';
+    context->script_date[4] = day < 10 ? ' ' : (char)('0' + day / 10);
+    context->script_date[5] = (char)('0' + day % 10);
+    context->script_date[6] = ' ';
+    for (unsigned i = 0, divisor = 1000; i < 4; ++i, divisor /= 10)
+        context->script_date[7 + i] = (char)('0' + year / divisor % 10);
+    context->script_date[11] = 0;
     snprintf(context->script_time,sizeof(context->script_time),"%02d:%02d:%02d",local_time.tm_hour,local_time.tm_min,local_time.tm_sec);
     context->scripts.date=context->script_date; context->scripts.time=context->script_time;
     for (unsigned i = 0; i < 64; ++i) if (!context->sources[i]) {

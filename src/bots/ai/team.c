@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_team_state.h"
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_storage.h"
@@ -117,19 +118,20 @@ bool bot_ai_source_goals_load(qa_bots *b,qa_error *e) {
     return true;
 }
 bool bot_ai_remember_order(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    if(!s->ordered) return true;
-    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&s->decisionmaker,true,e) &&
-        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&s->long_term_goal,true,e) &&
+    if(!bot_ai_ordered(s)) return true;
+    int32_t decisionmaker=bot_ai_decisionmaker(s),type=bot_ai_long_term_goal(s),teammate=bot_ai_teammate(s);
+    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&decisionmaker,true,e) &&
+        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&type,true,e) &&
         bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,true,e) &&
-        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&s->teammate,true,e);
+        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&teammate,true,e);
 }
 bool bot_ai_team_status(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!s->team_arena) return true;
     int task=3;
-    switch(s->long_term_goal) {
+    switch(bot_ai_long_term_goal(s)) {
     case BOT_LTG_TEAM_ACCOMPANY: {
         qa_bot_entity_info observation;bool found,carrying=false;
-        if(!qa_bot_runtime_entity(b->runtime,s->teammate,&observation,&found,e)) return false;
+        if(!qa_bot_runtime_entity(b->runtime,bot_ai_teammate(s),&observation,&found,e)) return false;
         if(b->source_goals.game_type==4 || b->source_goals.game_type==5)
             carrying=(observation.state.powerups&((1<<7)|(1<<8)|(1<<9)))!=0;
         else if(b->source_goals.game_type==7) {
@@ -191,10 +193,10 @@ static int32_t token_number(const char **text) {
     return empty?0:source_integer(start);
 }
 static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,bot_long_term_goal goal,float duration,qa_error *e) {
-    s->decisionmaker=client;s->ordered=true;bot_ai_order_time_set(s,b->time);
+    bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
-    s->long_term_goal=goal;bot_ai_team_goal_time_set(s,b->time+duration);
+    bot_ai_long_term_goal_set(s,goal);bot_ai_team_goal_time_set(s,b->time+duration);
     return true;
 }
 static bool initial_chat(qa_bots *b,bot_ai_state *s,const char *type,
@@ -259,7 +261,7 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
             (initial_chat(b,s,"iamteamleader",NULL,0,QA_BOT_CHAT_TEAM,e) && voice_only(b,s,-1,"startleader",e));
     }
     if(command_word(text,"patrol")) {
-        s->decisionmaker=client;s->long_term_goal=BOT_LTG_NONE;bot_ai_lead_time_set(s,0);
+        bot_ai_decisionmaker_set(s,client);bot_ai_long_term_goal_set(s,BOT_LTG_NONE);bot_ai_lead_time_set(s,0);
         int32_t last_type=0;
         if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,true,e)) return false;
         s->view.order=(qa_bot_order){0};
@@ -285,7 +287,7 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
         if(!found) return true;
         bool follow=command_word(text,"followme");
         if(!ordered(b,s,client,follow?BOT_LTG_TEAM_ACCOMPANY:BOT_LTG_CAMP_ORDER,600,e)) return false;
-        s->teammate=client;bot_ai_arrive_time_set(s,0);
+        bot_ai_teammate_set(s,client);bot_ai_arrive_time_set(s,0);
         if(follow) {bot_ai_teammate_visible_time_set(s,b->time);bot_ai_formation_distance_set(s,112);}
     } else if(command_word(text,"getflag") || command_word(text,"offense")) {
         if(type==4 || (s->team_arena && type==5)) {

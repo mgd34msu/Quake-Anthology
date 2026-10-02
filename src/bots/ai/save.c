@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_event_state.h"
 #include "../runtime/internal.h"
 #include "../save_fields.h"
 #include "qa/bots_population_save.h"
@@ -6,9 +7,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=18;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=20;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==18?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==20?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -63,15 +64,6 @@ static bool source_policy_fields(qa_source_save_io *io,bot_source_team_policy_st
     F(policy->reached_alt_route_time);F(policy->ctf_roam_time);
     I(policy->num_teammates);I(policy->ctf_strategy);I(policy->own_decision_time);I(policy->team_task_preference);
     return goal_fields(io,&policy->alternate_goal);
-}
-static bool source_events_fields(qa_source_save_io *io,bot_source_events_state *events) {
-    for(size_t i=0;i<BOT_SOURCE_EVENT_ENTITIES;++i) I(events->entity_event_time[i]);
-    I(events->last_killed_player);I(events->last_killed_by);I(events->bot_death_type);I(events->enemy_death_type);
-    I(events->num_deaths);I(events->num_kills);I(events->last_e_flags);F(events->killed_enemy_time);
-    B(events->bot_suicide);B(events->enemy_suicide);I(events->kamikaze_body);I(events->num_prox_mines);
-    if(events->num_prox_mines<0 || events->num_prox_mines>BOT_SOURCE_PROX_MINES) return false;
-    for(size_t i=0;i<BOT_SOURCE_PROX_MINES;++i) I(events->prox_mines[i]);
-    return true;
 }
 static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders) {
     I(orders->free_point);I(orders->find_client_maxclients);I(orders->find_enemy_maxclients);
@@ -144,13 +136,11 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
         state->activations[i].resume = (qa_bot_decision)resume; F(state->activations[i].until);
     }
     if(!qa_source_save_bytes(io,state->team_leader_name,sizeof(state->team_leader_name))) return false;
-    I(state->decisionmaker); I(state->long_term_goal); I(state->teammate);
+
     if(!goal_fields(io,&state->team_goal)) return false;
-    B(state->ordered);
 
     I(state->source_enemy);
-    if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy) ||
-       !source_events_fields(io,&state->source_events)) return false;
+    if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy)) return false;
     F(state->source_goal.defend_away_range);F(state->source_goal.camp_time);F(state->source_goal.camp_range);
     I(state->source_chat.chat_to);I(state->source_chat.last_frame_health);I(state->source_chat.last_hit_count);
     B(state->source_chat.enter_game_chat);
@@ -240,7 +230,7 @@ static bool topology(const qa_bots *bots, qa_error *error)
         if(!waypoint_index(state->source_order.current_patrol_point) ||
            !waypoint_chain(&bots->source_orders,state->source_order.checkpoints,waypoint_seen) ||
            !waypoint_chain(&bots->source_orders,state->source_order.patrol_points,waypoint_seen) ||
-           state->source_events.num_prox_mines<0 || state->source_events.num_prox_mines>BOT_SOURCE_PROX_MINES) goto invalid;
+           bot_ai_num_prox_mines(state)<0 || bot_ai_num_prox_mines(state)>BOT_SOURCE_PROX_MINES) goto invalid;
         if(!memchr(state->source_setup.team,0,sizeof(state->source_setup.team))) goto invalid;
         const bot_source_setup_progress *setup=&state->source_setup.progress;
         if(setup->kind>BOT_SOURCE_SETUP_COMPLETE || setup->kind==BOT_SOURCE_SETUP_EMPTY) goto invalid;
@@ -352,7 +342,8 @@ static bool fields(qa_source_save_io *io, qa_bots *bots)
             return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring native bot continuation");
         bot_ai_state *state=bots->source_cells[i];
         if(reading) state->acquired_source_client=i;
-        if(!qa_bot_source_record_fields(io,&bots->services.memory,&state->source_record)) return false;
+        if(!qa_bot_source_record_fields(io,&bots->services.memory,&state->source_record) ||
+           !bot_ai_source_alias_bind(bots,state,io->error)) return false;
         if (!state_fields(io, state)) return false;
         if(reading && state->view.actor.registry) {
             if(state->view.client>=bots->client_capacity || bots->clients[state->view.client]) return false;

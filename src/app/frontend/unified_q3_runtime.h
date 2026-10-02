@@ -137,6 +137,12 @@ bool frontend_unified_q3_runtime_rebind_prepare(frontend_unified_q3_runtime *,
     const frontend_unified_q3_client_frame *, qa_error *);
 bool frontend_unified_q3_runtime_rebind_ready(const frontend_unified_q3_runtime *,
     const frontend_unified_q3_client_frame *);
+const frontend_unified_q3_client_frame *frontend_unified_q3_runtime_rebind_frame(const frontend_unified_q3_runtime *);
+bool frontend_unified_q3_runtime_checkpoint_current(const frontend_unified_q3_runtime *);
+bool frontend_unified_q3_runtime_rebind_checkpoint_ready(const frontend_unified_q3_runtime *,
+    const frontend_unified_q3_client_frame *);
+bool frontend_unified_q3_runtime_rebind_restore(frontend_unified_q3_runtime *,
+    const frontend_unified_q3_client_frame *,qa_error *);
 void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
 /* Asset dictionaries and actual client/cache parents import first; this

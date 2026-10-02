@@ -37,7 +37,7 @@ struct frontend_unified_q3_client {
     const frontend_remote_unified_domain *domain;
     uint64_t receiver;
     qa_command_context command_context;
-    char *instance;
+    char *provider_name, *instance;
     client_history *history;
     frontend_unified_q3_client_frame *prepared;
     frontend_unified_q3_client_video *video;
@@ -75,11 +75,11 @@ static char *copy(const char *s)
 static bool activation(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 {
     const frontend_unified_q3_source_view *a = &c->constructor;
-    return v->owner == c->sources && v->epoch == a->epoch && v->provider == a->provider &&
+    return v->provider_name && v->owner == c->sources && v->epoch == a->epoch && v->provider == a->provider &&
         v->publication == a->publication && v->map_revision == a->map_revision && v->product == a->product &&
         v->files == a->files && v->assets == a->assets && v->max_clients == a->max_clients &&
         v->has_client && v->client_number == a->client_number &&
-        !strcmp(v->instance,c->instance);
+        !strcmp(v->provider_name,c->provider_name) && !strcmp(v->instance,c->instance);
 }
 static bool identity(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 { return activation(c,v) && qa_actor_id_equal(v->viewer,c->constructor.viewer) && v->snapshot_bit == c->constructor.snapshot_bit; }
@@ -131,12 +131,12 @@ bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *c, con
 { return c && v && activation(c,v) &&
     (qa_actor_id_equal(v->viewer,c->constructor.viewer) || v->snapshot_bit != c->constructor.snapshot_bit) &&
     frontend_unified_q3_source_current(v); }
-bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *c,const char *instance,
+bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *c,const char *provider_name,
     const char *content,uint32_t source_epoch)
 {
     frontend_unified_q3_source_view v;
-    return instance && content && observation(c,&v) && v.epoch == source_epoch &&
-        !strcmp(v.instance,instance) && !strcmp(v.content,content) && frontend_unified_q3_source_current(&v);
+    return provider_name && content && observation(c,&v) && v.epoch == source_epoch &&
+        !strcmp(v.provider_name,provider_name) && !strcmp(v.content,content) && frontend_unified_q3_source_current(&v);
 }
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *c)
 { return !c || (!c->busy && !c->prepared && !c->video); }
@@ -394,8 +394,8 @@ static bool create(frontend_remote_unified *replica, frontend_unified_q3_sources
         c->command_context.owner = receiver; c->command_context.actor = v->viewer;
         c->command_context.registry = v->viewer.registry; c->command_context.generation = v->publication;
         c->command_context.dialect = QA_CONSOLE_Q3; }
-    c->instance = copy(v->instance); c->history = calloc(1,sizeof(*c->history));
-    bool ok = c->domain && c->instance && c->history && (!retirement || frontend_unified_q3_client_retirement_bind(c,retirement,e)) &&
+    c->provider_name = copy(v->provider_name); c->instance = copy(v->instance); c->history = calloc(1,sizeof(*c->history));
+    bool ok = c->domain && c->provider_name && c->instance && c->history && (!retirement || frontend_unified_q3_client_retirement_bind(c,retirement,e)) &&
         (restoring || (receive(c->history,v,true,false,e) && create_source(c,false,e)));
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
@@ -430,6 +430,9 @@ bool frontend_unified_q3_client_ready(const frontend_unified_q3_client_frame *t)
 { return t && t->owner->prepared == t && !t->owner->busy && t->revision == t->owner->revision+1 &&
     frontend_unified_q3_client_matches(t->owner,&t->source) && frontend_unified_q3_source_current(&t->source) &&
     (!t->rebind || q3n_compiled_source_rebind_ready(t->rebind)); }
+bool frontend_unified_q3_client_frame_owned(const frontend_unified_q3_client *c,
+    const frontend_unified_q3_client_frame *t)
+{ return c && t && c->prepared == t && t->owner == c; }
 const q3n_compiled_source_rebind_ticket *frontend_unified_q3_client_frame_rebind(const frontend_unified_q3_client_frame *t)
 { return t && t->owner->prepared == t ? t->rebind : NULL; }
 const qa_command_context *frontend_unified_q3_client_frame_context(const frontend_unified_q3_client_frame *t)
@@ -459,7 +462,7 @@ bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_err
     if (!frontend_unified_q3_client_idle(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT retains entered consumers or a candidate frame");
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
     if (c->retirement && !frontend_unified_q3_source_retirement_client_drop(c->retirement,c,e)) return false;
-    history_free(c->history); free(c->cvar_cache); free(c->instance); free(c); *out = NULL; return true;
+    history_free(c->history); free(c->cvar_cache); free(c->provider_name); free(c->instance); free(c); *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
 {

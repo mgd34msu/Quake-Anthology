@@ -79,6 +79,7 @@ typedef struct remote_component {
     bool pictures_present;
     remote_component_event *events;
     uint64_t event_sequence;
+    bool event_present;
     qa_q3_source_scene_bank *submission_bank;
     uint64_t submission_cycle;
     remote_component_packet_admission *admissions;
@@ -112,6 +113,7 @@ struct frontend_unified_component_frame {
     size_t count;
 };
 bool q3remote_component_fail(qa_error *,qa_status,const char *);
+bool q3remote_component_player_finite(const qa_q3_player *);
 void q3remote_component_state_free(remote_component_state *);
 void q3remote_component_frame_free(remote_component_frame *);
 bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_document *,qa_json_id,

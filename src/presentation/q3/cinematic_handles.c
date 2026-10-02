@@ -191,7 +191,7 @@ void qa_q3_cinematic_source_release(qa_q3_cinematic_source *source)
 bool q3cin_close(qa_q3_cinematic_handles *owner,uint32_t index,qa_cinematic_end reason,qa_error *error)
 {
     q3cin_movie *movie=&owner->movies[index];
-    if (movie->system.context || movie->system.status || movie->system.end || movie->system.release) {
+    if (movie->system.context || movie->system.status || movie->system.end || movie->system.release || movie->system.playback) {
         if (!movie->system.end || !movie->system.release)
             return q3cin_fail(error,QA_ERROR_ARGUMENT,"Partial system cinematic retains its real lifetime owner");
         if (!movie->system.end(movie->system.context,reason,error)) return false;
@@ -199,6 +199,24 @@ bool q3cin_close(qa_q3_cinematic_handles *owner,uint32_t index,qa_cinematic_end 
     }
     qa_cinematic_destroy(movie->playback); qa_cinematic_asset_release(movie->asset);
     free(movie->path); *movie=(q3cin_movie){0}; return true;
+}
+bool qa_q3_cinematic_source_systems_close(qa_q3_cinematic_source *source,qa_error *error)
+{
+    if (!source || !qa_q3_cinematic_handles_idle(source->handles) || source->users)
+        return q3cin_fail(error,QA_ERROR_ARGUMENT,"System cinematic shutdown requires its returned actual Source");
+    qa_q3_cinematic_handles *owner=source->handles;
+    qa_q3_cinematic_source *member=owner->sources;
+    while (member && member!=source) member=member->next;
+    if (!member) return q3cin_fail(error,QA_ERROR_ARGUMENT,"System cinematic shutdown lost its actual pool membership");
+    owner->busy=true;
+    for (uint32_t i=0;i<16;++i) {
+        const q3cin_movie *movie=&owner->movies[i];
+        if (movie->source==source && (movie->system.context || movie->system.status || movie->system.end ||
+            movie->system.release || movie->system.playback) && !q3cin_close(owner,i,QA_CINEMATIC_STOPPED,error)) {
+            owner->busy=false; return false;
+        }
+    }
+    owner->busy=false; return true;
 }
 bool qa_q3_cinematic_source_destroy(qa_q3_cinematic_source **slot,qa_error *error)
 {
@@ -357,7 +375,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
         }
     }
     if (!ok) {
-        if (movie->system.context || movie->system.status || movie->system.end || movie->system.release) {
+        if (movie->system.context || movie->system.status || movie->system.end || movie->system.release || movie->system.playback) {
             if (!movie->system.end || !movie->system.release ||
                 !movie->system.end(movie->system.context,QA_CINEMATIC_STOPPED,NULL)) return false;
             movie->system.release(movie->system.context);

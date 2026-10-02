@@ -5,7 +5,16 @@
 bool q3scene_fail(qa_error *e, qa_status code, const char *text)
 { qa_error_set(e, code, 0, "%s", text); return false; }
 bool q3scene_current(const application_q3_scene *s)
-{ return s && !s->failed && s->options.source.current(s->options.source.context, &s->context); }
+{
+    if(!s||s->failed||!s->options.source.current(s->options.source.context,&s->context)) return false;
+    if(s->active_event) {
+        qa_actor_id actor_id; bool owned,found; qa_error error={0};
+        if(!s->options.source.live(s->options.source.context,s->active_event->actor)||
+            !s->options.source.actor(s->options.source.context,(uint32_t)s->active_event->player.clientNum,&actor_id,&owned,&found,&error)||
+            !found||!qa_actor_id_equal(actor_id,s->active_event->actor)) return false;
+    }
+    return true;
+}
 static bool argument(const qa_qvm_call *call, size_t i, int32_t *v, qa_error *e)
 { return qa_qvm_call_argument(call, i + 1, v, e); }
 static bool tokens_copy(const qa_command_tokens *from, qa_command_tokens *to, qa_error *e)
@@ -75,6 +84,8 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
     int32_t code; bool engine;
     if (!qa_qvm_classify_syscall(QA_QVM_CGAME, s->options.profile->abi, trap, &code, &engine, e)) return false;
     if (!engine) return s->lower.syscall(s->lower.context, call, trap, result, e);
+    if(s->options.profile->player_events&&code!=50&&(code<7||code>9))
+        return s->lower.syscall(s->lower.context,call,trap,result,e);
     *result = 0;
     if (code == 50) {
         int32_t ptr; return argument(call, 0, &ptr, e) && qa_qvm_write_gamestate(s->vm, ptr, true, s->game_state, e);
@@ -224,7 +235,7 @@ static bool acquire(application_q3_scene *s, bool baseline, qa_error *e)
     if (!q3scene_current(s) || !c.game_state || !c.snapshot || c.game_state_revision<0 ||
         c.game_state_revision<s->revision || c.revision<0 || c.revision<s->scene_revision || c.time_ms<0 || c.frame_ms<0 ||
         c.client_number<0 || (uint32_t)c.client_number>=s->options.profile->capacity ||
-        c.actor_count>s->options.profile->capacity || (c.actor_count&&!c.actors) || (c.command_count&&!c.commands) ||
+        (!s->options.profile->player_events&&c.actor_count>s->options.profile->capacity) || (c.actor_count&&!c.actors) || (c.command_count&&!c.commands) ||
         c.snapshot->entity_count>256 || (c.snapshot->entity_count&&!c.snapshot->entities))
         return q3scene_fail(e, QA_ERROR_FORMAT, "Component publication is incomplete or moved backwards");
     *s->game_state=*c.game_state;
@@ -278,6 +289,14 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
     const application_q3_scene_profile *p=s->options.profile; application_q3_scene_context *c=&s->context;
     *changed=c->revision!=s->scene_revision;
     if (!*changed) return true;
+    if(p->player_events) {
+        if(s->snapshot_number==INT32_MAX) return q3scene_fail(e,QA_ERROR_FORMAT,"Component source snapshot counter exhausted");
+        int32_t number=s->snapshot_number+1; q3scene_snapshot *row=s->snapshots+(uint32_t)number%32;
+        free(row->entities);
+        *row=(q3scene_snapshot){.number=number,.value={.valid=true,.server_time=c->snapshot->server_time,.player=c->snapshot->player}};
+        s->snapshot_number=number; s->scene_revision=c->revision;
+        return true;
+    }
     application_q3_scene_actor *actors=c->actor_count?calloc(c->actor_count,sizeof(*actors)):NULL;
     if (c->actor_count&&!actors) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining component scene actors");
     for (size_t i=0;i<c->actor_count;++i) {
@@ -327,8 +346,8 @@ bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
 {
     if (!application_q3_scene_idle(s) || s->initialized || s->restoring || s->failed)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component Init requires its fresh real executor");
-    s->busy=true; bool ok=acquire(s,true,e);
     const application_q3_scene_profile *p=s->options.profile;
+    s->busy=true; bool ok=acquire(s,!p->player_events,e);
     for (size_t i=0;ok&&i<p->cvar_count;++i) ok=qa_cvars_set(s->options.host.cvars,p->cvars[i].name,p->cvars[i].value,true,e);
     if (ok) ok=call_list(s,&p->initialize,e);
     if (ok) {
@@ -368,16 +387,16 @@ bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa
 }
 bool application_q3_scene_consume(application_q3_scene *s,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
 {
-    if(!s||!event||!s->options.profile->player_events||!s->initialized||s->failed||!application_q3_scene_idle(s)||!sequence||s->restoring)
+    if(!s||!event||!s->options.profile->player_events||!s->initialized||s->failed||!application_q3_scene_idle(s)||s->restoring)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event requires its initialized returned CG owner");
-    if(sequence<=s->event_sequence) return true;
+    if(s->event_present&&sequence<=s->event_sequence) return true;
     const application_q3_scene_profile *p=s->options.profile; int32_t slot=event->player.clientNum;
     if(slot<0||(uint32_t)slot>=p->capacity||!qa_vec_finite(event->origin)) return q3scene_fail(e,QA_ERROR_FORMAT,"Original player event leaves its declared CG projection");
-    if(!s->options.source.live(s->options.source.context,event->actor)) { s->event_sequence=sequence; return true; }
+    if(!s->options.source.live(s->options.source.context,event->actor)) { s->event_sequence=sequence; s->event_present=true; return true; }
     qa_actor_id actor_id; bool owned,found;
     if(!s->options.source.actor(s->options.source.context,(uint32_t)slot,&actor_id,&owned,&found,e)) return false;
-    if(!found||!qa_actor_id_equal(actor_id,event->actor)) { s->event_sequence=sequence; return true; }
-    s->event_sequence=sequence; s->busy=true; s->active_event=event;
+    if(!found||!qa_actor_id_equal(actor_id,event->actor)) { s->event_sequence=sequence; s->event_present=true; return true; }
+    s->event_sequence=sequence; s->event_present=true; s->busy=true; s->active_event=event;
     bool ok=acquire(s,false,e); uint32_t entity=p->entities+(uint32_t)slot*p->stride;
     if(ok&&!qa_actor_id_equal(s->players[slot],event->actor)) {
         ok=qa_qvm_write(s->vm,entity,(qa_bytes){s->defaults.data+(size_t)slot*p->stride,p->stride},e);
@@ -388,7 +407,18 @@ bool application_q3_scene_consume(application_q3_scene *s,const application_q3_s
         store(s,entity+p->state+180,event->event,e)&&store(s,entity+p->state+184,event->parameter,e);
     float origin[]={event->origin.x,event->origin.y,event->origin.z};
     if(ok) ok=words(s,entity+p->entity_origin,origin,3,e)&&call_list(s,&p->event,e);
-    ok=finish_output(s,ok,e); s->active_event=NULL;
+    bool retired=false;
+    if(!ok&&(!e||e->code==QA_ERROR_ARGUMENT)&&s->options.source.current(s->options.source.context,&s->context)) {
+        qa_error check={0};
+        retired=!s->options.source.live(s->options.source.context,event->actor);
+        if(!retired&&s->options.source.actor(s->options.source.context,(uint32_t)slot,&actor_id,&owned,&found,&check))
+            retired=!found||!qa_actor_id_equal(actor_id,event->actor);
+    }
+    if(retired) {
+        if(e) *e=(qa_error){0};
+        ok=!s->options.finish_output||s->options.finish_output(s->options.output_context,false,e);
+    } else ok=finish_output(s,ok,e);
+    s->active_event=NULL;
     if(!ok) s->failed=true;
     release(s); s->busy=false; return ok;
 }

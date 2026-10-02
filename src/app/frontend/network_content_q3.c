@@ -326,7 +326,9 @@ static bool create(const frontend_q3_content_request *request, qa_vfs **imported
         if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
             (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '/')) goto bad_map;
     }
-    snprintf(content->map_path, sizeof(content->map_path), "maps/%s.bsp", map);
+    memcpy(content->map_path, "maps/", 5);
+    memcpy(content->map_path + 5, map, map_length);
+    memcpy(content->map_path + 5 + map_length, ".bsp", 5);
     char *normalized = qa_vfs_normalize_path(content->map_path, error);
     if (!normalized) goto failed;
     free(normalized);

@@ -45,5 +45,9 @@ struct application_unified_server {
     bool bound, admitted, player_attached, admitted_receipt, preparing_frame, entered, closed;
     bool restore_pending;
     bool source_dropped;
+    qa_actor_owner drop_source_owner;
+    uint32_t drop_source_slot;
+    const qa_launch_instance *drop_source_launch;
+    bool drop_player_detached;
 };
 #endif

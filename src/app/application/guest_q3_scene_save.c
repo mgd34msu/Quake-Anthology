@@ -105,9 +105,9 @@ static bool tokens(qa_source_save_io *io,qa_command_tokens *t)
 }
 static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_qvm_binding *event)
 {
-    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=3;
+    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=4;
     qa_sha256_digest declaration=s->options.profile->declaration_digest;
-    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=3||
+    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=4||
         !qa_source_save_bytes(io,declaration.bytes,32)||!qa_sha256_equal(&declaration,&s->options.profile->declaration_digest)||
         !qa_source_save_u64(io,event)||(!s->options.profile->player_events&&!*event)||(s->options.profile->player_events&&*event)||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||
         !qa_source_save_u64(io,&s->context.generation)||!qa_source_save_i64(io,&s->revision)||s->revision<0||
@@ -120,7 +120,9 @@ static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,q
         (uint32_t)s->context.client_number>=s->options.profile->capacity||
         !qa_source_save_vec3(io,&s->context.origin)||!qa_vec_finite(s->context.origin)) return false;
     for(size_t i=0;i<3;++i) if(!qa_source_save_vec3(io,s->context.axis+i)||!qa_vec_finite(s->context.axis[i])) return false;
-    if(!qa_source_save_u64(io,&s->event_sequence)||!qa_source_save_bool(io,&s->frame_present)||!qa_source_save_u64(io,&s->frame)||
+    if(!qa_source_save_bool(io,&s->event_present)||!qa_source_save_u64(io,&s->event_sequence)||
+        (!s->event_present&&s->event_sequence)||(s->event_present&&!s->options.profile->player_events)||
+        !qa_source_save_bool(io,&s->frame_present)||!qa_source_save_u64(io,&s->frame)||
         !qa_source_save_bool(io,&s->hud_present)||!qa_source_save_u64(io,&s->hud_frame)||
         (s->hud_present&&(!s->frame_present||s->hud_frame>s->frame))||!game_state(io,s)||
         !blob(io,&s->defaults,(size_t)s->options.profile->stride*s->options.profile->capacity)||

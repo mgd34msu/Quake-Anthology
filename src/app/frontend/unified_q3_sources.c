@@ -17,7 +17,7 @@ typedef struct received_source {
     uint64_t configstring_revisions[QA_Q3_CONFIGSTRINGS];
     uint16_t visible_entities[256];
     uint8_t area_mask[32];
-    char *instance, *content;
+    char *provider_name, *instance, *content;
     size_t references;
 } received_source;
 struct frontend_unified_q3_sources {
@@ -100,7 +100,7 @@ static bool actor(frontend_unified_q3_sources *o, const qa_unified_document *d, 
             frontend_remote_unified_actor(o->replica, (uint32_t)slot, generation, out, e));
 }
 static void source_free(received_source *r)
-{ if (r && --r->references == 0) { free(r->instance); free(r->content); free(r->players); free(r); } }
+{ if (r && --r->references == 0) { free(r->provider_name); free(r->instance); free(r->content); free(r->players); free(r); } }
 static void rows_free(received_source **rows, size_t count)
 { if (rows) for (size_t i = 0; i < count; ++i) source_free(rows[i]); free(rows); }
 
@@ -194,12 +194,12 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
     r->references = 1;
     frontend_unified_q3_source_view *v = &r->view;
     v->owner = o; v->source = r; v->revision = revision; v->epoch = o->epoch;
-    char *owner = NULL; uint64_t product, clients, snapshot_bit;
+    uint64_t product, clients, snapshot_bit;
     qa_json_id activation = field(d,id,"activation");
     bool ok = qa_json_string_equal(j,field(d,id,"kind"),"compiled-q3") &&
         qa_json_string_equal(j,field(d,id,"abi"),"q3-modern") &&
-        text(d,field(d,id,"owner"),&owner,e) && text(d,field(d,id,"instance"),&r->instance,e) &&
-        !strcmp(owner,r->instance) && text(d,field(d,id,"content"),&r->content,e) &&
+        text(d,field(d,id,"owner"),&r->provider_name,e) && text(d,field(d,id,"instance"),&r->instance,e) &&
+        text(d,field(d,id,"content"),&r->content,e) &&
         natural(d,field(d,activation,"publication"),QA_UNIFIED_SAFE_INTEGER,&v->publication,e) && v->publication &&
         natural(d,field(d,activation,"mapRevision"),QA_UNIFIED_SAFE_INTEGER,&v->map_revision,e) &&
         natural(d,field(d,id,"product"),QA_Q3_TEAM_ARENA,&product,e) &&
@@ -207,10 +207,9 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
         natural(d,field(d,id,"snapshotBit"),4,&snapshot_bit,e) && (snapshot_bit == 0 || snapshot_bit == 4) &&
         integer(d,field(d,id,"serverTime"),&v->time,e) && integer(d,field(d,id,"levelStartTime"),&v->level_start,e) &&
         integer(d,field(d,id,"gameType"),&v->game_type,e) && actor(o,d,field(d,id,"viewer"),restoring,&v->viewer,e);
-    free(owner);
     if (ok) {
         v->product = (qa_q3_product)product; v->max_clients = (uint32_t)clients; v->snapshot_bit = (uint8_t)snapshot_bit;
-        v->instance = r->instance; v->content = r->content;
+        v->provider_name = r->provider_name; v->instance = r->instance; v->content = r->content;
         for (size_t i = 0; i < qa_executable_recipe_provider_count(o->recipe); ++i) {
             const qa_recipe_provider *p = qa_executable_recipe_provider(o->recipe,i);
             if (!strcmp(p->selection.instance,r->instance)) { v->provider = p; break; }
@@ -313,12 +312,15 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
     o->prepared = t;
     for (size_t i = 0; ok && i < count; ++i) {
         ok = source_read(o,d,qa_json_at(j,array,i),t->revision,restoring,false,t->rows+i,e);
-        for (size_t k = 0; ok && k < i; ++k) if (!strcmp(t->rows[k]->instance,t->rows[i]->instance)) ok = false;
+        for (size_t k = 0; ok && k < i; ++k)
+            if (!strcmp(t->rows[k]->instance,t->rows[i]->instance) ||
+                !strcmp(t->rows[k]->provider_name,t->rows[i]->provider_name))
+                ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 Source roster repeats its descriptor or event owner");
         for (size_t k = 0; ok && k < o->count; ++k) {
             const received_source *old = o->rows[k], *next = t->rows[i];
             if (strcmp(old->instance,next->instance)) continue;
             if (old->view.publication == next->view.publication && old->view.map_revision == next->view.map_revision &&
-                (old->view.product != next->view.product || old->view.max_clients != next->view.max_clients ||
+                (strcmp(old->provider_name,next->provider_name) || old->view.product != next->view.product || old->view.max_clients != next->view.max_clients ||
                  old->view.has_client != next->view.has_client || old->view.client_number != next->view.client_number ||
                  (!qa_actor_id_equal(old->view.viewer,next->view.viewer) && old->view.snapshot_bit == next->view.snapshot_bit) || strcmp(old->content,next->content)))
                 ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 retained activation changed its physical recipient or content");
@@ -386,7 +388,7 @@ static bool row_current(const frontend_unified_q3_source_view *v,bool cold)
         return r->revision == v->revision && r->epoch == v->epoch && r->provider == v->provider &&
             r->publication == v->publication && r->map_revision == v->map_revision &&
             r->entities == v->entities && r->players == v->players && r->game_state == v->game_state &&
-            r->instance == v->instance && r->content == v->content && r->files == v->files &&
+            r->provider_name == v->provider_name && r->instance == v->instance && r->content == v->content && r->files == v->files &&
             r->content_product == v->content_product && r->product == v->product &&
             r->time == v->time && r->level_start == v->level_start && r->game_type == v->game_type &&
             r->max_clients == v->max_clients && r->entity_count == v->entity_count && r->player_count == v->player_count &&

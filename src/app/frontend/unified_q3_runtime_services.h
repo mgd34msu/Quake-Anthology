@@ -17,6 +17,8 @@ typedef struct frontend_unified_q3_runtime_services_options {
     /* The stable factory row returns its runtime's actual lexical frame.
      * This cannot be replaced by the newest transport snapshot. */
     const q3n_compiled_frame *(*entered_frame)(void *);
+    /* Exact runtime-held returned CLIENT frame during staged capture. */
+    const frontend_unified_q3_client_frame *(*checkpoint_frame)(void *);
     /* These concrete factory services retain their own contexts. The builder
      * supplies resource/cvar/collision callbacks, preserving these input,
      * predictor, console-registration and music/movie owners. */

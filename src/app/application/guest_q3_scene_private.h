@@ -35,7 +35,7 @@ struct application_q3_scene {
     uint64_t frame, hud_frame;
     uint64_t event_sequence;
     const application_q3_scene_player_event *active_event;
-    bool frame_present, hud_present, initialized, failed, busy, restoring, restoring_scene, acquired;
+    bool event_present, frame_present, hud_present, initialized, failed, busy, restoring, restoring_scene, acquired;
 };
 bool q3scene_fail(qa_error *, qa_status, const char *);
 bool q3scene_current(const application_q3_scene *);

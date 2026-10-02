@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "source_event_state.h"
+#include "source_team_state.h"
 #include "source_inventory.h"
 #include "source_chat.h"
 #include "source_goal.h"
@@ -296,7 +298,7 @@ bool bot_ai_source_chat_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
     if(b->source_goals.game_type==1) return true;
     bool skip;CHAT_CALL(refused(b,s,chance,&skip,e));if(skip) return true;
     int32_t count;CHAT_CALL(active_count(b,s,&count,e));if(count<=1) return true;
-    int32_t attacker=s->source_events.last_killed_by,self;char name[32];
+    int32_t attacker=bot_ai_last_killed_by(s),self;char name[32];
     if(attacker>=0 && attacker<64) CHAT_CALL(bot_ai_easy_name(b,attacker,name,sizeof(name),e));
     else memcpy(name,"[world]",sizeof("[world]"));
     bool same=false;
@@ -308,9 +310,9 @@ bool bot_ai_source_chat_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
         s->source_chat.chat_to=QA_BOT_CHAT_TEAM;
     } else {
         if(b->source_goals.game_type>=3) {CHAT_CALL(taunt(b,s,e));*out=true;return true;}
-        int32_t method=s->source_events.bot_death_type;const char *type=NULL;
+        int32_t method=bot_ai_bot_death_type(s);const char *type=NULL;
         char opponent[32];const char *first=name,*second=NULL;
-        if(method==14 || method==15 || method==16 || method==19 || s->source_events.bot_suicide ||
+        if(method==14 || method==15 || method==16 || method==19 || bot_ai_bot_suicide(s) ||
            method==17 || method==20 || method==21 || method==22 || method==0) {
             type=method==14?"death_drown":method==15?"death_slime":method==16?"death_lava":
                 method==19?"death_cratered":"death_suicide";
@@ -343,22 +345,22 @@ bool bot_ai_source_chat_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     float chance;CHAT_CALL(characteristic(b,s,SOURCE_CHAT_KILL,&chance,e));
     if(b->source_goals.game_type==1) return true;
     bool skip;CHAT_CALL(refused(b,s,chance,&skip,e));if(skip) return true;
-    int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));if(s->source_events.last_killed_player==self) return true;
+    int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));if(bot_ai_last_killed_player(s)==self) return true;
     int32_t count;CHAT_CALL(active_count(b,s,&count,e));if(count<=1) return true;
     bool valid;CHAT_CALL(bot_ai_source_valid_chat_position(b,s,&valid,e));if(!valid) return true;
     bool enemies;CHAT_CALL(bot_ai_source_visible_enemies(b,s,&enemies,e));if(enemies) return true;
-    char name[32];CHAT_CALL(bot_ai_easy_name(b,s->source_events.last_killed_player,name,sizeof(name),e));
+    char name[32];CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_player(s),name,sizeof(name),e));
     s->source_chat.chat_to=QA_BOT_CHAT_ALL;bool same=false;
-    if(b->source_goals.game_type>=3) CHAT_CALL(bot_ai_source_same_team(b,s,s->source_events.last_killed_player,&same,e));
+    if(b->source_goals.game_type>=3) CHAT_CALL(bot_ai_source_same_team(b,s,bot_ai_last_killed_player(s),&same,e));
     const char *type;
     if(same) type="kill_teammate";
     else {
         if(b->source_goals.game_type>=3) return taunt(b,s,e);
-        int32_t method=s->source_events.enemy_death_type;
+        int32_t method=bot_ai_enemy_death_type(s);
         if(method==2) type="kill_gauntlet";else if(method==10) type="kill_rail";else if(method==18) type="kill_telefrag";
         else {
             size_t templates=0;
-            if(b->services.team_arena && s->source_events.bot_death_type==26) {
+            if(b->services.team_arena && bot_ai_bot_death_type(s)==26) {
                 templates=qa_bot_chat_initial_count(qa_bot_runtime_chat(b->runtime,s->chat),"kill_kamikaze");
                 if(!live(b,s)) return true;
             }
@@ -439,8 +441,8 @@ bool bot_ai_source_chat_hit_no_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_erro
 }
 bool bot_ai_source_chat_random(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;bool available;CHAT_CALL(level_available(b,s,&available,e));if(!available) return true;
-    if(b->source_goals.game_type==1 || s->long_term_goal==BOT_LTG_TEAM_HELP ||
-       s->long_term_goal==BOT_LTG_TEAM_ACCOMPANY || s->long_term_goal==BOT_LTG_RUSH_BASE) return true;
+    if(b->source_goals.game_type==1 || bot_ai_long_term_goal(s)==BOT_LTG_TEAM_HELP ||
+       bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY || bot_ai_long_term_goal(s)==BOT_LTG_RUSH_BASE) return true;
     float chance,random;CHAT_CALL(characteristic(b,s,SOURCE_CHAT_RANDOM,&chance,e));
     CHAT_CALL(bot_ai_random(b,&random,e));volatile float limit=s->view.think_time*.1f;
     if(random>limit) return true;
@@ -452,8 +454,8 @@ bool bot_ai_source_chat_random(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e)
     bool valid,enemies;CHAT_CALL(bot_ai_source_valid_chat_position(b,s,&valid,e));if(!valid) return true;
     CHAT_CALL(bot_ai_source_visible_enemies(b,s,&enemies,e));if(enemies) return true;
     int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));char name[32];
-    if(s->source_events.last_killed_player==self) CHAT_CALL(opponent_name(b,s,name,e));
-    else CHAT_CALL(bot_ai_easy_name(b,s->source_events.last_killed_player,name,sizeof(name),e));
+    if(bot_ai_last_killed_player(s)==self) CHAT_CALL(opponent_name(b,s,name,e));
+    else CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_player(s),name,sizeof(name),e));
     if(b->source_goals.game_type>=3) return taunt(b,s,e);
     const char *type;CHAT_CALL(random_type(b,s,SOURCE_CHAT_MISC,"random_misc","random_insult",&type,e));
     char opponent[32],map[128];const char *weapon;
@@ -486,7 +488,7 @@ static bool test_emit(qa_bots *b,bot_ai_state *s,const char *type,test_variables
             CHAT_CALL(ranked_name(b,s,true,first,e));CHAT_CALL(ranked_name(b,s,false,last,e));CHAT_CALL(map_title(b,map,e));
             values[0]=own;values[1]=opponent;values[2]=first;values[3]=last;values[4]=map;break;
         case TEST_ONE:values[0]=name;break;
-        case TEST_DEATH_WEAPON:values[0]=name;values[1]=weapon_name(b->services.team_arena,s->source_events.bot_death_type);break;
+        case TEST_DEATH_WEAPON:values[0]=name;values[1]=weapon_name(b->services.team_arena,bot_ai_bot_death_type(s));break;
         case TEST_HIT:values[0]=name;values[1]=weapon;break;
         case TEST_RANDOM:
             CHAT_CALL(opponent_name(b,s,opponent,e));CHAT_CALL(map_title(b,map,e));CHAT_CALL(random_weapon(b,s,&random_name,e));
@@ -508,18 +510,18 @@ bool bot_ai_source_chat_test(qa_bots *b,bot_ai_state *s,qa_error *e) {
     for(size_t i=0;i<2;++i) CHAT_CALL(test_emit(b,s,game[i],TEST_GAME,NULL,NULL,e));
     CHAT_CALL(test_emit(b,s,"level_start",TEST_START,NULL,NULL,e));
     for(size_t i=0;i<3;++i) CHAT_CALL(test_emit(b,s,end[i],TEST_END,NULL,NULL,e));
-    char name[32];CHAT_CALL(bot_ai_easy_name(b,s->source_events.last_killed_by,name,sizeof(name),e));
+    char name[32];CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_by(s),name,sizeof(name),e));
     for(size_t i=0;i<6;++i) CHAT_CALL(test_emit(b,s,death_one[i],TEST_ONE,name,NULL,e));
     for(size_t i=0;i<5;++i) CHAT_CALL(test_emit(b,s,death_weapon[i],TEST_DEATH_WEAPON,name,NULL,e));
-    CHAT_CALL(bot_ai_easy_name(b,s->source_events.last_killed_player,name,sizeof(name),e));
+    CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_player(s),name,sizeof(name),e));
     for(size_t i=0;i<6;++i) CHAT_CALL(test_emit(b,s,kill[i],TEST_ONE,name,NULL,e));
     qa_bot_source_player_state current;CHAT_CALL(own_player(b,s,&current,e));
     CHAT_CALL(bot_ai_client_name(b,current.last_hurt_client,name,sizeof(name),true,e));
     const char *weapon=weapon_name(b->services.team_arena,current.last_hurt_client);
     for(size_t i=0;i<3;++i) CHAT_CALL(test_emit(b,s,hit[i],TEST_HIT,name,weapon,e));
     int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));
-    if(s->source_events.last_killed_player==self) CHAT_CALL(opponent_name(b,s,name,e));
-    else CHAT_CALL(bot_ai_easy_name(b,s->source_events.last_killed_player,name,sizeof(name),e));
+    if(bot_ai_last_killed_player(s)==self) CHAT_CALL(opponent_name(b,s,name,e));
+    else CHAT_CALL(bot_ai_easy_name(b,bot_ai_last_killed_player(s),name,sizeof(name),e));
     for(size_t i=0;i<2;++i) CHAT_CALL(test_emit(b,s,random[i],TEST_RANDOM,name,NULL,e));
     return true;
 }

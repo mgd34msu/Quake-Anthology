@@ -1,5 +1,6 @@
 /* Q3 ai_team.c and ai_dmq3.c policy over the retained GAME and botlib owners. */
 #include "internal.h"
+#include "source_team_state.h"
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_orders.h"
@@ -459,9 +460,9 @@ bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
             const bot_source_match_cvar *skill=&b->source_match.cvars[BOT_SOURCE_SP_SKILL];
             if(!skill->registered) return bot_ai_fail(e,"Source bot pickup preference requires its cached g_spSkill cvar");
             if(skill->integer_value<=3) {
-                bool notify=offense?(s->long_term_goal!=BOT_LTG_GET_FLAG && s->long_term_goal!=BOT_LTG_ATTACK_BASE &&
-                    s->long_term_goal!=BOT_LTG_HARVEST && flags_at_base):
-                    (s->long_term_goal!=BOT_LTG_DEFEND && flags_at_base);
+                bool notify=offense?(bot_ai_long_term_goal(s)!=BOT_LTG_GET_FLAG && bot_ai_long_term_goal(s)!=BOT_LTG_ATTACK_BASE &&
+                    bot_ai_long_term_goal(s)!=BOT_LTG_HARVEST && flags_at_base):
+                    (bot_ai_long_term_goal(s)!=BOT_LTG_DEFEND && flags_at_base);
                 if(notify && !bot_ai_source_voice(b,s,offense?leader:-1,offense?"wantonoffense":"wantondefense",false,e)) return false;
                 if(offense && alive(b,s)) *preference|=2;
             }
@@ -479,7 +480,7 @@ bool bot_ai_source_print_team_goal(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!bot_ai_client_name(b,self,name,sizeof(name),true,e)) return false;
     if(!alive(b,s)) return true;
     float time=bot_ai_team_goal_time(s)-b->time;const char *action=NULL;
-    switch(s->long_term_goal) {
+    switch(bot_ai_long_term_goal(s)) {
     case BOT_LTG_TEAM_HELP:action="help a team mate";break;
     case BOT_LTG_TEAM_ACCOMPANY:action="accompany a team mate";break;
     case BOT_LTG_GET_FLAG:action="get the flag";break;
@@ -520,10 +521,10 @@ static bool source_team(qa_bots *b, bot_ai_state *s, int32_t *team, qa_error *e)
 }
 static int32_t opposite(int32_t team) { return team==1?2:team==2?1:0; }
 static bool refuse_order(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    if(!s->ordered || !bot_ai_order_time(s) || !(bot_ai_order_time(s)>b->time-10.0f) || !alive(b,s)) return true;
+    if(!bot_ai_ordered(s) || !bot_ai_order_time(s) || !(bot_ai_order_time(s)>b->time-10.0f) || !alive(b,s)) return true;
     if(!qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_NEGATIVE,e)) return false;
     if(!alive(b,s)) return true;
-    if(!bot_ai_source_voice(b,s,s->decisionmaker,"no",false,e)) return false;
+    if(!bot_ai_source_voice(b,s,bot_ai_decisionmaker(s),"no",false,e)) return false;
     if(alive(b,s)) bot_ai_order_time_set(s,0);
     return true;
 }
@@ -541,15 +542,19 @@ bool bot_ai_source_set_last_order(qa_bots *b, bot_ai_state *s, bool *out, qa_err
     }
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,false,e)) return false;
     if(!last_type) return true;
-    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&s->decisionmaker,false,e)) return false;
-    s->ordered=true;
-    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&s->long_term_goal,false,e) ||
-       !bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,false,e) ||
-       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&s->teammate,false,e)) return false;
+    int32_t value;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&value,false,e)) return false;
+    bot_ai_decisionmaker_set(s,value);
+    bot_ai_ordered_set(s,true);
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&value,false,e)) return false;
+    bot_ai_long_term_goal_set(s,value);
+    if(!bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,false,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&value,false,e)) return false;
+    bot_ai_teammate_set(s,value);
     bot_ai_team_goal_time_set(s,b->time+300.0f);
     if(!team_status(b,s,e)) return false;
     if(!alive(b,s)) return true;
-    if(b->source_goals.game_type==4 && s->long_term_goal==BOT_LTG_GET_FLAG) {
+    if(b->source_goals.game_type==4 && bot_ai_long_term_goal(s)==BOT_LTG_GET_FLAG) {
         if(!source_team(b,s,&team,e)) return false;
         if(!alive(b,s)) return true;
         const qa_bot_goal *own=team==1?&b->source_goals.red_flag:&b->source_goals.blue_flag;
@@ -608,11 +613,11 @@ static bool human_leader(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) 
             else if(type==4 || (s->team_arena && type==5))
                 s->team_goal=team==1?b->source_goals.red_flag:b->source_goals.blue_flag;
             else {*found=true;return true;}
-            s->decisionmaker=i;s->ordered=true;bot_ai_order_time_set(s,b->time);
+            bot_ai_decisionmaker_set(s,i);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
             float random;if(!bot_ai_random(b,&random,e)) return false;
             if(!alive(b,s)) return true;
             volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
-            s->long_term_goal=BOT_LTG_DEFEND;bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_defend_away_time_set(s,0);
+            bot_ai_long_term_goal_set(s,BOT_LTG_DEFEND);bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_defend_away_time_set(s,0);
             if(!team_status(b,s,e)) return false;
             if(alive(b,s) && !bot_ai_remember_order(b,s,e)) return false;
             if(alive(b,s) && qa_bot_runtime_debug(b->runtime) && !bot_ai_source_print_team_goal(b,s,e)) return false;
@@ -738,13 +743,13 @@ bool bot_ai_source_flag_carrier(qa_bots *b, bot_ai_state *s, bool teammate,
 }
 static bool teammate_carrying(qa_bots *b, bot_ai_state *s, bool cubes, bool *out, qa_error *e) {
     qa_bot_entity_info info;bool found;
-    if(!qa_bot_runtime_entity(b->runtime,s->teammate,&info,&found,e)) return false;
+    if(!qa_bot_runtime_entity(b->runtime,bot_ai_teammate(s),&info,&found,e)) return false;
     return carries(b,s,&info,cubes,out,e);
 }
 static bool own_decision(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s)) return true;
     int32_t client;if(!bot_ai_source_client(b,s,&client,e)) return false;
-    if(alive(b,s)) {s->decisionmaker=client;s->ordered=false;}
+    if(alive(b,s)) {bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,false);}
     return true;
 }
 static bool decision_deadline(qa_bots *b, bot_ai_state *s, qa_error *e) {
@@ -758,16 +763,16 @@ static bool decision_deadline(qa_bots *b, bot_ai_state *s, qa_error *e) {
 static bool accompany(qa_bots *b, bot_ai_state *s, int32_t teammate, qa_error *e) {
     if(!own_decision(b,s,e)) return false;
     if(!alive(b,s)) return true;
-    s->teammate=teammate;bot_ai_teammate_visible_time_set(s,b->time);bot_ai_team_message_time_set(s,0);bot_ai_arrive_time_set(s,1);
+    bot_ai_teammate_set(s,teammate);bot_ai_teammate_visible_time_set(s,b->time);bot_ai_team_message_time_set(s,0);bot_ai_arrive_time_set(s,1);
     if(!bot_ai_source_voice(b,s,teammate,"onfollow",false,e)) return false;
     if(!alive(b,s)) return true;
-    bot_ai_team_goal_time_set(s,b->time+600.0f);s->long_term_goal=BOT_LTG_TEAM_ACCOMPANY;bot_ai_formation_distance_set(s,112);
+    bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_long_term_goal_set(s,BOT_LTG_TEAM_ACCOMPANY);bot_ai_formation_distance_set(s,112);
     return team_status(b,s,e);
 }
 static bool rush(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!refuse_order(b,s,e)) return false;
     if(!alive(b,s)) return true;
-    s->long_term_goal=BOT_LTG_RUSH_BASE;bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_rush_base_away_time_set(s,0);
+    bot_ai_long_term_goal_set(s,BOT_LTG_RUSH_BASE);bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_rush_base_away_time_set(s,0);
     return own_decision(b,s,e);
 }
 static bool protect_order(int32_t type) {
@@ -782,12 +787,12 @@ static bool ctf_goal(int32_t type, bool one_flag) {
 static bool defend(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal, qa_error *e) {
     if(!own_decision(b,s,e)) return false;
     if(!alive(b,s)) return true;
-    s->team_goal=*goal;s->long_term_goal=BOT_LTG_DEFEND;bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_defend_away_time_set(s,0);
+    s->team_goal=*goal;bot_ai_long_term_goal_set(s,BOT_LTG_DEFEND);bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_defend_away_time_set(s,0);
     return team_status(b,s,e);
 }
 static bool roam(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s)) return true;
-    s->long_term_goal=BOT_LTG_NONE;s->source_team_policy.ctf_roam_time=b->time+60.0f;
+    bot_ai_long_term_goal_set(s,BOT_LTG_NONE);s->source_team_policy.ctf_roam_time=b->time+60.0f;
     return team_status(b,s,e);
 }
 static bool aggression(qa_bots *b, bot_ai_state *s, float *out, qa_error *e) {
@@ -819,10 +824,10 @@ static bool common_seek(qa_bots *b, bot_ai_state *s, bool one_flag, bool harvest
     int32_t last_type;
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,false,e)) return false;
     if(last_type) bot_ai_team_goal_time_set(s,bot_ai_team_goal_time(s)+60.0f);
-    if(!harvester && b->source_goals.game_type!=6 && !s->ordered && last_type) s->long_term_goal=BOT_LTG_NONE;
-    bool protected_goal=ctf_goal(s->long_term_goal,one_flag);
-    if(harvester) protected_goal=(protected_goal && s->long_term_goal!=BOT_LTG_RUSH_BASE &&
-        s->long_term_goal!=BOT_LTG_RETURN_FLAG) || s->long_term_goal==BOT_LTG_HARVEST;
+    if(!harvester && b->source_goals.game_type!=6 && !bot_ai_ordered(s) && last_type) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
+    bool protected_goal=ctf_goal(bot_ai_long_term_goal(s),one_flag);
+    if(harvester) protected_goal=(protected_goal && bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE &&
+        bot_ai_long_term_goal(s)!=BOT_LTG_RETURN_FLAG) || bot_ai_long_term_goal(s)==BOT_LTG_HARVEST;
     if(protected_goal) return true;
     bool restored;if(!bot_ai_source_set_last_order(b,s,&restored,e)) return false;
     if(!alive(b,s) || restored) return true;
@@ -836,7 +841,7 @@ static bool common_seek(qa_bots *b, bot_ai_state *s, bool one_flag, bool harvest
 static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t team;
     if(bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0) {
-        if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
+        if(bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e)) return false;
             if(!alive(b,s)) return true;
             if(!source_team(b,s,&team,e)) return false;
@@ -857,10 +862,10 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         }
         return true;
     }
-    if(s->long_term_goal==BOT_LTG_TEAM_ACCOMPANY && !s->ordered) {
+    if(bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY && !bot_ai_ordered(s)) {
         bool carrying;if(!teammate_carrying(b,s,false,&carrying,e)) return false;
         if(!alive(b,s)) return true;
-        if(!carrying) s->long_term_goal=BOT_LTG_NONE;
+        if(!carrying) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
     }
     if(!source_team(b,s,&team,e)) return false;
     if(!alive(b,s)) return true;
@@ -868,11 +873,11 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         (int64_t)s->source_order.blue_flag_status*2+s->source_order.red_flag_status;
     if(status==1) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time &&
-           !(s->long_term_goal==BOT_LTG_DEFEND && (s->team_goal.number==b->source_goals.red_flag.number ||
+           !(bot_ai_long_term_goal(s)==BOT_LTG_DEFEND && (s->team_goal.number==b->source_goals.red_flag.number ||
                s->team_goal.number==b->source_goals.blue_flag.number))) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,true,true,false,&carrier,e)) return false;
             if(!alive(b,s)) return true;
-            if(carrier>=0 && (s->long_term_goal!=BOT_LTG_TEAM_ACCOMPANY || s->teammate!=carrier))
+            if(carrier>=0 && (bot_ai_long_term_goal(s)!=BOT_LTG_TEAM_ACCOMPANY || bot_ai_teammate(s)!=carrier))
                 return refuse_order(b,s,e) && accompany(b,s,carrier,e) && decision_deadline(b,s,e);
         }
         return true;
@@ -881,12 +886,12 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,false,true,false,&carrier,e)) return false;
             if(!alive(b,s)) return true;
-            if(s->long_term_goal!=BOT_LTG_GET_FLAG && s->long_term_goal!=BOT_LTG_RETURN_FLAG && !protect_order(s->long_term_goal)) {
+            if(bot_ai_long_term_goal(s)!=BOT_LTG_GET_FLAG && bot_ai_long_term_goal(s)!=BOT_LTG_RETURN_FLAG && !protect_order(bot_ai_long_term_goal(s))) {
                 if(!refuse_order(b,s,e) || !own_decision(b,s,e)) return false;
                 if(!alive(b,s)) return true;
                 float random;if(!bot_ai_random(b,&random,e)) return false;
                 if(!alive(b,s)) return true;
-                s->long_term_goal=random<.5f?BOT_LTG_GET_FLAG:BOT_LTG_RETURN_FLAG;
+                bot_ai_long_term_goal_set(s,random<.5f?BOT_LTG_GET_FLAG:BOT_LTG_RETURN_FLAG);
                 bot_ai_team_message_time_set(s,0);bot_ai_team_goal_time_set(s,b->time+600.0f);
                 if(!bot_ai_source_alternate_route(b,s,opposite(team),e) || !team_status(b,s,e)) return false;
                 return decision_deadline(b,s,e);
@@ -896,14 +901,14 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     if(status==3) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time &&
-           s->long_term_goal!=BOT_LTG_RETURN_FLAG && s->long_term_goal!=BOT_LTG_TEAM_ACCOMPANY) {
+           bot_ai_long_term_goal(s)!=BOT_LTG_RETURN_FLAG && bot_ai_long_term_goal(s)!=BOT_LTG_TEAM_ACCOMPANY) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,true,true,false,&carrier,e) || !refuse_order(b,s,e)) return false;
             if(!alive(b,s)) return true;
             if(carrier>=0) {if(!accompany(b,s,carrier,e)) return false;}
             else {
                 if(!own_decision(b,s,e) || !message_delay(b,s,e)) return false;
                 if(!alive(b,s)) return true;
-                s->long_term_goal=BOT_LTG_RETURN_FLAG;bot_ai_team_goal_time_set(s,b->time+180.0f);
+                bot_ai_long_term_goal_set(s,BOT_LTG_RETURN_FLAG);bot_ai_team_goal_time_set(s,b->time+180.0f);
                 if(!bot_ai_source_alternate_route(b,s,opposite(team),e) || !team_status(b,s,e)) return false;
             }
             return decision_deadline(b,s,e);
@@ -919,7 +924,7 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(random<attack && bases) {
         if(!own_decision(b,s,e)) return false;
         if(!alive(b,s)) return true;
-        s->long_term_goal=BOT_LTG_GET_FLAG;bot_ai_team_goal_time_set(s,b->time+600.0f);
+        bot_ai_long_term_goal_set(s,BOT_LTG_GET_FLAG);bot_ai_team_goal_time_set(s,b->time+600.0f);
         if(!bot_ai_source_alternate_route(b,s,opposite(team),e) || !team_status(b,s,e)) return false;
     } else if(random<defense && bases) {
         if(!defend(b,s,team==1?&b->source_goals.red_flag:&b->source_goals.blue_flag,e)) return false;
@@ -930,7 +935,7 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
 static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t team;
     if(bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0) {
-        if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
+        if(bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e) || !source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
             if(!bot_ai_source_alternate_route(b,s,opposite(team),e) || !team_status(b,s,e)) return false;
@@ -938,26 +943,26 @@ static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
         }
         return true;
     }
-    if(s->long_term_goal==BOT_LTG_TEAM_ACCOMPANY && !s->ordered) {
+    if(bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY && !bot_ai_ordered(s)) {
         bool carrying;if(!teammate_carrying(b,s,false,&carrying,e)) return false;
         if(!alive(b,s)) return true;
-        if(!carrying) s->long_term_goal=BOT_LTG_NONE;
+        if(!carrying) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
     }
     if(s->source_order.neutral_flag_status==1) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time) {
-            if(s->long_term_goal!=BOT_LTG_TEAM_ACCOMPANY) {
+            if(bot_ai_long_term_goal(s)!=BOT_LTG_TEAM_ACCOMPANY) {
                 int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,true,true,false,&carrier,e)) return false;
                 if(!alive(b,s)) return true;
                 if(carrier>=0) return refuse_order(b,s,e) && accompany(b,s,carrier,e) && decision_deadline(b,s,e);
             }
-            if(ctf_goal(s->long_term_goal,true) && s->long_term_goal!=BOT_LTG_RETURN_FLAG) return true;
-            if(s->long_term_goal!=BOT_LTG_ATTACK_BASE) {
+            if(ctf_goal(bot_ai_long_term_goal(s),true) && bot_ai_long_term_goal(s)!=BOT_LTG_RETURN_FLAG) return true;
+            if(bot_ai_long_term_goal(s)!=BOT_LTG_ATTACK_BASE) {
                 if(!refuse_order(b,s,e) || !own_decision(b,s,e)) return false;
                 if(!alive(b,s)) return true;
                 if(!source_team(b,s,&team,e)) return false;
                 if(!alive(b,s)) return true;
                 s->team_goal=team==1?b->source_goals.blue_flag:b->source_goals.red_flag;
-                s->long_term_goal=BOT_LTG_ATTACK_BASE;bot_ai_team_goal_time_set(s,b->time+600.0f);
+                bot_ai_long_term_goal_set(s,BOT_LTG_ATTACK_BASE);bot_ai_team_goal_time_set(s,b->time+600.0f);
                 if(!team_status(b,s,e)) return false;
                 return decision_deadline(b,s,e);
             }
@@ -967,8 +972,8 @@ static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(s->source_order.neutral_flag_status==2) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,false,true,false,&carrier,e)) return false;
-            if(!alive(b,s) || protect_order(s->long_term_goal)) return true;
-            if(s->long_term_goal!=BOT_LTG_DEFEND) {
+            if(!alive(b,s) || protect_order(bot_ai_long_term_goal(s))) return true;
+            if(bot_ai_long_term_goal(s)!=BOT_LTG_DEFEND) {
                 if(!refuse_order(b,s,e) || !source_team(b,s,&team,e)) return false;
                 if(!alive(b,s)) return true;
                 return defend(b,s,team==1?&b->source_goals.red_flag:&b->source_goals.blue_flag,e) && decision_deadline(b,s,e);
@@ -984,7 +989,7 @@ static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(random<attack && b->source_goals.neutral_flag.area) {
         if(!own_decision(b,s,e)) return false;
         if(!alive(b,s)) return true;
-        s->long_term_goal=BOT_LTG_GET_FLAG;bot_ai_team_goal_time_set(s,b->time+600.0f);
+        bot_ai_long_term_goal_set(s,BOT_LTG_GET_FLAG);bot_ai_team_goal_time_set(s,b->time+600.0f);
         if(!team_status(b,s,e)) return false;
     } else if(random<defense && b->source_goals.red_flag.area && b->source_goals.blue_flag.area) {
         if(!source_team(b,s,&team,e)) return false;
@@ -999,13 +1004,13 @@ bool bot_ai_source_go_harvest(qa_bots *b, bot_ai_state *s, qa_error *e) {
     int32_t team;if(!source_team(b,s,&team,e)) return false;
     if(!alive(b,s)) return true;
     s->team_goal=team==1?b->source_goals.blue_obelisk:b->source_goals.red_obelisk;
-    s->long_term_goal=BOT_LTG_HARVEST;bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_harvest_away_time_set(s,0);
+    bot_ai_long_term_goal_set(s,BOT_LTG_HARVEST);bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_harvest_away_time_set(s,0);
     return team_status(b,s,e);
 }
 static bool seek_bases(qa_bots *b, bot_ai_state *s, bool harvester, qa_error *e) {
     int32_t team;
     if(harvester && (bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0)) {
-        if(s->long_term_goal!=BOT_LTG_RUSH_BASE) {
+        if(bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) {
             if(!rush(b,s,e) || !source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
             return bot_ai_source_alternate_route(b,s,opposite(team),e) && team_status(b,s,e);
@@ -1015,10 +1020,10 @@ static bool seek_bases(qa_bots *b, bot_ai_state *s, bool harvester, qa_error *e)
     if(harvester) {
         bool leader;if(!known_bot_leader(b,s,&leader,e)) return false;
         if(!alive(b,s) || leader) return true;
-        if(s->long_term_goal==BOT_LTG_TEAM_ACCOMPANY && !s->ordered) {
+        if(bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY && !bot_ai_ordered(s)) {
             bool carrying;if(!teammate_carrying(b,s,true,&carrying,e)) return false;
             if(!alive(b,s)) return true;
-            if(!carrying) s->long_term_goal=BOT_LTG_NONE;
+            if(!carrying) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
         }
     }
     bool allowed;if(!common_seek(b,s,true,harvester,false,&allowed,e)) return false;
@@ -1026,7 +1031,7 @@ static bool seek_bases(qa_bots *b, bot_ai_state *s, bool harvester, qa_error *e)
     if(harvester) {
         int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,false,true,true,&carrier,e)) return false;
         if(!alive(b,s)) return true;
-        if(s->long_term_goal!=BOT_LTG_TEAM_ACCOMPANY) {
+        if(bot_ai_long_term_goal(s)!=BOT_LTG_TEAM_ACCOMPANY) {
             if(!bot_ai_source_flag_carrier(b,s,true,true,true,&carrier,e)) return false;
             if(!alive(b,s)) return true;
             if(carrier>=0) return accompany(b,s,carrier,e);
@@ -1043,7 +1048,7 @@ static bool seek_bases(qa_bots *b, bot_ai_state *s, bool harvester, qa_error *e)
         if(!source_team(b,s,&team,e)) return false;
         if(!alive(b,s)) return true;
         s->team_goal=team==1?b->source_goals.blue_obelisk:b->source_goals.red_obelisk;
-        s->long_term_goal=BOT_LTG_ATTACK_BASE;bot_ai_team_goal_time_set(s,b->time+600.0f);
+        bot_ai_long_term_goal_set(s,BOT_LTG_ATTACK_BASE);bot_ai_team_goal_time_set(s,b->time+600.0f);
         return bot_ai_source_alternate_route(b,s,opposite(team),e) && team_status(b,s,e);
     }
     if(random<defense && bases) {
@@ -1059,11 +1064,11 @@ bool bot_ai_source_team_goals(qa_bots *b, bot_ai_state *s, bool retreat, qa_erro
     if(type==4) {
         if(!retreat) ok=seek_ctf(b,s,e);
         else if((bot_ai_inventory_value(s,QA_BOT_INV_RED_FLAG)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_FLAG)>0) &&
-                s->long_term_goal!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
+                bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
     } else if(s->team_arena) {
         if(type==5) {
             if(!retreat) ok=seek_one_flag(b,s,e);
-            else if(bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0 && s->long_term_goal!=BOT_LTG_RUSH_BASE) {
+            else if(bot_ai_inventory_value(s,QA_BOT_INV_NEUTRAL_FLAG)>0 && bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) {
                 int32_t team;
                 ok=rush(b,s,e) && source_team(b,s,&team,e);
                 if(ok && alive(b,s)) ok=bot_ai_source_alternate_route(b,s,opposite(team),e) && team_status(b,s,e);
@@ -1072,7 +1077,7 @@ bool bot_ai_source_team_goals(qa_bots *b, bot_ai_state *s, bool retreat, qa_erro
         else if(type==7) {
             if(!retreat) ok=seek_bases(b,s,true,e);
             else if((bot_ai_inventory_value(s,QA_BOT_INV_RED_CUBE)>0 || bot_ai_inventory_value(s,QA_BOT_INV_BLUE_CUBE)>0) &&
-                    s->long_term_goal!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
+                    bot_ai_long_term_goal(s)!=BOT_LTG_RUSH_BASE) ok=rush(b,s,e) && team_status(b,s,e);
         }
     }
     if(ok && alive(b,s)) bot_ai_order_time_set(s,0);

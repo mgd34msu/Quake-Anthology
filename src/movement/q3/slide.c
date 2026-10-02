@@ -6,7 +6,7 @@ qa_vec3 q3_clip(qa_vec3 velocity, qa_vec3 normal) {
     return qa_vec_sub(velocity, qa_vec_scale(normal, backoff));
 }
 
-bool q3_trace(qa_q3_step *step, qa_vec3 start, qa_vec3 end, qa_trace_result *trace) {
+bool q3_move_trace(qa_q3_step *step, qa_vec3 start, qa_vec3 end, qa_trace_result *trace) {
     return qa_move_trace(step->context, start, end, step->context->result->bounds,
                          step->mask, false, trace);
 }
@@ -36,7 +36,7 @@ bool q3_slide(qa_q3_step *step, bool gravity) {
     for (unsigned bump = 0; bump < 4; ++bump) {
         qa_trace_result trace;
         qa_vec3 end = qa_vec_add(state->origin, qa_vec_scale(state->velocity, remaining));
-        if (!q3_trace(step, state->origin, end, &trace)) return true;
+        if (!q3_move_trace(step, state->origin, end, &trace)) return true;
         if (trace.all_solid) {
             state->velocity.z = 0;
             return true;
@@ -103,11 +103,11 @@ void q3_step_slide(qa_q3_step *step, bool gravity) {
     qa_vec3 start_origin = state->origin, start_velocity = state->velocity;
     if (!q3_slide(step, gravity) || !q3_active(step)) return;
     qa_trace_result ground;
-    if (!q3_trace(step, start_origin, qa_vec_add(start_origin, qa_v3(0, 0, -18)), &ground)) return;
+    if (!q3_move_trace(step, start_origin, qa_vec_add(start_origin, qa_v3(0, 0, -18)), &ground)) return;
     if (state->velocity.z > 0 && (ground.fraction == 1 || !ground.contact ||
                                    ground.contact_plane.normal.z < 0.7f)) return;
     qa_trace_result raised;
-    if (!q3_trace(step, start_origin, qa_vec_add(start_origin, qa_v3(0, 0, 18)), &raised) ||
+    if (!q3_move_trace(step, start_origin, qa_vec_add(start_origin, qa_v3(0, 0, 18)), &raised) ||
         raised.all_solid) return;
     float step_size = raised.end.z - start_origin.z;
     state->origin = raised.end;
@@ -115,7 +115,7 @@ void q3_step_slide(qa_q3_step *step, bool gravity) {
     q3_slide(step, gravity);
     if (!q3_active(step)) return;
     qa_trace_result dropped;
-    if (!q3_trace(step, state->origin, qa_vec_add(state->origin, qa_v3(0, 0, -step_size)), &dropped)) return;
+    if (!q3_move_trace(step, state->origin, qa_vec_add(state->origin, qa_v3(0, 0, -step_size)), &dropped)) return;
     if (!dropped.all_solid) state->origin = dropped.end;
     if (dropped.fraction < 1 && dropped.contact)
         state->velocity = q3_clip(state->velocity, dropped.contact_plane.normal);

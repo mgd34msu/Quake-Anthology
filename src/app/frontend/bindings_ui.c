@@ -37,7 +37,7 @@ bool frontend_binding_capture(void *context, uint32_t id, qa_physical_input inpu
         if (!qa_input_physical_name(input, physical, sizeof(physical)))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "captured key has no physical name");
         seat->binding_conflict = true;
-        snprintf(seat->binding_status, sizeof(seat->binding_status), "%s is bound to %.128s; replace or cancel", physical, command);
+        snprintf(seat->binding_status, sizeof(seat->binding_status), "%s is bound to %.96s; replace or cancel", physical, command);
         return true;
     }
     return bind_pending(seat, error);

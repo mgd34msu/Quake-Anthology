@@ -25,6 +25,38 @@ static bool player_receipt(qa_source_save_io *io, application_unified_server *ow
         (owner->offered.family == QA_GAME_Q3 ? owner->admitted_player.source_slot < owner->offered.max_clients :
             owner->admitted_player.source_slot && owner->admitted_player.source_slot <= owner->offered.max_clients);
 }
+static bool drop_request(qa_source_save_io *io, application_unified_server *owner,
+    const application_unified_source *source)
+{
+    if (!owner->source_dropped) return !owner->drop_source_owner && !owner->drop_source_slot &&
+        !owner->drop_source_launch && !owner->drop_player_detached;
+    bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
+    if (writing && !owner->drop_source_launch) return false;
+    const char *instance = writing ? owner->drop_source_launch->selection.instance : NULL;
+    qa_sha256_digest identity = writing ? owner->drop_source_launch->identity : (qa_sha256_digest){0};
+    if (!qa_source_save_text(io, &instance) || !instance ||
+        !qa_source_save_bytes(io, identity.bytes, sizeof(identity.bytes)) ||
+        !qa_source_save_u32(io, &owner->drop_source_slot) ||
+        !qa_source_save_bool(io, &owner->drop_player_detached)) return false;
+    const qa_launch_instance *launch = qa_launch_snapshot_find(source->launch, instance);
+    application_provider *provider = NULL;
+    if (!launch || !qa_sha256_equal(&identity, &launch->identity)) return false;
+    for (size_t i = 0; i < owner->application->provider_count; ++i) {
+        application_provider *candidate = owner->application->providers[i];
+        if (!candidate->launch || strcmp(candidate->launch->selection.instance, instance)) continue;
+        if (provider) return false;
+        provider = candidate;
+    }
+    if (!provider || provider->application != owner->application || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        !provider->constructed || !provider->attached || provider->close_pending || !provider->owner ||
+        provider->launch != launch || !provider->state.q3 ||
+        (writing && (owner->drop_source_owner != provider->owner || owner->drop_source_launch != launch))) return false;
+    if (!writing) {
+        owner->drop_source_owner = provider->owner;
+        owner->drop_source_launch = launch;
+    }
+    return true;
+}
 static bool offer_valid(const application_unified_server *owner, const qa_net_client *peer, qa_error *e)
 {
     const qa_json_document *json = qa_unified_document_json(owner->offer);
@@ -145,9 +177,9 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     bool player_present = owner->admitted_receipt || owner->inputs || owner->components || owner->pending_capture;
     uint64_t seat_owner = owner->seat.owner;
     uint32_t seat_index = owner->seat.index;
-    char magic[4] = {'Q','U','S','B'}; uint32_t version = 4;
+    char magic[4] = {'Q','U','S','B'}; uint32_t version = 5;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUSB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 5 ||
         !application_unified_save_source(io, owner->application, source, &current, false) ||
         !application_unified_save_retained_source(io, owner->application, source, &owner->offered) ||
         !application_unified_save_client(io, peer->id) ||
@@ -167,6 +199,7 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     if (player_present && !historical_player && !application_unified_save_player_read(owner->application, peer->id,
         owner->seat, &player, io->error)) return false;
     if (!player_receipt(io, owner, player_present && !historical_player ? &player : NULL)) return false;
+    if (!drop_request(io, owner, source)) return false;
     if (historical_player && owner->admitted_receipt) player = owner->admitted_player;
     if (owner->source_dropped && (!player_present || obsolete ||
         !application_unified_server_source_drop_current(owner, io->error))) return false;

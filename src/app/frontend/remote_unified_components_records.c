@@ -8,6 +8,12 @@
 
 bool q3remote_component_fail(qa_error *e,qa_status status,const char *text)
 { qa_error_set(e,status,0,"%s",text); return false; }
+bool q3remote_component_player_finite(const qa_q3_player *p)
+{
+    const float *vectors[]={p->origin,p->velocity,p->grapplePoint,p->viewangles};
+    for(size_t i=0;i<4;++i) for(size_t k=0;k<3;++k) if(!isfinite(vectors[i][k])) return false;
+    return true;
+}
 static qa_json_id field(const qa_unified_document *d,qa_json_id id,const char *name)
 { return qa_json_get(qa_unified_document_json(d),id,name); }
 static bool integer(const qa_unified_document *d,qa_json_id id,uint64_t maximum,uint64_t *out,qa_error *e)
@@ -251,6 +257,17 @@ static bool signed_word(const qa_unified_document *d,qa_json_id id,int32_t *out,
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event exceeds its original signed word");
     *out=(int32_t)n; return true;
 }
+static bool event_module_matches(const qa_unified_document *d,qa_json_id module,const remote_component *r,
+    bool *matches,qa_error *e)
+{
+    const qa_json_document *identity=qa_unified_document_json(r->state.identity);
+    qa_json_id expected=qa_json_at(identity,qa_json_get(identity,qa_unified_document_root(r->state.identity),"modules"),0);
+    qa_buffer actual_bytes={0},expected_bytes={0};
+    bool ok=expected!=QA_JSON_NONE&&qa_unified_value_canonical(qa_json_source(qa_unified_document_json(d),module),&actual_bytes,e)&&
+        qa_unified_value_canonical(qa_json_source(identity,expected),&expected_bytes,e);
+    if(ok) *matches=actual_bytes.size==expected_bytes.size&&!memcmp(actual_bytes.data,expected_bytes.data,actual_bytes.size);
+    qa_buffer_free(&actual_bytes); qa_buffer_free(&expected_bytes); return ok;
+}
 static bool player_event_read(frontend_unified_components *o,const qa_unified_document *d,qa_json_id row,
     remote_component **target,remote_component_event *out,bool *handled,qa_error *e)
 {
@@ -261,23 +278,23 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_do
     qa_json_id event=field(d,row,"event"),source=field(d,event,"source"),stamp=field(d,row,"source");
     if(!qa_json_string_equal(j,field(d,row,"kind"),"q3-source")||
         !qa_json_string_equal(j,field(d,event,"kind"),"player-event")) return true;
-    remote_component *r=NULL;
-    for(size_t i=0;i<o->count;++i) if(o->rows[i]&&
-        qa_json_string_equal(j,field(d,stamp,"provider"),o->rows[i]->state.provider)) { r=o->rows[i]; break; }
-    if(!r||!r->state.player_events) return true;
+    remote_component *r=NULL; bool known=false;
+    for(size_t i=0;!r&&i<q3remote_component_physical_count(o);++i) {
+        remote_component *candidate=q3remote_component_physical_at(o,i);
+        if(!candidate||!candidate->state.player_events||
+            !qa_json_string_equal(j,field(d,stamp,"provider"),candidate->state.provider)) continue;
+        known=true; bool matches=false;
+        if(!event_module_matches(d,field(d,source,"module"),candidate,&matches,e)) return false;
+        const qa_product *content=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),candidate->state.mod->product);
+        if(matches&&content&&qa_json_string_equal(j,field(d,row,"content"),content->identity)&&
+            qa_json_string_equal(j,field(d,source,"abiProfile"),candidate->state.abi==QA_QVM_Q3_116N?"q3-1.16n-base":"q3-modern")) r=candidate;
+    }
+    if(!r) return !known||q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event has no actual admitted gameplay identity");
     *handled=true;
     const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),r->state.mod->product);
     if(!product||!qa_json_string_equal(j,field(d,row,"content"),product->identity)||
         !qa_json_string_equal(j,field(d,source,"abiProfile"),r->state.abi==QA_QVM_Q3_116N?"q3-1.16n-base":"q3-modern"))
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component player event changed its admitted source content or ABI");
-    const qa_json_document *identity=qa_unified_document_json(r->state.identity);
-    qa_json_id expected=qa_json_at(identity,qa_json_get(identity,qa_unified_document_root(r->state.identity),"modules"),0);
-    qa_buffer actual_bytes={0},expected_bytes={0};
-    bool ok=expected!=QA_JSON_NONE&&qa_unified_value_canonical(qa_json_source(j,field(d,source,"module")),&actual_bytes,e)&&
-        qa_unified_value_canonical(qa_json_source(identity,expected),&expected_bytes,e);
-    if(ok) ok=actual_bytes.size==expected_bytes.size&&!memcmp(actual_bytes.data,expected_bytes.data,actual_bytes.size);
-    qa_buffer_free(&actual_bytes); qa_buffer_free(&expected_bytes);
-    if(!ok) return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event belongs to another held gameplay module");
     qa_json_id owner=field(d,row,"owner");
     if(qa_json_type(j,owner)!=QA_JSON_NULL&&owner!=QA_JSON_NONE) {
         uint64_t generation=0;
@@ -292,14 +309,20 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_do
         if(!qa_actor_id_equal(receiver,viewer)) return true;
     }
     application_q3_scene_player_event *v=&out->value;
-    qa_buffer bytes={0};
-    ok=actor(d,field(d,event,"actor"),o->replica,&v->actor,e)&&
-        integer(d,field(d,event,"deliverySequence"),QA_UNIFIED_SAFE_INTEGER,&out->sequence,e)&&out->sequence&&
+    uint8_t bytes[468]={0}; qa_json_id state=field(d,event,"playerState");
+    bool ok=actor(d,field(d,event,"actor"),o->replica,&v->actor,e)&&
+        integer(d,field(d,row,"sequence"),QA_UNIFIED_SAFE_INTEGER,&out->sequence,e)&&
         signed_word(d,field(d,event,"event"),&v->event,e)&&signed_word(d,field(d,event,"parameter"),&v->parameter,e)&&
         signed_word(d,field(d,event,"time"),&v->time_ms,e)&&v->time_ms>=0&&
-        qa_unified_document_bytes(d,field(d,event,"playerState"),&bytes,e)&&bytes.size==qa_qvm_player_bytes(r->state.abi);
-    if(ok) { qa_q3_abi_record record={.abi=r->state.abi,.bytes={bytes.data,bytes.size}}; ok=qa_q3_abi_read_player(&record,0,true,&v->player,e); }
-    qa_buffer_free(&bytes);
+        qa_json_type(j,state)==QA_JSON_ARRAY&&qa_json_size(j,state)==qa_qvm_player_bytes(QA_QVM_Q3_MODERN);
+    for(size_t i=0;ok&&i<sizeof(bytes);++i) {
+        uint64_t value=0; ok=integer(d,qa_json_at(j,state,i),UINT8_MAX,&value,e);
+        if(ok) bytes[i]=(uint8_t)value;
+    }
+    if(ok) {
+        qa_q3_abi_record record={.abi=QA_QVM_Q3_MODERN,.bytes={bytes,sizeof(bytes)}};
+        ok=qa_q3_abi_read_player(&record,0,true,&v->player,e)&&q3remote_component_player_finite(&v->player);
+    }
     qa_json_id sequence=field(d,event,"sequence");
     v->external=qa_json_string_equal(j,field(d,sequence,"kind"),"external");
     if(ok) ok=(v->external||qa_json_string_equal(j,field(d,sequence,"kind"),"predictable"))&&
@@ -311,7 +334,7 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_do
         if(ok) *coordinates[i]=(float)n;
     }
     if(!ok) return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Component player event has no exact original record");
-    *target=r; return true;
+    *target=r->retired?NULL:r; return true;
 }
 bool frontend_unified_components_player_event_validate(frontend_unified_components *o,const qa_unified_document *d,
     qa_json_id row,bool *handled,qa_error *e)
@@ -326,12 +349,12 @@ bool frontend_unified_components_player_event(frontend_unified_components *o,con
     if(!handled) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event requires a reached-handler result");
     remote_component *target=NULL; remote_component_event event={0};
     if(!player_event_read(o,d,row,&target,&event,handled,e)) return false;
-    if(!target||event.sequence<=target->event_sequence) return true;
+    if(!target||(target->event_present&&event.sequence<=target->event_sequence)) return true;
     remote_component_event *owned=malloc(sizeof(*owned));
     if(!owned) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining reached original component player event");
     *owned=event; remote_component_event **tail=&target->events;
     while(*tail) tail=&(*tail)->next;
-    *tail=owned; target->event_sequence=event.sequence; return true;
+    *tail=owned; target->event_sequence=event.sequence; target->event_present=true; return true;
 }
 bool q3remote_component_frame_read(frontend_unified_components *o,remote_component *row,const qa_unified_document *d,qa_json_id id,
     remote_component_frame **out,qa_error *e)

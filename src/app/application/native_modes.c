@@ -84,9 +84,9 @@ bool application_native_q3_source_mode(application_provider *provider, qa_mode_i
         *found = true;
         return true;
     }
-    if (!application_native_q3_source_command_entered(provider))
+    if (!application_native_q3_source_entered(provider))
         return application_fail(error, QA_ERROR_ARGUMENT,
-            "Supplemental Q3 mode requires its actual entered Source command");
+            "Supplemental Q3 mode requires its actual entered Source operation");
     qa_mode_id selected = {0};
     bool admitted = false;
     for (size_t i = 0; i < app->mode_count; ++i) {
@@ -105,9 +105,9 @@ bool application_native_q3_source_mode(application_provider *provider, qa_mode_i
         admitted = true;
     }
     if (!admitted) return true;
-    if (!application_native_q3_source_command_entered(provider))
+    if (!application_native_q3_source_entered(provider))
         return application_fail(error, QA_ERROR_ARGUMENT,
-            "Supplemental Q3 mode lost its actual Source command");
+            "Supplemental Q3 mode lost its actual Source operation");
     *out = selected;
     *found = true;
     return true;
@@ -130,7 +130,7 @@ static bool mode_respawn_current(qa_application *app, qa_mode_id mode,
     bool supplemental = app && source && policy == source &&
         source->kind == APPLICATION_PROVIDER_Q3 &&
         application_world_provider(app, QA_ROLE_ENTITIES, "") != source &&
-        application_native_q3_source_command_entered(source);
+        application_native_q3_source_entered(source);
     if (!app || app->destroy_requested || app->finalizing || !app->players ||
         !policy || !source || (!supplemental && (app->players->map_provider != source ||
             application_world_provider(app, QA_ROLE_ENTITIES, "") != source)) ||
@@ -164,7 +164,7 @@ bool application_native_mode_respawn(void *opaque, qa_mode_id mode,
     application_provider *policy = app ? application_mode_provider(app, mode) : NULL;
     application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     if (policy && policy->kind == APPLICATION_PROVIDER_Q3 &&
-        application_native_q3_source_command_entered(policy)) source = policy;
+        application_native_q3_source_entered(policy)) source = policy;
     qa_mode_view view;
     if (!mode_respawn_current(app, mode, policy, source, actor, &view, error)) return false;
     /* Each physical source owns the discontinuity produced by its real spawn. */

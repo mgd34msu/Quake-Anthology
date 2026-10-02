@@ -87,6 +87,10 @@ bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runt
     const frontend_unified_q3_client_frame *,qa_error *);
 bool frontend_unified_q3_runtime_factory_rebind_ready(const frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *);
+bool frontend_unified_q3_runtime_factory_rebind_restore(frontend_unified_q3_runtime_factory *,
+    const frontend_unified_q3_client_frame *,qa_error *);
+bool frontend_unified_q3_runtime_factory_rebind_checkpoint_ready(const frontend_unified_q3_runtime_factory *,
+    const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_factory_rebind_commit(frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_factory_rebind_abort(frontend_unified_q3_runtime_factory *,

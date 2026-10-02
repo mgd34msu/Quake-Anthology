@@ -24,7 +24,7 @@ typedef struct objective_call {
     qa_mode_id mode;
     qa_actor_owner owner;
     uint64_t publication_generation, command_generation, map_revision;
-    bool source_command;
+    bool source_entered;
 } objective_call;
 
 static bool source_live(void *opaque, qa_error *error)
@@ -41,7 +41,7 @@ static bool source_live(void *opaque, qa_error *error)
         call->application->command_generation != call->command_generation ||
         call->application->map_revision != call->map_revision)
         return application_fail(error, QA_ERROR_NOT_FOUND, "TEAM source retired during its callback");
-    return (!call->source_command ||
+    return (!call->source_entered ||
         application_native_q3_source_mode_current(provider, call->mode, error)) &&
         qa_modes_read(call->modes, call->mode, &mode, error);
 }
@@ -62,7 +62,7 @@ static bool begin(application_provider *provider, qa_modes *modes, qa_mode_id mo
         .publication_generation = application->publication_generation,
         .command_generation = application->command_generation,
         .map_revision = application->map_revision,
-        .source_command = application_native_q3_source_command_entered(provider)};
+        .source_entered = application_native_q3_source_entered(provider)};
     return source_live(call, error) && application_native_q3_console_borrow(provider, error);
 }
 
@@ -83,7 +83,7 @@ static bool view_provider(qa_application *application, qa_mode_id mode,
     application_provider **out, qa_error *error)
 {
     application_provider *chosen = application_mode_provider(application, mode);
-    if (chosen && application_native_q3_source_command_entered(chosen)) {
+    if (chosen && application_native_q3_source_entered(chosen)) {
         if (!application_native_q3_source_mode_current(chosen, mode, error)) return false;
         *out = chosen;
     } else *out = application_world_provider(application, QA_ROLE_ENTITIES, "");

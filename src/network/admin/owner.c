@@ -22,6 +22,10 @@ struct qa_server_admin {
     uint64_t heartbeat_time, rcon_time;
     uint32_t heartbeat_sequence;
     bool heartbeat_sent, rcon_sent, shuffle, callback, executing;
+    qa_cvars *rate_registry;
+    char *rate_text;
+    uint64_t rate_revision;
+    uint32_t rate_time, credit, credit_cap, credit_cost;
 };
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text); return false;
@@ -32,6 +36,32 @@ static void strings_free(char **strings, size_t count) {
 }
 static char *copy(const char *text) {
     size_t n = strlen(text); char *out = malloc(n + 1); if (out) memcpy(out, text, n + 1); return out;
+}
+bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *error)
+{
+    if (!cvars || !owner) return fail(error,"Source administration needs its actual declaration owner");
+    qa_console_dialect dialect=qa_cvars_dialect(cvars);
+    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    const char *names[]={dialect==QA_CONSOLE_Q3?"rconPassword":"rcon_password",
+        "filterban","public","lrcon_password","sv_rcon_limit"};
+    const char *values[]={"","1","0","","1"};
+    uint32_t flags[]={q2?QA_Q2_CVAR_PRIVATE:dialect==QA_CONSOLE_Q3?QA_CVAR_TEMPORARY:0,
+        0,QA_Q2_CVAR_LATCH,QA_Q2_CVAR_PRIVATE,0};
+    size_t count=q2?5:dialect==QA_CONSOLE_Q3?1:2;
+    for (size_t i=0;i<count;++i) {
+        const qa_cvar_view *v=qa_cvars_find(cvars,names[i]);
+        if (v && !v->console_created) {
+            if (!qa_cvars_add_flags(cvars,names[i],flags[i],error)) return false;
+        } else if (!qa_cvars_register(cvars,names[i],values[i],flags[i],owner,NULL,error)) return false;
+    }
+    for (unsigned i=1;dialect==QA_CONSOLE_Q3 && i<=5;++i) {
+        char name[16]; snprintf(name,sizeof(name),"sv_master%u",i);
+        const qa_cvar_view *v=qa_cvars_find(cvars,name); uint32_t master_flags=i==1?0:QA_CVAR_ARCHIVE;
+        if (v && !v->console_created) {
+            if (!qa_cvars_add_flags(cvars,name,master_flags,error)) return false;
+        } else if (!qa_cvars_register(cvars,name,i==1?"master.quake3arena.com":"",master_flags,owner,NULL,error)) return false;
+    }
+    return true;
 }
 bool qa_server_admin_create(const qa_admin_options *options, qa_server_admin **out, qa_error *error) {
     if (!options || !out || !options->filters || options->filters > 4096 || !options->rate_entries ||
@@ -48,8 +78,16 @@ bool qa_server_admin_create(const qa_admin_options *options, qa_server_admin **o
 }
 void qa_server_admin_destroy(qa_server_admin *admin) {
     if (!admin || admin->callback) return;
-    free(admin->filters); free(admin->rates); free(admin->masters);
+    free(admin->filters); free(admin->rates); free(admin->masters); free(admin->rate_text);
     strings_free(admin->prefixes, admin->prefix_count); strings_free(admin->rotation, admin->rotation_count); free(admin);
+}
+bool qa_server_admin_policy(qa_server_admin *admin,qa_console_dialect dialect,
+    bool deny_matches,bool public_server,qa_error *error)
+{
+    if (!admin || (admin->callback && !admin->executing) || dialect>QA_CONSOLE_Q3)
+        return fail(error,"Administration policy requires its actual returned Source");
+    admin->options.dialect=dialect; admin->options.deny_matches=deny_matches;
+    admin->options.public_server=public_server; return true;
 }
 static bool filter_parse(const char *text, ip_filter *out) {
     *out = (ip_filter){0}; if (!text || !*text) return false;
@@ -182,7 +220,76 @@ static bool equal_secret(const char *left, const char *right) {
     for (size_t i = 0; i < n; ++i) different |= (size_t)((i < a ? (unsigned char)left[i] : 0) ^ (i < b ? (unsigned char)right[i] : 0));
     return different == 0;
 }
-static bool allow(qa_server_admin *admin, const qa_net_address *address, uint64_t now) {
+static uint32_t rate_unsigned(const char *text,size_t *offset)
+{
+    size_t at=*offset;
+    while (text[at] && strchr(" \t\n\v\f\r",text[at])) ++at;
+    bool negative=text[at]=='-'; if (text[at]=='+' || negative) ++at;
+    size_t first=at; uint64_t value=0; bool overflow=false;
+    while (text[at]>='0' && text[at]<='9') {
+        unsigned digit=(unsigned)(text[at++]-'0');
+        if (value>(UINT64_MAX-digit)/10) overflow=true;
+        else if (!overflow) value=value*10+digit;
+    }
+    if (at==first) return 0;
+    *offset=at;
+    return overflow?UINT32_MAX:negative?0u-(uint32_t)value:(uint32_t)value;
+}
+static uint32_t rate_credits(uint32_t rate)
+{
+    return rate>UINT32_MAX/32000u?(rate/10000u)*32000u:
+        (uint32_t)((uint64_t)rate*32000u/10000u);
+}
+static bool rerelease_allow(qa_server_admin *admin,uint64_t now,qa_error *error)
+{
+    bool outer=admin->callback; admin->callback=true;
+    qa_cvars *registry=admin->options.hooks.rate_registry(admin->options.hooks.context);
+    admin->callback=outer;
+    const qa_cvar_view *setting=registry?qa_cvars_find(registry,"sv_rcon_limit"):NULL;
+    if (!setting || qa_cvars_dialect(registry)!=QA_CONSOLE_Q2_RERELEASE)
+        return fail(error,"Rerelease RCON requires its actual Source rate declaration");
+    uint32_t time=(uint32_t)(now/UINT64_C(1000000));
+    if (!admin->rate_text || strcmp(admin->rate_text,setting->value) ||
+        (admin->rate_registry==registry && admin->rate_revision!=setting->modification_count)) {
+        size_t extent=strlen(setting->value);
+        if (extent>65535) return fail(error,"Source RCON rate setting exceeds its retained extent");
+        char *text=copy(setting->value);
+        if (!text) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining Source RCON rate recipe"); return false; }
+        size_t cursor=0; uint32_t limit=rate_unsigned(text,&cursor),period=1,multiplier=1;
+        if (text[cursor]=='/') {
+            ++cursor; period=rate_unsigned(text,&cursor); if (!period) period=1;
+            char unit=text[cursor]; if (unit>='A' && unit<='Z') unit=(char)(unit-'A'+'a');
+            if (unit=='s' || unit=='m' || unit=='h') { multiplier=unit=='h'?3600u:unit=='m'?60u:1u; ++cursor; }
+        }
+        const char *diagnostic=NULL; uint32_t burst=5;
+        if (!limit) { admin->rate_time=0; admin->credit=admin->credit_cap=admin->credit_cost=0; }
+        else if (period>UINT32_MAX/(10000u*multiplier)) diagnostic="Period too large";
+        else {
+            uint32_t rate=10000u*period*multiplier/limit;
+            const char *star=strchr(text+cursor,'*');
+            if (star) { cursor=(size_t)(star-text)+1; burst=rate_unsigned(text,&cursor); }
+            if (!rate) diagnostic="Limit too large";
+            else if (burst>UINT32_MAX/rate) diagnostic="Burst too large";
+            else { admin->rate_time=time; admin->credit=admin->credit_cap=rate_credits(rate*burst); admin->credit_cost=rate_credits(rate); }
+        }
+        if (diagnostic && admin->options.hooks.print) {
+            char message[96]; uint32_t value=!strcmp(diagnostic,"Period too large")?period:
+                !strcmp(diagnostic,"Limit too large")?limit:burst;
+            snprintf(message,sizeof(message),"%s: %u\n",diagnostic,(unsigned)value);
+            outer=admin->callback; admin->callback=true;
+            admin->options.hooks.print(admin->options.hooks.context,message); admin->callback=outer;
+        }
+        free(admin->rate_text); admin->rate_text=text;
+    }
+    admin->rate_registry=registry; admin->rate_revision=setting->modification_count;
+    admin->credit+=(time-admin->rate_time)*32u; admin->rate_time=time;
+    if (admin->credit>admin->credit_cap) admin->credit=admin->credit_cap;
+    if (admin->credit<admin->credit_cost) return false;
+    admin->credit-=admin->credit_cost; return true;
+}
+static bool allow(qa_server_admin *admin, const qa_net_address *address, uint64_t now,qa_error *error) {
+    if (admin->options.dialect==QA_CONSOLE_Q2_RERELEASE && admin->options.hooks.rate_registry)
+        return rerelease_allow(admin,now,error);
     if (admin->options.dialect == QA_CONSOLE_Q3) {
         uint32_t milliseconds = (uint32_t)(now / 1000000), previous = (uint32_t)(admin->rcon_time / 1000000);
         if (milliseconds < previous + 500u) return false;
@@ -245,7 +352,11 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     qa_token token; bool found;
     if (!qa_tokenizer_next(&lexer, &token, &found, error)) return false;
     if (!found || token.text.size != 4 || memcmp(token.text.data, "rcon", 4)) return true;
-    if (!allow(admin, &packet->from, packet->received_ns)) { *out = QA_ADMIN_THROTTLED; return true; }
+    qa_error rate_error={0};
+    if (!allow(admin, &packet->from, packet->received_ns,&rate_error)) {
+        if (rate_error.code!=QA_OK) { if (error) *error=rate_error; return false; }
+        *out = QA_ADMIN_THROTTLED; return true;
+    }
     char supplied[8193] = {0};
     if (!qa_tokenizer_next(&lexer, &token, &found, error)) return false;
     if (found && !qa_token_copy(&token, supplied, sizeof(supplied), error)) return false;
@@ -259,7 +370,11 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     bool is_full = full && *full && equal_secret(full, supplied);
     bool disabled = !full || !*full;
     const char *small = admin->options.hooks.password(admin->options.hooks.context, true);
-    bool is_limited = !is_full && small && *small && equal_secret(small, supplied) && limited(admin, command);
+    bool valid_limited = !is_full && small && *small && equal_secret(small, supplied);
+    bool is_limited = valid_limited && limited(admin, command);
+    if ((is_full || valid_limited) && admin->rate_text && admin->options.dialect==QA_CONSOLE_Q2_RERELEASE) {
+        admin->credit+=admin->credit_cost; if (admin->credit>admin->credit_cap) admin->credit=admin->credit_cap;
+    }
     memset(supplied, 0, sizeof(supplied));
     rcon_output output = {.admin = admin, .address = packet->from};
     bool ok;
@@ -389,7 +504,8 @@ static bool admin_checkpoint_valid(const qa_server_admin *a)
 {
     if (!a || a->callback || a->filter_count > a->options.filters || a->prefix_count > 256 ||
         a->rotation_count > 256 || a->master_count > 32 ||
-        (a->rotation_count ? a->rotation_index >= a->rotation_count : a->rotation_index != 0)) return false;
+        (a->rotation_count ? a->rotation_index >= a->rotation_count : a->rotation_index != 0) ||
+        (a->rate_text && (strlen(a->rate_text)>65535 || a->credit>a->credit_cap))) return false;
     for (size_t i = 0; i < a->filter_count; ++i) {
         for (size_t j = 0; j < 4; ++j) if ((a->filters[i].mask[j] != 0 && a->filters[i].mask[j] != 255) ||
             (a->filters[i].compare[j] & a->filters[i].mask[j]) != a->filters[i].compare[j]) return false;
@@ -409,12 +525,12 @@ static bool admin_checkpoint_valid(const qa_server_admin *a)
 bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_error *error)
 {
     if (!out || !admin_checkpoint_valid(a)) return fail(error, "Invalid administration continuation ownership");
-    size_t capacity = 512 + (size_t)a->options.filters * 8 + (size_t)a->options.rate_entries * 160 +
+    size_t capacity = 65536 + 512 + (size_t)a->options.filters * 8 + (size_t)a->options.rate_entries * 160 +
         a->prefix_count * 1024 + a->rotation_count * 128 + a->master_count * 160;
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding administration continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 2) &&
         qa_net_write_u32(&w, a->options.dialect) && qa_net_write_u32(&w, a->options.filters) &&
         qa_net_write_u32(&w, a->options.rate_entries) && qa_net_write_u32(&w, a->options.burst) &&
         qa_net_write_u64(&w, a->options.rate_interval_ns) && qa_net_write_u64(&w, a->options.heartbeat_interval_ns) &&
@@ -434,6 +550,10 @@ bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_err
     for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = qa_net_write_string(&w, a->rotation[i]);
     ok = ok && qa_net_write_u32(&w, (uint32_t)a->master_count);
     for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_save_address(&w, &a->masters[i]);
+    ok=ok && qa_net_write_u8(&w,a->options.hooks.rate_registry!=NULL) && qa_net_write_u8(&w,a->rate_text!=NULL);
+    if (ok && a->rate_text) ok=qa_net_write_string(&w,a->rate_text) && qa_net_write_u64(&w,a->rate_revision) &&
+        qa_net_write_u32(&w,a->rate_time) && qa_net_write_u32(&w,a->credit) &&
+        qa_net_write_u32(&w,a->credit_cap) && qa_net_write_u32(&w,a->credit_cost);
     if (!ok || w.failed) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
 }
@@ -443,7 +563,8 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
     if (!out || *out || !options || bytes.size > 2 * 1048576 || (bytes.size && !bytes.data))
         return fail(error, "Invalid administration continuation extent/output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x41534151) || qa_net_read_u32(&r) != 1 ||
+    uint32_t magic=qa_net_read_u32(&r),version=qa_net_read_u32(&r);
+    if (magic != UINT32_C(0x41534151) || (version!=1 && version!=2) ||
         qa_net_read_u32(&r) != (uint32_t)options->dialect || qa_net_read_u32(&r) != options->filters ||
         qa_net_read_u32(&r) != options->rate_entries || qa_net_read_u32(&r) != options->burst ||
         qa_net_read_u64(&r) != options->rate_interval_ns || qa_net_read_u64(&r) != options->heartbeat_interval_ns)
@@ -474,6 +595,17 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
     if (a->master_count > 32) { a->master_count = 0; ok = false; }
     if (ok && a->master_count) { a->masters = calloc(a->master_count, sizeof(*a->masters)); if (!a->masters) ok = false; }
     for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_restore_address(&r, &a->masters[i]);
+    if (ok && version==2) {
+        bool has_registry=q3_save_bool(&r),has_rate=q3_save_bool(&r);
+        ok=!r.failed && has_registry==(options->hooks.rate_registry!=NULL) && (!has_rate || has_registry);
+        if (ok && has_rate) {
+            a->rate_text=calloc(65536,1);
+            if (!a->rate_text) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring Source RCON rate recipe"); ok=false; }
+            else ok=qa_net_read_string(&r,a->rate_text,65536);
+            a->rate_revision=qa_net_read_u64(&r); a->rate_time=qa_net_read_u32(&r);
+            a->credit=qa_net_read_u32(&r); a->credit_cap=qa_net_read_u32(&r); a->credit_cost=qa_net_read_u32(&r);
+        }
+    }
     if (!ok || !qa_net_reader_finish(&r) || !admin_checkpoint_valid(a)) {
         qa_server_admin_destroy(a); return fail(error, "Invalid administration continuation fields");
     }

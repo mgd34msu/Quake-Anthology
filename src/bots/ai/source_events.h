@@ -5,15 +5,6 @@
 #include "qa/math.h"
 
 enum { BOT_SOURCE_EVENT_ENTITIES=1024, BOT_SOURCE_PROX_MINES=64 };
-typedef struct bot_source_events_state {
-    int32_t entity_event_time[BOT_SOURCE_EVENT_ENTITIES];
-    int32_t last_killed_player, last_killed_by, bot_death_type, enemy_death_type;
-    int32_t num_deaths, num_kills, last_e_flags;
-    float killed_enemy_time;
-    bool bot_suicide, enemy_suicide;
-    int32_t kamikaze_body, num_prox_mines;
-    int32_t prox_mines[BOT_SOURCE_PROX_MINES];
-} bot_source_events_state;
 typedef struct bot_source_events_globals {
     qa_vec3 last_teleport_origin;
     float last_teleport_time;

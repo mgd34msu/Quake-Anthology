@@ -9,10 +9,6 @@ typedef struct mount_binding {
     qa_fs_object_reference root_reference;
 } mount_binding;
 
-qa_resource_pool *qa_vfs_resources(const qa_vfs *vfs)
-{
-    return vfs ? vfs->pool : NULL;
-}
 static uint64_t package_index(const qa_resource_pool *pool, const package *wanted)
 {
     uint64_t index = 0;

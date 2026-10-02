@@ -268,7 +268,9 @@ static bool checkpoint_returned(void *context,const frontend_remote_unified *rep
         if (row->frame) {
             if (!(checkpoint?frontend_unified_q3_client_checkpoint_stage_current(row->client,row->frame):
                 frontend_unified_q3_client_ready(row->frame)) ||
-                (row->factory && !frontend_unified_q3_runtime_factory_rebind_ready(row->factory,row->frame))) return false;
+                (row->factory && !(checkpoint?
+                    frontend_unified_q3_runtime_factory_rebind_checkpoint_ready(row->factory,row->frame):
+                    frontend_unified_q3_runtime_factory_rebind_ready(row->factory,row->frame)))) return false;
         } else if (!frontend_unified_q3_client_idle(row->client) ||
             (checkpoint && !frontend_unified_q3_client_checkpoint_stage_current(row->client,NULL)) ||
             !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
@@ -1747,6 +1749,7 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
         if (version==6) client->archived=client->retired;
         if ((client->archived && (!client->retired || client->born || client->selected || client->frame.size)) ||
             (client->born && (!client->selected || !client->source_staged || client->frame.size || client->retired)) ||
+            ((client->selected || (client->retired && !client->archived)) && !saved->source_prepared) ||
             (client->source_staged && !saved->source_prepared) ||
             (!client->frame.size && client->candidate_source) ||
             (client->frame.size && (!saved->source_prepared || !client->selected || client->retired)) ||
@@ -2069,7 +2072,6 @@ bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified
             saved->factory_imported=true; row->factory_restored=true;
             row->factory_initialized=true; row->initialization_attempted=true;
         }
-        if (!frontend_unified_q3_runtime_factory_restore_ready(row->factory,error)) return false;
     }
     if (p->events && !p->import->events_finished) {
         if (!frontend_unified_events_restore_finish(p->events,error)) return false;
@@ -2078,6 +2080,10 @@ bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified
     if (!restore_frame_stage(p,error))
         return error && error->code!=QA_OK?false:
             frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified imported CLIENT receive stage has not returned");
+    for (size_t i=0;i<p->import->client_count;++i) {
+        const unified_q3_client_row *row=q3_saved_roster_at(p,i);
+        if (row->factory && !frontend_unified_q3_runtime_factory_restore_ready(row->factory,error)) return false;
+    }
     if (p->clock_started && (!p->clock.begin_generation ||
         p->clock.begin_generation>p->frontend->recipient_begin_generation ||
         p->clock.physical_frame>p->frontend->frame_number || p->clock.wall_time_ns>p->frontend->wall_time_ns))

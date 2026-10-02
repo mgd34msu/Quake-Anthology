@@ -2,6 +2,7 @@
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
+#include "native_q3_wire_state.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 
@@ -51,6 +52,7 @@ struct application_native_q3_console {
     size_t calls;
     bool settings_bound;
     application_native_q3_source_command_scope *source_command;
+    application_native_q3_source_drop_scope *source_drop;
 };
 
 bool application_native_q3_console_settings_bound(const application_provider *provider)
@@ -161,6 +163,91 @@ bool application_native_q3_source_command_actor_current(const application_provid
     const struct application_native_q3_console *owner=provider?provider->native_q3_console:NULL;
     return owner&&owner->calls&&owner->source_command&&
         qa_actor_id_equal(owner->source_command->actor,actor)&&source_command_current(owner->source_command);
+}
+static bool source_drop_current(const application_native_q3_source_drop_scope *scope)
+{
+    application_provider *p=scope?scope->provider:NULL;
+    qa_application *app=p?p->application:NULL;
+    if(!app||app->destroy_requested||!p->constructed||!p->attached||p->close_pending||
+        p->kind!=APPLICATION_PROVIDER_Q3||p->state.q3!=scope->game||p->launch!=scope->launch||
+        app->publication_generation!=scope->publication_generation||
+        app->command_generation!=scope->command_generation||app->map_revision!=scope->map_revision||
+        qa_launch_snapshot_find(qa_application_launch(app),scope->launch->selection.instance)!=scope->launch)
+        return false;
+    if(scope->disconnected) {
+        qa_q3_native_client client;
+        application_native_q3_wire_client_view wire;
+        bool admitted;
+        return qa_q3_client_slot_read(scope->game,scope->slot,&client,NULL)&&
+            client.connected==QA_Q3_CLIENT_DISCONNECTED&&
+            application_native_q3_wire_client_admission_read(p,scope->slot,&wire,&admitted,NULL)&&!admitted;
+    }
+    qa_actor_id actor;
+    const char *reason;
+    bool pending;
+    return qa_actors_get(qa_session_actors(app->session),scope->actor)&&
+        application_native_q3_wire_drop_client_read(p,scope->slot,&actor,&reason,&pending,NULL)&&
+        pending&&reason&&scope->reason&&!strcmp(reason,scope->reason)&&qa_actor_id_equal(actor,scope->actor);
+}
+bool application_native_q3_source_entered(const application_provider *provider)
+{
+    const struct application_native_q3_console *owner=provider?provider->native_q3_console:NULL;
+    return application_native_q3_source_command_entered(provider)||
+        (owner&&owner->calls&&owner->source_drop&&source_drop_current(owner->source_drop));
+}
+bool application_native_q3_source_drop_begin(application_provider *provider,uint32_t slot,qa_actor_id actor,
+    application_native_q3_source_drop_scope *scope,qa_error *error)
+{
+    qa_application *app=provider?provider->application:NULL;
+    qa_actor_id actual;
+    const char *reason;
+    bool pending;
+    if(!app||!scope||provider->kind!=APPLICATION_PROVIDER_Q3||!provider->state.q3||!provider->launch||
+        !provider->launch->selection.instance||!qa_actors_get(qa_session_actors(app->session),actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP lacks its actual pending full client request");
+    if(!application_native_q3_wire_drop_client_read(provider,slot,&actual,&reason,&pending,error)) return false;
+    if(!pending||!reason||!qa_actor_id_equal(actual,actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP lacks its actual pending full client request");
+    size_t length=strlen(reason);
+    char *retained=malloc(length+1);
+    if(!retained) return application_fail(error,QA_ERROR_MEMORY,"Retaining entered Source Q3 DROP reason");
+    memcpy(retained,reason,length+1);
+    *scope=(application_native_q3_source_drop_scope){.provider=provider,.game=provider->state.q3,
+        .launch=provider->launch,.actor=actor,.slot=slot,.reason=retained,
+        .publication_generation=app->publication_generation,.command_generation=app->command_generation,
+        .map_revision=app->map_revision};
+    if(!source_drop_current(scope)) {
+        free(retained);*scope=(application_native_q3_source_drop_scope){0};
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP lost its actual installed request");
+    }
+    if(!application_native_q3_console_borrow(provider,error)) {
+        free(retained);*scope=(application_native_q3_source_drop_scope){0};
+        return false;
+    }
+    scope->previous=provider->native_q3_console->source_drop;
+    provider->native_q3_console->source_drop=scope;
+    return true;
+}
+bool application_native_q3_source_drop_disconnected(application_native_q3_source_drop_scope *scope,qa_error *error)
+{
+    struct application_native_q3_console *owner=scope&&scope->provider?scope->provider->native_q3_console:NULL;
+    if(!owner||owner->source_drop!=scope)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP completion is outside its actual entered request");
+    scope->disconnected=true;
+    if(source_drop_current(scope)) return true;
+    scope->disconnected=false;
+    return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP precedes actual client and wire disconnect");
+}
+bool application_native_q3_source_drop_end(application_native_q3_source_drop_scope *scope,qa_error *error)
+{
+    struct application_native_q3_console *owner=scope&&scope->provider?scope->provider->native_q3_console:NULL;
+    if(!owner||owner->source_drop!=scope)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP scope is not the entered request");
+    bool current=source_drop_current(scope);
+    owner->source_drop=scope->previous;
+    application_native_q3_console_release(scope->provider);
+    free(scope->reason);*scope=(application_native_q3_source_drop_scope){0};
+    return current||application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP changed its retained physical request");
 }
 bool application_native_q3_source_command_begin(application_provider *provider,qa_actor_id actor,
     const qa_command_invocation *command,application_native_q3_source_command_scope *scope,qa_error *error)

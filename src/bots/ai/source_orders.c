@@ -1,5 +1,6 @@
 /* Source ai_cmd.c text orders over the actual botlib and GAME services. */
 #include "internal.h"
+#include "source_team_state.h"
 #include "source_timers.h"
 #include "source_orders.h"
 #include "source_storage.h"
@@ -328,7 +329,7 @@ static bool deadline(qa_bots *b,const qa_bot_chat_match *m,float *out,qa_error *
 }
 static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,qa_error *e) {
     if(!alive(b,s)) return true;
-    s->decisionmaker=client;s->ordered=true;bot_ai_order_time_set(s,b->time);
+    bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(alive(b,s)) {volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);}
     return true;
@@ -396,20 +397,20 @@ static bool help_accompany(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
         int32_t recipient;if(!bot_ai_source_client_from_name(b,name,&recipient,e)) return false;
         return qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),recipient,QA_BOT_CHAT_TEAM,e);
     }
-    s->teammate=client;
+    bot_ai_teammate_set(s,client);
     if(!requester(b,m,false,&client,e)) return false;
-    s->decisionmaker=client;s->ordered=true;bot_ai_order_time_set(s,b->time);bot_ai_teammate_visible_time_set(s,b->time);
+    bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);bot_ai_teammate_visible_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
     volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
     if(m->type==MSG_HELP) {
-        s->long_term_goal=BOT_LTG_TEAM_HELP;
+        bot_ai_long_term_goal_set(s,BOT_LTG_TEAM_HELP);
         if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+60.0f);
         return true;
     }
-    s->long_term_goal=BOT_LTG_TEAM_ACCOMPANY;
+    bot_ai_long_term_goal_set(s,BOT_LTG_TEAM_ACCOMPANY);
     if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
     bot_ai_formation_distance_set(s,112);bot_ai_arrive_time_set(s,0);return finish_order(b,s,true,e);
 }
@@ -426,7 +427,7 @@ static bool named_goal_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match 
     } else if(!requester(b,m,false,&client,e)) return false;
     if(!ordered(b,s,client,e)) return false;
     if(!alive(b,s)) return true;
-    s->long_term_goal=item?BOT_LTG_GET_ITEM:BOT_LTG_DEFEND;
+    bot_ai_long_term_goal_set(s,item?BOT_LTG_GET_ITEM:BOT_LTG_DEFEND);
     if(item) bot_ai_team_goal_time_set(s,b->time+60.0f);
     else {
         float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
@@ -459,7 +460,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     }
     if(!ordered(b,s,client,e)) return false;
     if(!alive(b,s)) return true;
-    s->long_term_goal=BOT_LTG_CAMP_ORDER;
+    bot_ai_long_term_goal_set(s,BOT_LTG_CAMP_ORDER);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
     if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
@@ -506,7 +507,7 @@ static bool patrol(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_erro
     if(!found || !alive(b,s)) return true;
     int32_t client;if(!requester(b,m,true,&client,e) || !ordered(b,s,client,e)) return false;
     if(!alive(b,s)) return true;
-    s->long_term_goal=BOT_LTG_PATROL;
+    bot_ai_long_term_goal_set(s,BOT_LTG_PATROL);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
     if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
@@ -613,7 +614,7 @@ static bool dismiss(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_err
     bool allowed;if(!order_allowed(b,s,m,&allowed,e)) return false;
     if(!allowed || !alive(b,s)) return true;
     int32_t client;if(!requester(b,m,false,&client,e)) return false;
-    s->decisionmaker=client;s->long_term_goal=BOT_LTG_NONE;bot_ai_lead_time_set(s,0);
+    bot_ai_decisionmaker_set(s,client);bot_ai_long_term_goal_set(s,BOT_LTG_NONE);bot_ai_lead_time_set(s,0);
     int32_t last_type=BOT_LTG_NONE;
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,true,e)) return false;
     return send_chat(b,s,"dismissed",NULL,NULL,client,QA_BOT_CHAT_TELL,e);
@@ -631,14 +632,14 @@ static bool doing(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error
     bool allowed;if(!addressed(b,s,m,&allowed,e)) return false;
     if(!allowed) return true;
     const char *type="roaming",*argument=NULL;char text[256];
-    switch(s->long_term_goal) {
+    switch(bot_ai_long_term_goal(s)) {
     case BOT_LTG_TEAM_HELP:case BOT_LTG_TEAM_ACCOMPANY:
-        type=s->long_term_goal==BOT_LTG_TEAM_HELP?"helping":"accompanying";
-        if(!bot_ai_easy_name(b,s->teammate,text,sizeof(text),e)) return false;
+        type=bot_ai_long_term_goal(s)==BOT_LTG_TEAM_HELP?"helping":"accompanying";
+        if(!bot_ai_easy_name(b,bot_ai_teammate(s),text,sizeof(text),e)) return false;
         argument=text;break;
     case BOT_LTG_DEFEND:case BOT_LTG_GET_ITEM: {
         const char *name;
-        type=s->long_term_goal==BOT_LTG_DEFEND?"defending":"gettingitem";
+        type=bot_ai_long_term_goal(s)==BOT_LTG_DEFEND?"defending":"gettingitem";
         if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),s->team_goal.number,&name,e)) return false;
         copy_name(text,sizeof(text),name);
         argument=text;break;
@@ -703,7 +704,7 @@ static bool kill(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
     volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
-    s->long_term_goal=BOT_LTG_KILL;bot_ai_team_goal_time_set(s,b->time+180.0f);
+    bot_ai_long_term_goal_set(s,BOT_LTG_KILL);bot_ai_team_goal_time_set(s,b->time+180.0f);
     return finish_order(b,s,false,e);
 }
 static bool nearest_item(qa_bots *b,bot_ai_state *s,const char *name,qa_bot_goal *goal,float *out,qa_error *e) {
@@ -772,7 +773,7 @@ static bool get_flag(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_er
     if(!allowed) return true;
     int32_t client;if(!requester(b,m,true,&client,e) || !ordered(b,s,client,e)) return false;
     if(!alive(b,s)) return true;
-    s->long_term_goal=BOT_LTG_GET_FLAG;bot_ai_team_goal_time_set(s,b->time+600.0f);
+    bot_ai_long_term_goal_set(s,BOT_LTG_GET_FLAG);bot_ai_team_goal_time_set(s,b->time+600.0f);
     if(type==4) {
         int32_t self,team;if(!bot_ai_source_client(b,s,&self,e) || !bot_ai_source_team(b,self,&team,e) ||
             !bot_ai_source_alternate_route(b,s,team==1?2:team==2?1:0,e)) return false;
@@ -803,11 +804,11 @@ static bool objective_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *
     int32_t client;if(!requester(b,m,true,&client,e) || !ordered(b,s,client,e)) return false;
     if(!alive(b,s)) return true;
     if(m->type==MSG_ATTACK) {
-        s->long_term_goal=BOT_LTG_ATTACK_BASE;bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_attack_away_time_set(s,0);
+        bot_ai_long_term_goal_set(s,BOT_LTG_ATTACK_BASE);bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_attack_away_time_set(s,0);
     } else if(m->type==MSG_HARVEST) {
-        s->long_term_goal=BOT_LTG_HARVEST;bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_harvest_away_time_set(s,0);
+        bot_ai_long_term_goal_set(s,BOT_LTG_HARVEST);bot_ai_team_goal_time_set(s,b->time+120.0f);bot_ai_harvest_away_time_set(s,0);
     } else {
-        s->long_term_goal=m->type==MSG_RUSH?BOT_LTG_RUSH_BASE:BOT_LTG_RETURN_FLAG;
+        bot_ai_long_term_goal_set(s,m->type==MSG_RUSH?BOT_LTG_RUSH_BASE:BOT_LTG_RETURN_FLAG);
         bot_ai_team_goal_time_set(s,b->time+(m->type==MSG_RUSH?120.0f:180.0f));bot_ai_rush_base_away_time_set(s,0);
     }
     return finish_order(b,s,m->type==MSG_ATTACK || m->type==MSG_HARVEST,e);

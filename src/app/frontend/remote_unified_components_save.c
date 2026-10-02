@@ -266,11 +266,13 @@ static bool admissions(qa_source_save_io *io,remote_component *row)
 static bool row_fields(qa_source_save_io *io,remote_component *row,const frontend_unified_components_refs *refs)
 {
     if(!state(io,row->parent,&row->state)) return false;
-    if(!qa_source_save_u64(io,&row->event_sequence)||row->event_sequence>QA_UNIFIED_SAFE_INTEGER) return false;
+    if(!qa_source_save_bool(io,&row->event_present)||!qa_source_save_u64(io,&row->event_sequence)||row->event_sequence>QA_UNIFIED_SAFE_INTEGER||
+        (!row->event_present&&row->event_sequence)) return false;
     size_t event_count=0;
     if(io->direction==QA_SOURCE_SAVE_WRITE) for(remote_component_event *event=row->events;event;event=event->next) ++event_count;
     if(!qa_source_save_count(io,&event_count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)||
-        (!row->state.player_events&&(row->event_sequence||event_count))) return fail(io,"Scene component retains an unrelated player-event cursor");
+        (!row->state.player_events&&(row->event_present||event_count))||(!row->event_present&&event_count))
+        return fail(io,"Scene component retains an unrelated player-event cursor");
     remote_component_event **event_slot=&row->events; uint64_t prior=0;
     for(size_t i=0;i<event_count;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ) {
@@ -278,16 +280,17 @@ static bool row_fields(qa_source_save_io *io,remote_component *row,const fronten
             if(!*event_slot) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining queued original player event");
         }
         remote_component_event *event=*event_slot; application_q3_scene_player_event *v=&event->value;
-        uint8_t ps[468]={0}; size_t size=qa_qvm_player_bytes(row->state.abi);
-        qa_q3_abi_record record={.abi=row->state.abi,.bytes={ps,size},.context=ps,.write=write_record};
-        if(!qa_source_save_u64(io,&event->sequence)||!event->sequence||event->sequence<=prior||event->sequence>row->event_sequence||
+        uint8_t ps[468]={0}; size_t size=qa_qvm_player_bytes(QA_QVM_Q3_MODERN);
+        qa_q3_abi_record record={.abi=QA_QVM_Q3_MODERN,.bytes={ps,size},.context=ps,.write=write_record};
+        if(!qa_source_save_u64(io,&event->sequence)||(i&&event->sequence<=prior)||event->sequence>row->event_sequence||
             !actor(io,row->parent,&v->actor)||!v->actor.registry||
             !qa_source_save_i32(io,&v->event)||!qa_source_save_i32(io,&v->parameter)||
             !qa_source_save_i32(io,&v->time_ms)||v->time_ms<0||!qa_source_save_i32(io,&v->source_sequence)||
             !qa_source_save_bool(io,&v->external)||!qa_source_save_vec3(io,&v->origin)||!qa_vec_finite(v->origin)||
             (io->direction==QA_SOURCE_SAVE_WRITE&&!qa_q3_abi_write_player(&record,0,true,false,&v->player,io->error))||
             !qa_source_save_bytes(io,ps,size)||
-            (io->direction==QA_SOURCE_SAVE_READ&&!qa_q3_abi_read_player(&record,0,true,&v->player,io->error))) return false;
+            (io->direction==QA_SOURCE_SAVE_READ&&!qa_q3_abi_read_player(&record,0,true,&v->player,io->error))||
+            !q3remote_component_player_finite(&v->player)) return false;
         prior=event->sequence; event_slot=&event->next;
     }
     bool same=io->direction==QA_SOURCE_SAVE_WRITE&&row->frame&&row->frame==row->baseline;

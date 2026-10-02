@@ -101,7 +101,7 @@ static bool q1_effect(q1_move *m, qa_movement_effect effect) {
     return ok;
 }
 
-bool q1_sound(q1_move *m, const char *sound) {
+bool q1_move_sound(q1_move *m, const char *sound) {
     return q1_effect(m, (qa_movement_effect){ .kind = QA_MOVE_EFFECT_SOUND, .sound = sound });
 }
 
@@ -116,7 +116,7 @@ qa_trace_shape q1_shape(const q1_move *m) {
     return shape;
 }
 
-bool q1_trace(q1_move *m, qa_vec3 start, qa_vec3 end, qa_trace_result *trace) {
+bool q1_move_trace(q1_move *m, qa_vec3 start, qa_vec3 end, qa_trace_result *trace) {
     return qa_move_trace_q1(m->c, start, end, q1_shape(m), QA_Q1_MOVE_NORMAL, trace);
 }
 
@@ -131,7 +131,7 @@ bool q1_contents(q1_move *m, qa_vec3 point, int32_t *contents) {
 
 bool q1_position_free(q1_move *m, qa_vec3 origin, bool *free_position) {
     qa_trace_result trace;
-    if (!q1_trace(m, origin, origin, &trace)) return false;
+    if (!q1_move_trace(m, origin, origin, &trace)) return false;
     *free_position = !trace.start_solid && !trace.all_solid;
     return true;
 }
@@ -160,7 +160,7 @@ bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
             start = c->state->data.nq.origin;
             end = q1_ma(start, (float)remaining, *velocity);
         }
-        if (!q1_trace(m, start, end, &trace)) return false;
+        if (!q1_move_trace(m, start, end, &trace)) return false;
         if (trace.all_solid || (m->qw && trace.start_solid)) {
             *velocity = qa_v3(0, 0, 0);
             out->blocked = 3;

@@ -6,6 +6,7 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/game_q2_source.h"
+#include "qa/server_admin.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -443,6 +444,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     bool present[4];
     for (size_t i = 0; i < 4; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
     if (okay && !cloned) okay = definitions(provider, common, sizeof(common) / sizeof(*common), error);
+    if (okay) okay = qa_server_admin_declarations(cvars,provider->owner,error);
     if (okay && dedicated_value) okay = qa_cvars_set(cvars, "dedicated", dedicated_value, true, error);
     free(dedicated_value);
     bool rr = dialect(provider) == QA_CONSOLE_Q2_RERELEASE;

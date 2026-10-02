@@ -56,6 +56,9 @@ bool qa_q3_cinematic_source_role_detach(qa_q3_cinematic_source *,void *expected_
 bool qa_q3_cinematic_source_retain(qa_q3_cinematic_source *,qa_error *);
 void qa_q3_cinematic_source_release(qa_q3_cinematic_source *);
 bool qa_q3_cinematic_source_destroy(qa_q3_cinematic_source **,qa_error *);
+/* Returned presentation shutdown releases actual fullscreen leases before
+ * stable parent custody can adopt the role's retained non-System slots. */
+bool qa_q3_cinematic_source_systems_close(qa_q3_cinematic_source *,qa_error *);
 bool qa_q3_cinematic_source_read(const qa_q3_cinematic_source *,qa_q3_cinematic_source_options *);
 bool qa_q3_cinematic_source_retained(const qa_q3_cinematic_source *);
 size_t qa_q3_cinematic_handles_source_count(const qa_q3_cinematic_handles *);

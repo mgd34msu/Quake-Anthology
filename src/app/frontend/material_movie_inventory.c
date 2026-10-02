@@ -518,7 +518,8 @@ static bool role_prefix(qa_source_save_io *io,qa_frontend *f,movie_row *rows,siz
         uint64_t parent_key=0; uint32_t seat=0;
         if(!reading) {
             frontend_cinematic_role_view role;
-            if(!frontend_cinematic_roles_read(f,i,&role,io->error) || !role.parent || !role.cinematics) return false;
+            if(!frontend_cinematic_roles_read(f,i,&role,io->error) || !role.parent || !role.cinematics ||
+                !qa_q3_cinematic_source_retained(role.cinematics)) return false;
             seat=role.seat;
             for(size_t j=0;j<count;++j) {
                 const frontend_material_movie_source *source=&rows[j].source;
@@ -653,6 +654,13 @@ static bool restore(qa_frontend *f,frontend_scene_namespace *space,
         if(!okay) { rows_free(rows,count); return false; }
         qa_q3_cinematic_handles_refs refs=global_refs(&scope);
         okay=qa_q3_cinematic_handles_restore(f->source_cinematics,&refs,(double)f->wall_time_ns/1000000.0,pool_state,error);
+    }
+    for(size_t i=0;okay && !unified_prefix && i<frontend_cinematic_roles_count(f);++i) {
+        frontend_cinematic_role_view role;
+        okay=frontend_cinematic_roles_read(f,i,&role,error) && role.cinematics &&
+            qa_q3_cinematic_source_retained(role.cinematics);
+        if(!okay && (!error || error->code==QA_OK))
+            frontend_fail(error,QA_ERROR_FORMAT,"Saved detached cinematic role has no actual global pool custody");
     }
     for(size_t i=0;okay && i<count;++i)
         if(!unified_prefix || rows[i].kind==MOVIE_UNIFIED)

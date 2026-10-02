@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_event_state.h"
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_events.h"
@@ -42,18 +43,17 @@ static bool sound_name(qa_bots *b,const char *event,int32_t parameter,
     return b->services.configstring(b->services.context,288+(uint32_t)parameter,name,128,e);
 }
 static bool obituary(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity,qa_error *e) {
-    bot_source_events_state *events=&s->source_events;
     int32_t target=entity->otherEntityNum,attacker=entity->otherEntityNum2;
     int32_t self;if(!bot_ai_source_client(b,s,&self,e)) return false;
     if(!live(b,s)) return true;
     if(target==self) {
-        events->bot_death_type=entity->eventParm;events->last_killed_by=attacker;
-        events->bot_suicide=target==attacker || target==QA_Q3_ENTITY_NONE || target==QA_Q3_ENTITY_WORLD;
-        events->num_deaths=increment(events->num_deaths);
+        bot_ai_bot_death_type_set(s,entity->eventParm);bot_ai_last_killed_by_set(s,attacker);
+        bot_ai_bot_suicide_set(s,target==attacker || target==QA_Q3_ENTITY_NONE || target==QA_Q3_ENTITY_WORLD);
+        bot_ai_num_deaths_set(s,increment(bot_ai_num_deaths(s)));
     } else if(attacker==self) {
-        events->enemy_death_type=entity->eventParm;events->last_killed_player=target;
-        events->killed_enemy_time=b->time;events->num_kills=increment(events->num_kills);
-    } else if(attacker==s->source_enemy && target==attacker) events->enemy_suicide=true;
+        bot_ai_enemy_death_type_set(s,entity->eventParm);bot_ai_last_killed_player_set(s,target);
+        bot_ai_killed_enemy_time_set(s,b->time);bot_ai_num_kills_set(s,increment(bot_ai_num_kills(s)));
+    } else if(attacker==s->source_enemy && target==attacker) bot_ai_enemy_suicide_set(s,true);
     if(s->team_arena && b->source_goals.game_type==5) {
         qa_bot_entity_info observed;bool found;
         if(!qa_bot_runtime_entity(b->runtime,target,&observed,&found,e)) return false;
@@ -97,8 +97,8 @@ bool bot_ai_source_check_event(qa_bots *b,bot_ai_state *s,const qa_q3_entity *en
     int32_t now;
     if(!b->services.source_event_time(b->services.context,entity->number,&now,e)) return false;
     if(!live(b,s)) return true;
-    if(s->source_events.entity_event_time[entity->number]==now) return true;
-    s->source_events.entity_event_time[entity->number]=now;
+    if(bot_ai_entity_event_time(s,(uint32_t)entity->number)==now) return true;
+    bot_ai_entity_event_time_set(s,(uint32_t)entity->number,now);
     int32_t event=(entity->eType>13?entity->eType-13:entity->event)&~INT32_C(0x300);
     switch(event) {
     case SOURCE_EVENT_OBITUARY:return obituary(b,s,entity,e);
@@ -148,12 +148,16 @@ static bool snapshot_avoid(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity
             if(armed) {
                 qa_bot_avoid_spot spot={.origin=vector(entity->pos.base),.radius=160,.type=1};
                 if(!qa_bot_moves_avoid_spot(qa_bot_runtime_moves(b->runtime),s->movement,&spot,e)) return false;
-                if(live(b,s) && s->source_events.num_prox_mines<BOT_SOURCE_PROX_MINES)
-                    s->source_events.prox_mines[s->source_events.num_prox_mines++]=entity->number;
+                if(live(b,s) && bot_ai_num_prox_mines(s)<BOT_SOURCE_PROX_MINES) {
+                    int32_t index=bot_ai_num_prox_mines(s);
+                    if(index<0) return bot_ai_fail(e,"Source proximity count is outside its actual BotState array");
+                    bot_ai_prox_mine_set(s,(uint32_t)index,entity->number);
+                    bot_ai_num_prox_mines_set(s,index+1);
+                }
             }
         }
     }
-    if(live(b,s) && (entity->eFlags&0x200) && (entity->eFlags&1)) s->source_events.kamikaze_body=entity->number;
+    if(live(b,s) && (entity->eFlags&0x200) && (entity->eFlags&1)) bot_ai_kamikaze_body_set(s,entity->number);
     return true;
 }
 static bool current_entity(qa_bots *b,int32_t number,qa_q3_entity *entity,qa_error *e) {
@@ -172,7 +176,7 @@ bool bot_ai_source_check_snapshot(qa_bots *b,bot_ai_state *s,qa_error *e) {
     qa_bot_avoid_spot clear={.origin={0},.radius=0,.type=0};
     if(!qa_bot_moves_avoid_spot(qa_bot_runtime_moves(b->runtime),s->movement,&clear,e)) return false;
     if(!live(b,s)) return true;
-    s->source_events.kamikaze_body=0;s->source_events.num_prox_mines=0;
+    bot_ai_kamikaze_body_set(s,0);bot_ai_num_prox_mines_set(s,0);
     int32_t sequence=0;
     for(;;) {
         int32_t number;bool present;
@@ -199,6 +203,6 @@ bool bot_ai_source_set_teleport_time(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!live(b,s)) return true;
     int32_t flags;
     if(!bot_ai_source_player_word(b,s,BOT_PS_ENTITY_FLAGS,&flags,e)) return false;
-    if((flags^s->source_events.last_e_flags)&4) bot_ai_teleport_time_set(s,b->time);
-    s->source_events.last_e_flags=flags;return true;
+    if((flags^bot_ai_last_e_flags(s))&4) bot_ai_teleport_time_set(s,b->time);
+    bot_ai_last_e_flags_set(s,flags);return true;
 }

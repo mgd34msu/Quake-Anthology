@@ -665,7 +665,7 @@ bool frontend_unified_q3_validate(frontend_unified_q3 *o, bool simulation,
     kind=field(j,event,"kind");
     if(qa_json_string_equal(j,kind,"server-command") || qa_json_string_equal(j,kind,"configstring")) {
         qa_buffer instance={0};
-        bool stamped=text(d,field(j,field(j,row,"source"),"provider"),&instance,e) && instance.size>1;
+        bool stamped=text(d,field(j,field(j,row,"source"),"provider"),&instance,e);
         qa_buffer_free(&instance);
         if(!stamped)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 Source event has no actual emitter stamp");
     }
@@ -1205,8 +1205,6 @@ static bool source_command_event(frontend_unified_q3 *o,const qa_unified_documen
     double sequence=0;int32_t recipient=-1,index=0;
     qa_json_id source=field(j,row,"source");
     bool okay=content_text(d,row,&content,e) && text(d,field(j,source,"provider"),&instance,e);
-    if(okay && instance.size<=1)
-        okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 Source event lost its actual activation receipt");
     if(okay && command) {
         okay=number(d,field(j,row,"sequence"),&sequence,e);
         if(okay && (sequence<0 || sequence>9007199254740991.0 || trunc(sequence)!=sequence))

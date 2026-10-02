@@ -713,6 +713,7 @@ static bool dispose_lease(remote_module_lease *lease, qa_error *error)
     lease->equipment = NULL;
     if (lease->presentation && !qa_q3_presentation_destroy(lease->presentation, error)) return false;
     lease->presentation = NULL;
+    if (lease->cinematics && !qa_q3_cinematic_source_systems_close(lease->cinematics, error)) return false;
     if (!frontend_cinematic_roles_adopt(f, &lease->cinematics, lease, error)) return false;
     if (!qa_q3_cinematic_source_destroy(&lease->cinematics, error)) return false;
     if (lease->movie_references)
