@@ -136,6 +136,8 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     if(!row->console) return false;
     row->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=game->publication.abi,.session=options->application->session,
         .world=options->world,.owner=game->publication.owner,.service_owner=row->services,.mounts=game->publication.content,
+        .write_view={.root=qa_catalog_write_resolver_root(game->write_resolver),
+            .resolver=qa_catalog_write_resolver_services(game->write_resolver)},
         .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},.common={.context=row,.print=print}};
     if(!options->scene_factory.prepare) return application_fail(e,QA_ERROR_UNSUPPORTED,"Component scene lacks its real renderer factory");
     application_q3_component_scene_preparation preparation={.component=game->publication.metadata,.descriptor=game->publication.descriptor,

@@ -117,7 +117,13 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .generation=row->publication.generation,.context=row,.current=q3components_current,.storage_current=q3components_storage,
         .match_read=match_read,.match_write=match_write,.clients=options->clients,
         .actor_operations=options->application->mod_operations,.damage_context=damage_context,.source_command_event=source_event,.source_player_event=q3components_player_event};
-    create.host.write_view.root=qa_catalog_product_write_root(row->provider->product_catalog,row->provider->launch->selection.product);
+    qa_catalog *catalog=row->publication.catalog;
+    qa_product_id product=row->publication.descriptor->selection.product;
+    if(qa_catalog_product_write_root(catalog,product)&&
+        !qa_catalog_write_resolver_create(catalog,product,&row->write_resolver,e)) return false;
+    create.host.write_view=(qa_q3_host_write_view){
+        .root=qa_catalog_write_resolver_root(row->write_resolver),
+        .resolver=qa_catalog_write_resolver_services(row->write_resolver)};
     for(size_t i=0;i<qa_vfs_mount_count(create.host.mounts);++i) {
         qa_vfs_mount_info mount;
         if(qa_vfs_mount_at(create.host.mounts,i,&mount)&&mount.writable&&!mount.is_archive&&

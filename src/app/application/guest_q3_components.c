@@ -270,6 +270,7 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
         qa_qvm_image_release(row->image); row->image=NULL;
         qa_resource_release(row->program); row->program=NULL; qa_resource_release(row->declaration); row->declaration=NULL;
         qa_vfs_acquisition_dispose(&row->program_acquisition); qa_vfs_acquisition_dispose(&row->declaration_acquisition);
+        qa_catalog_write_resolver_destroy(row->write_resolver); row->write_resolver=NULL;
         qa_launch_instance_lease_release(row->metadata_lease); row->metadata_lease=NULL;
         free(row->presentation_runtime); row->presentation_runtime=NULL;
         qa_unified_document_destroy(row->identity); row->identity=NULL;

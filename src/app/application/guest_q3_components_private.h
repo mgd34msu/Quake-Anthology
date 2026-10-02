@@ -5,6 +5,7 @@ bool q3components_player_event(void *,const application_q3_scene_player_event *,
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_component_clients.h"
 #include "qa/collision.h"
+#include "qa/catalog_write.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +25,7 @@ typedef struct component_game_row {
     qa_resource *program,*declaration;
     qa_vfs_acquisition program_acquisition,declaration_acquisition;
     qa_qvm_image *image;
+    qa_catalog_write_resolver *write_resolver;
     qa_component participant;
     qa_component_admission *admission;
     uint64_t services;
