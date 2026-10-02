@@ -4,6 +4,7 @@
 #include "qa/bots_allocator.h"
 #include "qa/bots_allocator_checkpoint.h"
 #include "library/source_fuzzy_checkpoint.h"
+#include "library/source_assets_history.h"
 #include "runtime/source_weapon_history.h"
 #include "chat/source_history.h"
 

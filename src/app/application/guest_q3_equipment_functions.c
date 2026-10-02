@@ -1,5 +1,7 @@
 #include "guest_q3_equipment_functions.h"
 #include "internal.h"
+#include <stdlib.h>
+#include <string.h>
 #include "qa/source_save.h"
 
 static bool signature(qa_source_save_io *io)

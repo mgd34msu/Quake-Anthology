@@ -20,8 +20,9 @@ bool q3g_arguments(void *context, qa_native_host_command_view *out, qa_error *er
         if (!role->common.arguments(role->common.context, out, error)) return false;
     } else {
         qa_command_tokens *args = role->kind == QA_QVM_GAME ? &role->engine->arguments : &role->arguments;
-        *out = (qa_native_host_command_view){args->count, (const char *const *)args->values,
-            args->args_text ? args->args_text : ""};
+        *out = (qa_native_host_command_view){.count = args->count,
+            .arguments = (const char *const *)args->values,
+            .tail = args->args_text ? args->args_text : ""};
     }
     out->canonical_configstrings = role->kind == QA_QVM_CGAME && !role->arguments_scoped;
     return true;

@@ -1303,6 +1303,27 @@ bool frontend_native_q3_recipient(const qa_frontend *f,uint32_t seat,
     }
     return true;
 }
+bool frontend_native_q3_client_cvars_read(const qa_frontend *f,uint32_t seat,
+    qa_cvars **out,qa_actor_owner *receiver,uint32_t *launch_seat,bool *present,qa_error *e)
+{
+    if(!f || !f->application || seat>=f->options.seats || !out || !receiver ||
+        !launch_seat || !present || f->capture || f->source_restoring ||
+        !frontend_seat_callbacks_returned(f))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native CLIENT settings require returned actual Source callbacks");
+    frontend_native_q3 *selected=NULL;
+    for(frontend_native_q3 *row=f->native_q3;row;row=row->next)if(row->view.seat==seat) {
+        if(selected)return frontend_fail(e,QA_ERROR_FORMAT,"Native CLIENT settings have duplicate physical recipients");
+        if(!row->constructed || row->restoring || row->video || !row_idle(row) ||
+            !frontend_native_q3_current(row))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Native CLIENT settings lost their installed Source row");
+        selected=row;
+    }
+    *out=selected?selected->view.cvars:NULL;
+    *receiver=selected?selected->view.receiver:0;
+    *launch_seat=selected?selected->view.launch_seat:0;
+    *present=selected!=NULL;
+    return true;
+}
 static bool visit_native_view(const qa_application_content_visitor *visitor,const qa_vfs *view,qa_error *e)
 {
     qa_resource_pool *pool=view?qa_vfs_resources(view):NULL;

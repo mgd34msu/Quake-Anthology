@@ -6,7 +6,7 @@
 #include "startup_flow.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 12u
+#define QC_ENGINE_VERSION 14u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -224,6 +224,7 @@ static bool client_binding_matches(struct application_qc_state *engine, uint32_t
         (!client->receipt_seen && (client->receipt_sequence || client->receipt_ordinal)) ||
         (client->prepared && (!qw || !client->connected || !client->has_parms)) ||
         (qw && client->spawned && !client->prepared) ||
+        !application_qc_pending_weapon_ready(engine,client,error) ||
         !qa_qc_slot(engine->provider->state.qc.instance, slot, &binding))
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC client metadata differs from its reserved guest binding");
     const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), binding.actor);
@@ -259,6 +260,11 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         !add_size(&capacity,engine->original_extension.size+4,error))
         return application_fail(error,QA_ERROR_FORMAT,"Invalid original source extension owner");
     if (!add_size(&capacity, ((size_t)engine->max_clients + 1) * 128, error)) return false;
+    for(uint32_t i=1;i<=engine->max_clients;++i) {
+        const char *item=engine->clients[i].pending_weapon?
+            qa_strings_cstr(qa_session_strings(engine->services.session),engine->clients[i].pending_weapon):"";
+        if(!item || !add_size(&capacity,strlen(item)+5,error)) return false;
+    }
     uint32_t indices[2]={0};
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource *entry=engine->resources+i;
@@ -338,7 +344,9 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
              qa_net_write_u8(&writer, client->output_published) &&
              qa_net_write_u8(&writer, client->receipt_seen) && qa_net_write_u64(&writer, client->receipt_sequence) &&
              qa_net_write_u64(&writer, client->receipt_ordinal) &&
-             write_actor(&writer, actors, client->actor);
+             write_actor(&writer, actors, client->actor) &&
+             write_text(&writer,client->pending_weapon?qa_strings_cstr(qa_session_strings(engine->services.session),client->pending_weapon):"") &&
+             qa_net_write_u8(&writer,client->pending_weapon_following);
         for (unsigned p = 0; ok && p < 16; ++p) ok = qa_net_write_f32(&writer, client->parms[p]);
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->resource_count);
@@ -447,6 +455,18 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         client->primary_character = primary != 0;
         client->output_published = output_published != 0;
         client->receipt_seen = receipt_seen != 0;
+        char *pending=ok?read_text(&reader):NULL;
+        uint8_t following=ok?qa_net_read_u8(&reader):0;
+        if(ok) {
+            ok=pending && following<=1;
+            if(ok && *pending) {
+                client->pending_weapon=qa_strings_find(qa_session_strings(engine->services.session),
+                    (qa_bytes){(const uint8_t *)pending,strlen(pending)});
+                ok=client->pending_weapon!=0;
+            }
+            client->pending_weapon_following=following!=0;
+        }
+        free(pending);
         if (ok && client->connected && !client->actor.registry) ok = qa_net_reader_fail(&reader, "QuakeC connected client lacks an actor");
         for (unsigned p = 0; ok && p < 16; ++p) client->parms[p] = qa_net_read_f32(&reader);
         if (reader.failed) ok = false;
@@ -599,6 +619,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         candidate.original_extension=(qa_buffer){0};
         application_qc_rerelease_destroy(engine);
         engine->rerelease=candidate.rerelease; candidate.rerelease=NULL;
+        engine->npc_restore=candidate.npc_restore; candidate.npc_restore=(qa_buffer){0};
         engine->random = candidate.random;
         engine->check_slot = candidate.check_slot; engine->check_time = candidate.check_time; engine->check_cluster = candidate.check_cluster;
         engine->loading = loading != 0;

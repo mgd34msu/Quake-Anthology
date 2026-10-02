@@ -472,7 +472,7 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
         (motion == QA_PHYSICS_PUSH || motion == QA_PHYSICS_STOP || motion == QA_PHYSICS_STATIONARY))
         return true;
     monster->touch_active = false;
-    context->actor->physics.flags &= ~(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
+    context->actor->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
     if (context->actor->entity) {
         const char *drop = q2_field_text(context->game, context->actor->entity, "item");
         if (*drop) {

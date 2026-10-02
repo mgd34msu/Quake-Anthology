@@ -21,6 +21,8 @@ typedef struct component_scene_packet {
     frontend_component_scene_packet view;
     uint8_t *areas;
     qa_scene_light *world_lights,*projected_lights;
+    float *q1_styles;
+    qa_vec3 *q2_styles;
     const char *texts[8];
 } component_scene_packet;
 struct frontend_component_scene_restore {
@@ -334,7 +336,8 @@ static void packet_destroy(component_scene_packet *packet)
 {
     free((void *)packet->view.entities); free((void *)packet->view.polygons);
     free((void *)packet->view.vertices); free((void *)packet->view.lights);
-    free(packet->areas); free(packet->world_lights); free(packet->projected_lights); free(packet);
+    free(packet->areas); free(packet->world_lights); free(packet->projected_lights);
+    free(packet->q1_styles); free(packet->q2_styles); free(packet);
 }
 static void packets_clear(struct frontend_component_scene *owner)
 {
@@ -353,12 +356,11 @@ static bool copy_span(const void *span,size_t count,size_t element,void **out,qa
     if (!*out) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining completed component scene");
     memcpy(*out,span,count*element); return true;
 }
-static bool scene_completed(void *context,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
+static bool packet_copy(struct frontend_component_scene *owner,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
     const qa_q3_ref_entity *entities,size_t entity_count,const qa_q3_scene_polygon *polygons,size_t polygon_count,
     const qa_scene_vertex *vertices,size_t vertex_count,const qa_scene_light *lights,size_t light_count,qa_error *e)
 {
-    struct frontend_component_scene *owner=context; application_q3_scene_context source;
-    if (!publication(owner,&source,e) || !owner->begun || !definition || !options ||
+    if (!definition || !options ||
         owner->packet_count==SIZE_MAX || options->world.shadow_light_count || options->world.entity_material ||
         options->world.q1_mirror || options->world.q1_sky_environment || options->world.q1_sky)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene completion leaves its genuine private render namespace");
@@ -381,19 +383,33 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         copy_span(options->world.lights,options->world.light_count,sizeof(qa_scene_light),&world_lights,e) &&
         copy_span(options->world.projected_lights,options->world.projected_light_count,sizeof(qa_scene_light),&projected,e);
     packet->areas=areas; packet->world_lights=world_lights; packet->projected_lights=projected;
+    void *q1=NULL,*q2=NULL;
+    if (ok && options->world.q1_styles) ok=copy_span(options->world.q1_styles,options->world.style_count,sizeof(float),&q1,e);
+    if (ok && options->world.q2_styles) ok=copy_span(options->world.q2_styles,options->world.style_count,sizeof(qa_vec3),&q2,e);
+    packet->q1_styles=q1; packet->q2_styles=q2;
     if (ok && options->world.render_text_count>8)
         ok=frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene exceeds its actual refdef text slots");
     if (ok) {
         packet->view.options.world.visible_areas=packet->areas;
         packet->view.options.world.lights=packet->world_lights;
         packet->view.options.world.projected_lights=packet->projected_lights;
+        packet->view.options.world.q1_styles=packet->q1_styles;
+        packet->view.options.world.q2_styles=packet->q2_styles;
         for (size_t i=0;i<options->world.render_text_count;++i) packet->texts[i]=packet->view.definition.text[i];
         packet->view.options.world.render_texts=packet->texts;
-        ok=owner->request.source.current(owner->request.source.context,&source);
     }
     if (!ok) { packet_destroy(packet); return false; }
     if (owner->last_packet) owner->last_packet->next=packet; else owner->packets=packet;
     owner->last_packet=packet; ++owner->packet_count; return true;
+}
+static bool scene_completed(void *context,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
+    const qa_q3_ref_entity *entities,size_t entity_count,const qa_q3_scene_polygon *polygons,size_t polygon_count,
+    const qa_scene_vertex *vertices,size_t vertex_count,const qa_scene_light *lights,size_t light_count,qa_error *e)
+{
+    struct frontend_component_scene *owner=context; application_q3_scene_context source;
+    return publication(owner,&source,e) && owner->begun &&
+        packet_copy(owner,definition,options,entities,entity_count,polygons,polygon_count,vertices,vertex_count,lights,light_count,e) &&
+        owner->request.source.current(owner->request.source.context,&source);
 }
 static void release_host(void *context) { ((struct frontend_component_scene *)context)->host_borrow=false; }
 static bool idle(const void *context)
@@ -562,6 +578,81 @@ bool frontend_component_scene_packet_read(const qa_frontend *f,uint64_t identity
     while (packet && ordinal--) packet=packet->next;
     if (!packet) return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene packet ordinal leaves its completed roster");
     *out=packet->view; return true;
+}
+static struct frontend_component_scene *import_owner(qa_frontend *f,uint64_t identity,qa_error *e)
+{
+    if (f && f->source_restoring && !f->capture && !f->resource_inventory)
+        for (struct frontend_component_scene *row=f->component_scenes;row;row=row->next)
+            if (row->identity==identity && row->request.restoring && row->ready && idle(row) && retained(row)) return row;
+    frontend_fail(e,QA_ERROR_ARGUMENT,"Component import lost its actual detached private renderer"); return NULL;
+}
+bool frontend_component_scene_restore_output(qa_frontend *f,uint64_t identity,uint64_t sequence,bool begun,
+    qa_bytes bytes,const qa_scene_frame_checkpoint_refs *refs,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    if (!owner || !refs || !qa_scene_frame_restore(&owner->frame,bytes,refs,e)) return false;
+    if (owner->frame.sequence!=sequence)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component output sequence differs from its actual saved frame");
+    packets_clear(owner); owner->sequence=sequence; owner->begun=begun; return true;
+}
+bool frontend_component_scene_restore_packet(qa_frontend *f,uint64_t identity,
+    const frontend_component_scene_packet *view,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    if (!owner || !view || !owner->begun)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component packet lacks its imported output sequence");
+    qa_q3_scene_options options=view->options;
+    options.world.source_scratch=scratch(owner,e);
+    options.world.source_diagnostics_read=diagnostics; options.world.source_diagnostics_context=owner;
+    options.world.video_frame=frontend_material_movies_frontend_resolve; options.world.video_context=f;
+    options.world.flare=NULL; options.world.flare_context=NULL;
+    if (!options.world.source_scratch || !frontend_q3_source_recipient(f,&options.world,e)) return false;
+    return packet_copy(owner,&view->definition,&options,view->entities,view->entity_count,
+        view->polygons,view->polygon_count,view->vertices,view->vertex_count,view->lights,view->light_count,e);
+}
+bool frontend_component_scene_restore_music(qa_frontend *f,uint64_t identity,qa_audio_music **player,
+    bool attached,const char *intro,const char *loop,bool looping,bool pending,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    if (!owner || !player || owner->music || owner->music_intro || owner->music_loop ||
+        (attached && (!*player || qa_audio_engine_bus_music(f->audio,identity)!=*player)) ||
+        (!attached && qa_audio_engine_bus_music(f->audio,identity)) || (!*player && (intro || loop || looping || pending)))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component music import differs from its actual bus and player owners");
+    char *saved_intro=intro?malloc(strlen(intro)+1):NULL,*saved_loop=loop?malloc(strlen(loop)+1):NULL;
+    if ((intro && !saved_intro) || (loop && !saved_loop)) {
+        free(saved_intro); free(saved_loop); return frontend_fail(e,QA_ERROR_MEMORY,"Retaining imported component cue names");
+    }
+    if (saved_intro) memcpy(saved_intro,intro,strlen(intro)+1);
+    if (saved_loop) memcpy(saved_loop,loop,strlen(loop)+1);
+    if (*player && !qa_audio_music_controls_bind(*player,frontend_music_sources_controls(f->music_sources),e)) {
+        free(saved_intro); free(saved_loop); return false;
+    }
+    owner->music=*player; *player=NULL; owner->music_intro=saved_intro; owner->music_loop=saved_loop;
+    owner->music_looping=looping; owner->music_pending=pending; return true;
+}
+bool frontend_component_scene_restore_movies(qa_frontend *f,uint64_t identity,
+    const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *e)
+{
+    struct frontend_component_scene *owner=import_owner(f,identity,e);
+    if (!owner || owner->movies || !refs) return false;
+    frontend_material_movie_source source={.frontend=f,.files=owner->files,.images=owner->images,
+        .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
+    return frontend_material_movies_restore(&source,refs,bytes,&owner->movies,e);
+}
+bool frontend_component_scenes_finish_restore(qa_frontend *f,qa_error *e)
+{
+    if (!f || !f->source_restoring || f->component_scene_restores)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component restoration retains an unclaimed graph prefix");
+    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next) {
+        if (!owner->ready || !retained(owner) || !idle(owner))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Component restoration retains an incomplete private parent");
+        if (owner->music) {
+            frontend_music_origin origin=music_origin(owner);
+            if (frontend_music_sources_restore_origin_matches(f->music_sources,&origin) &&
+                !frontend_music_sources_restore_origin(f->music_sources,&origin,e)) return false;
+        }
+    }
+    return true;
 }
 bool frontend_component_scene_prepare(void *context,const application_q3_component_scene_preparation *request,qa_error *e)
 {

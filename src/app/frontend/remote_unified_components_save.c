@@ -46,7 +46,7 @@ static bool actor(qa_source_save_io *io,frontend_unified_components *owner,qa_ac
         if(!present) {
             if(wire.slot||wire.generation) return fail(io,"Absent component actor contains wire identity");
             *value=(qa_actor_id){0};
-        } else if(!frontend_remote_unified_actor(owner->replica,wire.slot,wire.generation,value,io->error)) return false;
+        } else if(!frontend_remote_unified_actor_retained(owner->replica,wire.slot,wire.generation,value,io->error)) return false;
     }
     return true;
 }
@@ -288,7 +288,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_components *owner,cons
 bool frontend_unified_components_checkpoint(frontend_unified_components *owner,const frontend_unified_components_refs *refs,
     qa_buffer *out,qa_error *e)
 {
-    if(!owner||!refs||!refs->content||!out||out->data||out->size||owner->busy||owner->restoring||!frontend_unified_components_current(owner))
+    if(!owner||!refs||!refs->content||!out||out->data||out->size||owner->busy||owner->restoring||!frontend_unified_components_retained_current(owner))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component capture requires its actual returned replica and content graph");
     for(size_t i=0;i<owner->count;++i) {
         remote_component *row=owner->rows[i];
@@ -351,8 +351,10 @@ bool frontend_unified_components_restore_prepare(qa_frontend *frontend,frontend_
 }
 bool frontend_unified_components_restore_finish(frontend_unified_components *owner,const frontend_unified_components_refs *refs,qa_error *e)
 {
-    if(!owner||!owner->restoring||!refs||owner->busy||!frontend_unified_media_current(owner->media))
+    if(!owner||!owner->restoring||!refs||owner->busy||!owner->events||
+        !frontend_unified_components_retained_current(owner)||!frontend_unified_media_current(owner->media))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component activation requires its actual imported private media");
+    if(!frontend_unified_components_events_bind(owner,owner->events,e)) return false;
     for(size_t i=0;i<owner->count;++i) {
         remote_component *row=owner->rows[i]; if(!row->restore_pending) continue;
         if(!row->restore_consoles||!refs->scene_restore)
@@ -370,7 +372,7 @@ bool frontend_unified_components_restore_finish(frontend_unified_components *own
         qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars);
         qa_buffer_free(&row->saved_console); qa_buffer_free(&row->saved_frontend);
     }
-    owner->restoring=false; return frontend_unified_components_current(owner)||
+    owner->restoring=false; return frontend_unified_components_retained_current(owner)||
         q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Restored component collection lost its actual admitted replica");
 }
 bool frontend_unified_components_prepared(frontend_unified_components *owner,frontend_unified_component_frame **out,

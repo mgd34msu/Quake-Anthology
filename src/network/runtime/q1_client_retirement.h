@@ -21,6 +21,7 @@ static inline bool q1_client_retirement_start(q1_client_retirement *r,
     const char *reason, bool notify, size_t capacity, qa_error *e)
 {
     size_t length = strlen(reason);
+    if (length == SIZE_MAX) return qa_network_fail(e, "Q1 CLIENT retirement reason extent overflows");
     char *copy = malloc(length + 1);
     uint8_t *packet = notify ? malloc(capacity) : NULL;
     if (!copy || (notify && !packet)) {
@@ -79,7 +80,7 @@ static inline bool q1_client_retirement_read(q1_client_retirement *r, qa_net_rea
         r->packet.data = notify ? malloc(capacity) : NULL;
         if (!r->reason || (notify && !r->packet.data)) {
             q1_client_retirement_clear(r);
-            qa_error_set(e, QA_ERROR_MEMORY, reader->offset, "Restoring Q1 CLIENT retirement"); return false;
+            qa_error_set(e, QA_ERROR_MEMORY, reader->bit / 8, "Restoring Q1 CLIENT retirement"); return false;
         }
         if (length) memcpy(r->reason, reason.data, (size_t)length);
         r->reason[length] = 0;

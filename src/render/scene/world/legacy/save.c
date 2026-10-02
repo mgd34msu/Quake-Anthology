@@ -192,9 +192,10 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world,
         FIELD(bool,state,valid); FIELD(bool,state,dynamic);
         FIELD(u8,state,monolightmap);
         if (!light->lightmapped) {
-            if (state->encoded || state->direct || state->valid || state->dynamic) return false;
+            if (state->encoded || state->direct || state->valid || state->dynamic || state->monolightmap) return false;
             continue;
         }
+        if (q1 && state->valid && state->monolightmap != '0') return false;
         size_t pixels=(size_t)light->width*light->height, styles=light->style_count*3+1;
         if (!light->width || !light->height || light->width>SIZE_MAX/light->height || pixels>SIZE_MAX/4 ||
             light->style_count>(SIZE_MAX-1)/3 || !state->encoded || !state->direct) return false;

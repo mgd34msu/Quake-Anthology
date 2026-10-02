@@ -39,9 +39,17 @@ static void failure(qa_error *first, const qa_error *next) {
         return;
     }
     size_t used = strlen(first->message);
-    if (used < sizeof(first->message) - 1)
-        (void)snprintf(first->message + used, sizeof(first->message) - used, "; cleanup failed: %s",
-                       next->message);
+    const char prefix[] = "; cleanup failed: ";
+    size_t available = sizeof(first->message) - used - 1;
+    size_t count = sizeof(prefix) - 1;
+    if (count > available) count = available;
+    memcpy(first->message + used, prefix, count);
+    used += count;
+    available -= count;
+    count = strlen(next->message);
+    if (count > available) count = available;
+    memcpy(first->message + used, next->message, count);
+    first->message[used + count] = '\0';
 }
 bool qa_lobby_session_create(qa_lobbies *service, qa_local_account account,
                              const qa_lobby_transitions *transitions, qa_lobby_session **out,

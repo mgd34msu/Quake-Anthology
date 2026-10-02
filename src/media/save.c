@@ -23,7 +23,8 @@ static bool source_text(qa_source_save_io *io, char **value)
     qa_buffer bytes = reading ? (qa_buffer){0} : (qa_buffer){(uint8_t *)*value, *value ? strlen(*value) : 0};
     if (!blob(io, &bytes)) { if (reading) qa_buffer_free(&bytes); return false; }
     if (!bytes.size || bytes.size == SIZE_MAX || memchr(bytes.data, 0, bytes.size)) {
-        if (reading) qa_buffer_free(&bytes); return false;
+        if (reading) qa_buffer_free(&bytes);
+        return false;
     }
     if (reading) {
         char *text = realloc(bytes.data, bytes.size + 1);

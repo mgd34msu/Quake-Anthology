@@ -702,6 +702,7 @@ add_library(qa_bots STATIC
     src/bots/library/character_source.c
     src/bots/library/items_save.c
     src/bots/library/items_source.c
+    src/bots/library/source_assets_history.c
 )
 target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence)
 
@@ -1431,6 +1432,8 @@ add_library(qa_application STATIC
     src/app/application/native_q2_protocol_resources.c
     src/app/application/native_q2_records_save.c
     src/app/application/network_q2_materials.c
+    src/app/application/guest_qc_weapon.c
+    src/app/application/guest_q3_mod_items_profile.c
 )
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
 if(WIN32)
@@ -1806,6 +1809,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_client.c
     src/app/frontend/unified_q3_snapshots.c
     src/app/frontend/video_guests.c
+    src/app/frontend/remote_q2_material_movies_bridge.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"

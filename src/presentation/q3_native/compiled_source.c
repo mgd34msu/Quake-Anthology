@@ -14,15 +14,18 @@ struct q3n_compiled_source_rebind_ticket {
 };
 static bool fail(qa_error *e, const char *text)
 { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", text); return false; }
-static bool shape(const q3n_compiled_source_basis *b)
+static bool shape_fields(const q3n_compiled_source_basis *b)
 {
     return b->registry && b->provider && b->receiver && b->instance && *b->instance &&
-        b->content && b->assets && b->publication && b->serial && qa_actors_get(b->registry,b->viewer) &&
+        b->content && b->assets && b->publication && b->serial &&
+        b->viewer.registry==qa_actors_identity(b->registry) &&
         (b->product == QA_Q3_ARENA || b->product == QA_Q3_TEAM_ARENA) &&
         b->max_clients > 0 && b->max_clients <= 64 && b->game_type >= 0 && b->game_type <= 7 &&
         b->client_number >= -1 && b->client_number < b->max_clients &&
         b->initial_command>=0 && b->reached_command>=b->initial_command && !(b->snapshot_bit&~4u);
 }
+static bool shape(const q3n_compiled_source_basis *b)
+{ return shape_fields(b) && qa_actors_get(b->registry,b->viewer); }
 static bool identity(const q3n_compiled_source_basis *a, const q3n_compiled_source_basis *b)
 {
     return a->application == b->application && a->session == b->session && a->registry == b->registry &&
@@ -32,17 +35,24 @@ static bool identity(const q3n_compiled_source_basis *a, const q3n_compiled_sour
         qa_actor_id_equal(a->viewer, b->viewer) && a->seat == b->seat && a->physical_seat == b->physical_seat &&
         a->client_number == b->client_number && a->initial_command==b->initial_command && a->snapshot_bit==b->snapshot_bit;
 }
-bool q3n_compiled_source_create(const q3n_compiled_source_options *o, q3n_compiled_source **out, qa_error *e)
+static bool create(const q3n_compiled_source_options *o,bool restored,q3n_compiled_source **out,qa_error *e)
 {
-    if (!o || !o->context || !o->read || !o->current || !o->configstring || !o->idle || !o->actor_fields || !o->client_actor || !o->actor_known || !out || *out)
+    if (!o || !o->context || !o->read || !o->current || !o->configstring || !o->idle || !o->actor_fields || !o->client_actor || !o->actor_known || !out || *out ||
+        (o->checkpoint_read==NULL)!=(o->checkpoint_current==NULL) || (restored&&!o->checkpoint_read))
         return fail(e, "Compiled Q3 CLIENT requires its retained receiver callbacks");
     q3n_compiled_source_basis basis = {0};
-    if (!o->read(o->context, &basis, e) || !shape(&basis) || !o->current(o->context, &basis))
+    if (!(restored?o->checkpoint_read(o->context,&basis,e):o->read(o->context,&basis,e)) ||
+        !(restored?shape_fields(&basis)&&o->actor_known(o->context,basis.viewer):shape(&basis)) ||
+        !(restored?o->checkpoint_current(o->context,&basis):o->current(o->context,&basis)))
         return fail(e, "Compiled Q3 CLIENT constructor has no current source declaration");
     q3n_compiled_source *s = calloc(1, sizeof(*s));
     if (!s) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining compiled Q3 CLIENT source"); return false; }
     s->options = *o; s->constructor = basis; *out = s; return true;
 }
+bool q3n_compiled_source_create(const q3n_compiled_source_options *o,q3n_compiled_source **out,qa_error *e)
+{ return create(o,false,out,e); }
+bool q3n_compiled_source_create_restored(const q3n_compiled_source_options *o,q3n_compiled_source **out,qa_error *e)
+{ return create(o,true,out,e); }
 bool q3n_compiled_source_idle(const q3n_compiled_source *s)
 { return s && !s->prepared && s->options.idle(s->options.context); }
 bool q3n_compiled_source_destroy(q3n_compiled_source **slot, qa_error *e)
@@ -67,6 +77,26 @@ bool q3n_compiled_source_current(const q3n_compiled_source_view *v)
         v->basis.serial == actual.basis.serial && v->basis.time == actual.basis.time &&
         v->basis.game_type == actual.basis.game_type && v->basis.max_clients == actual.basis.max_clients &&
         v->basis.level_start_time == actual.basis.level_start_time && v->basis.initialized == actual.basis.initialized &&
+        v->basis.reached_command==actual.basis.reached_command;
+}
+bool q3n_compiled_source_checkpoint_read(const q3n_compiled_source *s,q3n_compiled_source_view *out,qa_error *e)
+{
+    if(!s || !out || s->prepared)return fail(e,"Compiled checkpoint needs its returned retained source owner");
+    if(!s->options.checkpoint_read)return q3n_compiled_source_read(s,out,e);
+    q3n_compiled_source_basis b={0};
+    if(!s->options.checkpoint_read(s->options.context,&b,e)||!shape_fields(&b)||!identity(&s->constructor,&b)||
+       !s->options.checkpoint_current(s->options.context,&b)||!s->options.actor_known(s->options.context,b.viewer)||
+       !s->options.checkpoint_current(s->options.context,&b))
+        return fail(e,"Compiled checkpoint lost its actual retained source or saved wire actor");
+    *out=(q3n_compiled_source_view){s,b}; return true;
+}
+bool q3n_compiled_source_checkpoint_current(const q3n_compiled_source_view *v)
+{
+    q3n_compiled_source_view actual;
+    return v && q3n_compiled_source_checkpoint_read(v->owner,&actual,NULL) && identity(&v->basis,&actual.basis) &&
+        v->basis.serial==actual.basis.serial && v->basis.time==actual.basis.time &&
+        v->basis.game_type==actual.basis.game_type && v->basis.max_clients==actual.basis.max_clients &&
+        v->basis.level_start_time==actual.basis.level_start_time && v->basis.initialized==actual.basis.initialized &&
         v->basis.reached_command==actual.basis.reached_command;
 }
 bool q3n_compiled_source_rebind(q3n_compiled_source *s,const q3n_compiled_source_view *before,qa_error *e)
@@ -114,6 +144,19 @@ bool q3n_compiled_source_rebind_prepare(q3n_compiled_source *s,const q3n_compile
         return fail(e,"Compiled round preparation changed its actual source receipts"); }
     *out=t; return true;
 }
+bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *t,
+    const q3n_compiled_source *s,const qa_command_context *before,const qa_command_context *after)
+{
+    return t && t->source==s && before && after && q3n_compiled_source_rebind_ready(t) &&
+        before->owner==t->before.basis.receiver && before->registry==t->before.basis.viewer.registry &&
+        before->generation==t->before.basis.publication && qa_actor_id_equal(before->actor,t->before.basis.viewer) &&
+        qa_actor_id_equal(after->actor,t->candidate.viewer) &&
+        before->session==after->session && before->owner==after->owner && before->client==after->client &&
+        before->seat==after->seat && before->dialect==after->dialect && before->origin==after->origin &&
+        before->direct==after->direct && before->console_text==after->console_text &&
+        before->registry==after->registry && before->generation==after->generation &&
+        ((!before->script&&!after->script)||(before->script&&after->script&&!strcmp(before->script,after->script)));
+}
 void q3n_compiled_source_rebind_commit(q3n_compiled_source_rebind_ticket **out)
 {
     if(!out||!*out)return;
@@ -142,7 +185,7 @@ bool q3n_compiled_source_configstring(const q3n_compiled_source *s, uint32_t ind
 bool q3n_compiled_source_fields(qa_source_save_io *io,const q3n_compiled_source *s)
 {
     q3n_compiled_source_view view;
-    if (!io || !s || s->prepared || !q3n_compiled_source_read(s,&view,io->error)) return false;
+    if (!io || !s || s->prepared || !q3n_compiled_source_checkpoint_read(s,&view,io->error)) return false;
     const q3n_compiled_source_basis *b=&view.basis;
     uint64_t provider=b->provider,receiver=b->receiver,publication=b->publication,map=b->map_revision,serial=b->serial;
     uint32_t seat=b->seat,physical=b->physical_seat,product=(uint32_t)b->product,snapshot_bit=b->snapshot_bit;
@@ -160,7 +203,7 @@ bool q3n_compiled_source_fields(qa_source_save_io *io,const q3n_compiled_source 
         qa_source_save_i32(io,&client) && client==b->client_number &&
         qa_source_save_i32(io,&initial) && initial==b->initial_command &&
         s->options.actor_fields(s->options.context,io,&viewer) && qa_actor_id_equal(viewer,b->viewer);
-    return ok && q3n_compiled_source_current(&view);
+    return ok && q3n_compiled_source_checkpoint_current(&view);
 }
 bool q3n_compiled_source_client_actor(const q3n_compiled_source *s,uint32_t physical,qa_actor_id *out,bool *found,qa_error *e)
 {

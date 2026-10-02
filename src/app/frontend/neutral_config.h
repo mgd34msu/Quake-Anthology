@@ -49,8 +49,12 @@ bool frontend_config_store_neutral_adopt_store(frontend_config_store *,const qa_
     frontend_config_files *,qa_error *);
 bool frontend_neutral_config_client_input(const frontend_neutral_configs *,
     const qa_application_client_preparation *,uint32_t,qa_input_seat **,qa_error *);
+bool frontend_neutral_config_client_controller(const frontend_neutral_configs *,
+    const qa_application_client_preparation *,uint32_t,qa_controller_selection *,qa_error *);
 bool frontend_config_store_client_input_configuration(const frontend_config_store *,
     const qa_application_client_preparation *,uint32_t,qa_input_seat **,qa_error *);
+bool frontend_config_store_client_controller_selection(const frontend_config_store *,
+    const qa_application_client_preparation *,uint32_t,qa_controller_selection *,qa_error *);
 bool frontend_config_store_client_view_transition(const frontend_config_store *,
     const qa_application_client_preparation *,frontend_view_transition *,qa_error *);
 bool frontend_neutral_configs_save(frontend_neutral_configs *, qa_error *);

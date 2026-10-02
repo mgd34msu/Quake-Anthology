@@ -12,6 +12,7 @@ struct qa_bots_checkpoint {
     qa_bot_memory_checkpoint *memory;
     bot_fuzzy_history *fuzzy;
     bot_weapon_pointer_history *weapons;
+    bot_source_assets_history *assets;
     bot_goal_history *goals;
     bot_chat_history *chat;
     bot_checkpoint_record *records;
@@ -44,6 +45,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
     bot_goal_history_destroy(checkpoint->goals);
     bot_chat_history_destroy(checkpoint->chat);
     bot_weapon_pointer_history_destroy(checkpoint->weapons);
+    bot_source_assets_history_destroy(checkpoint->assets);
     bot_fuzzy_history_destroy(checkpoint->fuzzy);
     qa_bot_memory_checkpoint_destroy(checkpoint->memory);
     free(checkpoint->records);free(checkpoint);
@@ -73,6 +75,7 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     if(!qa_bot_memory_checkpoint_capture(qa_bot_runtime_memory(b->runtime),&checkpoint->memory,e) ||
        !bot_fuzzy_history_capture(qa_bot_runtime_library(b->runtime),&checkpoint->fuzzy,e) ||
        !bot_runtime_weapons_capture(b->runtime,checkpoint->fuzzy,&checkpoint->weapons,e) ||
+       !bot_source_assets_capture(b->runtime,&checkpoint->assets,e) ||
        !bot_goal_history_capture(qa_bot_runtime_goals(b->runtime),checkpoint->fuzzy,&checkpoint->goals,e) ||
        !bot_chat_history_capture(b->runtime,&checkpoint->chat,e)) goto failed;
     for(uint32_t i=0;i<64;++i) {
@@ -211,6 +214,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     qa_bot_memory_prepared *memory=NULL;
     bot_fuzzy_history_restore *fuzzy=NULL;
     bot_weapon_pointer_restore *weapons=NULL;
+    bot_source_assets_restore *assets=NULL;
     bot_goal_history_restore *goals=NULL;
     bool ok=!count || prepared;
     if(!ok) qa_error_set(e,QA_ERROR_MEMORY,0,"preparing native bot checkpoint population");
@@ -232,6 +236,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     if(ok) ok=qa_bot_memory_checkpoint_prepare(qa_bot_runtime_memory(b->runtime),checkpoint->memory,&memory,e) &&
         bot_fuzzy_history_prepare(qa_bot_runtime_library(b->runtime),checkpoint->fuzzy,memory,&fuzzy,e) &&
         bot_runtime_weapons_prepare(b->runtime,checkpoint->weapons,memory,&weapons,e) &&
+        bot_source_assets_prepare(b->runtime,checkpoint->assets,memory,&assets,e) &&
         bot_goal_history_prepare(qa_bot_runtime_goals(b->runtime),checkpoint->goals,memory,&goals,e) &&
         bot_chat_history_prepare(b->runtime,checkpoint->chat,memory,&chat,e);
     if(ok) ok=validate(b,checkpoint,e);
@@ -247,6 +252,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     qa_bot_memory_checkpoint_finish(memory,ok);
     bot_fuzzy_history_finish(fuzzy,ok);
     bot_weapon_pointer_finish(weapons,ok);
+    bot_source_assets_finish(assets,ok);
     bot_goal_history_finish(goals,ok);
     for(uint32_t i=0;prepared && i<count;++i) {
         if(ok) {

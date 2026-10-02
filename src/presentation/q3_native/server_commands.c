@@ -59,7 +59,7 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     if(o && o->options.compiled_source) {
         q3n_loading_media media;
         const q3n_compiled_source_basis *b=f && f->compiled?&f->compiled->source.basis:NULL;
-        if(!b || o->closed || o->options.client || o->options.reader || o->options.remote_client || o->options.remote_source ||
+        if(!b || o->closed || o->rebind || o->options.client || o->options.reader || o->options.remote_client || o->options.remote_source ||
            f->compiled->source.owner!=o->options.compiled_source || f->application!=o->options.application ||
            b->content!=o->options.content || b->product!=o->options.product ||
            b->publication!=o->options.publication_generation || b->map_revision!=o->options.map_revision ||
@@ -202,7 +202,7 @@ static bool center(q3n_server_commands *o, const q3n_frame *f, const char *text,
         o->options.center_print(o->options.context, f, &recipient,
         text, y, width, e) && q3nc_current(o, f, e);
 }
-bool q3n_server_commands_idle(const q3n_server_commands *o) { return o && !o->busy; }
+bool q3n_server_commands_idle(const q3n_server_commands *o) { return o && !o->busy && !o->rebind; }
 const q3n_command_state *q3n_server_commands_state(const q3n_server_commands *o)
 { return q3n_server_commands_idle(o) ? &o->state : NULL; }
 static q3n_client_options client_source(const q3n_server_command_options *options)
@@ -239,7 +239,7 @@ static bool create(const q3n_server_command_options *options, unsigned domain,
     if (!q3n_clients_runtime_bound(options->clients, &clients, e)) return false;
     if(compiled) {
         q3n_compiled_source_view source; q3n_loading_media media;
-        if(!q3n_compiled_source_read(options->compiled_source,&source,e) ||
+        if(!q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) ||
            source.basis.application!=options->application || source.basis.content!=options->content ||
            source.basis.assets!=options->assets || source.basis.product!=options->product ||
            source.basis.publication!=options->publication_generation || source.basis.map_revision!=options->map_revision ||
@@ -281,6 +281,22 @@ bool q3n_server_commands_create_remote(const q3n_server_command_options *options
 bool q3n_server_commands_create_compiled(const q3n_server_command_options *options,q3n_server_commands **out,qa_error *e)
 { return create(options,2,out,e); }
 void q3n_server_commands_destroy(q3n_server_commands *o) { if (q3n_server_commands_idle(o)) free(o); }
+bool q3n_server_commands_rebind_prepare(q3n_server_commands *o,const q3n_compiled_source_rebind_ticket *t,
+    const qa_command_context *context,qa_error *e)
+{
+    if(!q3n_server_commands_idle(o)||!o->options.compiled_source||
+       !q3n_compiled_source_rebind_context_is(t,o->options.compiled_source,&o->options.compiled_context,context))
+        return q3nc_fail(e,QA_ERROR_ARGUMENT,"Command round rebind requires its actual retained and staged CLIENT context");
+    o->rebound_context=*context; o->rebind=t; return true;
+}
+bool q3n_server_commands_rebind_ready(const q3n_server_commands *o,const q3n_compiled_source_rebind_ticket *t)
+{ return o && !o->busy && o->rebind==t && t &&
+    q3n_compiled_source_rebind_context_is(t,o->options.compiled_source,&o->options.compiled_context,&o->rebound_context); }
+void q3n_server_commands_rebind_commit(q3n_server_commands *o,const q3n_compiled_source_rebind_ticket *t)
+{ if(o && t && o->rebind==t) { o->options.compiled_context=o->rebound_context;
+    o->rebound_context=(qa_command_context){0}; o->rebind=NULL; } }
+void q3n_server_commands_rebind_abort(q3n_server_commands *o,const q3n_compiled_source_rebind_ticket *t)
+{ if(o && t && o->rebind==t) { o->rebound_context=(qa_command_context){0}; o->rebind=NULL; } }
 static bool begin(q3n_server_commands *o, const q3n_frame *f, bool initialized, qa_error *e)
 {
     qa_native_q3_wire_publication publication;
@@ -648,13 +664,15 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
         int32_t warmup = q3nc_integer(text); s->warmup_count = -1;
         if (warmup > 0 && s->warmup <= 0) ok = sound_field(o, f,
             o->options.product == QA_Q3_TEAM_ARENA && s->game_type >= 4 && s->game_type <= 7 ? Q3N_S_PREPARE_TEAM : Q3N_S_PREPARE, 7, e);
-        if (ok) s->warmup = warmup; break;
+        if (ok) s->warmup = warmup;
+        break;
     }
     case 6: s->scores1 = q3nc_integer(text); break;
     case 7: s->scores2 = q3nc_integer(text); break;
     case 8: s->vote_time = q3nc_integer(text); s->vote_modified = true; break;
     case 9: q3nc_copy(s->vote_string, sizeof(s->vote_string), text);
-        if (o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e); break;
+        if (o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e);
+        break;
     case 10: s->vote_yes = q3nc_integer(text); s->vote_modified = true; break;
     case 11: s->vote_no = q3nc_integer(text); s->vote_modified = true; break;
     case 21: s->level_start_time = q3nc_integer(text); break;

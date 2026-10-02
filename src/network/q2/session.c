@@ -109,7 +109,7 @@ static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id i
         qa_error boundary = {0};
         bool ok = qa_q2_client_messages_read(&session->codec, received.payload, received.sequence, session->seats,
             q2_server_record, session, &boundary);
-        if (!ok && boundary.code == QA_ERROR_FORMAT && !session->retiring)
+        if (!ok && (boundary.code == QA_ERROR_FORMAT || boundary.code == QA_ERROR_UNSUPPORTED) && !session->retiring)
             return qa_network_q2_server_drop(runtime, id, boundary.message, packet->received_ns, error);
         if (!ok && error) *error = boundary;
         return ok;

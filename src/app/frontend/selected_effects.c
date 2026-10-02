@@ -204,7 +204,7 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
     backend.prepare_view = NULL; backend.submit_view = NULL; backend.prepare_picture = NULL;
     backend.video_frame = NULL; backend.video_context = NULL; backend.remap = NULL; backend.print = NULL; backend.scene_cleared = NULL;
     if (okay) okay = qa_q3_presentation_create(&backend, &group->view.presentation, error);
-    q3n_media_options media = {group->view.q3_product, group->view.assets};
+    q3n_media_options media = {.product=group->view.q3_product, .assets=group->view.assets};
     q3n_event_options events = {.product = group->view.q3_product, .assets = group->view.assets,
         .context = group, .trace = trace, .point_contents = contents, .mark_fragments = marks};
     if (okay) okay = q3n_media_create(&media, &group->view.media, error) &&

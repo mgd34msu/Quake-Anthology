@@ -56,6 +56,9 @@ bool application_native_q2_inventory_scanner_suspend(application_native_q2_inven
 bool application_native_q2_inventory_scanner_destroy(application_native_q2_inventory_scanner *, qa_error *);
 bool application_native_q2_inventory_scanner_idle(const application_native_q2_inventory_scanner *);
 bool application_native_q2_inventory_scanner_returned(const application_native_q2_inventory_scanner *);
+/* Present only during this actor's synchronous selected-item use callback. */
+const qa_native_region_event *application_native_q2_inventory_scanner_command_event(
+    const application_native_q2_inventory_scanner *, qa_actor_id);
 bool application_native_q2_inventory_scanner_read(application_native_q2_inventory_scanner *,
     qa_actor_id, application_native_q2_inventory_readout *, qa_error *);
 void application_native_q2_inventory_readout_free(application_native_q2_inventory_readout *);

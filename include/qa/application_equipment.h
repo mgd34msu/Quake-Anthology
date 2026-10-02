@@ -58,5 +58,11 @@ bool qa_application_equipment_q3_product_read(const qa_application *, qa_actor_o
 bool qa_application_equipment_q3_models_read(qa_application *,
     const qa_application_equipment_view *, qa_actor_owner recipient, uint32_t launch_seat,
     qa_application_q3_weapon_models *, bool *present, qa_error *);
+/* Qualifies the actual entered recipient's matching original CG/GAME model
+ * owner before lazy Source registration. The caller retains its whole Draw
+ * lease and registry; this runs no Source function and invents no draw refs. */
+bool qa_application_equipment_q3_source_draw_match(qa_application *,
+    const qa_application_equipment_view *, qa_actor_owner recipient, uint32_t launch_seat,
+    const qa_q3_presentation_assets *recipient_assets, bool *matching, qa_error *);
 
 #endif

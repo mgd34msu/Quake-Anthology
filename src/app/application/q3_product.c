@@ -256,11 +256,31 @@ bool qa_application_client_prepare_startup_ready(const qa_application_client_pre
     const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
     if (!source) return false;
     qa_console_dialect dialect=source->context.command.dialect;
-    if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
+    if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE && dialect!=QA_CONSOLE_Q3) return true;
     for (size_t i=0;app->startup && i<app->startup->count;++i) {
         application_startup_row *row=app->startup->rows+i;
-        if (row->name && row->queued_instance)
+        if ((dialect==QA_CONSOLE_Q3?row->safe_command:row->name!=NULL) && row->queued_instance)
             return false;
+    }
+    return true;
+}
+bool qa_application_client_prepare_safe_mode(const qa_application_client_preparation *preparation,
+    bool *safe,qa_error *error)
+{
+    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    if (!safe || !source || !qa_application_client_prepare_phase_is(preparation,QA_CLIENT_PREPARE_CONFIGURATION))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT safe mode requires its actual cfg owner");
+    *safe=false;
+    if (source->context.command.dialect!=QA_CONSOLE_Q3) return true;
+    if (!qa_application_client_prepare_startup_current(preparation))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT safe mode lost its genuine primary startup request");
+    qa_application *app=qa_application_client_prepare_application(preparation);
+    for (size_t i=0;app->startup && i<app->startup->count;++i) {
+        const application_startup_row *row=app->startup->rows+i;
+        if (!row->safe_command) continue;
+        if (row->queued_instance)
+            return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT safe mode cannot consume an admitted command buffer");
+        *safe=true; break;
     }
     return true;
 }
@@ -268,6 +288,11 @@ void qa_application_client_prepare_startup_publish(qa_application_client_prepara
 {
     qa_application *app=qa_application_client_prepare_application(preparation);
     const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    if (source->context.command.dialect==QA_CONSOLE_Q3) {
+        for (size_t i=0;app->startup && i<app->startup->count;++i)
+            if (app->startup->rows[i].safe_command) { app->startup->rows[i].consumed=true; break; }
+        return;
+    }
     if (source->context.command.dialect!=QA_CONSOLE_Q2 && source->context.command.dialect!=QA_CONSOLE_Q2_RERELEASE) return;
     /* Q2 early variables are the commands excluded from its late programme.
      * Q1/QW stuffed commands and Q3 late sets keep their original ordinals. */
@@ -482,7 +507,7 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
             size_t extent = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(row->queued_instance) : 0;
             size_t remaining = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX - 1;
             if (!qa_source_save_u64(io, &row->queued_generation) || !row->queued_generation ||
-                !qa_source_save_u32(io, &row->queued_kind) || row->queued_kind > QA_APPLICATION_CONSOLE_Q2_GAME ||
+                !qa_source_save_u32(io, &row->queued_kind) || row->queued_kind > QA_APPLICATION_CONSOLE_CLIENT ||
                 !qa_source_save_u32(io, &row->queued_seat) || !qa_source_save_count(io, &extent, remaining) || extent == SIZE_MAX) return false;
             if (io->direction == QA_SOURCE_SAVE_READ) {
                 row->queued_instance = malloc(extent + 1);

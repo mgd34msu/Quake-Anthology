@@ -225,7 +225,9 @@ bool application_guest_q3_video_reopen(application_guest_q3_video *ticket, qa_er
         struct application_q3_guest *engine = row->parent->engine;
         uint64_t sequence = engine->role_sequence;
         q3g_role *replacement = NULL;
-        ok = q3g_role_create(engine, row->kind, row->seat, row->path, row->primary, &replacement, error);
+        ok = row->source ? q3g_role_create_client(engine, row->kind, row->seat, row->path,
+            row->primary, row->source, &replacement, error) : q3g_role_create(engine, row->kind,
+            row->seat, row->path, row->primary, &replacement, error);
         if (!ok) {
             /* The constructor retains a refused cleanup shell in its real list. */
             for (q3g_role *r = engine->roles; r; r = r->next)

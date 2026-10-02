@@ -203,8 +203,9 @@ static qa_application_client_options app_options(frontend_client_source *s)
         .seat = s->options.metadata.seat, .physical_seat = s->options.physical_seat,
         .configuration_generation = s->configuration_generation, .runtime = s->options.runtime,
         .console = s->console, .cvars = registry(s), .command = s->command,
-        .owner = {s, retain, app_release, physical_current, physical_idle, connection_current,
-            s->options.entity_current ? entity_current : NULL}};
+        .owner = {.context = s, .retain = retain, .release = app_release,
+            .current = physical_current, .idle = physical_idle, .connection_current = connection_current,
+            .entity_current = s->options.entity_current ? entity_current : NULL}};
 }
 static uint32_t capabilities(const frontend_client_source_options *o)
 {
@@ -214,7 +215,8 @@ static uint32_t capabilities(const frontend_client_source_options *o)
         (o->cvar_owner ? 256u : 0u) | (o->visible_cvars ? 512u : 0u) | (o->cvar_edit ? 1024u : 0u) |
         (o->install ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
         (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u) |
-        (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u);
+        (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u) |
+        (o->configuration_advance ? 131072u : 0u);
 }
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
@@ -333,6 +335,34 @@ bool frontend_client_source_advance(frontend_client_source *s, bool *ready, qa_e
         s->ready = complete;
     }
     *ready = s->ready; return true;
+}
+bool frontend_client_source_configuration_advance(frontend_client_source *s,
+    qa_application_client_preparation *token,bool *complete,qa_error *e)
+{
+    const qa_application_client_source *held=qa_application_client_prepare_source(token);
+    if(!s||!complete||!held||!frontend_client_source_idle(s)||s->closing||!s->app_attached||
+        s->frontend->resource_inventory||s->frontend->capture||s->frontend->source_restoring||
+        qa_application_client_prepare_application(token)!=s->frontend->application||
+        !qa_application_client_prepare_entered(token,QA_CLIENT_PREPARE_CONFIGURATION)||
+        held->context.lifetime!=s->application.context.lifetime||held->context.receiver!=s->application.context.receiver||
+        held->context.seat!=s->application.context.seat||
+        !physical_current(s,held->descriptor,held->context.console,held->context.cvars,&held->context.command)||
+        !qa_application_client_current(s->frontend->application,&s->application)||
+        !qa_application_client_current(s->frontend->application,held))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"CLIENT programme leaves its entered physical configuration token");
+    if(!s->ready) {
+        if(!s->options.configuration_advance) return frontend_fail(e,QA_ERROR_ARGUMENT,"CLIENT programme has no retained configuration phase driver");
+        bool ready=false; ++s->calls;
+        bool ok=s->options.configuration_advance(s->options.context,&s->application,token,&ready,e);
+        --s->calls;
+        if(!ok) return false;
+        if(!qa_application_client_prepare_entered(token,QA_CLIENT_PREPARE_CONFIGURATION)||
+            !qa_application_client_current(s->frontend->application,&s->application)||
+            !qa_application_client_current(s->frontend->application,held))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"CLIENT programme changed its retained configuration token");
+        s->ready=ready;
+    }
+    *complete=s->ready; return true;
 }
 bool frontend_client_source_read(const frontend_client_source *s, frontend_client_source_view *out, qa_error *error)
 {
@@ -535,7 +565,7 @@ static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
         if (!qa_source_save_u64(io, &a->actors[i].generation) || !qa_source_save_u32(io, &a->actors[i].slot)) return false;
     if (!command_fields(io, &p->state.command) || p->state.command.seat != a->seat ||
         p->state.command.owner != a->receiver || !qa_source_save_u32(io, &p->state.capabilities) ||
-        (p->state.capabilities & ~131071u) || (p->state.capabilities & 15u) != 15u ||
+        (p->state.capabilities & ~262143u) || (p->state.capabilities & 15u) != 15u ||
         !qa_source_save_bool(io, &p->state.ready) ||
         (!p->state.ready && a->client.owner) || !buffer_fields(io, &p->state.console)) return false;
     if (reading) {

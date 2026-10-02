@@ -1,3 +1,4 @@
+#include "qa/q3_assets_save.h"
 #include "equipment_gear_private.h"
 
 bool frontend_equipment_gear_source(qa_frontend *frontend, qa_actor_owner namespace,

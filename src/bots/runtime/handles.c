@@ -73,33 +73,44 @@ bool bot_runtime_chat_shutdown(qa_bot_runtime *runtime,qa_error *error) {
 const qa_bot_character *qa_bot_runtime_character(const qa_bot_runtime *r, uint32_t id) {
     return r && id && id <= r->options.maximum_states ? r->characters[id - 1] : NULL;
 }
+bool bot_runtime_character_available(void *context) {
+    qa_bot_runtime *runtime = context;
+    uint32_t limit = runtime->options.maximum_states < 64 ? runtime->options.maximum_states : 64;
+    for (uint32_t i = 0; i < limit; ++i) if (!runtime->characters[i]) return true;
+    return false;
+}
+bool bot_runtime_character_publish(void *context, qa_bot_character *character, qa_error *error) {
+    qa_bot_runtime *runtime = context;
+    uint32_t limit = runtime->options.maximum_states < 64 ? runtime->options.maximum_states : 64;
+    uint32_t available = limit;
+    for (uint32_t i = 0; i < limit; ++i) {
+        if (runtime->characters[i] == character) return true;
+        if (available == limit && !runtime->characters[i]) available = i;
+    }
+    if (available == limit) return bot_runtime_fail(error, "Character publication has no free source handle");
+    qa_bot_character_retain(character); runtime->characters[available] = character; return true;
+}
 bool qa_bot_runtime_character_load(qa_bot_runtime *r, const char *path, float skill,
                                    uint32_t *out, qa_error *e) {
     if (!bot_runtime_mutable(r, e)) return false;
     if (!out || !path) return bot_runtime_fail(e, "missing character path/handle output");
     *out = 0;
     r->busy = true;
-    qa_bot_character *character;
+    qa_bot_character *character = NULL;
     bool interpolated;
-    bool ok = bot_character_load(r->library, path, skill, &character, &interpolated, e);
-    if (!ok) { r->busy = false; return false; }
-    /* Source defaults and lower interpolation profiles consume real handles
-     * before the requested profile, in their publication order. */
-    uint32_t limit = r->options.maximum_states < 64 ? r->options.maximum_states : 64;
-    for (qa_bot_character *held = r->library->characters; held; held = held->next) {
-        if (!held->ready || held->retired) continue;
-        bool present = false; uint32_t free_slot = limit;
-        for (uint32_t i = 0; i < limit; ++i) {
-            present |= r->characters[i] == held;
-            if (free_slot == limit && !r->characters[i]) free_slot = i;
-        }
-        if (!present && free_slot < limit) {
-            qa_bot_character_retain(held); r->characters[free_slot] = held;
-        }
+    qa_error load_error = {0};
+    bool ok = bot_character_load(r->library, path, skill, &character, &interpolated, &load_error);
+    if (!ok) {
+        bool exhausted = !bot_runtime_character_available(r) && load_error.code == QA_ERROR_NOT_FOUND;
+        r->busy = false;
+        if (exhausted) return true;
+        if (e) *e = load_error;
+        return false;
     }
+    uint32_t limit = r->options.maximum_states < 64 ? r->options.maximum_states : 64;
     uint32_t available = 0, handle = 0;
     for (uint32_t i = 0; i < limit; ++i) {
-        if (r->characters[i] == character) { handle = i + 1; break; }
+        if (character && r->characters[i] == character) { handle = i + 1; break; }
         if (!available && !r->characters[i]) available = i + 1;
     }
     if (handle || !available) qa_bot_character_release(character);

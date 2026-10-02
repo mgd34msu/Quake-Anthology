@@ -293,6 +293,7 @@ static void close_game(void *context) {
     free(g->actors);
     free(g->wire_actors);
     free(g->wire_freed_ns);
+    free(g->wire_references);
     free(g);
 }
 bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *options,

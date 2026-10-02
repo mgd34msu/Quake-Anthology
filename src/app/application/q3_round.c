@@ -1,4 +1,5 @@
 #include "q3_round.h"
+#include "qa/modes_q3_session.h"
 #include "bots_round.h"
 #include "guest_q3_restart.h"
 #include "guest_projection_private.h"

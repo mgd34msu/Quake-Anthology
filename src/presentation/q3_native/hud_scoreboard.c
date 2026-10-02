@@ -56,7 +56,8 @@ static bool team_scores(q3n_hud_draw *d,int32_t y,int32_t team,float fade,int32_
         const q3n_command_score *score=&c->scores[i]; if(score->client<0 || score->client>=64)return false;
         const q3n_client_info *ci=q3n_clients_get(d->frame->clients,(uint32_t)score->client); if(!ci)return false;
         if(ci->team!=team)continue;
-        if(!client_score(d,(float)(y+line * *count),score,color,fade,large,local))return false; ++*count;
+        if(!client_score(d,(float)(y+line * *count),score,color,fade,large,local))return false;
+        ++*count;
     }
     return true;
 }
@@ -108,13 +109,17 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
                    !q3nh_team_background(d,0,(float)(y-top),640,(float)(count*line+16),0.33f,team))return false;
                 y+=count*line+16; maximum-=count;
             }
-            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16;
+            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false;
+            y+=count*line+16;
         } else {
-            if(!team_scores(d,y,0,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16; maximum-=count;
-            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false; y+=count*line+16;
+            if(!team_scores(d,y,0,fade,maximum,line,!compact,&local,&count))return false;
+            y+=count*line+16; maximum-=count;
+            if(!team_scores(d,y,3,fade,maximum,line,!compact,&local,&count))return false;
+            y+=count*line+16;
         }
         if(!local)for(int32_t i=0;i<c->num_scores;++i)if(c->scores[i].client==p->clientNum) {
-            if(!client_score(d,(float)y,&c->scores[i],color,fade,!compact,&local))return false; break;
+            if(!client_score(d,(float)y,&c->scores[i],color,fade,!compact,&local))return false;
+            break;
         }
     }
     s->deferred_player_loading=q3ne_plus(s->deferred_player_loading,1);
@@ -148,7 +153,8 @@ bool q3nh_tourney(q3n_hud_draw *d)
     float y=160;
     for(uint32_t i=0;i<64;++i) {
         const q3n_client_info *ci=q3n_clients_get(d->frame->clients,i); if(!ci || !ci->info_valid || ci->team!=0)continue;
-        if(!tourney_line(d,y,ci->name,ci->dynamic.score))return false; y+=64;
+        if(!tourney_line(d,y,ci->name,ci->dynamic.score))return false;
+        y+=64;
     }
     return true;
 }

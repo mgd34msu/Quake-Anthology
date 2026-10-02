@@ -293,12 +293,14 @@ q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *erro
             qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, &visible, error);
         if (ok && visible && code == 26)
             ok = qa_collision_areas_connected(geometry, (int32_t)a.area, (int32_t)b.area, &connected, error);
-        if (ok) *result = visible && connected; break;
+        if (ok) *result = visible && connected;
+        break;
     }
     case 29: {
         bool connected;
         ok = qa_collision_areas_connected(geometry, q3_integer(call, 0), q3_integer(call, 1), &connected, error);
-        if (ok) *result = connected; break;
+        if (ok) *result = connected;
+        break;
     }
     case 28: {
         uint32_t number; qa_q3_host_visibility visibility; bool present;

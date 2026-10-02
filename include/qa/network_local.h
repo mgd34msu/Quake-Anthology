@@ -16,4 +16,5 @@ bool qa_network_attach_local(qa_network_runtime *,const qa_net_connect *,
     const qa_network_local_hooks *,uint64_t,qa_net_client_id *,qa_error *);
 bool qa_network_local_player_read(const qa_network_runtime *,qa_net_client_id,
     qa_network_local_player *,qa_error *);
+bool qa_network_local_player_refresh(qa_network_runtime *,qa_net_client_id,qa_error *);
 #endif

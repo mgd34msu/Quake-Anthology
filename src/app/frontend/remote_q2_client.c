@@ -9,6 +9,8 @@
 #include "remote_q2_effects.h"
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_footsteps.h"
+#include "remote_q2_material_movies_bridge.h"
+#include "qa/media_library_save.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,6 +99,8 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     row->content = (frontend_remote_q2_content){0}; row->selected = row->content_admitted = false; row->height_set = false;
     row->sample_frame_seconds = 0;
     row->gun_set = false; row->gun_frame = row->gun_previous_frame = 0; row->gun_server_frame = 0;
+    row->fog_start = row->fog_end = (qa_scene_fog){0};
+    row->fog_started_ms = 0; row->fog_duration_ms = 0; row->fog_received = false;
     memset(row->sent, 0, sizeof(row->sent)); row->sent_set = row->input_set = false;
     memset(row->commands, 0, sizeof(row->commands)); row->last_command = row->acknowledged_command = 0;
     row->predicted = false; row->prediction_error = row->prediction_pml = qa_v3(0, 0, 0);
@@ -104,6 +108,14 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     row->prediction_command = 0; row->prediction_frame = 0;
     row->prediction_ground = (qa_movement_ground){0}; row->prediction_plane = (qa_collision_plane){0};
     row->last_sent = row->acknowledged = 0; qa_input_command_clear(&row->input);
+    if (row->bound && !row->retired && !row->importing && row->options.entities_changed &&
+        qa_net_connections_get(qa_network_connections(row->options.domain.runtime), row->options.domain.client)) {
+        ++row->busy;
+        bool ok = row->options.current(row->options.context, &row->options.domain, error) &&
+            row->options.entities_changed(row->options.context, &row->options.domain, error);
+        --row->busy;
+        if (!ok) return false;
+    }
     return true;
 }
 bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options *options,
@@ -267,8 +279,10 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
         row->gun_set = true;
     }
     ++row->busy;
-    remote_q2_prediction_receive(row);
-    bool ok = remote_q2_prediction_replay(row, error);
+    bool ok = !row->options.entities_changed || row->options.entities_changed(row->options.context,
+        &row->options.domain, error);
+    if (ok) remote_q2_prediction_receive(row);
+    if (ok) ok = remote_q2_prediction_replay(row, error);
     if (ok) ok = remote_q2_effects_frame(row, error);
     --row->busy;
     return ok && remote_q2_live(row, error);
@@ -402,7 +416,7 @@ bool frontend_remote_q2_current(const frontend_remote_q2_view *view)
 }
 static bool media_idle(const frontend_remote_q2 *row)
 {
-    if (!frontend_remote_q2_effects_idle(row->effects) || (row->world && !qa_scene_world_idle(row->world)) ||
+    if (!remote_q2_material_movies_idle(row) || !frontend_remote_q2_effects_idle(row->effects) || (row->world && !qa_scene_world_idle(row->world)) ||
         (row->images && !qa_scene_resources_idle(row->images)) ||
         (row->materials && !qa_material_library_idle(row->materials)) ||
         (row->fonts && !qa_font_library_idle(row->fonts))) return false;
@@ -457,6 +471,17 @@ bool frontend_remote_q2_entity_generation(const frontend_remote_q2 *row, uint32_
     if (!generation || !row || !row->bound || !row->media_ready || !row->content_generation ||
         !row->loading_generation || !frontend_remote_q2_entity_received(row, number)) return false;
     *generation = row->content_generation;
+    return true;
+}
+bool frontend_remote_q2_entity_publication_read(const frontend_remote_q2 *row,
+    qa_application_client_entity_publication *out)
+{
+    if (!row || !out || !linked(row) || !row->bound || row->retired || row->importing) return false;
+    bool published = row->media_ready && row->frame.valid && row->content_generation && row->loading_generation;
+    *out = (qa_application_client_entity_publication){.published = published,
+        .map_generation = published ? row->content_generation : 0,
+        .received_ns = published ? row->received_ns : 0,
+        .source_frame = published ? row->frame.server_frame : 0};
     return true;
 }
 bool frontend_remote_q2_idle(const qa_frontend *f)
@@ -533,6 +558,17 @@ bool frontend_remote_q2_content_visit(const qa_frontend *f, const qa_application
             !visitor->pool(visitor->context, qa_vfs_resources(row->content.mounts), error) ||
             !visitor->view(visitor->context, row->content.mounts, error))) return false;
         if (!remote_q2_footsteps_visit(row, visitor, error)) return false;
+        if (row->media) {
+            qa_resource_pool *pool = qa_vfs_resources(row->content.mounts);
+            if (!pool || qa_media_library_resource_owner(row->media) != row->images ||
+                !visitor->pool(visitor->context, pool, error)) return false;
+            for (size_t i = 0; i < qa_media_library_record_count(row->media); ++i) {
+                const qa_cinematic_asset *asset = qa_media_library_record_at(row->media, i);
+                const qa_resource *resource = asset ? qa_cinematic_asset_resource(asset) : NULL;
+                if (!resource || qa_resource_pool_find(pool, qa_resource_id(resource)) != resource)
+                    return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 movie cache left its actual retained content pool");
+            }
+        }
     }
     return true;
 }
@@ -540,6 +576,7 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend 
     const frontend_remote_q2_options *options, qa_error *error)
 {
     if (!row || !f || !options || f->capture || f->resource_inventory || row->busy || row->importing || row->image_policy || !linked(row) ||
+        (f != row->frontend && (row->effects || row->media || row->shader_movies)) ||
         !remote_q2_domain_equal(&row->options.domain, &options->domain) ||
         f->application != options->domain.application || !options->current || !options->download_allowed ||
         !options->download_nonce || !options->records || !options->disconnected)

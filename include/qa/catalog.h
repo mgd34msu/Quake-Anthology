@@ -160,6 +160,14 @@ bool qa_catalog_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
 /* Pure qualification against the retained product recipe. Does not recreate
  * a view, reopen native paths or change resource/read ownership. */
 bool qa_catalog_product_view_current(const qa_catalog *, qa_product_id, const qa_vfs *);
+/* Resolve an actual scoped-view mount through its retained catalog recipe.
+ * The content owner follows the selected product's original ancestry, so an
+ * inherited base mount and a selected variant retain their proper identity. */
+bool qa_catalog_product_mount_origin(const qa_catalog *, qa_product_id,
+    const qa_vfs *, qa_mount_id, qa_product_id *content, qa_mount_id *catalog_mount);
+/* Qualify an issued acquisition against the unchanged original scoped view. */
+bool qa_catalog_product_acquisition_origin(const qa_catalog *, qa_product_id,
+    const qa_vfs *, const qa_vfs_acquisition *, qa_product_id *, qa_mount_id *, qa_error *);
 /* Initial files.c identity lookup uses actual discovered Q3 mounts even when
  * the selected retail package lacks other required files. */
 bool qa_catalog_q3_identification_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);

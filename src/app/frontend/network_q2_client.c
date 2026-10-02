@@ -70,6 +70,14 @@ static bool entity_current(void *context,const qa_application_client_source *sou
     return attachment(owner,source) && frontend_remote_q2_source_read(owner->source,&view,&error) &&
         frontend_remote_q2_entity_generation(view.receiver,number,generation);
 }
+static bool entity_publication(void *context, const qa_application_client_source *source,
+    qa_application_client_entity_publication *out)
+{
+    frontend_network_q2_client *owner = context;
+    frontend_remote_q2_source_view view; qa_error error = {0};
+    return attachment(owner, source) && frontend_remote_q2_source_read(owner->source, &view, &error) &&
+        frontend_remote_q2_entity_publication_read(view.receiver, out);
+}
 static bool namespace_prepare(void *context,const qa_launch_instance *descriptor,
     frontend_remote_q2_domain *domain,qa_error *error)
 {
@@ -99,7 +107,8 @@ static bool configure(void *context,const qa_launch_instance *descriptor,qa_cvar
         .seat=owner->domain.command_context.seat,.physical_seat=owner->options.physical_seat,
         .configuration_generation=owner->domain.configuration_generation,.runtime=owner->options.runtime,
         .console=console,.cvars=cvars,.command=owner->domain.command_context,
-        .owner={owner,retain,release,physical,idle,attachment,entity_current}};
+        .owner={.context=owner,.retain=retain,.release=release,.current=physical,.idle=idle,
+            .connection_current=attachment,.entity_current=entity_current,.entity_publication=entity_publication}};
     if(!qa_application_client_create(owner->domain.application,&options,&owner->application_source,error)) return false;
     owner->app_created=true;
     return true;
@@ -127,6 +136,14 @@ static bool configuration_retire(void *context,qa_error *error)
     frontend_network_q2_client *owner=context;
     return !owner->configuration.retire || owner->configuration.retire(owner->configuration.context,
         owner->app_created?&owner->application_source:NULL,error);
+}
+static bool configuration_advance(void *context,qa_application_client_preparation *token,
+    bool *complete,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    return owner->app_created && owner->configuration.configuration_advance &&
+        owner->configuration.configuration_advance(owner->configuration.context,
+            &owner->application_source,token,complete,error);
 }
 static void configuration_released(void *context)
 {
@@ -229,6 +246,12 @@ static bool entity_actor(void *context,const frontend_remote_q2_domain *domain,u
     return source_current(owner,domain,error) && qa_application_client_entity_read(domain->application,
         &owner->application_source,number,actor,error);
 }
+static bool entities_changed(void *context, const frontend_remote_q2_domain *domain, qa_error *error)
+{
+    frontend_network_q2_client *owner = context;
+    return source_current(owner, domain, error) && qa_application_client_entities_refresh(domain->application,
+        &owner->application_source, error);
+}
 static bool permission(const qa_cvars *cvars,const char *name)
 { const qa_cvar_view *value=qa_cvars_find(cvars,name); return value && value->number!=0; }
 static bool path_prefix(const char *path,const char *prefix)
@@ -320,10 +343,12 @@ static frontend_remote_q2_source_options source_options(frontend_network_q2_clie
 {
     return (frontend_remote_q2_source_options){.client={.domain=owner->domain,.context=owner,.current=source_current,
         .download_allowed=download_allowed,.download_nonce=download_nonce,.entity_actor=entity_actor,
-        .records=records,.disconnected=disconnected_source,.material_scripts=owner->material_scripts},
+        .records=records,.disconnected=disconnected_source,.material_scripts=owner->material_scripts,
+        .entities_changed=entities_changed},
         .prepare_namespace=namespace_prepare,.print=print_source,
         .configure=configure,.admit_content=admit_content,.initialize=initialize,.install=install,
         .configure_step=configure_step,.retire=configuration_retire,.released=configuration_released,
+        .configuration_advance=configuration_advance,
         .cvar_owner=owner->configuration.cvar_owner?configuration_cvars:NULL,
         .visible_cvars=owner->configuration.visible_cvars?configuration_visible:NULL,
         .cvar_edit=owner->configuration.cvar_edit?configuration_edit:NULL,
@@ -437,6 +462,22 @@ bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_
         source->context.entity_owner==held->context.entity_owner && source->context.lifetime==held->context.lifetime &&
         source->configuration_generation==held->configuration_generation &&
         qa_net_client_id_equal(source->client,held->client) && source->connection_epoch==held->connection_epoch;
+}
+bool frontend_network_q2_client_configuration_read(const frontend_network_q2_client *owner,
+    qa_application_client_source *out,bool *ready,qa_error *error)
+{
+    if(!out || !ready || !owner || !parent(owner) || !owner->app_created ||
+        !qa_application_client_current(owner->options.frontend->application,&owner->application_source))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT configuration lost its actual physical owner");
+    *out=owner->application_source;
+    *ready=frontend_remote_q2_source_configuration_completed(owner->source); return true;
+}
+bool frontend_network_q2_client_configuration_advance(frontend_network_q2_client *owner,
+    qa_application_client_preparation *token,bool *complete,qa_error *error)
+{
+    return owner && owner->source && !owner->calls && !owner->closing &&
+        frontend_network_q2_client_configuration_primary(owner,qa_application_client_prepare_source(token)) &&
+        frontend_remote_q2_source_configuration_continue(owner->source,token,complete,error);
 }
 bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_error *error)
 {
@@ -570,7 +611,8 @@ static bool physical_restore(void *context,const qa_launch_instance *descriptor,
         .seat=owner->domain.command_context.seat,.physical_seat=owner->options.physical_seat,
         .configuration_generation=owner->domain.configuration_generation,.runtime=owner->options.runtime,
         .console=console,.cvars=cvars,.command=owner->domain.command_context,
-        .owner={owner,retain,release,physical,idle,attachment,entity_current}};
+        .owner={.context=owner,.retain=retain,.release=release,.current=physical,.idle=idle,
+            .connection_current=attachment,.entity_current=entity_current,.entity_publication=entity_publication}};
     if(!qa_application_client_create_restored(owner->domain.application,&options,owner->restored_application,
         &owner->application_source,error)) return false;
     owner->app_created=true; return true;

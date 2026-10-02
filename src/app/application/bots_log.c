@@ -13,7 +13,7 @@ typedef struct application_bot_log_stream {
     uint64_t position;
 } application_bot_log_stream;
 
-static bool write(void *context,qa_bytes bytes,qa_error *error)
+static bool write_stream(void *context,qa_bytes bytes,qa_error *error)
 {
     application_bot_log_stream *stream=context;size_t offset=0;
     while(offset<bytes.size) {
@@ -86,7 +86,7 @@ static bool open_stream(void *context,const char *filename,bool resume,uint64_t 
         okay=application_fail(error,QA_ERROR_FORMAT,"Saved bot log position exceeds the retained file");
     if(!okay) {qa_fs_stream_close(stream->file);qa_fs_root_close(stream->root);free(stream);return false;}
     stream->position=resume?position:0;
-    *out=(qa_bot_log_stream){.context=stream,.write=write,.flush=flush,.close=close_stream,.checkpoint=checkpoint};
+    *out=(qa_bot_log_stream){.context=stream,.write=write_stream,.flush=flush,.close=close_stream,.checkpoint=checkpoint};
     return true;
 }
 

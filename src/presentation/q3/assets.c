@@ -94,6 +94,7 @@ bool q3p_assets_children_idle(const qa_q3_presentation_assets *a)
         const q3p_model *m = a->models[i];
         if (!m) continue;
         if (m->world && !qa_scene_world_idle(m->world)) return false;
+        if (m->source_md4_scene && !qa_scene_model_idle(m->source_md4_scene)) return false;
         for (unsigned j = 0; j < 3; ++j)
             if (m->scene[j] && !qa_scene_model_idle(m->scene[j])) return false;
     }

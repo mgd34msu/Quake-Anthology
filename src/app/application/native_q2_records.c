@@ -182,7 +182,7 @@ bool application_native_q2_records_create(const application_native_q2_records_op
     return nqr_current(o,e)&&nqr_profile(o,e);
 }
 bool application_native_q2_records_idle(const application_native_q2_records *o)
-{ return !o||(!o->frame&&!o->projection_depth&&!o->lifecycle_depth); }
+{ return !o||(!o->frame&&!o->pickup&&!o->projection_depth&&!o->lifecycle_depth); }
 bool application_native_q2_records_writing(const application_native_q2_records *o)
 { return o&&o->projection_depth!=0; }
 bool application_native_q2_records_lifecycle(const application_native_q2_records *o)

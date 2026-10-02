@@ -15,6 +15,7 @@ typedef enum qa_application_client_prepare_phase {
 bool qa_application_client_prepare_begin(qa_application *,const qa_application_client_source *,
     qa_application_client_preparation **,qa_error *);
 bool qa_application_client_prepare_current(const qa_application_client_preparation *);
+bool qa_application_client_prepare_active(const qa_application *);
 bool qa_application_client_prepare_associated(const qa_application *,
     const qa_application_client_preparation *);
 bool qa_application_client_prepare_entered(const qa_application_client_preparation *,
@@ -37,6 +38,12 @@ bool qa_application_client_prepare_consume(qa_application_client_preparation *,
     bool (*ready)(void *,const qa_application_client_preparation *),
     void (*consume)(void *,qa_application_client_preparation *),void *,qa_error *);
 bool qa_application_client_prepare_abort(qa_application_client_preparation *,qa_error *);
+/* Cancellation advances only an already retained release history. It leaves
+ * RELEASE installed until that history reports completion; no new work starts. */
+bool qa_application_client_prepare_cancel_advance(qa_application_client_preparation *,
+    bool (*cleanup)(void *,qa_application_client_preparation *,bool *,qa_error *),void *,
+    bool *complete,qa_error *);
+bool qa_application_client_prepare_cancel_entered(const qa_application_client_preparation *);
 bool qa_application_client_prepare_finish(qa_application_client_preparation **,
     bool (*cleanup)(void *,qa_application_client_preparation *,bool *,qa_error *),void *,
     bool *complete,qa_error *);
@@ -49,6 +56,7 @@ bool qa_application_client_prepare_replay(qa_application_client_preparation *,qa
 bool qa_application_client_prepare_startup_claim(qa_application_client_preparation *,void *,
     bool (*current)(void *,const qa_application_client_source *),qa_error *);
 bool qa_application_client_prepare_startup_current(const qa_application_client_preparation *);
+bool qa_application_client_prepare_safe_mode(const qa_application_client_preparation *,bool *,qa_error *);
 bool qa_application_client_prepare_startup_ready(const qa_application_client_preparation *);
 void qa_application_client_prepare_startup_publish(qa_application_client_preparation *);
 bool qa_application_client_prepare_holds(const qa_application *,const qa_application_client_source *);

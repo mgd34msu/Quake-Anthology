@@ -1,5 +1,7 @@
 #include "remote_unified_input_private.h"
 #include "remote_unified_private.h"
+#include "remote_unified_save.h"
+#include "remote_unified_prediction_private.h"
 #include "neutral_config.h"
 #include "config_store.h"
 #include "unified_input_command.h"
@@ -41,20 +43,23 @@ static bool current(frontend_unified_input *p,qa_error *e)
         configuration.client==d->cvars && configuration.mouse==p->configuration.mouse &&
         configuration.movement==p->configuration.movement && configuration.kind==p->builder.kind;
 }
-bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *replica,
-    frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
+static bool create(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_remote_unified_prediction *prediction,bool importing,frontend_unified_input **out,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
-    const qa_recipe_provider *movement=frontend_remote_unified_provider(replica,QA_ROLE_MOVEMENT,"");
-    const qa_recipe_provider *arsenal=frontend_remote_unified_provider(replica,QA_ROLE_ARSENAL,"");
+    const qa_recipe_provider *movement=importing ? frontend_remote_unified_provider_published(replica,QA_ROLE_MOVEMENT,"") :
+        frontend_remote_unified_provider(replica,QA_ROLE_MOVEMENT,"");
+    const qa_recipe_provider *arsenal=importing ? frontend_remote_unified_provider_published(replica,QA_ROLE_ARSENAL,"") :
+        frontend_remote_unified_provider(replica,QA_ROLE_ARSENAL,"");
     frontend_unified_prediction_view snapshot;
     frontend_neutral_config_view configuration;
-    if(!f || !replica || !prediction || !out || *out || !d || f->application!=d->application ||
-        !frontend_remote_unified_current(replica,e) ||
+    if(!f || !replica || !prediction || prediction->replica!=replica || !out || *out || !d || f->application!=d->application ||
+        !(importing ? frontend_remote_unified_checkpoint_current(replica,e) : frontend_remote_unified_current(replica,e)) ||
         !movement || !arsenal || !movement->registered || !arsenal->registered ||
         !movement->selection.instance || !arsenal->selection.instance ||
-        !frontend_remote_unified_prediction_snapshot(prediction,&snapshot,e) ||
-        !frontend_config_store_neutral_movement_adopt(f->config_store,d->console,snapshot.state.kind,e) ||
+        !(importing ? frontend_prediction_checkpoint_snapshot(prediction,&snapshot,e) :
+            frontend_remote_unified_prediction_snapshot(prediction,&snapshot,e)) ||
+        (!importing && !frontend_config_store_neutral_movement_adopt(f->config_store,d->console,snapshot.state.kind,e)) ||
         !frontend_config_store_neutral_read(f->config_store,d->console,&configuration,e) ||
         !configuration.ready || !configuration.published || configuration.client!=d->cvars ||
         configuration.physical_seat!=d->physical_seat || configuration.kind!=snapshot.state.kind)
@@ -66,7 +71,7 @@ bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *repli
         frontend_client_source_view view;
         if(!frontend_client_source_metadata_read(candidate,&view,e)) return false;
         if(view.source.context.console!=d->console) continue;
-        if(client || !frontend_client_source_read(candidate,&view,e) || !domain_matches(d,&view))
+        if(client || (!importing && !frontend_client_source_read(candidate,&view,e)) || !domain_matches(d,&view))
             return fail(e,"Unified input changed its unique physical CLIENT constructor");
         client=candidate;selected=view;
     }
@@ -83,6 +88,12 @@ bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *repli
     p->command_time=snapshot.command_time_ms;
     *out=p;return true;
 }
+bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
+{ return create(f,replica,prediction,false,out,e); }
+bool frontend_input_import_create(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
+{ return frontend_remote_unified_restore_pending(replica) && create(f,replica,prediction,true,out,e); }
 static bool scalar(const qa_unified_document *doc,qa_json_id id,double *out,qa_error *e)
 { return qa_unified_document_number(doc,id,out,e) && isfinite(*out); }
 static bool frame_read(frontend_unified_input *p,double time,

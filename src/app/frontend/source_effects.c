@@ -128,16 +128,16 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
     scope->groups = frontend_selected_effects_count(frontend);
     for (size_t i = 0; i < scope->groups; ++i) {
         if (!frontend_selected_effects_source_matches(frontend, scope, i)) continue;
-        const qa_scene_light *lights; size_t count;
-        if (!frontend_selected_effects_source_light_read(frontend, scope, i, &lights, &count, error)) return false;
-        if (count > SIZE_MAX / sizeof(*lights) - scope->effect_light_count)
+        const qa_scene_light *lights; size_t light_count;
+        if (!frontend_selected_effects_source_light_read(frontend, scope, i, &lights, &light_count, error)) return false;
+        if (light_count > SIZE_MAX / sizeof(*lights) - scope->effect_light_count)
             return frontend_fail(error, QA_ERROR_MEMORY, "Source effect light extent is exhausted");
-        if (!count) continue;
-        size_t total = scope->effect_light_count + count;
+        if (!light_count) continue;
+        size_t total = scope->effect_light_count + light_count;
         qa_scene_light *owned = realloc(scope->effect_lights, total * sizeof(*owned));
         if (!owned) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual source effect light packet");
         scope->effect_lights = owned;
-        memcpy(owned + scope->effect_light_count, lights, count * sizeof(*lights));
+        memcpy(owned + scope->effect_light_count, lights, light_count * sizeof(*lights));
         scope->effect_light_count = total;
     }
     scope->ready = frontend_source_effects_current(scope); return scope->ready;

@@ -399,8 +399,8 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         qa_q2_player_rules *rules = &g->player_runtime->rules;
         if (g->options.deathmatch && rules->force_respawn_seconds != 0)
             s->respawn_ns = q2_deadline(g->now_ns, q2_item_seconds(rules->force_respawn_seconds));
-        if (carry.inventory || carry.count == 0 && g->options.cooperative &&
-                                   (rules->coop_instanced_items || rules->coop_squad_respawn)) {
+        if (carry.inventory || (carry.count == 0 && g->options.cooperative &&
+                                   (rules->coop_instanced_items || rules->coop_squad_respawn))) {
             carry.health = carry.maximum_health;
             qa_q2_player_carry_free(&s->coop);
             s->coop = carry;

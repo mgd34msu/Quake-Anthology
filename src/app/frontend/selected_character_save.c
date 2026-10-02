@@ -35,7 +35,7 @@ bool frontend_selected_character_topology_checkpoint(const qa_frontend *frontend
         size_t visual = 0; frontend_visual_owner_view media;
         for (; visual < frontend_visual_owner_count(frontend); ++visual) {
             if (!frontend_visual_owner_read(frontend, visual, &media)) { okay = false; break; }
-            if (media.owner == owner->view.appearance.provider && media.family == QA_GAME_Q3 &&
+            if (media.owner == owner->view.appearance.provider && media.family == QA_SCENE_Q3 &&
                 media.mounts == owner->view.content.mounts && media.images == owner->view.content.images &&
                 media.materials == owner->view.content.materials) break;
         }
@@ -66,7 +66,7 @@ bool frontend_selected_character_prepare_restored(qa_frontend *frontend, qa_byte
         okay = topology_fields(&io, frontend->application, &owner->view.launch_seat,
             &owner->view.selection.owner, &owner->view.appearance.provider, &visual) &&
             frontend_visual_owner_read(frontend, visual, &owner->view.content) &&
-            owner->view.content.owner == owner->view.appearance.provider && owner->view.content.family == QA_GAME_Q3;
+            owner->view.content.owner == owner->view.appearance.provider && owner->view.content.family == QA_SCENE_Q3;
         for (const frontend_selected_character *prior = head; okay && prior != owner; prior = prior->next)
             if (prior->view.launch_seat == owner->view.launch_seat &&
                 prior->view.selection.owner == owner->view.selection.owner &&

@@ -325,7 +325,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
                 uint8_t inverse = (uint8_t)(255 - brightness);
                 bool alpha = world->options.q1_lightmap_encoding == QA_Q1_LIGHTMAP_INVERTED_ALPHA;
                 for (size_t channel = 0; channel < 3; ++channel) {
-                    light->encoded_pixels[pixel * 4 + channel] = alpha ? 0 : inverse;
+                    light->encoded_pixels[pixel * 4 + channel] = alpha ? 255 : inverse;
                     /* Source inverted encodings carry luminance in channel 0. */
                     light->light_pixels[pixel * 4 + channel] = brightness;
                 }
@@ -352,11 +352,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
                 uint8_t *direct = light->light_pixels + pixel * 4;
                 uint8_t brightness = encoded[3];
                 if (mono == 'L' || mono == 'I') {
-                    /* The original GL_LUMINANCE/GL_INTENSITY upload expands
-                     * its red source component to all sampled RGB lanes. */
-                    encoded[0] = encoded[1] = encoded[2] = brightness;
-                    direct[0] = direct[1] = direct[2] = brightness;
-                    encoded[3] = mono == 'I' ? brightness : 255;
+                    encoded[0] = brightness; encoded[1] = encoded[2] = 0;
                 } else if (mono == 'C') {
                     uint8_t alpha = (uint8_t)(255 - ((unsigned)encoded[0] + encoded[1] + encoded[2]) / 3);
                     for (size_t channel = 0; channel < 3; ++channel)
@@ -367,6 +363,16 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
                     encoded[3] = (uint8_t)(255 - brightness);
                     direct[0] = direct[1] = direct[2] = brightness;
                 }
+                uint8_t format = mono;
+                if (format >= 'a' && format <= 'z') format -= 'a' - 'A';
+                if (format == 'L' || format == 'I') {
+                    /* Internal format selection uppercases the setting;
+                     * R_BuildLightMap's store switch uses its original byte. */
+                    uint8_t luminance = encoded[0];
+                    encoded[0] = encoded[1] = encoded[2] = luminance;
+                    direct[0] = direct[1] = direct[2] = luminance;
+                    encoded[3] = format == 'I' ? luminance : 255;
+                } else if (format != 'A' && format != 'C') encoded[3] = 255;
             }
         }
         light->light_pixels[pixel * 4 + 3] = 255;

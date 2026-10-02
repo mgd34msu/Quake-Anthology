@@ -307,12 +307,12 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
         if (ammo != QA_JSON_NONE) {
             value->ammo_declared = true;
             if (qa_json_type(doc, ammo) != QA_JSON_NULL) {
-                char *name = string(doc, ammo, error);
-                if (!name) return false;
-                const char *separator = strchr(name, ':');
-                bool admitted = separator && separator != name && separator[1] &&
-                    qa_strings_intern_cstr(qa_session_strings(provider->application->session),name,&value->ammo,error);
-                free(name);
+                char *ammo_name = string(doc, ammo, error);
+                if (!ammo_name) return false;
+                const char *separator = strchr(ammo_name, ':');
+                bool admitted = separator && separator != ammo_name && separator[1] &&
+                    qa_strings_intern_cstr(qa_session_strings(provider->application->session),ammo_name,&value->ammo,error);
+                free(ammo_name);
                 if (!admitted) return application_fail(error, QA_ERROR_FORMAT,
                     "QC selected weapon ammunition requires its declared canonical namespace or null");
             }

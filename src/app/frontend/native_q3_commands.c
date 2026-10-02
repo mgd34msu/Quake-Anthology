@@ -33,9 +33,11 @@ static size_t command_count(qa_q3_product product)
 { return local_count(product)+QA_NATIVE_COUNT(forwarded); }
 static const char *command_name(qa_q3_product product,size_t index)
 {
-    if(index<QA_NATIVE_COUNT(common))return common[index]; index-=QA_NATIVE_COUNT(common);
+    if(index<QA_NATIVE_COUNT(common))return common[index];
+    index-=QA_NATIVE_COUNT(common);
     if(product==QA_Q3_TEAM_ARENA) { if(index<QA_NATIVE_COUNT(mission))return mission[index]; index-=QA_NATIVE_COUNT(mission); }
-    if(index<QA_NATIVE_COUNT(tail))return tail[index]; index-=QA_NATIVE_COUNT(tail);
+    if(index<QA_NATIVE_COUNT(tail))return tail[index];
+    index-=QA_NATIVE_COUNT(tail);
     return index<QA_NATIVE_COUNT(forwarded)?forwarded[index]:NULL;
 }
 static unsigned char lower(unsigned char c) { return c>='A' && c<='Z'?(unsigned char)(c+32):c; }
@@ -139,7 +141,8 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
         for(size_t i=1;i<command->argc;++i) {
             size_t n=strlen(command->argv[i]); size_t space=i>1?1:0;
             if(n+space>=sizeof(args)-used)return frontend_fail(e,QA_ERROR_FORMAT,"Cmd_Args exceeds MAX_STRING_CHARS");
-            if(space)args[used++]=' '; memcpy(args+used,command->argv[i],n); used+=n;
+            if(space)args[used++]=' ';
+            memcpy(args+used,command->argv[i],n); used+=n;
         }
         args[used]=0; if(used>127)args[127]=0;
         snprintf(text,128,"%s %i %s",lower((unsigned char)*name)=='v'?"vtell":"tell",client,args); return send(row,text,e);
@@ -222,7 +225,8 @@ static bool handle(void *context,const qa_command_invocation *command,qa_error *
     for(frontend_native_q3 *row=d->frontend->native_q3;row;row=row->next)
         if(row->constructed && row->console==d->console && row->view.source_owner==d->source &&
             row->view.launch_seat==command->context.seat && qa_actor_id_equal(row->view.actor,command->context.actor)) {
-            if(o)return frontend_fail(e,QA_ERROR_FORMAT,"Native console has duplicate actual recipients"); o=row->commands;
+            if(o)return frontend_fail(e,QA_ERROR_FORMAT,"Native console has duplicate actual recipients");
+            o=row->commands;
         }
     if(!o || !o->registered || o->busy)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console has no idle admitted recipient");
     if(o->closed)return frontend_fail(e,QA_ERROR_ARGUMENT,"Cgame console runtime is closed");
@@ -268,7 +272,8 @@ bool frontend_native_q3_commands_register(frontend_native_q3_commands *o,const q
 {
     if(!o || o->busy || o->registered || !frontend_native_q3_cut(o->row,f,e))return false;
     o->busy=true; bool ok=bind_commands(o,command_count(o->dispatch->product),e);
-    if(ok)o->registered=true; o->busy=false; return ok;
+    if(ok)o->registered=true;
+    o->busy=false; return ok;
 }
 bool frontend_native_q3_commands_idle(const frontend_native_q3_commands *o) { return !o || !o->busy; }
 bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error *e)
@@ -278,7 +283,8 @@ bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error
     native_dispatch *d=o->dispatch;
     if(d->users==1)for(size_t i=0;i<d->installed;++i)qa_console_unregister(d->console,command_name(d->product,i),d->source);
     for(size_t i=0;i<o->contributed;++i)qa_console_uncontribute(d->console,command_name(d->product,i),d->source,o->row->view.service_owner);
-    if(!--d->users)free(d); free(o); return true;
+    if(!--d->users)free(d);
+    free(o); return true;
 }
 static bool fields(qa_source_save_io *io,frontend_native_q3_commands *o)
 {

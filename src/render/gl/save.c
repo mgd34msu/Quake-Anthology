@@ -377,8 +377,8 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     const qa_render_checkpoint_refs *refs,const qa_gl_options *installed,const qa_gl_renderer *active)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=12,draw=renderer->draw_buffer;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>12 ||
+    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=13,draw=renderer->draw_buffer;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>13 ||
         !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
         !qa_source_save_u64(io,&renderer->options.owner) || !qa_source_save_u32(io,&saved->width) ||
         !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities) ||
@@ -396,9 +396,15 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     if (version>=6) {
         if (!render_save_pipeline(io,&renderer->pipeline)) return false;
     } else if (reading) qa_scene_state_default(&renderer->pipeline);
+    if (version>=13) {
+        if (!qa_source_save_f32(io,&renderer->clear_depth) || !isfinite(renderer->clear_depth) ||
+            renderer->clear_depth<0 || renderer->clear_depth>1) return false;
+    } else if (reading) renderer->clear_depth=1;
     if (version>=11) {
         if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
     } else if (reading) renderer->preblend_gamma=false;
+    if (version>=12 && (!qa_source_save_u32(io,&renderer->source_image_count) ||
+        renderer->source_image_count>GL_SOURCE_IMAGES_QA)) return false;
     if (reading) {
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
@@ -462,8 +468,24 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
             if (!texture || !entry) { free(texture); free(entry); return gl_save_error(io->error,QA_ERROR_MEMORY,"Restoring actual GPU image cache rows"); }
             *texture_tail=texture; texture_tail=&texture->next; *entry_tail=entry; entry_tail=&entry->next; texture->entry=entry;
         }
-        if (!texture || !render_save_image(io,refs,&texture->entry->image) || !texture->entry->image ||
-            !qa_source_save_count(io,&texture->count,(size_t)INT_MAX) || !texture->count ||
+        if (!texture || !render_save_image(io,refs,&texture->entry->image) || !texture->entry->image) return false;
+        if (version>=12) {
+            gl_texture_entry *entry=texture->entry;
+            if (!qa_source_save_bool(io,&entry->source_admitted) ||
+                !qa_source_save_u32(io,&entry->source_ordinal)) return false;
+            if (entry->source_admitted) {
+                if (!entry->image->source_q3 || entry->source_ordinal>=renderer->source_image_count) return false;
+                if (reading) {
+                    if (renderer->source_images[entry->source_ordinal]) return false;
+                    qa_scene_resources *owner=qa_scene_image_resource_owner(entry->image);
+                    if (!owner || !qa_scene_resources_retain(owner,io->error)) return false;
+                    entry->source_owner=owner;
+                    renderer->source_images[entry->source_ordinal]=entry;
+                } else if (renderer->source_images[entry->source_ordinal]!=entry ||
+                    entry->source_owner!=qa_scene_image_resource_owner(entry->image)) return false;
+            } else if (entry->source_ordinal) return false;
+        }
+        if (!qa_source_save_count(io,&texture->count,(size_t)INT_MAX) || !texture->count ||
             texture->count!=texture->entry->image->level_count || texture->count>SIZE_MAX/sizeof(gl_saved_level)) return false;
         if (reading) {
             texture->levels=calloc(texture->count,sizeof(*texture->levels));
@@ -480,6 +502,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
                 (prior->entry->image->identity==texture->entry->image->identity && prior->entry->image->revision==texture->entry->image->revision)) return false;
         texture=texture->next;
     }
+    for (uint32_t i=0;i<renderer->source_image_count;++i) if (!renderer->source_images[i]) return false;
     count=0; gl_saved_mesh *mesh=saved->meshes,**mesh_tail=&saved->meshes;
     if (!reading) for (;mesh;mesh=mesh->next) ++count;
     if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(gl_saved_mesh))) return false;
@@ -552,6 +575,8 @@ bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_render
     candidate->options=*options; candidate->detached=true; candidate->restore=saved;
     qa_render_controls_init_gl(&candidate->controls, candidate);
     candidate->capabilities=active->capabilities; candidate->draw_buffer=QA_DRAW_BACK; candidate->gamma=gamma;
+    qa_scene_state_default(&candidate->pipeline); candidate->pipeline.depth_test=QA_DEPTH_LESS;
+    candidate->clear_depth=1;
     candidate->view.viewport=(qa_scene_rect){0,0,info.drawable_width,info.drawable_height}; candidate->view.depth=1;
     bool ok=gl_gpu_capture(active,saved,false,error) && saved->width==info.drawable_width && saved->height==info.drawable_height;
     if (ok && gamma!=1) {
@@ -865,7 +890,22 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
     }
     gl->BindFramebuffer(GL_FRAMEBUFFER,0);
     gl->ReadBuffer(gl_draw_buffer_name(renderer->draw_buffer)); gl->DrawBuffer(gl_draw_buffer_name(renderer->draw_buffer));
-    gl->Viewport(renderer->view.viewport.x,renderer->view.viewport.y,(GLsizei)renderer->view.viewport.width,(GLsizei)renderer->view.viewport.height);
+    uint32_t height=saved->height;
+    if (renderer->target) {
+        gl->BindFramebuffer(GL_FRAMEBUFFER,renderer->target_framebuffer);
+        gl->ReadBuffer(GL_NONE); gl->DrawBuffer(GL_NONE);
+        height=renderer->target->levels[0].height;
+    } else if (renderer->output.enabled && renderer->output.color_ready[gl_draw_buffer_index(renderer->draw_buffer)]) {
+        gl->BindFramebuffer(GL_FRAMEBUFFER,renderer->output.framebuffer);
+        gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+            renderer->output.color[gl_draw_buffer_index(renderer->draw_buffer)],0);
+        gl->ReadBuffer(GL_COLOR_ATTACHMENT0); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
+    }
+    GLint bottom=(GLint)((int64_t)height-renderer->view.viewport.y-renderer->view.viewport.height);
+    gl->Viewport(renderer->view.viewport.x,bottom,(GLsizei)renderer->view.viewport.width,(GLsizei)renderer->view.viewport.height);
+    gl->Scissor(renderer->view.viewport.x,bottom,(GLsizei)renderer->view.viewport.width,(GLsizei)renderer->view.viewport.height);
+    gl->Enable(GL_SCISSOR_TEST);
+    gl_source_pipeline_restore(renderer);
     renderer->detached=false; guard->transferred=true; guard->saved=NULL;
     gl_restore_storage_destroy(renderer);
 }
@@ -876,10 +916,10 @@ struct gl_presentation_snapshot {
     gl_restore_storage *saved;
     gl_native_cut cut;
     GLint native_read,native_draw,depth_mask,color_mask[4],polygon[2],attributes[5];
-    bool enabled[5],uploaded[4],cut_valid,captured;
+    bool enabled[6],uploaded[4],cut_valid,captured;
 };
-static const GLenum gl_presentation_enables[5]={GL_DEPTH_TEST,GL_STENCIL_TEST,GL_CULL_FACE,
-    GL_BLEND,GL_POLYGON_OFFSET_FILL};
+static const GLenum gl_presentation_enables[6]={GL_DEPTH_TEST,GL_STENCIL_TEST,GL_CULL_FACE,
+    GL_BLEND,GL_POLYGON_OFFSET_FILL,GL_ALPHA_TEST};
 
 bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot **out,qa_error *error)
 {
@@ -908,9 +948,9 @@ bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot *
     gl->GetIntegerv(GL_DEPTH_WRITEMASK,&snapshot->depth_mask);
     gl->GetIntegerv(GL_COLOR_WRITEMASK,snapshot->color_mask);
     gl->GetIntegerv(GL_POLYGON_MODE,snapshot->polygon);
-    for (size_t i=0;i<5;++i) {
+    for (size_t i=0;i<6;++i) {
         snapshot->enabled[i]=gl->IsEnabled(gl_presentation_enables[i])!=GL_FALSE;
-        get_attribute((GLuint)i,GL_VERTEX_ATTRIB_ARRAY_ENABLED,snapshot->attributes+i);
+        if (i<5) get_attribute((GLuint)i,GL_VERTEX_ATTRIB_ARRAY_ENABLED,snapshot->attributes+i);
     }
     if (!gl_check(renderer,"Reading actual native presentation state",error)) return false;
     gl->BindFramebuffer(GL_FRAMEBUFFER,0);
@@ -949,11 +989,13 @@ bool gl_presentation_restore_bindings(qa_gl_renderer *renderer,const gl_presenta
         snapshot->color_mask[2]?GL_TRUE:GL_FALSE,snapshot->color_mask[3]?GL_TRUE:GL_FALSE);
     gl->PolygonMode(GL_FRONT,(GLenum)snapshot->polygon[0]);
     gl->PolygonMode(GL_BACK,(GLenum)snapshot->polygon[1]);
-    for (size_t i=0;i<5;++i) {
+    for (size_t i=0;i<6;++i) {
         if (snapshot->enabled[i]) gl->Enable(gl_presentation_enables[i]);
         else gl->Disable(gl_presentation_enables[i]);
-        if (snapshot->attributes[i]) gl->EnableVertexAttribArray((GLuint)i);
-        else gl->DisableVertexAttribArray((GLuint)i);
+        if (i<5) {
+            if (snapshot->attributes[i]) gl->EnableVertexAttribArray((GLuint)i);
+            else gl->DisableVertexAttribArray((GLuint)i);
+        }
     }
     return gl_check(renderer,"Restoring complete retained presentation bindings",error);
 }

@@ -80,12 +80,22 @@ uint32_t frontend_remote_unified_epoch(const frontend_remote_unified *);
  * recipe. During frame preparation it observes that exact incoming frame. */
 const qa_recipe_provider *frontend_remote_unified_provider(const frontend_remote_unified *,
     qa_launch_role, const char *selector);
+/* The accepted frame remains authoritative for saved input while a newer
+ * frame is retained for preparation. */
+const qa_recipe_provider *frontend_remote_unified_provider_published(const frontend_remote_unified *,
+    qa_launch_role,const char *selector);
 /* Creates an identity in this replica's private registry, with no Source
  * execution or physical body. Wire identities remain a separate namespace. */
 bool frontend_remote_unified_actor(frontend_remote_unified *, uint32_t wire_slot,
     uint64_t wire_generation, qa_actor_id *, qa_error *);
+/* Import reads an existing actual private identity, including retired history.
+ * It never creates an actor or grants live Source authority. */
+bool frontend_remote_unified_actor_retained(const frontend_remote_unified *,uint32_t,
+    uint64_t,qa_actor_id *,qa_error *);
 bool frontend_remote_unified_actor_present(const frontend_remote_unified *, uint32_t wire_slot,
     uint64_t wire_generation);
+bool frontend_remote_unified_actor_published(const frontend_remote_unified *,uint32_t,
+    uint64_t);
 bool frontend_remote_unified_wire_actor(const frontend_remote_unified *, qa_actor_id,
     qa_saved_actor_id *);
 bool frontend_remote_unified_player(const frontend_remote_unified *, qa_actor_id *, uint32_t *source_entity);

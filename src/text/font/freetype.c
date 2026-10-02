@@ -177,9 +177,9 @@ static bool flush_page(qa_font *font, atlas_page *page, qa_error *error) {
         raster_glyph item = page->glyphs[i];
         item.glyph.image = image;
         item.glyph.uv =
-            (qa_scene_vec4){(float)item.x / page->width, (float)item.y / used_height,
-                            (float)(item.x + (uint32_t)item.glyph.width) / page->width,
-                            (float)(item.y + (uint32_t)item.glyph.height) / used_height};
+            (qa_scene_vec4){(float)item.x / (float)page->width, (float)item.y / (float)used_height,
+                            (float)(item.x + (uint32_t)item.glyph.width) / (float)page->width,
+                            (float)(item.y + (uint32_t)item.glyph.height) / (float)used_height};
         if (!qa_font_internal_add_glyph(font, item.glyph, error))
             return false;
     }

@@ -1600,6 +1600,39 @@ void qa_vfs_acquisition_dispose(qa_vfs_acquisition *receipt)
     free((void *)receipt->opening.order); free((char *)receipt->opening.prefix);
     *receipt = (qa_vfs_acquisition){0};
 }
+bool qa_vfs_acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
+{
+    if (!source || !out || source == out || !source->mount || !source->resource_id ||
+        !source->path || !source->lookup_path || out->mount || out->resource_id ||
+        out->path || out->lookup_path || out->link_source || out->link_target ||
+        out->opening_present || out->opening.order || out->opening.prefix ||
+        out->opening.order_count || source->opening.order_count > SIZE_MAX / sizeof(qa_mount_id) ||
+        (source->opening.order_count && !source->opening.order)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Receipt copy requires an actual acquisition and empty destination"); return false;
+    }
+    qa_vfs_acquisition copy = {.mount = source->mount, .resource_id = source->resource_id,
+        .opening_present = source->opening_present,
+        .opening = {.rank = source->opening.rank, .order_count = source->opening.order_count,
+            .user_overlay = source->opening.user_overlay}};
+    const char *values[] = {source->path, source->lookup_path, source->link_source, source->link_target, source->opening.prefix};
+    char **targets[] = {&copy.path, &copy.lookup_path, &copy.link_source, &copy.link_target};
+    for (size_t i = 0; i < 5; ++i) if (values[i]) {
+        char *value = copy_string(values[i]);
+        if (!value) goto fail;
+        if (i == 4) copy.opening.prefix = value;
+        else *targets[i] = value;
+    }
+    if (copy.opening.order_count) {
+        size_t size = copy.opening.order_count * sizeof(qa_mount_id);
+        qa_mount_id *order = malloc(size);
+        if (!order) goto fail;
+        memcpy(order, source->opening.order, size); copy.opening.order = order;
+    }
+    *out = copy; return true;
+fail:
+    qa_vfs_acquisition_dispose(&copy);
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual acquisition receipt"); return false;
+}
 bool qa_vfs_acquisition_opening_codec(qa_source_save_io *io, const qa_vfs *vfs, qa_vfs_acquisition *receipt)
 {
     if (!io || !vfs || !receipt || !receipt->path || !receipt->link_source ||
@@ -2316,6 +2349,11 @@ bool qa_vfs_prefix_at(const qa_vfs *vfs, size_t index, const char **prefix,
     if (!rule) return false;
     *prefix = rule->prefix; *order = rule->order; *count = vfs->count; return true;
 }
+qa_resource_pool *qa_vfs_resources(const qa_vfs *vfs)
+{
+    return vfs ? vfs->pool : NULL;
+}
+
 size_t qa_vfs_resource_count(const qa_vfs *vfs) {
     size_t count = 0;
     if (vfs) for (const qa_resource *resource = vfs->pool->resources; resource; resource = resource->next) ++count;

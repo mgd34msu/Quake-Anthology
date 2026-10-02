@@ -5,6 +5,7 @@
 #include "qa/launch_save.h"
 #include "qa/console_save.h"
 #include "remote_q2_restore.h"
+#include "qa/application_client_prepare.h"
 typedef struct frontend_remote_q2_source frontend_remote_q2_source;
 typedef struct frontend_remote_q2_source_options {
     qa_launch_q2_client_metadata metadata;
@@ -20,6 +21,7 @@ typedef struct frontend_remote_q2_source_options {
     bool (*initialize)(void *, const qa_launch_instance *, qa_cvars *, const qa_command_context *, qa_error *);
     bool (*install)(void *, bool restoring, qa_error *);
     bool (*configure_step)(void *, bool *complete, qa_error *);
+    bool (*configuration_advance)(void *, qa_application_client_preparation *, bool *complete, qa_error *);
     bool (*retire)(void *, qa_error *);
     void (*released)(void *);
     qa_cvars *(*cvar_owner)(void *, const qa_command_context *, const char *);
@@ -50,6 +52,11 @@ bool frontend_remote_q2_source_recipe(qa_catalog *, qa_net_protocol_id, const ch
 bool frontend_remote_q2_source_create(qa_frontend *, const frontend_remote_q2_source_options *,
     frontend_remote_q2_source **, qa_error *);
 bool frontend_remote_q2_source_advance(frontend_remote_q2_source *, bool *ready, qa_error *);
+bool frontend_remote_q2_source_configuration_advance(frontend_remote_q2_source *,
+    qa_application_client_preparation *, bool *, qa_error *);
+bool frontend_remote_q2_source_configuration_continue(frontend_remote_q2_source *,
+    qa_application_client_preparation *, bool *, qa_error *);
+bool frontend_remote_q2_source_configuration_completed(const frontend_remote_q2_source *);
 bool frontend_remote_q2_source_retire(frontend_remote_q2_source *, qa_error *);
 bool frontend_remote_q2_source_read(const frontend_remote_q2_source *, frontend_remote_q2_source_view *, qa_error *);
 bool frontend_remote_q2_source_current(const frontend_remote_q2_source_view *);

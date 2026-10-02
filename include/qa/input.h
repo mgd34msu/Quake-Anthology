@@ -358,6 +358,12 @@ uint32_t qa_input_seat_ordinal(const qa_input_seat *);
  * ENGINE template keeps actor/generation uncaptured until real dispatch. */
 bool qa_input_seat_context_ready(const qa_input_seat *, const qa_command_context *, qa_error *);
 void qa_input_seat_context_publish(qa_input_seat *, const qa_command_context *);
+bool qa_input_seat_recipient_read(const qa_input_seat *,qa_console **,qa_cvars **,qa_command_context *);
+/* A recipient change follows completed ALL release, or an empty physical
+ * seat. The old console remains installed until publication. */
+bool qa_input_seat_recipient_ready_is(const qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *);
+bool qa_input_seat_recipient_ready(const qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *,qa_error *);
+void qa_input_seat_recipient_publish(qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *);
 qa_input_focus qa_input_seat_focus(const qa_input_seat *);
 bool qa_input_seat_focused(const qa_input_seat *);
 bool qa_input_seat_has_held(const qa_input_seat *);
@@ -393,6 +399,7 @@ bool qa_input_seat_configuration_ready(const qa_input_seat *active,
  * separately by configuration_ready before admission. No qualifier runs. */
 bool qa_input_seat_configuration_owned_is(const qa_input_seat *active,
     const qa_input_seat *candidate);
+bool qa_input_seat_configuration_clone(const qa_input_seat *,qa_input_seat **,qa_error *);
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate);
 bool qa_input_seat_unbind(qa_input_seat *, qa_physical_input);
 void qa_input_seat_unbind_all(qa_input_seat *);

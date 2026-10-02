@@ -458,8 +458,10 @@ bool application_qc_player_receive(application_provider *provider, qa_actor_id a
         int32_t reference;
         if (!application_qc_reference(engine, actor, &reference, error)) return false;
         bool source_impulse = command->kind != QA_MOVEMENT_Q3 && command->kind != QA_MOVEMENT_Q2_RERELEASE;
-        if (source_impulse && command->impulse &&
-            !application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+        if (source_impulse && command->impulse) {
+            application_qc_weapon_command(engine,actor);
+            if(!application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+        }
         if (!application_qc_rerelease_command(provider, actor, command, error)) return false;
         client->receipt_seen = true; client->receipt_sequence = command->sequence; client->receipt_ordinal = ordinal;
         return true;
@@ -487,8 +489,10 @@ bool application_qc_player_command(application_provider *provider, qa_actor_id a
             qa_actor_id_equal(client->actor, actor) && client->receipt_seen &&
             command->sequence <= client->receipt_sequence;
     }
-    if (!received && command->impulse != 0 &&
-        !application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+    if (!received && command->impulse != 0) {
+        application_qc_weapon_command(engine,actor);
+        if(!application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+    }
     return true;
 }
 bool application_qc_client_userinfo(application_provider *provider, qa_actor_id actor, qa_error *error)
@@ -536,6 +540,7 @@ bool application_qc_disconnect_player(application_provider *provider, qa_actor_i
             client->output_published = false;
             client->outputs = (application_client_outputs){0};
             client->receipt_seen = false; client->receipt_sequence = client->receipt_ordinal = 0;
+            client->pending_weapon=0; client->pending_weapon_following=false;
         }
         return ok;
     }

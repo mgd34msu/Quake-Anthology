@@ -21,7 +21,7 @@ struct frontend_remote_q2_source {
     frontend_remote_q2_domain domain;
     size_t references;
     unsigned calls;
-    bool closing, configured, ready, commands_verified, template_retired;
+    bool closing, configured, configuration_complete, ready, commands_verified, template_retired;
 };
 static bool profile_protocol(const qa_product *profile, qa_net_protocol_id protocol, qa_error *error)
 {
@@ -250,6 +250,16 @@ static bool entity_actor(void *context, const frontend_remote_q2_domain *domain,
 static bool records(void *context, const frontend_remote_q2_domain *domain,
     const qa_q2_server_record *batch, size_t count, qa_error *error)
 { frontend_remote_q2_source *source = context; return source->options.client.records(source->options.client.context, domain, batch, count, error); }
+static bool entities_changed(void *context, const frontend_remote_q2_domain *domain, qa_error *error)
+{
+    frontend_remote_q2_source *source = context;
+    if (!source || source->closing || source->calls || !source->options.client.entities_changed ||
+        !remote_q2_domain_equal(domain, &source->domain) || !current(source, domain, error)) return false;
+    ++source->calls;
+    bool ok = source->options.client.entities_changed(source->options.client.context, domain, error);
+    --source->calls;
+    return ok && current(source, domain, error);
+}
 static bool disconnected(void *context, const frontend_remote_q2_domain *domain, const char *reason, qa_error *error)
 { frontend_remote_q2_source *source = context; return source->options.client.disconnected(source->options.client.context, domain, reason, error); }
 static bool select_content(void *context, uint64_t generation, const qa_q2_serverdata *data,
@@ -296,7 +306,8 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
         {"cl_vwep", "1", QA_CVAR_ARCHIVE}, {"cl_hit_markers", "2", 0}, {"scr_hit_marker_time", "500", 0},
         {"ch_alpha", "1", 0}, {"ch_scale", "1", 0}, {"ch_x", "0", 0}, {"ch_y", "0", 0},
         {"cl_muzzlelight_time", "100", 0}, {"cl_rerelease_effects", "1", 0}, {"cl_dlight_hacks", "0", 0},
-        {"cl_muzzleflashes", "1", 0}, {"cl_disable_particles", "0", 0}, {"cl_disable_explosions", "0", 0}
+        {"cl_muzzleflashes", "1", 0}, {"cl_disable_particles", "0", 0}, {"cl_disable_explosions", "0", 0},
+        {"cl_smooth_explosions", "1", 0}
     };
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
         if (!qa_cvars_register(source->domain.cvars, values[i].name, values[i].value, values[i].flags,
@@ -383,24 +394,85 @@ bool frontend_remote_q2_source_advance(frontend_remote_q2_source *source, bool *
     *ready = source->ready;
     if (*ready) return true;
     if (source->receiver) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver construction failed and retains checked cleanup");
-    bool complete = true;
-    if (source->options.configure_step) {
+    bool complete = source->configuration_complete || !source->options.configure_step;
+    if (!complete) {
         complete = false; ++source->calls;
         bool ok = source->options.configure_step(source->options.client.context, &complete, error); --source->calls;
         if (!ok || !current(source, &source->domain, error)) return false;
     }
     if (!complete) return true;
+    source->configuration_complete = true;
     const frontend_remote_q2_source_options *options = &source->options;
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
         .material_scripts = options->client.material_scripts,
         .download_allowed = allowed, .download_nonce = nonce, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL,
+        .entities_changed = options->client.entities_changed ? entities_changed : NULL,
         .content_admit = content_admit,
         .select_content = options->client.select_content ? select_content : NULL};
     bool ok = frontend_remote_q2_create(source->frontend, &child, &source->receiver, error);
     if (ok) source->ready = *ready = true;
     return ok;
 }
+bool frontend_remote_q2_source_configuration_advance(frontend_remote_q2_source *source,
+    qa_application_client_preparation *token, bool *complete, qa_error *error)
+{
+    const qa_application_client_source *held = qa_application_client_prepare_source(token);
+    if (!source || !complete || !held || !source->configured || source->closing || source->template_retired ||
+        !frontend_remote_q2_source_owner_idle(source) || source->frontend->capture ||
+        source->frontend->resource_inventory || source->frontend->source_restoring ||
+        qa_application_client_prepare_application(token) != source->domain.application ||
+        !qa_application_client_prepare_entered(token, QA_CLIENT_PREPARE_CONFIGURATION) ||
+        held->context.receiver != source->domain.command_context.owner || held->context.seat != source->domain.command_context.seat ||
+        !frontend_remote_q2_source_owner_current(source, held->descriptor, held->context.console,
+            held->context.cvars, &held->context.command, error) ||
+        !qa_application_client_current(source->domain.application, held))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT programme leaves its actual entered configuration token");
+    bool ready = source->configuration_complete;
+    if (!ready) {
+        ready = true;
+        if (source->options.configure_step) {
+            if (!source->options.configuration_advance)
+                return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT programme has no actual entered phase callback");
+            ready = false; ++source->calls;
+            bool ok = source->options.configuration_advance(source->options.client.context, token, &ready, error); --source->calls;
+            if (!ok) return false;
+        }
+        if (!qa_application_client_prepare_entered(token, QA_CLIENT_PREPARE_CONFIGURATION) ||
+            !qa_application_client_current(source->domain.application, held))
+            return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT programme changed its actual configuration token");
+    }
+    *complete = ready; return true;
+}
+bool frontend_remote_q2_source_configuration_continue(frontend_remote_q2_source *source,
+    qa_application_client_preparation *token, bool *complete, qa_error *error)
+{
+    const qa_application_client_source *held = qa_application_client_prepare_source(token);
+    if (!source || !complete || !held || !source->configured || source->closing || source->template_retired ||
+        !frontend_remote_q2_source_owner_idle(source) || source->frontend->capture || source->frontend->resource_inventory ||
+        source->frontend->source_restoring || qa_application_client_prepare_application(token) != source->domain.application ||
+        !qa_application_client_prepare_associated(source->domain.application, token) ||
+        !qa_application_client_prepare_current(token) ||
+        held->context.receiver != source->domain.command_context.owner || held->context.seat != source->domain.command_context.seat ||
+        !frontend_remote_q2_source_owner_current(source, held->descriptor, held->context.console,
+            held->context.cvars, &held->context.command, error) || !qa_application_client_current(source->domain.application, held))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT programme leaves its actual returned preparation token");
+    for (int phase = QA_CLIENT_PREPARE_CONFIGURATION; phase <= QA_CLIENT_PREPARE_CLEANUP; ++phase)
+        if (qa_application_client_prepare_entered(token, (qa_application_client_prepare_phase)phase))
+            return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT preparation callback remains entered");
+    if (!source->configuration_complete) {
+        bool ready = true;
+        if (source->options.configure_step) {
+            ready = false; ++source->calls;
+            bool ok = source->options.configure_step(source->options.client.context, &ready, error); --source->calls;
+            if (!ok || !current(source, &source->domain, error)) return false;
+        }
+        source->configuration_complete = ready;
+    }
+    *complete = source->configuration_complete; return true;
+}
+bool frontend_remote_q2_source_configuration_completed(const frontend_remote_q2_source *source)
+{ return source && source->configuration_complete; }
 bool frontend_remote_q2_source_retire(frontend_remote_q2_source *source, qa_error *error)
 {
     if (!source || source->template_retired) return true;
@@ -647,10 +719,11 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         .material_scripts = options->client.material_scripts,
         .download_allowed = allowed, .download_nonce = nonce, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL, .content_admit = content_admit,
+        .entities_changed = options->client.entities_changed ? entities_changed : NULL,
         .select_content = options->client.select_content ? select_content : NULL};
     bool restored = frontend_remote_q2_restore_prepare(f, &child, saved->receiver_refs, saved->receiver,
         &source->receiver, error);
-    if (restored) source->ready = true;
+    if (restored) source->configuration_complete = source->ready = true;
     return restored;
 }
 static bool console_scope(const frontend_remote_q2_source *source, qa_application *app,

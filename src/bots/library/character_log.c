@@ -12,11 +12,13 @@ bool qa_bot_character_dump(qa_bot_library *library, qa_bot_log *log,
     if (!log) return true;
     qa_bot_character *held = (qa_bot_character *)character;
     qa_bot_character_retain(held);
-    const qa_bot_character_view *view = qa_bot_character_read(held);
-    bool okay = qa_bot_log_write(log, view->path, error);
+    const qa_bot_character_view *view = NULL;
+    bool okay = qa_bot_character_view_read(held, &view, error);
+    if (okay) okay = qa_bot_log_write(log, view->path, error);
     if (okay && qa_bot_log_file_pointer(log)) {
+        okay = qa_bot_character_view_read(held, &view, error);
         const qa_script_services *services = &library->options.scripts;
-        if (services->diagnostic) {
+        if (okay && services->diagnostic) {
             qa_script_diagnostic warning = {
                 .severity = QA_SCRIPT_WARNING, .location = {.path = view->path},
                 .message = "BotDumpCharacter: omitted undefined skill log format (%d receives a promoted float)"};
@@ -25,6 +27,8 @@ bool qa_bot_character_dump(qa_bot_library *library, qa_bot_log *log,
     }
     if (okay) okay = qa_bot_log_write(log, "{\n", error);
     for (uint32_t index = 0; okay && index < 80; ++index) {
+        okay = qa_bot_character_view_read(held, &view, error);
+        if (!okay) break;
         const qa_bot_character_value *value = view->values + index;
         if (value->kind == QA_BOT_CHARACTER_UNSET) continue;
         char number[64];

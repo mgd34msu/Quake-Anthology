@@ -306,7 +306,12 @@ bool llm_auth_tick(qa_llm *s, qa_error *error) {
     }
     if (a->peer != AUTH_INVALID && now >= a->peer_deadline) close_peer(a);
     if (a->peer != AUTH_INVALID && !a->output) {
-        int got = (int)recv(a->peer, a->input + a->input_size, (int)(sizeof a->input - 1 - a->input_size), 0);
+        size_t available = sizeof a->input - 1 - a->input_size;
+#ifdef _WIN32
+        int got = recv(a->peer, a->input + a->input_size, (int)available, 0);
+#else
+        ssize_t got = recv(a->peer, a->input + a->input_size, available, 0);
+#endif
         if (got > 0) {
             a->input_size += (size_t)got; a->input[a->input_size] = 0;
             if (memchr(a->input, 0, a->input_size)) a->output = reply_bad;
@@ -320,7 +325,13 @@ bool llm_auth_tick(qa_llm *s, qa_error *error) {
 #ifdef MSG_NOSIGNAL
         flags = MSG_NOSIGNAL;
 #endif
-        size_t length = strlen(a->output); int sent = (int)send(a->peer, a->output + a->output_sent, (int)(length - a->output_sent), flags);
+        size_t length = strlen(a->output);
+        size_t remaining = length - a->output_sent;
+#ifdef _WIN32
+        int sent = send(a->peer, a->output + a->output_sent, (int)remaining, flags);
+#else
+        ssize_t sent = send(a->peer, a->output + a->output_sent, remaining, flags);
+#endif
         if (sent > 0) { a->output_sent += (size_t)sent; if (a->output_sent == length) close_peer(a); }
         else if (!blocked()) close_peer(a);
     }

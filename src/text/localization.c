@@ -595,7 +595,8 @@ bool qa_localization_pool_checkpoint(const qa_localization_pool *pool, qa_buffer
     qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, NULL, error) && pool_fields(&io, (qa_localization_pool *)pool) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
-    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid actual localization pool"); return ok;
+    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid actual localization pool");
+    return ok;
 }
 bool qa_localization_pool_restore(qa_localization_pool *pool, qa_bytes bytes, qa_error *error)
 {
@@ -606,5 +607,6 @@ bool qa_localization_pool_restore(qa_localization_pool *pool, qa_bytes bytes, qa
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && pool_fields(&io, candidate) && qa_source_save_finish(&io, NULL);
     if (ok) { pool->first = candidate->first; candidate->first = NULL; }
     qa_source_save_dispose(&io); qa_localization_pool_destroy(candidate);
-    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved localization pool"); return ok;
+    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved localization pool");
+    return ok;
 }

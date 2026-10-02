@@ -12,4 +12,5 @@ bool frontend_received_music_destroy(frontend_received_music **,qa_error *);
 bool frontend_received_music_fields(qa_frontend *,frontend_received_music **,qa_source_save_io *,const qa_audio_checkpoint_refs *,qa_error *);
 bool frontend_received_music_restore_finish(frontend_received_music *,const frontend_music_origin *,qa_error *);
 qa_audio_music *frontend_received_music_player(const frontend_received_music *);
+bool frontend_received_music_bus(const frontend_received_music *,uint64_t *);
 #endif

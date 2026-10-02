@@ -127,6 +127,64 @@ bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
     saved->launch = actual->launch; saved->session = actual->session; saved->world = actual->world;
     return true;
 }
+bool application_unified_save_source_obsolete(const application_unified_source *actual,
+    const application_unified_source *saved)
+{
+    return actual && saved && (saved->publication < actual->publication ||
+        (saved->publication == actual->publication && saved->map_revision < actual->map_revision));
+}
+bool application_unified_save_source_stamp_equal(const application_unified_source *a,
+    const application_unified_source *b)
+{
+    return a && b && a->owner == b->owner && a->family == b->family && a->publication == b->publication &&
+        a->map_revision == b->map_revision && a->frame_revision == b->frame_revision &&
+        a->max_clients == b->max_clients && frame_equal(&a->frame, &b->frame);
+}
+bool application_unified_save_retained_source(qa_source_save_io *io, qa_application *app,
+    const application_unified_source *actual, application_unified_source *saved)
+{
+    bool obsolete = application_unified_save_source_obsolete(actual, saved);
+    if (!qa_source_save_bool(io, &obsolete)) return false;
+    if (!obsolete) return application_unified_save_source(io, app, actual, saved, true);
+    uint32_t family = (uint32_t)saved->family;
+    if (!qa_source_save_string(io, &saved->owner) || !qa_source_save_u32(io, &family) ||
+        !qa_source_save_u64(io, &saved->publication) || !qa_source_save_u64(io, &saved->map_revision) ||
+        !qa_source_save_u64(io, &saved->frame_revision) || !qa_source_save_u32(io, &saved->max_clients) ||
+        !frame_fields(io, &saved->frame)) return false;
+    saved->family = (qa_game_family)family;
+    if (!saved->owner || family > QA_GAME_Q3 || !saved->publication || !saved->max_clients ||
+        saved->max_clients > 256 || !saved->frame.provider ||
+        (unsigned)saved->frame.kind > QA_CLOCK_Q3 || (unsigned)saved->frame.phase > QA_FRAME_EXIT ||
+        !application_unified_save_source_obsolete(actual, saved)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        saved->launch = NULL; saved->session = NULL; saved->world = NULL;
+    }
+    return true;
+}
+bool application_unified_save_player_equal(const qa_unified_session_player *a,
+    const qa_unified_session_player *b)
+{
+    return a && b && qa_actor_id_equal(a->actor, b->actor) && a->seat.owner == b->seat.owner &&
+        a->seat.index == b->seat.index && a->movement == b->movement && a->source_owner == b->source_owner &&
+        a->source_slot == b->source_slot && a->arsenal.size == b->arsenal.size &&
+        (!a->arsenal.size || (a->arsenal.data && b->arsenal.data &&
+            !memcmp(a->arsenal.data, b->arsenal.data, a->arsenal.size)));
+}
+bool application_unified_save_player_owned(qa_source_save_io *io, qa_unified_session_player *player,
+    qa_buffer *arsenal)
+{
+    uint32_t movement = (uint32_t)player->movement;
+    if (io->direction == QA_SOURCE_SAVE_WRITE &&
+        (player->arsenal.data != arsenal->data || player->arsenal.size != arsenal->size)) return false;
+    if (!qa_source_save_actor(io, &player->actor) || !player->actor.registry ||
+        !qa_source_save_u64(io, &player->seat.owner) || !player->seat.owner ||
+        !qa_source_save_u32(io, &player->seat.index) || !qa_source_save_u32(io, &movement) ||
+        movement > QA_MOVEMENT_Q3 || !qa_source_save_string(io, &player->source_owner) || !player->source_owner ||
+        !qa_source_save_u32(io, &player->source_slot) || !application_unified_save_blob(io, arsenal)) return false;
+    player->movement = (qa_movement_kind)movement;
+    player->arsenal = (qa_bytes){arsenal->data, arsenal->size};
+    return true;
+}
 bool application_unified_save_player(qa_source_save_io *io, const qa_unified_session_player *actual)
 {
     qa_unified_session_player saved = *actual;

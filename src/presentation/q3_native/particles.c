@@ -81,7 +81,7 @@ bool q3n_particles_create_remote(qa_q3_presentation_assets *assets,q3n_remote_so
 bool q3n_particles_create_compiled(qa_q3_presentation_assets *assets,q3n_compiled_source *source,q3n_particles **out,qa_error *e)
 {
     q3n_compiled_source_view view;
-    if(!q3n_compiled_source_read(source,&view,e) || view.basis.assets!=assets)return false;
+    if(!q3n_compiled_source_checkpoint_read(source,&view,e) || view.basis.assets!=assets)return false;
     if(!q3n_particles_create(assets,view.basis.product,out,e))return false;
     (*out)->compiled_source=source; return true;
 }

@@ -92,6 +92,8 @@ struct qa_material_source_scratch {
     void *runtime_video_context;
     qa_scene_source_diagnostics_read_fn runtime_diagnostics;
     void *runtime_diagnostics_context;
+    bool (*runtime_frame_policy)(void *, qa_scene_frame *, qa_error *);
+    void *runtime_frame_context;
     material_source_entity entities[1023];
     uint32_t entity_count, first_scene_entity, entity_cell;
     uint32_t submitted_light_count, first_scene_light;

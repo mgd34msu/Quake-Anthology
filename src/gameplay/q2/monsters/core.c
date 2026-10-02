@@ -690,7 +690,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
     if (!q2m_refresh(context, error)) return false;
   }
   if (eta < (rerelease ? context->elapsed : .1f) || eta > (rerelease ? 2.5f : 5.f) ||
-      admission > (rerelease ? .5f : .25f * (g->options.skill + 1))) return true;
+      admission > (rerelease ? .5f : .25f * (float)(g->options.skill + 1))) return true;
   if (!rerelease && !trace) {
     qa_error_set(error, QA_ERROR_ARGUMENT, context->actor->id.slot,
                  "Classic imported monster dodge requires its source trace after admission");
@@ -1068,7 +1068,7 @@ bool qa_q2_monster_turret_admit(qa_q2_game *game, qa_actor_id id,
   monster->frame = monster->move->first_frame;
   monster->next_frame = 0;
   monster->next_frame_ns = UINT64_MAX;
-  return present_animation(&context, error);
+  return q2m_animation(&context, error);
 }
 
 bool qa_q2_monster_turret_aim(qa_q2_game *game, qa_actor_id id,
@@ -1569,16 +1569,16 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
         (float)(game->options.cooperative ? 500 * game->options.skill : 0);
   if (definition->species == Q2M_CARRIER)
     monster->base_health =
-        fmaxf(2000.0f, 2000.0f + 1000.0f * (game->options.skill - 1)) +
-        (game->options.cooperative ? 500.0f * game->options.skill : 0.0f);
+        fmaxf(2000.0f, 2000.0f + 1000.0f * (float)(game->options.skill - 1)) +
+        (game->options.cooperative ? 500.0f * (float)game->options.skill : 0.0f);
   if (definition->species == Q2M_WIDOW)
     monster->base_health =
-        2000.0f + 1000.0f * game->options.skill +
-        (game->options.cooperative ? 500.0f * game->options.skill : 0.0f);
+        2000.0f + 1000.0f * (float)game->options.skill +
+        (game->options.cooperative ? 500.0f * (float)game->options.skill : 0.0f);
   if (definition->species == Q2M_WIDOW2)
     monster->base_health =
-        2800.0f + 1000.0f * game->options.skill +
-        (game->options.cooperative ? 500.0f * game->options.skill : 0.0f);
+        2800.0f + 1000.0f * (float)game->options.skill +
+        (game->options.cooperative ? 500.0f * (float)game->options.skill : 0.0f);
   monster->max_health = monster->base_health;
   monster->gib_health = definition->species == Q2M_INFANTRY &&
                                 game->options.edition == QA_Q2_RERELEASE

@@ -43,6 +43,7 @@ bool frontend_unified_q1_current(const frontend_unified_q1 *);
 bool frontend_unified_q1_idle(const frontend_unified_q1 *);
 bool frontend_unified_q1_destroy(frontend_unified_q1 **,qa_error *);
 size_t frontend_unified_q1_group_count(const frontend_unified_q1 *);
+bool frontend_unified_q1_music_at(const frontend_unified_q1 *,size_t,uint64_t *,qa_audio_music **);
 const qa_scene_image *frontend_unified_q1_particle_image(const frontend_unified_q1 *,size_t);
 size_t frontend_unified_q1_light_count(const frontend_unified_q1 *,size_t);
 bool frontend_unified_q1_light_at(const frontend_unified_q1 *,size_t,size_t,uint64_t *);

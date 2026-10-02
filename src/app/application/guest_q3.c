@@ -239,23 +239,29 @@ bool application_guest_q3_create_empty(qa_application *application, application_
 bool q3g_selected_client_seat(const application_provider *provider,
     const qa_launch_choices *choices, qa_qvm_role kind, size_t index)
 {
-    if (choices->seats[index].bot) return false;
-    qa_launch_role selected_role = kind == QA_QVM_CGAME ? QA_ROLE_HUD : QA_ROLE_MENU;
+    if (!provider || !choices || index >= choices->seat_count || choices->seats[index].bot) return false;
+    qa_launch_role selected_roles[2] = {kind == QA_QVM_CGAME ? QA_ROLE_HUD : QA_ROLE_MENU, QA_ROLE_ARSENAL};
+    size_t count = kind == QA_QVM_CGAME && provider->kind == APPLICATION_PROVIDER_QVM &&
+        q3g_primary_role(provider->launch->selection.artifact) == QA_QVM_GAME ? 2 : 1;
     const qa_launch_seat *seat = &choices->seats[index];
-    const qa_launch_binding *binding = NULL;
-    if (seat->actor.generation)
-        for (size_t i = 0; i < choices->binding_count; ++i) {
-            const qa_launch_binding *candidate = &choices->bindings[i];
-            if (candidate->role == selected_role && candidate->scope.kind == QA_SCOPE_ACTOR &&
-                qa_actor_id_equal(candidate->scope.actor, seat->actor) && !*candidate->selector) {
-                binding = candidate; break;
+    for (size_t n = 0; n < count; ++n) {
+        qa_launch_role selected_role = selected_roles[n];
+        const qa_launch_binding *binding = NULL;
+        if (seat->actor.generation)
+            for (size_t i = 0; i < choices->binding_count; ++i) {
+                const qa_launch_binding *candidate = &choices->bindings[i];
+                if (candidate->role == selected_role && candidate->scope.kind == QA_SCOPE_ACTOR &&
+                    qa_actor_id_equal(candidate->scope.actor, seat->actor) && !*candidate->selector) {
+                    binding = candidate; break;
+                }
             }
-        }
-    if (!binding) binding = qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, selected_role, "");
-    if (!binding) binding = qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, selected_role, "");
-    return binding && !strcmp(binding->instance, provider->launch->selection.instance);
+        if (!binding) binding = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, selected_role, "");
+        if (!binding) binding = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_WORLD}, selected_role, "");
+        if (binding && !strcmp(binding->instance, provider->launch->selection.instance)) return true;
+    }
+    return false;
 }
 
 bool application_construct_q3_guest(qa_application *application, application_provider *provider,

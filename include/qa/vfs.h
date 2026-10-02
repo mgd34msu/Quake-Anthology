@@ -28,6 +28,7 @@ void qa_resource_pool_trim(qa_resource_pool *pool);
  * Borrowed until pool trimming/destruction; retain it across those operations. */
 const qa_resource *qa_resource_pool_find(const qa_resource_pool *, uint64_t id);
 qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error);
+qa_resource_pool *qa_vfs_resources(const qa_vfs *vfs);
 /* Copies mount/order/policy state while sharing immutable resources. Neither
  * view depends on the other's lifetime or subsequent configuration changes. */
 qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error);
@@ -230,6 +231,9 @@ typedef struct qa_vfs_acquisition {
 bool qa_vfs_acquire_receipt(qa_vfs *, const char *, qa_resource **,
     qa_vfs_acquisition *empty_receipt, qa_error *);
 void qa_vfs_acquisition_dispose(qa_vfs_acquisition *);
+/* Copy the issued receipt, including its owned original opening order. */
+bool qa_vfs_acquisition_copy(const qa_vfs_acquisition *, qa_vfs_acquisition *empty,
+    qa_error *);
 struct qa_source_save_io;
 /* Preserve a held acquisition's actual order snapshot after its recipe fields
  * have been decoded. Historical issued IDs remain valid after unmount. */

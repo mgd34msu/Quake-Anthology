@@ -73,7 +73,7 @@ bool qa_bot_moves_save_restore(qa_bot_moves *moves, qa_bytes bytes, qa_error *er
     bot_move_slot *slots = NULL;
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) &&
         qa_source_save_u32(&io, &maximum) && maximum == moves->maximum &&
-        maximum <= SIZE_MAX / sizeof(*slots) && qa_source_save_f32(&io, &time) && isfinite(time);
+        (!maximum || sizeof(*slots) <= SIZE_MAX / maximum) && qa_source_save_f32(&io, &time) && isfinite(time);
     for (size_t i = 0; ok && i < BOT_MOVE_VARIABLE_COUNT; ++i) {
         const char *name = NULL;
         ok = bot_save_text(&io, &name);

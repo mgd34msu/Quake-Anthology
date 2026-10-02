@@ -91,7 +91,8 @@ bool application_guest_q3_source_ui_create(struct application_q3_guest *engine,
         if (native_path && !native_artifact(engine, cgame, native_path, &loaded, error)) return false;
         if (loaded) path = native_path;
     }
-    return q3g_role_create(engine, QA_QVM_UI, seat, path, false, out, error);
+    return cgame->client_source ? q3g_role_create_client(engine, QA_QVM_UI, seat, path, false,
+        cgame->client_source, out, error) : q3g_role_create(engine, QA_QVM_UI, seat, path, false, out, error);
 }
 
 static bool received_current(q3g_role *cgame, const qa_q3_gamestate *state, qa_error *error)
@@ -100,7 +101,7 @@ static bool received_current(q3g_role *cgame, const qa_q3_gamestate *state, qa_e
     ++engine->calls;
     const qa_q3_gamestate *actual = cgame->client_services.gamestate(cgame->client_services.context);
     --engine->calls;
-    return actual == state && state->client_number == (int32_t)cgame->client ||
+    return (actual == state && state->client_number == (int32_t)cgame->client) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Source UI policy lost its actual received local gamestate");
 }
 
@@ -134,7 +135,10 @@ bool application_guest_q3_source_ui_received(q3g_role *cgame, const qa_q3_gamest
     if (!qa_q3_info_value(qa_q3_configstring(state, 1), "sv_pure", pure, sizeof(pure), error)) return false;
     if (!strtol(pure, NULL, 10) || ui->image) { *out = ui; return true; }
     q3g_role *replacement = NULL;
-    if (!q3g_role_create(engine, QA_QVM_UI, cgame->seat, "vm/ui.qvm", false, &replacement, error)) return false;
+    bool created = cgame->client_source ? q3g_role_create_client(engine, QA_QVM_UI, cgame->seat,
+        "vm/ui.qvm", false, cgame->client_source, &replacement, error) :
+        q3g_role_create(engine, QA_QVM_UI, cgame->seat, "vm/ui.qvm", false, &replacement, error);
+    if (!created) return false;
     bool current = received_current(cgame, state, error) &&
         qa_q3_info_value(qa_q3_configstring(state, 1), "sv_pure", pure, sizeof(pure), error) &&
         strtol(pure, NULL, 10) != 0;

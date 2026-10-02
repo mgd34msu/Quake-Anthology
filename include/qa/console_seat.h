@@ -29,6 +29,10 @@ qa_command_context qa_seat_console_context_read(const qa_seat_console *);
  * candidate/current publication and both input/console owners unchanged. */
 bool qa_seat_console_context_ready(const qa_seat_console *, const qa_command_context *, qa_error *);
 void qa_seat_console_context_publish(qa_seat_console *, const qa_command_context *);
+qa_console *qa_seat_console_recipient_read(const qa_seat_console *);
+bool qa_seat_console_recipient_ready_is(const qa_seat_console *,const qa_console *,const qa_command_context *);
+bool qa_seat_console_recipient_ready(const qa_seat_console *,qa_console *,const qa_command_context *,qa_error *);
+void qa_seat_console_recipient_publish(qa_seat_console *,qa_console *,const qa_command_context *);
 qa_console_buffer *qa_seat_console_buffer(qa_seat_console *);
 qa_text_field *qa_seat_console_field(qa_seat_console *, bool chat);
 qa_console_history *qa_seat_console_history(qa_seat_console *);

@@ -155,7 +155,6 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         q3_map_schedule(game, stored, 200, QA_Q3_MAP_THINK_LOCATIONS);
     else if (stored->kind == QA_Q3_MAP_TARGET_SPEAKER &&
              ((stored->spawnflags & 1u) || stored->sound_random != 0)) {
-        qa_actor_id actor = stored->actor;
         stored->sound_looping = (stored->spawnflags & 1u) != 0;
         if (!q3_map_emit(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_SOUND,
                                                   .actor = actor,

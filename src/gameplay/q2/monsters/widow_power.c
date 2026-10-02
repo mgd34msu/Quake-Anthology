@@ -66,7 +66,7 @@ static bool armor(q2m_context *context, qa_error *error) {
         return false;
     if (!q2m_alive(context))
         return true;
-    float cells = 250.0f * game->options.skill;
+    float cells = 250.0f * (float)game->options.skill;
     combat.armor.powered = (qa_powered_armor){.kind = QA_POWER_SHIELD, .cells = cells};
     qa_q2_combat_power_armor_source(game, &combat.armor.powered);
     if (!qa_combat_set_armor(game->services.combat, id, &combat.armor, error))

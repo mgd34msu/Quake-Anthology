@@ -226,7 +226,8 @@ static bool tokens(player_fx *p,int32_t flags,qa_error *e)
         skull.axis[1]=q3ne_cross(skull.axis[0],skull.axis[2]);
         float angle=sphere_angle(q3ne_plus(p->frame->time,5000-(int32_t)i*500),16);
         skull.origin=q3ne_sum(position,qa_v3(0,0,q3ne_mul((float)sin((double)angle),10)));
-        if(!emit(p,&skull,e))return false; origin=position;
+        if(!emit(p,&skull,e))return false;
+        origin=position;
     }
     return true;
 }
@@ -331,7 +332,8 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
             float a=q3ne_f((float)acos((double)fmaxf(-1,fminf(1,q3ne_dot(pole.axis[0],d)))));
             float degrees=q3ne_div(q3ne_mul(a,180),3.14159265358979323846f);
             float yaw=q3ne_dot(pole.axis[1],d)<0?q3ne_add(360,-degrees):degrees;
-            if(yaw<0)yaw=q3ne_add(yaw,360); if(yaw>360)yaw=q3ne_add(yaw,-360);
+            if(yaw<0)yaw=q3ne_add(yaw,360);
+            if(yaw>360)yaw=q3ne_add(yaw,-360);
             flag_swing(s,yaw,p->frame->frame_milliseconds);
         }
     }

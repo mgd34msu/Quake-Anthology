@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "items_source.h"
 #include "character_reader.h"
+#include "qa/binary.h"
 
 #define FIELD(field, text, kind)                                                                   \
     {text, offsetof(qa_bot_item_info, field), sizeof(((qa_bot_item_info *)0)->field), kind}
@@ -38,9 +39,25 @@ bool qa_bot_items_view_read(const qa_bot_items *c, const qa_bot_items_view **out
     *out = &c->view; return true;
 }
 typedef struct item_write { qa_bot_items *config; size_t index; qa_bot_item_info *value; } item_write;
-static bool written(void *context, qa_error *error) {
+static bool written(void *context, const bot_field *field, size_t elements, qa_error *error) {
     item_write *write = context;
-    return bot_items_store(write->config, write->index, write->value, error);
+    qa_bot_memory_span cell;
+    if (!field || !bot_items_cell(write->config, write->index, &cell, error)) return false;
+    size_t offset;
+    if (field->offset == offsetof(qa_bot_item_info, name)) offset = 32;
+    else if (field->offset == offsetof(qa_bot_item_info, model)) offset = 112;
+    else if (field->offset == offsetof(qa_bot_item_info, model_index)) offset = 192;
+    else if (field->offset == offsetof(qa_bot_item_info, type)) offset = 196;
+    else if (field->offset == offsetof(qa_bot_item_info, inventory)) offset = 200;
+    else if (field->offset == offsetof(qa_bot_item_info, respawn_seconds)) offset = 204;
+    else if (field->offset == offsetof(qa_bot_item_info, mins)) offset = 208;
+    else offset = 220;
+    const uint8_t *value = (const uint8_t *)write->value + field->offset;
+    if (field->kind == BOT_FIELD_STRING) memcpy(cell.data + offset, value, field->size);
+    else for (size_t i = 0; i < elements; ++i) {
+        uint32_t raw; memcpy(&raw, value + i * 4, 4); qa_store_u32le(cell.data + offset + i * 4, raw);
+    }
+    return true;
 }
 static bool load_source(qa_bot_library *library, const char *path, size_t capacity,
                        qa_bot_items **out, qa_error *e) {
@@ -62,6 +79,7 @@ static bool load_source(qa_bot_library *library, const char *path, size_t capaci
     c->script_host = host;
     c->next = library->item_configs; library->item_configs = c;
     qa_bot_items_retain(c); c->reader = s; c->active = true;
+    bool classname_failure = false;
     for (;;) {
         qa_script_token token;
         bool found;
@@ -84,12 +102,17 @@ static bool load_source(qa_bot_library *library, const char *path, size_t capaci
         if (!bot_items_cell(c, count, &cell, e)) goto fail;
         memset(cell.data, 0, cell.size); *item = (qa_bot_item_info){0};
         item_write write = {c, count, item};
-        if (!bot_read_string(s, item->classname, sizeof(item->classname), e) ||
-            !written(&write, e) ||
-            !bot_structure_source(s, item, fields, sizeof(fields) / sizeof(*fields), &write, written, e))
+        if (!bot_read_string(s, item->classname, sizeof(item->classname), e)) {
+            classname_failure = true; goto fail;
+        }
+        if (!bot_items_cell(c, count, &cell, e)) goto fail;
+        memcpy(cell.data, item->classname, sizeof(item->classname));
+        if (!bot_structure_source(s, item, fields, sizeof(fields) / sizeof(*fields), &write, written, e))
             goto fail;
         item->number = (int32_t)count;
-        if (!written(&write, e) || !bot_items_member(c, count, e) || !bot_items_count(c, count + 1, e)) goto fail;
+        if (!bot_items_cell(c, count, &cell, e)) goto fail;
+        qa_store_u32le(cell.data + 232, count);
+        if (!bot_items_member(c, count, e) || !bot_items_count(c, count + 1, e)) goto fail;
     }
     qa_script_close(s); c->reader = NULL; c->active = false; c->ready = true;
     if (!bot_items_project(c, e)) { qa_bot_items_release(c); return false; }
@@ -98,8 +121,9 @@ static bool load_source(qa_bot_library *library, const char *path, size_t capaci
 fail:
     c->active = false;
     if (!host->callback_failed && e && (e->code == QA_ERROR_FORMAT || e->code == QA_ERROR_NOT_FOUND)) {
-        qa_script_close(s); c->reader = NULL;
-        (void)qa_bot_items_free(c, NULL);
+        if (!qa_bot_items_free(c, e)) { qa_bot_items_release(c); return false; }
+        if (classname_failure) c->reader_retired = true;
+        else { qa_script_close(s); c->reader = NULL; }
     }
     qa_bot_items_release(c);
     return false;

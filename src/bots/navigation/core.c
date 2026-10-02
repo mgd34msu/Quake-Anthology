@@ -174,9 +174,10 @@ bool qa_bot_navigation_trace(qa_bot_navigation *n, qa_vec3 start, qa_vec3 end,
                              qa_trace_result *out, qa_error *e) {
     if (!n) return bot_nav_fail(e, "missing bot trace owner");
     qa_trace_query query = {.start = start, .end = end,
-        .shape = {bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT, bounds ? *bounds : (qa_bounds){0}},
+        .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
         .policy = {.family = QA_COLLISION_Q3, .contents_mask = mask, .q1_hull = -1,
                    .curves = true, .player_curve_clip = true}, .pass_actor = pass};
+    if (bounds) query.shape.bounds = *bounds;
     return qa_world_trace(n->world, &query, out, e);
 }
 bool qa_bot_navigation_contents(qa_bot_navigation *n, qa_vec3 point, int32_t *out, qa_error *e) {

@@ -2,6 +2,7 @@
 #define QA_APPLICATION_SAVE_NATIVE_Q2_RECORD_H
 
 #include "qa/persistence_application.h"
+#include "qa/native.h"
 
 struct application_provider;
 bool application_native_q2_save_capture(struct application_provider *, qa_save_purpose,
@@ -13,5 +14,7 @@ bool application_native_q2_save_restore(struct application_provider *, qa_bytes,
 bool application_native_q2_save_matches(struct application_provider *, qa_bytes, qa_error *);
 /* Pure envelope lookup before native process construction. */
 bool application_native_q2_save_resource_recipe(const qa_save_record *, qa_bytes *, qa_error *);
+/* Decode the actual callback-owned CPU/RAM capsule before source construction. */
+bool application_native_q2_save_process(const qa_save_record *, qa_native_checkpoint *, qa_error *);
 
 #endif

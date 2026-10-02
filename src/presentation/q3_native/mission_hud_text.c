@@ -10,7 +10,7 @@ static fontInfo_t *selected_font(float scale)
 static bool escape(const unsigned char *p) { return p[0]=='^' && p[1] && p[1]!='^'; }
 static float line_height(const fontInfo_t *font,float scale)
 { int height=0; for(unsigned i=0;i<256;++i)if(font->glyphs[i].height>height)height=font->glyphs[i].height;
-    return height*(scale*font->glyphScale); }
+    return (float)height*(scale*font->glyphScale); }
 static int metric(const char *text,float scale,int limit,bool height)
 {
     q3n_mission_hud *o=q3nm_active(); fontInfo_t *font=selected_font(scale); float value=0; int count=0;
@@ -30,7 +30,7 @@ int q3nm_height(const char *text,float scale,int limit) { return metric(text,sca
 static void glyph(glyphInfo_t *g,float x,float y,float scale)
 {
     q3n_mission_hud *o=q3nm_active(); if(!g->glyph||o->menus->failed)return;
-    qa_scene_rect_f r=q3nh_rect(&o->draw,(qa_scene_rect_f){x,y-scale*g->top,g->imageWidth*scale,g->imageHeight*scale});
+    qa_scene_rect_f r=q3nh_rect(&o->draw,(qa_scene_rect_f){x,y-scale*(float)g->top,(float)g->imageWidth*scale,(float)g->imageHeight*scale});
     q3nm_result(q3nh_pixels(&o->draw,r.x,r.y,r.width,r.height,g->glyph,
         (qa_scene_vec4){g->s,g->t,g->s2,g->t2}));
 }
@@ -57,7 +57,7 @@ void q3nm_text(float x,float y,float scale,float input[4],const char *text,float
             float black[4]={0,0,0,color[3]},offset=style==3?1:2;
             q3nm_result(q3nh_color(&o->draw,black)); glyph(g,x+offset,y+offset,scale); q3nm_result(q3nh_color(&o->draw,color));
         }
-        glyph(g,x,y,scale); x+=g->xSkip*scale+adjust; ++count;
+        glyph(g,x,y,scale); x+=(float)g->xSkip*scale+adjust; ++count;
     }
     q3nm_result(q3nh_color(&o->draw,NULL));
 }
@@ -96,8 +96,8 @@ float q3nm_limit(const char *text,float x,float y,float scale,const float input[
     q3nm_result(q3nh_color(&o->draw,color));
     for(const unsigned char *p=(const unsigned char *)text;p&&*p&&!o->menus->failed&&(limit<=0||count<limit);++p) {
         if(escape(p)) { ++p; if(!force) { colored(*p,input[3],color); q3nm_result(q3nh_color(&o->draw,color)); } continue; }
-        if(x+q3nm_width((const char *)p,scale,1)>max_x) { result=0; break; }
-        glyphInfo_t *g=&font->glyphs[*p]; glyph(g,x,y,draw_scale); x+=g->xSkip*draw_scale; result=x; ++count;
+        if(x+(float)q3nm_width((const char *)p,scale,1)>max_x) { result=0; break; }
+        glyphInfo_t *g=&font->glyphs[*p]; glyph(g,x,y,draw_scale); x+=(float)g->xSkip*draw_scale; result=x; ++count;
     }
     q3nm_result(q3nh_color(&o->draw,NULL)); return result;
 }
@@ -107,7 +107,7 @@ bool q3n_mission_hud_text(q3n_mission_hud *o,const q3n_frame *f,const char *text
     q3menu_context *previous; if(!text||!input||!isfinite(y)||!isfinite(scale)||!q3nm_begin(o,f,e,&previous))return false;
     if(!q3nh_preferences(&o->draw))return q3nm_end(o,previous,false);
     int width=q3nm_width(text,scale,0); float color[4]; memcpy(color,input,sizeof(color));
-    q3nm_text(320-(integer_half?(float)(width/2):width*0.5f),y,scale,color,text,0,0,style);
+    q3nm_text(320-(integer_half?(float)(width/2):(float)width*0.5f),y,scale,color,text,0,0,style);
     return q3nm_end(o,previous,true);
 }
 bool q3n_mission_hud_center_line(q3n_mission_hud *o,const q3n_frame *f,const char *text,float y,
@@ -116,6 +116,6 @@ bool q3n_mission_hud_center_line(q3n_mission_hud *o,const q3n_frame *f,const cha
     q3menu_context *previous; if(!text||!input||!height||!q3nm_begin(o,f,e,&previous))return false;
     if(!q3nh_preferences(&o->draw))return q3nm_end(o,previous,false);
     float color[4]; memcpy(color,input,sizeof(color)); *height=(float)q3nm_height(text,0.5f,0);
-    q3nm_text((640-q3nm_width(text,0.5f,0))/2,y+*height,0.5f,color,text,0,0,6);
+    q3nm_text((float)((640-q3nm_width(text,0.5f,0))/2),y+*height,0.5f,color,text,0,0,6);
     return q3nm_end(o,previous,true);
 }

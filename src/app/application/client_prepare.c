@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/console_cvar_observer.h"
 #include "native_client_roles.h"
 #include "engine_shutdown.h"
 #include "qa/application_client_prepare.h"
@@ -16,7 +17,7 @@ struct qa_application_client_preparation {
     qa_application_client_prepare_phase phase;
     void *startup_context;
     bool (*startup_current)(void *,const qa_application_client_source *);
-    bool entered,resources_complete,published;
+    bool entered,canceling,resources_complete,published;
 };
 bool qa_application_client_prepare_associated(const qa_application *app,
     const qa_application_client_preparation *p)
@@ -36,6 +37,8 @@ bool qa_application_client_prepare_associated(const qa_application *app,
 }
 bool qa_application_client_prepare_current(const qa_application_client_preparation *p)
 { return p && qa_application_client_prepare_associated(p->application,p); }
+bool qa_application_client_prepare_active(const qa_application *app)
+{ return app && app->client_preparation; }
 bool qa_application_client_prepare_phase_is(const qa_application_client_preparation *p,
     qa_application_client_prepare_phase phase)
 { return qa_application_client_prepare_current(p) && p->phase==phase; }
@@ -106,6 +109,25 @@ bool qa_application_client_prepare_abort(qa_application_client_preparation *p,qa
     if (!qa_application_client_prepare_current(p) || p->entered || p->published)
         return application_fail(e,QA_ERROR_ARGUMENT,"CLIENT abort lost its unpublished physical owner");
     p->phase=QA_CLIENT_PREPARE_CLEANUP; return true;
+}
+bool qa_application_client_prepare_cancel_entered(const qa_application_client_preparation *p)
+{
+    return qa_application_client_prepare_entered(p,QA_CLIENT_PREPARE_RELEASE) && p->canceling;
+}
+bool qa_application_client_prepare_cancel_advance(qa_application_client_preparation *p,
+    bool (*cleanup)(void *,qa_application_client_preparation *,bool *,qa_error *),void *context,
+    bool *complete,qa_error *e)
+{
+    if (complete) *complete=false;
+    if (!complete || !cleanup || !qa_application_client_prepare_phase_is(p,QA_CLIENT_PREPARE_RELEASE) ||
+        p->entered || p->published)
+        return application_fail(e,QA_ERROR_ARGUMENT,"CLIENT release cancellation lost its returned physical owner");
+    bool done=false; p->canceling=true; p->entered=true;
+    bool ok=cleanup(context,p,&done,e);
+    p->entered=false; p->canceling=false;
+    if (!qa_application_client_prepare_current(p))
+        return application_fail(e,QA_ERROR_ARGUMENT,"CLIENT release cancellation changed its retained physical owner");
+    *complete=done; return ok;
 }
 bool qa_application_client_prepare_finish(qa_application_client_preparation **out,
     bool (*cleanup)(void *,qa_application_client_preparation *,bool *,qa_error *),void *context,

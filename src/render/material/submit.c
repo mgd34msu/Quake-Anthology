@@ -2,6 +2,7 @@
 #include "source_scratch_private.h"
 #include "qa/scene_effects.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/material_library_save.h"
 #include <math.h>
 #include <stdalign.h>
 #include <string.h>
@@ -348,16 +349,17 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         draw.fog = context->fog;
         draw.fog.effect = adjustment;
     }
-    qa_scene_vertex *vertices = frame_array(frame, geometry->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
-    if (vertices == NULL) return false;
-    for (size_t i = 0; i < geometry->vertex_count; ++i) {
-        vertices[i] = geometry->vertices[i];
+    size_t storage = source ? QA_SOURCE_TESS_VERTICES : geometry->vertex_count;
+    qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
+    if (storage && vertices == NULL) return false;
+    for (size_t i = 0; i < storage; ++i) {
+        vertices[i] = i < geometry->vertex_count ? geometry->vertices[i] : source->vertices[i];
         if (source) {
             bool lightmapped = iterator == QA_MATERIAL_LIGHTMAPPED, vertex_lit = iterator == QA_MATERIAL_VERTEX_LIT;
             vertices[i].color = lightmapped ? (qa_scene_vec4){1, 1, 1, 1} : source->colors[i];
-            vertices[i].texcoord = lightmapped || vertex_lit ? geometry->vertices[i].texcoord :
+            vertices[i].texcoord = lightmapped || vertex_lit ? vertices[i].texcoord :
                 source->coordinates[first_binding == stage ? 0 : 1][i];
-            if (second_binding) vertices[i].lightmap = lightmapped ? geometry->vertices[i].lightmap :
+            if (second_binding) vertices[i].lightmap = lightmapped ? vertices[i].lightmap :
                 source->coordinates[second_binding == stage ? 0 : 1][i];
             continue;
         }
@@ -372,6 +374,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     }
     draw.mesh.vertices = vertices;
     draw.source_arrays = source != NULL;
+    draw.source_vertex_storage = source ? QA_SOURCE_TESS_VERTICES : 0;
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     return !source || !source->issuing || !second_binding ||
         (material_source_texture_enable(source, false, error) && material_source_texture_select(source, 0, error));
@@ -384,7 +387,7 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
                           const qa_scene_mesh *geometry, const qa_material_context *context,
                           bool fast_iterator, qa_scene_frame *frame, qa_error *error)
 {
-    if (context->light_mask == 0 || material->sort > 3.0f ||
+    if (geometry->index_count == 0 || context->light_mask == 0 || material->sort > 3.0f ||
         (!fast_iterator && (material->surface_flags & (UINT32_C(0x20000) | 4u)) != 0)) return true;
     if (material->dlight_image == NULL) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Projected light texture is unavailable");
@@ -472,7 +475,7 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
         (!material_source_client_arrays(context->source_scratch, true, true, error) ||
         !material_source_client_coordinate_pointer(context->source_scratch, MATERIAL_SOURCE_COORDINATES_STAGE, 0, error))) return false;
     qa_scene_vertex *vertices = frame_array(frame, geometry->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
-    if (vertices == NULL) return false;
+    if (geometry->vertex_count && vertices == NULL) return false;
     if (volume) {
         if (material->fog_image == NULL) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Fog lookup texture is unavailable");
@@ -613,13 +616,6 @@ static void source_entity_read(qa_material_source_scratch *source, const qa_mate
     source->entity_is_cell = context->source_entity_cell && context->entity < 1022;
     if (source->entity_is_cell) {
         source->entity_cell = context->entity;
-        if (source->scene_bank) {
-            qa_q3_source_entity_cell raw;
-            if (qa_q3_source_scene_bank_entity_read(source->scene_bank, context->entity, &raw))
-                qa_q3_source_scene_bank_entity_lighting(source->scene_bank, context->entity,
-                    context->ambient, context->directed, context->light_direction, context->ambient_alpha,
-                    raw.axis_length, raw.need_lights);
-        }
         material_source_entity *cell = source->entities + context->entity;
         cell->ambient = context->ambient; cell->directed = context->directed;
         cell->light_direction = context->light_direction; cell->ambient_alpha = context->ambient_alpha;
@@ -740,7 +736,7 @@ static bool source_debug(const qa_material *material, const qa_material *origina
             !material_source_depth_range(context->source_scratch, 0, 0, error)) return false;
         qa_scene_draw draw = initial_draw(material, original, *mesh, context);
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
-        if (!vertices) return false;
+        if (mesh->vertex_count && !vertices) return false;
         for (size_t i = 0; i < mesh->vertex_count; ++i) {
             vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_scene_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_scene_vec2){0};
         }
@@ -756,7 +752,7 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         qa_scene_draw draw = initial_draw(material, original, *mesh, context);
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count * 2, sizeof(*vertices), alignof(qa_scene_vertex), error);
         uint32_t *indices = frame_array(frame, mesh->vertex_count * 2, sizeof(*indices), alignof(uint32_t), error);
-        if (!vertices || !indices) return false;
+        if (mesh->vertex_count && (!vertices || !indices)) return false;
         for (size_t i = 0; i < mesh->vertex_count; ++i) {
             vertices[i * 2] = (qa_scene_vertex){.position = mesh->vertices[i].position, .color = {1, 1, 1, 1}};
             vertices[i * 2 + 1] = vertices[i * 2];
@@ -790,6 +786,7 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         mesh->vertex_count < QA_SOURCE_TESS_VERTICES && mesh->index_count < QA_SOURCE_TESS_INDEXES);
     if (!ok) qa_error_set(error, QA_ERROR_FORMAT, 0, "Source surface exceeds tess sentinel limits");
     qa_scene_mesh geometry = {0};
+    bool reached = mesh->index_count != 0;
     bool skipped = false;
     if (ok) {
         if (cloud) {
@@ -865,9 +862,9 @@ static bool submit_source(const qa_material *original, const qa_material *materi
     qa_scene_texture_environment plan_environment; qa_scene_state plan_state;
     size_t plan_passes; qa_material_iterator plan_iterator;
     (void)material_plan(material, context->fragment_lighting, &plan_environment, &plan_state, &plan_passes, &plan_iterator);
-    bool offset = ok && !skipped && geometry.vertex_count && geometry.index_count && material->polygon_offset &&
+    bool offset = ok && !skipped && reached && material->polygon_offset &&
         plan_iterator != QA_MATERIAL_VERTEX_LIT && plan_iterator != QA_MATERIAL_LIGHTMAPPED;
-    if (ok && !skipped && geometry.vertex_count && geometry.index_count) {
+    if (ok && !skipped && reached) {
         ok = execute_material(material, original, &geometry, context, time, frame, error);
         if (ok && offset && source->issuing)
             ok = material_source_polygon_offset(source, false, context->source_diagnostics.polygon_offset_factor,
@@ -1165,6 +1162,9 @@ bool material_source_deform_overflow(qa_material_source_scratch *source, const q
 }
 static bool source_flush_pending(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
 {
+    if (source->runtime_frame_policy &&
+        !source->runtime_frame_policy(source->runtime_frame_context, frame, error)) return false;
+    if (frame->source_skip_backend) return true;
     if (!source->index_count) return true;
     if (!source->material || !source->runtime_diagnostics) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source pending surface has no actual runtime owner"); return false;
@@ -1172,7 +1172,8 @@ static bool source_flush_pending(qa_material_source_scratch *source, qa_scene_fr
     material_source_submission row = {.original = source->material,
         .mesh = {.primitive = QA_SCENE_TRIANGLES},
         .context = {.source_scratch = source, .source_primitives = true,
-            .identity_light = source->identity_light, .source_white = source->material->dlight_image,
+            .identity_light = source->identity_light,
+            .source_white = qa_scene_white(qa_material_library_resource_owner(source->material->library)),
             .video_frame = source->runtime_video_frame, .video_context = source->runtime_video_context,
             .milliseconds = source->picture_milliseconds,
             .seconds = (float)source->picture_milliseconds * .001f}};
@@ -1577,6 +1578,8 @@ bool qa_material_source_swap_end(qa_material_source_scratch *source, qa_scene_fr
     if (!source || !frame) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source flush requires its actual renderer frame"); return false;
     }
+    if (source->runtime_frame_policy &&
+        !source->runtime_frame_policy(source->runtime_frame_context, frame, error)) return false;
     if (source->entered && !qa_material_source_frame_end(source, frame, true, error)) return false;
     if (frame->source_skip_backend || !source->index_count) return true;
     if (!material_source_enter(source, error)) return false;

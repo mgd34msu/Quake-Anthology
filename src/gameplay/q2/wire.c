@@ -32,6 +32,8 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
         return false;
     }
     free(g->wire_actors); free(g->wire_freed_ns);
+    free(g->wire_references); g->wire_references = NULL;
+    g->wire_reference_count = g->wire_reference_capacity = 0;
     g->wire_actors = actors; g->wire_freed_ns = freed;
     g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = clients + 1;
     g->wire_frame = 0;
@@ -43,6 +45,7 @@ void q2_wire_reset(qa_q2_game *g)
     memset(g->wire_actors, 0, g->wire_capacity * sizeof(*g->wire_actors));
     memset(g->wire_freed_ns, 0, g->wire_capacity * sizeof(*g->wire_freed_ns));
     g->wire_extent = g->wire_clients + 1; g->wire_frame = 0;
+    g->wire_reference_count = 0;
     memset(g->wire_lightstyles, 0, sizeof(g->wire_lightstyles));
     memset(g->wire_shadows, 0, sizeof(g->wire_shadows)); g->wire_shadow_count = 0;
     g->wire_music = 0; g->wire_music_present = false;
@@ -57,12 +60,27 @@ static bool bind(qa_q2_game *g, q2_actor *a, qa_actor_id id,
             "Q2 physical source edict is occupied or outside its admitted table");
         return false;
     }
-    if (a->wire_bound && a->wire_slot != slot) {
-        if (!qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
+    if (a->wire_bound && a->wire_slot != slot &&
+        !qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
             qa_error_set(error, QA_ERROR_FORMAT, a->wire_slot,
                 "Q2 actor lost its prior physical source edict");
             return false;
+    }
+    size_t reference = 0;
+    while (reference < g->wire_reference_count &&
+        !qa_actor_id_equal(g->wire_references[reference].actor, id)) ++reference;
+    if (reference == g->wire_reference_capacity) {
+        size_t capacity = reference ? reference * 2 : 32;
+        if (capacity < reference || capacity > SIZE_MAX / sizeof(*g->wire_references)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 Engine provenance extent overflows"); return false;
         }
+        q2_wire_reference *rows = realloc(g->wire_references, capacity * sizeof(*rows));
+        if (!rows) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 Engine admission provenance"); return false; }
+        g->wire_references = rows; g->wire_reference_capacity = capacity;
+    }
+    g->wire_references[reference] = (q2_wire_reference){id, slot};
+    if (reference == g->wire_reference_count) ++g->wire_reference_count;
+    if (a->wire_bound && a->wire_slot != slot) {
         g->wire_actors[a->wire_slot] = (qa_actor_id){0};
         g->wire_freed_ns[a->wire_slot] = g->now_ns;
         a->wire_lifetime = (qa_q2_wire_lifetime){0};
@@ -141,6 +159,25 @@ bool qa_q2_wire_admit_actor(qa_q2_game *g, qa_actor_id id, qa_error *error)
         return false;
     }
     return q2_actor_get(g, id, true, error) != NULL;
+}
+
+bool qa_q2_wire_entity_number(qa_q2_game *g, qa_actor_id id, uint32_t *out, qa_error *error)
+{
+    if (!g || !out || !id.registry || g->restoring_continuation || g->continuation_pending ||
+        g->continuation_failed || g->release_failed) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 entity reference requires its actual Engine namespace"); return false;
+    }
+    for (size_t i = 0; i < g->wire_reference_count; ++i)
+        if (qa_actor_id_equal(g->wire_references[i].actor, id)) {
+            *out = g->wire_references[i].number; return true;
+        }
+    if (!qa_q2_wire_admit_actor(g, id, error)) return false;
+    q2_actor *a = g->actors[id.slot];
+    if (!a || !a->wire_bound || a->wire_slot >= g->wire_extent ||
+        !qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 emitted actor lost its genuine Engine admission"); return false;
+    }
+    *out = a->wire_slot; return true;
 }
 
 bool qa_q2_wire_linked(qa_q2_game *g, const qa_linked_body *linked, qa_error *error)

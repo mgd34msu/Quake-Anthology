@@ -748,7 +748,17 @@ bool frontend_music_policy_source_play(frontend_music_policy *owner,const char *
         owner->frontend->capture || owner->frontend->source_restoring)
         return fail(e,"Received music requires its actual returned source-owned policy");
     owner->busy=true;
-    bool ok=manual_track(owner,NULL,cue,true,false,e);
+    bool ok;
+    if(!strcmp(cue,"0")){
+        music_state next={0};qa_audio_music_selection *selection=NULL;
+        ok=state_copy(&owner->state,&next,e);
+        if(ok){manual_state(&next);free(next.track);next.track=copy(cue,e);next.looping=false;ok=next.track!=NULL;}
+        if(ok)ok=parent_current(owner) && qa_audio_music_selection_prepare(owner->music,
+            QA_AUDIO_MUSIC_STOP,NULL,NULL,0,NULL,&selection,e) && qa_audio_music_selection_ready(selection,e);
+        if(ok){qa_audio_music_selection_publish(&selection);state_free(&owner->state);owner->state=next;next=(music_state){0};}
+        else if(selection)(void)qa_audio_music_selection_abort(&selection,NULL);
+        state_free(&next);
+    }else ok=manual_track(owner,NULL,cue,true,false,e);
     owner->busy=false;
     return ok && parent_current(owner);
 }

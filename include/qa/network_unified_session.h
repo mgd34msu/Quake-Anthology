@@ -53,6 +53,7 @@ typedef struct qa_unified_session_hooks {
         const qa_unified_document *, qa_unified_session_commit *, qa_error *);
     bool (*restart)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
         const qa_sha256_digest *, qa_unified_document **offer, qa_error *);
+    bool (*source_ready)(void *, qa_network_runtime *, qa_net_client_id, uint32_t wire_epoch, qa_error *);
     void (*closed)(void *, qa_net_client_id);
 } qa_unified_session_hooks;
 typedef struct qa_unified_session qa_unified_session;

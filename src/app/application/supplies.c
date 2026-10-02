@@ -2005,7 +2005,7 @@ static bool supply_actors_field(application_supplies *owner, qa_source_save_io *
     return true;
 }
 static bool supply_codec_ready(qa_application *app, qa_error *error) {
-    if (!app || app->operation != APPLICATION_PERSISTING || !app->supplies ||
+    if (!app || app->operation != APPLICATION_PERSISTING || app->client_preparation || !app->supplies ||
         app->supplies->application != app || app->supplies->inventory != app->inventory ||
         !application_supplies_idle(app->supplies))
         return application_fail(error, QA_ERROR_ARGUMENT, "Supply continuation requires its idle actual publication owner");

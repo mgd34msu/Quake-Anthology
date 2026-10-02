@@ -28,6 +28,8 @@ struct frontend_remote_unified_prediction {
     int64_t discarded;
     uint32_t epoch;
     int rounding;
-    bool received, busy;
+    bool received, busy, importing;
 };
+bool frontend_prediction_import_create(frontend_remote_unified *,frontend_remote_unified_prediction **,qa_error *);
+bool frontend_prediction_checkpoint_snapshot(const frontend_remote_unified_prediction *,frontend_unified_prediction_view *,qa_error *);
 #endif

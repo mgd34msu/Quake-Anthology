@@ -9,7 +9,7 @@ bool q3n_compiled_frame_current(const q3n_compiled_frame *f)
 {
     if (!f || !f->owner || !f->context || !f->current || !f->entity || !f->entity_event ||
         !f->entity_trajectory || !f->entity_weapon || !f->trace_number || !f->entities || !f->revision ||
-        f->stage < Q3N_COMPILED_INITIALIZATION || f->stage > Q3N_COMPILED_AWAITING_SNAPSHOT ||
+        f->stage < Q3N_COMPILED_INITIALIZATION || f->stage > Q3N_COMPILED_LOADING_INFORMATION ||
         (f->stage == Q3N_COMPILED_COMPLETED_FRAME ? f->scope != 0 : f->scope == 0) ||
         !q3n_compiled_source_current(&f->source)) return false;
     qa_q3_product product = f->source.basis.product;
@@ -18,7 +18,8 @@ bool q3n_compiled_frame_current(const q3n_compiled_frame *f)
     if (f->snapshot && (!f->snapshot->valid || !player(&f->snapshot->player, product) ||
         f->snapshot->message_number > f->processed_snapshot)) return false;
     if (f->next_snapshot && (!f->next_snapshot->valid || !player(&f->next_snapshot->player, product) ||
-        f->next_snapshot->message_number <= f->snapshot->message_number ||
+        (f->next_snapshot->message_number <= f->snapshot->message_number &&
+            !(f->stage==Q3N_COMPILED_SNAPSHOT_CALLBACK && f->scope && f->next_snapshot==f->snapshot)) ||
         f->next_snapshot->message_number > f->processed_snapshot)) return false;
     if ((f->predicted_state == NULL) != (f->predicted_entity == NULL) ||
         (f->predicted_next_state == NULL) != (f->predicted_entity == NULL) ||

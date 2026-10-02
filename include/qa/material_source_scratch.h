@@ -40,7 +40,8 @@ size_t qa_material_source_world_count(const qa_material_source_scratch *);
 const qa_scene_world *qa_material_source_world_at(const qa_material_source_scratch *, size_t);
 bool qa_render_controls_source_runtime_bind(qa_render_controls *,
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *), void *video_context,
-    bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context, qa_error *);
+    bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context,
+    bool (*frame_policy)(void *, qa_scene_frame *, qa_error *), void *frame_context, qa_error *);
 bool qa_material_source_swap_end(qa_material_source_scratch *, qa_scene_frame *, qa_error *);
 /* Structural identity remains readable while the owner holds a controls ticket. */
 bool qa_material_source_material_metadata(const qa_material_source_scratch *, const qa_material **, qa_error *);

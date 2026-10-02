@@ -223,7 +223,7 @@ static bool goal_grounded(bot_travel *t, const qa_bot_move_goal_source *goal, ui
             return false;
         state->reach_area = state->area;
         state->jump_reach = 0;
-        state->input.flags &= ~QA_BOT_MOVE_GRAPPLE_RESET;
+        state->input.flags &= ~(uint32_t)QA_BOT_MOVE_GRAPPLE_RESET;
         if (!bot_reach_read(t, number, &prior, &found, e))
             return false;
         if (found) {
@@ -314,7 +314,7 @@ static bool move_goal(bot_travel *t, const qa_bot_move_goal_source *goal, uint32
     if (!goal) {
         return bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e);
     }
-    state->input.flags &= ~(QA_BOT_MOVE_SWIMMING | QA_BOT_MOVE_AGAINST_LADDER);
+    state->input.flags &= ~(uint32_t)(QA_BOT_MOVE_SWIMMING | QA_BOT_MOVE_AGAINST_LADDER);
     bool grounded;
     if (!bot_on_ground(t, &grounded, e))
         return false;

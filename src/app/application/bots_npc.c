@@ -1,6 +1,5 @@
 #include "bots_npc_private.h"
 #include "qa/game_q1_bots.h"
-#include "qa/map_sidecars.h"
 #include "qa/hash.h"
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
@@ -206,11 +205,13 @@ static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profil
     bool *found,qa_error *error)
 {
     *found=false;
-    const qa_map_sidecars *sidecars=qa_application_map_sidecars(owner->source->application);
-    if(!sidecars) return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation lost geometry source mounts");
-    if(!owner->files && !qa_catalog_open(qa_map_sidecars_catalog(sidecars),
-            qa_map_sidecars_product(sidecars),&owner->files,error)) return false;
-    const char *path=qa_map_sidecars_map_path(sidecars);
+    qa_launch_resource_origin origin;
+    if(!qa_application_map_origin_read(owner->source->application,&origin) ||
+       !origin.catalog || !origin.content || !origin.acquisition ||
+       origin.acquisition->resource_id!=qa_resource_id(owner->map_resource))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation lost its actual geometry acquisition");
+    if(!owner->files && !qa_catalog_open(origin.catalog,origin.product,&owner->files,error)) return false;
+    const char *path=origin.acquisition->path;
     if(!path) return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation lacks its actual map path");
     size_t stem=strlen(path);
     if(stem>=5 && (path[0]=='m'||path[0]=='M') && (path[1]=='a'||path[1]=='A') &&
@@ -239,11 +240,20 @@ static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profil
         size_t prefix_size=strlen(prefix);
         memcpy(name,prefix,prefix_size);memcpy(name+prefix_size,path,stem);
         strcpy(name+prefix_size+stem,aas?".aas":".nav");
-        qa_resource *resource=NULL;qa_error local={0};
-        if(!qa_vfs_acquire(owner->files,name,&resource,NULL,&local)) {
+        qa_resource *resource=NULL;qa_error local={0};qa_mount_id mount;
+        if(!qa_vfs_acquire(owner->files,name,&resource,&mount,&local)) {
             if(local.code==QA_ERROR_NOT_FOUND) continue;
             if(error) *error=local;
             okay=false;break;
+        }
+        if(!aas) {
+            qa_product_id product;qa_mount_id physical;
+            if(!qa_catalog_product_mount_origin(origin.catalog,origin.product,owner->files,mount,&product,&physical)) {
+                qa_resource_release(resource);
+                okay=application_fail(error,QA_ERROR_ARGUMENT,"Monster NAV lost its genuine mount content");
+                break;
+            }
+            if(product!=origin.product) {qa_resource_release(resource);continue;}
         }
         qa_bytes bytes=qa_resource_bytes(resource);qa_nav_asset *asset=NULL;
         uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
@@ -349,6 +359,12 @@ bool application_bots_npc_clone(void *opaque,qa_actor_id from,qa_actor_id to,qa_
     while(original && !qa_actor_id_equal(original->actor,from)) original=original->next;
     if(!original || !original->has_path || original->retired) return true;
     if(qa_actor_id_equal(from,to) || !application_npc_current(owner,error)) return false;
+    qa_body_state body;qa_physics_properties properties;bool found;
+    if(!actual(owner,to,&body,&properties,&found,error)) return false;
+    if(!found) return application_fail(error,QA_ERROR_NOT_FOUND,"Cloned monster route lacks its actual target body");
+    for(npc_actor *held=owner->actors;held;held=held->next)
+        if(qa_actor_id_equal(held->actor,to))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Cloned monster route target already has a continuation");
     npc_actor *copy=NULL;qa_nav_checkpoint continuation={0};
     bool okay=application_npc_actor_create(owner,to,original->graph,&copy,error) &&
         route_copy(&original->route,&copy->route,error) &&

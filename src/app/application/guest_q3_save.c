@@ -1622,8 +1622,25 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
             engine->restored_client_source_seat = registry->source_seat;
         }
         q3g_role *role = NULL;
+        application_provider *client_source = NULL;
+        if (next->source_owner) {
+            if (next->source_owner == provider->owner) client_source = provider;
+            else {
+                qa_application *app = provider->application;
+                application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+                size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+                for (size_t i = 0; i < count; ++i)
+                    if (providers[i] && providers[i]->owner == next->source_owner) {
+                        if (client_source) return application_fail(error, QA_ERROR_FORMAT,
+                            "Restored CLIENT has ambiguous genuine GAME parent ownership");
+                        client_source = providers[i];
+                    }
+            }
+            if (!client_source) return application_fail(error, QA_ERROR_FORMAT,
+                "Restored CLIENT lost its actual saved GAME parent");
+        }
         bool created = q3g_role_create_restored(engine, (qa_qvm_role)artifact->kind, next->seat, artifact->path,
-            (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, &role, error);
+            (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, client_source, &role, error);
         engine->restored_client_registry = NULL;
         engine->restored_client_cvars = (qa_bytes){0};
         engine->restored_client_role = 0;

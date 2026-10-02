@@ -218,7 +218,7 @@ bool application_bot_weapon_slot(application_provider *provider,int32_t source,i
         for(uint32_t ordinal=0;ordinal<registered_count;++ordinal) {
             const qa_q2_weapon_definition *definition;
             if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,ordinal,&definition,error)) return false;
-            if(definition->weapon==source && q2_base[definition->weapon].pellets) {
+            if((int32_t)definition->weapon==source && q2_base[definition->weapon].pellets) {
                 *slot=(int32_t)ordinal+1;break;
             }
         }

@@ -20,4 +20,6 @@ struct frontend_unified_input {
     uint32_t epoch;
     bool submitted, has_sample, has_pending, busy;
 };
+bool frontend_input_import_create(qa_frontend *,frontend_remote_unified *,frontend_remote_unified_prediction *,
+    frontend_unified_input **,qa_error *);
 #endif

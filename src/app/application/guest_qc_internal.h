@@ -79,6 +79,7 @@ struct application_qc_state {
     const float *client_think_time;
     float serverflags;
     qa_buffer original_extension;
+    qa_buffer npc_restore;
     struct application_qc_rerelease *rerelease;
     char *lightstyles[64];
     application_qc_message *messages;
@@ -97,6 +98,7 @@ static inline bool application_qc_has_source_admission(const struct application_
 bool application_qc_import(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);
 bool application_qc_capture_engine(void *, qa_buffer *, qa_error *);
 bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
+bool application_qc_npc_restore_finish(application_provider *, qa_error *);
 bool application_qc_flush(struct application_qc_state *, qa_error *);
 bool application_qc_write_message(struct application_qc_state *, qa_qc_instance *, qa_qc_builtin, qa_error *);
 bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, qa_error *);
@@ -133,6 +135,8 @@ bool application_qc_weapon_binding_at(struct application_qc_state *,size_t,
     struct qa_application_qc_weapon_ui_binding *,uint32_t *,qa_error *);
 bool application_qc_pending_weapon_ready(struct application_qc_state *,const application_qc_client *,qa_error *);
 bool application_qc_client_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
+bool application_qc_weapon_before_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
+bool application_qc_weapon_after_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
 void application_qc_weapon_command(struct application_qc_state *,qa_actor_id);
 bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 #endif

@@ -52,7 +52,7 @@ bool q3n_player_state_create_compiled(const q3n_player_state_options *options,q3
 {
     q3n_compiled_source_view source;
     if(!options || !out || *out || !options->compiled_source || options->source || options->client || options->remote_client ||
-       !options->print || !q3n_compiled_source_read(options->compiled_source,&source,e) ||
+       !options->print || !q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) ||
        source.basis.application!=options->application || source.basis.assets!=options->assets || source.basis.seat!=options->seat)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled playerstate requires its actual CLIENT source and assets");
     q3n_player_state *o=calloc(1,sizeof(*o));

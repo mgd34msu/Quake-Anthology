@@ -30,7 +30,7 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     return true;
 }
 
-bool application_native_q2_idle(const application_provider *provider)
+static bool owner_returned(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
@@ -40,6 +40,11 @@ bool application_native_q2_idle(const application_provider *provider)
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
+}
+bool application_native_q2_idle(const application_provider *provider)
+{
+    const struct application_native_q2 *engine=provider?provider->state.native.q2_engine:NULL;
+    return owner_returned(provider)&&(!engine||application_native_q2_inventory_scanner_idle(engine->inventory_scanner));
 }
 
 static bool frontend_owner_idle(void *context)
@@ -281,8 +286,8 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
             if (!ok) return false;
         }
         if(qa_json_get(d,root,"clients")!=QA_JSON_NONE) {
-            const qa_cvar_view *maximum=qa_cvars_find(engine->cvars,"maxclients");
-            if(!maximum||maximum->number!=(double)clients)
+            const qa_cvar_view *client_limit=qa_cvars_find(engine->cvars,"maxclients");
+            if(!client_limit||client_limit->number!=(double)clients)
                 return application_fail(error,QA_ERROR_FORMAT,"Native callback client capacity differs from actual maxclients");
         }
     }
@@ -343,13 +348,17 @@ bool application_construct_native_q2(qa_application *app, application_provider *
     if (!engine) {
         if (!prepare_owner(app, provider, world, product, choices, error)) return false;
         engine = provider->state.native.q2_engine;
+        if (app->native_restore_image && engine->callbacks && !load_host(engine, error)) return false;
     } else if (!app || !world || !product || !choices || provider->application != app ||
         provider->product != product || product->family != QA_GAME_Q2 || engine->provider != provider ||
         engine->world != world || !engine->prepared || !provider->constructed || provider->attached ||
         engine->initialized || engine->map_ready || engine->shutting_down || engine->activation_failed ||
         !provider->state.native.host || !application_native_q2_idle(provider) ||
-        qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) != QA_NATIVE_LOADED)
+        (qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) != QA_NATIVE_LOADED &&
+            !qa_native_process_restore_pending(qa_native_host_instance(provider->state.native.host))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 construction lost its retained prepared owner");
+    if (provider->state.native.host && qa_native_process_restore_pending(qa_native_host_instance(provider->state.native.host)))
+        return true;
     return application_startup_source_preinit(provider, engine->console, engine->cvars,
         &engine->command_context, error) && (app->operation == APPLICATION_PERSISTING ||
         qa_cvars_apply_latched(engine->cvars, NULL, error));
@@ -401,6 +410,18 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
         instance.observe || qa_native_declaration_region_count(engine->declaration) != 0,
         process_current, engine, &engine->process, error)) return false;
+    qa_native_checkpoint cold = {0};
+    if (provider->application->native_restore_image && engine->callbacks) {
+        const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
+            QA_SAVE_PROVIDER, provider->launch->selection.instance);
+        if (!saved || !application_native_q2_save_process(saved, &cold, error)) return false;
+        if (!qa_native_process_resources_restore_read(engine->process.resources,
+            (qa_bytes){cold.process.data, cold.process.size}, NULL, &engine->process.process, error)) {
+            qa_native_checkpoint_free(&cold);
+            return false;
+        }
+        engine->process.process.defer_host_restore = true;
+    }
     instance.process = &engine->process.process;
     bool ok;
     ++engine->calls;
@@ -435,6 +456,17 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             &provider->state.native.host, error);
     }
     --engine->calls;
+    /* The constructor copied the actual capsule and its deferred HOST bytes.
+     * No enclosing recipe keeps this temporary snapshot storage borrowed. */
+    engine->process.process.continuation = (qa_bytes){0};
+    qa_native_checkpoint_free(&cold);
+    if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
+        ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
+        if(ok) {
+            application_native_q2_inventory_scanner_options options=application_native_q2_inventory_rows_options(engine->inventory_rows);
+            ok=application_native_q2_inventory_scanner_create(engine,&options,&engine->inventory_scanner,error);
+        }
+    }
     if (!ok) {
         engine->activation_failed = true;
         engine->activation_error = error ? *error : (qa_error){0};
@@ -442,13 +474,6 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             qa_error_set(&engine->activation_error, QA_ERROR_UNSUPPORTED, 0,
                 "Native Q2 source owner activation failed");
         if (error) *error = engine->activation_error;
-    }
-    if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
-        ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
-        if(ok) {
-            application_native_q2_inventory_scanner_options options=application_native_q2_inventory_rows_options(engine->inventory_rows);
-            ok=application_native_q2_inventory_scanner_create(engine,&options,&engine->inventory_scanner,error);
-        }
     }
     return ok;
 }
@@ -543,7 +568,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
-    if (!application_native_q2_idle(provider))
+    if (!owner_returned(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && provider->state.native.host) {
         if (engine->initialized) {
@@ -593,7 +618,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
-    if (!application_native_q2_idle(provider))
+    if (!owner_returned(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if(!application_native_q2_inventory_scanner_destroy(engine->inventory_scanner,error)) return false;

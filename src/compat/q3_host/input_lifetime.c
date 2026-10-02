@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/bot_runtime.h"
 
 bool qa_q3_host_source_input(const qa_q3_host *host, qa_input_seat **seat, uint64_t *owner)
 {

@@ -137,7 +137,6 @@ bool qa_bot_goals_source_status(qa_bot_goals *, int32_t client, const qa_bot_goa
 bool qa_bot_goals_missing_visible(qa_bot_goals *, int32_t client, qa_vec3 eye, const qa_bot_goal *,
                                   bool *, qa_error *);
 bool qa_bot_goal_touching(qa_vec3 origin, const qa_bot_goal *);
-const char *qa_bot_goals_name(const qa_bot_goals *, int32_t number);
 bool qa_bot_goals_name_read(const qa_bot_goals *, int32_t number, const char **out, qa_error *);
 /* Load borrows the map's immutable entity table; repeated same-map restarts may
  * retain it. Live entity updates are obtained from services.entities. */

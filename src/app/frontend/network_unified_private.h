@@ -12,7 +12,7 @@ typedef struct unified_peer {
     application_unified_server *server;
     frontend_remote_unified *remote;
     qa_buffer source_import;
-    bool occupied, staging, travel_prepared, frame_published;
+    bool occupied, staging, travel_prepared, frame_published, client_bound;
 } unified_peer;
 struct frontend_network_unified {
     frontend_network_unified_options options;
@@ -25,7 +25,7 @@ struct frontend_network_unified {
     uint32_t epoch;
     uint64_t frame_before;
     unsigned calls;
-    bool closing, traveling, frame_boundary, restore_pending, imported;
+    bool closing, traveling, frame_boundary, restore_pending, lower_restored, imported;
 };
 bool frontend_network_unified_import_admit(frontend_network_unified *, const qa_net_connect *, qa_error *);
 qa_unified_bootstrap_hooks frontend_network_unified_bootstrap_hooks(frontend_network_unified *);

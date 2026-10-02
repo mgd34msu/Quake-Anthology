@@ -40,7 +40,8 @@ static bool menu_ref(qa_source_save_io *io,q3menu_context *c,menuDef_t **v)
     int32_t index=-1;
     if(io->direction==QA_SOURCE_SAVE_WRITE&&*v) { for(int i=0;i<MAX_MENUS;++i)if(*v==c->menus+i) { index=i; break; } if(index<0)return false; }
     if(!qa_source_save_i32(io,&index)||index< -1||index>=MAX_MENUS)return false;
-    if(io->direction==QA_SOURCE_SAVE_READ)*v=index<0?NULL:c->menus+index; return true;
+    if(io->direction==QA_SOURCE_SAVE_READ)*v=index<0?NULL:c->menus+index;
+    return true;
 }
 static bool handle(qa_source_save_io *io,int *v,const qa_q3_presentation_assets *a,q3p_resource_kind kind)
 { return integer(io,v)&&q3nh_handle(a,*v,kind); }
@@ -181,7 +182,8 @@ bool q3menu_checkpoint(const q3menu_context *borrowed,qa_buffer *out,qa_error *e
 }
 bool q3menu_restore(const q3menu_context *basis,qa_bytes bytes,q3menu_context **out,qa_error *e)
 {
-    if(!basis||!out||*out)return false; q3menu_context *c=q3menu_create(basis->display,basis->owner,e); if(!c)return false;
+    if(!basis||!out||*out)return false;
+    q3menu_context *c=q3menu_create(basis->display,basis->owner,e); if(!c)return false;
     c->scripts=basis->scripts; c->script_options=basis->script_options; c->random_integer=basis->random_integer;
     c->global_defines=basis->global_defines; qa_script_defines_retain(c->global_defines);
     qa_source_save_io io={0}; bool ok=qa_source_save_reader(&io,NULL,bytes,e)&&fields(&io,c)&&qa_source_save_finish(&io,NULL);

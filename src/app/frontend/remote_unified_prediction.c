@@ -1,4 +1,5 @@
 #include "remote_unified_prediction_private.h"
+#include "remote_unified_save.h"
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
@@ -9,6 +10,7 @@ typedef struct prediction_reader {
     const qa_unified_document *document;
     const qa_json_document *json;
     frontend_remote_unified *replica;
+    bool importing;
 } prediction_reader;
 
 static bool fail(qa_error *e, qa_status code, const char *message)
@@ -65,9 +67,10 @@ static bool actor(const prediction_reader *r, qa_json_id id, qa_actor_id *out, q
 {
     if (qa_json_type(r->json, id) == QA_JSON_NULL) { *out = (qa_actor_id){0}; return true; }
     uint32_t slot; int64_t generation;
-    return u32(r, get(r, id, "slot"), &slot, e) &&
-        integer(r, get(r, id, "generation"), 0, QA_UNIFIED_SAFE_INTEGER, &generation, e) &&
-        frontend_remote_unified_actor(r->replica, slot, (uint64_t)generation, out, e);
+    if (!u32(r, get(r, id, "slot"), &slot, e) ||
+        !integer(r, get(r, id, "generation"), 0, QA_UNIFIED_SAFE_INTEGER, &generation, e)) return false;
+    return r->importing ? frontend_remote_unified_actor_retained(r->replica,slot,(uint64_t)generation,out,e) :
+        frontend_remote_unified_actor(r->replica,slot,(uint64_t)generation,out,e);
 }
 static bool ground(const prediction_reader *r, qa_json_id id, qa_movement_ground *out, qa_error *e)
 {
@@ -227,7 +230,8 @@ static bool clock_read(const prediction_reader *r, qa_json_id id, qa_movement_ki
 static bool profile_read(const prediction_reader *r, qa_json_id id, qa_movement_profile *v, int *rounding, qa_error *e)
 {
     if (!kind(r,get(r,id,"kind"),&v->kind,e) || !numeric(r,get(r,id,"numeric"),v->kind,rounding,e)) return false;
-    const qa_recipe_provider *provider=frontend_remote_unified_provider(r->replica,QA_ROLE_MOVEMENT,"");
+    const qa_recipe_provider *provider=r->importing ? frontend_remote_unified_provider_published(r->replica,QA_ROLE_MOVEMENT,"") :
+        frontend_remote_unified_provider(r->replica,QA_ROLE_MOVEMENT,"");
     if (!provider || !equal(r,get(r,id,"id"),provider->selection.instance))
         return fail(e,QA_ERROR_FORMAT,"Prediction profile differs from its actual received player movement provider");
     if (!clock_read(r,get(r,id,"clock"),v->kind,&provider->selection.clock,e)) return false;
@@ -295,7 +299,8 @@ static bool scene_read(const prediction_reader *r, qa_json_id array, qa_world *s
         qa_actor_id id; qa_saved_actor_id wire; qa_body_state state={0}; qa_actor_collision collision={0}; qa_body_link_state link={.linked=true}; int64_t count;
         if (!actor(r,get(r,body,"actor"),&id,e) || !id.registry ||
             !frontend_remote_unified_wire_actor(r->replica,id,&wire) ||
-            !(frontend_remote_unified_actor_present(r->replica,wire.slot,wire.generation) ||
+            !((r->importing ? frontend_remote_unified_actor_published(r->replica,wire.slot,wire.generation) :
+                frontend_remote_unified_actor_present(r->replica,wire.slot,wire.generation)) ||
                 fail(e,QA_ERROR_FORMAT,"Prediction collision body lacks its received live actor metadata")) ||
             !vector(r,get(r,value,"origin"),&state.origin,e) || !vector(r,get(r,value,"angles"),&state.angles,e) ||
             !vector(r,get(r,value,"velocity"),&state.velocity,e) || !bounds(r,get(r,value,"bounds"),&state.bounds,e) ||
@@ -332,17 +337,19 @@ static bool scene_read(const prediction_reader *r, qa_json_id array, qa_world *s
 }
 static bool current(const frontend_remote_unified_prediction *p, qa_error *e)
 {
-    if(!p || !frontend_remote_unified_current(p->replica,e) || frontend_remote_unified_recipe(p->replica)!=p->recipe ||
+    if(!p || !(p->importing ? frontend_remote_unified_checkpoint_current(p->replica,e) :
+        frontend_remote_unified_current(p->replica,e)) || frontend_remote_unified_recipe(p->replica)!=p->recipe ||
         frontend_remote_unified_registry(p->replica)!=p->registry || frontend_remote_unified_epoch(p->replica)!=p->epoch ||
         qa_executable_recipe_geometry(p->recipe)!=p->geometry)
         return fail(e,QA_ERROR_ARGUMENT,"Private prediction changed its actual replica, recipe, registry or epoch");
     if(p->received && fegetround()!=p->rounding) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction changed its admitted rounding environment");
     return true;
 }
-bool frontend_remote_unified_prediction_create(frontend_remote_unified *replica,
+static bool create(frontend_remote_unified *replica,bool importing,
     frontend_remote_unified_prediction **out, qa_error *e)
 {
-    if(!replica || !out || *out || !frontend_remote_unified_current(replica,e)) return false;
+    if(!replica || !out || *out || !(importing ? frontend_remote_unified_checkpoint_current(replica,e) :
+        frontend_remote_unified_current(replica,e))) return false;
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(replica);
     qa_actor_registry *registry=frontend_remote_unified_registry(replica);
     qa_collision_geometry *geometry=qa_executable_recipe_geometry(recipe);
@@ -350,15 +357,21 @@ bool frontend_remote_unified_prediction_create(frontend_remote_unified *replica,
     frontend_remote_unified_prediction *p=calloc(1,sizeof(*p));
     if(!p) return fail(e,QA_ERROR_MEMORY,"Allocating private unified prediction owner");
     p->replica=replica; p->recipe=recipe; p->registry=registry; p->geometry=geometry;
-    p->epoch=frontend_remote_unified_epoch(replica); p->discarded=-1;
+    p->epoch=frontend_remote_unified_epoch(replica); p->discarded=-1;p->importing=importing;
     *out=p; return true;
 }
+bool frontend_remote_unified_prediction_create(frontend_remote_unified *replica,
+    frontend_remote_unified_prediction **out,qa_error *e)
+{ return create(replica,false,out,e); }
+bool frontend_prediction_import_create(frontend_remote_unified *replica,
+    frontend_remote_unified_prediction **out,qa_error *e)
+{ return frontend_remote_unified_restore_pending(replica) && create(replica,true,out,e); }
 bool frontend_remote_unified_prediction_receive(frontend_remote_unified_prediction *p,
     const qa_unified_document *document, qa_error *e)
 {
     if(!p || p->busy || !document || qa_unified_document_type(document)!=QA_UNIFIED_PREDICTION_DOCUMENT || !current(p,e)) return false;
     p->busy=true;
-    prediction_reader r={document,qa_unified_document_json(document),p->replica};
+    prediction_reader r={document,qa_unified_document_json(document),p->replica,p->importing};
     qa_json_id root=qa_unified_document_root(document);
     prediction_snapshot s={0}; qa_actor_id admitted; uint32_t source_entity; int rounding=0;
     qa_world *scene=NULL; qa_unified_document *copy=NULL;
@@ -533,16 +546,30 @@ bool frontend_remote_unified_prediction_time(const frontend_remote_unified_predi
     *out=p->command_count?fmax(p->snapshot.time_ms,p->commands[p->command_count-1].time_ms):p->snapshot.time_ms;
     return true;
 }
-bool frontend_remote_unified_prediction_snapshot(const frontend_remote_unified_prediction *p,
-    frontend_unified_prediction_view *out, qa_error *e)
+static void snapshot_read(const frontend_remote_unified_prediction *p,frontend_unified_prediction_view *out)
 {
-    if(!p || p->busy || !p->received || !out || !current(p,e)) return false;
     const prediction_snapshot *s=&p->snapshot;
     *out=(frontend_unified_prediction_view){.actor=s->input.actor,.state=s->input.state,
         .view_angles=s->angles,.view_offset=s->offset,.bounds=s->input.current_bounds,
         .view_height=s->height,.command_time_ms=s->time_ms,.sequence=s->sequence,
         .status=FRONTEND_UNIFIED_PREDICTION_UNCHANGED};
-    return true;
+}
+bool frontend_remote_unified_prediction_snapshot(const frontend_remote_unified_prediction *p,
+    frontend_unified_prediction_view *out, qa_error *e)
+{
+    if(!p || p->busy || !p->received || !out || !current(p,e)) return false;
+    snapshot_read(p,out);return true;
+}
+bool frontend_prediction_checkpoint_snapshot(const frontend_remote_unified_prediction *p,
+    frontend_unified_prediction_view *out,qa_error *e)
+{
+    if(!p || p->busy || p->importing || !p->received || !out ||
+        !frontend_remote_unified_checkpoint_current(p->replica,e) ||
+        p->recipe!=frontend_remote_unified_recipe(p->replica) ||
+        p->registry!=frontend_remote_unified_registry(p->replica) ||
+        p->epoch!=frontend_remote_unified_epoch(p->replica) ||
+        p->geometry!=qa_executable_recipe_geometry(p->recipe)) return false;
+    snapshot_read(p,out);return true;
 }
 bool frontend_remote_unified_prediction_idle(const frontend_remote_unified_prediction *p)
 { return p && !p->busy && (!p->scene || qa_world_idle(p->scene)); }

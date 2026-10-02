@@ -4,11 +4,17 @@
 
 typedef struct qa_q3_asset_model_holder {
     bool present, has_lods, owns_world, shared_parent;
+    bool source_registration, registration_bad;
+    qa_model_format source_kind;
+    uint32_t source_num_lods;
     qa_q3_presentation_provider provider;
     const qa_resource *resource, *lod_resources[3];
     const qa_model *sources[3];
     const qa_model_lod_set *lods;
     qa_scene_model *scenes[3];
+    const qa_model *source_md4;
+    const qa_resource *source_md4_resource;
+    qa_scene_model *source_md4_scene;
     qa_scene_world *world;
     uint32_t inline_model;
 } qa_q3_asset_model_holder;

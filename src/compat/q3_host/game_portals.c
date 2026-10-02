@@ -18,8 +18,10 @@ bool q3_game_portal_reference(qa_q3_host *host, uint32_t first, uint32_t second,
     const qa_bsp_view *bsp = qa_collision_bsp(geometry);
     qa_bsp_area area;
     if (!qa_bsp_read_area(bsp, first, &area, error)) return false;
+#if SIZE_MAX <= UINT32_MAX
     if (area.portals.count > SIZE_MAX / sizeof(uint32_t))
         return q3_fail(error, QA_ERROR_MEMORY, 0, "Q3 foreign area portal table is too large");
+#endif
     uint32_t *ids = area.portals.count ? malloc((size_t)area.portals.count * sizeof(*ids)) : NULL;
     if (area.portals.count && !ids) return q3_fail(error, QA_ERROR_MEMORY, 0, "Resolving Q3 foreign area portals");
     size_t count = 0;

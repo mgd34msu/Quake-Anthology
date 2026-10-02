@@ -60,7 +60,7 @@ bool q3n_media_create(const q3n_media_options *options, q3n_media **out, qa_erro
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Native Q3 media needs its actual product and registry");
     if (options->compiled_source) {
         q3n_compiled_source_view source;
-        if (options->remote_source || !q3n_compiled_source_read(options->compiled_source,&source,error) ||
+        if (options->remote_source || !q3n_compiled_source_checkpoint_read(options->compiled_source,&source,error) ||
             source.basis.product!=options->product || source.basis.assets!=options->assets)
             return q3p_fail(error,QA_ERROR_ARGUMENT,"Compiled media constructor has another actual source registry");
     } else if (options->remote_source) {

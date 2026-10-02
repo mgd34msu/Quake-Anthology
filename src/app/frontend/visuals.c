@@ -19,6 +19,7 @@
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "qa/media_library_save.h"
+#include "qa/media_library_prepare.h"
 #include <limits.h>
 
 typedef struct frontend_visual_content {
@@ -536,7 +537,8 @@ static bool optional_resource(qa_vfs *files, const char *path, qa_resource **out
     qa_error observed = {0};
     if (qa_vfs_acquire(files, path, out, NULL, &observed)) return true;
     if (observed.code == QA_ERROR_NOT_FOUND) return true;
-    if (error) *error = observed; return false;
+    if (error) *error = observed;
+    return false;
 }
 static bool q1_pair_skins(qa_vfs *files, const qa_model_replacement *pair, bool *valid, qa_error *error)
 {
@@ -566,7 +568,8 @@ static bool q1_pair_skins(qa_vfs *files, const qa_model_replacement *pair, bool 
                 qa_image_free(&decoded); qa_resource_release(resource);
                 if (!ok) {
                     if (observed.code == QA_ERROR_FORMAT) return true;
-                    if (error) *error = observed; return false;
+                    if (error) *error = observed;
+                    return false;
                 }
             }
     *valid = true; return true;
@@ -599,7 +602,8 @@ static bool replacement_read(const qa_model *native, const char *requested, int6
                 if (decoded) decoded = qa_model_replacement_init(native, &content->model, &content->animation, description, &observed);
                 if (!decoded) {
                     if (observed.code != QA_ERROR_FORMAT && observed.code != QA_ERROR_ARGUMENT) {
-                        if (error) *error = observed; ok = false;
+                        if (error) *error = observed;
+                        ok = false;
                     }
                 } else if (q2) present = true;
                 else ok = q1_pair_skins(files, description, &present, error);

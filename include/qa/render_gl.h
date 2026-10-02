@@ -40,6 +40,8 @@ bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error);
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error);
 /* Read the actual renderer-owned scalar without entering the native context. */
 bool qa_gl_gamma_read(const qa_gl_renderer *, float *, qa_error *);
+/* Pure uniform viewport observation on the actual selected draw buffer. */
+bool qa_gl_output_domain_read(const qa_gl_renderer *, qa_scene_rect, bool *, qa_error *);
 /* Retain the existing window/context and prepare its real gamma targets and
  * native presentation. Ready/publish/abort/retire use the surface ticket API;
  * failure retains any entered ticket for checked restoration and disposal. */

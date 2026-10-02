@@ -26,6 +26,7 @@ bool qa_nq_channel_ready(const qa_nq_channel *);
 bool qa_nq_channel_queue(qa_nq_channel *, qa_bytes, qa_error *);
 bool qa_nq_channel_next(qa_nq_channel *, uint64_t, bool *present, qa_bytes *, qa_error *);
 bool qa_nq_channel_unreliable(qa_nq_channel *, qa_bytes, qa_bytes *, qa_error *);
+uint32_t qa_nq_channel_unreliable_sequence(const qa_nq_channel *);
 bool qa_nq_channel_receive(qa_nq_channel *, qa_bytes, uint64_t, qa_q1_delivery *, qa_bytes *reply, qa_error *);
 bool qa_qw_channel_create(qa_q1_channel_side, uint16_t qport, size_t message_bytes,
                            uint32_t bytes_per_second, qa_qw_channel **, qa_error *);

@@ -394,6 +394,9 @@ bool qa_application_network_q2_entity_number(qa_application *app, qa_actor_owner
         if (!host->wire_engine && !application_native_q2_wire_begin(host, error)) return false;
         return application_native_q2_wire_admit(host, actor, out, error);
     }
+    if (physical && physical->kind == APPLICATION_PROVIDER_Q2 && physical->constructed && physical->attached &&
+        !physical->close_pending)
+        return qa_q2_wire_entity_number(physical->state.q2, actor, out, error);
     return application_native_q2_wire_number(engine, actor, out, error);
 }
 
@@ -410,10 +413,8 @@ bool qa_application_network_q2_event_entity(qa_application_network_q2 *owner, qa
         struct application_native_q2 *engine = physical ? physical->state.native.q2_engine : NULL;
         return application_native_q2_wire_admit(engine, actor, out, error);
     }
-    qa_q2_wire_binding binding;
     qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
-    if (!qa_q2_wire_admit_actor(game, actor, error) || !qa_q2_wire_actor(game, actor, &binding, error)) return false;
-    *out = binding.source_slot; return true;
+    return qa_q2_wire_entity_number(game, actor, out, error);
 }
 
 bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,

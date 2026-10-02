@@ -43,7 +43,8 @@ static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
             for(size_t j=1;j<item_count;++j)if((items[j].kind==QA_Q3_ITEM_POWERUP || items[j].kind==QA_Q3_ITEM_TEAM ||
                 items[j].kind==QA_Q3_ITEM_PERSISTENT) && items[j].tag==(int32_t)powerup) {
                 int32_t shader; if(!qa_q3_register_shader(d->frame->assets,items[j].icon,false,&shader,d->error) ||
-                   !q3nh_picture(d,xx,*y,cell,cell,shader))return false; xx+=right?-cell:cell; break;
+                   !q3nh_picture(d,xx,*y,cell,cell,shader))return false;
+                xx+=right?-cell:cell; break;
             }
         }
         *y+=cell;
@@ -61,7 +62,8 @@ static bool upper(q3n_hud_draw *d)
             d->frame->remote->source.publication.latest_message,d->frame->remote->snapshots.command_sequence);
         else snprintf(text,sizeof(text),"time:%i frame:%llu cmd:%i",d->frame->source.source_time_ms,
             (unsigned long long)d->frame->source.source_frame.number,c->server_command_sequence);
-        if(!q3nh_right(d,635,y+2,text,1))return false; y+=20*d->frame->preferences.text_scale;
+        if(!q3nh_right(d,635,y+2,text,1))return false;
+        y+=20*d->frame->preferences.text_scale;
     }
     if(d->settings->draw_fps) {
         q3n_hud *o=d->owner; int32_t time=o->options.milliseconds(o->options.context);
@@ -77,7 +79,8 @@ static bool upper(q3n_hud_draw *d)
     if(d->settings->draw_timer) {
         int32_t seconds=q3ne_sub(d->frame->time,c->level_start_time)/1000,minutes=seconds/60; seconds%=60;
         snprintf(text,sizeof(text),"%i:%i%i",minutes,seconds/10,seconds%10);
-        if(!q3nh_right(d,635,y+2,text,1))return false; y+=20*d->frame->preferences.text_scale;
+        if(!q3nh_right(d,635,y+2,text,1))return false;
+        y+=20*d->frame->preferences.text_scale;
     }
     if(d->settings->draw_attacker) {
         const qa_q3_player *p=q3n_frame_predicted_player(d->frame); q3n_player_feedback *g=&d->player->feedback;
@@ -127,7 +130,8 @@ static bool scores(q3n_hud_draw *d,float *y)
     }
     int32_t limit=c->game_type>=4?c->capturelimit:c->fraglimit;
     if(limit) { snprintf(text,sizeof(text),"%2i",limit); float width;
-        if(!q3nh_width(d,text,16,16,0,&width))return false; x-=width+8*d->frame->preferences.text_scale;
+        if(!q3nh_width(d,text,16,16,0,&width))return false;
+        x-=width+8*d->frame->preferences.text_scale;
         if(!q3nh_big(d,x+4,*y,text,1))return false; }
     *y=y1-8; return true;
 }
@@ -146,11 +150,13 @@ static bool powerups(q3n_hud_draw *d,float y)
         const qa_q3_item *item=NULL;
         for(size_t j=1;j<item_count;++j)if((items[j].kind==QA_Q3_ITEM_POWERUP || items[j].kind==QA_Q3_ITEM_TEAM || items[j].kind==QA_Q3_ITEM_PERSISTENT) &&
            items[j].tag==(int32_t)sorted[i]) { item=&items[j]; break; }
-        if(!item)continue; y-=48; const float red[4]={1,0.2f,0.2f,1};
+        if(!item)continue;
+        y-=48; const float red[4]={1,0.2f,0.2f,1};
         if(!q3nh_color(d,red) || !q3nh_field(d,528,y,2,remaining[i]/1000))return false;
         float color[4],*modulation=NULL;
         if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=q3ne_div((float)remaining[i],1000); fraction=q3ne_add(fraction,-(float)q3ne_int(fraction));
-            for(unsigned j=0;j<4;++j)color[j]=fraction; modulation=color; }
+            for(unsigned j=0;j<4;++j)color[j]=fraction;
+            modulation=color; }
         if(!q3nh_color(d,modulation))return false;
         float size=48;
         if(!d->frame->preferences.reduced_flashes && g->powerup_active==(int32_t)sorted[i] && q3ne_sub(d->frame->time,g->powerup_time)<200) {
@@ -164,7 +170,8 @@ static bool powerups(q3n_hud_draw *d,float y)
 }
 static bool pickup(q3n_hud_draw *d,float y)
 {
-    if(q3n_frame_snapshot_player(d->frame)->stats[0]<=0)return true; y-=48;
+    if(q3n_frame_snapshot_player(d->frame)->stats[0]<=0)return true;
+    y-=48;
     const q3n_event_state *g=q3n_events_state(d->frame->events); float color[4];
     if(!g->item_pickup || !q3nh_fade(d->frame->time,g->item_pickup_time,3000,color))return true;
     size_t count; const qa_q3_item *items=qa_q3_items(d->owner->product,&count);
@@ -181,7 +188,8 @@ bool q3nh_corners(q3n_hud_draw *d)
     q3nh_anchor(d,640,480);
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float y=432;
     if(c->game_type>=3 && d->settings->team_overlay==2 && !team_overlay(d,&y,true,false))return false;
-    if(!scores(d,&y) || !powerups(d,y))return false; y=432; q3nh_anchor(d,0,480);
+    if(!scores(d,&y) || !powerups(d,y))return false;
+    y=432; q3nh_anchor(d,0,480);
     if(c->game_type>=3 && d->settings->team_overlay==3 && !team_overlay(d,&y,false,false))return false;
     return pickup(d,y);
 }

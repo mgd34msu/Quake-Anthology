@@ -9,7 +9,7 @@ static bool reader_bound(const q3n_server_command_options *options, qa_error *e)
     if(options->compiled_source) {
         q3n_compiled_source_view source;
         return !options->client && !options->reader && !options->remote_client && !options->remote_source &&
-            q3n_compiled_source_read(options->compiled_source,&source,e) && source.basis.application==options->application &&
+            q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) && source.basis.application==options->application &&
             source.basis.content==options->content && source.basis.assets==options->assets && source.basis.product==options->product &&
             source.basis.publication==options->publication_generation && source.basis.map_revision==options->map_revision;
     }
@@ -45,7 +45,7 @@ static bool reached(const q3n_server_commands *o, qa_error *e)
 {
     if(o->options.compiled_source) {
         q3n_compiled_source_view source;
-        return !o->initialized || o->closed || (q3n_compiled_source_read(o->options.compiled_source,&source,e) &&
+        return !o->initialized || o->closed || (q3n_compiled_source_checkpoint_read(o->options.compiled_source,&source,e) &&
             source.basis.reached_command==o->state.server_command_sequence);
     }
     if (o->options.remote_source) {

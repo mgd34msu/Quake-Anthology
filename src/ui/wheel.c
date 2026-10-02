@@ -266,8 +266,8 @@ static bool draw_text(wheel_draw *d, const char *text, float x, float y, qa_scen
         for (size_t i=0;i<line->glyph_count;++i) glyphs[line->first_glyph+i].rect.x-=line->width*.5f;
     }
     qa_font_draw_options draw = {.seat = d->options->fonts.seat, .target = d->options->viewport,
-        .origin = {d->x + x * d->scale - d->options->viewport.x,
-                   d->y + y * d->scale - d->options->viewport.y},
+        .origin = {d->x + x * d->scale - (float)d->options->viewport.x,
+                   d->y + y * d->scale - (float)d->options->viewport.y},
         .space = QA_FONT_PIXELS, .shadow_offset = d->scale};
     return qa_font_draw_layout(d->frame, &layout, &draw, d->error);
 }
@@ -282,12 +282,12 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
         !color_valid(options->disabled) || !color_valid(options->panel))
         return wheel_fail(error, "invalid wheel drawing resources");
     if (!begin(w, error)) return false;
-    float base = fminf(options->viewport.width / 640.f, options->viewport.height / 480.f);
+    float base = fminf((float)options->viewport.width / 640.f, (float)options->viewport.height / 480.f);
     if (base <= 0) { w->busy = false; return true; }
     wheel_draw d = {.options = options, .frame = frame, .error = error,
         .scale = base * fminf(1, options->scale)};
-    d.x = options->viewport.x + options->viewport.width / 2.f - 320 * d.scale;
-    d.y = options->viewport.y + options->viewport.height / 2.f - 240 * d.scale;
+    d.x = (float)options->viewport.x + (float)options->viewport.width / 2.f - 320 * d.scale;
+    d.y = (float)options->viewport.y + (float)options->viewport.height / 2.f - 240 * d.scale;
     bool ok = true;
     if (w->opacity > 0 || w->open) {
         ok = observe(w, w->mode, false, error);
@@ -317,8 +317,8 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
     if (ok && w->carousel == CAROUSEL_OPEN) {
         ok = observe(w, QA_HUD_WHEEL_WEAPONS, true, error);
         d.scale = base * options->scale;
-        d.x = options->viewport.x + options->viewport.width / 2.f - 320 * d.scale;
-        d.y = options->viewport.y + options->viewport.height - 480 * d.scale;
+        d.x = (float)options->viewport.x + (float)options->viewport.width / 2.f - 320 * d.scale;
+        d.y = (float)options->viewport.y + (float)options->viewport.height - 480 * d.scale;
         float width = fminf(48, 600.f / (float)(w->count ? w->count : 1));
         float start = 320 - (float)w->count * width / 2;
         for (size_t i = 0; ok && i < w->count; ++i) {

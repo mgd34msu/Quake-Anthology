@@ -335,7 +335,8 @@ q3_service_result q3_bot_navigation(q3_call *call, int32_t *result, qa_error *er
         uint32_t area;
         ok = q3_vector(call, call->arguments[0], &point, error) &&
              qa_bot_navigation_point(navigation, point, &area, error);
-        if (ok) *result = (int32_t)area; break;
+        if (ok) *result = (int32_t)area;
+        break;
     }
     case 309:
         ok = q3_vector(call, call->arguments[0], &point, error) &&
@@ -353,13 +354,15 @@ q3_service_result q3_bot_navigation(q3_call *call, int32_t *result, qa_error *er
         qa_bot_nav_route route;
         ok = (!query.has_origin || q3_vector(call, call->arguments[1], &query.origin, error)) &&
              qa_bot_navigation_route(navigation, &query, &route, error);
-        if (ok) *result = (int32_t)route.travel_time; break;
+        if (ok) *result = (int32_t)route.travel_time;
+        break;
     }
     case 317: {
         bool swimming;
         ok = q3_vector(call, call->arguments[0], &point, error) &&
              qa_bot_navigation_swimming(navigation, point, &swimming, error);
-        if (ok) *result = swimming; break;
+        if (ok) *result = swimming;
+        break;
     }
     case 575: ok = alternatives(call, navigation, result, error); break;
     case 576: ok = route_prediction(call, navigation, result, error); break;

@@ -7,12 +7,17 @@
 #include "shared_settings.h"
 #include "shared_publication.h"
 #include "network_config.h"
+#include "seat_save.h"
+#include "shared_register.h"
+#include "legacy_render_policy.h"
 #include "save_private.h"
 #include "qa/catalog_save.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/cvars_save.h"
 #include "qa/source_frame_time.h"
+#include "qa/application_native_q3_cvars.h"
+#include "qa/q3_product_policy.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +102,7 @@ static qa_cvars *route(void *context,const qa_command_context *command,const cha
 {
     frontend_neutral_config *row=context;
     if (!active(row,command) || !name) return NULL;
+    if (frontend_legacy_source_owns(row->client,name)) return row->client;
     qa_cvars *engine=qa_application_cvars(row->owner->frontend->application);
     frontend_shared_settings *shared=row->preparation?frontend_config_store_shared(row->owner->manager,
         row->owner->frontend->application,NULL):NULL;
@@ -272,7 +278,7 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
 {
     frontend_neutral_config *row=context; qa_frontend *f=row->owner->frontend;
     if (!selected || !client || !command || row->metadata || row->imported ||
-        command->origin!=QA_COMMAND_SEAT || command->dialect>QA_CONSOLE_Q2_RERELEASE ||
+        command->origin!=QA_COMMAND_SEAT || command->dialect>QA_CONSOLE_Q3 ||
         qa_cvars_dialect(client)!=command->dialect ||
         !qa_application_command_context_active(f->application,command) ||
         row->physical_seat>=f->options.seats || !f->seats)
@@ -299,6 +305,21 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     qa_catalog *catalog=qa_launch_instance_catalog(selected);
     const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
     if (!product) return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT lost its actual catalog profile");
+    if (product->family==QA_GAME_Q2 && !frontend_source_q2_settings_register(selected,client,command,e)) return false;
+    if (row->dialect==QA_CONSOLE_Q3) {
+        qa_q3_product_policy policy;
+        if (product->family!=QA_GAME_Q3 || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
+            !qa_application_q3_product_policy_read(f->application,&policy) || !policy.restriction_resolved ||
+            policy.filesystem_restricted!=qa_catalog_q3_restricted(catalog) ||
+            !qa_q3_product_policy_register_source(&policy,client,command->owner,e))
+            return fail(e,QA_ERROR_ARGUMENT,"Neutral Q3 CLIENT needs its retained compiled profile and resolved product policy");
+        qa_q3_product q3=product->campaign && !strcmp(product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+        for (size_t i=0;i<qa_native_q3_cvar_definition_count(q3);++i) {
+            qa_native_q3_cvar_definition value;
+            if (!qa_native_q3_cvar_definition_at(q3,i,&value) ||
+                !qa_cvars_register(client,value.name,value.reset,value.flags,command->owner,NULL,e)) return false;
+        }
+    }
     row->files=frontend_config_files_create(catalog,product->id,
         frontend_global_settings_storage_user_store(f->global_settings_storage),
         frontend_global_settings_storage_device_store(f->global_settings_storage),e);
@@ -368,12 +389,6 @@ static bool install(void *context,const qa_application_client_source *source,boo
             !qa_settings_load_cvars(input_store,mouse_owner,3,row->dialect,&row->mouse_archive,e) ||
             !qa_settings_load_cvars(input_store,movement_owner,2,(qa_console_dialect)row->kind,&row->movement_archive,e) ||
             !qa_settings_load_seat(input_store,path,&row->settings,&row->found,e)) return false;
-        frontend_startup_config_options options={.command=row->command,
-            .has_mod=qa_catalog_configuration_base(qa_launch_instance_catalog(held),held->selection.product)!=held->selection.product,
-            .context=row,.read=script_read,.release=script_release,
-            .apply_defaults=defaults,.apply_archive=archive,.apply_launch=launch,.replay_startup_variables=replay};
-        row->phase=frontend_startup_config_create(&options,e);
-        if (!row->phase) return false;
     }
     row->bindings=qa_input_console_create(&(qa_input_console_options){.console=source->context.console,
         .owner=source->context.receiver,.user=row,.seat=binding_seat,.print=binding_print},e);
@@ -400,7 +415,9 @@ static bool advance_preparation(void *context,qa_application_client_preparation 
         *complete=done; return true;
     }
     if (qa_application_client_prepare_entered(preparation,QA_CLIENT_PREPARE_RESOURCES)) {
-        *complete=frontend_config_store_client_settings_prepare(row->owner->manager,preparation,e); return *complete;
+        *complete=frontend_config_store_client_settings_prepare(row->owner->manager,preparation,e) &&
+            frontend_seat_client_recipient_ready(f,row->physical_seat,&row->source,e);
+        return *complete;
     }
     if (!qa_application_client_prepare_entered(preparation,QA_CLIENT_PREPARE_CONFIGURATION))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral programme is outside its actual CLIENT configuration phase");
@@ -411,6 +428,17 @@ static bool advance_preparation(void *context,qa_application_client_preparation 
     if (!row->variables_seeded) {
         if (row->startup_owned && !qa_application_client_prepare_initial(preparation,e)) return false;
         row->variables_seeded=true;
+    }
+    if (!row->phase) {
+        const qa_launch_instance *held=descriptor(row);
+        bool safe=false;
+        if (row->startup_owned && !qa_application_client_prepare_safe_mode(preparation,&safe,e)) return false;
+        frontend_startup_config_options options={.command=row->command,.safe_mode=safe,
+            .has_mod=qa_catalog_configuration_base(qa_launch_instance_catalog(held),held->selection.product)!=held->selection.product,
+            .context=row,.read=script_read,.release=script_release,
+            .apply_defaults=defaults,.apply_archive=archive,.apply_launch=launch,.replay_startup_variables=replay};
+        row->phase=frontend_startup_config_create(&options,e);
+        if (!row->phase) return false;
     }
     bool done=false; row->running=true;
     bool ok=frontend_startup_config_advance(row->phase,row->source.context.console,&done,e);
@@ -431,6 +459,7 @@ static bool publication_ready(void *context,const qa_application_client_preparat
     const frontend_neutral_config *row=context; const qa_frontend *f=row->owner->frontend;
     return row->preparation==preparation && row->configuration_done && !row->running && !row->phase && row->input &&
         qa_input_seat_configuration_owned_is(f->seats[row->physical_seat].input,row->input) &&
+        frontend_seat_client_recipient_ready_is(f,row->physical_seat,&row->source) &&
         (!row->startup_owned || qa_application_client_prepare_startup_ready(preparation)) &&
         frontend_config_store_client_settings_ready_is(row->owner->manager,preparation);
 }
@@ -439,6 +468,7 @@ static void publication_consume(void *context,qa_application_client_preparation 
     frontend_neutral_config *row=context; qa_frontend *f=row->owner->frontend;
     frontend_config_store_client_settings_consume(row->owner->manager,preparation);
     qa_input_seat_configuration_publish(f->seats[row->physical_seat].input,row->input);
+    frontend_seat_client_recipient_publish(f,row->physical_seat,&row->source);
     if (row->startup_owned) qa_application_client_prepare_startup_publish(preparation);
     row->published=true;
 }
@@ -446,9 +476,26 @@ static bool cleanup_preparation(void *context,qa_application_client_preparation 
 {
     frontend_neutral_config *row=context;
     if (!row->published) {
-        *complete=frontend_config_store_client_settings_abort(row->owner->manager,preparation,e); return *complete;
+        return frontend_config_store_client_settings_abort(row->owner->manager,preparation,complete,e);
     }
     return frontend_config_store_client_settings_finish(row->owner->manager,preparation,complete,e);
+}
+static bool cancel_preparation(void *context,qa_application_client_preparation *preparation,bool *complete,qa_error *e)
+{
+    frontend_neutral_config *row=context;
+    return frontend_config_store_client_settings_cancel(row->owner->manager,preparation,complete,e);
+}
+static bool configuration_advance(void *context,const qa_application_client_source *source,
+    qa_application_client_preparation *preparation,bool *complete,qa_error *e)
+{
+    frontend_neutral_config *row=context;
+    if (complete) *complete=false;
+    if (!row || !source || !complete || row->preparation!=preparation || row->running || row->retiring ||
+        source->context.console!=row->source.context.console || source->context.cvars!=row->client ||
+        !qa_application_client_current(row->owner->frontend->application,source) ||
+        !qa_application_client_prepare_entered(preparation,QA_CLIENT_PREPARE_CONFIGURATION))
+        return fail(e,QA_ERROR_ARGUMENT,"Neutral configuration step requires its exact entered CLIENT programme");
+    return advance_preparation(row,preparation,complete,e);
 }
 static bool configure(void *context,const qa_application_client_source *source,bool *complete,qa_error *e)
 {
@@ -487,12 +534,20 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
         source->context.cvars!=row->client)) || (row->files && !frontend_config_files_idle(row->files)))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral retirement still retains its actual configuration programme");
     if (row->preparation) {
+        if (qa_application_client_prepare_phase_is(row->preparation,QA_CLIENT_PREPARE_RELEASE)) {
+            bool complete=false;
+            if (!qa_application_client_prepare_cancel_advance(row->preparation,cancel_preparation,row,&complete,e)) {
+                if (!qa_application_client_prepare_abort(row->preparation,e)) return false;
+            } else if (!complete) return false;
+        }
         if (!qa_application_client_prepare_phase_is(row->preparation,QA_CLIENT_PREPARE_CLEANUP) &&
             !qa_application_client_prepare_abort(row->preparation,e)) return false;
         bool complete=false;
         if (!qa_application_client_prepare_finish(&row->preparation,cleanup_preparation,row,&complete,e) || !complete) return false;
     }
-    if (!qa_input_console_destroy(row->bindings,e)) return false;
+    if (row->bindings && !qa_console_idle(row->source.context.console))
+        return fail(e,QA_ERROR_ARGUMENT,"Neutral input handlers still have an entered physical console");
+    qa_input_console_destroy(row->bindings);
     row->bindings=NULL;
     if (row->write_registered) qa_console_unregister(row->source.context.console,"writeconfig",row->command.owner);
     if (row->dump_registered) qa_console_unregister(row->source.context.console,"condump",row->command.owner);
@@ -565,6 +620,7 @@ bool frontend_neutral_config_options(frontend_neutral_configs *owner,uint32_t ph
     row->movement_selected=true;
     *out=(frontend_client_source_options){.physical_seat=physical,.context=row,
         .initialize=initialize,.configure=configure,.install=install,.print=print,
+        .configuration_advance=configuration_advance,
         .allow_command=allow,.cvar_owner=route,.visible_cvars=visible,.cvar_edit=edit,
         .read_script=read_script,.release_script=script_release,.script_complete=script_complete,
         .retire=retire,.released=released};
@@ -713,6 +769,20 @@ bool frontend_neutral_config_client_input(const frontend_neutral_configs *owner,
     if (!frontend_seat_context_ready((void *)physical,ordinal,&command,e)) return false;
     *out=physical->input; return true;
 }
+bool frontend_neutral_config_client_controller(const frontend_neutral_configs *owner,
+    const qa_application_client_preparation *preparation,uint32_t ordinal,qa_controller_selection *out,qa_error *e)
+{
+    qa_input_seat *dictionary=NULL;
+    if (!out || !frontend_neutral_config_client_input(owner,preparation,ordinal,&dictionary,e)) return false;
+    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    const frontend_neutral_config *row=owner->rows;
+    while (row && (!row->attached || row->source.context.lifetime!=source->context.lifetime)) row=row->next;
+    if (ordinal==row->physical_seat && !row->published && row->found) {
+        *out=row->settings.controller; return true;
+    }
+    return (owner->frontend->input && qa_input_platform_selection(owner->frontend->input,ordinal,out)) ||
+        fail(e,QA_ERROR_ARGUMENT,"CLIENT controller selection has no actual retained platform receipt");
+}
 void frontend_neutral_configs_rebind(frontend_neutral_configs *owner,qa_frontend *f,frontend_config_store *manager)
 { if (owner && f && manager) { owner->frontend=f; owner->manager=manager; } }
 bool frontend_neutral_configs_save(frontend_neutral_configs *owner,qa_error *e)
@@ -813,7 +883,7 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
     qa_sha256_digest identity=writing?held->identity:(qa_sha256_digest){0};
     uint32_t dialect=row->dialect,movement=row->kind,logical=writing?row->command.seat:0;
     bool ok=frontend_save_text(io,&name) && name && *name &&
-        qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q2_RERELEASE &&
+        qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
         qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 && qa_source_save_u32(io,&logical) &&
         qa_source_save_u32(io,&row->physical_seat) && row->physical_seat<row->owner->frontend->options.seats &&
         qa_source_save_u64(io,&row->namespace_revision) && row->namespace_revision &&

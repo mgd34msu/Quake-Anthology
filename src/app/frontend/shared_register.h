@@ -9,6 +9,11 @@
 bool frontend_shared_register(qa_cvars *,const qa_console_dialect *,
     qa_audio_output_format,float gamma,qa_error *);
 bool frontend_shared_menu_track_valid(const char *);
+/* Called by the real CLIENT initializer on its new physical heap. The retained
+ * normalized profile selects Classic/Rerelease defaults; cold import keeps
+ * the already imported private records. */
+bool frontend_source_q2_settings_register(const qa_launch_instance *,qa_cvars *,
+    const qa_command_context *,qa_error *);
 /* The actual first/restarted physical Source renderer applies R_Register
  * latches and near-clip initialization before consuming its policy rows.
  * Imported renderers retain their decoded continuation. */

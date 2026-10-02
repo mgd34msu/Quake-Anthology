@@ -216,12 +216,8 @@ bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
     return true;
 }
 
-bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
+static void retire_registry_map(qa_q3_presentation_assets *assets)
 {
-    if (!p || p->busy || p->options.assets->busy || p->options.assets->retired || !q3p_assets_children_idle(p->options.assets))
-        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 map presentation is executing");
-    if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) return false;
-    qa_q3_presentation_assets *assets = p->options.assets;
     for (size_t i = 0; i < assets->model_count; ++i) {
         q3p_model *model = assets->models[i];
         if (!model || !model->world || model->owns_world) continue;
@@ -240,27 +236,94 @@ bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
         }
     }
     assets->world = NULL; assets->geometry = NULL;
+}
+static void retire_presentation_map(qa_q3_presentation *p)
+{
     p->world = NULL; p->geometry = NULL; p->entity_text = (qa_bytes){0};
     p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
     p->world_loaded = p->material_view_valid = false;
+}
+bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
+{
+    if (!p || p->busy || p->options.assets->busy || p->options.assets->retired || !q3p_assets_children_idle(p->options.assets))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 map presentation is executing");
+    if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) return false;
+    retire_registry_map(p->options.assets); retire_presentation_map(p);
     return true;
 }
-
+struct qa_q3_registry_retirement {
+    qa_q3_presentation *presentation;
+    qa_q3_presentation_assets *prior, *next;
+    qa_common_cursor cursor;
+    qa_scene_world *world;
+    qa_collision_geometry *geometry;
+    qa_bytes entities;
+};
+bool qa_q3_presentation_retire_world_prepare(qa_q3_presentation *p,
+    qa_q3_registry_retirement **out, qa_error *error)
+{
+    if (!out || *out || !qa_q3_presentation_idle(p))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Retained map retirement requires its actual idle presentation");
+    qa_q3_registry_retirement *prepared = calloc(1, sizeof(*prepared));
+    if (!prepared) return q3p_fail(error, QA_ERROR_MEMORY, "Preparing actual registry map retirement");
+    prepared->presentation = p; prepared->prior = p->options.assets;
+    if (!qa_common_cursor_init(&prepared->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error) ||
+        !q3p_assets_fork(prepared->prior, &prepared->next, error)) {
+        free(prepared); return false;
+    }
+    if (!qa_q3_assets_capture_begin(prepared->prior, error)) {
+        qa_q3_presentation_assets_destroy(prepared->next); free(prepared); return false;
+    }
+    retire_registry_map(prepared->next);
+    prepared->world = p->world; prepared->geometry = p->geometry; prepared->entities = p->entity_text;
+    *out = prepared; return true;
+}
+bool qa_q3_presentation_retire_world_ready(const qa_q3_registry_retirement *prepared, qa_error *error)
+{
+    const qa_q3_presentation *p = prepared ? prepared->presentation : NULL;
+    const qa_q3_presentation_assets *prior = prepared ? prepared->prior : NULL;
+    if (!p || p->busy || (p->frame && p->frame->source_pending) || !prior || !prepared->next ||
+        p->options.assets != prior || !prior->capturing || prior->codec_busy || prior->busy != 1 ||
+        prior->retired || prepared->next->parent != prior || !qa_q3_assets_idle(prepared->next) ||
+        p->world != prepared->world || p->geometry != prepared->geometry ||
+        p->entity_text.data != prepared->entities.data || p->entity_text.size != prepared->entities.size)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Prepared registry retirement lost its actual held parent");
+    return true;
+}
+bool qa_q3_presentation_retire_world_dispose(qa_q3_registry_retirement **slot, qa_error *error)
+{
+    if (!slot) return q3p_fail(error, QA_ERROR_ARGUMENT, "Registry retirement disposal requires its actual owner slot");
+    if (!*slot) return true;
+    qa_q3_registry_retirement *prepared = *slot;
+    if (!prepared->prior->capturing || prepared->prior->codec_busy || prepared->prior->busy != 1 ||
+        !qa_q3_assets_idle(prepared->next))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Prepared registry retirement retains active children or codec work");
+    qa_q3_assets_capture_end(prepared->prior);
+    qa_q3_presentation_assets_destroy(prepared->next);
+    free(prepared); *slot = NULL; return true;
+}
+void qa_q3_presentation_retire_world_commit(qa_q3_registry_retirement **slot,
+    qa_q3_presentation_assets **out)
+{
+    if (!slot || !*slot || !out || *out) return;
+    qa_q3_registry_retirement *prepared = *slot;
+    qa_q3_presentation *p = prepared->presentation;
+    p->options.assets = prepared->next;
+    ++prepared->next->users;
+    p->cursor = prepared->cursor; retire_presentation_map(p);
+    prepared->prior->retired = true;
+    qa_q3_assets_capture_end(prepared->prior);
+    qa_q3_assets_release(prepared->prior);
+    *out = prepared->next; free(prepared); *slot = NULL;
+}
 bool qa_q3_presentation_retire_world_retained(qa_q3_presentation *p,
     qa_q3_presentation_assets **out, qa_error *error)
 {
-    if (!p || p->busy || !out || *out || !qa_q3_assets_idle(p->options.assets))
-        return q3p_fail(error, QA_ERROR_ARGUMENT, "Retained map retirement requires its actual idle presentation");
-    qa_q3_presentation_assets *prior = p->options.assets, *next = NULL;
-    if (!q3p_assets_fork(prior, &next, error)) return false;
-    p->options.assets = next;
-    if (!qa_q3_presentation_retire_world(p, error)) {
-        p->options.assets = prior; qa_q3_presentation_assets_destroy(next); return false;
-    }
-    ++next->users;
-    prior->retired = true;
-    qa_q3_assets_release(prior);
-    *out = next; return true;
+    if (!out || *out) return q3p_fail(error, QA_ERROR_ARGUMENT, "Retained retirement requires empty registry output");
+    qa_q3_registry_retirement *prepared = NULL;
+    if (!qa_q3_presentation_retire_world_prepare(p, &prepared, error)) return false;
+    /* The immediate path runs no dispatch between preparation and commit. */
+    qa_q3_presentation_retire_world_commit(&prepared, out); return true;
 }
 
 bool qa_q3_presentation_load_world(qa_q3_presentation *p, const char *path, qa_error *error)

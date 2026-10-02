@@ -68,7 +68,7 @@ bool q3n_view_create_compiled(const q3n_view_options *options,q3n_view **out,qa_
     q3n_compiled_source_view source;
     if (!options || !out || *out || !options->assets || options->source || options->client || options->remote_client ||
         !options->compiled_source || !options->set_view_size || !options->set_third_person_angle_value || !options->print ||
-        !q3n_compiled_source_read(options->compiled_source,&source,e) || source.basis.assets!=options->assets ||
+        !q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) || source.basis.assets!=options->assets ||
         source.basis.application!=options->application || source.basis.seat!=options->seat)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled view requires its real CLIENT declaration and cvar owner");
     q3n_view *o=calloc(1,sizeof(*o));

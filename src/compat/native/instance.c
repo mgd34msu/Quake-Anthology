@@ -202,6 +202,9 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
 {
     if (!module || !options || !options->process || !out || *out)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process creation needs its actual graph and empty owner");
+    if (options->process->defer_host_restore &&
+        (!options->process->continuation.size || options->process->previous))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "deferred host construction requires an independent saved process");
     if ((module->info.profile == QA_NATIVE_Q2_GAME_API2023 ||
          module->info.profile == QA_NATIVE_Q2_CGAME_API2023) &&
         (!options->tick_rate || !isfinite(options->frame_seconds) || options->frame_seconds <= 0 ||
@@ -222,7 +225,10 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     instance->options.process = NULL;
     instance->options.declaration = NULL; instance->options.declaration_digest = NULL;
     instance->options.dependencies = NULL; instance->options.dependency_count = 0;
-    if (okay && options->process->continuation.size) {
+    if (okay && options->process->continuation.size && options->process->defer_host_restore) {
+        instance->process_host_pending = true;
+    }
+    if (okay && options->process->continuation.size && !instance->process_host_pending) {
         /* The actual host constructor owns this output slot. Publish the
          * provisional address solely to its synchronous HOST decoder so its
          * genuine actor/resource bindings can qualify the saved source state. */
@@ -231,7 +237,7 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
             (qa_bytes){instance->process_host.data, instance->process_host.size}, error) &&
             native_process_publish(instance, options->process->previous, error);
     }
-    qa_buffer_free(&instance->process_host);
+    if (!instance->process_host_pending) qa_buffer_free(&instance->process_host);
     if (okay && report_latched(instance, error)) { *out = instance; return true; }
     instance->lifecycle = QA_NATIVE_SHUT_DOWN;
     qa_error cleanup = {0};
@@ -376,7 +382,7 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
                            "active native instance cannot be destroyed");
     bool completed = true;
     qa_error first = {0}, current = {0};
-    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !qa_native_terminal(instance) && !qa_native_shutdown(instance, &current)) {
+    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !instance->process_host_pending && !qa_native_terminal(instance) && !qa_native_shutdown(instance, &current)) {
         completed = false; first = current;
     }
     instance->destroying = true;
@@ -455,7 +461,7 @@ const qa_native_signature *qa_native_entry_signature(const qa_native_instance *i
 bool native_call_binding(qa_native_instance *instance, const native_entry_binding *binding,
                          const qa_native_value *arguments, size_t count, qa_native_value *result,
                          qa_error *error) {
-    if (!instance || !binding || !binding->address)
+    if (!instance || !binding || !binding->address || instance->process_host_pending)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native entry binding is required");
     bool outer = instance->active_depth == 0;
     if (outer) {

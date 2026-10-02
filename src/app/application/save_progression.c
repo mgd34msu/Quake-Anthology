@@ -2,6 +2,7 @@
 #include "save_progression.h"
 #include "rankings.h"
 #include "qa/source_save.h"
+#include <string.h>
 
 typedef struct progression_record {
     bool rankings_present, progress_present, configured;

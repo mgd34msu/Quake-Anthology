@@ -20,13 +20,20 @@ typedef struct instance_binding {
     instance_owner *owner;
     qa_launch_instance view;
 } instance_binding;
+typedef struct resource_binding {
+    qa_launch_resource view;
+    qa_vfs *content;
+    qa_product_id origin_product;
+    qa_mount_id catalog_mount;
+    qa_vfs_acquisition acquisition;
+} resource_binding;
 struct qa_launch_snapshot {
     size_t references;
     qa_launch_draft *draft;
     qa_vfs *mounts;
     instance_binding *instances;
     size_t instance_count;
-    qa_launch_resource *resources;
+    resource_binding *resources;
     size_t resource_count, resource_capacity;
 };
 struct qa_configuration {
@@ -53,21 +60,7 @@ static bool error_message(qa_error *error, const char *message)
 
 static bool retain_acquisition(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
 {
-    if (!source || !source->mount || !source->resource_id || !source->path || !source->lookup_path)
-        return error_message(error, "Restored artifact lacks its true retained acquisition");
-    *out = (qa_vfs_acquisition){.mount = source->mount, .resource_id = source->resource_id};
-    const char *values[] = {source->path, source->lookup_path, source->link_source, source->link_target};
-    char **targets[] = {&out->path, &out->lookup_path, &out->link_source, &out->link_target};
-    for (size_t i = 0; i < 4; ++i) if (values[i]) {
-        size_t length = strlen(values[i]);
-        *targets[i] = malloc(length + 1);
-        if (!*targets[i]) {
-            qa_vfs_acquisition_dispose(out);
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual restored artifact receipt"); return false;
-        }
-        memcpy(*targets[i], values[i], length + 1);
-    }
-    return true;
+    return qa_vfs_acquisition_copy(source, out, error);
 }
 
 static void owner_dispose(instance_owner *owner)
@@ -134,7 +127,11 @@ void qa_launch_snapshot_release(const qa_launch_snapshot *snapshot)
     qa_launch_snapshot *s = (qa_launch_snapshot *)snapshot;
     if (!s || --s->references) return;
     for (size_t i = s->instance_count; i-- > 0;) owner_release(s->instances[i].owner);
-    for (size_t i = 0; i < s->resource_count; ++i) qa_resource_release((qa_resource *)s->resources[i].resource);
+    for (size_t i = 0; i < s->resource_count; ++i) {
+        qa_resource_release((qa_resource *)s->resources[i].view.resource);
+        qa_vfs_acquisition_dispose(&s->resources[i].acquisition);
+        qa_vfs_destroy(s->resources[i].content);
+    }
     free(s->instances); free(s->resources); qa_vfs_destroy(s->mounts);
     qa_launch_draft_destroy(s->draft); free(s);
 }
@@ -161,7 +158,15 @@ const qa_launch_instance *qa_launch_snapshot_find(const qa_launch_snapshot *s, c
 }
 size_t qa_launch_snapshot_resource_count(const qa_launch_snapshot *s) { return s ? s->resource_count : 0; }
 const qa_launch_resource *qa_launch_snapshot_resource(const qa_launch_snapshot *s, size_t i)
-{ return s && i < s->resource_count ? &s->resources[i] : NULL; }
+{ return s && i < s->resource_count ? &s->resources[i].view : NULL; }
+bool qa_launch_snapshot_resource_origin(const qa_launch_snapshot *s, size_t i, qa_launch_resource_origin *out)
+{
+    if (!s || !out || i >= s->resource_count) return false;
+    const resource_binding *row = &s->resources[i];
+    *out = (qa_launch_resource_origin){.catalog = s->draft->catalog, .content = row->content,
+        .product = row->origin_product, .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition};
+    return true;
+}
 
 static void hash_u64(qa_sha256_context *h, uint64_t value)
 {
@@ -789,18 +794,24 @@ bool qa_launch_instance_restore_client_profile(const qa_launch_client_metadata *
 static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const char *path, qa_error *error)
 {
     for (size_t i = 0; i < s->resource_count; ++i)
-        if (s->resources[i].product == product && !strcmp(s->resources[i].path, path)) return true;
-    qa_vfs *view;
-    if (!qa_catalog_open(s->draft->catalog, product, &view, error)) return false;
-    qa_resource *resource;
-    bool ok = qa_vfs_acquire(view, path, &resource, NULL, error);
-    qa_vfs_destroy(view);
-    if (!ok) return false;
+        if (s->resources[i].view.product == product && !strcmp(s->resources[i].view.path, path)) return true;
+    resource_binding row = {0};
+    if (!qa_catalog_open(s->draft->catalog, product, &row.content, error)) return false;
+    qa_resource *resource = NULL;
+    if (!qa_vfs_acquire_receipt(row.content, path, &resource, &row.acquisition, error)) goto fail;
+    row.view = (qa_launch_resource){product, NULL, resource};
+    if (!qa_catalog_product_acquisition_origin(s->draft->catalog, product, row.content,
+        &row.acquisition, &row.origin_product, &row.catalog_mount, error)) {
+        error_message(error, "Acquired launch resource has no actual catalog mount owner"); goto fail;
+    }
     const char *retained_path = launch_text(s->draft, path, error);
     if (!retained_path || !launch_grow((void **)&s->resources, &s->resource_capacity,
-        s->resource_count + 1, sizeof(*s->resources), error)) { qa_resource_release(resource); return false; }
-    s->resources[s->resource_count++] = (qa_launch_resource){product, retained_path, resource};
+        s->resource_count + 1, sizeof(*s->resources), error)) goto fail;
+    row.view.path = retained_path; s->resources[s->resource_count++] = row;
     return true;
+fail:
+    qa_resource_release(resource); qa_vfs_acquisition_dispose(&row.acquisition); qa_vfs_destroy(row.content);
+    return false;
 }
 
 static bool prepare_mounts(qa_launch_snapshot *candidate,
@@ -825,14 +836,31 @@ static bool prepare_mounts(qa_launch_snapshot *candidate,
             if (!value.path || !value.resource || !qa_catalog_product(candidate->draft->catalog, value.product))
                 return error_message(error, "saved launch resource has an invalid retained product");
             for (size_t j = 0; j < i; ++j)
-                if (candidate->resources[j].product == value.product &&
-                    !strcmp(candidate->resources[j].path, value.path))
+                if (candidate->resources[j].view.product == value.product &&
+                    !strcmp(candidate->resources[j].view.path, value.path))
                     return error_message(error, "saved launch resource inventory repeats an entry");
             const char *path = launch_text(candidate->draft, value.path, error);
             if (!path) return false;
-            candidate->resources[candidate->resource_count++] =
-                (qa_launch_resource){value.product, path, value.resource};
+            resource_binding *row = &candidate->resources[candidate->resource_count++];
+            row->view = (qa_launch_resource){value.product, path, value.resource};
             qa_resource_retain((qa_resource *)value.resource);
+            qa_launch_resource_origin origin = {0};
+            bool admitted = content->resource_origin(content->context, i, &origin, error);
+            row->content = origin.content;
+            if (!admitted) return false;
+            qa_product_id product = 0; qa_mount_id physical = 0;
+            if (origin.catalog != candidate->draft->catalog || !origin.acquisition ||
+                origin.acquisition->resource_id != qa_resource_id(value.resource) ||
+                !qa_catalog_product_acquisition_origin(origin.catalog, value.product, origin.content,
+                    origin.acquisition, &product, &physical, error) ||
+                product != origin.product || physical != origin.catalog_mount)
+                return error_message(error, "saved launch resource origin disagrees with its actual retained opening");
+            char *lookup = qa_vfs_normalize_path(value.path, error);
+            bool same = lookup && !strcmp(lookup, origin.acquisition->path);
+            free(lookup);
+            if (!same) return error_message(error, "saved launch resource opening differs from its requested path");
+            row->origin_product = origin.product; row->catalog_mount = origin.catalog_mount;
+            if (!retain_acquisition(origin.acquisition, &row->acquisition, error)) return false;
             if (value.product == v->world.geometry && !strcmp(value.path, v->world.map)) map = true;
             if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
                 value.product == v->world.environment_product &&
@@ -1037,7 +1065,7 @@ bool qa_configuration_prepare_restored(qa_configuration *manager, const qa_launc
 {
     if (!manager || !checkpoint || !out || manager->busy || manager->transactions ||
         manager->current || manager->generation || !checkpoint->has_current || !checkpoint->generation ||
-        !content || !content->mounts || !content->instance || !content->resource ||
+        !content || !content->mounts || !content->instance || !content->resource || !content->resource_origin ||
         !manager->hooks.safe(manager->hooks.context))
         return error_message(error, "configuration restoration requires a fresh isolated manager and saved current snapshot");
     if (!configuration_prepare(manager, draft, content, false, out, error)) return false;

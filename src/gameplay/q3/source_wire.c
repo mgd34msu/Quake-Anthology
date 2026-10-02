@@ -738,10 +738,10 @@ static uint32_t solid_byte(float value) {
 static bool linked_geometry_matches(const qa_body_state *published,
                                       const qa_body_state *source, qa_vec3 origin) {
     for (unsigned axis = 0; axis < 3; ++axis)
-        if (qa_vec_component(published->origin, axis) != qa_vec_component(origin, axis) ||
-            qa_vec_component(published->angles, axis) != qa_vec_component(source->angles, axis) ||
-            qa_vec_component(published->bounds.mins, axis) != qa_vec_component(source->bounds.mins, axis) ||
-            qa_vec_component(published->bounds.maxs, axis) != qa_vec_component(source->bounds.maxs, axis))
+        if (q3_source_vec_component(published->origin, axis) != q3_source_vec_component(origin, axis) ||
+            q3_source_vec_component(published->angles, axis) != q3_source_vec_component(source->angles, axis) ||
+            q3_source_vec_component(published->bounds.mins, axis) != q3_source_vec_component(source->bounds.mins, axis) ||
+            q3_source_vec_component(published->bounds.maxs, axis) != q3_source_vec_component(source->bounds.maxs, axis))
             return false;
     return true;
 }
@@ -948,7 +948,7 @@ static bool entity_read(const qa_q3_game *game, uint32_t slot, qa_q3_entity *out
         trajectory(&value.pos, &entry->state.missile.trajectory);
         value.eFlags = word(entry->state.missile.flags);
         value.weapon = entry->state.missile.weapon;
-        value.generic1 = entry->state.missile.team;
+        value.generic1 = word(entry->state.missile.team);
         break;
     case Q3_ACTOR_ITEM:
         trajectory(&value.pos, &entry->state.item.trajectory);
@@ -1254,7 +1254,7 @@ static void damage_attacker(qa_q3_game *game, qa_actor_id target, qa_actor_id at
     qa_error ignored = {0};
     if (!qa_q3_native_client_slot(game, target, &slot, &ignored)) return;
     int32_t number = qa_q3_source_actor_slot(game, attacker, &owner_slot, &ignored)
-        ? game->source_entities[owner_slot].number : QA_Q3_SOURCE_NONE;
+        ? game->source_entities[owner_slot].number : (int32_t)QA_Q3_SOURCE_NONE;
     if (current(game, slot, target)) {
         game->wire->clients[slot].attacker = number;
         qa_q3_player *followed = q3_client_follow_player(game, slot);

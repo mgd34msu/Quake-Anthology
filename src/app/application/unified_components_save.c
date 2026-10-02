@@ -33,11 +33,20 @@ static bool recipient_fields(qa_source_save_io *io, qa_net_client_id client, qa_
 }
 
 static bool source_fields(qa_source_save_io *io, qa_application *app, const application_unified_source *actual,
-    const qa_unified_session_player *player)
+    application_unified_source *retained, const qa_unified_session_player *player)
 {
     application_unified_source saved = *actual;
+    application_unified_source expected = *retained;
     return application_unified_save_source(io, app, actual, &saved, false) &&
+        application_unified_save_retained_source(io, app, actual, retained) &&
+        application_unified_save_source_stamp_equal(retained, &expected) &&
         application_unified_save_player(io, player);
+}
+static bool magic(qa_source_save_io *io, const char expected[4])
+{
+    char value[4]; memcpy(value, expected, sizeof(value)); uint32_t version = 2;
+    return qa_source_save_bytes(io, value, sizeof(value)) && !memcmp(value, expected, sizeof(value)) &&
+        qa_source_save_u32(io, &version) && version == 2;
 }
 
 static bool cursor_fields(qa_source_save_io *io, component_cursor *row)
@@ -101,11 +110,12 @@ static bool hash_json(const qa_json_document *json, qa_json_id value, qa_sha256_
 }
 
 static bool owners_valid(qa_application *app, const application_unified_source *source,
-    const component_cursor *rows, size_t count, const native_cursor *native, bool pending, qa_error *e)
+    const component_cursor *rows, size_t count, const native_cursor *native, bool pending, bool obsolete, qa_error *e)
 {
     if (count + (native->present ? 1u : 0u) > 256) return bad(e, "Component cold roster exceeds its owner extent");
     for (size_t i = 0; i < count; ++i) {
         if (native->present && rows[i].owner == native->owner) return bad(e, "Component cold namespaces alias");
+        if (obsolete) continue;
         application_q3_component_publication publication = {0}; bool found = false;
         if (!application_q3_components_checkpoint_publication_read(app, rows[i].owner, &publication, &found, e)) return false;
         /* An old reliable roster remains authoritative until its replacement
@@ -123,7 +133,7 @@ static bool owners_valid(qa_application *app, const application_unified_source *
             rows[i].game_state_revision > gs || rows[i].sequence > sequence)
             return bad(e, "Component cursor differs from its genuine imported activation");
     }
-    if (native->present) {
+    if (native->present && !obsolete) {
         application_native_q2_publication_view publication = {0}; bool found = false;
         if (!application_native_q2_publication_checkpoint_read(app, source, &publication, &found, e)) return false;
         if (pending && (!found || publication.owner != native->owner ||
@@ -141,7 +151,7 @@ static bool owners_valid(qa_application *app, const application_unified_source *
 
 static bool publisher_fields(qa_source_save_io *io, application_unified_component_publisher *p)
 {
-    return application_unified_save_magic(io, "QUCP") && recipient_fields(io, p->recipient, p->actor) &&
+    return magic(io, "QUCP") && recipient_fields(io, p->recipient, p->actor) &&
         qa_source_save_u32(io, &p->epoch) && qa_source_save_u64(io, &p->revision) &&
         qa_source_save_u64(io, &p->serial) && rows_fields(io, &p->rows, &p->count) && native_fields(io, &p->native) &&
         p->revision <= QA_UNIFIED_SAFE_INTEGER &&
@@ -173,19 +183,32 @@ bool application_unified_components_checkpoint(const application_unified_compone
     qa_buffer *out, qa_error *e)
 {
     application_unified_source source = {0}; qa_unified_session_player player;
-    if (!p || !out || out->data || out->size || (p->pending && (!p->pending->sealed ||
-        !application_unified_components_current(p->pending))))
+    if (!p)
         return application_fail(e, QA_ERROR_ARGUMENT, "Component checkpoint requires its actual recipient and returned Source");
     if (!recipient_read(p, &source, &player, e)) return false;
-    if (!qa_actor_id_equal(player.actor, p->actor)) return bad(e, "Component publisher recipient changed");
+    return application_unified_components_checkpoint_retained(p, &source, &source, &player, out, e);
+}
+bool application_unified_components_checkpoint_retained(const application_unified_component_publisher *p,
+    const application_unified_source *source, const application_unified_source *retained,
+    const qa_unified_session_player *player, qa_buffer *out, qa_error *e)
+{
+    bool obsolete = application_unified_save_source_obsolete(source, retained);
+    if (!p || !source || !retained || !player || !out || out->data || out->size ||
+        !(application_unified_source_current(p->application, source) ||
+            application_unified_source_checkpoint_current(p->application, source)) ||
+        (!obsolete && !source_current(p->application, retained, p->recipient, player)) ||
+        (p->pending && (!p->pending->sealed || !application_unified_components_current(p->pending))))
+        return application_fail(e, QA_ERROR_ARGUMENT, "Component checkpoint lacks its actual current or historical recipient");
+    if (!qa_actor_id_equal(player->actor, p->actor)) return bad(e, "Component publisher recipient changed");
     application_unified_component_publisher copy = *p;
+    application_unified_source saved = *retained;
     component_cursor rows[256];
     if (p->count > 256 || (p->count && !p->rows)) return bad(e, "Component checkpoint cursor extent is invalid");
-    if (!owners_valid(p->application, &source, p->rows, p->count, &p->native, false, e)) return false;
+    if (!owners_valid(p->application, source, p->rows, p->count, &p->native, false, obsolete, e)) return false;
     if (p->count) memcpy(rows, p->rows, p->count * sizeof(*rows));
     copy.rows = rows;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, source.session, e) && source_fields(&io, p->application, &source, &player) &&
+    bool ok = qa_source_save_writer(&io, source->session, e) && source_fields(&io, p->application, source, &saved, player) &&
         publisher_fields(&io, &copy) && qa_source_save_finish(&io, out);
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Component publisher continuation is inconsistent");
     qa_source_save_dispose(&io);
@@ -196,15 +219,27 @@ bool application_unified_components_restore(qa_bytes bytes, qa_application *app,
     const application_unified_source *source, qa_net_client_id client, const qa_unified_session_player *player,
     application_unified_component_publisher **out, qa_error *e)
 {
-    if (!out || *out || !source_current(app, source, client, player))
+    return application_unified_components_restore_retained(bytes, app, source, source, client, player, out, e);
+}
+bool application_unified_components_restore_retained(qa_bytes bytes, qa_application *app,
+    const application_unified_source *source, const application_unified_source *retained,
+    qa_net_client_id client, const qa_unified_session_player *player,
+    application_unified_component_publisher **out, qa_error *e)
+{
+    bool obsolete = application_unified_save_source_obsolete(source, retained);
+    if (!source || !retained || !player || !out || *out ||
+        !(application_unified_source_current(app, source) || application_unified_source_checkpoint_current(app, source)) ||
+        (!obsolete && !source_current(app, retained, client, player)))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component restore requires its genuine imported recipient");
     application_unified_component_publisher *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(e, QA_ERROR_MEMORY, "Restoring recipient component publisher");
     p->application = app; p->recipient = client; p->actor = player->actor;
+    application_unified_source saved = *retained;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, source->session, bytes, e) && source_fields(&io, app, source, player) &&
+    bool ok = qa_source_save_reader(&io, source->session, bytes, e) && source_fields(&io, app, source, &saved, player) &&
         publisher_fields(&io, p) && qa_source_save_finish(&io, NULL) &&
-        owners_valid(app, source, p->rows, p->count, &p->native, false, e) && source_current(app, source, client, player);
+        owners_valid(app, source, p->rows, p->count, &p->native, false, obsolete, e) &&
+        (obsolete || source_current(app, retained, client, player));
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component publisher differs from its imported Source");
     qa_source_save_dispose(&io);
     if (!ok) { free(p->rows); free(p); return false; }
@@ -468,8 +503,9 @@ static bool capture_documents(const application_unified_component_capture *v, qa
 
 static bool capture_fields(qa_source_save_io *io, application_unified_component_capture *v)
 {
-    return application_unified_save_magic(io, "QUCT") && recipient_fields(io, v->owner->recipient, v->owner->actor) &&
-        source_fields(io, v->owner->application, &v->source, &v->player) && qa_source_save_u32(io, &v->epoch) &&
+    application_unified_source actual = v->source;
+    return magic(io, "QUCT") && recipient_fields(io, v->owner->recipient, v->owner->actor) &&
+        source_fields(io, v->owner->application, &actual, &v->source, &v->player) && qa_source_save_u32(io, &v->epoch) &&
         qa_source_save_u64(io, &v->revision) && qa_source_save_u64(io, &v->serial) &&
         rows_fields(io, &v->rows, &v->count) && native_fields(io, &v->native) &&
         application_unified_save_document(io, &v->frame, QA_UNIFIED_CHECKPOINT) &&
@@ -487,7 +523,7 @@ bool application_unified_components_capture_checkpoint(const application_unified
         !source_current(v->owner->application, &v->source, v->owner->recipient, &v->player))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component token checkpoint requires its sealed returned Source");
     if (v->count > 256 || (v->count && !v->rows) || !capture_documents(v, e) ||
-        !owners_valid(v->owner->application, &v->source, v->rows, v->count, &v->native, true, e)) return false;
+        !owners_valid(v->owner->application, &v->source, v->rows, v->count, &v->native, true, false, e)) return false;
     application_unified_component_capture copy = *v; component_cursor rows[256];
     if (v->count) memcpy(rows, v->rows, v->count * sizeof(*rows));
     copy.rows = rows;
@@ -511,7 +547,7 @@ bool application_unified_components_capture_restore(qa_bytes bytes, application_
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, source->session, bytes, e) && capture_fields(&io, v) &&
         qa_source_save_finish(&io, NULL) && capture_documents(v, e) &&
-        owners_valid(p->application, source, v->rows, v->count, &v->native, true, e) && source_current(p->application, source, p->recipient, player);
+        owners_valid(p->application, source, v->rows, v->count, &v->native, true, false, e) && source_current(p->application, source, p->recipient, player);
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component token differs from its imported publisher");
     qa_source_save_dispose(&io);
     if (!ok) { application_unified_components_dispose(v); return false; }

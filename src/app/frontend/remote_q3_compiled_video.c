@@ -4,6 +4,7 @@
 #include "remote_q3_frame.h"
 #include "remote_q3_runtime.h"
 #include "video_guests.h"
+#include "capture.h"
 #include <stdlib.h>
 
 struct frontend_remote_q3_compiled_video {
@@ -14,7 +15,7 @@ struct frontend_remote_q3_compiled_video {
     frontend_remote_q3_resources resources;
     qa_native_q3_remote_client_service *client;
     q3n_remote_source *source;
-    int32_t reached_command,latest_message;
+    int32_t reached_command,latest_message,server_message;
     uint64_t time_ns,frame_number;
     bool closed,media_ready,rebuild_attempted,reopened,aborting;
 };
@@ -44,7 +45,8 @@ bool frontend_remote_q3_compiled_video_current(const frontend_remote_q3_compiled
         resources.input!=ticket->resources.input || resources.physical_seat!=ticket->resources.physical_seat ||
         resources.domain.restart_generation!=ticket->resources.domain.restart_generation ||
         !q3n_remote_source_read(ticket->source,&source,e) ||
-        source.reached_command!=ticket->reached_command || source.publication.latest_message!=ticket->latest_message)
+        source.reached_command!=ticket->reached_command || source.publication.latest_message!=ticket->latest_message ||
+        source.publication.server_message!=ticket->server_message)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Compiled video changed its actual Source, map, command or CLIENT parents");
     return true;
 }
@@ -89,6 +91,7 @@ bool frontend_remote_q3_compiled_video_prepare(frontend_remote_q3 *row,
     ticket->aggregate=aggregate; ticket->resources=resources;
     ticket->client=services.client; ticket->source=services.source;
     ticket->reached_command=source.reached_command; ticket->latest_message=source.publication.latest_message;
+    ticket->server_message=source.publication.server_message;
     ticket->time_ns=row->frontend->time_ns; ticket->frame_number=row->frontend->frame_number;
     row->compiled_video=ticket; *out=ticket;
     return frontend_remote_q3_compiled_video_close(ticket,e);

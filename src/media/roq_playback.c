@@ -321,12 +321,12 @@ bool qa_roq_playback_image(qa_roq_playback *playback, bool shader, uint32_t draw
                     unsigned value;
                     if (xm == 2 && ym == 2) {
                         offset = ((size_t)y << 12) + x * 8 + c;
-                        value = (pixels.data[offset] + pixels.data[offset + 4] +
+                        value = ((unsigned)pixels.data[offset] + pixels.data[offset + 4] +
                                  pixels.data[offset + 2048] + pixels.data[offset + 2052]) >>
                                 2;
                     } else if (xm == 2 && ym == 1) {
                         offset = ((size_t)y << 11) + x * 8 + c;
-                        value = (pixels.data[offset] + pixels.data[offset + 4]) >> 1;
+                        value = ((unsigned)pixels.data[offset] + pixels.data[offset + 4]) >> 1;
                     } else {
                         offset = ((((size_t)y * ym) << shift) + x * xm) * 4 + c;
                         if (offset >= pixels.size)

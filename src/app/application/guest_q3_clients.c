@@ -7,6 +7,7 @@
 #include "native_q3_console.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
+#include "qa/json.h"
 
 bool application_q3_guest_actor_bound(application_provider *provider, qa_actor_id actor,
     uint32_t *slot)
@@ -182,6 +183,7 @@ bool application_q3_guest_client_begin(application_provider *provider, uint32_t 
     bool clamped;
     if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, client->reliable.sequence, &clamped, error)) return false;
     client->consumed_server_command = client->reliable.sequence;
+    if (!q3g_arsenal_client_admit(provider, slot, error)) return false;
     return application_guest_bots_admit(provider, error) && application_guest_clients_drain(provider, error);
 }
 
@@ -476,7 +478,8 @@ rescan: ;
     bool clamped;
     int32_t acknowledged = number > client->reliable.acknowledged ? number : client->reliable.acknowledged;
     if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, acknowledged, &clamped, error)) return false;
-    if (number > client->consumed_server_command) client->consumed_server_command = number; return true;
+    if (number > client->consumed_server_command) client->consumed_server_command = number;
+    return true;
 }
 static int32_t current_command(void *context)
 {
@@ -545,8 +548,10 @@ bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *erro
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 timing source request requires a genuine local CGAME binding");
         return true;
     }
-    application_provider *source = q3g_game_source(role->engine->provider->application);
-    if (!source || !source->constructed || source->close_pending)
+    application_provider *source = role->client_source ? role->client_source :
+        q3g_game_source(role->engine->provider->application);
+    if (!source || source->application != role->engine->provider->application ||
+        !source->constructed || source->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role lacks its selected actual GAME source");
     struct application_q3_guest *source_engine = q3g_engine(source);
     const uint32_t *seats = source_engine ? source_engine->seats : role->engine->seats;
@@ -572,8 +577,10 @@ bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *erro
         role->client_source = source;
         role->client_engine = source_engine;
         if (source_engine != role->engine) ++source_engine->client_leases;
-        options->client = (qa_q3_host_client_services){role, gamestate, current_snapshot, snapshot,
-            server_command, current_command, user_command, command_values, source_actor};
+        options->client = (qa_q3_host_client_services){.context = role,
+            .gamestate = gamestate, .current_snapshot = current_snapshot, .snapshot = snapshot,
+            .server_command = server_command, .current_command = current_command,
+            .user_command = user_command, .command_values = command_values, .source_actor = source_actor};
     }
     if (options->client_time_from_game || options->client_time_cvars) {
         qa_cvars *actual = source->kind == APPLICATION_PROVIDER_Q3 ?
@@ -599,6 +606,69 @@ bool application_q3_guest_client_gamestate(application_provider *provider, uint3
     if (!engine || !out || slot >= 64 || !engine->clients[slot].connected || !engine->clients[slot].gamestate)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 local client gamestate is not admitted");
     *out = engine->clients[slot].gamestate; return true;
+}
+
+bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    qa_application *app = provider ? provider->application : NULL;
+    if (!engine || !app || slot >= 64 || !engine->game || !engine->game->vm || !app->q3_client_prepare)
+        return true;
+    q3g_client *client = engine->clients + slot;
+    if (!client->connected || !client->begun || client->pending_retirement || client->bot ||
+        application_provider_for(app, client->actor, QA_ROLE_ARSENAL, "") != provider) return true;
+    uint32_t seat;
+    if (!qa_application_player_seat(app, client->actor, &seat) || engine->seats[slot] != seat ||
+        engine->calls || engine->restore_pending || !engine->map_ready || !client->gamestate)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG admission lost its actual GAME client and seat");
+    q3g_role *cgame = NULL, *ui = NULL;
+    for (q3g_role *r = engine->roles; r; r = r->next) if (r->seat == seat) {
+        if (r->kind == QA_QVM_CGAME) {
+            if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG has ambiguous actual seat owners");
+            cgame = r;
+        } else if (r->kind == QA_QVM_UI) {
+            if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal UI has ambiguous actual seat owners");
+            ui = r;
+        }
+    }
+    if (!cgame) {
+        bool found; uint64_t size;
+        if (!qa_vfs_probe(provider->launch->content, "cgame-weapon-models.json", &found, &size, error)) return false;
+        if (!found) return true;
+        qa_resource *declaration = NULL; qa_vfs_acquisition acquisition = {0};
+        qa_json_document *document = NULL; qa_buffer path = {0}; char *normalized = NULL;
+        bool ok = qa_vfs_acquire_receipt(provider->launch->content, "cgame-weapon-models.json",
+            &declaration, &acquisition, error) && qa_json_parse(qa_resource_bytes(declaration), &document, error) &&
+            qa_json_string(document, qa_json_get(document, qa_json_root(document), "artifactPath"), &path, error);
+        if (ok && memchr(path.data, 0, path.size))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Arsenal CG declaration path contains a NUL");
+        if (ok) { normalized = qa_vfs_normalize_path((const char *)path.data, error); ok = normalized != NULL; }
+        if (ok) ok = q3g_role_create_client(engine, QA_QVM_CGAME, seat, normalized, false, provider, &cgame, error);
+        free(normalized); qa_buffer_free(&path); qa_json_destroy(document);
+        qa_vfs_acquisition_dispose(&acquisition); qa_resource_release(declaration);
+        if (!ok) return false;
+        cgame->next = engine->roles; engine->roles = cgame;
+    }
+    if (cgame->ready && !cgame->retired && cgame->artifact &&
+        !cgame->artifact->weapon_models_profile.present && !cgame->weapon_models) return true;
+    if (!cgame->ready || cgame->retired || cgame->client_source != provider ||
+        cgame->client_engine != engine || cgame->client != slot || !cgame->weapon_models)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG changed its genuine matching GAME and registry");
+    if (!ui) {
+        if (!application_guest_q3_source_ui_create(engine, seat, &ui, error)) return false;
+        ui->next = engine->roles; engine->roles = ui;
+    }
+    if (ui->client_source != provider || ui->client_engine != engine || ui->client != slot)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal source UI changed its actual matching GAME");
+    if (cgame->initialized)
+        return cgame->init_succeeded || application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG retains a failed actual Init");
+    int32_t message, time;
+    if (!cgame->client_services.current_snapshot(cgame->client_services.context, &message, &time, error)) return false;
+    const qa_q3_gamestate *state = cgame->client_services.gamestate(cgame->client_services.context);
+    if (!state || state != client->gamestate)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG lost its admitted GAME gamestate");
+    return application_q3_guest_role_initialize(provider, QA_QVM_CGAME, seat,
+        message, state->command_sequence, state->client_number, true, error);
 }
 const qa_q3_gamestate *application_q3_guest_server_gamestate(application_provider *provider)
 {

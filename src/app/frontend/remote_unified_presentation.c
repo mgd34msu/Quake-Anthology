@@ -43,7 +43,8 @@ typedef struct unified_presentation_import {
     qa_buffer child[UNIFIED_CHILD_COUNT];
     unified_saved_q3_client *clients;
     size_t client_count;
-    bool received, roots;
+    bool imported[UNIFIED_CHILD_COUNT];
+    bool received, decoded, media_prepared, roots, media_roots, pending_roots, components_finished, q1_finished;
 } unified_presentation_import;
 typedef struct unified_presentation {
     qa_frontend *frontend;
@@ -169,6 +170,13 @@ static bool idle(void *context, const frontend_remote_unified *replica)
         (!p->q3_sources || frontend_unified_q3_sources_idle(p->q3_sources)) &&
         (!p->components || frontend_unified_components_idle(p->components));
 }
+static void import_free(unified_presentation_import *saved)
+{
+    if (!saved) return;
+    for (size_t i=0;i<UNIFIED_CHILD_COUNT;++i) qa_buffer_free(saved->child+i);
+    if (saved->clients) for (size_t i=0;i<saved->client_count;++i) qa_buffer_free(&saved->clients[i].bytes);
+    free(saved->clients); free(saved);
+}
 static void frame_abort(unified_presentation *p)
 {
     unified_q3_client_row **slot=&p->q3_clients;
@@ -213,7 +221,9 @@ static bool close_children(unified_presentation *p, qa_error *error)
     p->media = NULL; p->received = false;
     free(p->draw_lights); p->draw_lights=NULL;
     while (p->audio) { unified_audio_identity *row = p->audio; p->audio = row->next; free(row); }
-    p->audio_owner = 0; p->pending_view=false; return true;
+    p->audio_owner = 0; p->pending_view=false;
+    import_free(p->import); p->import=NULL; p->restore_complete=false;
+    return true;
 }
 static bool q1_action_read(unified_presentation *p,const qa_unified_document *doc,qa_json_id row,
     bool *departure,qa_saved_actor_id *actor,qa_unified_vec3 *angles,qa_error *error)
@@ -226,7 +236,8 @@ static bool q1_action_read(unified_presentation *p,const qa_unified_document *do
         return p->replica->session!=NULL || frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Q1 departure has no actual live transport owner");
     }
     if (family(doc,row,"view-reset")) { wire=qa_json_get(j,row,"actor"); value=qa_json_get(j,row,"angles"); }
-    else if (family(doc,row,"q1") && qa_json_string_equal(j,kind,"teleport-player")) {
+    else if (family(doc,row,"q1") && (qa_json_string_equal(j,kind,"teleport-player") ||
+        qa_json_string_equal(j,kind,"camera"))) {
         wire=qa_json_get(j,event,"player"); value=qa_json_get(j,event,"angles");
     } else return frontend_unified_fail(error,QA_ERROR_UNSUPPORTED,"Q1 action has no installed progress, camera or soundtrack owner");
     uint64_t slot,generation;
@@ -541,6 +552,7 @@ static bool content_visit(void *context, const frontend_remote_unified *replica,
 {
     unified_presentation *p = context;
     return p && idle(p,replica) && (!p->media || frontend_unified_media_visit(p->media,visitor,error)) &&
+        (!p->q2 || frontend_unified_q2_visit(p->q2,visitor,error)) &&
         (!p->q3 || frontend_unified_q3_visit(p->q3,visitor,error)) &&
         (!p->components || frontend_unified_components_visit(p->components,visitor,error)) &&
         (!p->candidate_media || frontend_unified_media_visit(p->candidate_media,visitor,error));
@@ -696,4 +708,295 @@ bool frontend_remote_unified_presentation_body(const frontend_remote_unified *re
     if (!p || p->replica!=replica || !p->received || p->busy)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified body awaits a returned authoritative prediction scene");
     return frontend_remote_unified_prediction_body_read(p->prediction,actor,out,error);
+}
+
+static unified_presentation *presentation_owner(const frontend_remote_unified *replica)
+{
+    if (!replica || replica->options.consumers.input!=input) return NULL;
+    unified_presentation *p=replica->options.consumers.context;
+    return p && p->replica==replica ? p : NULL;
+}
+static bool saved_blob(qa_source_save_io *io,qa_buffer *bytes)
+{
+    size_t size=bytes->size;
+    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        bytes->size=size; bytes->data=size?malloc(size):NULL;
+        if (size && !bytes->data) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining unified CLIENT child continuation");
+    }
+    return qa_source_save_bytes(io,bytes->data,size);
+}
+static bool saved_identity(const qa_frontend *f,uint64_t identity)
+{
+    return identity>QA_FRONTEND_COMMAND_OWNER && identity-QA_FRONTEND_COMMAND_OWNER<=f->next_source_id;
+}
+static bool saved_actor(unified_presentation *p,qa_source_save_io *io,qa_actor_id *actor)
+{
+    qa_saved_actor_id wire={0};
+    if (io->direction==QA_SOURCE_SAVE_WRITE && !frontend_remote_unified_wire_actor(p->replica,*actor,&wire)) return false;
+    return qa_source_save_u32(io,&wire.slot) && qa_source_save_u64(io,&wire.generation) &&
+        (io->direction!=QA_SOURCE_SAVE_READ || frontend_remote_unified_actor_retained(p->replica,wire.slot,wire.generation,actor,io->error));
+}
+static bool saved_routes(unified_presentation *p,qa_source_save_io *io)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=0;
+    if (!reading) for (const unified_audio_identity *row=p->audio;row;row=row->next) ++count;
+    if (!qa_source_save_count(io,&count,reading?(io->input.size-io->offset)/20:SIZE_MAX)) return false;
+    unified_audio_identity **tail=&p->audio;
+    unified_audio_identity *row=p->audio;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            row=calloc(1,sizeof(*row));
+            if (!row) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining actual unified mixer actor aliases");
+            *tail=row; tail=&row->next;
+        }
+        if (!row || !saved_actor(p,io,&row->actor) || !qa_source_save_u64(io,&row->audio) ||
+            !saved_identity(p->frontend,row->audio) || row->audio==p->audio_owner) return false;
+        for (const unified_audio_identity *previous=p->audio;previous!=row;previous=previous->next)
+            if (previous->audio==row->audio || qa_actor_id_equal(previous->actor,row->actor)) return false;
+        if (!reading) row=row->next;
+    }
+    return true;
+}
+static bool child_capture(unified_presentation *p,unified_child_kind kind,
+    const frontend_unified_presentation_refs *refs,qa_buffer *out,qa_error *error)
+{
+    switch (kind) {
+    case UNIFIED_MEDIA: return !p->media || frontend_unified_media_checkpoint(p->media,&refs->media,out,error);
+    case UNIFIED_PENDING_MEDIA: return !p->candidate_media || frontend_unified_media_checkpoint(p->candidate_media,&refs->pending_media,out,error);
+    case UNIFIED_EVENTS: return !p->events || frontend_unified_events_checkpoint(p->events,&refs->events,out,error);
+    case UNIFIED_Q1: return !p->q1 || frontend_unified_q1_checkpoint(p->q1,&refs->q1,out,error);
+    case UNIFIED_Q2: return !p->q2 || frontend_unified_q2_checkpoint(p->q2,&refs->q2,out,error);
+    case UNIFIED_Q3: return !p->q3 || frontend_unified_q3_checkpoint(p->q3,refs->media.content,out,error);
+    case UNIFIED_COMPONENTS: return !p->components || frontend_unified_components_checkpoint(p->components,&refs->components,out,error);
+    case UNIFIED_Q3_SOURCES: return !p->q3_sources || frontend_unified_q3_sources_checkpoint(p->q3_sources,out,error);
+    case UNIFIED_PREDICTION: return !p->prediction || frontend_remote_unified_prediction_checkpoint(p->prediction,out,error);
+    case UNIFIED_INPUT: return !p->physical || frontend_unified_input_checkpoint(p->physical,out,error);
+    case UNIFIED_RENDER: return !p->render || frontend_unified_render_checkpoint(p->render,&refs->render,out,error);
+    case UNIFIED_CHILD_COUNT: break;
+    }
+    return false;
+}
+static bool presentation_fields(unified_presentation *p,unified_presentation_import *saved,
+    const frontend_unified_presentation_refs *refs,qa_source_save_io *io)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    char magic[4]={'Q','U','P','C'}; uint32_t version=1,epoch=p->replica->epoch;
+    uint32_t physical=p->replica->options.domain.physical_seat;
+    uint64_t frame_number=p->replica->frame_number;
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUPC",sizeof(magic)) ||
+        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&epoch) || epoch!=p->replica->epoch ||
+        !qa_source_save_u32(io,&physical) || physical!=p->replica->options.domain.physical_seat ||
+        !qa_source_save_u64(io,&frame_number) || frame_number!=p->replica->frame_number ||
+        !qa_source_save_bool(io,&saved->received) || (saved->received && !p->replica->frame) ||
+        !qa_source_save_u64(io,&p->audio_owner) || (p->audio_owner && !saved_identity(p->frontend,p->audio_owner)) ||
+        !qa_source_save_bool(io,&p->pending_view) || !qa_source_save_f64(io,&p->pending_angles.x) ||
+        !qa_source_save_f64(io,&p->pending_angles.y) || !qa_source_save_f64(io,&p->pending_angles.z) ||
+        !isfinite(p->pending_angles.x) || !isfinite(p->pending_angles.y) || !isfinite(p->pending_angles.z) ||
+        (p->pending_view && (!saved_actor(p,io,&p->pending_view_actor) ||
+            !qa_actor_id_equal(p->pending_view_actor,p->replica->player))) || !saved_routes(p,io)) return false;
+    for (size_t i=0;i<UNIFIED_CHILD_COUNT;++i) {
+        if ((!reading && !child_capture(p,(unified_child_kind)i,refs,saved->child+i,io->error)) ||
+            !saved_blob(io,saved->child+i)) return false;
+    }
+    bool media=saved->child[UNIFIED_MEDIA].size!=0;
+    if ((media && !p->replica->recipe) || (saved->child[UNIFIED_PENDING_MEDIA].size && !p->replica->preparing_recipe)) return false;
+    if ((saved->child[UNIFIED_PENDING_MEDIA].size && refs->pending_media.content!=refs->media.content) ||
+        (saved->child[UNIFIED_Q2].size && refs->q2.content!=refs->media.content) ||
+        (saved->child[UNIFIED_COMPONENTS].size && refs->components.content!=refs->media.content)) return false;
+    for (size_t i=UNIFIED_EVENTS;i<UNIFIED_CHILD_COUNT;++i)
+        if (saved->child[i].size && (!media || !p->audio_owner)) return false;
+    if (saved->received) for (size_t i=UNIFIED_MEDIA;i<UNIFIED_CHILD_COUNT;++i)
+        if (i!=UNIFIED_PENDING_MEDIA && i!=UNIFIED_INPUT && !saved->child[i].size) return false;
+    if (!saved->received && (saved->child[UNIFIED_RENDER].size || saved->child[UNIFIED_INPUT].size)) return false;
+    if (!reading) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next) ++saved->client_count;
+    if (!qa_source_save_count(io,&saved->client_count,reading?(io->input.size-io->offset)/24:SIZE_MAX) ||
+        saved->client_count>SIZE_MAX/sizeof(*saved->clients)) return false;
+    if (saved->client_count) {
+        saved->clients=calloc(saved->client_count,sizeof(*saved->clients));
+        if (!saved->clients) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining per-Source compiled CLIENT capsule order");
+    }
+    const unified_q3_client_row *row=p->q3_clients;
+    for (size_t i=0;i<saved->client_count;++i) {
+        unified_saved_q3_client *client=saved->clients+i;
+        if (!reading) {
+            if (!row || row->born || row->frame) return false;
+            client->receiver=row->receiver; bool found=false;
+            for (size_t n=0;n<frontend_unified_q3_sources_count(p->q3_sources);++n) {
+                frontend_unified_q3_source_view view;
+                if (!frontend_unified_q3_sources_checkpoint_read(p->q3_sources,n,&view,io->error)) return false;
+                if (frontend_unified_q3_client_checkpoint_matches(row->client,&view)) { client->source=n; found=true; break; }
+            }
+            if (!found || !frontend_unified_q3_client_checkpoint(row->client,&client->bytes,io->error)) return false;
+            row=row->next;
+        }
+        if (!qa_source_save_count(io,&client->source,SIZE_MAX) || !qa_source_save_u64(io,&client->receiver) ||
+            !saved_identity(p->frontend,client->receiver) || client->receiver==p->audio_owner ||
+            !saved_blob(io,&client->bytes) || !client->bytes.size) return false;
+        for (size_t n=0;n<i;++n)
+            if (saved->clients[n].source==client->source || saved->clients[n].receiver==client->receiver) return false;
+        for (const unified_audio_identity *alias=p->audio;alias;alias=alias->next)
+            if (alias->audio==client->receiver) return false;
+    }
+    return !saved->client_count || saved->child[UNIFIED_Q3_SOURCES].size;
+}
+bool frontend_remote_unified_presentation_checkpoint(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_buffer *out,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !refs->media.content || !out || out->data || out->size || p->import ||
+        p->frame_prepared || p->candidate_render || p->candidate_prediction || replica->prepared_frame ||
+        !idle(p,replica) || !frontend_remote_unified_checkpoint_current(replica,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT capture requires its returned actual child graph");
+    unified_presentation_import *saved=calloc(1,sizeof(*saved));
+    if (!saved) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Capturing unified CLIENT continuation");
+    saved->received=p->received;
+    qa_source_save_io io={0};
+    bool okay=qa_source_save_writer(&io,NULL,error) && presentation_fields(p,saved,refs,&io) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); import_free(saved);
+    if (!okay && (!error || error->code==QA_OK)) frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified CLIENT child graph cannot be captured exactly");
+    return okay;
+}
+bool frontend_remote_unified_presentation_restore_prepare(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_bytes bytes,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !refs->media.content || !replica->restore_pending || !p->frontend->source_restoring ||
+        p->import || p->media || p->candidate_media || p->events || p->prediction || p->audio || p->q3_clients)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT child import requires its empty actual recipe prefix");
+    p->import=calloc(1,sizeof(*p->import));
+    if (!p->import) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining unified CLIENT cold prefix");
+    qa_source_save_io io={0};
+    bool okay=qa_source_save_reader(&io,NULL,bytes,error) && presentation_fields(p,p->import,refs,&io) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (!okay) {
+        if (!error || error->code==QA_OK)
+            frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified CLIENT capsule has an invalid owner or child field");
+        return false;
+    }
+    p->import->decoded=true;
+    qa_buffer *media=&p->import->child[UNIFIED_MEDIA],*pending=&p->import->child[UNIFIED_PENDING_MEDIA];
+    if (media->size && !frontend_unified_media_restore_prepare(p->frontend,replica->recipe,&refs->media,
+        (qa_bytes){media->data,media->size},&p->media,error)) return false;
+    if (pending->size && !frontend_unified_media_restore_prepare(p->frontend,replica->preparing_recipe,&refs->pending_media,
+        (qa_bytes){pending->data,pending->size},&p->candidate_media,error)) return false;
+    p->import->media_prepared=true;
+    return true;
+}
+bool frontend_remote_unified_presentation_restore_roots(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !p->import || !p->import->decoded || !p->import->media_prepared || !refs ||
+        !replica->restore_pending || !p->frontend->source_restoring) return false;
+    if (p->import->roots) return true;
+    if (!p->import->media_roots) {
+        if (p->media && !frontend_unified_media_roots_attach(p->media,&refs->media,error)) return false;
+        p->import->media_roots=true;
+    }
+    if (!p->import->pending_roots) {
+        if (p->candidate_media && !frontend_unified_media_roots_attach(p->candidate_media,&refs->pending_media,error)) return false;
+        p->import->pending_roots=true;
+    }
+    p->import->roots=true; return true;
+}
+static bool child_import(unified_presentation *p,unified_child_kind kind,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    qa_buffer *saved=p->import->child+kind;
+    if (!saved->size || p->import->imported[kind]) return true;
+    qa_bytes bytes={saved->data,saved->size}; bool okay=false;
+    frontend_unified_event_options events={.audio_owner=p->audio_owner,.context=p,
+        .validate=validate,.presentation=presentation,.simulation=simulation,.audio_actor=audio_actor};
+    frontend_unified_q1_options q1={.audio_owner=p->audio_owner,.context=p,.audio_actor=audio_actor,
+        .action_validate=q1_action_validate,.action=q1_action};
+    switch (kind) {
+    case UNIFIED_COMPONENTS:
+        okay=frontend_unified_components_restore_prepare(p->frontend,p->replica,p->media,&refs->components,bytes,&p->components,error); break;
+    case UNIFIED_EVENTS:
+        okay=frontend_unified_events_restore(p->frontend,p->replica,p->media,&events,&refs->events,bytes,&p->events,error); break;
+    case UNIFIED_Q1:
+        okay=frontend_unified_q1_restore(p->frontend,p->replica,p->media,&q1,&refs->q1,bytes,&p->q1,error); break;
+    case UNIFIED_Q2:
+        okay=frontend_unified_q2_restore(p->frontend,p->replica,p->media,p->events,&refs->q2,bytes,&p->q2,error); break;
+    case UNIFIED_Q3:
+        okay=frontend_unified_q3_restore(p->frontend,p->replica,p->media,p->components,refs->media.content,bytes,&p->q3,error); break;
+    case UNIFIED_Q3_SOURCES:
+        okay=frontend_unified_q3_sources_restore(p->replica,p->media,bytes,&p->q3_sources,error); break;
+    case UNIFIED_PREDICTION:
+        okay=frontend_remote_unified_prediction_restore(p->replica,bytes,&p->prediction,error); break;
+    case UNIFIED_INPUT:
+        okay=frontend_unified_input_restore(p->frontend,p->replica,p->prediction,bytes,&p->physical,error); break;
+    case UNIFIED_RENDER:
+        okay=frontend_unified_render_restore(p->frontend,p->replica,p->media,&refs->render,bytes,&p->render,error); break;
+    case UNIFIED_MEDIA: case UNIFIED_PENDING_MEDIA: case UNIFIED_CHILD_COUNT: break;
+    }
+    if (okay) p->import->imported[kind]=true;
+    return okay;
+}
+bool frontend_remote_unified_presentation_restore_finish(frontend_remote_unified *replica,
+    const frontend_unified_presentation_refs *refs,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (!p || !refs || !replica->restore_pending || !p->frontend->source_restoring)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT activation requires its actual isolated cold graph");
+    if (p->restore_complete) return frontend_remote_unified_presentation_restore_ready(replica,error);
+    if (!p->import || !p->import->decoded || !p->import->roots) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT media roots have not imported");
+    if ((p->media && frontend_unified_media_importing(p->media) && !frontend_unified_media_restore_finish(p->media,&refs->media,error)) ||
+        (p->candidate_media && frontend_unified_media_importing(p->candidate_media) &&
+            !frontend_unified_media_restore_finish(p->candidate_media,&refs->pending_media,error))) return false;
+    if (!child_import(p,UNIFIED_COMPONENTS,refs,error) || !child_import(p,UNIFIED_EVENTS,refs,error)) return false;
+    if (p->components && p->events && !frontend_unified_components_events_bind(p->components,p->events,error)) return false;
+    if (p->components && !p->import->components_finished) {
+        if (!frontend_unified_components_restore_finish(p->components,&refs->components,error)) return false;
+        p->import->components_finished=true;
+    }
+    if (!child_import(p,UNIFIED_Q1,refs,error)) return false;
+    if (p->q1 && p->events && !frontend_unified_q1_events(p->q1,p->events,error)) return false;
+    if (p->q1 && !p->import->q1_finished) {
+        if (!frontend_unified_q1_restore_finish(p->q1,error)) return false;
+        p->import->q1_finished=true;
+    }
+    if (!child_import(p,UNIFIED_Q2,refs,error) || !child_import(p,UNIFIED_Q3_SOURCES,refs,error) ||
+        !child_import(p,UNIFIED_PREDICTION,refs,error) || !child_import(p,UNIFIED_Q3,refs,error) ||
+        !child_import(p,UNIFIED_RENDER,refs,error) || !child_import(p,UNIFIED_INPUT,refs,error)) return false;
+    if (p->q3 && (!frontend_unified_q3_audio(p->q3,p->audio_owner,p,audio_actor,error) ||
+        (p->events && !frontend_unified_q3_events(p->q3,p->events,error)) ||
+        (p->components && !frontend_unified_q3_components(p->q3,p->components,error)))) return false;
+    unified_q3_client_row **tail=&p->q3_clients;
+    for (size_t i=0;i<p->import->client_count;++i) {
+        unified_saved_q3_client *saved=p->import->clients+i;
+        frontend_unified_q3_source_view source;
+        if (!frontend_unified_q3_sources_checkpoint_read(p->q3_sources,saved->source,&source,error) || !source.has_client) return false;
+        if (!*tail) {
+            *tail=calloc(1,sizeof(**tail));
+            if (!*tail) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Importing actual per-Source compiled CLIENT history");
+            (*tail)->receiver=saved->receiver;
+            if (!frontend_unified_q3_client_restore(replica,p->q3_sources,&source,saved->receiver,
+                (qa_bytes){saved->bytes.data,saved->bytes.size},&(*tail)->client,error)) return false;
+        }
+        if ((*tail)->receiver!=saved->receiver || !frontend_unified_q3_client_checkpoint_matches((*tail)->client,&source) ||
+            !frontend_unified_q3_client_checkpoint_current((*tail)->client)) return false;
+        tail=&(*tail)->next;
+    }
+    if (*tail || !idle(p,replica)) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified imported CLIENT descendants have not returned");
+    p->received=p->import->received;
+    import_free(p->import); p->import=NULL; p->restore_complete=true;
+    return frontend_remote_unified_presentation_restore_ready(replica,error);
+}
+bool frontend_remote_unified_presentation_restore_ready(const frontend_remote_unified *replica,qa_error *error)
+{
+    unified_presentation *p=presentation_owner(replica);
+    return (p && p->restore_complete && !p->import && !p->frame_prepared &&
+        !p->candidate_render && !p->candidate_prediction && idle(p,replica) &&
+        (!p->received || (p->media && p->render && p->prediction && p->events && p->q1 &&
+            p->q2 && p->q3 && p->components && p->q3_sources)) &&
+        frontend_remote_unified_checkpoint_current(replica,error)) ||
+        frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT saved children have not finished their actual graph import");
+}
+void frontend_remote_unified_presentation_adopt(frontend_remote_unified *replica)
+{
+    unified_presentation *p=presentation_owner(replica);
+    if (p && p->restore_complete && !p->import && p->events) frontend_unified_events_adopt(p->events);
 }

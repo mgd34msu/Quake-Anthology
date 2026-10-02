@@ -1,5 +1,6 @@
 #include "remote_unified_private.h"
 #include "remote_unified_events.h"
+#include "remote_unified_save.h"
 #include "../application/unified_output.h"
 #include "qa/binary.h"
 
@@ -29,7 +30,7 @@ typedef struct unified_component_owner {
     qa_unified_document *identity;
     char *provider, *content;
     uint64_t generation;
-    bool retired;
+    bool retired, cancelled;
 } unified_component_owner;
 struct frontend_unified_events {
     qa_frontend *frontend;
@@ -53,9 +54,16 @@ static bool current(frontend_unified_events *o, qa_error *e)
 {
     if (!o || o->failed || !frontend_unified_media_current(o->media))
         return frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified event media is not current");
-    if (!frontend_remote_unified_current(o->replica, e)) return false;
+    bool snapshot=o->frontend->capture || o->frontend->source_restoring;
+    if (!(snapshot?frontend_remote_unified_checkpoint_current(o->replica,e):frontend_remote_unified_current(o->replica,e))) return false;
     return o->epoch == frontend_remote_unified_epoch(o->replica) ||
         frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified event owner changed its admitted epoch");
+}
+static bool execution_current(frontend_unified_events *o,qa_error *e)
+{
+    if (!o || o->frontend->capture || o->frontend->source_restoring || o->frontend->resource_inventory)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event delivery overlaps private graph capture or restore");
+    return current(o,e);
 }
 static bool scalar(const qa_unified_document *d, qa_json_id row, double *v, qa_error *e)
 {
@@ -138,21 +146,37 @@ bool frontend_unified_events_component_current(const frontend_unified_events *o,
     unified_component_owner *c=okay?component_find(o,(const char *)provider.data,generation):NULL;
     if (okay && (!c || strcmp(c->content,content)))
         okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation token has no matching reliable content admission");
-    if (okay) *active=!c->retired;
+    if (okay) *active=!c->retired && !c->cancelled;
     qa_buffer_free(&provider); return okay;
 }
 bool frontend_unified_events_component_admit(frontend_unified_events *o,const qa_unified_document *d,const char *content,qa_error *e)
+{ bool created; return frontend_unified_events_component_admit_created(o,d,content,&created,e); }
+bool frontend_unified_events_component_admit_created(frontend_unified_events *o,const qa_unified_document *d,const char *content,
+    bool *created,qa_error *e)
 {
-    if (!o || o->busy || o->prepared || !current(o,e)) return false;
+    if (!o || !created || o->busy || o->prepared || !current(o,e)) return false;
+    *created=false;
     unified_component_owner *candidate=NULL;
     if (!component_read(o,d,content,&candidate,e)) return false;
     unified_component_owner *c=component_find(o,candidate->provider,candidate->generation);
     if (c) {
         bool okay=!strcmp(c->content,candidate->content) ||
             frontend_unified_fail(e,QA_ERROR_FORMAT,"Reliable component token changed its admitted content");
+        if (okay && c->cancelled) { c->cancelled=false; *created=true; }
         component_free(candidate); return okay;
     }
-    candidate->next=o->components; o->components=candidate; return true;
+    candidate->next=o->components; o->components=candidate; *created=true; return true;
+}
+bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_unified_document *d,qa_error *e)
+{
+    if (!o || o->busy || o->prepared || !d || qa_unified_document_type(d)!=QA_UNIFIED_CHECKPOINT)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component cancellation needs returned retained event storage");
+    qa_buffer provider={0}; uint64_t generation=0;
+    bool okay=component_identity(d,qa_unified_document_root(d),&provider,&generation,e);
+    unified_component_owner *c=okay?component_find(o,(const char *)provider.data,generation):NULL;
+    if (okay && (!c || c->retired)) okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Component cancellation has no unpublished admission");
+    if (okay) c->cancelled=true;
+    qa_buffer_free(&provider); return okay;
 }
 bool frontend_unified_events_component_retire(frontend_unified_events *o,const qa_unified_document *d,qa_error *e)
 {
@@ -162,7 +186,7 @@ bool frontend_unified_events_component_retire(frontend_unified_events *o,const q
     bool okay=component_identity(d,qa_unified_document_root(d),&provider,&generation,e);
     unified_component_owner *c=okay?component_find(o,(const char *)provider.data,generation):NULL;
     if (okay && !c) okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Retiring component has no reliable presentation admission");
-    if (okay) c->retired=true;
+    if (okay) { c->retired=true; c->cancelled=false; }
     qa_buffer_free(&provider); return okay;
 }
 static uint64_t clock_ns(double seconds)
@@ -322,7 +346,7 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_document *d,b
 bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified_document *doc,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !doc || qa_unified_document_type(doc)!=QA_UNIFIED_CONTROL_DOCUMENT ||
-        !current(o,e)) return false;
+        !execution_current(o,e)) return false;
     const qa_json_document *j=qa_unified_document_json(doc);
     qa_json_id value=field(j,qa_unified_document_root(doc),"value"),kind=field(j,value,"kind");
     uint64_t epoch;
@@ -345,7 +369,7 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
 bool frontend_unified_events_frame_prepare(frontend_unified_events *o,const qa_unified_document *doc,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !doc || qa_unified_document_type(doc)!=QA_UNIFIED_FRAME_DOCUMENT ||
-        !current(o,e)) return false;
+        !execution_current(o,e)) return false;
     const qa_json_document *j=qa_unified_document_json(doc); qa_json_id root=qa_unified_document_root(doc);
     qa_json_id frame=field(j,field(j,field(j,root,"output"),"snapshot"),"frame");
     qa_json_id time=field(j,frame,"time"); uint64_t epoch,n; double seconds;
@@ -470,8 +494,15 @@ static bool apply_presentation(frontend_unified_events *o,const qa_unified_docum
     if (!scalar(d,field(j,row,"seconds"),&seconds,e)) return false;
     if (!o->options.presentation)
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Unified source presentation consumer is not installed");
-    (void)event;
-    return o->options.presentation(o->options.context,d,row,mirrors,e);
+    if (!o->options.presentation(o->options.context,d,row,mirrors,e)) return false;
+    if (qa_json_string_equal(j,field(j,row,"kind"),"presentation-owner")) {
+        qa_buffer provider={0}; uint64_t generation=0;
+        if (!component_identity(d,field(j,event,"owner"),&provider,&generation,e)) { qa_buffer_free(&provider); return false; }
+        unified_component_owner *c=component_find(o,(const char *)provider.data,generation);
+        if (c) { c->retired=qa_json_string_equal(j,field(j,event,"kind"),"retired"); c->cancelled=false; }
+        qa_buffer_free(&provider);
+    }
+    return true;
 }
 static bool apply_simulation(frontend_unified_events *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
 {
@@ -497,7 +528,7 @@ static bool apply_simulation(frontend_unified_events *o,const qa_unified_documen
 }
 bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
 {
-    if (!o || o->busy || o->prepared || !current(o,e)) return false;
+    if (!o || o->busy || o->prepared || !execution_current(o,e)) return false;
     if (!o->has_frame) return true;
     o->busy=true; bool okay=true;
     while (okay && o->pending && o->pending->frame<=o->frame) {
@@ -538,7 +569,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
 }
 bool frontend_unified_events_draw(frontend_unified_events *o,const qa_scene_view *view,qa_scene_frame *frame,qa_error *e)
 {
-    if (!o || !view || !frame || o->busy || !o->has_frame || !current(o,e)) return false;
+    if (!o || !view || !frame || o->busy || !o->has_frame || !execution_current(o,e)) return false;
     qa_actor_id player; uint32_t source;
     if (!frontend_remote_unified_player(o->replica,&player,&source)) return false;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
@@ -587,11 +618,11 @@ static bool document(qa_source_save_io *io,qa_unified_document_kind kind,qa_unif
 static bool fields(qa_source_save_io *io,frontend_unified_events *o,const frontend_unified_event_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[5]={'Q','U','E','V','4'};
+    uint8_t magic[5]={'Q','U','E','V','5'};
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     uint32_t physical=d->physical_seat,epoch=o->epoch;
     uint64_t audio_owner=o->options.audio_owner;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUEV4",sizeof(magic)) ||
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUEV5",sizeof(magic)) ||
         !qa_source_save_u32(io,&physical) || physical!=d->physical_seat ||
         !qa_source_save_u32(io,&epoch) || epoch!=o->epoch ||
         !qa_source_save_u64(io,&audio_owner) || audio_owner!=o->options.audio_owner ||
@@ -631,7 +662,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
                 return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Component ledger repeats a reliable owner token"); }
             *component_tail=next; component_tail=&next->next; c=next;
         }
-        if (!qa_source_save_bool(io,&c->retired)) return false;
+        if (!qa_source_save_bool(io,&c->retired) || !qa_source_save_bool(io,&c->cancelled) || (c->retired && c->cancelled)) return false;
         if (!reading) c=c->next;
     }
     count=0;
@@ -735,6 +766,7 @@ bool frontend_unified_events_checkpoint(frontend_unified_events *o,const fronten
 {
     if (!o || !refs || !refs->asset_encode || !out || out->data || out->size || !frontend_unified_events_idle(o))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event capture needs a returned owner and empty output");
+    if (!frontend_remote_unified_checkpoint_current(o->replica,e)) return false;
     qa_source_save_io io={0};
     bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,o,refs) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return okay;
@@ -745,6 +777,7 @@ bool frontend_unified_events_restore(qa_frontend *f,frontend_remote_unified *rep
     if (!refs || !refs->asset_decode || !out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event candidate needs actual asset graph references");
     frontend_unified_events *o=allocate(f,replica,media,opts,e);
     if (!o) return false;
+    if (!frontend_remote_unified_checkpoint_current(replica,e)) { free(o); return false; }
     qa_source_save_io io={0};
     bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,o,refs) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
@@ -772,7 +805,7 @@ bool frontend_unified_events_audio_actor(frontend_unified_events *o,qa_actor_id 
 bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *content,const char *path,
     qa_actor_id actor_id,qa_vec3 origin,double ms,int32_t channel,float volume,float attenuation,double delay,qa_error *e)
 {
-    if (!o || !content || !path || !isfinite(ms) || !isfinite(delay) || !current(o,e)) return false;
+    if (!o || !content || !path || !isfinite(ms) || !isfinite(delay) || !execution_current(o,e)) return false;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
     qa_vfs *files; const qa_product *product;
     if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||
@@ -853,7 +886,7 @@ bool frontend_unified_events_sound_loop_path(frontend_unified_events *o,const ch
     float volume,float attenuation,int32_t frame_number,bool persistent,qa_error *e)
 {
     if (!o || !content || !path || !isfinite(ms) || !qa_vec_finite(origin) || !qa_vec_finite(velocity) ||
-        !isfinite(volume) || !isfinite(attenuation) || !current(o,e)) return false;
+        !isfinite(volume) || !isfinite(attenuation) || !execution_current(o,e)) return false;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
     qa_vfs *files; const qa_product *product;
     if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||

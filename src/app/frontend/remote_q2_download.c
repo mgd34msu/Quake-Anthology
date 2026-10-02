@@ -156,8 +156,7 @@ static bool material_dependency(void *context, const qa_q2_material_dependency *
 {
     material_download *state = context;
     if (state->waiting) return true;
-    if (dependency->kind == QA_Q2_MATERIAL_IMAGE &&
-        (!strcmp(dependency->path, "$whiteimage") || !strcmp(dependency->path, "$lightmap"))) return true;
+    if (qa_q2_material_dependency_builtin(dependency)) return true;
     if (dependency->kind != QA_Q2_MATERIAL_SKY)
         return request(state->row, dependency->path, &state->waiting, error);
     if (!strcmp(dependency->path, "-")) return true;

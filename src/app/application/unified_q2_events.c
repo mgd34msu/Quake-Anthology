@@ -45,7 +45,7 @@ static uint32_t player_slot(const q2_projection *p, qa_actor_id target)
     return 0;
 }
 
-static bool reference_actor(const q2_projection *p, uint32_t slot, qa_actor_id *out)
+static bool reference_actor(const q2_projection *p, uint32_t slot, size_t relative_offset, qa_actor_id *out)
 {
     if (!p->record || !p->record->raw.data || !p->message->payload.data) return false;
     if (p->record->event.kind != QA_Q2_SVC_SOUND && p->record->event.kind != QA_Q2_SVC_MUZZLEFLASH &&
@@ -53,10 +53,12 @@ static bool reference_actor(const q2_projection *p, uint32_t slot, qa_actor_id *
     uintptr_t raw = (uintptr_t)p->record->raw.data, payload = (uintptr_t)p->message->payload.data;
     if (raw < payload || raw - payload > p->message->payload.size ||
         p->record->raw.size > p->message->payload.size - (size_t)(raw - payload)) return false;
-    size_t first = (size_t)(raw - payload), last = first + p->record->raw.size;
+    size_t first = (size_t)(raw - payload);
+    if (p->record->raw.size < 2 || relative_offset > p->record->raw.size - 2) return false;
+    size_t offset = first + relative_offset;
     for (size_t i = 0; i < p->message->reference_count; ++i) {
         const qa_application_protocol_reference *reference = p->message->references + i;
-        if (reference->offset < first || reference->offset >= last ||
+        if (reference->offset != offset ||
             p->message->payload.size < 2 || reference->offset > p->message->payload.size - 2) continue;
         uint32_t number = qa_load_u16le(p->message->payload.data + reference->offset);
         if (reference->packed_sound) number >>= 3;
@@ -67,11 +69,11 @@ static bool reference_actor(const q2_projection *p, uint32_t slot, qa_actor_id *
 
 /* Read the admitted public GAME prefix while the actual import is executing.
  * Idle snapshot APIs cannot be used at this append-time boundary. */
-static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *actor_out,
+static bool source_entity(const q2_projection *p, uint32_t slot, size_t relative_offset, qa_actor_id *actor_out,
     qa_vec3 *origin, qa_vec3 *angles, float *scale, bool *present, qa_error *e)
 {
     *present = false; *actor_out = (qa_actor_id){0};
-    bool captured = reference_actor(p, slot, actor_out);
+    bool captured = reference_actor(p, slot, relative_offset, actor_out);
     qa_native_instance *instance = qa_native_host_instance(p->provider->state.native.host);
     qa_native_entity_table before;
     qa_native_slot_binding binding;
@@ -106,10 +108,10 @@ static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *ac
     return true;
 }
 
-static bool source_actor(const q2_projection *p, uint32_t slot, qa_actor_id *out, qa_error *e)
+static bool source_actor(const q2_projection *p, uint32_t slot, size_t relative_offset, qa_actor_id *out, qa_error *e)
 {
     qa_vec3 origin, angles; bool present;
-    return source_entity(p, slot, out, &origin, &angles, NULL, &present, e);
+    return source_entity(p, slot, relative_offset, out, &origin, &angles, NULL, &present, e);
 }
 
 static const qa_application_protocol_resource_reference *resource_receipt(const q2_projection *p,
@@ -215,6 +217,7 @@ static bool residual_temporary(q2_projection *p, application_unified_json *j,
     if (!text(j, "{\"kind\":\"q2-temp-entity\",\"event\":{", e) ||
         !string(j, "\"profile\":", p->engine->profile == QA_NATIVE_Q2_GAME_API3 ? "q2-34" : "q2-kex-2023", e) ||
         !number(j, ",\"type\":", t->type, e) || !text(j, ",\"fields\":[", e)) return false;
+    size_t offset = 2;
     for (size_t i = 0; i < t->field_count; ++i) {
         const qa_q2_temp_field *f = t->fields + i;
         if ((unsigned)f->name >= sizeof(names) / sizeof(*names) ||
@@ -229,11 +232,16 @@ static bool residual_temporary(q2_projection *p, application_unified_json *j,
             if (!number(j, ",\"value\":", f->value.integer, e)) return false;
             if (f->name == QA_Q2_TEMP_ENTITY1 || f->name == QA_Q2_TEMP_ENTITY2) {
                 qa_actor_id a = {0};
-                if (f->value.integer >= 0 && !source_actor(p, (uint32_t)f->value.integer, &a, e)) return false;
+                if (f->value.integer >= 0 && t->type != QA_Q2_TE_STEAM && t->type != QA_Q2_TE_WIDOWBEAMOUT &&
+                    !source_actor(p, (uint32_t)f->value.integer, offset, &a, e)) return false;
                 if (!actor(j, ",\"actor\":", a, e)) return false;
             }
         }
         if (!text(j, "}", e)) return false;
+        if (f->kind == QA_Q2_TEMP_VECTOR)
+            offset += f->name == QA_Q2_TEMP_DIRECTION ? 1u : p->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 6u : 12u;
+        else offset += f->name == QA_Q2_TEMP_ENTITY1 || f->name == QA_Q2_TEMP_ENTITY2 ? 2u :
+            f->name == QA_Q2_TEMP_TIME ? 4u : 1u;
     }
     return text(j, "]}}", e);
 }
@@ -306,7 +314,7 @@ static bool muzzle(q2_projection *p, const qa_q2_server_event *event,
     application_unified_json *presentation, application_unified_json *simulation, qa_error *e)
 {
     qa_actor_id a; qa_vec3 origin, angles; float scale = 1; bool present;
-    if (!source_entity(p, event->data.muzzle.entity, &a, &origin, &angles, &scale, &present, e)) return false;
+    if (!source_entity(p, event->data.muzzle.entity, 1, &a, &origin, &angles, &scale, &present, e)) return false;
     if (!a.registry || (event->data.muzzle.monster && !present)) return true;
     if (event->data.muzzle.monster) {
         bool classic = p->engine->profile == QA_NATIVE_Q2_GAME_API3;
@@ -389,7 +397,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
             text(&simulation, "}}", e);
         if (ok && index >= skins && index < skins + 256) {
             source = index - skins + 1; qa_actor_id a;
-            ok = source_actor(p, source, &a, e);
+            ok = source_actor(p, source, SIZE_MAX, &a, e);
             if (ok && a.registry) {
                 const char *value = event->data.config.value, *split = strchr(value, '\\');
                 size_t count = split ? (size_t)(split - value) : strlen(value);
@@ -431,7 +439,12 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         qa_actor_id a = {0}; qa_vec3 origin = {0}, angles; bool present;
         const char *path = resource_path(p, QA_NATIVE_HOST_SOUND, sound->index, e);
         ok = path != NULL;
-        if (ok && (sound->flags & 8u)) ok = source_entity(p, sound->entity, &a, &origin, &angles, NULL, &present, e);
+        if (ok && (sound->flags & 8u)) {
+            uint8_t flags = sound->flags;
+            size_t offset = 2u + ((flags & 32u) ? 2u : 1u) + ((flags & 1u) != 0) +
+                ((flags & 2u) != 0) + ((flags & 16u) != 0);
+            ok = source_entity(p, sound->entity, offset, &a, &origin, &angles, NULL, &present, e);
+        }
         if (sound->has_position) origin = vec(sound->position);
         source = sound->entity; has_source = (sound->flags & 8u) != 0;
         if (ok) ok = text(&presentation, "{\"kind\":\"q2\",\"event\":{\"kind\":\"sound\"", e) &&

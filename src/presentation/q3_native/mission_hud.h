@@ -32,6 +32,11 @@ bool q3n_mission_hud_create_restored(const q3n_mission_hud_options *, q3n_missio
 /* Empty received-CLIENT continuation; genuine Team CG_Init stages follow. */
 bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
 bool q3n_mission_hud_create_compiled(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
+bool q3n_mission_hud_rebind_prepare(q3n_mission_hud *, const q3n_compiled_source_rebind_ticket *,
+    const qa_command_context *, qa_error *);
+bool q3n_mission_hud_rebind_ready(const q3n_mission_hud *, const q3n_compiled_source_rebind_ticket *);
+void q3n_mission_hud_rebind_commit(q3n_mission_hud *, const q3n_compiled_source_rebind_ticket *);
+void q3n_mission_hud_rebind_abort(q3n_mission_hud *, const q3n_compiled_source_rebind_ticket *);
 void q3n_mission_hud_destroy(q3n_mission_hud *);
 bool q3n_mission_hud_idle(const q3n_mission_hud *);
 bool q3n_mission_hud_bind(q3n_mission_hud *, q3n_hud *, qa_error *);

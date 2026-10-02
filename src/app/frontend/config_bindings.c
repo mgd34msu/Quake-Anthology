@@ -21,8 +21,10 @@ static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
         unsigned a=(unsigned char)*left,b=(unsigned char)*right;
-        if (a>='A' && a<='Z') a+='a'-'A'; if (b>='A' && b<='Z') b+='a'-'A';
-        if (a!=b) return false; if (!a) return true;
+        if (a>='A' && a<='Z') a+='a'-'A';
+        if (b>='A' && b<='Z') b+='a'-'A';
+        if (a!=b) return false;
+        if (!a) return true;
     }
 }
 static bool same(qa_physical_input a,qa_physical_input b)
@@ -71,7 +73,8 @@ static void print_row(frontend_config_bindings *owner,qa_physical_input input,co
 static bool execute(frontend_config_bindings *owner,const qa_command_invocation *command,qa_error *error)
 {
     if (equal(command->argv[0],"unbindall")) {
-        while (owner->count) remove_at(owner,owner->count-1); return true;
+        while (owner->count) remove_at(owner,owner->count-1);
+        return true;
     }
     if (equal(command->argv[0],"bindlist")) {
         for (size_t i=0;i<owner->count;++i) print_row(owner,owner->rows[i].input,owner->rows[i].command);
@@ -135,7 +138,8 @@ static bool handler(void *context,const qa_command_invocation *command,qa_error 
 frontend_config_bindings *frontend_config_bindings_create(qa_error *error)
 {
     frontend_config_bindings *owner=calloc(1,sizeof(*owner));
-    if (!owner) fail(error,QA_ERROR_MEMORY,"Allocating dedicated binding dictionary"); return owner;
+    if (!owner) fail(error,QA_ERROR_MEMORY,"Allocating dedicated binding dictionary");
+    return owner;
 }
 bool frontend_config_bindings_commands(frontend_config_bindings *owner,
     const frontend_config_binding_commands *commands,qa_error *error)
@@ -205,7 +209,8 @@ bool frontend_config_bindings_config(const frontend_config_bindings *owner,qa_bu
         ok=append(out,"bind \"",error) && append(out,name,error) && append(out,"\" \"",error) &&
             append(out,row->command,error) && append(out,"\"\n",error);
     }
-    if (!ok) qa_buffer_free(out); return ok;
+    if (!ok) qa_buffer_free(out);
+    return ok;
 }
 bool frontend_config_bindings_fields(frontend_config_bindings *owner,qa_source_save_io *io)
 {

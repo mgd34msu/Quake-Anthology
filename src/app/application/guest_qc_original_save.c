@@ -1,6 +1,7 @@
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_startup_prepare.h"
 #include "qa/qc_text_save.h"
 #include "guest_qc_original_save.h"
 #include "control_frame.h"
@@ -42,7 +43,7 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
     application_provider *provider=app?application_world_provider(app,QA_ROLE_ENTITIES,""):NULL;
     struct application_qc_state *engine=provider && provider->kind==APPLICATION_PROVIDER_QC?provider->state.qc.engine:NULL;
     if (!app || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_RUNNING ||
-        !app->map_view_ready || app->publication_started || !app->world || !app->session ||
+        !app->map_view_ready || app->publication_started || app->client_preparation || !app->world || !app->session ||
         !qa_session_safe(app->session) || !qa_world_idle(app->world) || !application_guests_idle(app) ||
         !engine || engine->provider!=provider || engine->world!=app->world ||
         !provider->constructed || !provider->attached || provider->close_pending || !provider->map_bound ||
@@ -102,9 +103,9 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
         }
     }
     for (size_t i=0;i<choices->binding_count;++i) {
-        const qa_launch_binding *binding=choices->bindings+i;
-        if ((binding->role==QA_ROLE_ARSENAL && strcmp(binding->instance,provider->launch->selection.instance)) ||
-            (binding->role==QA_ROLE_BODY && binding->definition && strcmp(binding->definition,"player"))) {
+        const qa_launch_binding *selected_binding=choices->bindings+i;
+        if ((selected_binding->role==QA_ROLE_ARSENAL && strcmp(selected_binding->instance,provider->launch->selection.instance)) ||
+            (selected_binding->role==QA_ROLE_BODY && selected_binding->definition && strcmp(selected_binding->definition,"player"))) {
             application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve selected mixed weapons or character models"); return NULL;
         }
     }

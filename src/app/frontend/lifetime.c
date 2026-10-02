@@ -34,6 +34,7 @@
 #include "ui_features.h"
 #include "keys.h"
 #include "config_store.h"
+#include "neutral_config.h"
 #include "client_registry.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
@@ -294,6 +295,13 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
         if (qa_application_should_stop(application) || (!console && qa_application_travel_read(application,&travel))) return true;
         qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1};
         if (!console) {
+            qa_application_client_source neutral;
+            bool neutral_primary=false;
+            if (!frontend_config_store_neutral_startup_read(frontend->config_store,&neutral,&neutral_primary,error)) return false;
+            if (neutral_primary) {
+                console=neutral.context.console;
+                context=neutral.context.command;
+            }
             const qa_launch_snapshot *publication=qa_application_launch(application);
             const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
             const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
@@ -308,7 +316,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
                     return frontend_fail(error,QA_ERROR_FORMAT,"Startup has multiple primary physical consoles");
                 console=candidate;
             }
-            if (console) {
+            if (console && !neutral_primary) {
                 qa_application_console_scope scope;
                 if (!qa_application_console_scope_read(application,console,&scope))
                     return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup lost its primary physical console scope");
@@ -323,7 +331,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
                 context.dialect=product->family==QA_GAME_Q3?QA_CONSOLE_Q3:
                     product->family==QA_GAME_Q2?(product->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2):
                     product->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
-            } else {
+            } else if (!console) {
                 if (binding || frontend_network_remote(frontend))
                     return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup source has no published primary console");
                 console=qa_application_console(application);

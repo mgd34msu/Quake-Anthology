@@ -136,7 +136,7 @@ static bool load_catalog(qa_bot_catalog *c,bool bots,qa_error *e) {
         if(listed_bytes+length+1>=1024) break;
         listed_bytes+=length+1;
         if(strlen(name)+7>=128) {okay=bot_catalog_fail(e,QA_ERROR_FORMAT,"Game catalog filename exceeds source 128-byte storage");break;}
-        snprintf(filename,sizeof(filename),"scripts/%s",name);
+        snprintf(filename,sizeof(filename),"scripts/%.247s",name);
         okay=load_file(c,filename,destination,e);
     }
     for(size_t i=0;i<folded_count;++i) qa_buffer_free(&folded[i]);

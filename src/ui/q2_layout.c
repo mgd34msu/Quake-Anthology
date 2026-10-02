@@ -75,7 +75,7 @@ static bool quad(layout_context *c, const qa_scene_image *image, float x, float 
     if (c->failed || !image) return !c->failed;
     const qa_hud_q2_options *o = c->options;
     if (!qa_scene_frame_picture_f(c->scene, image, o->viewport,
-        (qa_scene_rect_f){o->viewport.x + x * o->scale, o->viewport.y + y * o->scale,
+        (qa_scene_rect_f){(float)o->viewport.x + x * o->scale, (float)o->viewport.y + y * o->scale,
                           w * o->scale, h * o->scale}, uv, color, c->error)) c->failed = true;
     return !c->failed;
 }
@@ -86,8 +86,8 @@ static void picture(layout_context *c, const char *name, float x, float y, float
     if (c->failed || !*name || !c->options->picture) return;
     const qa_scene_image *image = c->options->picture(c->options->context, name, c->error);
     if (!image) return;
-    if (before) x -= image->logical_width + 2;
-    quad(c, image, x, y, w > 0 ? w : image->logical_width, h > 0 ? h : image->logical_height,
+    if (before) x -= (float)image->logical_width + 2;
+    quad(c, image, x, y, w > 0 ? w : (float)image->logical_width, h > 0 ? h : (float)image->logical_height,
          (qa_scene_vec4){0, 0, 1, 1}, white);
 }
 static void classic_glyph(layout_context *c, uint32_t code, float x, float y, bool shadow) {
@@ -181,7 +181,7 @@ static void field(layout_context *c, double value, int32_t digits, bool alternat
     if (digits < 1) return;
     const char *s = number_string(c, value, true);
     size_t length = strlen(s); if (length > (size_t)digits) length = (size_t)digits;
-    float x = c->x + 2 + 16 * (digits - (int32_t)length);
+    float x = c->x + 2 + (float)(16 * (digits - (int32_t)length));
     for (size_t i = 0; i < length; ++i, x += 16) {
         char name[32];
         if (s[i] == '-') snprintf(name, sizeof name, "%s_minus", alternate ? "anum" : "num");
@@ -289,7 +289,7 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q2 HUD frame or resources"); return false;
     }
     *c = (layout_context){.options = options, .frame = frame, .scene = scene, .error = error,
-        .width = options->viewport.width / options->scale, .height = options->viewport.height / options->scale,
+        .width = (float)options->viewport.width / options->scale, .height = (float)options->viewport.height / options->scale,
         .table = options->table};
     if (!isfinite(c->width) || !isfinite(c->height)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD scale exceeds logical coordinate range"); return false;
@@ -477,8 +477,8 @@ static bool execute(layout_context *c, const char *source) {
             int32_t px = integer(c), py = integer(c), slot = integer(c), score = integer(c), ping = integer(c);
             int32_t time = c->rerelease ? 0 : integer(c);
             if (!draw) continue;
-            c->x = truncf(c->width / 2) - 160 + px + (c->rerelease ? 8 : 0);
-            c->y = truncf(c->height / 2) - 120 + py + (c->rerelease ? 7 : 0);
+            c->x = truncf(c->width / 2) - 160 + (float)px + (c->rerelease ? 8 : 0);
+            c->y = truncf(c->height / 2) - 120 + (float)py + (c->rerelease ? 7 : 0);
             const char *info = client_info(c, slot), *slash = strchr(info, '\\');
             const char *name = slash ? copy_span(c, info, (size_t)(slash - info)) : info;
             text(c, name, !c->rerelease, c->x + 32, c->y, false);
@@ -499,7 +499,7 @@ static bool execute(layout_context *c, const char *source) {
             if (ping > 999) ping = 999;
             const char *icon = c->rerelease ? argument(c) : "";
             if (!draw) continue;
-            c->x = truncf(c->width / 2) - 160 + px; c->y = truncf(c->height / 2) - 120 + py;
+            c->x = truncf(c->width / 2) - 160 + (float)px; c->y = truncf(c->height / 2) - 120 + (float)py;
             bool alternate = slot == c->frame->player_number;
             const char *name = client_name(c, slot);
             if (c->rerelease) {
@@ -558,7 +558,7 @@ static bool execute(layout_context *c, const char *source) {
             float w = c->width / 2, left = c->width / 4;
             for (size_t i = 0; i < 2; ++i) {
                 uint32_t packed = (value >> (i * 8)) & 255; if (!(packed & 128)) continue;
-                float fraction = (packed & 127) / 127.f;
+                float fraction = (float)(packed & 127u) / 127.f;
                 fill(c, left, c->y, w + 1, 5, black);
                 if (fraction > 0) fill(c, left, c->y, w * fraction, 4, (qa_scene_vec4){1, 0, 0, 1});
                 if (fraction < 1) fill(c, left + w * fraction, c->y, w * (1 - fraction), 4, (qa_scene_vec4){80.f / 255, 80.f / 255, 80.f / 255, 1});

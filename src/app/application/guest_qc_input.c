@@ -338,6 +338,8 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
             float value = application_qc_input_scalar(command, field->input);
             if (!field->nonzero || value != 0) {
                 value *= field->scale;
+                if(field->input==QC_INPUT_IMPULSE && value!=0 && !received)
+                    application_qc_weapon_command(engine,actor);
                 ok = isfinite(value) && qa_qc_project_entity_float(vm, reference, field->definition->offset, value, error);
             }
         }

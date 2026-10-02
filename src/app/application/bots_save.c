@@ -12,6 +12,7 @@
 #include "bots_catalog.h"
 #include "bots_guests.h"
 #include "bots_knowledge.h"
+#include "bots_npc.h"
 #include <limits.h>
 
 typedef struct bot_app_record {
@@ -22,10 +23,16 @@ static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=9;
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=10;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==9?true:
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==10?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
+}
+static bool nav_signature(qa_source_save_io *io) {
+    uint8_t magic[8];memcpy(magic,nav_magic,sizeof(magic));uint32_t version=2;
+    return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
+        (!memcmp(magic,nav_magic,sizeof(magic)) && version==2?true:
+            bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application navigation continuation schema"));
 }
 
 static bool section(qa_source_save_io *io,qa_bytes *value) {
@@ -85,73 +92,45 @@ static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
     }
     return true;
 }
-/* Bot file views are constructor clones with read-only script consumers. Their
- * origin selects the complete pinned policy; numeric mount IDs are remapped
- * by real search-order ordinal, and archive content must remain identical. */
-static bool files_field(qa_source_save_io *io,application_bots *bots) {
-    qa_application *app=bots->application;
-    if(!qa_source_save_bool(io,&bots->files_launch) || !qa_source_save_string(io,&bots->files_product) ||
-        (bots->files_launch && bots->files_product) || (!bots->files_launch && !bots->files_product))
-        return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid application bot file origin");
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        if(bots->files_launch) bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(launch(app)),io->error);
-        else {
-            const char *id=qa_strings_cstr(qa_session_strings(app->session),bots->files_product);
-            const qa_product *product=NULL;
-            for(size_t i=0;id && i<qa_catalog_count(app->catalog);++i) {
-                const qa_product *candidate=qa_catalog_at(app->catalog,i);
-                if(!strcmp(candidate->key,id)) {product=candidate;break;}
-            }
-            if(!product || product->family!=QA_GAME_Q3 || product->availability!=QA_CONTENT_INSTALLED)
-                return bot_save_fail(io,QA_ERROR_FORMAT,"Saved bot content product is unavailable");
-            if(!qa_catalog_open(app->catalog,product->id,&bots->files,io->error)) return false;
-        }
-        if(!bots->files) return false;
-    }
-    size_t actual=qa_vfs_mount_count(bots->files),count=actual;
-    if(!qa_source_save_count(io,&count,actual) || count!=actual) return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file mount inventory differs");
-    if(io->direction==QA_SOURCE_SAVE_READ && count) {
-        bots->saved_file_references=calloc(count,sizeof(*bots->saved_file_references));
-        if(!bots->saved_file_references) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring bot file reference accounting");
-        bots->saved_file_reference_count=count;
-    }
-    for(size_t i=0;i<count;++i) {
-        qa_vfs_mount_info info;
-        if(!qa_vfs_mount_at(bots->files,i,&info)) return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file mount is absent");
-        bool archive=info.is_archive,writable=info.writable,overlay=info.user_overlay,referenced=info.referenced;
-        uint32_t format=info.format,comparison=info.comparison;
-        qa_sha256_digest digest={0};if(info.digest) digest=*info.digest;
-        if(!qa_source_save_bool(io,&archive) || !qa_source_save_u32(io,&format) ||
-            !qa_source_save_u32(io,&comparison) || !qa_source_save_bool(io,&writable) ||
-            !qa_source_save_bool(io,&overlay) || !qa_source_save_bool(io,&referenced) ||
-            !qa_source_save_bytes(io,digest.bytes,sizeof(digest.bytes)) ||
-            archive!=info.is_archive || format!=(uint32_t)info.format || comparison!=(uint32_t)info.comparison ||
-            writable!=info.writable || overlay!=info.user_overlay ||
-            (info.digest? !qa_sha256_equal(&digest,info.digest):memcmp(digest.bytes,(uint8_t[32]){0},32)))
-            return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file mount policy or content differs");
-        if(io->direction==QA_SOURCE_SAVE_READ) bots->saved_file_references[i]=referenced;
-    }
-    actual=qa_vfs_prefix_count(bots->files);count=actual;
-    if(!qa_source_save_count(io,&count,actual) || count!=actual) return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file prefix inventory differs");
-    for(size_t i=0;i<count;++i) {
-        const char *prefix;const qa_mount_id *order;size_t extent;
-        if(!qa_vfs_prefix_at(bots->files,i,&prefix,&order,&extent)) return false;
-        const char *saved=io->direction==QA_SOURCE_SAVE_WRITE?prefix:NULL;
-        bool ok=bot_save_text(io,&saved) && saved && !strcmp(saved,prefix);
-        if(io->direction==QA_SOURCE_SAVE_READ) free((void *)saved);
-        size_t saved_extent=extent;
-        if(!ok || !qa_source_save_count(io,&saved_extent,extent) || saved_extent!=extent)
-            return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file prefix policy differs");
-        for(size_t j=0;j<extent;++j) {
-            size_t ordinal=0;qa_vfs_mount_info info;
-            while(ordinal<qa_vfs_mount_count(bots->files) &&
-                (!qa_vfs_mount_at(bots->files,ordinal,&info) || info.id!=order[j])) ++ordinal;
-            size_t expected=ordinal;
-            if(ordinal==qa_vfs_mount_count(bots->files) || !qa_source_save_count(io,&ordinal,expected) || ordinal!=expected)
-                return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file prefix mount order differs");
-        }
+bool application_bots_content_visit(const qa_application *app,const qa_application_content_visitor *visitor,
+    qa_error *error) {
+    application_bots *bots=app?app->bots:NULL;
+    if(!visitor || !visitor->view || !visitor->pool)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot content visitor is incomplete");
+    if(app) for(size_t i=0;i<app->provider_count;++i)
+        if(!application_bots_npc_content_visit(app->providers[i],visitor,error)) return false;
+    if(!bots) return true;
+    if(!application_bots_can_destroy(app))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot content owners are borrowed");
+    if(!bots->files || !visitor->view(visitor->context,bots->files,error)) return false;
+    if(bots->navigation_files && !visitor->view(visitor->context,bots->navigation_files,error)) return false;
+    for(application_bot_graph *g=bots->graphs;g;g=g->next) {
+        if(!g->asset_resource) continue;
+        qa_resource_pool *pool=qa_vfs_resources(bots->navigation_files);
+        if(!pool || qa_resource_pool_find(pool,qa_resource_id(g->asset_resource))!=g->asset_resource ||
+           g->asset_acquisition.resource_id!=qa_resource_id(g->asset_resource) ||
+           !qa_vfs_acquisition_retained(bots->navigation_files,&g->asset_acquisition,error))
+            return application_fail(error,QA_ERROR_FORMAT,"Bot navigation asset lost its retained opening");
     }
     return true;
+}
+static bool view_field(qa_source_save_io *io,application_bots *bots,qa_vfs **value,bool required,bool prepare) {
+    qa_application_content_graph *graph=qa_application_content_graph_read(bots->application);
+    uint64_t id=io->direction==QA_SOURCE_SAVE_WRITE?qa_application_content_view_id(graph,*value):0;
+    if(!qa_source_save_u64(io,&id) || (required && !id) ||
+       (io->direction==QA_SOURCE_SAVE_WRITE && *value && !id))
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file view is outside the actual content graph");
+    if(io->direction==QA_SOURCE_SAVE_READ && prepare) {
+        if(*value) return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file view was already restored");
+        if(id && !qa_application_content_retain_view(graph,id,value,io->error)) return false;
+    } else if(io->direction==QA_SOURCE_SAVE_READ && qa_application_content_view(graph,id)!=*value)
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Bot file view differs from its restored owner");
+    return true;
+}
+static bool files_field(qa_source_save_io *io,application_bots *bots) {
+    return qa_source_save_bool(io,&bots->files_launch) && qa_source_save_string(io,&bots->files_product) &&
+        !(bots->files_launch && bots->files_product) && (bots->files_launch || bots->files_product) &&
+        view_field(io,bots,&bots->files,true,true);
 }
 static bool map_field(qa_source_save_io *io,application_bots *bots) {
     qa_application *app=bots->application;
@@ -199,7 +178,8 @@ static bool snapshot_field(qa_source_save_io *io,application_bots *bots) {
 static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *record) {
     qa_application *app=bots->application;
     if(!provider_field(io,app,&bots->source,true) || !map_field(io,bots) || !files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
-        bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats)) return false;
+        bots->capacity>INT32_MAX ||
+        (bots->capacity && sizeof(*bots->seats)>SIZE_MAX/bots->capacity)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
         if(bots->capacity>(io->input.size-io->offset)/14) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
         bots->seats=calloc(bots->capacity,sizeof(*bots->seats));
@@ -294,29 +274,50 @@ static bool binding(qa_source_save_io *io,application_bots *bots,qa_actor_id act
     }
     return true;
 }
-static bool asset_field(qa_source_save_io *io,application_bots *bots,application_bot_graph *g,bool prepare) {
-    bool present=g->asset_resource!=NULL;
+bool application_navigation_asset_field(qa_source_save_io *io,qa_application *app,qa_vfs *files,
+    qa_resource **held_resource,qa_vfs_acquisition *held_acquisition,bool prepare) {
+    bool present=*held_resource!=NULL;
     if(!qa_source_save_bool(io,&present)) return false;
-    if(!present) return !g->asset_resource || bot_save_fail(io,QA_ERROR_FORMAT,"Navigation asset presence differs");
-    const char *path=io->direction==QA_SOURCE_SAVE_WRITE?qa_resource_path(g->asset_resource):NULL;
-    qa_sha256_digest digest={0};if(g->asset_resource) digest=*qa_resource_digest(g->asset_resource);
-    size_t ordinal=g->asset_mount_ordinal;
-    qa_vfs *files=qa_launch_snapshot_mounts(launch(bots->application));
-    bool ok=bot_save_text(io,&path) && path && qa_source_save_bytes(io,digest.bytes,32) &&
-        qa_source_save_count(io,&ordinal,qa_vfs_mount_count(files));
-    if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare) {
-        qa_vfs_mount_info mount;
-        ok=qa_vfs_mount_at(files,ordinal,&mount) &&
-            qa_vfs_acquire_from(files,mount.id,path,&g->asset_resource,io->error) &&
-            qa_sha256_equal(&digest,qa_resource_digest(g->asset_resource));
-        g->asset_mount_ordinal=ordinal;
-    } else if(ok && io->direction==QA_SOURCE_SAVE_READ) {
-        ok=g->asset_resource && ordinal==g->asset_mount_ordinal &&
-            !strcmp(path,qa_resource_path(g->asset_resource)) &&
-            qa_sha256_equal(&digest,qa_resource_digest(g->asset_resource));
+    if(!present) return !*held_resource || bot_save_fail(io,QA_ERROR_FORMAT,"Navigation asset presence differs");
+    qa_application_content_graph *graph=qa_application_content_graph_read(app);
+    uint64_t pool=0,resource=0;
+    if(io->direction==QA_SOURCE_SAVE_WRITE &&
+       !qa_application_content_resource_id(graph,*held_resource,&pool,&resource))
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Navigation asset is outside its actual content pool");
+    qa_vfs_acquisition decoded={0};
+    qa_vfs_acquisition *receipt=io->direction==QA_SOURCE_SAVE_WRITE?held_acquisition:&decoded;
+    bool ok=qa_source_save_u64(io,&pool) && pool && qa_source_save_u64(io,&resource) && resource &&
+        qa_source_save_u64(io,&receipt->mount) && qa_source_save_u64(io,&receipt->resource_id);
+    char **texts[]={&receipt->path,&receipt->lookup_path,&receipt->link_source,&receipt->link_target};
+    for(size_t i=0;ok && i<4;++i) {
+        const char *text=*texts[i];ok=bot_save_text(io,&text);
+        if(io->direction==QA_SOURCE_SAVE_READ) *texts[i]=(char *)text;
     }
-    if(io->direction==QA_SOURCE_SAVE_READ) free((void *)path);
-    return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Pinned navigation asset selection differs");
+    ok=ok && receipt->resource_id==resource && receipt->path && receipt->lookup_path &&
+        qa_vfs_acquisition_opening_codec(io,files,receipt) &&
+        receipt->opening_present && qa_vfs_acquisition_retained(files,receipt,io->error);
+    const qa_resource *actual=ok?qa_application_content_resource(graph,pool,resource):NULL;
+    ok=ok && actual && qa_vfs_resources(files)==qa_application_content_pool(graph,pool) &&
+        qa_resource_pool_find(qa_vfs_resources(files),resource)==actual;
+    if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare) {
+        if(*held_resource) ok=false;
+        else {
+            *held_resource=(qa_resource *)actual;qa_resource_retain(*held_resource);
+            *held_acquisition=decoded;decoded=(qa_vfs_acquisition){0};
+        }
+    } else if(ok && io->direction==QA_SOURCE_SAVE_READ) {
+        const qa_vfs_acquisition *held=held_acquisition;
+        ok=actual==*held_resource && decoded.mount==held->mount && decoded.resource_id==held->resource_id &&
+            decoded.opening.rank==held->opening.rank && decoded.opening.user_overlay==held->opening.user_overlay &&
+            decoded.opening.order_count==held->opening.order_count;
+        const char *a[]={decoded.path,decoded.lookup_path,decoded.link_source,decoded.link_target,decoded.opening.prefix};
+        const char *b[]={held->path,held->lookup_path,held->link_source,held->link_target,held->opening.prefix};
+        for(size_t i=0;ok && i<5;++i) ok=a[i]&&b[i]?strcmp(a[i],b[i])==0:a[i]==b[i];
+        for(size_t i=0;ok && i<decoded.opening.order_count;++i)
+            ok=decoded.opening.order[i]==held->opening.order[i];
+    }
+    qa_vfs_acquisition_dispose(&decoded);
+    return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Navigation asset differs from its retained acquisition");
 }
 static bool same_profile(qa_movement_profile a,qa_movement_profile b,qa_error *error) {
     qa_source_save_io left={0},right={0};qa_buffer x={0},y={0};
@@ -334,6 +335,7 @@ static bool graph_policy(application_bot_graph *g,qa_error *error) {
     return true;
 }
 static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool prepare,bool restore) {
+    if(!view_field(io,bots,&bots->navigation_files,false,prepare)) return false;
     size_t count=graph_count(bots);
     if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(application_bot_graph))) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && prepare && count>(io->input.size-io->offset)/50)
@@ -350,7 +352,8 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
         if(!g) return bot_save_fail(io,QA_ERROR_FORMAT,"Application navigation graph inventory differs");
         if(!provider_field(io,bots->application,&g->movement,false) ||
             !qa_persistence_movement_profile(io,&g->profile) || !qa_persistence_bounds(io,&g->bounds) ||
-            !asset_field(io,bots,g,prepare)) return false;
+            !application_navigation_asset_field(io,bots->application,bots->navigation_files,
+                &g->asset_resource,&g->asset_acquisition,prepare)) return false;
         qa_buffer graph={0},state={0};qa_bytes graph_bytes={0},state_bytes={0};bool ok=true;
         if(io->direction==QA_SOURCE_SAVE_WRITE) {
             ok=qa_navigation_graph_save_capture(bots->application->session,g->graph,&graph,io->error) &&
@@ -361,7 +364,8 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
         if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare) {
             qa_nav_asset *asset=NULL;
             if(g->asset_resource) {
-                int32_t checksum=(int32_t)qa_block_checksum(bots->geometry.source);
+                uint32_t checksum_word=qa_block_checksum(bots->geometry.source);int32_t checksum;
+                memcpy(&checksum,&checksum_word,sizeof(checksum));
                 /* Native NAV2/NAV3 ignore the optional AAS checksum argument. */
                 ok=qa_nav_asset_read(qa_resource_bytes(g->asset_resource),&checksum,&asset,io->error);
             }
@@ -414,7 +418,7 @@ bool application_navigation_save_capture(qa_application *app,qa_buffer *out,qa_e
         app->bots->round || app->bots->original || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application navigation is borrowed or restoring");
     bool present=app->bots!=NULL;qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,app->session,error) && bot_save_signature(&io,nav_magic) &&
+    bool ok=qa_source_save_writer(&io,app->session,error) && nav_signature(&io) &&
         qa_source_save_bool(&io,&present) && (!present || navigation_fields(&io,app->bots,false,false)) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);return ok;
@@ -444,13 +448,11 @@ bool application_bots_save_prepare(qa_application *app,qa_bytes bytes,qa_bytes n
         bots->saved_catalogue=record.catalogue;
     }
     bool nav_present=false;
-    if(ok) ok=qa_source_save_reader(&io,app->session,nav,error) && bot_save_signature(&io,nav_magic) &&
+    if(ok) ok=qa_source_save_reader(&io,app->session,nav,error) && nav_signature(&io) &&
         qa_source_save_bool(&io,&nav_present) && nav_present==present &&
         (!present || navigation_fields(&io,bots,true,false)) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    return ok && (!present ||
-        (qa_vfs_restore_references(bots->files,bots->saved_file_references,bots->saved_file_reference_count,error) &&
-         application_bots_construct_restored(bots,error)));
+    return ok && (!present || application_bots_construct_restored(bots,error));
 }
 bool application_navigation_save_restore(qa_application *app,qa_bytes bytes,qa_error *error) {
     application_bots *bots=app?app->bots:NULL;
@@ -458,7 +460,7 @@ bool application_navigation_save_restore(qa_application *app,qa_bytes bytes,qa_e
         memcmp(bytes.data,bots->saved_navigation_record.data,bytes.size)))
         return application_fail(error,QA_ERROR_FORMAT,"Navigation import differs from prepared candidate");
     qa_source_save_io io={0};bool present=false;
-    bool ok=app && qa_source_save_reader(&io,app->session,bytes,error) && bot_save_signature(&io,nav_magic) &&
+    bool ok=app && qa_source_save_reader(&io,app->session,bytes,error) && nav_signature(&io) &&
         qa_source_save_bool(&io,&present) && present==(bots!=NULL) &&
         (!present || navigation_fields(&io,bots,false,true)) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);if(ok && bots) bots->navigation_restored=true;return ok;

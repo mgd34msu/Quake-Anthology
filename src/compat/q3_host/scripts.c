@@ -208,7 +208,8 @@ q3_service_result q3_scripts(q3_call *call, int32_t *result, qa_error *error)
         qa_script_location position = qa_script_position(script->reader);
         char path[65]; size_t length = position.path ? strlen(position.path) : 0;
         if (length > 64) length = 64;
-        if (length) memcpy(path, position.path, length); path[length] = 0;
+        if (length) memcpy(path, position.path, length);
+        path[length] = 0;
         uint32_t line = position.line;
         bool ok = q3_write_string(call, call->arguments[1], path,
                                     role == QA_QVM_GAME ? 128 : (int32_t)length + 1, error) &&

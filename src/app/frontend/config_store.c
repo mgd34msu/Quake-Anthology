@@ -7,6 +7,7 @@
 #include "config_weapon_defaults.h"
 #include "remote_config.h"
 #include "neutral_config.h"
+#include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "native_q3_client.h"
@@ -630,6 +631,15 @@ bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_applicati
         return admitted || fail(error,QA_ERROR_ARGUMENT,"Published values require their actual physical command context");
     }
     frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    qa_application_client_preparation *client=frontend_shared_settings_client(manager->shared);
+    if (client) {
+        const qa_application_client_source *actual=qa_application_client_prepare_source(client);
+        if (actual && actual->context.console==console) {
+            if (registry!=frontend_shared_values_registry(values)) return true;
+            qa_cvars *engine=NULL;
+            return frontend_shared_values_client_access(values,client,command,&engine,out,error) && engine==registry;
+        }
+    }
     qa_application_startup_source source;
     if (pending_tuple(manager,application,console,&source))
         return frontend_shared_values_edit(values,&source,command,registry,out,error);
@@ -657,6 +667,15 @@ bool frontend_config_store_stage_input(frontend_config_store *manager,const qa_c
     if (!manager->shared) return true;
     if (shared_consumed(manager,manager->shared_application)) return true;
     frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    qa_application_client_preparation *client=frontend_shared_settings_client(manager->shared);
+    if (client) {
+        const qa_application_client_source *actual=qa_application_client_prepare_source(client);
+        if (actual && actual->context.console==console) {
+            bool ok=frontend_shared_values_client_input_restart(values,client,&command->context,error);
+            if (ok) *staged=true;
+            return ok;
+        }
+    }
     qa_application_startup_source source;
     bool ok=pending_tuple(manager,manager->shared_application,console,&source)?
         frontend_shared_values_input_restart(values,&source,&command->context,error):
@@ -829,6 +848,38 @@ static frontend_config_source *published_primary(const frontend_config_store *ma
     }
     return NULL;
 }
+bool frontend_config_store_primary_legacy_read(const frontend_config_store *manager,uint32_t logical,
+    frontend_config_legacy_view *out,bool *present,qa_error *error)
+{
+    if (present) *present=false;
+    if (out) *out=(frontend_config_legacy_view){0};
+    qa_application *application=manager && manager->frontend?manager->frontend->application:NULL;
+    if (!application || !out || !present)
+        return fail(error,QA_ERROR_ARGUMENT,"Legacy policy requires its actual published configuration manager");
+    frontend_config_source *source=published_primary(manager,application);
+    if (!source) return true;
+    const qa_launch_instance *selected=instance(source);
+    const qa_product *product=qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product);
+    if (!product || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
+        (product->family!=QA_GAME_Q1 && product->family!=QA_GAME_Q2)) return true;
+    size_t ordinal=seat_index(source,logical);
+    if (ordinal>=source->seat_count) return true;
+    qa_cvars *registry=source->seats[ordinal].cvars;
+    qa_command_context command;
+    if (source->running || !source->configured || !source->released || !registry ||
+        !current_command(source,&command,error) || !frontend_legacy_source_owns(registry,"r_fullbright") ||
+        !qa_cvars_observer_idle(registry))
+        return fail(error,QA_ERROR_ARGUMENT,"Legacy policy lost its returned physical CLIENT declarations");
+    *out=(frontend_config_legacy_view){source,selected,product,registry,logical}; *present=true; return true;
+}
+bool frontend_config_store_primary_legacy_current(const frontend_config_store *manager,
+    const frontend_config_legacy_view *view)
+{
+    frontend_config_legacy_view actual; bool present=false;
+    return view && frontend_config_store_primary_legacy_read(manager,view->authored_seat,&actual,&present,NULL) &&
+        present && actual.source==view->source && actual.descriptor==view->descriptor &&
+        actual.product==view->product && actual.registry==view->registry;
+}
 bool frontend_config_store_select_bindings(frontend_config_store *manager,uint32_t logical,
     qa_strings *strings,const qa_item_definition *items,size_t count,int32_t controller,qa_error *error)
 {
@@ -989,6 +1040,13 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
     if (client?!frontend_remote_config_cvar_active(client,command):!source_cvar_context(source,command)) return NULL;
     qa_application *application=manager->frontend->application;
     qa_cvars *engine=qa_application_cvars(application);
+    qa_cvars *private=NULL;
+    if (client) private=frontend_remote_config_cvar_owner(client,command,name);
+    else if (command->origin!=QA_COMMAND_SERVER && source->seat_count) {
+        size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
+        if (seat<source->seat_count) private=source->seats[seat].cvars;
+    }
+    if (name && frontend_legacy_source_owns(private,name)) return private;
     qa_application_startup_source tuple;
     if (name && manager->shared && !shared_consumed(manager,application) && pending_tuple(manager,application,console,&tuple)) {
         qa_cvars *owner=NULL;
@@ -1908,6 +1966,9 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
             qa_settings_load_seat(input_store(source),path,&seat->settings,&seat->found,error) &&
             qa_settings_load_cvars(store,client_owner,4,command->dialect,&seat->client_archive,error) &&
             qa_settings_load_cvars(input_store(source),mouse_owner,3,command->dialect,&seat->mouse_archive,error);
+        if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
+            (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2))
+            ok=frontend_legacy_source_register(seat->cvars,command->dialect,source->declaration_owner,error);
     }
     if (ok) ok=install_commands(source,error);
     if (ok && source->primary) ok=phase_create(source,error);
@@ -2683,6 +2744,11 @@ bool frontend_config_store_client_input_configuration(const frontend_config_stor
 {
     return manager && frontend_neutral_config_client_input(manager->neutral,preparation,ordinal,out,error);
 }
+bool frontend_config_store_client_controller_selection(const frontend_config_store *manager,
+    const qa_application_client_preparation *preparation,uint32_t ordinal,qa_controller_selection *out,qa_error *error)
+{
+    return manager && frontend_neutral_config_client_controller(manager->neutral,preparation,ordinal,out,error);
+}
 bool frontend_config_store_client_view_transition(const frontend_config_store *manager,
     const qa_application_client_preparation *preparation,frontend_view_transition *out,qa_error *error)
 {
@@ -2785,17 +2851,39 @@ bool frontend_config_store_client_settings_finish(frontend_config_store *manager
     return ok;
 }
 bool frontend_config_store_client_settings_abort(frontend_config_store *manager,
-    qa_application_client_preparation *client,qa_error *error)
+    qa_application_client_preparation *client,bool *complete,qa_error *error)
 {
-    if (!manager || !client || !qa_application_client_prepare_associated(manager->frontend->application,client))
+    if (complete) *complete=false;
+    if (!complete || !manager || !client || !qa_application_client_prepare_associated(manager->frontend->application,client))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT abort lost its actual application phase");
-    if (!manager->shared) return !manager->publication;
+    if (!manager->shared) { *complete=!manager->publication; return *complete; }
     if (!client_settings_current(manager,client)) return fail(error,QA_ERROR_ARGUMENT,"CLIENT abort names another scalar owner");
-    bool complete=false;
-    if (!frontend_shared_settings_cancel_advance(manager->shared,&complete,error) || !complete) return false;
-    bool ok=frontend_shared_settings_abort(&manager->shared,error);
-    if (!manager->shared) { manager->publication=NULL; manager->shared_application=NULL; manager->shared_candidate=NULL; }
+    bool released=false;
+    qa_error original={0};
+    bool ok=frontend_shared_settings_cancel_advance(manager->shared,&released,&original);
+    if (ok && !released) return true;
+    if (ok) ok=frontend_shared_settings_abort(&manager->shared,&original);
+    if (!ok && manager->shared) {
+        qa_error cleanup={0}; bool terminal=false;
+        bool cleaned=frontend_shared_settings_client_shutdown(&manager->shared,&terminal,&cleanup);
+        if (original.code==QA_OK && cleanup.code!=QA_OK) original=cleanup;
+        ok=cleaned && ok;
+    }
+    if (!manager->shared) {
+        manager->publication=NULL; manager->shared_application=NULL; manager->shared_candidate=NULL;
+        *complete=true;
+    }
+    if (!ok && error) *error=original;
     return ok;
+}
+bool frontend_config_store_client_settings_cancel(frontend_config_store *manager,
+    qa_application_client_preparation *client,bool *complete,qa_error *error)
+{
+    if (complete) *complete=false;
+    if (!complete || !client_settings_current(manager,client) ||
+        !qa_application_client_prepare_cancel_entered(client))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT release cancellation lost its exact retained settings owner");
+    return frontend_shared_settings_cancel_advance(manager->shared,complete,error);
 }
 bool frontend_config_store_neutral_pending_options(frontend_config_store *manager,uint32_t physical,
     frontend_client_source_options *out,qa_error *error)
@@ -2819,8 +2907,8 @@ bool frontend_config_store_client_profile(const frontend_config_store *manager,q
 {
     if (!manager || !out || !manager->frontend || !manager->frontend->application)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT profile needs its retained frontend selection");
-    if (family!=QA_GAME_Q1 && family!=QA_GAME_Q2)
-        return fail(error,QA_ERROR_UNSUPPORTED,"Neutral CLIENT configuration supports genuine Q1 and Q2 profiles");
+    if (family!=QA_GAME_Q1 && family!=QA_GAME_Q2 && family!=QA_GAME_Q3)
+        return fail(error,QA_ERROR_UNSUPPORTED,"Neutral CLIENT configuration requires a genuine Quake profile");
     qa_frontend *f=manager->frontend;
     const qa_product *product=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
     if (!product || product->family!=family || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||

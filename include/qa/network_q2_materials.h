@@ -9,8 +9,10 @@ typedef struct qa_q2_material_dependency {
     qa_q2_material_dependency_kind kind;
     const char *path;
     size_t begin, end;
+    bool builtin_images;
 } qa_q2_material_dependency;
 typedef bool (*qa_q2_material_dependency_fn)(void *, const qa_q2_material_dependency *, qa_error *);
+bool qa_q2_material_dependency_builtin(const qa_q2_material_dependency *);
 typedef struct qa_q2_material_scope {
     qa_scene_family family;
     bool palette_present;

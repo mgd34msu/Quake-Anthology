@@ -478,7 +478,7 @@ bool q2m_widow_summon(q2m_context *context, bool second, bool grow, qa_error *er
         qa_vec3 point =
             qa_vec_add(context->body.origin,
                        qa_vec_add(qa_vec_scale(forward, 30),
-                                  qa_vec_add(qa_vec_scale(right, side * (second ? 135.0f : 100.0f)),
+                                  qa_vec_add(qa_vec_scale(right, (float)side * (second ? 135.0f : 100.0f)),
                                              qa_vec_scale(up, second ? 0 : 16))));
         bool found;
         if (!qa_q2_rogue_find_spawn_point(context->game, point, bounds, 64, &found, &point, error))

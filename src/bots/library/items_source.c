@@ -48,7 +48,8 @@ bool bot_items_cell(qa_bot_items *c, size_t index, qa_bot_memory_span *out, qa_e
 }
 bool bot_items_count(qa_bot_items *c, uint32_t count, qa_error *error) {
     qa_bot_memory_span span;
-    if (!bytes(c, &span, error) || count > c->view.capacity) return false;
+    if (!bytes(c, &span, error)) return false;
+    if (count > c->view.capacity) return fail(error, "Item count exceeds its source allocation");
     put(span.data, count); return true;
 }
 bool bot_items_header_count(qa_bot_items *c, uint32_t *out, qa_error *error) {
@@ -58,8 +59,9 @@ bool bot_items_header_count(qa_bot_items *c, uint32_t *out, qa_error *error) {
     return *out <= c->view.capacity || fail(error, "Item parser count exceeds its actual source cells");
 }
 bool bot_items_member(qa_bot_items *c, uint32_t index, qa_error *error) {
-    if (index >= c->view.capacity || c->member_count == SIZE_MAX ||
-        !bot_grow((void **)&c->members, &c->member_capacity, c->member_count + 1,
+    if (index >= c->view.capacity || c->member_count == SIZE_MAX)
+        return fail(error, "Parsed item membership exceeds native storage");
+    if (!bot_grow((void **)&c->members, &c->member_capacity, c->member_count + 1,
                    sizeof(*c->members), error)) return false;
     c->members[c->member_count++] = index; return true;
 }

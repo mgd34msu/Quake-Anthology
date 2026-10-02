@@ -8,6 +8,7 @@
 #include "qa/font.h"
 #include "qa/collision.h"
 #include "qa/persistence_content.h"
+#include "qa/application_client.h"
 
 typedef struct frontend_remote_q2 frontend_remote_q2;
 /* The enclosing Source factory supplies its actual authenticated CLIENT
@@ -50,6 +51,7 @@ typedef struct frontend_remote_q2_options {
     bool (*records)(void *, const frontend_remote_q2_domain *,
         const qa_q2_server_record *, size_t, qa_error *);
     bool (*disconnected)(void *, const frontend_remote_q2_domain *, const char *, qa_error *);
+    bool (*entities_changed)(void *, const frontend_remote_q2_domain *, qa_error *);
 } frontend_remote_q2_options;
 typedef struct frontend_remote_q2_view {
     const frontend_remote_q2 *owner;
@@ -105,6 +107,8 @@ const char *frontend_remote_q2_config(const frontend_remote_q2 *, uint16_t);
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *, uint32_t source_number);
 bool frontend_remote_q2_entity_generation(const frontend_remote_q2 *, uint32_t source_number,
     uint64_t *content_generation);
+bool frontend_remote_q2_entity_publication_read(const frontend_remote_q2 *,
+    qa_application_client_entity_publication *);
 bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *, uint32_t *remote_index, qa_error *);
 /* Pure late attachment takes the exact candidate runtime/registry binding;
  * immutable content and media children are imported separately by graph IDs. */

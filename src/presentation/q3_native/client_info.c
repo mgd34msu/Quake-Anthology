@@ -141,7 +141,8 @@ static bool exists(q3n_clients *owner, const char *path, bool *found, qa_error *
     char *normalized = qa_vfs_normalize_path(path, &local);
     if (!normalized) {
         if (local.code == QA_ERROR_ARGUMENT || local.code == QA_ERROR_FORMAT) return current(owner, error);
-        if (error) *error = local; return false;
+        if (error) *error = local;
+        return false;
     }
     bool ok = qa_vfs_acquire(owner->options.content, normalized, &resource, NULL, &local);
     free(normalized);
@@ -305,7 +306,8 @@ static bool animation(q3n_clients *owner, q3n_client_info *ci, q3n_animation_hol
     char *normalized = qa_vfs_normalize_path(path, &local);
     if (!normalized) {
         if (local.code == QA_ERROR_ARGUMENT || local.code == QA_ERROR_FORMAT) return current(owner, error);
-        if (error) *error = local; return false;
+        if (error) *error = local;
+        return false;
     }
     free(normalized);
     bool ok = qa_vfs_acquire_receipt(owner->options.content, path, &next.resource, &next.receipt, &local);
@@ -515,7 +517,7 @@ static bool create(const q3n_client_options *options, unsigned domain, q3n_clien
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Invalid native Q3 client media services");
     if (domain==2) {
         q3n_compiled_source_view v;
-        if (!q3n_compiled_source_read(options->compiled_source,&v,error) ||
+        if (!q3n_compiled_source_checkpoint_read(options->compiled_source,&v,error) ||
             v.basis.content!=options->content || v.basis.assets!=options->assets || v.basis.product!=options->product)
             return q3n_client_fail(error,QA_ERROR_ARGUMENT,"Compiled client media has another content owner");
     } else if (domain==1) {

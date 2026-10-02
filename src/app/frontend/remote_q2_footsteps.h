@@ -6,10 +6,10 @@ struct frontend_remote_q2;
 struct remote_q2_footsteps;
 typedef struct remote_q2_footsteps frontend_q2_footsteps;
 typedef struct frontend_q2_footstep_source {
-    const qa_catalog *catalog;
+    qa_catalog *catalog;
     qa_product_id product;
     const char *map_name;
-    const qa_resource *map;
+    qa_resource *map;
     qa_vfs *files;
     qa_collision_geometry *geometry;
     qa_audio_bank *sounds;

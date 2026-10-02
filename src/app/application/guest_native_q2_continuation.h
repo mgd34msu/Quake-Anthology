@@ -7,12 +7,13 @@ struct application_native_q2_continuation;
 bool application_native_q2_continuation_portable(struct application_provider *, qa_error *);
 bool application_native_q2_continuation_capture(struct application_provider *,
     const qa_native_checkpoint *, qa_buffer *, qa_error *);
-/* Identity/base qualification precedes original module import. The prepared
- * token owns scalar values and resolved canonical identities, not addresses. */
+/* Primary source saves own declared scalar values and canonical identities.
+ * Callback source saves qualify the actual complete process/HOST capsule;
+ * their original private memory is owned by that capsule, without layout guesses. */
 bool application_native_q2_continuation_prepare(struct application_provider *,
     const qa_native_checkpoint *, qa_bytes, struct application_native_q2_continuation **, qa_error *);
-/* Apply only to the isolated candidate after GAME/baseline/LEVEL/HOST and before
- * observer activation or shared primary adoption. Failure leaves it discardable. */
+/* Apply after the source-specific restore path and before observer activation.
+ * Callback mode performs no private RAM writes or source callback replay. */
 bool application_native_q2_continuation_apply(struct application_provider *,
     const struct application_native_q2_continuation *, qa_error *);
 void application_native_q2_continuation_abort(struct application_native_q2_continuation *);

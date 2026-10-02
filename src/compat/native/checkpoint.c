@@ -19,7 +19,7 @@ static bool checkpoint_kind_matches_profile(const qa_native_checkpoint *checkpoi
 }
 
 static bool checkpoint_ready(qa_native_instance *instance, qa_error *error) {
-    if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED)
+    if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance is required for checkpointing");
     if (instance->active_depth || instance->callback_depth || instance->checkpointing ||

@@ -10,7 +10,8 @@ static const char *const time_names[]={"timescale","fixedtime","com_cameraMode",
 static char *retain_text(const char *text)
 {
     size_t length=strlen(text); char *copy=malloc(length+1);
-    if (copy) memcpy(copy,text,length+1); return copy;
+    if (copy) memcpy(copy,text,length+1);
+    return copy;
 }
 static bool write_value(qa_native_q3_client_service *service,qa_cvars *registry,
     const char *name,const char *value,qa_error *error)
@@ -44,7 +45,8 @@ static bool refresh_time(qa_native_q3_client_service *service,bool subscribed,qa
     for (size_t i=0;i<6;++i) if (suppressed[i]) {
         qa_error cleanup={0};
         if (!qa_cvars_observer_suppress(mirror,service->time_mirror_tokens[i],false,&cleanup)) {
-            if (ok && error) *error=cleanup; ok=false;
+            if (ok && error) *error=cleanup;
+            ok=false;
         }
     }
     return ok;

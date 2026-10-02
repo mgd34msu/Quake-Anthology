@@ -133,7 +133,7 @@ typedef struct gl_api {
 typedef struct gl_stage_uniforms {
     GLint mvp, model, normal_matrix;
     GLint clip_enabled, clip_plane;
-    GLint primary, secondary, secondary_mode, alpha_mode;
+    GLint primary, primary_enabled, secondary, secondary_mode, alpha_mode;
     GLint preblend_gamma, preblend_table;
     GLint fog_mode, fog_color, fog_amount;
     GLint lighting_mode, luminance_alpha, light_count;
@@ -226,6 +226,7 @@ struct qa_gl_renderer {
     const qa_scene_image *bound[2];
     qa_scene_view view;
     qa_scene_state pipeline;
+    float clear_depth;
     qa_scene_vertex source_vertices[QA_SOURCE_TESS_VERTICES];
     qa_scene_draw_buffer draw_buffer;
     float gamma;
@@ -285,6 +286,7 @@ GLenum gl_draw_buffer_name(qa_scene_draw_buffer buffer);
 unsigned gl_draw_buffer_index(qa_scene_draw_buffer buffer);
 bool gl_check(qa_gl_renderer *renderer, const char *operation,
               qa_error *error);
+void gl_source_pipeline_restore(qa_gl_renderer *renderer);
 
 typedef struct gl_presentation_snapshot gl_presentation_snapshot;
 bool gl_presentation_capture(qa_gl_renderer *, gl_presentation_snapshot **, qa_error *);

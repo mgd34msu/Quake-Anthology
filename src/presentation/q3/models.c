@@ -4,6 +4,12 @@
 void q3p_model_free(q3p_model *model)
 {
     if (!model) return;
+    if (!model->borrowed_scenes) qa_scene_model_destroy(model->source_md4_scene);
+    if (model->source_md4_lease.release) model->source_md4_lease.release(model->source_md4_lease.context);
+    if (!model->borrowed_models) qa_model_free(&model->source_md4_model);
+    qa_resource_release(model->source_md4_resource);
+    qa_vfs_acquisition_dispose(&model->source_md4_opening);
+    free(model->source_md4_order.mounts); free(model->source_md4_order.prefix);
     for (unsigned i = 0; i < 3; ++i) {
         bool shared = false;
         for (unsigned j = 0; j < i; ++j) if (model->scene[i] == model->scene[j]) shared = true;
@@ -191,6 +197,107 @@ static bool decode(q3p_model *model, const char *path, qa_error *error)
                                   &images, &model->scene[0], error);
 }
 
+static bool source_primary(q3p_model *model, unsigned slot, qa_error *error)
+{
+    qa_vfs_acquisition opening = {0}; q3p_opening_order order = {0}; int64_t rank = 0;
+    if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &opening, error) ||
+        !opening_rank(model->provider.mounts, &opening, &rank, &order, error)) {
+        qa_vfs_acquisition_dispose(&opening); free(order.mounts); free(order.prefix); return false;
+    }
+    qa_resource_retain(model->lod_resources[slot]); qa_resource_release(model->resource);
+    qa_vfs_acquisition_dispose(&model->opening); free(model->opening_order.mounts); free(model->opening_order.prefix);
+    model->resource = model->lod_resources[slot]; model->opening = opening;
+    model->opening_rank = rank; model->opening_order = order; return true;
+}
+static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *model,
+    const char *path, qa_error *error)
+{
+    model->source_registration = true; model->has_lods = true;
+    model->source_kind = QA_MODEL_MD3; model->registration_bad = true;
+    size_t length = strlen(path); const char *dot = strrchr(path, '.');
+    size_t stem = dot ? (size_t)(dot - path) : length;
+    if (length == SIZE_MAX || stem > SIZE_MAX - 7)
+        return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source model LOD requests");
+    for (unsigned slot = 0; slot < 3; ++slot) {
+        model->lods.paths[slot] = malloc(slot ? stem + 7 : length + 1);
+        if (!model->lods.paths[slot]) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source model LOD requests");
+        if (!slot) memcpy(model->lods.paths[slot], path, length + 1);
+        else {
+            memcpy(model->lods.paths[slot], path, stem);
+            memcpy(model->lods.paths[slot] + stem, slot == 1 ? "_1.md3" : "_2.md3", 7);
+        }
+    }
+    qa_scene_image_options images = {.family = model->provider.family, .wrap = QA_SCENE_REPEAT,
+        .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true,
+        .usage = QA_IMAGE_USAGE_SKIN, .transparent_index = -1};
+    int failed_slot = -1;
+    for (int slot = 2; slot >= 0; --slot) {
+        qa_error observed = {0};
+        if (!qa_vfs_acquire_receipt(model->provider.mounts, model->lods.paths[slot],
+            &model->lod_resources[slot], &model->lod_openings[slot], &observed)) {
+            if (observed.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = observed;
+            return false;
+        }
+        if (!opening_rank(model->provider.mounts, &model->lod_openings[slot],
+            &model->lod_opening_ranks[slot], &model->lod_opening_orders[slot], error)) return false;
+        model->lods.load_order[model->lods.load_count++] = (uint32_t)slot;
+        if (!model->resource && !source_primary(model, (unsigned)slot, error)) return false;
+        qa_bytes bytes = qa_resource_bytes(model->lod_resources[slot]);
+        bool md3 = bytes.size >= 4 && !memcmp(bytes.data, "IDP3", 4);
+        bool md4 = bytes.size >= 4 && !memcmp(bytes.data, "IDP4", 4);
+        if (!md3 && !md4) {
+            if (assets->options.print) assets->options.print(assets->options.context, "RE_RegisterModel: unknown fileid\n");
+            return true;
+        }
+        qa_model decoded = {0};
+        if (!qa_model_load(bytes, &decoded, &observed)) {
+            if (observed.code == QA_ERROR_MEMORY) { if (error) *error = observed; return false; }
+            model->lods.states[slot] = QA_MODEL_LOD_INVALID;
+            if (!slot) return true;
+            failed_slot = slot; break;
+        }
+        qa_model *retained;
+        qa_scene_model **scene;
+        if (md3) {
+            model->lods.models[slot] = decoded; retained = &model->lods.models[slot];
+            model->lods.states[slot] = QA_MODEL_LOD_LOADED; scene = &model->scene[slot];
+        } else {
+            qa_scene_model_destroy(model->source_md4_scene); model->source_md4_scene = NULL;
+            qa_model_free(&model->source_md4_model); model->source_md4_model = decoded;
+            retained = &model->source_md4_model; scene = &model->source_md4_scene;
+            qa_resource_release(model->source_md4_resource);
+            model->source_md4_resource = model->lod_resources[slot]; qa_resource_retain(model->source_md4_resource);
+            qa_vfs_acquisition_dispose(&model->source_md4_opening);
+            free(model->source_md4_order.mounts); free(model->source_md4_order.prefix);
+            model->source_md4_order = (q3p_opening_order){0};
+            if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &model->source_md4_opening, error) ||
+                !opening_rank(model->provider.mounts, &model->source_md4_opening,
+                    &model->source_md4_rank, &model->source_md4_order, error)) return false;
+            model->source_md4_slots[slot] = true;
+        }
+        /* Material admission is reached before the next file read, preserving
+         * the Source physical shader registration order. */
+        if (!qa_scene_model_create(retained, model->provider.images, model->provider.materials,
+            &images, scene, error) || !source_primary(model, (unsigned)slot, error)) return false;
+        model->source_kind = md3 ? QA_MODEL_MD3 : QA_MODEL_MD4;
+        ++model->source_num_lods;
+        if (retained->source.size > SIZE_MAX - model->lods.byte_length)
+            return q3p_fail(error, QA_ERROR_MEMORY, "Source model allocation total overflows");
+        model->lods.byte_length += retained->source.size;
+    }
+    if (!model->source_num_lods) return true;
+    if (failed_slot > 0) for (int slot = failed_slot - 1; slot >= 0; --slot) {
+        model->lods.states[slot] = QA_MODEL_LOD_ALIAS; model->lods.aliases[slot] = (uint32_t)slot + 1;
+        model->scene[slot] = model->scene[slot + 1]; ++model->source_num_lods;
+    }
+    model->lods.lod_count = model->source_num_lods;
+    model->registration_bad = false;
+    const qa_model *base = qa_model_at_lod(&model->lods, 0);
+    model->bounds = base ? bounds(base->frame_count ? &base->frames[0].bounds : &base->bounds) : (qa_bounds){0};
+    return true;
+}
+
 static bool source_bad_model(qa_q3_presentation_assets *a, const char *path,
     int32_t *out, qa_error *error)
 {
@@ -234,7 +341,7 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
     q3p_model *model = calloc(1, sizeof(*model));
     bool ok = model != NULL;
     if (!ok) q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 model resource");
-    int32_t handle = 0;
+    int32_t handle = 0, physical_handle = 0;
     if (ok && path[0] == '*') {
         double index = 0;
         const char *number = path + 1;
@@ -256,9 +363,12 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         }
     } else if (ok) {
         qa_error local = {0};
-        ok = q3p_select(a, normalized, QA_Q3_ASSET_MODEL, &model->provider, &local) &&
-             qa_vfs_acquire_receipt(model->provider.mounts, normalized, &model->resource, &model->opening, &local);
-        if (ok) ok = opening_rank(model->provider.mounts, &model->opening, &model->opening_rank,
+        bool source_lods = source_model && (extension(normalized, ".md3") || extension(normalized, ".md4"));
+        ok = q3p_select(a, normalized, QA_Q3_ASSET_MODEL, &model->provider, &local);
+        if (ok && source_lods) ok = source_model_lods(a, model, normalized, &local);
+        else if (ok) ok = qa_vfs_acquire_receipt(model->provider.mounts, normalized,
+            &model->resource, &model->opening, &local);
+        if (ok && !source_lods) ok = opening_rank(model->provider.mounts, &model->opening, &model->opening_rank,
             &model->opening_order, &local);
         if (!ok && local.code == QA_ERROR_NOT_FOUND) { ok = true; q3p_model_free(model); model = NULL; }
         else if (!ok && error) *error = local;
@@ -269,7 +379,7 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
                 if (existing->resource == model->resource && existing->provider.images == model->provider.images &&
                     existing->provider.materials == model->provider.materials) { handle = (int32_t)i + 1; break; }
             }
-            if (!handle) {
+            if (!handle && !source_lods) {
                 qa_error decoded = {0};
                 ok = decode(model, normalized, &decoded);
                 if (!ok && source_model && (decoded.code == QA_ERROR_NOT_FOUND ||
@@ -289,7 +399,7 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         if (!model->first_requested_path) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining first Q3 model request");
         else memcpy(model->first_requested_path, path, length + 1);
     }
-    if (ok && model && !handle && a->options.model_initialize) {
+    if (ok && model && !handle && !model->registration_bad && a->options.model_initialize) {
         for (uint32_t slot = 0; ok && slot < 3; ++slot) {
             if (!model->scene[slot]) continue;
             bool shared = false;
@@ -308,11 +418,11 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         ok = a->model_count < INT32_MAX && q3p_reserve((void **)&a->models, &a->model_capacity,
             a->model_count + 1, sizeof(*a->models), error);
         if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_MEMORY, "Q3 model handle capacity exceeded");
-        if (ok) handle = (int32_t)a->model_count + 1;
+        if (ok) { physical_handle = (int32_t)a->model_count + 1; handle = model->registration_bad ? 0 : physical_handle; }
     }
     if (ok) ok = q3p_add_name(a, Q3P_MODEL, path, handle, false, error);
     if (ok) {
-        if (model && (size_t)handle > a->model_count) { a->models[a->model_count++] = model; model = NULL; }
+        if (model && physical_handle) { a->models[a->model_count++] = model; model = NULL; }
         *out = handle;
     }
     q3p_model_free(model); free(normalized); --a->busy; return ok;

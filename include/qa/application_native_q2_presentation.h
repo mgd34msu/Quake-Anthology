@@ -48,5 +48,7 @@ bool qa_application_native_q2_presentation_current(qa_application *,
  * PresentationOwner. Other source families leave edition unchanged. */
 bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_owner,
     qa_q2_edition *edition, bool *found, qa_error *);
+bool qa_application_native_q2_source_clock_read(qa_application *, qa_actor_owner,
+    qa_q2_edition *edition, uint64_t *interval_ns, bool *found, qa_error *);
 
 #endif

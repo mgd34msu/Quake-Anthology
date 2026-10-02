@@ -3,6 +3,7 @@
 #include "guest_qc_rerelease.h"
 #include "guest_qc_factory.h"
 #include "guest_qc_spawn.h"
+#include "bots_npc.h"
 #include "startup_flow.h"
 #include "control_frame.h"
 #include <float.h>
@@ -360,7 +361,9 @@ static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame
             inputs.self = client->actor;
             if (!application_qc_client_think(engine, client->actor, frame, error)) return false;
             if (!client->spawned || !qa_actors_get(qa_session_actors(session), inputs.self)) continue;
-            if (!application_qc_run_calls(engine, &profile->client_frame, &inputs, error)) return false;
+            if (!application_qc_weapon_before_postthink(engine,inputs.self,error) ||
+                !application_qc_run_calls(engine, &profile->client_frame, &inputs, error) ||
+                !application_qc_weapon_after_postthink(engine,inputs.self,error)) return false;
         }
         return true;
     }
@@ -688,6 +691,7 @@ static bool control_qw_input(struct application_qc_state *engine, int32_t refere
                                const qa_movement_command *command, qa_error *error)
 {
     float fix, health;
+    if(command->impulse) application_qc_weapon_command(engine,actor);
     if (!control_scalar(engine, reference, actor, "fixangle", &fix, error) ||
         !control_scalar(engine, reference, actor, "health", &health, error)) return false;
     if ((fix == 0 && !control_store_vector(engine, reference, actor, "v_angle", command->angles, error)) ||
@@ -929,7 +933,7 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
             !control_mixed_water(engine, reference, actor, call, error)) return false;
         if (!context->defer_postthink && !(spectator ?
             application_qc_spectator_callback(engine, "SpectatorThink", actor, error) :
-            application_qc_named(engine, "PlayerPostThink", actor, error))) return false;
+            application_qc_client_postthink(engine, actor, error))) return false;
     }
 refreshed:
     if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
@@ -1019,7 +1023,7 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
         if (result.status == QA_PHYSICS_REMOVED) return true;
     }
     if (player && !profile && !spectator && qa_actors_get(qa_session_actors(session), actor) != NULL)
-        return application_qc_named(engine, "PlayerPostThink", actor, error);
+        return application_qc_client_postthink(engine, actor, error);
     return true;
 }
 static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
@@ -1174,6 +1178,9 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     struct application_qc_state *engine = provider->state.qc.engine;
     if (!application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC map has unfinished input");
+    if(!application_bots_npc_idle(provider))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC map retains an active monster path");
+    application_bots_npc_destroy(provider);
     if (provider->state.qc.qualified)
         return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error);
     const char *map = qa_strings_cstr(qa_session_strings(provider->application->session), map_id);
@@ -1184,6 +1191,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
             engine->clients[slot].receipt_seen = false;
             engine->clients[slot].receipt_sequence = engine->clients[slot].receipt_ordinal = 0;
+            engine->clients[slot].pending_weapon=0;
+            engine->clients[slot].pending_weapon_following=false;
         }
         provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
         engine->loading = true; engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
@@ -1283,12 +1292,15 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         (engine->cvars && !qa_cvars_observer_idle(engine->cvars)) ||
         (provider->state.qc.game && !qa_qc_game_idle(provider->state.qc.game)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC collision contexts are borrowed by the world");
+    if (!application_bots_npc_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC teardown retains an active monster path");
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
         if (!engine->actors[i].collision_bound) continue;
         if (!qa_world_collision_unbind(engine->world, engine->actors[i].actor, &engine->actors[i], error)) return false;
         engine->actors[i].collision_bound = false;
     }
     engine->initialized = false;
+    application_bots_npc_destroy(provider);
     if (!qa_qc_game_destroy(provider->state.qc.game, error)) return false;
     provider->state.qc.game = NULL; provider->state.qc.instance = NULL;
     engine->output_channels = 0;
@@ -1316,6 +1328,7 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
     if (engine == NULL) return true;
     if (!application_qc_source_client_released(engine, record, error)) return false;
     application_qc_rerelease_released(engine,record.id);
+    application_bots_npc_released(provider,record.id);
     qa_qc_game_actor_released(provider->state.qc.game, record);
     if (record.id.slot < engine->actor_capacity && qa_actor_id_equal(engine->actors[record.id.slot].actor, record.id))
         engine->actors[record.id.slot] = (application_qc_actor){0};
@@ -1327,6 +1340,8 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
             engine->clients[i].outputs = (application_client_outputs){0};
             engine->clients[i].receipt_seen = false;
             engine->clients[i].receipt_sequence = engine->clients[i].receipt_ordinal = 0;
+            engine->clients[i].pending_weapon=0;
+            engine->clients[i].pending_weapon_following=false;
         }
     return true;
 }

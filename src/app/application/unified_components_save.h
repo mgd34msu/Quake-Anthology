@@ -11,6 +11,12 @@ bool application_unified_components_checkpoint(const application_unified_compone
 bool application_unified_components_restore(qa_bytes, qa_application *,
     const application_unified_source *, qa_net_client_id, const qa_unified_session_player *,
     application_unified_component_publisher **, qa_error *);
+bool application_unified_components_checkpoint_retained(const application_unified_component_publisher *,
+    const application_unified_source *current, const application_unified_source *retained,
+    const qa_unified_session_player *, qa_buffer *, qa_error *);
+bool application_unified_components_restore_retained(qa_bytes, qa_application *,
+    const application_unified_source *current, const application_unified_source *retained,
+    qa_net_client_id, const qa_unified_session_player *, application_unified_component_publisher **, qa_error *);
 bool application_unified_components_capture_checkpoint(const application_unified_component_capture *,
     qa_buffer *, qa_error *);
 bool application_unified_components_capture_restore(qa_bytes,

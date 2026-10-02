@@ -1,5 +1,6 @@
 #include "remote_unified_q1.h"
 #include "remote_unified_private.h"
+#include "remote_unified_save.h"
 #include "selected_effects_particles.h"
 #include "legacy_render_policy.h"
 #include "scene_identity.h"
@@ -9,6 +10,7 @@
 #include "qa/text.h"
 #include "qa/q1_text.h"
 #include "qa/ui_preferences.h"
+#include "qa/player_progress.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -20,7 +22,7 @@ typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
     Q1_PROMPT,Q1_CLEAR_PROMPT,Q1_LOG,Q1_TOTAL,Q1_FOUND,Q1_ACHIEVEMENT,Q1_CLIENT,Q1_SKY,
-    Q1_FOG,Q1_FINALE,Q1_ACTION,Q1_MUSIC,Q1_PAUSE
+    Q1_FOG,Q1_FINALE,Q1_ACTION,Q1_MUSIC,Q1_PAUSE,Q1_COMPLETED
 } q1_event_kind;
 typedef struct q1_event {
     q1_event_kind kind;
@@ -181,6 +183,12 @@ bool frontend_unified_q1_current(const frontend_unified_q1 *o)
     return o && frontend_unified_media_current(o->media) &&
         frontend_remote_unified_current(o->replica,NULL) && o->epoch==frontend_remote_unified_epoch(o->replica);
 }
+static bool checkpoint_current(const frontend_unified_q1 *o,qa_error *e)
+{
+    return o && (o->frontend->capture || o->frontend->source_restoring) &&
+        frontend_unified_media_current(o->media) && frontend_remote_unified_checkpoint_current(o->replica,e) &&
+        o->epoch==frontend_remote_unified_epoch(o->replica);
+}
 static bool mutable(frontend_unified_q1 *o,qa_error *e)
 {
     return (frontend_unified_q1_current(o) && !o->frontend->capture && !o->frontend->resource_inventory &&
@@ -214,6 +222,9 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id
         if(qa_json_string_equal(j,k,"cd-track")){p->kind=Q1_MUSIC;return word(d,field(j,v,"track"),&p->a,255,e);}
         if(qa_json_string_equal(j,k,"pause")){p->kind=Q1_PAUSE;return qa_json_bool(j,field(j,v,"paused"),&p->flag,e);}
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 music event has no received player operation");
+    }
+    if(qa_json_string_equal(j,kind,"q1-session") && qa_json_string_equal(j,k,"level-completed")){
+        p->kind=Q1_COMPLETED;return true;
     }
     if(qa_json_string_equal(j,kind,"q1-session") || qa_json_string_equal(j,kind,"q1-level")){
         p->kind=Q1_ACTION;return string(d,k,&p->name,e);
@@ -254,7 +265,12 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id
     if(q1 && qa_json_string_equal(j,k,"weapon")) {
         p->kind=Q1_WEAPON;return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"weapon"),&p->name,e) && string(d,field(j,v,"viewModel"),&p->text,e) && word(d,field(j,v,"frame"),&p->a,UINT32_MAX,e) && number(d,field(j,v,"punch"),&p->b,e);
     }
-    if(q1 && (qa_json_string_equal(j,k,"teleport-player") || qa_json_string_equal(j,k,"camera") || qa_json_string_equal(j,k,"intermission"))){
+    if(q1 && qa_json_string_equal(j,k,"intermission")){
+        p->kind=Q1_COMPLETED;
+        return vec(d,field(j,v,"origin"),&p->origin,e) && vec(d,field(j,v,"angles"),&p->angles,e) &&
+            string(d,field(j,v,"map"),&p->text,e) && number(d,field(j,v,"exitAfter"),&p->a,e) && number(d,field(j,v,"track"),&p->b,e);
+    }
+    if(q1 && (qa_json_string_equal(j,k,"teleport-player") || qa_json_string_equal(j,k,"camera"))){
         p->kind=Q1_ACTION;return string(d,k,&p->name,e);
     }
     if(q1 && qa_json_string_equal(j,k,"powerup")) {
@@ -299,6 +315,49 @@ static bool owns(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
     if(!p->actor_present) return true;
     return frontend_remote_unified_actor(o->replica,p->actor.slot,p->actor.generation,&actual,e) &&
         frontend_remote_unified_player(o->replica,&player,&source) && qa_actor_id_equal(actual,player);
+}
+static bool progress_target(frontend_unified_q1 *o,const q1_event *p,qa_json_id row,
+    bool *local,qa_player_progress **store,const char **value,uint32_t *seat,qa_error *e)
+{
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    if(!domain || !o->frontend->seats || domain->physical_seat>=o->frontend->options.seats ||
+        o->frontend->seats[domain->physical_seat].frontend!=o->frontend)
+        return fail(e,"Q1 progress lost its actual local frontend seat");
+    *local=!p->actor_present || same_wire(p->actor,o->replica->wire_player);
+    const qa_json_document *j=qa_unified_document_json(p->document);qa_json_id recipient=field(j,row,"recipient");
+    if(recipient!=QA_JSON_NONE && qa_json_type(j,recipient)!=QA_JSON_NULL){qa_saved_actor_id actor;bool present;
+        if(!wire(p->document,recipient,&actor,&present,false,e))return false;
+        *local=*local && same_wire(actor,o->replica->wire_player);
+    }
+    *value=p->kind==Q1_ACHIEVEMENT?(const char *)p->text.data:NULL;
+    if(p->kind==Q1_COMPLETED){const qa_recipe_choices *choices=qa_executable_recipe_choices(frontend_remote_unified_recipe(o->replica));
+        if(!choices || !choices->world.map || !*choices->world.map)return fail(e,"Q1 completion has no actual admitted map declaration");
+        *value=choices->world.map;
+    }
+    *seat=o->frontend->seats[domain->physical_seat].id;
+    *store=qa_application_player_progress(domain->application);
+    return !*local || !*value || !**value || *store ||
+        frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 progress has no installed player profile store");
+}
+static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_json_id row,qa_error *e)
+{
+    bool local;qa_player_progress *store;const char *value;uint32_t seat;
+    if(!progress_target(o,p,row,&local,&store,&value,&seat,e))return false;
+    if(!local || !value || !*value)return true;
+    const char *prefix=p->kind==Q1_ACHIEVEMENT?"achievement:":"level:";
+    size_t a=strlen(prefix),b=p->content.size,c=strlen(value);
+    if(b>SIZE_MAX-a-1 || c>SIZE_MAX-a-b-1)return fail(e,"Q1 progress identity exceeds storage");
+    size_t length=a+b+1+c;uint8_t *identity=malloc(length);
+    if(!identity)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 progress identity");
+    memcpy(identity,prefix,a);memcpy(identity+a,p->content.data,b);identity[a+b]=':';memcpy(identity+a+b+1,value,c);
+    char participant[32];int count=snprintf(participant,sizeof(participant),"local-seat:%u",(unsigned)seat);
+    if(count<=0 || (size_t)count>=sizeof(participant)){free(identity);return fail(e,"Q1 progress local seat identity exceeds storage");}
+    qa_progress_event event={.kind=p->kind==Q1_ACHIEVEMENT?QA_PROGRESS_ACHIEVEMENT:QA_PROGRESS_LEVEL_COMPLETED,
+        .source=QA_GAME_Q1,.participant={(const uint8_t *)participant,(size_t)count},.event={identity,length}};
+    if(p->kind==Q1_ACHIEVEMENT)event.value.award=(qa_bytes){(const uint8_t *)value,c};
+    else event.value.map=(qa_bytes){(const uint8_t *)value,c};
+    bool inserted;bool ok=qa_player_progress_record(store,&event,&inserted,e);
+    free(identity);return ok;
 }
 static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **out,qa_error *e)
 {
@@ -445,7 +504,7 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->frontend=f;o->replica=r;o->media=m;o->options=*options;o->epoch=frontend_remote_unified_epoch(r);
     qa_builtin_random_seed(&o->random,1);
     o->localizations=qa_localization_pool_create(e);const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
-    bool ok=o->localizations && d && frontend_unified_q1_current(o) && qa_hud_create(&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,
+    bool ok=o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o)) && qa_hud_create(&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,
         .application=d->application,.seat=d->physical_seat,.context=o,.read=hud_read},&o->hud,e);
     if(!ok) {qa_localization_pool_destroy(o->localizations);free(o);return false;}
     o->ctf[0].label="Red";o->ctf[1].label="Blue";o->ctf[2].label="Flags";o->ctf[3].label="Runes";*out=o;return true;
@@ -470,6 +529,10 @@ bool frontend_unified_q1_validate(frontend_unified_q1 *o,bool simulation,const q
     if(ok && p.kind==Q1_ACTION)ok=(o->options.action && o->options.action_validate)?
         o->options.action_validate(o->options.context,d,row,e):
         frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 session/view/music action has no actual CLIENT callback");
+    if(ok && (p.kind==Q1_ACHIEVEMENT || p.kind==Q1_COMPLETED)){
+        bool local;qa_player_progress *store;const char *value;uint32_t seat;
+        ok=progress_target(o,&p,row,&local,&store,&value,&seat,e);
+    }
     event_free(&p);return ok;
 }
 static void prompt_clear(frontend_unified_q1 *o)
@@ -577,6 +640,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
     q1_event p={0};q1_group *g=NULL;q1_activation *owner=NULL;
     bool ok=parse(o,d,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
     if(owner && owner->retired){event_free(&p);return true;}
+    if(p.kind==Q1_COMPLETED){ok=progress_record(o,&p,row,e);event_free(&p);return ok && mutable(o,e);}
     bool persistent=p.kind==Q1_BEAM || p.kind==Q1_STYLE || p.kind==Q1_STATIC || p.kind==Q1_AMBIENT || p.kind==Q1_CLIENT || p.kind==Q1_SKY ||
         p.kind==Q1_MUSIC || p.kind==Q1_PAUSE || p.kind==Q1_FINALE;
     if(!group(o,(char *)p.content.data,persistent?owner:NULL,&g,e)){event_free(&p);return false;}
@@ -626,7 +690,9 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
     case Q1_PROMPT:ok=prompt_set(o,&p,row,e);if(ok)o->prompt_activation=owner;break;
     case Q1_CLEAR_PROMPT:prompt_clear(o);break;
     case Q1_LOG:ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
-    case Q1_ACHIEVEMENT:ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
+    case Q1_ACHIEVEMENT:ok=progress_record(o,&p,row,e);
+        if(ok && p.text.size)ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
+    case Q1_COMPLETED:break;
     case Q1_TOTAL:o->total_monsters=p.a;o->monsters_present=true;break;
     case Q1_FOUND: {const qa_json_document *j=qa_unified_document_json(d);
         if(qa_json_string_equal(j,field(j,p.value,"kind"),"secret")){o->secrets=p.b;o->total_secrets=p.a;o->secrets_present=true;}
@@ -906,6 +972,12 @@ static const q1_group *group_at(const frontend_unified_q1 *o,size_t index)
 {const q1_group *g=o?o->groups:NULL;while(g && index--)g=g->next;return g;}
 size_t frontend_unified_q1_group_count(const frontend_unified_q1 *o)
 {size_t count=0;for(const q1_group *g=o?o->groups:NULL;g;g=g->next)++count;return count;}
+bool frontend_unified_q1_music_at(const frontend_unified_q1 *o,size_t index,uint64_t *bus,qa_audio_music **player)
+{
+    const q1_group *g=group_at(o,index);
+    if(!g || !player || !frontend_received_music_bus(g->music,bus))return false;
+    *player=frontend_received_music_player(g->music);return true;
+}
 const qa_scene_image *frontend_unified_q1_particle_image(const frontend_unified_q1 *o,size_t index)
 {const q1_group *g=group_at(o,index);return g?g->particle_image:NULL;}
 size_t frontend_unified_q1_light_count(const frontend_unified_q1 *o,size_t index)
@@ -1088,7 +1160,7 @@ static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_u
 }
 bool frontend_unified_q1_checkpoint(frontend_unified_q1 *o,const frontend_unified_q1_refs *refs,qa_buffer *out,qa_error *e)
 {
-    if(!o || !out || out->data || !frontend_unified_q1_idle(o) || !frontend_unified_q1_current(o))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
+    if(!o || !out || out->data || !frontend_unified_q1_idle(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
     qa_source_save_io io;if(!qa_source_save_writer(&io,NULL,e))return false;
     bool ok=fields(o,&io,refs,e) && qa_source_save_finish(&io,out);qa_source_save_dispose(&io);return ok;
 }
@@ -1108,7 +1180,7 @@ bool frontend_unified_q1_restore(qa_frontend *f,frontend_remote_unified *r,front
 }
 bool frontend_unified_q1_restore_finish(frontend_unified_q1 *o,qa_error *e)
 {
-    if(!o || !o->frontend->source_restoring || !frontend_unified_q1_current(o))return fail(e,"Q1 music import lost its real retained CLIENT recipe");
+    if(!o || !o->frontend->source_restoring || !checkpoint_current(o,e))return fail(e,"Q1 music import lost its real retained CLIENT recipe");
     for(q1_group *g=o->groups;g;g=g->next)if(g->music){frontend_music_origin origin;
         if(!music_origin(g,&origin,e) || !frontend_received_music_restore_finish(g->music,&origin,e))return false;}
     return true;

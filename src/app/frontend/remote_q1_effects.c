@@ -328,6 +328,11 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
     remote_q1_hud_clear(row);
     return true;
 }
+bool remote_q1_effects_music(const frontend_remote_q1 *row,uint64_t *bus,qa_audio_music **player)
+{
+    if(!row || !row->effects || !player || !frontend_received_music_bus(row->effects->music,bus))return false;
+    *player=frontend_received_music_player(row->effects->music);return true;
+}
 bool remote_q1_effects_idle(const frontend_remote_q1 *row)
 {
     const frontend_remote_q1_effects *fx=row?row->effects:NULL;

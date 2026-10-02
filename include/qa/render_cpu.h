@@ -34,6 +34,8 @@ bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error);
 bool qa_cpu_set_gamma(qa_cpu_renderer *renderer, float gamma, qa_error *error);
 /* Read the actual renderer-owned scalar, without callbacks or mutation. */
 bool qa_cpu_gamma_read(const qa_cpu_renderer *, float *, qa_error *);
+/* Pure uniform viewport observation after Source command issue. */
+bool qa_cpu_output_domain_read(const qa_cpu_renderer *, qa_scene_rect, bool *, qa_error *);
 /* Prepare gamma on the existing endpoint. No native present callback runs;
  * publish the actual table/output ownership with surface_publish, then retire.
  * A failed prepare may retain *out for checked surface_abort. */

@@ -3,10 +3,10 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
 
-bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_owner owner,
-    qa_q2_edition *out, bool *found, qa_error *error)
+bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_owner owner,
+    qa_q2_edition *out, uint64_t *interval_ns, bool *found, qa_error *error)
 {
-    if (!app || !owner || !out || !found || app->destroy_requested)
+    if (!app || !owner || !out || !interval_ns || !found || app->destroy_requested)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile requires its actual emitting owner");
     application_provider *provider=NULL;
     for (application_provider *p=app->live_providers;p;p=p->next_live)
@@ -31,8 +31,18 @@ bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_
             return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile has an unsupported original GAME ABI");
         edition=engine->profile==QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
     } else return true;
-    *out=edition; *found=true;
+    const qa_clock_config *clock=&provider->component.clock;
+    if (!clock->interval_ns || clock->kind!=(edition==QA_Q2_CLASSIC ?
+            QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE))
+        return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its admitted frame interval");
+    *out=edition; *interval_ns=clock->interval_ns; *found=true;
     return true;
+}
+bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_owner owner,
+    qa_q2_edition *out, bool *found, qa_error *error)
+{
+    uint64_t interval;
+    return qa_application_native_q2_source_clock_read(app,owner,out,&interval,found,error);
 }
 
 static bool ready(const qa_application *app, bool retained)

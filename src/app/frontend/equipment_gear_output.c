@@ -1,3 +1,4 @@
+#include "qa/q3_assets_save.h"
 #include "equipment_gear_private.h"
 #include "equipment_gear_output.h"
 #include "qa/q3_asset_shader.h"

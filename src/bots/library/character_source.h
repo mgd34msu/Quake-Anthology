@@ -22,6 +22,7 @@ bool bot_character_create(bot_character_store *, const char *, float, qa_bot_cha
 bool bot_character_project(qa_bot_character *, qa_error *);
 bool bot_character_write(qa_bot_character *, uint32_t, qa_bot_character_value, bool, qa_error *);
 bool bot_character_skill(qa_bot_character *, float, qa_error *);
+bool bot_character_filename(qa_bot_character *, const char *, qa_error *);
 void bot_character_forget(qa_bot_library *, qa_bot_character *);
 bool bot_character_store_fields(qa_source_save_io *, bot_character_store *);
 bool bot_character_alias_fields(qa_source_save_io *, bot_character_store *, const qa_bot_character *,

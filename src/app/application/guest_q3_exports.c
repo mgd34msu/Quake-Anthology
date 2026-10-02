@@ -14,6 +14,7 @@
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "qa/application_q3_client.h"
+#include "qa/application_q3_arsenal_client.h"
 #include "qa/game_q3_source.h"
 
 bool application_guest_frontend_rebind_ready(application_provider *provider,
@@ -459,6 +460,83 @@ bool qa_application_q3_client_host_current(qa_application *app,
         actual.host == retained->host && host_context_equal(&actual.context, &retained->context) &&
         command_context_equal(&actual.source.command_context, &retained->source.command_context) &&
         qa_application_q3_client_context_current(app, &retained->source);
+}
+
+bool qa_application_q3_arsenal_client_read(qa_application *app, qa_actor_id actor,
+    uint32_t seat, qa_application_q3_arsenal_client *out, bool *present, qa_error *error)
+{
+    qa_actor_id actual;
+    if (!app || !out || !present || app->destroy_requested ||
+        !qa_application_player_actor(app, seat, &actual) || !qa_actor_id_equal(actual, actor) ||
+        !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw requires its actual player and launch seat");
+    application_provider *provider = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || !engine->game || !engine->game->vm ||
+        application_provider_for(app, actor, QA_ROLE_HUD, NULL) == provider) {
+        *out = (qa_application_q3_arsenal_client){0}; *present = false;
+        return true;
+    }
+    qa_application_q3_arsenal_client value = {.actor = actor};
+    bool found;
+    if (!qa_application_q3_client_host_read(app, provider->owner, seat, &value.client, &found, error)) return false;
+    if (!found) {
+        *out = (qa_application_q3_arsenal_client){0}; *present = false;
+        return true;
+    }
+    q3g_role *role = find_role(provider, QA_QVM_CGAME, seat, error);
+    if (!role || role->host != value.client.host || !role->artifact)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw lost its actual CG artifact and host");
+    if (!role->artifact->weapon_models_profile.present && !role->weapon_models) {
+        *out = (qa_application_q3_arsenal_client){0}; *present = false;
+        return true;
+    }
+    if (!role->weapon_models || !role->initialized || !role->init_succeeded ||
+        role->client_engine != engine || role->client_source != provider ||
+        !qa_actor_id_equal(value.client.source.source_actor, actor) ||
+        value.client.source.source_owner != provider->owner || !value.client.context.frontend_lifetime)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw has no initialized matching GAME companion");
+    *out = value; *present = true;
+    return true;
+}
+
+bool qa_application_q3_arsenal_client_current(qa_application *app,
+    const qa_application_q3_arsenal_client *held)
+{
+    qa_application_q3_arsenal_client actual;
+    bool present;
+    return held && qa_application_q3_arsenal_client_read(app, held->actor,
+        held->client.source.seat, &actual, &present, NULL) && present &&
+        actual.client.host == held->client.host &&
+        host_context_equal(&actual.client.context, &held->client.context) &&
+        qa_application_q3_client_host_current(app, &held->client);
+}
+
+bool qa_application_q3_arsenal_client_draw(qa_application *app,
+    const qa_application_q3_arsenal_client *held, qa_error *error)
+{
+    if (!app || app->operation != APPLICATION_IDLE || app->destroy_requested ||
+        app->state == QA_APPLICATION_FAULTED || app->state == QA_APPLICATION_STOPPING ||
+        !qa_session_safe(app->session) || !application_guests_idle(app) ||
+        !qa_application_q3_arsenal_client_current(app, held))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw requires its returned actual companion");
+    qa_application_q3_client_context source;
+    if (!qa_application_q3_client_context_read(app, held->client.source.receiver,
+        held->client.source.seat, &source, error)) return false;
+    application_provider *provider = application_provider_for(app, held->actor, QA_ROLE_ARSENAL, NULL);
+    q3g_role *role = find_role(provider, QA_QVM_CGAME, source.seat, error);
+    if (!role || role->host != held->client.host || role->engine->calls ||
+        !qa_actor_id_equal(source.source_actor, held->actor) ||
+        !qa_application_q3_arsenal_client_current(app, held))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw changed its retained source before entry");
+    int32_t arguments[3] = {source.source_milliseconds, 0, 0}, result;
+    app->operation = APPLICATION_ADVANCING;
+    bool ok = q3g_call(role, 3, arguments, 3, &result, error);
+    app->operation = APPLICATION_IDLE;
+    if (ok && !qa_application_q3_arsenal_client_current(app, held))
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw changed its retained source on return");
+    if (!ok) application_fault(app, error);
+    return ok;
 }
 
 bool qa_application_q3_client_retire(qa_application *app,

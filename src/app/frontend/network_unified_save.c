@@ -8,6 +8,8 @@
 #include "qa/map_sidecars.h"
 #include "network_unified_client.h"
 #include "remote_unified_save.h"
+#include "remote_unified_presentation.h"
+#include "remote_unified_presentation_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -102,7 +104,8 @@ static bool peer_fields(qa_source_save_io *io, unified_peer *peer, size_t index,
     bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
     const qa_net_client *actual = writing ? qa_net_connections_get(
         qa_network_connections(owner->options.runtime), peer->client) : NULL;
-    if (writing && (!actual || peer->staging || peer->travel_prepared || !peer->server || peer->remote ||
+    if (writing && (!actual || peer->staging || peer->travel_prepared ||
+        (owner->options.server ? (!peer->server || peer->remote) : (peer->server || !peer->remote || index)) ||
         !peer->session || actual->protocol.kind != QA_NET_UNIFIED_1 || actual->seat_count != 1 || !actual->seats)) return false;
     qa_net_client_id id = peer->client;
     qa_net_seat_binding binding = writing ? actual->seats[0] : peer->binding;
@@ -112,7 +115,8 @@ static bool peer_fields(qa_source_save_io *io, unified_peer *peer, size_t index,
         !qa_source_save_u64(io, &id.generation) || !id.generation || !qa_source_save_u32(io, &id.slot) ||
         !qa_source_save_u64(io, &binding.seat.owner) || binding.seat.owner != owner->options.seat_owner ||
         !qa_source_save_u32(io, &binding.seat.index) ||
-        binding.seat.index != owner->options.remote_seat_base + (uint32_t)index ||
+        binding.seat.index != (owner->options.server ? owner->options.remote_seat_base + (uint32_t)index :
+            owner->options.client.domain.seat.index) ||
         !qa_source_save_u32(io, &binding.remote_index) || binding.remote_index || !address(io, &endpoint) ||
         !qa_source_save_bytes(io, composition.bytes, sizeof(composition.bytes)) ||
         !qa_source_save_bool(io, &peer->frame_published)) return false;
@@ -122,7 +126,10 @@ static bool peer_fields(qa_source_save_io *io, unified_peer *peer, size_t index,
             .protocol = {.kind = QA_NET_UNIFIED_1}, .seats = &peer->binding, .seat_count = 1, .composition = composition};
     }
     qa_buffer source = {0};
-    bool okay = !writing || application_unified_server_checkpoint(peer->server, &source, io->error);
+    bool okay = !writing || (owner->options.server ?
+        application_unified_server_checkpoint(peer->server, &source, io->error) :
+        frontend_remote_unified_checkpoint(peer->remote,
+            qa_application_content_graph_read(owner->options.frontend->application), &source, io->error));
     if (okay) okay = application_unified_save_blob(io, &source) && source.size;
     if (okay && !writing) { peer->source_import = source; source = (qa_buffer){0}; }
     qa_buffer_free(&source);
@@ -135,19 +142,40 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
     bool server = owner->options.server;
     uint64_t seat_owner = owner->options.seat_owner;
     uint32_t seat_base = owner->options.remote_seat_base;
-    application_unified_source current = *actual;
-    if (!application_unified_save_magic(io, "QUFH") || !qa_source_save_bool(io, &server) || !server ||
+    char magic[4] = {'Q','U','F','H'}; uint32_t version = 2;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_bool(io, &server) || server != owner->options.server ||
         !qa_source_save_u64(io, &seat_owner) || seat_owner != owner->options.seat_owner ||
-        !qa_source_save_u32(io, &seat_base) || seat_base != owner->options.remote_seat_base ||
-        !sidecars(io, owner) ||
-        !application_unified_save_source(io, owner->options.frontend->application, actual, &current, false) ||
-        !application_unified_save_source(io, owner->options.frontend->application, actual, &owner->source, true) ||
-        !qa_source_save_u32(io, &owner->epoch) || !owner->epoch ||
-        !qa_source_save_u64(io, &owner->frame_before) || owner->frame_before > actual->frame.number ||
-        !qa_source_save_bool(io, &owner->frame_boundary)) return false;
+        !qa_source_save_u32(io, &seat_base) || seat_base > UINT32_MAX - (UNIFIED_PEERS - 1) ||
+        (server && seat_base != owner->options.remote_seat_base)) return false;
+    if (!writing && !server) owner->options.remote_seat_base = seat_base;
+    if (server) {
+        application_unified_source current = *actual;
+        if (!sidecars(io, owner) ||
+            !application_unified_save_source(io, owner->options.frontend->application, actual, &current, false) ||
+            !application_unified_save_source(io, owner->options.frontend->application, actual, &owner->source, true)) return false;
+    } else {
+        qa_net_address remote = owner->options.remote;
+        uint32_t physical = owner->options.client.domain.physical_seat;
+        uint32_t seat = owner->options.client.domain.seat.index;
+        if (!address(io, &remote) ||
+            (writing && !qa_net_address_equal(&remote, &owner->options.remote, true)) ||
+            !qa_source_save_u32(io, &physical) || physical >= owner->options.frontend->options.seats ||
+            !qa_source_save_u32(io, &seat)) return false;
+        if (!writing) {
+            owner->options.remote = remote;
+            owner->options.client.domain.physical_seat = physical;
+            owner->options.client.domain.seat = (qa_net_seat_id){owner->options.seat_owner, seat};
+        }
+    }
+    if (!qa_source_save_u32(io, &owner->epoch) || !owner->epoch ||
+        !qa_source_save_u64(io, &owner->frame_before) || (server ? owner->frame_before > actual->frame.number : owner->frame_before != 0) ||
+        !qa_source_save_bool(io, &owner->frame_boundary) || (!server && owner->frame_boundary)) return false;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (!qa_source_save_bool(io, &peer->occupied)) return false;
+        if (peer->occupied && !server && i) return false;
         if (peer->occupied && !peer_fields(io, peer, i, owner, connection_owner)) return false;
         for (size_t j = 0; peer->occupied && j < i; ++j)
             if (owner->peers[j].occupied && qa_net_client_id_equal(peer->client, owner->peers[j].client)) return false;
@@ -189,11 +217,11 @@ static bool inventory(const frontend_network_unified *owner, qa_network_runtime 
 }
 bool frontend_network_unified_checkpoint(const frontend_network_unified *owner, qa_buffer *out, qa_error *e)
 {
-    application_unified_source source;
-    if (!owner || !owner->options.server || owner->restore_pending || owner->closing || owner->traveling ||
+    application_unified_source source = {0};
+    if (!owner || owner->restore_pending || owner->closing || owner->traveling ||
         !out || out->data || out->size || !frontend_network_unified_idle(owner) ||
-        !application_unified_save_source_read(owner->options.frontend->application, &source, e))
-        return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified host checkpoint requires returned live Source and owned children");
+        (owner->options.server && !application_unified_save_source_read(owner->options.frontend->application, &source, e)))
+        return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified checkpoint requires returned actual Source owners and children");
     uint64_t connection_owner = owner->options.seat_owner;
     frontend_network_unified copy = *owner;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) if (copy.peers[i].occupied) {
@@ -204,8 +232,10 @@ bool frontend_network_unified_checkpoint(const frontend_network_unified *owner, 
             .protocol = client->protocol, .seats = &copy.peers[i].binding, .seat_count = 1, .composition = client->composition};
     }
     qa_source_save_io io = {0};
-    bool okay = inventory(&copy, owner->options.runtime, true, e) &&
-        qa_source_save_writer(&io, source.session, e) && fields(&io, &copy, connection_owner, &source) &&
+    bool okay = frontend_network_unified_qualified(owner, owner->options.runtime, true, e) &&
+        inventory(&copy, owner->options.runtime, true, e) &&
+        qa_source_save_writer(&io, qa_application_session(owner->options.frontend->application), e) &&
+        fields(&io, &copy, connection_owner, owner->options.server ? &source : NULL) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return okay;
@@ -213,18 +243,20 @@ bool frontend_network_unified_checkpoint(const frontend_network_unified *owner, 
 bool frontend_network_unified_restore_prepare(const frontend_network_unified_options *options,
     uint64_t connection_owner, qa_bytes bytes, frontend_network_unified **out, qa_error *e)
 {
-    application_unified_source source;
-    if (!options || !options->server || !options->frontend || !options->frontend->application ||
+    application_unified_source source = {0};
+    if (!options || !options->frontend || !options->frontend->application ||
         !options->current || !options->seat_owner || connection_owner != options->seat_owner ||
         options->remote_seat_base > UINT32_MAX - (UNIFIED_PEERS - 1) || !out || *out ||
-        !application_unified_save_source_read(options->frontend->application, &source, e))
-        return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified host import requires its actual candidate Source owner");
+        (options->server && !application_unified_save_source_read(options->frontend->application, &source, e)))
+        return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified import requires its actual candidate Source namespace");
     frontend_network_unified *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(e, QA_ERROR_MEMORY, "Decoding actual Unified host continuation");
     owner->options = *options; owner->options.runtime = NULL; owner->options.sidecars = NULL; owner->options.sidecar_count = 0;
-    owner->source = source; owner->restore_pending = true;
+    if (options->server) owner->source = source;
+    owner->options.client.domain.runtime = NULL; owner->options.client_service = NULL; owner->restore_pending = true;
     qa_source_save_io io = {0};
-    bool okay = qa_source_save_reader(&io, source.session, bytes, e) && fields(&io, owner, connection_owner, &source) &&
+    bool okay = qa_source_save_reader(&io, qa_application_session(options->frontend->application), bytes, e) &&
+        fields(&io, owner, connection_owner, options->server ? &source : NULL) &&
         qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!okay) { frontend_network_unified_restore_dispose(&owner, NULL); return false; }
@@ -240,10 +272,19 @@ bool frontend_network_unified_restore_hooks(frontend_network_unified *owner, qa_
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (!peer->occupied || !client_request(peer, client)) continue;
-        if (peer->server || !peer->source_import.size) return bad(e, "Unified Source owner was imported twice");
-        if (!application_unified_server_restore((qa_bytes){peer->source_import.data, peer->source_import.size},
-            owner->options.frontend->application, runtime, client, &peer->server, e)) return false;
-        *hooks = application_unified_server_hooks(peer->server);
+        if (peer->server || peer->remote || !peer->source_import.size) return bad(e, "Unified Source owner was imported twice");
+        if (owner->options.server) {
+            if (!application_unified_server_restore((qa_bytes){peer->source_import.data, peer->source_import.size},
+                owner->options.frontend->application, runtime, client, &peer->server, e)) return false;
+            *hooks = application_unified_server_hooks(peer->server);
+        } else {
+            if (!owner->options.client_service || owner->options.client.domain.runtime != runtime ||
+                !qa_net_client_id_equal(owner->options.client.domain.client, client->id) ||
+                !frontend_remote_unified_presentation_restore_prefix(owner->options.frontend, &owner->options.client,
+                    client, qa_application_content_graph_read(owner->options.frontend->application),
+                    (qa_bytes){peer->source_import.data, peer->source_import.size}, &peer->remote, e)) return false;
+            *hooks = frontend_remote_unified_hooks(peer->remote);
+        }
         return true;
     }
     return bad(e, "Unified Source resolver has no actual retained connection receipt");
@@ -288,25 +329,55 @@ static bool resolve(void *context, qa_net_client_id client, qa_unified_session *
     }
     return bad(e, "Restored handshake has no real installed Source session");
 }
-bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa_network_runtime *runtime, qa_error *e)
+bool frontend_network_unified_restore_lower(frontend_network_unified *owner, qa_network_runtime *runtime, qa_error *e)
 {
     if (!owner || !owner->restore_pending || !runtime ||
         (owner->options.runtime && owner->options.runtime != runtime) || !qa_network_callbacks_idle(runtime))
         return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified import finish requires its actual restored runtime");
     owner->options.runtime = runtime;
+    if (owner->lower_restored) return inventory(owner, runtime, true, e);
+    if (!owner->options.server && !owner->options.client_service)
+        return bad(e, "Unified lower import precedes its genuine physical CLIENT prefix");
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (!peer->occupied) continue;
-        if (!peer->server || !qa_unified_session_find(runtime, peer->client, &peer->session, e) ||
-            !application_unified_server_restore_bind(peer->server, peer->session, e)) return false;
+        if (!qa_unified_session_find(runtime, peer->client, &peer->session, e)) return false;
+        if (owner->options.server) {
+            if (!peer->server || (peer->server->restore_pending &&
+                !application_unified_server_restore_bind(peer->server, peer->session, e))) return false;
+        } else {
+            if (!peer->remote || i) return false;
+            if (!peer->client_bound && !frontend_network_unified_client_bind(owner->options.client_service,
+                peer->client, peer->binding.seat, peer->remote, e)) return false;
+            peer->client_bound = true;
+        }
     }
     if (!inventory(owner, runtime, true, e)) return false;
     qa_unified_bootstrap_hooks hooks = frontend_network_unified_bootstrap_hooks(owner);
-    if (!qa_unified_bootstrap_restore((qa_bytes){owner->bootstrap_import.data, owner->bootstrap_import.size},
+    if (!owner->bootstrap && !qa_unified_bootstrap_restore((qa_bytes){owner->bootstrap_import.data, owner->bootstrap_import.size},
         runtime, owner->options.seat_owner, &hooks, resolve, owner, &owner->bootstrap, e)) return false;
     bool server; uint32_t maximum; qa_net_address remote;
-    if (!qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) || !server ||
-        maximum != owner->source.max_clients) return bad(e, "Imported handshake changes its genuine Source capacity");
+    if (!qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) || server != owner->options.server ||
+        maximum != (server ? owner->source.max_clients : 1) ||
+        (!server && !qa_net_address_equal(&remote, &owner->options.remote, true)))
+        return bad(e, "Imported handshake changes its genuine Source domain");
+    owner->lower_restored = true;
+    return true;
+}
+bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa_network_runtime *runtime, qa_error *e)
+{
+    if (!frontend_network_unified_restore_lower(owner, runtime, e)) return false;
+    if (!owner->options.server) {
+        for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+            unified_peer *peer = owner->peers + i;
+            if (!peer->occupied) continue;
+            if (frontend_remote_unified_restore_pending(peer->remote) &&
+                (!frontend_remote_unified_presentation_restore_ready(peer->remote, e) ||
+                 !frontend_remote_unified_restore_bind(peer->remote, peer->session, e))) return false;
+            if (!frontend_remote_unified_qualified(peer->remote, runtime,
+                qa_net_connections_get(qa_network_connections(runtime), peer->client), e)) return false;
+        }
+    }
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) qa_buffer_free(&owner->peers[i].source_import);
     qa_buffer_free(&owner->bootstrap_import); owner->restore_pending = false; owner->imported = true;
     return true;
@@ -317,11 +388,20 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
     qa_network_runtime *runtime, bool complete, qa_error *e)
 {
     if (owner && !owner->options.server) {
-        if (!runtime || owner->closing || owner->calls || owner->options.runtime != runtime ||
-            !owner->options.client_service || !qa_network_callbacks_idle(runtime))
+        if (!runtime || owner->closing || owner->calls || !qa_network_callbacks_idle(runtime))
             return bad(e, "Unified CLIENT controller changed its genuine runtime owner");
-        if (owner->restore_pending)
-            return (!complete && owner->bootstrap_import.size) || bad(e, "Unified CLIENT cold graph is not complete");
+        if (owner->restore_pending) {
+            if (complete || (owner->options.runtime && owner->options.runtime != runtime) ||
+                !owner->bootstrap_import.size) return bad(e, "Unified CLIENT cold graph is not complete");
+            for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+                const unified_peer *peer = owner->peers + i;
+                if (peer->occupied && (i || !peer->source_import.size || peer->staging))
+                    return bad(e, "Unified CLIENT import lost its actual retained replica prefix");
+            }
+            return true;
+        }
+        if (owner->options.runtime != runtime || !owner->options.client_service)
+            return bad(e, "Unified CLIENT controller lost its actual programme owner");
         frontend_remote_unified_options client = {0};
         bool server; uint32_t maximum; qa_net_address remote;
         if (!frontend_network_unified_client_idle(owner->options.client_service) ||
@@ -397,6 +477,8 @@ bool frontend_network_unified_restore_dispose(frontend_network_unified **slot, q
                 return frontend_fail(e, QA_ERROR_ARGUMENT, "Imported controller cleanup cannot revoke live Source custody");
             if (peer->server && !peer->server->restore_pending &&
                 !application_unified_server_transport_retired(peer->server, session, e)) return false;
+            if (peer->remote && !frontend_remote_unified_restore_pending(peer->remote) &&
+                !frontend_remote_unified_transport_retired(peer->remote, session, e)) return false;
             if (!qa_network_detach(owner->options.runtime, peer->client, "Unpublished Unified import disposed", e)) return false;
         }
         if (peer->server) {
@@ -404,6 +486,13 @@ bool frontend_network_unified_restore_dispose(frontend_network_unified **slot, q
                 application_unified_server_destroy(peer->server, e);
             if (!okay) return false;
             peer->server = NULL;
+        }
+        if (peer->remote) {
+            if (frontend_remote_unified_restore_pending(peer->remote)) {
+                if (!frontend_remote_unified_restore_dispose(&peer->remote, e)) return false;
+            } else {
+                if (!frontend_remote_unified_destroy(&peer->remote, e)) return false;
+            }
         }
         qa_buffer_free(&peer->source_import);
     }

@@ -4,6 +4,7 @@
 #include "qa/launch_client.h"
 #include "qa/launch_save.h"
 #include "qa/application_client_save.h"
+#include "qa/application_client_prepare.h"
 #include "qa/console_save.h"
 #include "qa/persistence_content.h"
 
@@ -38,6 +39,8 @@ typedef struct frontend_client_source_options {
      * programme context only after those children have been consumed. */
     bool (*retire)(void *, const qa_application_client_source *, qa_error *);
     void (*released)(void *);
+    bool (*configuration_advance)(void *,const qa_application_client_source *,
+        qa_application_client_preparation *,bool *,qa_error *);
 } frontend_client_source_options;
 typedef struct frontend_client_source_view {
     const frontend_client_source *owner;
@@ -48,6 +51,7 @@ typedef struct frontend_client_source_view {
  * The caller keeps that owner reachable until checked destruction succeeds. */
 bool frontend_client_source_create(qa_frontend *, const frontend_client_source_options *, frontend_client_source **, qa_error *);
 bool frontend_client_source_advance(frontend_client_source *, bool *ready, qa_error *);
+bool frontend_client_source_configuration_advance(frontend_client_source *,qa_application_client_preparation *,bool *,qa_error *);
 bool frontend_client_source_read(const frontend_client_source *, frontend_client_source_view *, qa_error *);
 /* Installed physical topology only; never calls the transport or app current
  * facade. Cold codecs and child destructors retain readiness separately. */

@@ -465,7 +465,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             float distance = qa_vec_length(direction);
             direction = qa_vec_normalize(direction);
             speed = distance > 500  ? 500
-                    : distance < 20 ? distance / (g->frame_ns / (float)Q2_NS)
+                    : distance < 20 ? distance / ((float)g->frame_ns / (float)Q2_NS)
                                     : distance;
             if (distance <= 1)
                 speed = 0;

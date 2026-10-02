@@ -178,44 +178,72 @@ static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_stat
 }
 static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_nav_profile *profile,
                          const qa_navigation_services *services,qa_nav_graph **out,
-                         qa_resource **saved_resource,size_t *saved_mount,bool *found,qa_error *error) {
-    const qa_launch_snapshot *snapshot=bots->application->routing_snapshot?
-        bots->application->routing_snapshot:qa_application_launch(bots->application);
-    qa_vfs *files=snapshot?qa_launch_snapshot_mounts(snapshot):NULL;
+                         qa_resource **saved_resource,qa_vfs_acquisition *saved_acquisition,bool *found,qa_error *error) {
     *found=false;
-    if(!files) return true;
-    const char *name=qa_strings_cstr(qa_session_strings(bots->application->session),map->name);
-    if(!name) return application_fail(error,QA_ERROR_NOT_FOUND,"bot map name is absent");
-    const char *extensions[]={"aas","nav2","nav3"};
-    for(size_t i=0;i<3;++i) {
-        size_t length=strlen(name)+strlen(extensions[i])+7;
-        char *path=malloc(length);
-        if(!path) return application_fail(error,QA_ERROR_MEMORY,"allocating bot navigation resource path");
-        snprintf(path,length,"maps/%s.%s",name,extensions[i]);
-        qa_resource *resource=NULL;qa_error local={0};
-        qa_mount_id mount=0;
-        bool acquired=qa_vfs_acquire(files,path,&resource,&mount,&local);free(path);
+    qa_launch_resource_origin origin;
+    if(!qa_application_map_origin_read(bots->application,&origin) || !origin.catalog ||
+       !origin.content || !origin.acquisition ||
+       origin.acquisition->resource_id!=qa_resource_id(bots->map_resource))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot navigation lost its actual geometry acquisition");
+    if(!bots->navigation_files && !qa_catalog_open(origin.catalog,origin.product,&bots->navigation_files,error)) return false;
+    const char *name=origin.acquisition->path;
+    if(!name) return application_fail(error,QA_ERROR_ARGUMENT,"Bot navigation lacks its actual map path");
+    size_t stem=strlen(name);
+    if(stem>=5 && (name[0]=='m'||name[0]=='M') && (name[1]=='a'||name[1]=='A') &&
+       (name[2]=='p'||name[2]=='P') && (name[3]=='s'||name[3]=='S') && name[4]=='/') {
+        name+=5;stem-=5;
+    }
+    if(stem>=4 && name[stem-4]=='.' && (name[stem-3]=='b'||name[stem-3]=='B') &&
+       (name[stem-2]=='s'||name[stem-2]=='S') && (name[stem-1]=='p'||name[stem-1]=='P')) stem-=4;
+    if(!stem || stem>SIZE_MAX-22) return application_fail(error,QA_ERROR_ARGUMENT,"Invalid navigation map resource path");
+    for(size_t start=0;start<=stem;) {
+        size_t end=start;
+        while(end<stem && name[end]!='/') ++end;
+        size_t length=end-start;
+        if(!length || (length==1 && name[start]=='.') ||
+           (length==2 && name[start]=='.' && name[start+1]=='.'))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Invalid navigation map resource path");
+        if(end==stem) break;
+        start=end+1;
+    }
+    char *path=malloc(stem+22);
+    if(!path) return application_fail(error,QA_ERROR_MEMORY,"Allocating bot navigation resource path");
+    bool ok=true;
+    for(size_t i=0;i<2;++i) {
+        bool aas=bots->geometry.family==QA_BSP_Q3?i==0:i==1;
+        const char *prefix=aas?"maps/":"bots/navigation/";
+        size_t prefix_size=strlen(prefix);
+        memcpy(path,prefix,prefix_size);memcpy(path+prefix_size,name,stem);
+        strcpy(path+prefix_size+stem,aas?".aas":".nav");
+        qa_resource *resource=NULL;qa_error local={0};qa_vfs_acquisition acquisition={0};
+        bool acquired=qa_vfs_acquire_receipt(bots->navigation_files,path,&resource,&acquisition,&local);
         if(!acquired) {
             if(local.code==QA_ERROR_NOT_FOUND) continue;
-            if(error) *error=local;return false;
+            if(error) *error=local;
+            ok=false;break;
+        }
+        if(!aas) {
+            qa_product_id product;qa_mount_id physical;
+            if(!qa_catalog_product_mount_origin(origin.catalog,origin.product,bots->navigation_files,
+                acquisition.mount,&product,&physical)) {
+                qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);
+                ok=application_fail(error,QA_ERROR_ARGUMENT,"Bot NAV lost its genuine mount content");break;
+            }
+            if(product!=origin.product) {
+                qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);continue;
+            }
         }
         qa_nav_asset *asset=NULL;
-        uint32_t checksum=qa_block_checksum(bots->geometry.source);
-        bool ok=qa_nav_asset_read(qa_resource_bytes(resource),i==0?&checksum:NULL,&asset,error);
+        uint32_t checksum_word=qa_block_checksum(bots->geometry.source);int32_t checksum;
+        memcpy(&checksum,&checksum_word,sizeof(checksum));
+        ok=qa_nav_asset_read(qa_resource_bytes(resource),aas?&checksum:NULL,&asset,error);
         if(ok) ok=qa_nav_graph_from_asset(map,asset,profile,services,out,error);
         qa_nav_asset_release(asset);
-        if(!ok) {qa_resource_release(resource);return false;}
-        size_t ordinal=0;qa_vfs_mount_info info;
-        while(ordinal<qa_vfs_mount_count(files) &&
-            (!qa_vfs_mount_at(files,ordinal,&info) || info.id!=mount)) ++ordinal;
-        if(ordinal==qa_vfs_mount_count(files)) {
-            qa_nav_graph_release(*out);*out=NULL;qa_resource_release(resource);
-            return application_fail(error,QA_ERROR_FORMAT,"navigation asset mount is absent");
-        }
-        *saved_resource=resource;*saved_mount=ordinal;
-        *found=true;return true;
+        if(!ok) {qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);break;}
+        *saved_resource=resource;*saved_acquisition=acquisition;
+        *found=true;break;
     }
-    return true;
+    free(path);return ok;
 }
 static bool navigation_graph(application_bots *bots,application_provider *movement,
                               const qa_movement_profile *movement_profile,qa_bounds bounds,
@@ -245,13 +273,14 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
             .entity=entity,.movement_input=application_bot_movement_input};
         bool found;
         bool ok=asset_graph(bots,&map,&profile,&services,&shared->graph,
-                            &shared->asset_resource,&shared->asset_mount_ordinal,&found,error);
+                            &shared->asset_resource,&shared->asset_acquisition,&found,error);
         if(ok && !found) {
             qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
             ok=qa_nav_graph_construct(&construction,&services,&shared->graph,error);
         }
         if(ok) ok=qa_navigation_create(shared->graph,&services,&shared->navigation,error);
-        if(!ok) {qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);free(shared);return false;}
+        if(!ok) {qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);
+            qa_vfs_acquisition_dispose(&shared->asset_acquisition);free(shared);return false;}
         shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
         shared->next=bots->graphs;bots->graphs=shared;
     }

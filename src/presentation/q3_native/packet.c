@@ -1,5 +1,6 @@
 #include "packet.h"
 #include "packet_remote.h"
+#include "packet_compiled.h"
 #include "attachments.h"
 #include "trajectory.h"
 #include "qa/game_q3.h"
@@ -64,21 +65,27 @@ typedef struct packet_source {
     const qa_q3_entity *state;
     const qa_application_native_q3_entity *local;
     const q3n_remote_entity *remote;
+    const q3n_compiled_entity *compiled;
 } packet_source;
 typedef struct packet_imports {
     const q3n_packet_imports *local;
     const q3n_packet_remote_imports *remote;
+    const q3n_packet_compiled_imports *compiled;
 } packet_imports;
 static bool current(const q3n_frame *f,const packet_source *source,qa_error *error) {
     if (q3n_frame_current(f) && (!source->remote ||
         (q3n_remote_entity_current(source->remote) && q3n_media_assets(f->media)==f->assets &&
-            q3n_media_remote_current(f->media,&f->remote->source,error)))) return true;
+            q3n_media_remote_current(f->media,&f->remote->source,error))) && (!source->compiled ||
+        (q3n_compiled_entity_current(source->compiled) && q3n_media_assets(f->media)==f->assets &&
+            q3n_media_compiled_current(f->media,&f->compiled->source,error)))) return true;
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native packet source changed during presentation"); return false;
 }
 static bool body(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
     const packet_imports *imports,const qa_q3_ref_entity *ref,qa_error *error) {
     bool ok;
-    if(imports->remote && imports->remote->body)
+    if(imports->compiled && imports->compiled->body)
+        ok=imports->compiled->body(imports->compiled->context,f,source->compiled,entity,ref,error);
+    else if(imports->remote && imports->remote->body)
         ok=imports->remote->body(imports->remote->context,f,source->remote,entity,ref,error);
     else if(imports->local && imports->local->body)
         ok=imports->local->body(imports->local->context,f,source->local,entity,ref,error);
@@ -87,24 +94,28 @@ static bool body(const q3n_frame *f,const packet_source *source,q3n_entity *enti
 }
 static bool player(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
     const packet_imports *imports,qa_error *error) {
-    bool ok=imports->remote ? imports->remote->player(imports->remote->context,f,source->remote,entity,error)
+    bool ok=imports->compiled ? imports->compiled->player(imports->compiled->context,f,source->compiled,entity,error)
+        : imports->remote ? imports->remote->player(imports->remote->context,f,source->remote,entity,error)
         : imports->local->player(imports->local->context,f,source->local,entity,error);
     return ok && current(f,source,error);
 }
 static bool trail(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
     const packet_imports *imports,const q3n_weapon_media *weapon,bool grapple,qa_error *error) {
-    bool ok=imports->remote ? imports->remote->trail(imports->remote->context,f,source->remote,entity,weapon,grapple,error)
+    bool ok=imports->compiled ? imports->compiled->trail(imports->compiled->context,f,source->compiled,entity,weapon,grapple,error)
+        : imports->remote ? imports->remote->trail(imports->remote->context,f,source->remote,entity,weapon,grapple,error)
         : imports->local->trail(imports->local->context,f,source->local,entity,weapon,grapple,error);
     return ok && current(f,source,error);
 }
 static bool powerups(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
     const packet_imports *imports,const qa_q3_ref_entity *ref,int32_t team,qa_error *error) {
-    bool ok=imports->remote ? imports->remote->powerups(imports->remote->context,f,source->remote,entity,ref,team,error)
+    bool ok=imports->compiled ? imports->compiled->powerups(imports->compiled->context,f,source->compiled,entity,ref,team,error)
+        : imports->remote ? imports->remote->powerups(imports->remote->context,f,source->remote,entity,ref,team,error)
         : imports->local->powerups(imports->local->context,f,source->local,entity,ref,team,error);
     return ok && current(f,source,error);
 }
 static int32_t random_value(const packet_imports *imports) {
-    return imports->remote ? imports->remote->rand(imports->remote->context) : imports->local->rand(imports->local->context);
+    return imports->compiled ? imports->compiled->rand(imports->compiled->context) :
+        imports->remote ? imports->remote->rand(imports->remote->context) : imports->local->rand(imports->local->context);
 }
 static bool sound_position(const q3n_frame *f,const packet_source *source,
     const q3n_entity *entity,qa_error *error) {
@@ -122,8 +133,8 @@ static bool effects(const q3n_frame *f,const packet_source *source,q3n_entity *e
         !qa_q3_presentation_loop(f->presentation,media->game_sounds[s->loopSound],s->number,entity->lerp_origin,
             qa_v3(0,0,0),s->eType==7,error) || !current(f,source,error))) return false;
     uint32_t light=(uint32_t)s->constantLight;
-    return !light || qa_q3_presentation_light(f->presentation,entity->lerp_origin,(float)((light>>24)&255u)*4,
-        qa_v3((float)(light&255u),(float)((light>>8)&255u),(float)((light>>16)&255u)),false,error) && current(f,source,error);
+    return !light || (qa_q3_presentation_light(f->presentation,entity->lerp_origin,(float)((light>>24)&255u)*4,
+        qa_v3((float)(light&255u),(float)((light>>8)&255u),(float)((light>>16)&255u)),false,error) && current(f,source,error));
 }
 static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *entity,
     const q3n_packet_options *options,const packet_imports *imports,qa_error *error) {
@@ -188,6 +199,8 @@ static bool missile(const q3n_frame *f,const packet_source *source,q3n_entity *e
     qa_q3_product product=q3n_frame_product(f);
     if(source->remote && s->weapon>(product==QA_Q3_TEAM_ARENA ? 14 : 11) &&
         (!q3n_remote_frame_entity_weapon(source->remote,s->weapon,0,error) || !current(f,source,error))) return false;
+    if(source->compiled && s->weapon>(product==QA_Q3_TEAM_ARENA ? 14 : 11) &&
+        (!q3n_compiled_frame_entity_weapon(source->compiled,s->weapon,0,error) || !current(f,source,error))) return false;
     const q3n_media_view *media=q3n_media_read(f->media);
     int32_t weapon_index=s->weapon>(product==QA_Q3_TEAM_ARENA ? 14 : 11) ? 0 : s->weapon;
     if(!range(weapon_index,16,"weapon",error)) return false;
@@ -312,7 +325,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
 bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity *source,q3n_entity *entity,
     const q3n_packet_options *options,const q3n_packet_imports *imports,qa_error *error) {
     uint32_t physical;
-    if(!f || f->remote || !source || !entity || !options || !q3n_media_read(f->media) ||
+    if(!f || f->remote || f->compiled || !source || !entity || !options || !q3n_media_read(f->media) ||
         !imports || !imports->rand || !imports->player || !imports->trail || !imports->powerups ||
         !qa_application_native_q3_presentation_current(f->application,&f->source) || f->time!=f->source.source_time_ms ||
         !qa_actor_id_equal(entity->actor,source->binding.actor) || !entity->valid || !source->present ||
@@ -331,7 +344,7 @@ bool q3n_packet_entity(const q3n_frame *f,const qa_application_native_q3_entity 
 
 bool q3n_packet_sound_position(const q3n_frame *f,const qa_application_native_q3_entity *source,
     const q3n_entity *entity,qa_error *error) {
-    if(!f || f->remote || !source || !entity || !q3n_media_read(f->media)) {
+    if(!f || f->remote || f->compiled || !source || !entity || !q3n_media_read(f->media)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Native sound position lacks its actual local source"); return false;
     }
     packet_source observed={.state=&source->state,.local=source};
@@ -350,14 +363,7 @@ static float lerp_angle(float from,float to,float fraction) {
     if(delta< -180) to=add(to,360);
     return add(from,mul(fraction,add(to,-from)));
 }
-bool q3n_packet_remote_predict(const q3n_frame *f,qa_error *error) {
-    if(!f || !f->remote || !q3n_frame_current(f) || !f->remote->predicted_player ||
-        !f->remote->predicted_state || !f->remote->predicted_entity ||
-        f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction needs its retained CG player-state owner"); return false;
-    }
-    qa_q3_player *p=f->remote->predicted_player;
-    qa_q3_entity *s=f->remote->predicted_state;
+static bool predict(const q3n_frame *f,qa_q3_player *p,qa_q3_entity *s,q3n_entity *entity,qa_error *error) {
     s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40 ? 10 : 1;
     s->pos.type=1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
     s->apos.type=1; memcpy(s->apos.base,p->viewangles,sizeof(s->apos.base)); s->angles2[1]=(float)p->movementDir;
@@ -374,56 +380,76 @@ bool q3n_packet_remote_predict(const q3n_frame *f,qa_error *error) {
     s->weapon=p->weapon; s->groundEntityNum=p->groundEntityNum; s->powerups=0;
     for(unsigned i=0;i<16;++i) if(p->powerups[i]) s->powerups|=(int32_t)(1u<<i);
     s->loopSound=p->loopSound; s->generic1=p->generic1;
-    f->remote->predicted_entity->loop_stopped=false;
+    entity->loop_stopped=false;
     return q3n_frame_current(f) || (qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction lost its CG owner"),false);
 }
-bool q3n_packet_remote_lerp(const q3n_frame *f,const q3n_remote_entity *source,
-    const q3n_packet_options *options,qa_error *error) {
-    if(!options || !remote_valid(f,source,error) || (!source->predicted && !source->published)) return false;
-    const qa_q3_snapshot *snapshot=f->remote->snapshots.snapshot;
-    const qa_q3_snapshot *next=f->remote->snapshots.next_snapshot;
+bool q3n_packet_remote_predict(const q3n_frame *f,qa_error *error) {
+    if(!f || !f->remote || !q3n_frame_current(f) || !f->remote->predicted_player ||
+        !f->remote->predicted_state || !f->remote->predicted_entity ||
+        f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction needs its retained CG player-state owner"); return false;
+    }
+    return predict(f,f->remote->predicted_player,f->remote->predicted_state,f->remote->predicted_entity,error);
+}
+static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet_options *options,qa_error *error) {
+    const qa_q3_snapshot *snapshot=f->compiled?f->compiled->snapshot:f->remote->snapshots.snapshot;
+    const qa_q3_snapshot *next=f->compiled?f->compiled->next_snapshot:f->remote->snapshots.next_snapshot;
     if(!snapshot) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote entity position needs its actual snapshot"); return false; }
-    const qa_q3_entity *s=source->current;
-    q3n_entity *entity=source->presentation;
+    const qa_q3_entity *s=source->state;
+    const qa_q3_entity *next_state=source->compiled?source->compiled->next:source->remote->next;
+    q3n_entity *entity=source->compiled?source->compiled->presentation:source->remote->presentation;
+    bool interpolate=source->compiled?source->compiled->interpolate:source->remote->interpolate;
+    bool predicted=source->compiled?source->compiled->predicted:source->remote->predicted;
     if(!options->smooth_clients && s->number<64) {
-        if(!source->next) {
+        if(!next_state) {
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote smoothing needs its actual private next state"); return false;
         }
-        if(!q3n_remote_frame_entity_trajectory(source,s->pos.type,source->next->pos.type,1,1,error) ||
-            !remote_valid(f,source,error)) return false;
+        if(!(source->compiled?q3n_compiled_frame_entity_trajectory(source->compiled,s->pos.type,next_state->pos.type,1,1,error):
+            q3n_remote_frame_entity_trajectory(source->remote,s->pos.type,next_state->pos.type,1,1,error)) ||
+            !current(f,source,error)) return false;
     }
     qa_q3_trajectory pos=s->pos;
-    if(source->interpolate && (pos.type==1 || (pos.type==3 && s->number<64))) {
-        if(!next || !source->next) {
+    if(interpolate && (pos.type==1 || (pos.type==3 && s->number<64))) {
+        if(!next || !next_state) {
             qa_error_set(error,QA_ERROR_FORMAT,0,"CG_InterpolateEntityPosition: cg.nextSnap == NULL"); return false;
         }
         int32_t delta=difference(next->server_time,snapshot->server_time);
         float fraction=delta ? divide((float)difference(f->time,snapshot->server_time),(float)delta) : 0;
-        qa_q3_trajectory next_pos=source->next->pos;
+        qa_q3_trajectory next_pos=next_state->pos;
         qa_vec3 a,b;
         if(!q3n_trajectory(&pos,snapshot->server_time,&a,error) ||
             !q3n_trajectory(&next_pos,next->server_time,&b,error)) return false;
         entity->lerp_origin=plus(a,scale(plus(b,scale(a,-1)),fraction));
         if(!q3n_trajectory(&s->apos,snapshot->server_time,&a,error) ||
-            !q3n_trajectory(&source->next->apos,next->server_time,&b,error)) return false;
+            !q3n_trajectory(&next_state->apos,next->server_time,&b,error)) return false;
         entity->lerp_angles=qa_v3(lerp_angle(a.x,b.x,fraction),lerp_angle(a.y,b.y,fraction),lerp_angle(a.z,b.z,fraction));
         return true;
     }
     if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||
         !q3n_trajectory(&s->apos,f->time,&entity->lerp_angles,error)) return false;
-    if(!source->predicted && s->groundEntityNum>0 && s->groundEntityNum<1022) {
-        q3n_remote_entity mover;
-        if(!q3n_remote_frame_entity(f->remote,(uint32_t)s->groundEntityNum,&mover,error)) return false;
-        if(mover.current->eType==4) {
+    if(!predicted && s->groundEntityNum>0 && s->groundEntityNum<1022) {
+        q3n_remote_entity remote_mover; q3n_compiled_entity compiled_mover;
+        const qa_q3_entity *mover;
+        if(f->compiled) { if(!q3n_compiled_frame_entity(f->compiled,(uint32_t)s->groundEntityNum,&compiled_mover,error))return false;
+            mover=compiled_mover.current; }
+        else { if(!q3n_remote_frame_entity(f->remote,(uint32_t)s->groundEntityNum,&remote_mover,error))return false;
+            mover=remote_mover.current; }
+        if(mover->eType==4) {
             qa_vec3 previous,position,discarded;
-            if(!q3n_trajectory(&mover.current->pos,snapshot->server_time,&previous,error) ||
-                !q3n_trajectory(&mover.current->apos,snapshot->server_time,&discarded,error) ||
-                !q3n_trajectory(&mover.current->pos,f->time,&position,error) ||
-                !q3n_trajectory(&mover.current->apos,f->time,&discarded,error)) return false;
+            if(!q3n_trajectory(&mover->pos,snapshot->server_time,&previous,error) ||
+                !q3n_trajectory(&mover->apos,snapshot->server_time,&discarded,error) ||
+                !q3n_trajectory(&mover->pos,f->time,&position,error) ||
+                !q3n_trajectory(&mover->apos,f->time,&discarded,error)) return false;
             entity->lerp_origin=plus(entity->lerp_origin,plus(position,scale(previous,-1)));
         }
     }
     return true;
+}
+bool q3n_packet_remote_lerp(const q3n_frame *f,const q3n_remote_entity *source,
+    const q3n_packet_options *options,qa_error *error) {
+    if(!options || !remote_valid(f,source,error) || (!source->predicted && !source->published)) return false;
+    packet_source observed={.state=source->current,.remote=source};
+    return lerp(f,&observed,options,error);
 }
 bool q3n_packet_remote_entity(const q3n_frame *f,const q3n_remote_entity *source,
     const q3n_packet_options *options,const q3n_packet_remote_imports *imports,qa_error *error) {
@@ -441,5 +467,43 @@ bool q3n_packet_remote_entity(const q3n_frame *f,const q3n_remote_entity *source
 bool q3n_packet_remote_sound_position(const q3n_frame *f,const q3n_remote_entity *source,qa_error *error) {
     if(!remote_valid(f,source,error) || (!source->published && !source->predicted) || !q3n_media_read(f->media)) return false;
     packet_source observed={.state=source->current,.remote=source};
+    return sound_position(f,&observed,source->presentation,error);
+}
+static bool compiled_valid(const q3n_frame *f,const q3n_compiled_entity *source,qa_error *error) {
+    if(f && f->compiled && source && source->frame==f->compiled && source->current &&
+       source->presentation && q3n_frame_current(f) && q3n_compiled_entity_current(source) &&
+       q3n_media_assets(f->media)==f->assets && q3n_media_compiled_current(f->media,&f->compiled->source,error))return true;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Compiled packet lacks its actual reached entity receipt"); return false;
+}
+bool q3n_packet_compiled_predict(const q3n_frame *f,qa_error *error) {
+    if(!f || !f->compiled || !q3n_frame_current(f) || !f->compiled->predicted_player ||
+       !f->compiled->predicted_state || !f->compiled->predicted_entity ||
+       f->compiled->stage!=Q3N_COMPILED_COMPLETED_FRAME) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Compiled packet prediction needs its actual private player-state owner"); return false;
+    }
+    return predict(f,f->compiled->predicted_player,f->compiled->predicted_state,f->compiled->predicted_entity,error);
+}
+bool q3n_packet_compiled_lerp(const q3n_frame *f,const q3n_compiled_entity *source,
+    const q3n_packet_options *options,qa_error *error) {
+    if(!options || !compiled_valid(f,source,error) || (!source->predicted && !source->published))return false;
+    packet_source observed={.state=source->current,.compiled=source};
+    return lerp(f,&observed,options,error);
+}
+bool q3n_packet_compiled_entity(const q3n_frame *f,const q3n_compiled_entity *source,
+    const q3n_packet_options *options,const q3n_packet_compiled_imports *imports,qa_error *error) {
+    if(!compiled_valid(f,source,error) || !options || !q3n_media_read(f->media) ||
+       (!source->predicted && (!source->published || !source->current_valid)) || !imports || !imports->rand ||
+       !imports->player || !imports->trail || !imports->powerups) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Compiled packet lacks its actual row and child consumers"); return false;
+    }
+    if(source->current->eType>=13)return true;
+    if(!q3n_packet_compiled_lerp(f,source,options,error))return false;
+    packet_source observed={.state=source->current,.compiled=source};
+    packet_imports callbacks={.compiled=imports};
+    return packet_entity(f,&observed,source->presentation,options,&callbacks,error);
+}
+bool q3n_packet_compiled_sound_position(const q3n_frame *f,const q3n_compiled_entity *source,qa_error *error) {
+    if(!compiled_valid(f,source,error) || (!source->published && !source->predicted) || !q3n_media_read(f->media))return false;
+    packet_source observed={.state=source->current,.compiled=source};
     return sound_position(f,&observed,source->presentation,error);
 }

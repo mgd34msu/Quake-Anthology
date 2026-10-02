@@ -72,7 +72,7 @@ static bool actor_encode(void *context,qa_actor_id actor,qa_saved_actor_id *out,
 static bool actor_decode(void *context,qa_saved_actor_id actor,qa_actor_id *out,qa_error *e)
 {
     remote_component *r=context;
-    return frontend_remote_unified_actor(r->parent->replica,actor.slot,actor.generation,out,e);
+    return frontend_remote_unified_actor_retained(r->parent->replica,actor.slot,actor.generation,out,e);
 }
 static bool weapon_presented(void *context,qa_actor_id actor,bool *out,qa_error *e)
 {
@@ -156,8 +156,8 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         .print=console_print,.cvar_owner=cvar_owner,.source_command=console_command,.capture_context=capture,.context_active=active};
     if(!r->console) r->console=qa_console_create(&console,e);
     if(!r->console) return false;
-    r->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=r->state.abi,.restoring=r->restore_pending,.session=qa_application_session(domain->application),
-        .owner=r->owner,.service_owner=r->services,.receiver=r->owner,.mounts=files,.cvars=r->cvars,.console=r->console,.command_context=console.context,
+    r->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=r->state.abi,.session=qa_application_session(domain->application),
+        .owner=r->owner,.service_owner=r->services,.mounts=files,.cvars=r->cvars,.console=r->console,.command_context=console.context,
         .common={.context=r,.print=print}};
     application_q3_scene_source source={r,acquire,source_current,source_actor,source_live,release,weapon_presented};
     application_q3_component_scene_preparation request={.origin=APPLICATION_Q3_COMPONENT_SCENE_REMOTE,.component=r->state.mod,

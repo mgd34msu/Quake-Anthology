@@ -45,6 +45,7 @@ static const char stage_vertex[] =
 static const char *const stage_fragment[] = {
     "#version 120\n"
     "uniform sampler2D primaryTexture;\n"
+    "uniform int primaryEnabled;\n"
     "uniform sampler2D secondaryTexture;\n"
     "uniform int secondaryMode;\n"
     "uniform int alphaMode;\n"
@@ -158,7 +159,7 @@ static const char *const stage_fragment[] = {
     "float preblendCorrect(float v) { return texture2D(u_preblend_table,vec2((floor(clamp(v,0.0,1.0)*255.0+0.5)+0.5)/256.0,0.5)).r; }\n"
     "void main() {\n"
     "  if (clipDistance < 0.0) discard;\n"
-    "  vec4 texel=texture2D(primaryTexture,coordinates0);\n"
+    "  vec4 texel=primaryEnabled!=0?texture2D(primaryTexture,coordinates0):vec4(1.0);\n"
     "  if(u_luminance_alpha!=0) texel.rgb*=(texel.r+texel.g+texel.b)/3.0*vertexColor.a;\n"
     "  vec4 color=clamp(texel*vertexColor,0.0,1.0);\n"
     "  if(u_lighting_mode==1) color=vec4(texel.rgb+dynamicLights(),1.0);\n"
@@ -335,6 +336,7 @@ static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
     STAGE_UNIFORM(clip_enabled, "u_clip_enabled");
     STAGE_UNIFORM(clip_plane, "u_clip_plane");
     STAGE_UNIFORM(primary, "primaryTexture");
+    STAGE_UNIFORM(primary_enabled, "primaryEnabled");
     STAGE_UNIFORM(secondary, "secondaryTexture");
     STAGE_UNIFORM(secondary_mode, "secondaryMode");
     STAGE_UNIFORM(alpha_mode, "alphaMode");
@@ -518,6 +520,8 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
                   draw->texture_count < 2 ? 0 :
                   draw->environment == QA_TEXTURE_MODULATE ? 1 :
                   draw->environment == QA_TEXTURE_ADD ? 2 : 3);
+    bool source=draw->source_arrays || draw->source_retain_depth_range || draw->source_direct!=QA_SOURCE_DIRECT_NONE;
+    gl->Uniform1i(u->primary_enabled,source?renderer->controls.attributes.texture_enabled[0]:draw->texture_count>0);
     gl->Uniform1i(u->alpha_mode, (GLint)draw->state.alpha_test);
     int mode = fog_mode(&draw->fog);
     gl->Uniform1i(u->fog_mode, mode);

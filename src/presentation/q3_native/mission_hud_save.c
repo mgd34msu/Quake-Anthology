@@ -103,7 +103,7 @@ static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 }
 bool q3n_mission_hud_checkpoint(const q3n_mission_hud *borrowed,qa_buffer *out,qa_error *e)
 {
-    if(!borrowed||!out||out->data||out->size||!q3nh_capture(borrowed->options.assets,borrowed->busy,e))return false;
+    if(!q3n_mission_hud_idle(borrowed)||!out||out->data||out->size||!q3nh_capture(borrowed->options.assets,borrowed->busy,e))return false;
     q3n_mission_hud *o=(q3n_mission_hud *)borrowed; o->busy=true; q3n_mission_hud copy=*o;
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,e)&&fields(&io,&copy)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); o->busy=false;
@@ -112,7 +112,7 @@ bool q3n_mission_hud_checkpoint(const q3n_mission_hud *borrowed,qa_buffer *out,q
 }
 bool q3n_mission_hud_restore(q3n_mission_hud *o,qa_bytes bytes,qa_error *e)
 {
-    if(!o||!q3nh_capture(o->options.assets,o->busy,e))return false;
+    if(!q3n_mission_hud_idle(o)||!q3nh_capture(o->options.assets,o->busy,e))return false;
     o->busy=true; q3n_mission_hud candidate=*o; q3menu_context *old=o->menus;
     qa_source_save_io io={0}; bool ok=qa_source_save_reader(&io,NULL,bytes,e)&&fields(&io,&candidate)&&qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);

@@ -387,7 +387,7 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
             goto out;
         }
     }
-    qa_actor_registry *registry = qa_session_actors(g->services.session);
+    const qa_actor_registry *registry = qa_session_actors(g->services.session);
     if (!qa_builtin_snapshot_reserve(&targets->snapshot, qa_actors_count(registry), e))
         goto out;
     uint32_t cursor = 0;

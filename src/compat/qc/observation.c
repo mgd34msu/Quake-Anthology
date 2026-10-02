@@ -37,3 +37,9 @@ bool qa_qc_actor_observation_vector(const qa_qc_instance *vm, uint32_t slot,
     if (!qa_vec_finite(value)) return qc_fail(error, QA_ERROR_FORMAT, word, "QC observed vector is nonfinite");
     *out = value; return true;
 }
+bool qa_qc_actor_observation_int(const qa_qc_instance *vm,uint32_t slot,
+    qa_actor_id actor,uint32_t word,int32_t *out,qa_error *error)
+{
+    if(!out || !qc_visual_actor(vm,slot,actor,error) || !qc_entity_range(vm,slot,word,1,error)) return false;
+    *out=qc_load_int(qc_entity_words_const(vm,slot),word); return true;
+}

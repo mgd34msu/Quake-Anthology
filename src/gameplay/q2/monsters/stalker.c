@@ -424,7 +424,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
             }
         }
     }
-    if (!(result.contents & (rerelease ? 35u : 3u)))
+    if (!((uint32_t)result.contents & (rerelease ? 35u : 3u)))
         return true;
     if (position < 0) {
         if (self_min - result.end.z < 24 || enemy_min - result.end.z > 32 ||

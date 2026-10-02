@@ -129,7 +129,9 @@ bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *servi
 static bool same_name(const char *a, const char *b)
 {
     while (*a && *b) { unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A'; if (y >= 'A' && y <= 'Z') y += 'a' - 'A'; if (x != y) return false; }
+        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if (x != y) return false; }
     return !*a && !*b;
 }
 static bool system_info(qa_native_q3_remote_client_service *service, qa_error *error)

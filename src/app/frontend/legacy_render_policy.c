@@ -60,6 +60,7 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
             .fullbright = !value.quakeworld && fullbright != 0,
             .lightmap = !value.quakeworld && lightmap != 0, .dynamic = dynamic != 0,
             .polyblend = polyblend != 0, .cull = cull != 0, .clear = clear != 0,
+            .planar_shadows = value.planar_shadows, .double_eyes = value.double_eyes,
             .flares = true, .modulate = 1, .monolightmap = '0'};
         if (value.family == QA_SCENE_Q2) {
             float saturate;
@@ -72,7 +73,7 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
             const qa_cvar_view *flares = qa_cvars_find(registry, "cl_flares");
             if (flares) {
                 if (!isfinite(flares->number)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 flare setting is nonfinite");
-                value.lighting.flares = flares->number != 0;
+                value.lighting.flares = flares->integer != 0;
             }
         }
     }
@@ -114,6 +115,30 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
     return true;
 }
 
+bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
+{
+    if (!registry || !name) return false;
+    qa_console_dialect dialect = qa_cvars_dialect(registry);
+    bool q1 = dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
+    bool q2 = dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    if (!q1 && !q2) return false;
+    const qa_cvar_view *row = qa_cvars_find(registry, name);
+    if (!row || !row->owner || row->console_created) return false;
+    const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
+    const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys"};
+    const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares"};
+    for (size_t i = 0; i < sizeof(shared) / sizeof(*shared); ++i)
+        if (!strcmp(name, shared[i])) return true;
+    if (q1) {
+        for (size_t i = 0; i < sizeof(quake) / sizeof(*quake); ++i)
+            if (!strcmp(name, quake[i])) return true;
+    } else {
+        for (size_t i = 0; i < sizeof(quake2) / sizeof(*quake2); ++i)
+            if (!strcmp(name, quake2[i])) return true;
+    }
+    return false;
+}
+
 bool frontend_legacy_model_input(const qa_frontend *frontend, qa_product_id content,
     const qa_scene_world *actual_world,
     const qa_scene_world_input *world, qa_scene_model_input *input, qa_error *error)
@@ -133,7 +158,11 @@ bool frontend_legacy_model_input_product(const qa_frontend *frontend, const qa_p
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy model has no real world input");
     frontend_legacy_render_policy policy;
     if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
-    if (world->legacy_policy.present) policy.lighting = world->legacy_policy;
+    if (world->legacy_policy.present) {
+        policy.lighting = world->legacy_policy;
+        policy.planar_shadows = world->legacy_policy.planar_shadows;
+        policy.double_eyes = world->legacy_policy.double_eyes;
+    }
     input->q1_double_eyes = policy.double_eyes;
     if (policy.lighting.present) {
         input->no_cull = input->no_cull || !policy.lighting.cull;

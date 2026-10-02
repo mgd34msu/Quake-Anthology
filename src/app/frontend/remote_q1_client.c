@@ -1,6 +1,7 @@
 #include "remote_q1_private.h"
 #include "internal.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_effects.h"
 #include "remote_q1_skins.h"
 #include <math.h>
 #include <stdlib.h>

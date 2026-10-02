@@ -1,4 +1,5 @@
 #include "unified_q3_sources.h"
+#include "remote_unified_save.h"
 #include "qa/q3_abi.h"
 #include "qa/source_save.h"
 
@@ -80,12 +81,13 @@ static bool vector(const qa_unified_document *d, qa_json_id id, qa_vec3 *out, qa
     *out = qa_v3(values[0], values[1], values[2]); return true;
 }
 static bool actor(frontend_unified_q3_sources *o, const qa_unified_document *d, qa_json_id id,
-    qa_actor_id *out, qa_error *e)
+    bool restoring,qa_actor_id *out, qa_error *e)
 {
     uint64_t slot, generation;
     return natural(d, field(d,id,"slot"), UINT32_MAX, &slot, e) &&
         natural(d, field(d,id,"generation"), QA_UNIFIED_SAFE_INTEGER, &generation, e) &&
-        frontend_remote_unified_actor(o->replica, (uint32_t)slot, generation, out, e);
+        (restoring ? frontend_remote_unified_actor_retained(o->replica,(uint32_t)slot,generation,out,e) :
+            frontend_remote_unified_actor(o->replica, (uint32_t)slot, generation, out, e));
 }
 static void source_free(received_source *r)
 { if (r) { free(r->instance); free(r->content); free(r->players); free(r); } }
@@ -98,17 +100,28 @@ bool frontend_unified_q3_sources_current(const frontend_unified_q3_sources *o)
         o->epoch == frontend_remote_unified_epoch(o->replica) &&
         frontend_unified_media_current(o->media) && frontend_remote_unified_current(o->replica, NULL);
 }
+bool frontend_unified_q3_sources_checkpoint_current(const frontend_unified_q3_sources *o)
+{
+    return o && o->recipe == frontend_remote_unified_recipe(o->replica) &&
+        o->epoch == frontend_remote_unified_epoch(o->replica) && frontend_unified_media_current(o->media) &&
+        frontend_remote_unified_checkpoint_current(o->replica,NULL);
+}
+static bool create(frontend_remote_unified *replica,frontend_unified_media *media,
+    bool restoring,frontend_unified_q3_sources **out,qa_error *e)
+{
+    if (!replica || !media || !out || *out || !frontend_unified_media_current(media) ||
+        !(restoring ? frontend_remote_unified_checkpoint_current(replica,e) : frontend_remote_unified_current(replica,e)) ||
+        frontend_unified_media_recipe(media) != frontend_remote_unified_recipe(replica))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 CLIENT requires its actual replica and retained recipe media");
+    frontend_unified_q3_sources *o = calloc(1,sizeof(*o));
+    if (!o) return fail(e,QA_ERROR_MEMORY,"Retaining compiled Q3 received Source owner");
+    o->replica = replica; o->media = media; o->recipe = frontend_remote_unified_recipe(replica);
+    o->epoch = frontend_remote_unified_epoch(replica); *out = o; return true;
+}
 bool frontend_unified_q3_sources_create(frontend_remote_unified *replica, frontend_unified_media *media,
     frontend_unified_q3_sources **out, qa_error *e)
 {
-    if (!replica || !media || !out || *out || !frontend_unified_media_current(media) ||
-        !frontend_remote_unified_current(replica, e) ||
-        frontend_unified_media_recipe(media) != frontend_remote_unified_recipe(replica))
-        return fail(e, QA_ERROR_ARGUMENT, "Compiled Q3 CLIENT requires its actual replica and retained recipe media");
-    frontend_unified_q3_sources *o = calloc(1, sizeof(*o));
-    if (!o) return fail(e, QA_ERROR_MEMORY, "Retaining compiled Q3 received Source owner");
-    o->replica = replica; o->media = media; o->recipe = frontend_remote_unified_recipe(replica);
-    o->epoch = frontend_remote_unified_epoch(replica); *out = o; return true;
+    return create(replica,media,false,out,e);
 }
 
 static bool read_record(const qa_unified_document *d, qa_json_id id, bool player,
@@ -182,7 +195,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
         natural(d,field(d,id,"maxClients"),64,&clients,e) && clients &&
         natural(d,field(d,id,"snapshotBit"),4,&snapshot_bit,e) && (snapshot_bit == 0 || snapshot_bit == 4) &&
         integer(d,field(d,id,"serverTime"),&v->time,e) && integer(d,field(d,id,"levelStartTime"),&v->level_start,e) &&
-        integer(d,field(d,id,"gameType"),&v->game_type,e) && actor(o,d,field(d,id,"viewer"),&v->viewer,e);
+        integer(d,field(d,id,"gameType"),&v->game_type,e) && actor(o,d,field(d,id,"viewer"),restoring,&v->viewer,e);
     free(owner);
     if (ok) {
         v->product = (qa_q3_product)product; v->max_clients = (uint32_t)clients; v->snapshot_bit = (uint8_t)snapshot_bit;
@@ -214,7 +227,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
         if (!ok) break;
         frontend_unified_q3_source_entity *entity = r->entities+n;
         if (entity->present) { ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 entity roster duplicates a physical Source row"); break; }
-        ok = actor(o,d,field(d,row,"actor"),&entity->actor,e) &&
+        ok = actor(o,d,field(d,row,"actor"),restoring,&entity->actor,e) &&
             read_record(d,field(d,row,"state"),false,v->product,&entity->state,e) && entity->state.number == (int32_t)n &&
             vector(d,field(d,row,"origin"),&entity->origin,e) &&
             qa_json_bool(j,field(d,row,"linked"),&entity->linked,e) &&
@@ -237,7 +250,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_documen
         frontend_unified_q3_source_player *p = r->players+i;
         ok = natural(d,field(d,row,"number"),QA_Q3_ENTITY_WORLD,&n,e) &&
             natural(d,field(d,row,"clientSlot"),v->max_clients-1,&slot,e) &&
-            integer(d,field(d,row,"clientNum"),&client_num,e) && actor(o,d,field(d,row,"actor"),&p->actor,e) &&
+            integer(d,field(d,row,"clientNum"),&client_num,e) && actor(o,d,field(d,row,"actor"),restoring,&p->actor,e) &&
             read_record(d,field(d,row,"state"),true,v->product,&p->state,e) && p->state.clientNum == client_num &&
             r->entities[n].present && qa_actor_id_equal(r->entities[n].actor,p->actor);
         for (size_t k = 0; ok && k < i; ++k) if (r->players[k].source_number == n) ok = false;
@@ -275,7 +288,8 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
     qa_json_id array, bool restoring, frontend_unified_q3_source_frame **out, qa_error *e)
 {
     if (!o || !out || *out || o->prepared || o->revision == UINT64_MAX ||
-        !frontend_unified_q3_sources_current(o)) return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source owner is not returned for its genuine frame");
+        !(restoring ? frontend_unified_q3_sources_checkpoint_current(o) : frontend_unified_q3_sources_current(o)))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source owner is not returned for its genuine frame");
     const qa_json_document *j = qa_unified_document_json(d);
     size_t count = qa_json_size(j,array);
     if (qa_json_type(j,array) != QA_JSON_ARRAY || count > qa_executable_recipe_provider_count(o->recipe))
@@ -299,7 +313,9 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
                 ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 retained activation changed its physical recipient or content");
         }
     }
-    if (ok) ok = frontend_unified_q3_sources_ready(t);
+    if (ok && restoring) {
+        for (size_t i = 0; ok && i < count; ++i) ok = frontend_unified_q3_source_checkpoint_current(&t->rows[i]->view);
+    } else if (ok) ok = frontend_unified_q3_sources_ready(t);
     if (!ok) { frontend_unified_q3_sources_abort(&t); return e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Q3 frame admission lost its actual owner"); }
     *out = t; return true;
 }
@@ -345,14 +361,16 @@ void frontend_unified_q3_sources_abort(frontend_unified_q3_source_frame **out)
 }
 size_t frontend_unified_q3_sources_count(const frontend_unified_q3_sources *o)
 { return o ? (o->prepared ? o->prepared->count : o->count) : 0; }
-bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *v)
+static bool row_current(const frontend_unified_q3_source_view *v,bool cold)
 {
-    if (!v || !frontend_unified_q3_sources_current(v->owner)) return false;
+    if (!v || !(cold ? frontend_unified_q3_sources_checkpoint_current(v->owner) : frontend_unified_q3_sources_current(v->owner))) return false;
     const frontend_unified_q3_sources *o = v->owner;
-    received_source **rows = o->prepared ? o->prepared->rows : o->rows;
-    size_t count = o->prepared ? o->prepared->count : o->count;
-    for (size_t i = 0; i < count; ++i) if (rows[i] == v->source) {
-        const frontend_unified_q3_source_view *r = &rows[i]->view;
+    received_source *found = NULL;
+    for (size_t i = 0; i < o->count; ++i) if (o->rows[i] == v->source) found = o->rows[i];
+    if (o->prepared) for (size_t i = 0; i < o->prepared->count; ++i)
+        if (o->prepared->rows[i] == v->source) found = o->prepared->rows[i];
+    if (found) {
+        const frontend_unified_q3_source_view *r = &found->view;
         qa_q3_presentation_assets *assets;
         return r->revision == v->revision && r->epoch == v->epoch && r->provider == v->provider &&
             r->publication == v->publication && r->map_revision == v->map_revision &&
@@ -370,6 +388,18 @@ bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *v
     }
     return false;
 }
+bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *v)
+{ return row_current(v,false); }
+bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *v)
+{ return row_current(v,true); }
+bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *o,size_t index,
+    frontend_unified_q3_source_view *out,qa_error *e)
+{
+    if (!out || !frontend_unified_q3_sources_checkpoint_current(o) || o->prepared || index >= o->count)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 cold observation lost its actual returned Source owner");
+    *out = o->rows[index]->view;
+    return frontend_unified_q3_source_checkpoint_current(out);
+}
 bool frontend_unified_q3_sources_read(const frontend_unified_q3_sources *o, size_t index,
     frontend_unified_q3_source_view *out, qa_error *e)
 {
@@ -378,6 +408,16 @@ bool frontend_unified_q3_sources_read(const frontend_unified_q3_sources *o, size
     received_source *r = o->prepared ? o->prepared->rows[index] : o->rows[index];
     *out = r->view;
     return frontend_unified_q3_source_current(out) || fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source row has retired");
+}
+size_t frontend_unified_q3_sources_committed_count(const frontend_unified_q3_sources *o)
+{ return o ? o->count : 0; }
+bool frontend_unified_q3_sources_committed_read(const frontend_unified_q3_sources *o,size_t index,
+    frontend_unified_q3_source_view *out,qa_error *e)
+{
+    if (!out || !frontend_unified_q3_sources_current(o) || index >= o->count)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 published Source observation has retired");
+    *out = o->rows[index]->view;
+    return frontend_unified_q3_source_current(out) || fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 published Source row has retired");
 }
 bool frontend_unified_q3_sources_idle(const frontend_unified_q3_sources *o)
 { return !o || !o->prepared; }
@@ -391,7 +431,7 @@ bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **out, qa_e
 
 bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *o, qa_buffer *out, qa_error *e)
 {
-    if (!out || out->data || !frontend_unified_q3_sources_current(o) || !frontend_unified_q3_sources_idle(o))
+    if (!out || out->data || !frontend_unified_q3_sources_checkpoint_current(o) || !frontend_unified_q3_sources_idle(o))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 cold capture requires the returned actual Source owner");
     qa_source_save_io io = {0}; qa_buffer packet = {0}; uint32_t version = 1, epoch = o->epoch;
     uint64_t revision = o->revision; bool present = o->packet != NULL;
@@ -416,7 +456,7 @@ bool frontend_unified_q3_sources_restore(frontend_remote_unified *replica, front
         (present ? size != 0 && revision != 0 : size == 0 && revision == 0) && epoch == frontend_remote_unified_epoch(replica);
     qa_unified_document *packet = NULL; frontend_unified_q3_sources *o = NULL;
     if (ok && present) ok = qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){io.input.data+io.offset,size},&packet,e);
-    if (ok) { io.offset += size; ok = io.offset == io.input.size && frontend_unified_q3_sources_create(replica,media,&o,e); }
+    if (ok) { io.offset += size; ok = io.offset == io.input.size && create(replica,media,true,&o,e); }
     frontend_unified_q3_source_frame *t = NULL;
     if (ok && present) ok = prepare(o,packet,qa_unified_document_root(packet),true,&t,e);
     if (ok && t) frontend_unified_q3_sources_commit(&t);

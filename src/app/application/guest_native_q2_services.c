@@ -99,11 +99,23 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
 static bool register_file(struct application_native_q2 *engine, qa_native_host_resource_kind kind,
     const char *name, qa_error *error)
 {
-    if (!*name || *name == '*' || kind == QA_NATIVE_HOST_IMAGE) return true;
+    if (!*name || *name == '*') return true;
     char id[81]; bool found;
-    if (!application_unified_event_resource_lookup(engine->provider->application,
-        engine->provider->owner, name, id, &found, error)) return false;
+    if (!application_unified_event_resource_lookup_kind(engine->provider->application,
+        engine->provider->owner, kind, name, id, &found, error)) return false;
     if (found) return true;
+    if (kind == QA_NATIVE_HOST_IMAGE) {
+        if (!engine->platform.resource_precache) return true;
+        const qa_vfs *view = NULL; qa_resource *held = NULL; qa_vfs_acquisition opening = {0};
+        bool ok = engine->platform.resource_precache(engine->platform.context, kind, name,
+            &view, &held, &opening, &found, error);
+        if (ok && found) ok = application_unified_event_resource_register_acquired(engine->provider->application,
+            engine->provider->owner, kind, name, view, held, &opening, id, error);
+        if (ok && !found && (held || opening.path || opening.lookup_path || opening.link_source ||
+            opening.link_target || opening.mount || opening.resource_id))
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Absent Q2 image precache retained an unclaimed opening");
+        qa_resource_release(held); qa_vfs_acquisition_dispose(&opening); return ok;
+    }
     const char *opening = *name == '#' ? name + 1 : name;
     size_t length = strlen(opening), prefix = kind == QA_NATIVE_HOST_SOUND && *name != '#' ? 6 : 0;
     if (length > SIZE_MAX - 7)
@@ -112,17 +124,17 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     if (!path) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 resource precache path");
     if (prefix) memcpy(path, "sound/", prefix);
     memcpy(path + prefix, opening, length + 1);
-    qa_resource *held = NULL; qa_error acquisition = {0};
-    bool ok = qa_vfs_acquire(engine->provider->launch->content, path, &held, NULL, &acquisition);
+    qa_resource *held = NULL; qa_vfs_acquisition receipt = {0}; qa_error acquisition = {0};
+    bool ok = qa_vfs_acquire_receipt(engine->provider->launch->content, path, &held, &receipt, &acquisition);
     free(path);
     if (!ok) {
         if (acquisition.code == QA_ERROR_NOT_FOUND) return true;
         if (error) *error = acquisition;
         return false;
     }
-    ok = application_unified_event_resource_register(engine->provider->application,
-        engine->provider->owner, name, held, id, error);
-    qa_resource_release(held);
+    ok = application_unified_event_resource_register_acquired(engine->provider->application,
+        engine->provider->owner, kind, name, engine->provider->launch->content, held, &receipt, id, error);
+    qa_resource_release(held); qa_vfs_acquisition_dispose(&receipt);
     return ok;
 }
 

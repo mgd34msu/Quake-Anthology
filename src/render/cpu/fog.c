@@ -93,9 +93,9 @@ bool cpu_depth_fog(qa_cpu_renderer *renderer, const qa_scene_fog *fog,
       }
       if (height) {
         double ndc_x =
-            (x + 0.5 - view->viewport.x) * 2 / view->viewport.width - 1;
+            ((double)x + 0.5 - view->viewport.x) * 2 / view->viewport.width - 1;
         double ndc_y =
-            1 - (y + 0.5 - view->viewport.y) * 2 / view->viewport.height;
+            1 - ((double)y + 0.5 - view->viewport.y) * 2 / view->viewport.height;
         double dx = (view->axis[0].x - view->axis[1].x * ndc_x * tan_x +
                      view->axis[2].x * ndc_y * tan_y) *
                     eye;

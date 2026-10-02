@@ -261,9 +261,9 @@ bool qa_font_kfont_load(qa_font_library *library, const char *path, const qa_fon
             qa_font_glyph glyph = {
                 .codepoint = value.codepoint,
                 .image = image,
-                .uv = {(float)value.x / image_width, (float)value.y / image_height,
-                       (float)(value.x + value.width) / image_width,
-                       (float)(value.y + value.height) / image_height},
+                .uv = {(float)value.x / (float)image_width, (float)value.y / (float)image_height,
+                       (float)((uint64_t)(uint32_t)value.x + (uint32_t)value.width) / (float)image_width,
+                       (float)((uint64_t)(uint32_t)value.y + (uint32_t)value.height) / (float)image_height},
                 .width = (float)value.width,
                 .height = (float)value.height,
                 .advance = (float)value.width,

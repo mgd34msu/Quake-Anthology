@@ -1,4 +1,5 @@
 #include "native_client_roles.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/application_client_save.h"
 #include "qa/application_client_prepare.h"
 #include "startup_flow.h"
@@ -16,6 +17,8 @@ struct application_native_client_role {
     qa_actor_id *actors;
     size_t actor_count, actor_capacity;
     uint64_t entity_generation;
+    qa_application_client_entity_publication entity_publication;
+    bool entity_publication_set;
     unsigned calls;
     bool retiring, entity_mutating;
 };
@@ -314,6 +317,72 @@ bool qa_application_client_rebind(qa_application *app, const qa_application_clie
     qa_launch_instance_lease *old = r->metadata; r->metadata = metadata; r->source = next;
     qa_launch_instance_lease_release(old); *out = next; return true;
 }
+static bool entity_publication_read(struct application_native_client_role *row,
+    const qa_application_client_source *source, qa_application_client_entity_publication *out)
+{
+    if (!row->options.owner.entity_publication || row->calls == UINT_MAX ||
+        !qa_application_client_current(row->provider->application, source)) return false;
+    ++row->calls;
+    bool current = row->options.owner.entity_publication(row->options.owner.context, source, out);
+    --row->calls;
+    return current && (!out->published || out->map_generation) &&
+        qa_application_client_current(row->provider->application, source);
+}
+static bool entity_publication_equal(const qa_application_client_entity_publication *a,
+    const qa_application_client_entity_publication *b)
+{
+    return a->published == b->published && a->map_generation == b->map_generation &&
+        a->source_frame == b->source_frame && a->received_ns == b->received_ns;
+}
+bool qa_application_client_entities_refresh(qa_application *app,
+    const qa_application_client_source *source, qa_error *error)
+{
+    struct application_native_client_role *row = source ? row_read(provider_read(app,
+        source->context.receiver), source->context.seat) : NULL;
+    qa_application_client_entity_publication publication = {0};
+    if (!row || row->calls || row->entity_mutating || !source->client.owner ||
+        !row->options.owner.entity_current || !entity_publication_read(row, source, &publication))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT entity refresh lacks its actual decoded publication");
+    row->entity_mutating = true; ++row->calls;
+    qa_actor_registry *actors = qa_session_actor_registry(app->session);
+    bool ok = true;
+    for (size_t i = 0; ok && i < row->actor_count;) {
+        qa_actor_id id = row->actors[i];
+        const qa_actor_record *record = qa_actors_get(actors, id);
+        bool keep = false;
+        if (record) {
+            if (record->owner != source->context.entity_owner ||
+                record->definition != source->context.entity_definition || !record->has_source) {
+                ok = application_fail(error, QA_ERROR_FORMAT, "CLIENT observer leaves its actual source namespace"); break;
+            }
+            if (publication.published && row->entity_generation == publication.map_generation) {
+                uint64_t generation = 0;
+                keep = row->options.owner.entity_current(row->options.owner.context, source,
+                    record->source_slot, &generation);
+                if (keep && generation != publication.map_generation) {
+                    ok = application_fail(error, QA_ERROR_ARGUMENT, "CLIENT entity changed its decoded map publication"); break;
+                }
+            }
+        }
+        qa_application_client_entity_publication current = {0};
+        if (!entity_publication_read(row, source, &current) || !entity_publication_equal(&publication, &current)) {
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "CLIENT decoded publication changed during observer refresh"); break;
+        }
+        if (keep) { ++i; continue; }
+        if (record && !qa_actors_release(actors, id, error)) { ok = false; break; }
+        memmove(row->actors + i, row->actors + i + 1, (row->actor_count - i - 1) * sizeof(*row->actors));
+        --row->actor_count;
+    }
+    qa_application_client_entity_publication current = {0};
+    if (ok && (!entity_publication_read(row, source, &current) || !entity_publication_equal(&publication, &current)))
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "CLIENT decoded publication retired during observer refresh");
+    if (ok) {
+        row->entity_generation = publication.published ? publication.map_generation : 0;
+        row->entity_publication = publication; row->entity_publication_set = true;
+    }
+    --row->calls; row->entity_mutating = false;
+    return ok;
+}
 bool qa_application_client_entity_read(qa_application *app, const qa_application_client_source *source,
     uint32_t number, qa_actor_id *out, qa_error *error)
 {
@@ -321,6 +390,13 @@ bool qa_application_client_entity_read(qa_application *app, const qa_application
     if (!r || !out || r->entity_mutating || r->calls == UINT_MAX || !r->options.owner.entity_current ||
         !source->client.owner || !qa_application_client_current(app, source))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT entity requires a genuine decoded source receipt");
+    if (r->options.owner.entity_publication) {
+        qa_application_client_entity_publication publication = {0};
+        if (!entity_publication_read(r, source, &publication))
+            return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT entity lost its actual decoded publication");
+        if ((!r->entity_publication_set || !entity_publication_equal(&publication, &r->entity_publication)) &&
+            !qa_application_client_entities_refresh(app, source, error)) return false;
+    }
     uint64_t generation = 0;
     ++r->calls; bool current = r->options.owner.entity_current(r->options.owner.context, source, number, &generation); --r->calls;
     if (!current || !generation || !qa_application_client_current(app, source))
@@ -375,7 +451,8 @@ bool qa_application_client_capture(qa_application *app, const qa_application_cli
     qa_application_client_state *out, qa_error *error)
 {
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
-    if (!r || !out || out->actors || !source_equal(source, &r->source) || r->retiring || !row_idle(r))
+    if (!r || !out || out->actors || app->client_preparation ||
+        !source_equal(source, &r->source) || r->retiring || !row_idle(r))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT capture requires its returned physical namespace");
     qa_application_client_state state = {.descriptor_identity = source->descriptor->identity,
         .receiver = source->context.receiver, .entity_owner = source->context.entity_owner,

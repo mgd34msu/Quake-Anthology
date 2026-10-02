@@ -110,17 +110,18 @@ const qa_resource *application_unified_event_resource_read(const qa_application 
     return NULL;
 }
 
-bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
-    const char *path, char id[81], bool *found, qa_error *error)
+bool application_unified_event_resource_lookup_kind(qa_application *app, qa_actor_owner owner,
+    qa_native_host_resource_kind kind, const char *path, char id[81], bool *found, qa_error *error)
 {
     application_unified_event_source source;
-    if (!application_unified_event_source_read(app, owner, &source, error) || !path || !id || !found)
+    if (!application_unified_event_source_read(app, owner, &source, error) ||
+        (unsigned)kind > QA_NATIVE_HOST_IMAGE || !path || !id || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
     id[0] = 0; *found = false;
     for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
         const application_unified_event_registration *row = app->unified_event_registrations + i;
         const char *registered = qa_strings_cstr(qa_session_strings(app->session), row->path);
-        if (row->provider != owner || !registered || strcmp(registered, path)) continue;
+        if (row->provider != owner || row->kind != kind || !registered || strcmp(registered, path)) continue;
         if (row->resource >= app->unified_event_resource_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source sound registration lost its retained resource");
         memcpy(id, app->unified_event_resources[row->resource].id, 81);
@@ -128,6 +129,10 @@ bool application_unified_event_resource_lookup(qa_application *app, qa_actor_own
     }
     return true;
 }
+
+bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
+    const char *path, char id[81], bool *found, qa_error *error)
+{ return application_unified_event_resource_lookup_kind(app, owner, QA_NATIVE_HOST_SOUND, path, id, found, error); }
 
 bool application_unified_event_registration_clear(qa_application *app, qa_actor_owner owner, qa_error *error)
 {
@@ -147,15 +152,16 @@ bool application_unified_event_registration_clear(qa_application *app, qa_actor_
     return true;
 }
 
-static bool registration_bind(qa_application *app, qa_actor_owner owner, const char *path,
-    size_t resource, qa_error *error)
+static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_native_host_resource_kind kind,
+    const char *path, size_t resource, qa_error *error)
 {
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), path, &name, error)) return false;
     size_t index = 0;
     while (index < app->unified_event_registration_count &&
         (app->unified_event_registrations[index].provider != owner ||
-         app->unified_event_registrations[index].path != name)) ++index;
+         app->unified_event_registrations[index].path != name ||
+         app->unified_event_registrations[index].kind != kind)) ++index;
     if (index < app->unified_event_registration_count &&
         app->unified_event_registrations[index].resource == resource) return true;
     if (app->unified_event_registration_revision == UINT64_MAX)
@@ -168,7 +174,7 @@ static bool registration_bind(qa_application *app, qa_actor_owner owner, const c
         if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source registrations");
         app->unified_event_registrations = rows; app->unified_event_registration_capacity = capacity;
     }
-    app->unified_event_registrations[index] = (application_unified_event_registration){owner, name, resource};
+    app->unified_event_registrations[index] = (application_unified_event_registration){owner, name, resource, kind};
     if (index == app->unified_event_registration_count) ++app->unified_event_registration_count;
     ++app->unified_event_registration_revision;
     return true;
@@ -182,6 +188,7 @@ void application_unified_events_resources_dispose(qa_application *app)
         qa_buffer_free(&row->key);
         qa_resource_release(row->resource);
         qa_launch_instance_lease_release(row->descriptor);
+        qa_vfs_acquisition_dispose(&row->opening); qa_vfs_destroy(row->view);
         qa_resource_pool_destroy(row->pool);
     }
     free(app->unified_event_resources);
@@ -199,25 +206,42 @@ bool application_unified_event_resource_register(qa_application *app, qa_actor_o
     if (!application_unified_event_source_read(app, owner, &source, error) || !path || !*path || !resource || !id)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source registration has no genuine held resource");
     const qa_vfs *view = source.content;
-    bool opened = false;
-    const char *registration_path = NULL;
     for (size_t i = 0; i < qa_vfs_read_count(view); ++i) {
         qa_vfs_read_reference actual;
         if (qa_vfs_read_at(view, i, &actual) && actual.resource == resource && actual.path &&
             (!strcmp(actual.path, path) || (!strncmp(actual.path, "sound/", 6) && !strcmp(actual.path + 6, path)) ||
              (path[0] == '#' && !strcmp(actual.path, path + 1)))) {
-            opened = true; registration_path = actual.path; break;
+            qa_vfs_acquisition opening = {.mount = actual.mount, .resource_id = qa_resource_id(resource),
+                .path = (char *)actual.path, .lookup_path = (char *)actual.lookup_path,
+                .link_source = (char *)actual.link_source, .link_target = (char *)actual.link_target,
+                .opening = actual.opening, .opening_present = true};
+            return application_unified_event_resource_register_acquired(app, owner, QA_NATIVE_HOST_SOUND,
+                path, view, resource, &opening, id, error);
         }
     }
+    return application_fail(error, QA_ERROR_FORMAT, "Source registration is outside its actual precache opening");
+}
+
+bool application_unified_event_resource_register_acquired(qa_application *app, qa_actor_owner owner,
+    qa_native_host_resource_kind kind, const char *path, const qa_vfs *view, const qa_resource *resource,
+    const qa_vfs_acquisition *opening, char id[81], qa_error *error)
+{
+    application_unified_event_source source;
+    if (!application_unified_event_source_read(app, owner, &source, error) || (unsigned)kind > QA_NATIVE_HOST_IMAGE ||
+        !path || !*path || !view || !resource || !opening || !id ||
+        opening->resource_id != qa_resource_id(resource) || !opening->opening_present ||
+        !qa_vfs_lookup_equal(view, source.content) || !qa_vfs_acquisition_retained(view, opening, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source acquired registration lost its genuine scoped opening");
     qa_resource_pool *pool = qa_vfs_resources(view);
-    if (!opened || !pool || qa_resource_pool_find(pool, qa_resource_id(resource)) != resource)
-        return application_fail(error, QA_ERROR_FORMAT, "Source registration is outside its actual precache opening");
+    const char *registration_path = opening->path;
+    if (!pool || qa_resource_pool_find(pool, qa_resource_id(resource)) != resource)
+        return application_fail(error, QA_ERROR_FORMAT, "Source acquired registration is outside its retained resource pool");
     qa_unified_document *key = NULL;
     char actual_id[81];
     if (!application_unified_resource_key(source.product, registration_path, resource, &key, actual_id, error)) return false;
     for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
         if (!strcmp(app->unified_event_resources[i].id, actual_id)) {
-            bool ok = registration_bind(app, owner, path, i, error);
+            bool ok = registration_bind(app, owner, kind, path, i, error);
             if (ok) memcpy(id, actual_id, 81);
             qa_unified_document_destroy(key);
             return ok;
@@ -242,15 +266,20 @@ bool application_unified_event_resource_register(qa_application *app, qa_actor_o
         }
     }
     if (ok) {
+        ok = qa_vfs_acquisition_copy(opening, &row.opening, error) && qa_vfs_retain((qa_vfs *)view, error);
+        if (ok) row.view = (qa_vfs *)view;
+    }
+    if (ok) {
         memcpy(row.key.data, bytes.data, bytes.size); row.key.size = bytes.size;
         memcpy(row.id, actual_id, 81);
         qa_resource_retain(row.resource); qa_resource_pool_retain(pool);
         size_t index = app->unified_event_resource_count++;
         app->unified_event_resources[index] = row;
-        ok = registration_bind(app, owner, path, index, error);
+        ok = registration_bind(app, owner, kind, path, index, error);
         if (ok) memcpy(id, actual_id, 81);
     } else {
         qa_buffer_free(&row.key); qa_launch_instance_lease_release(row.descriptor);
+        qa_vfs_acquisition_dispose(&row.opening); qa_vfs_destroy(row.view);
     }
     qa_unified_document_destroy(key);
     return ok;
@@ -271,7 +300,7 @@ bool application_unified_world_text_emit(qa_application *app, qa_actor_owner own
     if (primary) {
         qa_clock_state source_clock;
         if (!qa_session_clock(app->session, primary->owner, &source_clock))
-            return application_fail(error, QA_ERROR_STATE, "World text lost its primary Source clock");
+            return application_fail(error, QA_ERROR_ARGUMENT, "World text lost its primary Source clock");
         clock = source_clock;
     }
     if (app->unified_world_text_count == app->unified_world_text_capacity) {
@@ -647,12 +676,14 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         .simulation_time_ns = time_ns, .source_entity = source_entity,
         .has_source_entity = has_source_entity, .link_presentation = link_presentation};
     qa_q2_edition q2_edition; bool q2_profile;
-    if (!qa_application_native_q2_source_profile_read(app,owner,&q2_edition,&q2_profile,error)) return false;
+    uint64_t q2_interval;
+    if (!qa_application_native_q2_source_clock_read(app,owner,&q2_edition,&q2_interval,&q2_profile,error)) return false;
     if (q2_profile) {
         qa_clock_kind actual=q2_edition==QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE;
         if (source.clock!=actual)
             return application_fail(error,QA_ERROR_FORMAT,"Q2 Source rules differ from its emitted clock receipt");
         record.q2_source_profile=(uint8_t)(q2_edition==QA_Q2_CLASSIC ? 1 : 2);
+        record.q2_source_interval_ns=q2_interval;
     }
     bool activated = false;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i)
@@ -1048,6 +1079,8 @@ static bool presentation_write(application_unified_json *j, qa_application *app,
         application_unified_json_string(j,qa_strings_cstr(qa_session_strings(app->session),row->provider),error) &&
         application_unified_json_text(j,",\"profile\":",error) &&
         application_unified_json_string(j,row->q2_source_profile==1 ? "classic" : "rerelease",error) &&
+        application_unified_json_text(j,",\"frameMilliseconds\":",error) &&
+        application_unified_json_number(j,(double)row->q2_source_interval_ns/1000000.0,error) &&
         application_unified_json_text(j,"}",error);
     if (ok) ok = application_unified_json_text(j, ",\"sourceEntity\":", error) &&
         (row->has_source_entity ? application_unified_json_number(j, row->source_entity, error) :

@@ -199,7 +199,18 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
         if (ok && local) ok = bot_character_alias_fields(io, set->character_store, object,
             set->library ? &set->library->options.scripts : NULL, reading ? &object : NULL);
         else if (ok) ok = bot_save_character_fields(io, object, reading ? &object : NULL);
-        if (reading) asset->object = object;
+        if (reading) {
+            asset->object = object;
+            if (ok && local && !object->retired) for (size_t prior = 0; prior < index; ++prior) {
+                if (set->assets[prior].kind != QA_BOT_SAVED_CHARACTER) continue;
+                const qa_bot_character *first = set->assets[prior].object;
+                qa_bot_memory_allocation a = first->allocation, b = object->allocation;
+                if (!first->retired && first->source == object->source && a.owner == b.owner &&
+                    a.generation == b.generation && a.slot == b.slot) {
+                    ok = bot_save_fail(io, QA_ERROR_FORMAT, "Distinct characters repeat a source profile allocation"); break;
+                }
+            }
+        }
         break;
     }
     case QA_BOT_SAVED_WEAPONS: {
@@ -249,7 +260,18 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
         if (ok && local) ok = bot_items_alias_fields(io, set->library ? set->library->memory : NULL,
             object, set->library ? &set->library->options.scripts : NULL, reading ? &object : NULL);
         else if (ok) ok = bot_save_items_fields(io, object, reading ? &object : NULL);
-        if (reading) asset->object = object;
+        if (reading) {
+            asset->object = object;
+            if (ok && local) for (size_t prior = 0; prior < index; ++prior) {
+                if (set->assets[prior].kind != QA_BOT_SAVED_ITEMS) continue;
+                const qa_bot_items *first = set->assets[prior].object;
+                qa_bot_memory_allocation a = first->allocation, b = object->allocation;
+                if (first->memory == object->memory && a.owner == b.owner &&
+                    a.generation == b.generation && a.slot == b.slot) {
+                    ok = bot_save_fail(io, QA_ERROR_FORMAT, "Distinct item configs repeat a source HUNK allocation"); break;
+                }
+            }
+        }
         break;
     }
     case QA_BOT_SAVED_CHAT: {
@@ -399,7 +421,8 @@ bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_b
 {
     qa_bot_library *library = runtime ? runtime->library : NULL;
     if (!library || !out || *out || !qa_bot_runtime_can_destroy(runtime) || library->weights || library->characters ||
-        library->weapon_configs || library->item_configs || library->chat_assets || library->last_character)
+        library->weapon_configs || library->item_configs || library->chat_assets || library->last_character ||
+        library->character_store)
         return fail(error, "Bot asset restore requires an empty detached actual library cache");
     qa_bot_saved_assets *set = NULL;
     if(!library->fuzzy_store || library->fuzzy_store->first || library->fuzzy_store->readers ||

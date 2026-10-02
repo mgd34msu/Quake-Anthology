@@ -74,7 +74,8 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
         float xx=x; int32_t count=0;
         for(const unsigned char *p=(const unsigned char *)text;*p && (!limit || count<limit);++p) {
             if(p[0]=='^' && p[1] && p[1]!='^') { ++p; continue; }
-            if(!glyph(d,xx+2,y+2,w,h,*p))return false; xx=q3ne_add(xx,w); ++count;
+            if(!glyph(d,xx+2,y+2,w,h,*p))return false;
+            xx=q3ne_add(xx,w); ++count;
         }
     }
     if(!q3nh_color(d,selected))return false;
@@ -84,7 +85,8 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
             if(!force) { float color[4]; memcpy(color,colors[(p[1]-'0')&7],sizeof(color)); color[3]=c[3]; if(!q3nh_color(d,color))return false; }
             ++p; continue;
         }
-        if(!glyph(d,x,y,w,h,*p))return false; x=q3ne_add(x,w); ++count;
+        if(!glyph(d,x,y,w,h,*p))return false;
+        x=q3ne_add(x,w); ++count;
     }
     return q3nh_color(d,NULL);
 }
@@ -96,7 +98,8 @@ bool q3nh_right(q3n_hud_draw *d,float x,float y,const char *s,float alpha)
 { float width; return q3nh_width(d,s,16,16,0,&width) && q3nh_big(d,x-width,y,s,alpha); }
 bool q3nh_field(q3n_hud_draw *d,float x,float y,int32_t width,int32_t value)
 {
-    if(width<1)return true; if(width>5)width=5;
+    if(width<1)return true;
+    if(width>5)width=5;
     static const int32_t max[4]={9,99,999,9999},min[4]={0,-9,-99,-999};
     if(width<=4) { if(value>max[width-1])value=max[width-1]; if(value<min[width-1])value=min[width-1]; }
     char text[16]; snprintf(text,sizeof(text),"%i",value); size_t count=strlen(text); if(count>(size_t)width)count=(size_t)width;

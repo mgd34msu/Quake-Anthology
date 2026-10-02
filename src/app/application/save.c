@@ -1319,7 +1319,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                                      provider->kind == APPLICATION_PROVIDER_NATIVE &&
                                      provider->state.native.q2_engine) ? 2 :
                                     owner->kind == QA_SAVE_CONTROLS ? 11 :
-                                    owner->kind == QA_SAVE_EQUIPMENT ? 3 :
+                                    owner->kind == QA_SAVE_EQUIPMENT ? 4 :
                                     owner->kind == QA_SAVE_EVENTS ? APPLICATION_EVENTS_SAVE_VERSION :
                                     owner->kind == QA_SAVE_INVENTORY || owner->kind == QA_SAVE_PROGRESSION ||
                                     owner->kind == QA_SAVE_TARGETS ? 2 : 1;
@@ -1521,6 +1521,14 @@ static bool content_instance(void *opaque, const qa_launch_provider *selection,
 }
 static bool content_resource(void *opaque, size_t index, qa_launch_resource *out, qa_error *error)
 { return application_save_content_launch_resource_at(opaque, index, out, error); }
+static bool content_resource_origin(void *opaque, size_t index, qa_launch_resource_origin *out, qa_error *error)
+{
+    qa_application_content_graph *graph = opaque;
+    if (!application_save_content_launch_resource_origin(graph, index, out, error)) return false;
+    uint64_t view = qa_application_content_view_id(graph, out->content);
+    out->content = NULL;
+    return qa_application_content_retain_view(graph, view, &out->content, error);
+}
 
 static bool persistence_create(void *opaque, const qa_save_image *image, void **out, qa_error *error)
 {
@@ -1560,6 +1568,7 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     qa_configuration_transaction *transaction = NULL;
     const qa_launch_restore_content content = {.context = candidate->content_graph,
         .mounts = content_mounts, .instance = content_instance, .resource = content_resource,
+        .resource_origin = content_resource_origin,
         .resource_count = application_save_content_launch_resource_count(candidate->content_graph)};
     bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&
         application_q3_product_validate_draft(&candidate->q3_product, draft, error) &&
@@ -1747,6 +1756,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             ok = qa_q2_game_restore_finish(provider->state.q2, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q1)
             ok = qa_q1_game_restore_finish(provider->state.q1, error);
+        else if (provider->kind == APPLICATION_PROVIDER_QC)
+            ok = application_qc_npc_restore_finish(provider, error);
         if (ok)
             ok = application_guest_inventory_restore_finish(provider, error);
     }

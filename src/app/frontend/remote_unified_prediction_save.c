@@ -1,6 +1,7 @@
 #include "remote_unified_prediction_save.h"
 #include "remote_unified_prediction_private.h"
 #include "remote_unified_private.h"
+#include "remote_unified_save.h"
 #include "qa/source_save.h"
 #include <math.h>
 #include <stdlib.h>
@@ -56,8 +57,8 @@ bool frontend_remote_unified_prediction_checkpoint(const frontend_remote_unified
     qa_buffer *out,qa_error *e)
 {
     if(!p || !out || out->data || !frontend_remote_unified_prediction_idle(p) ||
-        !frontend_remote_unified_current(p->replica,e) || p->epoch!=frontend_remote_unified_epoch(p->replica) ||
-        (p->received && !frontend_remote_unified_prediction_document(p))) return false;
+        p->importing || !frontend_remote_unified_checkpoint_current(p->replica,e) ||
+        p->epoch!=frontend_remote_unified_epoch(p->replica) || (p->received && !p->snapshot_document)) return false;
     saved_prediction s={.epoch=p->epoch,.received=p->received,.discarded=p->discarded,.snapshot=p->snapshot_document};
     s.commands.epoch=p->epoch;s.commands.count=p->command_count;
     for(size_t i=0;i<p->command_count;++i) {
@@ -77,13 +78,13 @@ bool frontend_remote_unified_prediction_restore(frontend_remote_unified *replica
         s.epoch==frontend_remote_unified_epoch(replica);
     qa_source_save_dispose(&io);
     frontend_remote_unified_prediction *p=NULL;
-    if(ok) ok=frontend_remote_unified_prediction_create(replica,&p,e);
+    if(ok) ok=frontend_prediction_import_create(replica,&p,e);
     if(ok && s.received) ok=frontend_remote_unified_prediction_receive(p,s.snapshot,e);
     for(size_t i=0;ok && i<s.commands.count;++i) {
         ok=(int64_t)s.commands.commands[i].sequence>p->snapshot.sequence &&
             frontend_remote_unified_prediction_input(p,&s.commands.commands[i],s.times[i],e);
     }
-    if(ok) {p->discarded=s.discarded;*out=p;p=NULL;}
+    if(ok) {p->discarded=s.discarded;p->importing=false;*out=p;p=NULL;}
     if(p) (void)frontend_remote_unified_prediction_destroy(&p,NULL);
     qa_unified_document_destroy(s.snapshot);qa_unified_inputs_free(&s.commands);
     if(!ok && (!e || e->code==QA_OK)) frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid retained Unified prediction history");

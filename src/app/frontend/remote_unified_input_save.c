@@ -1,6 +1,7 @@
 #include "remote_unified_input_save.h"
 #include "remote_unified_input_private.h"
 #include "remote_unified_private.h"
+#include "remote_unified_save.h"
 #include "qa/source_save.h"
 #include <math.h>
 #include <string.h>
@@ -85,7 +86,7 @@ bool frontend_unified_input_checkpoint(const frontend_unified_input *p,qa_buffer
 {
     if(!p || !out || out->data || !frontend_unified_input_idle(p) ||
         !frontend_client_source_current(&p->client_view) || !frontend_neutral_config_current(&p->configuration) ||
-        !frontend_remote_unified_current(p->replica,e) || p->epoch!=frontend_remote_unified_epoch(p->replica)) return false;
+        !frontend_remote_unified_checkpoint_current(p->replica,e) || p->epoch!=frontend_remote_unified_epoch(p->replica)) return false;
     saved_input s={.epoch=p->epoch,.physical=p->configuration.physical_seat,
         .configuration=p->client_view.source.configuration_generation,.connection=p->client_view.source.connection_epoch,
         .namespace_revision=p->configuration.namespace_revision,
@@ -106,7 +107,7 @@ bool frontend_unified_input_restore(qa_frontend *f,frontend_remote_unified *repl
     bool ok=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,&s) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     frontend_unified_input *p=NULL;
-    if(ok) ok=frontend_unified_input_create(f,replica,prediction,&p,e);
+    if(ok) ok=frontend_input_import_create(f,replica,prediction,&p,e);
     if(ok) ok=p->epoch==s.epoch && p->configuration.physical_seat==s.physical && p->builder.kind==s.builder.kind &&
         p->client_view.source.configuration_generation==s.configuration && p->client_view.source.connection_epoch==s.connection &&
         p->configuration.namespace_revision==s.namespace_revision &&

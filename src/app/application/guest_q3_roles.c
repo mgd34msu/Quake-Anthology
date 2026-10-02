@@ -165,6 +165,7 @@ bool q3g_role_destroy(q3g_role *role, qa_error *error)
 static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                           uint32_t seat, const char *path, bool primary,
                           uint64_t saved_sequence, qa_string_id saved_owner,
+                          application_provider *client_source,
                           q3g_role **out, qa_error *error)
 {
     if (!engine || engine->constructing_role || !path || !*path || !out || (unsigned)kind > QA_QVM_UI)
@@ -177,6 +178,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     q3g_role *role = calloc(1, sizeof(*role));
     if (!role) return application_fail(error, QA_ERROR_MEMORY, "allocating Q3 role");
     role->engine = engine; role->kind = kind; role->seat = seat; role->primary = primary;
+    role->client_source = client_source;
     role->client = UINT32_MAX; role->path = q3g_copy_text(path, error);
     if (!role->path) { free(role); return false; }
     qa_q3_host_options options = {0};
@@ -590,17 +592,28 @@ bool q3g_role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                       uint32_t seat, const char *path, bool primary,
                       q3g_role **out, qa_error *error)
 {
-    return role_create(engine, kind, seat, path, primary, 0, QA_STRING_NONE, out, error);
+    return role_create(engine, kind, seat, path, primary, 0, QA_STRING_NONE, NULL, out, error);
+}
+
+bool q3g_role_create_client(struct application_q3_guest *engine, qa_qvm_role kind,
+    uint32_t seat, const char *path, bool primary, application_provider *source,
+    q3g_role **out, qa_error *error)
+{
+    if (!engine || !source || kind == QA_QVM_GAME || source->application != engine->provider->application ||
+        !source->constructed || !source->attached || source->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT constructor requires its actual retained GAME parent");
+    return role_create(engine, kind, seat, path, primary, 0, QA_STRING_NONE, source, out, error);
 }
 
 bool q3g_role_create_restored(struct application_q3_guest *engine, qa_qvm_role kind,
                                uint32_t seat, const char *path, bool primary,
                                uint64_t service_sequence, qa_string_id service_owner,
+                               application_provider *client_source,
                                q3g_role **out, qa_error *error)
 {
     if (!service_owner || !service_sequence)
         return application_fail(error, QA_ERROR_FORMAT, "Restored Q3 role requires its saved source owner");
-    return role_create(engine, kind, seat, path, primary, service_sequence, service_owner, out, error);
+    return role_create(engine, kind, seat, path, primary, service_sequence, service_owner, client_source, out, error);
 }
 
 bool q3g_role_activate(q3g_role *role, qa_error *error)
@@ -714,6 +727,7 @@ bool q3g_role_restart(q3g_role *role, q3g_role **out, qa_error *error)
     qa_qvm_role kind = role->kind;
     uint32_t seat = role->seat;
     bool primary = role->primary, game = role == engine->game;
+    application_provider *client_source = role->client_source;
     qa_error shutdown_error = {0};
     bool shut_down = q3g_role_shutdown(role, false, &shutdown_error);
     q3g_role *next = role->next;
@@ -725,7 +739,8 @@ bool q3g_role_restart(q3g_role *role, q3g_role **out, qa_error *error)
     if (game) { engine->game = NULL; q3g_game_aliases(engine, NULL); }
     if (!shut_down) { if (error) *error = shutdown_error; free(path); return false; }
     q3g_role *replacement = NULL;
-    bool ok = q3g_role_create(engine, kind, seat, path, primary, &replacement, error);
+    bool ok = client_source ? q3g_role_create_client(engine, kind, seat, path, primary,
+        client_source, &replacement, error) : q3g_role_create(engine, kind, seat, path, primary, &replacement, error);
     free(path);
     if (!ok) return false;
     replacement->next = engine->roles; engine->roles = replacement;

@@ -690,7 +690,8 @@ bool qa_caption_library_restore(qa_caption_library *library, qa_bytes bytes, qa_
     bool ok = qa_source_save_reader(&io, NULL, bytes, e) && library_fields(&io, candidate) && qa_source_save_finish(&io, NULL);
     if (ok) { library->first = candidate->first; candidate->first = NULL; }
     qa_source_save_dispose(&io); qa_caption_library_destroy(candidate);
-    if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Invalid saved caption cache"); return ok;
+    if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Invalid saved caption cache");
+    return ok;
 }
 static bool timeline_fields(qa_source_save_io *io, qa_captions *timeline,
     const qa_caption_library *library, const qa_localization_pool *pool)
@@ -781,5 +782,6 @@ bool qa_captions_restore(qa_captions *timeline, const qa_caption_library *librar
         candidate->localization = NULL; candidate->cues = NULL; candidate->count = candidate->capacity = 0;
     }
     qa_source_save_dispose(&io); qa_captions_destroy(candidate);
-    if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Saved caption timeline leaves its restored graph"); return ok;
+    if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Saved caption timeline leaves its restored graph");
+    return ok;
 }

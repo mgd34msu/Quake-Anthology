@@ -1,6 +1,7 @@
 #include "remote_q1_source.h"
 #include "remote_q1_private.h"
 #include "internal.h"
+#include "legacy_render_policy.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t seat,qa_error *error)
 {
     if (!cvars || !owner || qa_cvars_dialect(cvars)>QA_CONSOLE_QW) return false;
+    if (!frontend_legacy_source_register(cvars, qa_cvars_dialect(cvars), owner, error)) return false;
     if (qa_cvars_dialect(cvars)==QA_CONSOLE_Q1) {
         char name[48]; if (seat==0) snprintf(name,sizeof(name),"Player");
         else snprintf(name,sizeof(name),"Player %llu",(unsigned long long)seat+1);

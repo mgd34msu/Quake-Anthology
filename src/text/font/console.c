@@ -425,7 +425,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
     float available = fmaxf(1.0f, (float)options->target.width - margin * 2.0f);
     size_t maximum_cells = cells_that_fit(available, cell_width);
     float y = (float)((double)options->target.y + bottom -
-                      (double)line_height * (row_count + field_lines + help_count));
+                      (double)line_height * ((double)row_count + (double)field_lines + (double)help_count));
     static const qa_scene_vec4 colors[8] = {
         {0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 1, 0, 1},
         {0, 0, 1, 1}, {0, 1, 1, 1}, {1, 0, 1, 1}, {1, 1, 1, 1},

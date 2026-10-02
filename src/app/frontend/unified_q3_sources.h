@@ -61,8 +61,19 @@ void frontend_unified_q3_sources_abort(frontend_unified_q3_source_frame **);
 size_t frontend_unified_q3_sources_count(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_sources_read(const frontend_unified_q3_sources *, size_t,
     frontend_unified_q3_source_view *, qa_error *);
+/* A held update does not retire the published rows until its nofail commit.
+ * Round preparation uses these actual old receipts alongside its candidate. */
+size_t frontend_unified_q3_sources_committed_count(const frontend_unified_q3_sources *);
+bool frontend_unified_q3_sources_committed_read(const frontend_unified_q3_sources *, size_t,
+    frontend_unified_q3_source_view *, qa_error *);
 bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *);
 bool frontend_unified_q3_sources_current(const frontend_unified_q3_sources *);
+/* Pure cold-owner receipts. They require the replica's actual capture or
+ * isolated restore admission and grant no ordinary frame/effect authority. */
+bool frontend_unified_q3_sources_checkpoint_current(const frontend_unified_q3_sources *);
+bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *);
+bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *, size_t,
+    frontend_unified_q3_source_view *, qa_error *);
 bool frontend_unified_q3_sources_idle(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **, qa_error *);
 bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *, qa_buffer *, qa_error *);

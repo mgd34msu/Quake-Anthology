@@ -1,6 +1,7 @@
 #include "remote_unified_private.h"
 #include "../application/unified_output_json.h"
 #include "qa/network_unified_save.h"
+#include "remote_unified_save.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,6 +14,18 @@ bool frontend_unified_clone(const qa_unified_document *source, qa_unified_docume
 {
     return qa_unified_document_create(qa_unified_document_type(source),
         qa_json_source(qa_unified_document_json(source), qa_unified_document_root(source)), out, error);
+}
+bool frontend_remote_unified_actor_retained(const frontend_remote_unified *owner,uint32_t slot,
+    uint64_t generation,qa_actor_id *out,qa_error *error)
+{
+    if (!out || !frontend_remote_unified_checkpoint_current(owner,error)) return false;
+    for (const frontend_unified_identity *row=owner->identities;row;row=row->next)
+        if (row->wire.slot==slot && row->wire.generation==generation) {
+            qa_saved_actor_id actual;
+            if (!qa_actors_save_reference(owner->actors,row->actual,&actual,error)) return false;
+            *out=row->actual; return true;
+        }
+    return frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified import references an absent private identity receipt");
 }
 
 static bool linked(const frontend_remote_unified *owner)
@@ -92,11 +105,10 @@ const frontend_remote_unified_domain *frontend_remote_unified_domain_read(const 
 uint32_t frontend_remote_unified_epoch(const frontend_remote_unified *owner)
 { return owner ? owner->epoch : 0; }
 
-const qa_recipe_provider *frontend_remote_unified_provider(const frontend_remote_unified *owner,
-    qa_launch_role role, const char *selector)
+static const qa_recipe_provider *frame_provider(const frontend_remote_unified *owner,
+    const qa_unified_document *frame,qa_launch_role role,const char *selector)
 {
     if (!owner || !owner->admitted || !owner->recipe || (selector && *selector)) return NULL;
-    const qa_unified_document *frame = owner->prepared_frame ? owner->prepared_frame : owner->frame;
     if (!frame) return NULL;
     const qa_json_document *json = qa_unified_document_json(frame);
     qa_json_id output = qa_json_get(json, qa_unified_document_root(frame), "output");
@@ -128,11 +140,19 @@ const qa_recipe_provider *frontend_remote_unified_provider(const frontend_remote
     return NULL;
 }
 
-bool frontend_remote_unified_actor_present(const frontend_remote_unified *owner, uint32_t slot,
-    uint64_t generation)
+const qa_recipe_provider *frontend_remote_unified_provider(const frontend_remote_unified *owner,
+    qa_launch_role role,const char *selector)
 {
-    if (!owner) return false;
-    const qa_unified_document *frame = owner->prepared_frame ? owner->prepared_frame : owner->frame;
+    return frame_provider(owner,owner?(owner->prepared_frame?owner->prepared_frame:owner->frame):NULL,role,selector);
+}
+const qa_recipe_provider *frontend_remote_unified_provider_published(const frontend_remote_unified *owner,
+    qa_launch_role role,const char *selector)
+{
+    return frame_provider(owner,owner?owner->frame:NULL,role,selector);
+}
+
+static bool frame_actor_present(const qa_unified_document *frame,uint32_t slot,uint64_t generation)
+{
     if (frame) {
         const qa_json_document *json = qa_unified_document_json(frame);
         qa_json_id rows = qa_json_get(json, qa_json_get(json, qa_json_get(json,
@@ -147,6 +167,10 @@ bool frontend_remote_unified_actor_present(const frontend_remote_unified *owner,
     }
     return false;
 }
+bool frontend_remote_unified_actor_present(const frontend_remote_unified *owner,uint32_t slot,uint64_t generation)
+{ return owner && frame_actor_present(owner->prepared_frame?owner->prepared_frame:owner->frame,slot,generation); }
+bool frontend_remote_unified_actor_published(const frontend_remote_unified *owner,uint32_t slot,uint64_t generation)
+{ return owner && frame_actor_present(owner->frame,slot,generation); }
 bool frontend_remote_unified_actor(frontend_remote_unified *owner, uint32_t slot,
     uint64_t generation, qa_actor_id *out, qa_error *error)
 {
@@ -593,7 +617,8 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
 {
     if (!slot || !*slot) return true;
     frontend_remote_unified *owner = *slot;
-    if (!linked(owner) || owner->busy || owner->frontend->resource_inventory || owner->session ||
+    if (!linked(owner) || owner->busy ||
+        (owner->frontend->resource_inventory && !owner->frontend->source_restoring) || owner->session ||
         (owner->bound && !owner->retired))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified cleanup requires its actually retired returned session");
     if (owner->consumers_live && !owner->options.consumers.close(owner->options.consumers.context, owner, error)) return false;

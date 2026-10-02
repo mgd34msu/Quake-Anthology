@@ -1,6 +1,8 @@
 #include "internal.h"
+#include "../library/internal.h"
 #include "../checkpoint_internal.h"
 #include "source_weapon_setup.h"
+#include "../library/internal.h"
 
 bool bot_runtime_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -100,6 +102,9 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
     }
+    r->library->character_context = r;
+    r->library->character_available = bot_runtime_character_available;
+    r->library->character_publish = bot_runtime_character_publish;
     r->memory=qa_bot_library_memory(r->library);
     if(!qa_bot_memory_retain(r->memory,e)) {
         r->memory=NULL;(void)qa_bot_runtime_destroy(r,NULL);return false;

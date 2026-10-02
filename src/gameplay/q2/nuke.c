@@ -95,8 +95,8 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         if (!q2_actor_live(g, target))
             continue;
         bool done = false;
-        for (size_t i = 0; i < count; ++i)
-            if (qa_actor_id_equal(blinded[i], target)) {
+        for (size_t blinded_index = 0; blinded_index < count; ++blinded_index)
+            if (qa_actor_id_equal(blinded[blinded_index], target)) {
                 done = true;
                 break;
             }

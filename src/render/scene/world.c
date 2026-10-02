@@ -1147,6 +1147,12 @@ static qa_material_context world_context(const qa_scene_world *world, const qa_s
 static bool fragment_context(const qa_scene_world *world, const qa_scene_world_input *input,
                                qa_scene_frame *frame, qa_material_context *context, qa_error *error)
 {
+    if (world->bsp.family != QA_BSP_Q3 && input->legacy_policy.present &&
+        (input->legacy_policy.fullbright || !input->legacy_policy.dynamic)) {
+        context->fragment_lighting = false;
+        context->fragment_light_count = 0;
+        return true;
+    }
     context->fragment_lighting = input->shadow_lights != NULL;
     context->fragment_light_count = input->shadow_light_count;
     context->shadow_atlas = input->shadow_atlas;
@@ -1159,7 +1165,8 @@ static bool fragment_context(const qa_scene_world *world, const qa_scene_world_i
     if (lights == NULL) return false;
     for (size_t i = 0; i < input->shadow_light_count; ++i) {
         lights[i] = input->shadow_lights[i];
-        lights[i].light.scale *= world->options.q2_light_modulate;
+        lights[i].light.scale *= world->bsp.family != QA_BSP_Q3 && input->legacy_policy.present ?
+            input->legacy_policy.modulate : world->options.q2_light_modulate;
     }
     context->fragment_lights = lights;
     return true;
@@ -1386,7 +1393,7 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
         || !isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) || !isfinite(color.w))
         return world_error(error, QA_ERROR_ARGUMENT, "invalid inline model or source entity");
     for (unsigned axis = 0; axis < 3; ++axis)
-        if (!isfinite(transform->origin[axis]))
+        if (!isfinite(transform->origin[axis]) || !isfinite(transform->scale[axis]))
             return world_error(error, QA_ERROR_ARGUMENT, "nonfinite inline model origin");
     qa_model_transform inverse;
     if (!qa_model_transform_inverse(transform, &inverse))
@@ -1558,6 +1565,31 @@ bool qa_scene_world_q1_mirror_overlay(qa_scene_world *world, const qa_scene_worl
         }
     }
     return transaction_end(world, frame, &start, ok);
+}
+
+bool qa_scene_world_source_model_admission(const qa_scene_world *world, uint32_t model,
+    const qa_model_transform *transform, const qa_scene_world_input *input, bool *visible, qa_error *error)
+{
+    if (!world || !world->references || world->checkpoint_active || world->capture || world->image_policy ||
+        world->bsp.family!=QA_BSP_Q3 || !input || !input->source_order || !transform || !visible ||
+        model>=world->model_count)
+        return world_error(error,QA_ERROR_ARGUMENT,"Source inline admission requires its actual retained model and view");
+    if (!valid_input(world,input,error)) return false;
+    for (size_t axis=0;axis<3;++axis) {
+        if (!isfinite(transform->origin[axis]))
+            return world_error(error,QA_ERROR_ARGUMENT,"Source inline model origin is nonfinite");
+        for (size_t component=0;component<3;++component)
+            if (!isfinite(transform->axes[axis][component]))
+                return world_error(error,QA_ERROR_ARGUMENT,"Source inline model axis is nonfinite");
+    }
+    qa_model_transform inverse;
+    if (!qa_model_transform_inverse(transform,&inverse))
+        return world_error(error,QA_ERROR_ARGUMENT,"Source inline model transform is singular");
+    qa_scene_plane planes[6];
+    size_t count=input->no_cull?0:qa_scene_frustum(&input->view,planes);
+    if (count>4) count=4;
+    *visible=local_bounds_visible(bsp_bounds(world->models[model].source.bounds),transform,planes,count);
+    return true;
 }
 
 bool qa_scene_world_submit_model(qa_scene_world *world, uint32_t model,

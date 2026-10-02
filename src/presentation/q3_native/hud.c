@@ -44,7 +44,7 @@ bool q3n_hud_create_compiled(const q3n_hud_options *options,q3n_hud **out,qa_err
     q3n_compiled_source_view source;
     if(!options || !out || *out || !options->compiled_source || options->source || options->client || options->remote_client ||
        !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command || !options->oldest_command ||
-       !q3n_compiled_source_read(options->compiled_source,&source,e) || source.basis.application!=options->application ||
+       !q3n_compiled_source_checkpoint_read(options->compiled_source,&source,e) || source.basis.application!=options->application ||
        source.basis.assets!=options->assets || source.basis.seat!=options->seat ||
        (source.basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order ||
         !options->mission_timed || !options->mission_text || !options->mission_center_line)))

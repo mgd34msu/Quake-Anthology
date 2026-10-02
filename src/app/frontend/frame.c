@@ -44,12 +44,11 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     uint64_t *out,qa_error *error)
 {
     const qa_cvars *cvars=NULL;
-    bool remote=frontend_network_remote(frontend);
-    if (remote) {
-        bool present;
-        if (!frontend_network_client_time_cvars_read(frontend,&cvars,&present,error)) return false;
-        if (!present) cvars=NULL;
-    } else if (!qa_application_startup_pending(frontend->application)) {
+    bool present=false;
+    if (!frontend_network_client_time_cvars_read(frontend,&cvars,&present,error)) return false;
+    bool remote=present || frontend->options.network_connect!=NULL;
+    if (!present) cvars=NULL;
+    if (!remote && !qa_application_startup_pending(frontend->application)) {
         const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
         const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(publication),
             (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
@@ -392,6 +391,16 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (frontend_constructor_pending(frontend)) {
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
+    }
+    qa_application_client_preparation *client=frontend_config_store_client_preparation(frontend->config_store);
+    if (client) {
+        if (!qa_application_client_prepare_associated(frontend->application,client) ||
+            !qa_application_client_prepare_current(client) || frontend->capture || frontend->resource_inventory ||
+            frontend->source_restoring || !frontend_seat_callbacks_returned(frontend))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT settings lost their returned physical preparation");
+        frontend->wall_time_ns+=elapsed_ns;
+        bool complete=false;
+        return frontend_network_client_configuration_advance(frontend,client,&complete,error);
     }
     if (frontend->restart && !frontend_restart_idle(frontend->restart)) {
         if (frontend->capture || frontend->resource_inventory || frontend->source_restoring ||

@@ -70,11 +70,11 @@ bool qa_q2_game_inventory_group(qa_q2_game *g, qa_actor_id id, uint64_t saved_se
     for (size_t i = 0; i < saved->count; ++i) {
         const qa_item_admission *native = &g->item_runtime->admissions[i];
         const qa_item_admission *entry = &saved->items[i];
-        const qa_item_definition *a = &native->definition, *b = &entry->definition;
-        if (native->replace_primary != entry->replace_primary || a->item != b->item ||
-            a->ammo != b->ammo || a->owner != b->owner || a->weapon != b->weapon ||
-            a->actions != b->actions || (!!a->label != !!b->label) ||
-            (a->label && strcmp(a->label, b->label))) {
+        const qa_item_definition *definition = &native->definition, *b = &entry->definition;
+        if (native->replace_primary != entry->replace_primary || definition->item != b->item ||
+            definition->ammo != b->ammo || definition->owner != b->owner || definition->weapon != b->weapon ||
+            definition->actions != b->actions || (!!definition->label != !!b->label) ||
+            (definition->label && strcmp(definition->label, b->label))) {
             qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 saved inventory catalog differs from source");
             return false;
         }

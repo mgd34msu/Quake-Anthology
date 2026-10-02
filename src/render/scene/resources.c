@@ -668,7 +668,11 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
         qa_resource_release(resources->cache[i].logical_record);
     }
     free(resources->cache);
-    for (size_t i = 0; i < 3; ++i) qa_buffer_free(&resources->palettes[i]);
+    for (size_t i = 0; i < 3; ++i) {
+        qa_buffer_free(&resources->palettes[i]);
+        qa_resource_release(resources->palette_resources[i]);
+        qa_vfs_acquisition_dispose(&resources->palette_openings[i]);
+    }
     qa_scene_image_release(resources->white);
     qa_scene_image_release(resources->missing);
     qa_scene_image_release(resources->source_white); qa_scene_image_release(resources->source_missing);
@@ -779,6 +783,14 @@ static bool policy_prepare(qa_scene_resources *owner,
             } else {
                 destination->palettes[family].size = owner->palettes[family].size;
                 memcpy(destination->palettes[family].data, owner->palettes[family].data, owner->palettes[family].size);
+                if (owner->palette_resources[family]) {
+                    ok = qa_vfs_acquisition_copy(&owner->palette_openings[family],
+                        &destination->palette_openings[family], error);
+                    if (ok) {
+                        destination->palette_resources[family] = owner->palette_resources[family];
+                        qa_resource_retain(destination->palette_resources[family]);
+                    }
+                }
             }
         }
     }
@@ -1006,6 +1018,10 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
         if (!owner->palettes[family].size) {
             owner->palettes[family] = destination->palettes[family];
             destination->palettes[family] = (qa_buffer){0};
+            owner->palette_resources[family] = destination->palette_resources[family];
+            destination->palette_resources[family] = NULL;
+            owner->palette_openings[family] = destination->palette_openings[family];
+            destination->palette_openings[family] = (qa_vfs_acquisition){0};
         }
         owner->policies[family] = destination->policies[family]; owner->has_policy[family] = destination->has_policy[family];
     }
@@ -1055,13 +1071,14 @@ bool qa_scene_resources_palette(qa_scene_resources *resources, qa_scene_family f
     if (resources->vfs == NULL) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "scene has no mounted palette source"); return false;
     }
-    qa_resource *resource = NULL;
-    if (!qa_vfs_acquire(resources->vfs, family == QA_SCENE_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx",
-                        &resource, NULL, error)) return false;
+    qa_resource *resource = NULL; qa_vfs_acquisition opening = {0};
+    if (!qa_vfs_acquire_receipt(resources->vfs, family == QA_SCENE_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx",
+                        &resource, &opening, error)) return false;
     qa_bytes bytes = qa_resource_bytes(resource);
     uint8_t *palette = malloc(768);
     if (palette == NULL) {
-        qa_resource_release(resource); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene palette"); return false;
+        qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene palette"); return false;
     }
     bool ok = true;
     if (family == QA_SCENE_Q1) {
@@ -1076,10 +1093,20 @@ bool qa_scene_resources_palette(qa_scene_resources *resources, qa_scene_family f
         if (ok) for (size_t i = 0; i < 256; ++i) memcpy(palette + i * 3, decoded.palette.data + i * 4, 3);
         qa_image_free(&decoded);
     }
-    qa_resource_release(resource);
-    if (!ok) { free(palette); return false; }
+    if (!ok) { free(palette); qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening); return false; }
     *stored = (qa_buffer){palette,768};
+    resources->palette_resources[family] = resource; resources->palette_openings[family] = opening;
     *out = (qa_bytes){palette,768};
+    return true;
+}
+bool qa_scene_resources_palette_source_read(const qa_scene_resources *resources,
+    qa_scene_family family, qa_scene_palette_source *out)
+{
+    if (!resources || !out || family < QA_SCENE_Q1 || family > QA_SCENE_Q3 ||
+        resources->palettes[family].size != 768 || !resources->palette_resources[family]) return false;
+    const qa_vfs_acquisition *opening = &resources->palette_openings[family];
+    if (!opening->opening_present || opening->resource_id != qa_resource_id(resources->palette_resources[family])) return false;
+    *out = (qa_scene_palette_source){resources->palette_resources[family], opening};
     return true;
 }
 
@@ -1361,6 +1388,52 @@ static bool decode_asset(qa_scene_resources *resources, const char *request, con
     qa_bytes bytes, const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
 { return decode_asset_upload(resources, request, path, bytes, options, NULL, out, error); }
 
+bool qa_scene_image_decode_retained(qa_scene_resources *resources, const char *request,
+    const char *path, qa_bytes bytes, const qa_scene_image_options *options,
+    qa_scene_image **out, qa_error *error)
+{
+    if (!resources || !request || !path || !options || !out || *out || !bytes.data ||
+        options->family < QA_SCENE_Q1 || options->family > QA_SCENE_Q3 ||
+        options->wrap < QA_SCENE_REPEAT || options->wrap > QA_SCENE_CLAMP ||
+        options->filter < QA_SCENE_NEAREST || options->filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
+        options->usage < QA_IMAGE_USAGE_DEFAULT || options->usage > QA_IMAGE_USAGE_SKY ||
+        (options->palette_rgb.size && (options->palette_rgb.size != 768 || !options->palette_rgb.data)) ||
+        (options->translation.size && (options->translation.size != 256 || !options->translation.data))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained image decode requires its real bytes and explicit options");
+        return false;
+    }
+    bool external_palette = suffix_equal(path, ".lmp") || suffix_equal(path, ".mip") ||
+        suffix_equal(path, ".wal") || (resources->vfs && suffix_equal(path, ".pcx") &&
+        options->family == QA_SCENE_Q2 &&
+        (options->usage == QA_IMAGE_USAGE_SKIN || options->usage == QA_IMAGE_USAGE_SPRITE));
+    if (external_palette && options->palette_rgb.size != 768) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained indexed image decode requires the actual source palette");
+        return false;
+    }
+    if (!admission_ready(resources, error)) return false;
+    if (options->source_q3 && (options->family != QA_SCENE_Q3 ||
+        options->source_upload.mipmap != options->mipmap)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained Source upload requires its actual admission profile");
+        return false;
+    }
+    if (options->source_q3 && !qa_q3_image_upload_options_valid(&options->source_upload, error)) return false;
+    return decode_asset(resources, request, path, bytes, options, out, error);
+}
+void qa_scene_image_load_receipt_dispose(qa_scene_image_load_receipt *receipt)
+{
+    if (!receipt) return;
+    qa_resource_release(receipt->source); qa_resource_release(receipt->logical_source);
+    *receipt = (qa_scene_image_load_receipt){0};
+}
+static void image_load_receipt(qa_scene_image_load_receipt *receipt, qa_resource *source,
+    qa_mount_id source_mount, qa_resource *logical_source, qa_mount_id logical_mount)
+{
+    if (!receipt) return;
+    qa_resource_retain(source); qa_resource_retain(logical_source);
+    *receipt = (qa_scene_image_load_receipt){source, logical_source, source_mount,
+        logical_source ? logical_mount : 0};
+}
+
 bool scene_resource_variant_parent_retain(qa_scene_resources *destination, const qa_scene_image *source,
     qa_scene_resources **out, qa_error *error)
 {
@@ -1619,7 +1692,8 @@ static void candidate_add(const char **candidates, size_t *count, const char *ex
 }
 
 static bool image_load(qa_scene_resources *resources, const char *name,
-    const qa_scene_image_options *options, bool exact_file, qa_scene_image **out, qa_error *error)
+    const qa_scene_image_options *options, bool exact_file, qa_scene_image **out,
+    qa_scene_image_load_receipt *receipt, qa_error *error)
 {
     if (resources == NULL || name == NULL || options == NULL || out == NULL ||
         options->family < QA_SCENE_Q1 || options->family > QA_SCENE_Q3 ||
@@ -1642,6 +1716,8 @@ static bool image_load(qa_scene_resources *resources, const char *name,
         for (size_t i = 0; cached_name && i < resources->cache_count; ++i) {
             const image_cache *entry = resources->cache + i;
             if (entry->name == cached_name && entry->options.source_q3 && !entry->exact_file) {
+                image_load_receipt(receipt, entry->source_record, entry->source_mount,
+                    entry->logical_record, entry->logical_mount);
                 qa_scene_image_retain(entry->image); *out = entry->image; return true;
             }
         }
@@ -1741,6 +1817,7 @@ static bool image_load(qa_scene_resources *resources, const char *name,
             logical_path = path;
             size_ok = original_image(resources, path, resource, mount, false, &original, &original_mount, error);
         }
+        image_load_receipt(receipt, resource, mount, original, original_mount);
         if (!size_ok) {
             qa_resource_release(original); qa_resource_release(resource); failed = true; break;
         }
@@ -1778,11 +1855,22 @@ static bool image_load(qa_scene_resources *resources, const char *name,
 bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
     const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
 {
-    return image_load(resources, name, options, false, out, error);
+    return image_load(resources, name, options, false, out, NULL, error);
 }
 
 bool qa_scene_image_load_exact(qa_scene_resources *resources, const char *name,
     const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
 {
-    return image_load(resources, name, options, true, out, error);
+    return image_load(resources, name, options, true, out, NULL, error);
+}
+bool qa_scene_image_load_observed(qa_scene_resources *resources, const char *name,
+    const qa_scene_image_options *options, qa_scene_image **out,
+    qa_scene_image_load_receipt *receipt, qa_error *error)
+{
+    if (!receipt || receipt->source || receipt->logical_source || receipt->source_mount || receipt->logical_mount ||
+        !out || *out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Observed image load requires empty image and receipt outputs");
+        return false;
+    }
+    return image_load(resources, name, options, false, out, receipt, error);
 }

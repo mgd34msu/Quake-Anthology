@@ -65,6 +65,8 @@ bool qa_gl_source_stage_state(qa_render_controls *, const qa_scene_state *, qa_e
 bool qa_cpu_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_image_admit(qa_render_controls *,const qa_scene_image *,uint32_t,qa_error *);
+size_t qa_gl_source_images_metadata_count(const qa_render_controls *);
+const qa_scene_image *qa_gl_source_image_metadata_at(const qa_render_controls *,size_t);
 void qa_render_source_stage_state(qa_scene_state *, const qa_scene_state *);
 bool qa_gl_source_texture_filter_apply(qa_render_controls *, qa_error *);
 void qa_cpu_render_controls_close(qa_render_controls *);

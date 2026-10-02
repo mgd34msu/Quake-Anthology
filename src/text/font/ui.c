@@ -46,9 +46,9 @@ static bool draw_pass(qa_scene_frame *frame, const qa_font_layout *layout,
             positioned->rect.height <= 0)
             continue;
         qa_scene_rect_f rect = {
-            options->target.x + transform.bias_x +
+            (float)options->target.x + transform.bias_x +
                 (options->origin.x + positioned->rect.x + offset) * transform.scale_x,
-            options->target.y +
+            (float)options->target.y +
                 (options->origin.y + positioned->rect.y + offset) * transform.scale_y,
             positioned->rect.width * transform.scale_x,
             positioned->rect.height * transform.scale_y,
@@ -93,7 +93,7 @@ bool qa_font_seat_scale_for(qa_scene_rect viewport, float console_scale, float s
                                   floorf((float)viewport.height / 144.0f)));
     float status = status_bar_scale > 0 ? fmaxf(1.0f, fminf(status_bar_scale, fit)) : fit;
     *out = (qa_font_seat_scale){
-        .console = (float)viewport.width / console_width,
+        .console = (float)viewport.width / (float)console_width,
         .status_bar = status,
         .crosshair = fmaxf(1.0f, fminf(crosshair_scale, 10.0f)),
         .console_width = console_width,

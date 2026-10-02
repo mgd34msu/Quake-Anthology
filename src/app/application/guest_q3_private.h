@@ -184,9 +184,12 @@ qa_qvm_role q3g_primary_role(const char *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                       const char *path, bool primary, q3g_role **, qa_error *);
+bool q3g_role_create_client(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
+    const char *path, bool primary, application_provider *actual_game, q3g_role **, qa_error *);
 bool q3g_role_create_restored(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                                const char *path, bool primary, uint64_t service_sequence,
-                               qa_string_id service_owner, q3g_role **, qa_error *);
+                               qa_string_id service_owner, application_provider *actual_game,
+                               q3g_role **, qa_error *);
 bool q3g_role_destroy(q3g_role *, qa_error *);
 bool q3g_role_activate(q3g_role *, qa_error *);
 bool q3g_role_shutdown(q3g_role *, bool restart, qa_error *);
@@ -198,6 +201,7 @@ void q3g_game_aliases(struct application_q3_guest *, q3g_role *);
 bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);
 bool q3g_client_bind(q3g_role *, qa_q3_host_options *, qa_error *);
+bool q3g_arsenal_client_admit(application_provider *, uint32_t, qa_error *);
 application_provider *q3g_native_game_source(qa_application *);
 application_provider *q3g_game_source(qa_application *);
 bool q3g_selected_client_seat(const application_provider *, const qa_launch_choices *,

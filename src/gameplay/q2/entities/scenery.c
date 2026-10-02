@@ -272,7 +272,7 @@ static bool nuke(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_trace_frame *frame = q2_scratch_acquire(g, e);
     if (!frame)
         return false;
-    qa_actor_registry *actors = qa_session_actors(g->services.session);
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     size_t count = qa_actors_count(actors);
     uint32_t cursor = 0;
     const qa_actor_record *record;

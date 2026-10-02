@@ -766,6 +766,28 @@ static bool source_md3_visible(const qa_scene_model *model, const qa_scene_model
     }
     return front[0] && front[1] && front[2] && front[3];
 }
+bool qa_scene_model_source_admission(const qa_scene_model *model, const qa_scene_model_input *original,
+    bool *visible, qa_error *error)
+{
+    if (!model || !model->source || !original || !visible || !original->source_order ||
+        (model->source->format != QA_MODEL_MD3 && model->source->format != QA_MODEL_MD4) ||
+        !isfinite(original->back_lerp)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source admission requires the actual selected model and input");
+        return false;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!isfinite(original->transform.origin[i]) || !isfinite(original->transform.scale[i]) ||
+            !qa_vec_finite(model_vec(original->transform.axes[i]))) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "Source admission transform is nonfinite");
+            return false;
+        }
+    }
+    qa_scene_model_input input = *original;
+    input.replacement = NULL;
+    repair_frames(model, &input);
+    *visible = model->source->format == QA_MODEL_MD4 || source_md3_visible(model, &input);
+    return true;
+}
 
 static bool alias_diffuse(const qa_scene_model_input *input, const float normal[3],
     qa_vec3 *out, qa_error *error)

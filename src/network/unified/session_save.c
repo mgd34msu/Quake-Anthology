@@ -189,6 +189,8 @@ bool qa_unified_session_source_ready(const qa_unified_session *s, qa_error *e)
 {
     const qa_net_client *client = s ? qa_net_connections_get(qa_network_connections(s->runtime), s->id) : NULL;
     if (!qa_unified_session_idle(s) || !qa_unified_session_qualified(s, client, e)) return false;
+    if (s->server && s->hooks.source_ready)
+        return s->hooks.source_ready(s->hooks.context, s->runtime, s->id, s->epoch, e);
     if (!s->admitted || (!s->server && client->phase != QA_NET_ACTIVE)) return true;
     qa_unified_session_player player;
     return qa_unified_session_player_read(s, &player, e);

@@ -283,6 +283,8 @@ void qa_console_destroy(qa_console *console);
  * profile only between command invocations. */
 bool qa_console_set_profile(qa_console *console, qa_console_dialect dialect,
                               qa_cvars *cvars, qa_error *error);
+/* Borrowed physical default registry; does not invoke namespace routing. */
+qa_cvars *qa_console_cvars(const qa_console *console);
 bool qa_console_register(qa_console *console, const char *name, const char *description,
                            uint64_t owner, bool engine_command, qa_command_handler handler,
                            void *user, qa_error *error);

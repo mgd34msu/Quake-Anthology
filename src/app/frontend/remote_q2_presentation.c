@@ -1,6 +1,7 @@
 #include "remote_q2_private.h"
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_clientinfo.h"
+#include "remote_q2_material_movies_bridge.h"
 #include "legacy_render_policy.h"
 #include "qa/material.h"
 #include <stdlib.h>
@@ -39,6 +40,23 @@ static const qa_q2_frame_player *frame_player(const frontend_remote_q2 *row, con
     if (!frontend_remote_q2_wire_seat(row, &index, &error)) return NULL;
     return frame->valid && index < frame->player_count ? &frame->players[index] : NULL;
 }
+bool frontend_remote_q2_initial_clear(qa_frontend *frontend, uint32_t seat,
+    bool *active, bool *clear, qa_error *error)
+{
+    if (!frontend || !active || !clear || seat >= frontend->options.seats) return false;
+    *active = false; *clear = true;
+    frontend_remote_q2 *row = seat_owner(frontend, seat, error);
+    if (!row) return !error || error->code == QA_OK;
+    if (!row->bound || !row->media_ready || !row->world) return true;
+    if (row->busy || !remote_q2_live(row, error)) return false;
+    if (!frame_player(row, &row->frame)) return true;
+    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
+    frontend_legacy_render_policy policy;
+    if (!frontend_legacy_render_policy_read_registry(row->options.domain.cvars, product, &policy, error) ||
+        !remote_q2_live(row, error)) return false;
+    *active = true; *clear = policy.lighting.clear;
+    return true;
+}
 static const qa_q2_entity *entity(const qa_q2_wire_frame *frame, uint32_t number)
 {
     for (size_t i = 0; i < frame->entity_count; ++i) if (frame->entities[i].number == number) return &frame->entities[i];
@@ -51,6 +69,45 @@ static qa_vec3 player_origin(const frontend_remote_q2 *row, const qa_q2_player *
 }
 static bool near(qa_vec3 a, qa_vec3 b, float limit)
 { return fabsf(a.x - b.x) <= limit && fabsf(a.y - b.y) <= limit && fabsf(a.z - b.z) <= limit; }
+static void fog_receive(frontend_remote_q2 *row, const qa_q2_wire_fog *wire)
+{
+    row->fog_duration_ms = wire->bits & 16u ? wire->time : 0;
+    if (row->fog_duration_ms) {
+        row->fog_start = row->fog_end;
+        row->fog_started_ms = row->frame.valid ? ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms : 0;
+    }
+    qa_scene_fog *target = &row->fog_end;
+    if (wire->bits & 1u) { target->density = wire->density; target->sky_factor = (float)wire->sky_factor / 255; }
+    if (wire->bits & 2u) target->color.x = (float)wire->color[0] / 255;
+    if (wire->bits & 4u) target->color.y = (float)wire->color[1] / 255;
+    if (wire->bits & 8u) target->color.z = (float)wire->color[2] / 255;
+    if (wire->bits & 32u) target->height_falloff = wire->height_falloff;
+    if (wire->bits & 64u) target->height_density = wire->height_density;
+    if (wire->bits & 256u) target->height_color.x = (float)wire->height_start_color[0] / 255;
+    if (wire->bits & 512u) target->height_color.y = (float)wire->height_start_color[1] / 255;
+    if (wire->bits & 1024u) target->height_color.z = (float)wire->height_start_color[2] / 255;
+    if (wire->bits & 2048u) target->height_start = (float)wire->height_start_distance;
+    if (wire->bits & 4096u) target->height_end_color.x = (float)wire->height_end_color[0] / 255;
+    if (wire->bits & 8192u) target->height_end_color.y = (float)wire->height_end_color[1] / 255;
+    if (wire->bits & 16384u) target->height_end_color.z = (float)wire->height_end_color[2] / 255;
+    if (wire->bits & 32768u) target->height_end = (float)wire->height_end_distance;
+    row->fog_received = true;
+}
+static qa_scene_fog fog_sample(const frontend_remote_q2 *row, double milliseconds)
+{
+    double elapsed = milliseconds - row->fog_started_ms;
+    float fraction = row->fog_duration_ms && elapsed <= row->fog_duration_ms ?
+        (float)(elapsed / row->fog_duration_ms) : 1;
+    const qa_scene_fog *a = &row->fog_start, *b = &row->fog_end;
+    qa_scene_fog value = {.kind = QA_FOG_Q2, .effect = QA_FOG_OVERLAY, .far_depth = 1 - 1e-6f};
+    value.color = qa_vec_lerp(a->color, b->color, fraction);
+    value.height_color = qa_vec_lerp(a->height_color, b->height_color, fraction);
+    value.height_end_color = qa_vec_lerp(a->height_end_color, b->height_end_color, fraction);
+#define MIX(field) value.field = a->field + (b->field - a->field) * fraction
+    MIX(density); MIX(sky_factor); MIX(height_density); MIX(height_start); MIX(height_end); MIX(height_falloff);
+#undef MIX
+    return value;
+}
 static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect viewport, qa_error *error)
 {
@@ -73,9 +130,9 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     const qa_cvar_view *y = qa_cvars_find(row->options.domain.cvars, "ch_y");
     float dx = x && isfinite(x->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(x->number))) : 0;
     float dy = y && isfinite(y->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(y->number))) : 0;
-    float width = truncf(image->logical_width * scale), height = truncf(image->logical_height * scale);
-    qa_scene_rect_f rect = {viewport.x + truncf((viewport.width - width) * .5f) + dx,
-        viewport.y + truncf((viewport.height - height) * .5f) + dy, width, height};
+    float width = truncf((float)image->logical_width * scale), height = truncf((float)image->logical_height * scale);
+    qa_scene_rect_f rect = {(float)viewport.x + truncf(((float)viewport.width - width) * .5f) + dx,
+        (float)viewport.y + truncf(((float)viewport.height - height) * .5f) + dy, width, height};
     return qa_scene_frame_picture_f(&row->frontend->frame, image, viewport, rect,
         (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 0, 0, opacity * (1 - fraction * fraction)}, error);
 }
@@ -134,6 +191,7 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
             strcpy(copy, text); free(row->overlay); row->overlay = copy; break;
         }
         case QA_Q2_SVC_SOUND: if (!sound(row, &event->data.sound, error)) return false; break;
+        case QA_Q2_SVC_FOG: fog_receive(row, &event->data.fog); break;
         default: break;
         }
     }
@@ -178,7 +236,7 @@ bool frontend_remote_q2_sample(qa_frontend *f, uint64_t now, qa_error *error)
         row->sample_ns = now;
         double elapsed = now >= row->received_ns ? (double)(now - row->received_ns) / 1000000.0 : 0;
         row->fraction = (float)fmin(1, fmax(0, elapsed / row->frame_ms));
-        ++row->busy; bool ok = loops(row, error); --row->busy;
+        ++row->busy; bool ok = remote_q2_hit_marker_sample(row, error) && loops(row, error); --row->busy;
         if (!ok || !remote_q2_live(row, error)) return false;
     }
     return true;
@@ -267,7 +325,8 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         .skin = current->modelindex == 255 ? 0 : current->skinnum, .flags = flags,
         .entity = current->number, .back_lerp = previous ? 1 - row->fraction : 0,
         .seconds = world->seconds, .view_model = view_model, .player = current->modelindex == 255,
-        .material_library = row->materials, .custom_material = skin, .source_path = path};
+        .material_library = row->materials, .custom_material = skin, .source_path = path,
+        .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend};
     const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
     if (view_model && hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2)
         input.left_hand = (uint8_t)hand->number;
@@ -285,7 +344,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         ambient = qa_vec_add(ambient, directed);
     }
     input.ambient = ambient; input.light_direction = direction;
-    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.product);
+    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
     if (!remote_q2_live(row, error) || !frontend_legacy_model_input_product(row->frontend,
         product, row->world, world, &input, error) || !remote_q2_live(row, error)) return false;
     if (!qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error)) return false;
@@ -309,7 +368,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     const qa_q2_frame_player *frame = frame_player(row, &row->frame);
     if (!row->media_ready || !frame) { *listener = (qa_audio_listener){.seat = seat, .actor = QA_AUDIO_NO_ACTOR}; return true; }
     const qa_q2_frame_player *before = frame_player(row, &row->previous);
-    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.product);
+    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
     frontend_legacy_render_policy policy;
     if (!frontend_legacy_render_policy_read_registry(row->options.domain.cvars, product, &policy, error) ||
         !remote_q2_live(row, error)) return false;
@@ -382,7 +441,9 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     qa_scene_world_input world = {.view = view, .seconds = time * 0.001, .milliseconds = (int64_t)time,
         .visible_areas = frame->area_bits.data, .visible_area_bytes = frame->area_bits.size,
         .q2_styles = styles, .style_count = 256, .no_world = (frame->player.rdflags & 2) != 0,
-        .legacy_policy = policy.lighting};
+        .legacy_policy = policy.lighting,
+        .video_frame = frontend_material_movies_frontend_resolve, .video_context = f};
+    if (ok && row->shader_movies) ok = frontend_material_movies_frame(row->shader_movies, &f->frame, error);
     bool sky_auto = true; char *sky_end;
     world.sky_rotation = strtof(frontend_remote_q2_config(row, 3), &sky_end);
     if (row->layout.max_models == 8192) {

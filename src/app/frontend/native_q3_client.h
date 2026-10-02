@@ -108,6 +108,8 @@ bool frontend_native_q3_q3_ready(const qa_frontend *, size_t,
     const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_native_q3_recipient(const qa_frontend *, uint32_t physical_seat,
     qa_application_q3_client_context *, uint64_t *action_generation, bool *found, qa_error *);
+bool frontend_native_q3_client_cvars_read(const qa_frontend *, uint32_t physical_seat,
+    qa_cvars **, qa_actor_owner *receiver, uint32_t *launch_seat, bool *present, qa_error *);
 /* A real selected composition owner can hold this row during synchronous
  * frame callbacks. The completed source context is requalified on each use. */
 bool frontend_native_q3_borrow(frontend_native_q3 *,qa_application_q3_client_context *,qa_error *);

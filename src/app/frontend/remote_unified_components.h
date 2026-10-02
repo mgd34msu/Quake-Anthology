@@ -28,6 +28,7 @@ bool frontend_unified_components_world(frontend_unified_components *,const qa_sc
     const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_components_hud(frontend_unified_components *,qa_ui *,qa_scene_rect,qa_scene_frame *,qa_error *);
 bool frontend_unified_components_current(const frontend_unified_components *);
+bool frontend_unified_components_retained_current(const frontend_unified_components *);
 bool frontend_unified_components_idle(const frontend_unified_components *);
 bool frontend_unified_components_destroy(frontend_unified_components **,qa_error *);
 bool frontend_unified_components_visit(const frontend_unified_components *,const qa_application_content_visitor *,qa_error *);

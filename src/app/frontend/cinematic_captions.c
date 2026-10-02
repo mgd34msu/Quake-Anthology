@@ -1,3 +1,4 @@
+#include "qa/ui_preferences.h"
 #include "cinematic_captions.h"
 #include "campaign_cinematic.h"
 #include "system_cinematic.h"

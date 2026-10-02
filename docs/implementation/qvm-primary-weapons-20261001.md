@@ -112,11 +112,12 @@ QAG3WM/1 retains the actual source IDs, table rows, handles and binding ID.
 Import stores those receipts before outer RAM restoration; the parent qualifies
 them afterward against the actual restored CG registry and matching GAME
 namespace. The real host registry getter is
-`qa_q3_host_presentation_resources`. The factory now installs artifact opening,
-constructor, checked lifetime and the complete callback codec; the selected frontend still needs
-the genuine typed tuple consumer. A selected GAME arsenal can lack a CG role
-when HUD comes from another provider, so that caller must admit an actual
-matching CG registration owner instead of borrowing the physical HUD's table.
+`qa_q3_host_presentation_resources`. The factory installs artifact opening,
+constructor, checked lifetime and the complete callback codec. After actual
+GAME ClientBegin, gamestate publication and command acknowledgement,
+`q3g_arsenal_client_admit` admits a matching CG against the selected arsenal's
+real GAME client and seat when its model declaration is present. UI, restart,
+video recreation and cold import retain that explicit GAME parent.
 
 The pure application getter `qa_application_equipment_q3_models_read` now
 qualifies the selected full actor and exact live GAME client, explicit actual CG
@@ -125,9 +126,16 @@ receipt. It returns genuine absence while that CG owner is uninstalled. The
 equipment observation retains arbitrary int32 Source selection and reads item,
 ammo and label from the actual catalog. Its existing standard-roster policy
 remains bounded to the real default catalog constructor; custom IDs do not
-enter the native weapon-enum model lookup. The Source-rendering consumer and
-foreign-arsenal CG admission remain open; registered handles alone do not
-establish custom animation or continuous-flash policy.
+enter the native weapon-enum model lookup. The matching Source Draw consumer
+in `frontend/equipment_source.c` qualifies the actual CG recipient, launch
+seat, GAME namespace and registry before lazy registration. It retains the
+CG's own view, held and HUD paths, including its submitted refs, animation and
+effects; it requires no separate equipment override declaration. This applies
+only while that matching CG actually enters Draw. The foreign-arsenal
+companion Draw caller remains open: current application and frontend
+presentation schedule the selected HUD CG, so an independently selected
+arsenal companion still needs genuine Draw and output composition. Registered
+handles alone do not establish custom animation or continuous-flash policy.
 
 `application_q3_weapon_models_role_create` builds the real retained companion
 CG/GAME module after host construction and before Init. Its lifetime qualifier

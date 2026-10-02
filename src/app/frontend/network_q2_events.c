@@ -43,26 +43,27 @@ static const qa_application_protocol_resource_reference *resource(const q2_event
 }
 
 static bool entity(q2_event_packet *packet, const qa_q2_server_record *record,
-    uint32_t source_number, uint32_t *number, qa_error *error)
+    size_t relative_offset, uint32_t source_number, uint32_t *number, qa_error *error)
 {
     uintptr_t raw = (uintptr_t)record->raw.data, first = (uintptr_t)packet->source->payload.data;
     if (raw < first || raw - first > packet->source->payload.size ||
         record->raw.size > packet->source->payload.size - (size_t)(raw - first))
         return fail(error, QA_ERROR_FORMAT, "Q2 event entity leaves its captured packet");
-    size_t begin = (size_t)(raw - first), end = begin + record->raw.size;
+    size_t begin = (size_t)(raw - first);
+    if (record->raw.size < 2 || relative_offset > record->raw.size - 2)
+        return fail(error, QA_ERROR_FORMAT, "Q2 Source entity field exceeds its actual record");
+    size_t offset = begin + relative_offset;
     for (size_t i = 0; i < packet->source->reference_count; ++i) {
         const qa_application_protocol_reference *reference = packet->source->references + i;
-        if (reference->offset < begin || reference->offset >= end || packet->source->payload.size < 2 ||
-            reference->offset > packet->source->payload.size - 2) continue;
+        if (reference->offset != offset) continue;
         uint32_t original = qa_load_u16le(packet->source->payload.data + reference->offset);
         if (reference->packed_sound) original >>= 3;
-        if (original == source_number)
-            return qa_application_network_q2_event_entity(packet->publisher, packet->source->provider,
-                reference->actor, number, error);
+        if (original != source_number)
+            return fail(error, QA_ERROR_FORMAT, "Q2 captured entity receipt differs from its actual Source word");
+        return qa_application_network_q2_event_entity(packet->publisher, packet->source->provider,
+            reference->actor, number, error);
     }
-    if (packet->source->provider != packet->host_source)
-        return fail(error, QA_ERROR_FORMAT, "Foreign Q2 event has no captured full Source entity");
-    *number = source_number; return true;
+    return fail(error, QA_ERROR_FORMAT, "Q2 event has no captured full Source entity");
 }
 
 static uint32_t resource_base(bool rerelease, qa_native_host_resource_kind kind)
@@ -72,23 +73,29 @@ static uint32_t resource_base(bool rerelease, qa_native_host_resource_kind kind)
 }
 
 static bool translate(q2_event_packet *packet, const qa_q2_server_record *record,
-    size_t ordinal, qa_q2_server_event *event, qa_error *error)
+    size_t ordinal, qa_q2_server_event *event, bool *include, qa_error *error)
 {
-    *event = record->event;
+    *event = record->event; *include = true;
     uint32_t number;
     if (event->kind == QA_Q2_SVC_MUZZLEFLASH) {
-        if (!entity(packet, record, event->data.muzzle.entity, &number, error)) return false;
+        if (!entity(packet, record, 1, event->data.muzzle.entity, &number, error)) return false;
         event->data.muzzle.entity = number;
     } else if (event->kind == QA_Q2_SVC_TEMP_ENTITY) {
         qa_q2_temp_entity *temporary = &event->data.temporary;
+        size_t offset = 2;
         for (size_t i = 0; i < temporary->field_count; ++i) {
             qa_q2_temp_field *field = temporary->fields + i;
-            if (field->kind != QA_Q2_TEMP_INTEGER || field->value.integer < 0 ||
-                (field->name != QA_Q2_TEMP_ENTITY1 && field->name != QA_Q2_TEMP_ENTITY2) ||
-                temporary->type == QA_Q2_TE_STEAM || temporary->type == QA_Q2_TE_WIDOWBEAMOUT) continue;
-            if (!entity(packet, record, (uint32_t)field->value.integer, &number, error)) return false;
-            if (number > INT16_MAX) return fail(error, QA_ERROR_FORMAT, "Q2 event entity exceeds its genuine temporary word");
-            field->value.integer = (int32_t)number;
+            bool entity_field = field->name == QA_Q2_TEMP_ENTITY1 || field->name == QA_Q2_TEMP_ENTITY2;
+            if (field->kind == QA_Q2_TEMP_INTEGER && field->value.integer >= 0 && entity_field &&
+                temporary->type != QA_Q2_TE_STEAM && temporary->type != QA_Q2_TE_WIDOWBEAMOUT) {
+                if (!entity(packet, record, offset, (uint32_t)field->value.integer, &number, error)) return false;
+                if (number > INT16_MAX) return fail(error, QA_ERROR_FORMAT, "Q2 event entity exceeds its genuine temporary word");
+                field->value.integer = (int32_t)number;
+            }
+            if (field->kind == QA_Q2_TEMP_VECTOR)
+                offset += field->name == QA_Q2_TEMP_DIRECTION ? 1u :
+                    packet->delivery->profile == QA_NATIVE_Q2_GAME_API3 ? 6u : 12u;
+            else offset += entity_field ? 2u : field->name == QA_Q2_TEMP_TIME ? 4u : 1u;
         }
     } else if (event->kind == QA_Q2_SVC_SOUND) {
         const qa_application_protocol_resource_reference *receipt = resource(packet, ordinal,
@@ -98,7 +105,10 @@ static bool translate(q2_event_packet *packet, const qa_q2_server_record *record
         if (number > UINT16_MAX) return fail(error, QA_ERROR_FORMAT, "Q2 sound exceeds its admitted resource word");
         event->data.sound.index = (uint16_t)number;
         if (event->data.sound.flags & 8u) {
-            if (!entity(packet, record, event->data.sound.entity, &number, error)) return false;
+            uint8_t flags = event->data.sound.flags;
+            size_t offset = 2u + ((flags & 32u) ? 2u : 1u) + ((flags & 1u) != 0) +
+                ((flags & 2u) != 0) + ((flags & 16u) != 0);
+            if (!entity(packet, record, offset, event->data.sound.entity, &number, error)) return false;
             event->data.sound.entity = number;
         }
         /* Width flags describe the incoming Source encoding. The admitted
@@ -111,7 +121,7 @@ static bool translate(q2_event_packet *packet, const qa_q2_server_record *record
         if (!qa_application_network_q2_event_resource(packet->publisher, packet->source->provider, receipt, &number, error)) return false;
         if (number > UINT16_MAX) return fail(error, QA_ERROR_FORMAT, "Q2 POI exceeds its admitted image word");
         event->data.poi.image = (uint16_t)number;
-    } else if (event->kind == QA_Q2_SVC_CONFIGSTRING && packet->source->provider != packet->host_source) {
+    } else if (event->kind == QA_Q2_SVC_CONFIGSTRING) {
         bool rerelease = packet->delivery->profile == QA_NATIVE_Q2_GAME_API2023;
         for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind) {
             uint32_t base = resource_base(rerelease, (qa_native_host_resource_kind)kind);
@@ -125,11 +135,13 @@ static bool translate(q2_event_packet *packet, const qa_q2_server_record *record
             uint32_t wire_base = resource_base(wire_rerelease, (qa_native_host_resource_kind)kind);
             if (wire_base + number > UINT16_MAX) return fail(error, QA_ERROR_FORMAT, "Foreign Q2 configstring exceeds its admitted table");
             event->data.config.index = (uint16_t)(wire_base + number);
+            if (!qa_application_network_q2_event_config(packet->publisher, event->data.config.index,
+                &event->data.config.value, error)) return false;
             return true;
         }
-        /* Non-resource configstrings are owned by the physical HOST GAME.
-         * Foreign Source tables cannot overwrite its map/rules/player rows. */
-        event->kind = QA_Q2_SVC_NOP;
+        /* Network publishes the physical HOST's current globals from its
+         * actual config owner, independently of this historical raw journal. */
+        *include = false;
     }
     return true;
 }
@@ -150,7 +162,9 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
         if (captured_seat(packet, record->seat, i)) ++eligible;
     if (!eligible) return true;
     qa_q2_server_event event;
-    if (!translate(packet, record, ordinal, &event, error)) return false;
+    bool include;
+    if (!translate(packet, record, ordinal, &event, &include, error)) return false;
+    if (!include) return true;
     bool kex = packet->codec.protocol.kind == QA_NET_Q2KEX_2023;
     if (!kex) return qa_q2_server_event_write(&packet->codec, &packet->writer, &event);
     if (eligible == packet->client->seat_count)

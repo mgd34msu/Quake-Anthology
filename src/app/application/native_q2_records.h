@@ -6,6 +6,17 @@
 
 typedef struct application_native_q2_records application_native_q2_records;
 typedef struct application_native_q2_record_scope application_native_q2_record_scope;
+typedef struct application_native_q2_pickup_scope application_native_q2_pickup_scope;
+typedef bool (*application_native_q2_protection_item_fn)(void *,qa_actor_id,
+    qa_protection_channel,qa_item_id,bool *found,qa_error *);
+typedef struct application_native_q2_inventory_commit {
+    qa_actor_id actor;
+    const qa_item_id *items;
+    size_t count;
+    void *context;
+    bool (*current)(void *,qa_error *);
+    qa_inventory_committed_fn committed;
+} application_native_q2_inventory_commit;
 typedef struct application_native_q2_records_options {
     application_native_q2_callbacks *callbacks;
     qa_native_instance *instance;
@@ -52,6 +63,15 @@ bool application_native_q2_records_refresh(application_native_q2_records *,qa_er
 bool application_native_q2_records_validate(application_native_q2_records *,qa_error *);
 bool application_native_q2_records_begin(application_native_q2_records *,application_native_q2_record_scope **,qa_error *);
 bool application_native_q2_records_commit(application_native_q2_records *,qa_error *);
+bool application_native_q2_records_commit_inventory(application_native_q2_records *,
+    const application_native_q2_inventory_commit *,qa_error *);
+/* The admitted resource execution remains borrowed until checked scope close.
+ * Failed construction/removal retains *scope and its real write subscriptions. */
+bool application_native_q2_records_pickup_begin(application_native_q2_records *,qa_actor_id,
+    qa_pickup_execution *,application_native_q2_protection_item_fn,void *,
+    application_native_q2_pickup_scope **,qa_error *);
+bool application_native_q2_records_pickup_end(application_native_q2_records *,
+    application_native_q2_pickup_scope **,qa_error *);
 /* Failed checked cleanup retains the exact innermost scope in *scope. */
 bool application_native_q2_records_end(application_native_q2_records *,application_native_q2_record_scope **,bool succeeded,qa_error *);
 bool application_native_q2_records_release(application_native_q2_records *,qa_actor_id,qa_error *);

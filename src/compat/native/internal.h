@@ -144,6 +144,7 @@ struct qa_native_instance {
     uint64_t source_id, first_callback, callback_base, import_table_address;
     char *source_library;
     qa_buffer process_host;
+    bool process_host_pending;
     native_region_slot *regions;
     size_t region_count;
     qa_native_entry_observer *entry_observers;

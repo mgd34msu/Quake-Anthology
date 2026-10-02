@@ -29,6 +29,12 @@ static qa_bytes raw_span(qa_net_reader *r, size_t start) {
     return (qa_bytes){r->bytes.data + start, r->bit / 8 - start};
 }
 
+static bool callback_failed(qa_net_reader *reader, const char *message)
+{
+    if (!reader->error || reader->error->code == QA_OK) return qa_net_reader_fail(reader, message);
+    reader->failed = true; return false;
+}
+
 static void download_reset(qa_q2_messages *m) {
     if (m->download_open) inflateEnd(&m->download);
     memset(&m->download, 0, sizeof(m->download));
@@ -167,7 +173,7 @@ static bool emit_record(qa_q2_messages *m, qa_net_reader *r, size_t start, uint8
     if (r->bit % 8) return qa_net_reader_fail(r, "Q2 server record ended inside a byte");
     qa_q2_server_record record = {m->seat, opcode, raw_span(r, start), *event};
     if (event->kind == QA_Q2_SVC_FRAME && is_kex(&m->codec)) record.seat = 0;
-    if (emit && !emit(user, &record, r->error)) return qa_net_reader_fail(r, "Q2 server record callback failed");
+    if (emit && !emit(user, &record, r->error)) return callback_failed(r, "Q2 server record callback failed");
     return true;
 }
 
@@ -680,7 +686,7 @@ bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequenc
                 if (checksum && qa_q2_sequence_checksum(raw_span(&r, checksum_start), sequence) != expected)
                     return qa_net_reader_fail(&r, "Q2 command sequence checksum mismatch");
                 record.seat = (uint8_t)seat; record.raw = raw_span(&r, start);
-                if (emit && !emit(user, &record, error)) return qa_net_reader_fail(&r, "Q2 client command callback failed");
+                if (emit && !emit(user, &record, error)) return callback_failed(&r, "Q2 client command callback failed");
             }
             continue;
         }
@@ -706,7 +712,7 @@ bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequenc
         }
         if (r.failed) return false;
         record.raw = raw_span(&r, start);
-        if (emit && !emit(user, &record, error)) return qa_net_reader_fail(&r, "Q2 client command callback failed");
+        if (emit && !emit(user, &record, error)) return callback_failed(&r, "Q2 client command callback failed");
     }
     return qa_net_reader_finish(&r);
 }

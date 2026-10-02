@@ -7,6 +7,8 @@
 #include "authored_menu_context.h"
 struct q3n_mission_hud {
     q3n_mission_hud_options options;
+    const q3n_compiled_source_rebind_ticket *rebind;
+    qa_command_context rebound_context;
     const qa_q3_game *source_game;
     uint64_t publication_generation, map_revision;
     q3n_hud *hud;

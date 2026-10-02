@@ -13,6 +13,8 @@ struct q3n_server_commands {
     q3n_server_command_options options;
     q3n_command_state state;
     q3n_voice voice;
+    const q3n_compiled_source_rebind_ticket *rebind;
+    qa_command_context rebound_context;
     bool initialized, busy, closed;
 };
 bool q3nc_fail(qa_error *, qa_status, const char *);

@@ -1,4 +1,5 @@
 #include "save_content.h"
+#include "bots_save_private.h"
 #include "guest_q3_components.h"
 #include "internal.h"
 #include "qa/catalog_save.h"
@@ -14,7 +15,14 @@
 typedef struct content_pool { qa_resource_pool *value; bool owned; qa_buffer bytes; } content_pool;
 typedef struct content_catalog { qa_catalog *value; uint64_t pool; qa_buffer bytes; } content_catalog;
 typedef struct content_view { qa_vfs *value; uint64_t pool, catalog; bool owned, qualified; qa_buffer bytes, baseline; } content_view;
-typedef struct content_resource { qa_launch_resource value; uint64_t pool, resource; bool retained; } content_resource;
+typedef struct content_resource {
+    qa_launch_resource value;
+    uint64_t pool, resource, origin_view;
+    qa_product_id origin_product;
+    qa_mount_id catalog_mount;
+    qa_vfs_acquisition acquisition;
+    bool retained;
+} content_resource;
 typedef struct content_instance {
     application_saved_instance_content value;
     uint64_t catalog, product_catalog, artifact_pool, artifact, declaration_pool, declaration;
@@ -173,14 +181,7 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
         if (!receipt || receipt->resource_id != qa_resource_id(source->artifact) ||
             !qa_vfs_acquisition_retained(source->content, receipt, error))
             return fail(error, QA_ERROR_FORMAT, "Provider artifact lost its actual opening receipt");
-        row->artifact_acquisition = (qa_vfs_acquisition){.mount = receipt->mount, .resource_id = receipt->resource_id};
-        row->artifact_acquisition.path = copy_text(receipt->path, error);
-        row->artifact_acquisition.lookup_path = copy_text(receipt->lookup_path, error);
-        if (receipt->link_source) row->artifact_acquisition.link_source = copy_text(receipt->link_source, error);
-        if (receipt->link_target) row->artifact_acquisition.link_target = copy_text(receipt->link_target, error);
-        if (!row->artifact_acquisition.path || !row->artifact_acquisition.lookup_path ||
-            (receipt->link_source && !row->artifact_acquisition.link_source) ||
-            (receipt->link_target && !row->artifact_acquisition.link_target)) return false;
+        if (!qa_vfs_acquisition_copy(receipt, &row->artifact_acquisition, error)) return false;
         value->artifact_acquisition = &row->artifact_acquisition;
     }
     if (value->artifact) { qa_resource_retain((qa_resource *)value->artifact); row->artifact_retained = true; }
@@ -239,13 +240,26 @@ bool application_save_content_collect(const qa_application *app, qa_application_
             !(g->resources = calloc(g->resource_count, sizeof(*g->resources))))
             ok = fail(error, QA_ERROR_MEMORY, "Retaining physical launch resource order");
     }
-    for (size_t i = 0; ok && i < g->resource_count; ++i)
-        ok = copy_resource(g, qa_vfs_resources(qa_launch_snapshot_mounts(launch)),
-            qa_launch_snapshot_resource(launch, i), &g->resources[i], error);
+    for (size_t i = 0; ok && i < g->resource_count; ++i) {
+        qa_launch_resource_origin origin = {0};
+        content_resource *row = &g->resources[i];
+        ok = qa_launch_snapshot_resource_origin(launch, i, &origin) &&
+            origin.catalog == qa_launch_snapshot_catalog(launch) &&
+            add_view(g, origin.content, error) &&
+            copy_resource(g, qa_vfs_resources(origin.content), qa_launch_snapshot_resource(launch, i), row, error) &&
+            origin.acquisition && origin.acquisition->opening_present &&
+            qa_vfs_acquisition_retained(origin.content, origin.acquisition, error) &&
+            qa_vfs_acquisition_copy(origin.acquisition, &row->acquisition, error);
+        if (ok) {
+            row->origin_view = qa_application_content_view_id(g, origin.content);
+            row->origin_product = origin.product; row->catalog_mount = origin.catalog_mount;
+        }
+    }
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
     if (ok) ok = qa_map_sidecars_content_visit(app->map_sidecars, &visitor, error);
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
     if (ok) ok = application_q3_components_content_visit(app->components,&visitor,error);
+    if (ok) ok = application_bots_content_visit(app,&visitor,error);
     for (size_t i = 0; ok && i < application_unified_event_resource_count(app); ++i) {
         const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
         ok = row && row->pool && row->resource &&
@@ -319,6 +333,7 @@ void application_save_content_destroy(qa_application_content_graph *g)
     }
     for (size_t i = 0; g->resources && i < g->resource_count; ++i) {
         free((void *)g->resources[i].value.path);
+        qa_vfs_acquisition_dispose(&g->resources[i].acquisition);
         if (g->resources[i].retained) qa_resource_release((qa_resource *)g->resources[i].value.resource);
     }
     /* Catalogs retain their pool and destroy their private view. Standalone
@@ -426,6 +441,17 @@ bool application_save_content_launch_resource_at(const qa_application_content_gr
     if (!g || !out || i >= g->resource_count) return fail(error, QA_ERROR_ARGUMENT, "Saved launch resource ordinal is outside physical inventory");
     *out = g->resources[i].value; return true;
 }
+bool application_save_content_launch_resource_origin(const qa_application_content_graph *g, size_t i,
+    qa_launch_resource_origin *out, qa_error *error)
+{
+    if (!g || !out || i >= g->resource_count)
+        return fail(error, QA_ERROR_ARGUMENT, "Saved launch resource origin is outside physical inventory");
+    const content_resource *row = &g->resources[i];
+    *out = (qa_launch_resource_origin){.catalog = qa_application_content_catalog(g, g->launch_catalog),
+        .content = qa_application_content_view(g, row->origin_view), .product = row->origin_product,
+        .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition};
+    return true;
+}
 bool application_save_content_launch_resource(const qa_application_content_graph *g, qa_product_id product,
     const char *path, const qa_resource **out, qa_error *error)
 {
@@ -492,18 +518,52 @@ static bool acquisition_text(qa_source_save_io *io, char **value)
     return ok;
 }
 
+static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *receipt)
+{
+    if (!qa_source_save_bool(io, &receipt->opening_present)) return false;
+    if (!receipt->opening_present) return !receipt->opening.order && !receipt->opening.order_count &&
+        !receipt->opening.prefix && !receipt->opening.rank && !receipt->opening.user_overlay;
+    qa_vfs_read_opening *opening = &receipt->opening;
+    char *prefix = (char *)opening->prefix;
+    if (!qa_source_save_i64(io, &opening->rank) || opening->rank < -1 ||
+        !qa_source_save_bool(io, &opening->user_overlay)) return false;
+    bool ok = acquisition_text(io, &prefix);
+    if (io->direction == QA_SOURCE_SAVE_READ) opening->prefix = prefix;
+    if (!ok) return false;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 8 :
+        SIZE_MAX / sizeof(qa_mount_id);
+    if (!qa_source_save_count(io, &opening->order_count, maximum)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && opening->order_count) {
+        qa_mount_id *order = calloc(opening->order_count, sizeof(*order));
+        if (!order) return fail(io->error, QA_ERROR_MEMORY, "Restoring actual resource opening order");
+        opening->order = order;
+    }
+    for (size_t i = 0; i < opening->order_count; ++i) {
+        qa_mount_id id = io->direction == QA_SOURCE_SAVE_WRITE ? opening->order[i] : 0;
+        if (!qa_source_save_u64(io, &id) || !id) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) ((qa_mount_id *)opening->order)[i] = id;
+        for (size_t j = 0; j < i; ++j) if (opening->order[j] == id) return false;
+    }
+    return true;
+}
+
+static bool receipt_fields(qa_source_save_io *io, qa_vfs_acquisition *receipt, uint64_t resource)
+{
+    return qa_source_save_u64(io, &receipt->mount) && qa_source_save_u64(io, &receipt->resource_id) &&
+        acquisition_text(io, &receipt->path) && acquisition_text(io, &receipt->lookup_path) &&
+        acquisition_text(io, &receipt->link_source) && acquisition_text(io, &receipt->link_target) &&
+        opening_fields(io, receipt) && receipt->mount && receipt->resource_id == resource &&
+        receipt->path && *receipt->path && receipt->lookup_path && *receipt->lookup_path &&
+        ((receipt->link_source != NULL) == (receipt->link_target != NULL));
+}
+
 static bool acquisition_fields(qa_source_save_io *io, content_instance *row)
 {
     qa_vfs_acquisition *receipt = &row->artifact_acquisition;
     bool present = row->artifact != 0;
     if (!qa_source_save_bool(io, &present) || present != (row->artifact != 0)) return false;
     if (!present) return true;
-    if (!qa_source_save_u64(io, &receipt->mount) || !qa_source_save_u64(io, &receipt->resource_id) ||
-        !acquisition_text(io, &receipt->path) || !acquisition_text(io, &receipt->lookup_path) ||
-        !acquisition_text(io, &receipt->link_source) || !acquisition_text(io, &receipt->link_target) ||
-        !receipt->mount || receipt->resource_id != row->artifact || !receipt->path || !*receipt->path ||
-        !receipt->lookup_path || !*receipt->lookup_path ||
-        ((receipt->link_source != NULL) != (receipt->link_target != NULL))) return false;
+    if (!receipt_fields(io, receipt, row->artifact)) return false;
     row->value.source.artifact_acquisition = receipt;
     return true;
 }
@@ -532,10 +592,10 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
 }
 static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
 {
-    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = 2;
+    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = 3;
     const uint8_t expected[8] = {'Q','A','C','G',0,0,0,0};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 2) return false;
+        !qa_source_save_u32(io, &version) || version != 3) return false;
     FIELD(u64, g, application_pool); FIELD(u64, g, application_catalog); FIELD(u64, g, launch_catalog); FIELD(u64, g, launch_view);
     if (!table_field(io, (void **)&g->pools, &g->pool_count, sizeof(*g->pools), 8)) return false;
     for (size_t i = 0; i < g->pool_count; ++i) if (!blob_field(io, &g->pools[i].bytes)) return false;
@@ -550,7 +610,12 @@ static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
     if (!table_field(io, (void **)&g->instances, &g->instance_count, sizeof(*g->instances), 188)) return false;
     for (size_t i = 0; i < g->instance_count; ++i) if (!instance_fields(io, &g->instances[i])) return false;
     if (!table_field(io, (void **)&g->resources, &g->resource_count, sizeof(*g->resources), 28)) return false;
-    for (size_t i = 0; i < g->resource_count; ++i) if (!resource_fields(io, &g->resources[i])) return false;
+    for (size_t i = 0; i < g->resource_count; ++i) {
+        content_resource *row = &g->resources[i];
+        if (!resource_fields(io, row)) return false;
+        FIELD(u64, row, origin_view); FIELD(u32, row, origin_product); FIELD(u64, row, catalog_mount);
+        if (!receipt_fields(io, &row->acquisition, row->resource) || !row->acquisition.opening_present) return false;
+    }
     return true;
 }
 #undef FIELD
@@ -610,7 +675,10 @@ static bool structure(const qa_application_content_graph *g, qa_error *error)
     for (size_t i = 0; i < g->resource_count; ++i) {
         const content_resource *r = &g->resources[i];
         if (!r->value.product || !r->value.path || !*r->value.path || !r->resource ||
-            r->pool != g->views[g->launch_view - 1].pool)
+            r->pool != g->views[g->launch_view - 1].pool || !r->origin_view || r->origin_view > g->view_count ||
+            g->views[r->origin_view - 1].catalog || g->views[r->origin_view - 1].pool != r->pool ||
+            !r->origin_product || !r->catalog_mount || r->acquisition.resource_id != r->resource ||
+            !r->acquisition.opening_present)
             return fail(error, QA_ERROR_FORMAT, "Saved launch resource has invalid actual root ownership");
         for (size_t j = 0; j < i; ++j) if (r->value.product == g->resources[j].value.product &&
             !strcmp(r->value.path, g->resources[j].value.path))
@@ -666,8 +734,19 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
         v->interfaces = r->interface_values; v->behaviors = r->behavior_values;
     }
     qa_catalog *launch = qa_application_content_catalog(g, g->launch_catalog);
-    for (size_t i = 0; i < g->resource_count; ++i)
-        if (!qa_catalog_product(launch, g->resources[i].value.product) || !resource_resolve(g, &g->resources[i], error)) return false;
+    for (size_t i = 0; i < g->resource_count; ++i) {
+        content_resource *r = &g->resources[i];
+        qa_vfs *view = qa_application_content_view(g, r->origin_view);
+        qa_product_id content = 0; qa_mount_id physical = 0;
+        if (!qa_catalog_product(launch, r->value.product) || !resource_resolve(g, r, error) ||
+            !qa_catalog_product_acquisition_origin(launch, r->value.product, view, &r->acquisition, &content, &physical, error) ||
+            content != r->origin_product || physical != r->catalog_mount)
+            return fail(error, QA_ERROR_FORMAT, "Saved launch resource origin leaves its actual catalog opening");
+        char *requested = qa_vfs_normalize_path(r->value.path, error);
+        bool same = requested && !strcmp(requested, r->acquisition.path);
+        free(requested);
+        if (!same) return fail(error, QA_ERROR_FORMAT, "Saved launch opening differs from its actual requested resource path");
+    }
     return true;
 }
 

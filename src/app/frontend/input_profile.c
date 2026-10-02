@@ -1,3 +1,4 @@
+#include "qa/catalog_save.h"
 #include "input_profile.h"
 #include "qa/application_profile.h"
 #include "save_private.h"

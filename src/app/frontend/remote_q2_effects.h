@@ -39,6 +39,8 @@ typedef struct frontend_remote_q2_effects_source {
     qa_material_library *materials;
     qa_scene_world *world;
     const qa_scene_image *white;
+    const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
+    void *video_context;
     void *context;
     bool (*current)(void *, const struct frontend_remote_q2_effects_source *, qa_error *);
     bool (*actor)(void *, uint32_t received_number, frontend_remote_q2_effects_pose *, qa_error *);
@@ -51,6 +53,7 @@ typedef struct frontend_remote_q2_effects_source {
         int32_t channel, float volume, float attenuation, double delay_seconds, qa_error *);
     bool (*hit_marker)(void *, int32_t damage, qa_error *);
     bool (*controls)(void *, frontend_remote_q2_effects_controls *, qa_error *);
+    bool (*frame_milliseconds)(void *, double *, qa_error *);
     bool (*footstep)(void *, const frontend_remote_q2_effects_pose *, uint32_t event,
         double milliseconds, qa_builtin_random *, qa_error *);
     bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);

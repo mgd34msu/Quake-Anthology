@@ -346,7 +346,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
         break;
     case 3:
         result.count = 1;
-        result.members[0] = (squad_member){"enforcer", {0}};
+        result.members[0] = (squad_member){"enforcer", {0, 0, 0}};
         break;
     case 4:
         result.count = skill > 0 ? 2 : 1;
@@ -355,7 +355,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
         break;
     case 5:
         result.count = 1;
-        result.members[0] = (squad_member){"ogre", {0}};
+        result.members[0] = (squad_member){"ogre", {0, 0, 0}};
         break;
     case 6:
         result.count = skill > 0 ? 2 : 1;
@@ -369,7 +369,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
         break;
     case 8:
         result.count = 1;
-        result.members[0] = (squad_member){"wizard", {0}};
+        result.members[0] = (squad_member){"wizard", {0, 0, 0}};
         break;
     case 9:
         result.count = skill > 0 ? 2 : 1;
@@ -390,7 +390,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
         break;
     case 12:
         result.count = 1;
-        result.members[0] = (squad_member){"shambler", {0}};
+        result.members[0] = (squad_member){"shambler", {0, 0, 0}};
         break;
     case 13: {
         result.double_demon = true;
@@ -403,7 +403,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
     }
     case 14:
         result.count = 1;
-        result.members[0] = (squad_member){"shalrath", {0}};
+        result.members[0] = (squad_member){"shalrath", {0, 0, 0}};
         break;
     default:
         break;
@@ -587,7 +587,8 @@ static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error 
         if (!mode_live(m, actor))
             return mode_fail(e, "Horde monster provider returned no live actor");
         h->monsters[actor.slot] =
-            (horde_monster){actor, strcmp(s.members[i].name, "zombie") == 0, false};
+            (horde_monster){.actor = actor,
+                .zombie = strcmp(s.members[i].name, "zombie") == 0};
     }
     if (category == 0)
         --h->value.fodder;

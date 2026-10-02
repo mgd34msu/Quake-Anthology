@@ -1,6 +1,11 @@
 #include "network_unified_client.h"
 #include "internal.h"
 #include "qa/source_save.h"
+#include "qa/source_frame_time.h"
+#include "qa/application_character_selection.h"
+#include "qa/application_native_q3_cvars.h"
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -35,7 +40,64 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
     const qa_command_context *command,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
-    return parent(o) && o->options.configuration.initialize(o->options.configuration.context,
+    if (!parent(o) || !descriptor || !variables || !command || !command->owner ||
+        command->origin!=QA_COMMAND_SEAT || qa_cvars_dialect(variables)!=command->dialect ||
+        !qa_source_frame_time_register(variables,command->owner,e)) return false;
+    const uint32_t identity=QA_CVAR_ARCHIVE|QA_CVAR_USERINFO;
+    const char *description="Unified CLIENT baseline";
+    char name[64];
+    if (!command->seat) memcpy(name,"Player",7);
+    else snprintf(name,sizeof(name),"Player %" PRIu64,(uint64_t)command->seat+1);
+    bool ok=true;
+    switch (command->dialect) {
+    case QA_CONSOLE_Q1:
+        ok=qa_cvars_register(variables,"name",name,identity,command->owner,description,e) &&
+            qa_cvars_register(variables,"color","0",QA_CVAR_ARCHIVE,command->owner,description,e) &&
+            qa_cvars_register(variables,"password","",QA_CVAR_USERINFO,command->owner,description,e);
+        break;
+    case QA_CONSOLE_QW: {
+        static const struct { const char *name,*value; uint32_t flags; } values[]={
+            {"cl_hightrack","0",0},{"cl_chasecam","0",0},
+            {"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"noskins","0",QA_CVAR_ARCHIVE},{"baseskin","base",QA_CVAR_ARCHIVE},
+            {"name","unnamed",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"team","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"skin","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"topcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"bottomcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"noaim","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"msg","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"password","",QA_CVAR_USERINFO}};
+        for (size_t i=0;ok && i<sizeof(values)/sizeof(*values);++i)
+            ok=qa_cvars_register(variables,values[i].name,values[i].value,values[i].flags,command->owner,description,e);
+        break;
+    }
+    case QA_CONSOLE_Q2: case QA_CONSOLE_Q2_RERELEASE: {
+        const char *model=o->options.frontend->options.character_model;
+        qa_native_q3_character_declaration defaults;
+        if (!model) {
+            if (!qa_native_q3_character_default_declaration(QA_GAME_Q2,&defaults,e)) return false;
+            model=defaults.model;
+        }
+        size_t length=strlen(model);
+        if (!length || length>SIZE_MAX-9)
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified Q2 CLIENT model declaration is invalid");
+        const char *skin=!strcmp(model,"female")?"athena":!strcmp(model,"cyborg")?"oni911":"grunt";
+        char *appearance=malloc(length+strlen(skin)+2);
+        if (!appearance) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified Q2 CLIENT appearance");
+        memcpy(appearance,model,length);appearance[length]='/';strcpy(appearance+length+1,skin);
+        const struct { const char *name,*value; } values[]={
+            {"name",name},{"skin",appearance},{"rate","15000"},{"msg","1"},{"hand","0"},
+            {"fov","90"},{"gender",!strcmp(model,"female")?"female":"male"}};
+        for (size_t i=0;ok && i<sizeof(values)/sizeof(*values);++i)
+            ok=qa_cvars_register(variables,values[i].name,values[i].value,identity,command->owner,description,e);
+        free(appearance);
+        if (ok) ok=qa_cvars_register(variables,"password","",QA_CVAR_USERINFO,command->owner,description,e) &&
+            qa_cvars_register(variables,"spectator","0",QA_CVAR_USERINFO,command->owner,description,e);
+        break;
+    }
+    case QA_CONSOLE_Q3:
+        ok=qa_native_q3_client_defaults(descriptor,variables,command,o->options.frontend->options.character_model,e);
+        break;
+    default: return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT has no admitted source dialect");
+    }
+    return ok && parent(o) && o->options.configuration.initialize(o->options.configuration.context,
         descriptor,variables,command,e) && parent(o);
 }
 static bool configure(void *context,const qa_application_client_source *source,bool *ready,qa_error *e)
@@ -189,7 +251,7 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     qa_catalog *catalog=qa_application_catalog(f->application);
     const qa_product *profile=qa_catalog_product(catalog,options->profile);
     if (!profile || !profile->builtin || profile->program_kind!=QA_PROGRAM_BUILTIN ||
-        profile->availability!=QA_CONTENT_INSTALLED || profile->family>QA_GAME_Q2)
+        profile->availability!=QA_CONTENT_INSTALLED || profile->family>QA_GAME_Q3)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT requires its genuine installed compiled profile");
     frontend_network_unified_client_service *o=calloc(1,sizeof(*o));
     if (!o) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified CLIENT services");
@@ -326,7 +388,10 @@ static bool capsule_read(qa_bytes bytes,qa_net_address *remote,qa_net_seat_id *s
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,e) &&
         capsule_fields(&io,remote,seat,physical,NULL,prefix) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io);
+    if (!ok && (!e || e->code==QA_OK))
+        frontend_fail(e,QA_ERROR_FORMAT,"Invalid retained Unified CLIENT capsule");
+    return ok;
 }
 bool frontend_network_unified_client_saved_read(qa_frontend *f,qa_application_content_graph *graph,qa_bytes bytes,
     frontend_client_source_prefix *out,qa_net_address *remote,qa_net_seat_id *seat,qa_error *e)

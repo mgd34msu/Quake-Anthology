@@ -66,6 +66,11 @@ bool frontend_received_music_create(qa_frontend *f,const frontend_music_origin *
 }
 qa_audio_music *frontend_received_music_player(const frontend_received_music *o)
 {return o?o->player:NULL;}
+bool frontend_received_music_bus(const frontend_received_music *o,uint64_t *out)
+{
+    if(!o || !out || !o->slot || *o->slot!=o || !o->bus || o->frontend->audio!=o->engine)return false;
+    *out=o->bus;return true;
+}
 bool frontend_received_music_idle(const frontend_received_music *o)
 {return !o || (o->slot && *o->slot==o && o->frontend->audio==o->engine &&
     (qa_audio_music_idle(o->player) || (o->importing && (!o->player || qa_audio_music_controls_restore_pending(o->player)))));}
@@ -113,7 +118,7 @@ bool frontend_received_music_fields(qa_frontend *f,frontend_received_music **slo
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=*slot!=NULL;
     if(!qa_source_save_bool(io,&present))return false;
     if(!present)return true;
-    if(!f || !f->audio || !refs || !refs->encode || !refs->decode ||
+    if(!f || !f->audio || !refs || (reading?!refs->decode:!refs->encode) ||
         (reading?*slot!=NULL:!frontend_received_music_idle(*slot)))return fail(e,"Received music cold state lacks its actual audio graph");
     if(reading){*slot=calloc(1,sizeof(**slot));if(!*slot)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining imported received music");
         (*slot)->frontend=f;(*slot)->engine=f->audio;(*slot)->slot=slot;(*slot)->importing=true;}

@@ -95,6 +95,16 @@ qa_cvars *frontend_config_source_mouse_cvars(const frontend_config_source *,uint
 /* Borrows the installed WORLD ENTITIES source's actual authored seat mouse
  * owner and selected movement kind. Absent source/seat returns NULL. */
 qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *,uint32_t,qa_movement_kind *);
+typedef struct frontend_config_legacy_view {
+    const frontend_config_source *source;
+    const qa_launch_instance *descriptor;
+    const qa_product *product;
+    qa_cvars *registry;
+    uint32_t authored_seat;
+} frontend_config_legacy_view;
+bool frontend_config_store_primary_legacy_read(const frontend_config_store *,uint32_t,
+    frontend_config_legacy_view *,bool *present,qa_error *);
+bool frontend_config_store_primary_legacy_current(const frontend_config_store *,const frontend_config_legacy_view *);
 bool frontend_config_store_select_bindings(frontend_config_store *,uint32_t authored_seat,
     qa_strings *,const qa_item_definition *,size_t,int32_t controller,qa_error *);
 bool frontend_config_store_reset_bindings(frontend_config_store *,uint32_t authored_seat,int32_t controller,qa_error *);
@@ -118,6 +128,8 @@ bool frontend_config_store_view_transition(const frontend_config_store *,qa_appl
     const qa_launch_snapshot *,frontend_view_transition *,qa_error *);
 bool frontend_config_store_client_input_configuration(const frontend_config_store *,
     const qa_application_client_preparation *,uint32_t,qa_input_seat **,qa_error *);
+bool frontend_config_store_client_controller_selection(const frontend_config_store *,
+    const qa_application_client_preparation *,uint32_t,qa_controller_selection *,qa_error *);
 bool frontend_config_store_client_view_transition(const frontend_config_store *,
     const qa_application_client_preparation *,frontend_view_transition *,qa_error *);
 bool frontend_config_store_client_settings_begin(frontend_config_store *,qa_application_client_preparation *,qa_error *);
@@ -127,7 +139,8 @@ bool frontend_config_store_client_settings_prepare(frontend_config_store *,qa_ap
 bool frontend_config_store_client_settings_ready_is(const frontend_config_store *,const qa_application_client_preparation *);
 void frontend_config_store_client_settings_consume(frontend_config_store *,qa_application_client_preparation *);
 bool frontend_config_store_client_settings_finish(frontend_config_store *,qa_application_client_preparation *,bool *,qa_error *);
-bool frontend_config_store_client_settings_abort(frontend_config_store *,qa_application_client_preparation *,qa_error *);
+bool frontend_config_store_client_settings_abort(frontend_config_store *,qa_application_client_preparation *,bool *complete,qa_error *);
+bool frontend_config_store_client_settings_cancel(frontend_config_store *,qa_application_client_preparation *,bool *complete,qa_error *);
 qa_application_client_preparation *frontend_config_store_client_preparation(const frontend_config_store *);
 /* The actual source factory calls before destination options/capacity/Init.
  * A different physical program/profile returns carried=false. The supplied

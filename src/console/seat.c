@@ -95,6 +95,28 @@ void qa_seat_console_context_publish(qa_seat_console *seat, const qa_command_con
     free(seat->script); seat->script = NULL;
     seat->options.command = *command;
 }
+qa_console *qa_seat_console_recipient_read(const qa_seat_console *seat) {
+    return seat?seat->options.commands:NULL;
+}
+bool qa_seat_console_recipient_ready_is(const qa_seat_console *seat,const qa_console *commands,
+    const qa_command_context *command) {
+    return seat && commands && command && qa_seat_console_idle(seat) &&
+        qa_console_idle(seat->options.commands) && qa_console_idle(commands) &&
+        command->origin==QA_COMMAND_SEAT && !command->script && !command->console_text &&
+        qac_dialect_valid(command->dialect);
+}
+bool qa_seat_console_recipient_ready(const qa_seat_console *seat,qa_console *commands,
+    const qa_command_context *command,qa_error *error) {
+    if (!qa_seat_console_recipient_ready_is(seat,commands,command))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Seat console recipient requires returned physical owners");
+    qa_seat_console_options options=seat->options;
+    options.commands=commands; options.command=*command;
+    return qac_seat_context_ready(&options,command,error);
+}
+void qa_seat_console_recipient_publish(qa_seat_console *seat,qa_console *commands,
+    const qa_command_context *command) {
+    qa_seat_console_context_publish(seat,command); seat->options.commands=commands;
+}
 static bool print_inner(qa_seat_console *seat, const char *text, qa_error *error) {
     double time = seat->options.now_ms(seat->options.context);
     size_t length = strlen(text);

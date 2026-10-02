@@ -82,10 +82,16 @@ struct frontend_remote_q2 {
     int32_t hit_marker_frame;
     uint64_t hit_marker_ns;
     bool hit_marker_set;
+    qa_scene_fog fog_start, fog_end;
+    double fog_started_ms;
+    uint16_t fog_duration_ms;
+    bool fog_received;
     qa_resource *map;
     qa_vfs_acquisition map_opening;
     qa_scene_resources *images;
     qa_material_library *materials;
+    qa_media_library *media;
+    struct frontend_material_movies *shader_movies;
     qa_audio_bank *sounds;
     qa_font_library *fonts;
     const qa_font *classic;

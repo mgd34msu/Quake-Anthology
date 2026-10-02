@@ -4,6 +4,7 @@
 #include "qa/application_q3_factory.h"
 #include "engine_shutdown.h"
 #include "qa/script_defines_save.h"
+#include "qa/console_cvar_observer.h"
 
 typedef enum client_configuration_state {
     CLIENT_CONFIGURATION_LIVE, CLIENT_CONFIGURATION_SHUTDOWN,

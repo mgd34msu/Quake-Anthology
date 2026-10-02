@@ -935,6 +935,8 @@ static bool normalized_field(qa_source_save_io *io, event_store *store, applicat
         !qa_source_save_u64(io, &row->presentation_sequence) || !qa_source_save_u64(io, &row->simulation_sequence) ||
         !qa_source_save_u64(io, &row->owner_generation) || row->owner_generation > QA_UNIFIED_SAFE_INTEGER ||
         !qa_source_save_u8(io,&row->q2_source_profile) || row->q2_source_profile>2 ||
+        !qa_source_save_u64(io,&row->q2_source_interval_ns) ||
+        ((row->q2_source_profile!=0)!=(row->q2_source_interval_ns!=0)) ||
         !qa_source_save_u64(io, &row->time_ns) || !qa_source_save_u64(io, &row->simulation_time_ns) ||
         !enum_field(io, &clock, QA_CLOCK_Q3) || !enum_field(io, &presentation_clock, QA_CLOCK_Q3) ||
         !normalized_actor_field(io, row, false) || !normalized_actor_field(io, row, true) ||
@@ -1313,7 +1315,7 @@ bool application_events_save_validate(qa_application *app, qa_error *error)
 
 static bool public_lease(qa_application *app, qa_error *error)
 {
-    if (!app || app->operation != APPLICATION_IDLE || !app->session || !app->world ||
+    if (!app || app->operation != APPLICATION_IDLE || app->client_preparation || !app->session || !app->world ||
         !app->configuration || !qa_application_launch(app) || app->destroy_requested || app->finalizing ||
         app->q3_round_active || app->frame_preparing || app->publication_started || app->pending_close ||
         app->routing_snapshot || app->routing_providers || app->routing_provider_count ||

@@ -92,7 +92,8 @@ void *q3menu_alloc(int native_size,int source_size,q3menu_allocation_kind kind)
         c->native_alloc_point+native_size>(int)sizeof(c->allocation.bytes) || c->allocation_count>=8192) {
         c->out_of_memory=qtrue;
         q3menu_print("UI_Alloc: Failure. Out of memory!\n"); q3menu_error(0,"Authored menu allocation exhausted source storage");
-        if(c->allocation_guard)longjmp(c->allocation_failure,1); return NULL;
+        if(c->allocation_guard)longjmp(c->allocation_failure,1);
+        return NULL;
     }
     int offset=c->native_alloc_point;
     c->allocations[c->allocation_count++]=(q3menu_allocation){(uint32_t)offset,(uint32_t)source_size,kind};

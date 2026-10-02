@@ -10,7 +10,7 @@ void q3nm_result(bool result)
 bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
 {
     if(o&&o->options.compiled_source) {
-        if(!f||!f->compiled||f->remote||f->compiled->source.owner!=o->options.compiled_source||
+        if(o->rebind||!f||!f->compiled||f->remote||f->compiled->source.owner!=o->options.compiled_source||
            f->compiled->source.basis.product!=QA_Q3_TEAM_ARENA||
            f->compiled->source.basis.content!=o->options.content||f->application!=o->options.application||
            f->assets!=o->options.assets||f->presentation!=o->options.presentation||f->seat!=o->options.seat||
@@ -345,23 +345,39 @@ bool q3n_mission_hud_create_compiled(const q3n_mission_hud_options *options,q3n_
     q3n_compiled_source_view view;
     if(!options||!out||*out||options->source||options->client||options->reader||options->remote_client||options->remote_source||
        !options->compiled_source||!options->compiled_cvars||!options->compiled_current||!options->compiled_cvar_read||
-       !options->compiled_console||!options->context||!q3n_compiled_source_read(options->compiled_source,&view,e)||
+       !options->compiled_console||!options->context||!q3n_compiled_source_checkpoint_read(options->compiled_source,&view,e)||
        view.basis.product!=QA_Q3_TEAM_ARENA||view.basis.application!=options->application||view.basis.content!=options->content||
        view.basis.seat!=options->seat||view.basis.assets!=options->assets||!options->presentation||!options->fonts||
        !options->milliseconds||!options->print||!options->key_catcher||options->presentation->options.assets!=options->assets||
        options->compiled_context.registry!=view.basis.viewer.registry||options->compiled_context.owner!=view.basis.receiver||
        options->compiled_context.generation!=view.basis.publication||!qa_actor_id_equal(options->compiled_context.actor,view.basis.viewer)||
        qa_font_library_content(options->fonts)!=options->assets->options.provider.mounts||
-       qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images||!q3n_compiled_source_current(&view))
+       qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images||!q3n_compiled_source_checkpoint_current(&view))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled Mission HUD requires its actual CLIENT command and menu/font resource tuple");
     return allocate(options,NULL,out,e);
 }
 bool q3n_mission_hud_bind(q3n_mission_hud *o,q3n_hud *hud,qa_error *e)
-{ if(!o||o->busy||!hud||hud->options.application!=o->options.application||hud->options.assets!=o->options.assets||
+{ if(!q3n_mission_hud_idle(o)||!hud||hud->options.application!=o->options.application||hud->options.assets!=o->options.assets||
     hud->options.client!=o->options.client||hud->options.remote_client!=o->options.remote_client||
     hud->options.compiled_source!=o->options.compiled_source||
     hud->options.seat!=o->options.seat||hud->source_game!=o->source_game||hud->product!=QA_Q3_TEAM_ARENA)
     return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD binding requires its actual native HUD owner");
   o->hud=hud; return true; }
-void q3n_mission_hud_destroy(q3n_mission_hud *o) { if(o&&!o->busy) { q3menu_destroy(o->menus); free(o); } }
-bool q3n_mission_hud_idle(const q3n_mission_hud *o) { return o&&!o->busy; }
+void q3n_mission_hud_destroy(q3n_mission_hud *o) { if(q3n_mission_hud_idle(o)) { q3menu_destroy(o->menus); free(o); } }
+bool q3n_mission_hud_idle(const q3n_mission_hud *o) { return o&&!o->busy&&!o->rebind; }
+bool q3n_mission_hud_rebind_prepare(q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t,
+    const qa_command_context *context,qa_error *e)
+{
+    if(!q3n_mission_hud_idle(o)||!o->options.compiled_source||
+       !q3n_compiled_source_rebind_context_is(t,o->options.compiled_source,&o->options.compiled_context,context))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission round rebind requires its actual retained and staged CLIENT context");
+    o->rebound_context=*context; o->rebind=t; return true;
+}
+bool q3n_mission_hud_rebind_ready(const q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
+{ return o && !o->busy && o->rebind==t && t &&
+    q3n_compiled_source_rebind_context_is(t,o->options.compiled_source,&o->options.compiled_context,&o->rebound_context); }
+void q3n_mission_hud_rebind_commit(q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
+{ if(o && t && o->rebind==t) { o->options.compiled_context=o->rebound_context;
+    o->rebound_context=(qa_command_context){0}; o->rebind=NULL; } }
+void q3n_mission_hud_rebind_abort(q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
+{ if(o && t && o->rebind==t) { o->rebound_context=(qa_command_context){0}; o->rebind=NULL; } }

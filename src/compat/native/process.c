@@ -98,7 +98,7 @@ bool native_process_close(qa_native_instance *instance, qa_error *error)
 {
     bool idle = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
         qa_native_sysv_process_idle(instance->sysv_process) : qa_native_windows_process_idle(instance->windows_process);
-    if (idle && !qa_native_terminal(instance)) {
+    if (idle && !instance->process_host_pending && !qa_native_terminal(instance)) {
         qa_native_instance *previous = native_active_instance;
         unsigned active = instance->active_depth;
         bool unloading = instance->unloading;
@@ -371,13 +371,46 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
 bool qa_native_process_checkpoint(qa_native_instance *instance, qa_buffer *out, qa_error *error)
 {
     if (!instance || instance->checkpointing || instance->active_depth || instance->callback_depth ||
-        instance->destroying || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
+        instance->destroying || instance->process_host_pending || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
         !instance->options.checkpoint || !instance->options.restore)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native private capture requires its actual idle process/host binding");
     instance->checkpointing = true; qa_buffer host = {0};
     bool okay = instance->options.checkpoint(instance->options.context, &host, error) &&
         native_process_checkpoint_host(instance, (qa_bytes){host.data, host.size}, out, error);
     qa_buffer_free(&host); instance->checkpointing = false; return okay;
+}
+
+bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expected_host, qa_error *error)
+{
+    if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
+        !instance->process_host_pending || !instance->process_host.size ||
+        instance->active_depth || instance->callback_depth || instance->checkpointing ||
+        instance->destroying || qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native host adoption requires its staged idle process continuation");
+    if (!expected_host.data || expected_host.size != instance->process_host.size ||
+        memcmp(expected_host.data, instance->process_host.data, expected_host.size))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "native enclosing HOST record differs from its actual process capsule");
+    instance->checkpointing = true;
+    bool okay = instance->options.restore(instance->options.context,
+        (qa_bytes){instance->process_host.data, instance->process_host.size}, error) &&
+        native_process_publish(instance, NULL, error);
+    instance->checkpointing = false;
+    if (okay) {
+        instance->process_host_pending = false;
+        qa_buffer_free(&instance->process_host);
+    } else {
+        /* A partially decoded canonical host is never a retryable source owner. */
+        instance->failed = true;
+        instance->failure = error ? *error : (qa_error){0};
+        if (instance->failure.code == QA_OK)
+            qa_error_set(&instance->failure, QA_ERROR_FORMAT, 0, "native staged host continuation failed");
+    }
+    return okay;
+}
+
+bool qa_native_process_restore_pending(const qa_native_instance *instance)
+{
+    return instance && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->process_host_pending;
 }
 
 static bool restored_callback(void *context, uint64_t id, uint64_t address,

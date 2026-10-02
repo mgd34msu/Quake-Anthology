@@ -42,8 +42,11 @@ static bot_character_string *string(bot_character_store *store, uint32_t pointer
 }
 bool bot_character_create(bot_character_store *store, const char *path, float skill,
                           qa_bot_character **out, qa_error *error) {
-    if (!store || !path || strlen(path) >= 64 || !out || *out)
-        return fail(error, "Character filename copy exceeds MAX_QPATH destination");
+    if (!store || !path || !out || *out)
+        return fail(error, "Character source needs its filename, MEMORY and empty output");
+    size_t length = strlen(path);
+    char filename[64];
+    if (length < sizeof(filename)) memcpy(filename, path, length + 1);
     qa_bot_character *c = calloc(1, sizeof(*c));
     if (!c) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining character source alias"); return false; }
     atomic_init(&c->references, 1); c->source = store; ++store->references;
@@ -51,11 +54,19 @@ bool bot_character_create(bot_character_store *store, const char *path, float sk
                                 NULL, &c->allocation, error)) {
         bot_character_store_release(store); free(c); return false;
     }
+    *out = c;
+    if (length >= sizeof(filename))
+        return fail(error, "Character filename copy exceeds MAX_QPATH destination");
     qa_bot_memory_span span;
-    if (!bytes(c, &span, error)) { qa_bot_character_release(c); return false; }
-    memcpy(span.data, path, strlen(path) + 1);
-    if (!bot_character_skill(c, skill, error)) { qa_bot_character_release(c); return false; }
-    *out = c; return true;
+    if (!bytes(c, &span, error)) return false;
+    memcpy(span.data, filename, length + 1);
+    return bot_character_skill(c, skill, error);
+}
+bool bot_character_filename(qa_bot_character *c, const char *path, qa_error *error) {
+    qa_bot_memory_span span;
+    if (!path || strlen(path) >= 64 || !bytes(c, &span, error))
+        return fail(error, "Character filename copy exceeds its actual source destination");
+    memmove(span.data, path, strlen(path) + 1); return true;
 }
 bool bot_character_skill(qa_bot_character *c, float skill, qa_error *error) {
     qa_bot_memory_span span;
@@ -73,21 +84,25 @@ bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_v
         if (!value.data.string) return fail(error, "Character string source is absent");
         if (type_first) span.data[offset] = (uint8_t)value.kind;
         bot_character_store *store = c->source;
-        if (store->next_pointer > UINT32_MAX ||
-            !bot_grow((void **)&store->strings, &store->capacity, store->count + 1,
+        if (!bot_grow((void **)&store->strings, &store->capacity, store->count + 1,
                       sizeof(*store->strings), error)) return false;
         size_t length = strlen(value.data.string);
         if (length >= INT32_MAX - 4) return fail(error, "Character string exceeds source allocation bounds");
+        char *copy = malloc(length + 1);
+        if (!copy) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining copied characteristic string"); return false; }
+        memcpy(copy, value.data.string, length + 1);
         qa_bot_memory_allocation allocation = {0};
         if (!qa_bot_memory_allocate(store->memory, (uint32_t)length + 1, QA_BOT_MEMORY_HEAP,
-                                    false, NULL, &allocation, error)) return false;
-        raw = (uint32_t)store->next_pointer++;
+                                    false, NULL, &allocation, error)) { free(copy); return false; }
+        uint64_t pointer = store->next_pointer++;
+        if (pointer > UINT32_MAX) { free(copy); return fail(error, "Character string pointer space is exhausted"); }
+        raw = (uint32_t)pointer;
         store->strings[store->count++] = (bot_character_string){raw, allocation};
-        if (!bytes(c, &span, error)) return false;
+        if (!bytes(c, &span, error)) { free(copy); return false; }
         put(span.data + offset + 4, raw);
         qa_bot_memory_span text;
-        if (!qa_bot_memory_bytes(store->memory, allocation, &text, error)) return false;
-        memcpy(text.data, value.data.string, length + 1);
+        if (!qa_bot_memory_bytes(store->memory, allocation, &text, error)) { free(copy); return false; }
+        memcpy(text.data, copy, length + 1); free(copy);
     } else if (value.kind == QA_BOT_CHARACTER_INTEGER) raw = (uint32_t)value.data.integer;
     else if (value.kind == QA_BOT_CHARACTER_FLOAT) memcpy(&raw, &value.data.number, 4);
     put(span.data + offset + 4, raw); span.data[offset] = (uint8_t)value.kind;
@@ -125,10 +140,10 @@ bool qa_bot_character_free(qa_bot_character *c, qa_error *error) {
         uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + i * 8;
         if (span.data[offset] != QA_BOT_CHARACTER_STRING) continue;
         uint32_t pointer = word(span.data + offset + 4);
-        if (!pointer) continue;
+        if (!pointer) return fail(error, "Character free reached an uninitialized string pointer");
         bot_character_string *row = string(c->source, pointer);
         if (!row || !qa_bot_memory_free(c->source->memory, row->allocation, error)) return false;
-        row->pointer = 0; put(span.data + offset + 4, 0);
+        row->pointer = 0;
     }
     if (!qa_bot_memory_free(c->source->memory, c->allocation, error)) return false;
     c->retired = true; c->ready = false; return true;

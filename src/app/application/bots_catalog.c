@@ -49,7 +49,8 @@ static bool set_cvar(void *context,const char *name,const char *value,qa_error *
     qa_cvars *owner=registry(bots,name);
     bool okay=owner?qa_cvars_set(owner,name,value,true,error):
         application_fail(error,QA_ERROR_NOT_FOUND,"bot catalogue cvar setter owner is absent");
-    if(native) application_native_q3_console_release(actual);return okay;
+    if(native) application_native_q3_console_release(actual);
+    return okay;
 }
 static bool server_info(void *context,char *out,size_t capacity,qa_error *error) {
     application_bots *bots=context;application_provider *actual;qa_buffer text={0};
@@ -180,7 +181,8 @@ bool application_bots_catalog_initialize(application_bots *bots,bool restart,qa_
         register_cvar(bots,"bot_enable","1",0,error) &&
         register_cvar(bots,"g_spSkill","2",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,error) &&
         qa_bot_catalog_initialize(bots->catalogue,restart,error);
-    if(okay) bots->catalogue_ready=true;return okay;
+    if(okay) bots->catalogue_ready=true;
+    return okay;
 }
 bool application_bots_spawn_admitted(const qa_application *app) {
     const application_bots *bots=app?app->bots:NULL;

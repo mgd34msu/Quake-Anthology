@@ -190,7 +190,8 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
     if (complete) *complete=false;
     if (!complete || !owner || owner->aborting ||
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate) ||
-        !(owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_RELEASE):
+        !(owner->client?(qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_RELEASE) &&
+            !qa_application_client_prepare_cancel_entered(owner->client)):
             qa_application_startup_resource_phase(owner->application,owner->candidate)) ||
         (validated && !owner->before_complete) || (!validated && owner->after_started))
         return fail(error,"Shared release advancement lost its actual candidate phase");
@@ -264,7 +265,8 @@ bool frontend_shared_settings_cancel_advance(frontend_shared_settings *owner,
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate))
         return fail(error,"Shared cancellation lost its returned candidate parents");
     if (!owner->input) { *complete=true; return true; }
-    if (!(owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_CLEANUP):
+    if (!(owner->client?(qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_CLEANUP) ||
+        qa_application_client_prepare_cancel_entered(owner->client)):
         qa_application_startup_release_cleanup_phase(owner->application,owner->candidate)))
         return fail(error,"Shared cancellation lacks its real returned release phase");
     owner->aborting=true;

@@ -37,6 +37,8 @@ bool application_save_content_launch_resource(const qa_application_content_graph
 size_t application_save_content_launch_resource_count(const qa_application_content_graph *);
 bool application_save_content_launch_resource_at(const qa_application_content_graph *,
     size_t, qa_launch_resource *, qa_error *);
+bool application_save_content_launch_resource_origin(const qa_application_content_graph *,
+    size_t, qa_launch_resource_origin *, qa_error *);
 /* Transfer a restored pool's unclaimed graph reference, or retain the already
  * adopted physical pool. Each event resource owns the returned reference. */
 bool application_save_content_event_pool(qa_application_content_graph *, uint64_t,

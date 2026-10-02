@@ -101,6 +101,23 @@ bool qa_material_source_lightmap_read(const qa_material_source_scratch *source,
     *out=source->lightmap;
     return true;
 }
+bool qa_render_controls_source_images_metadata(const qa_render_controls *owner,size_t *out,qa_error *error)
+{
+    if (!out || !current(owner) || owner->source.entered)
+        return fail(error,"Source image metadata requires its actual non-entered renderer allocation");
+    *out=owner->backend==QA_RENDER_CONTROLS_GL?qa_gl_source_images_metadata_count(owner):0;
+    return true;
+}
+bool qa_render_controls_source_image_metadata(const qa_render_controls *owner,size_t ordinal,
+    const qa_scene_image **out,qa_error *error)
+{
+    size_t count=0;
+    if (!out || !qa_render_controls_source_images_metadata(owner,&count,error) || ordinal>=count)
+        return fail(error,"Source image ordinal is outside its actual admitted image registry");
+    *out=qa_gl_source_image_metadata_at(owner,ordinal);
+    return *out!=NULL || fail(error,"Source image registry lost its actual admitted image");
+}
+
 bool qa_material_source_lightmap_metadata(const qa_material_source_scratch *source,
     const qa_scene_image **out, qa_error *error)
 {
@@ -139,15 +156,18 @@ qa_q3_source_scene_bank *qa_material_source_scene_bank(qa_material_source_scratc
 }
 bool qa_render_controls_source_runtime_bind(qa_render_controls *owner,
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *), void *video_context,
-    bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context, qa_error *error)
+    bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context,
+    bool (*frame_policy)(void *, qa_scene_frame *, qa_error *), void *frame_context, qa_error *error)
 {
-    if (!current(owner) || owner->ticket || owner->source.entered || !diagnostics ||
+    if (!current(owner) || owner->ticket || owner->source.entered || !diagnostics || !frame_policy ||
         (owner->source.runtime_diagnostics && (owner->source.runtime_diagnostics != diagnostics ||
             owner->source.runtime_diagnostics_context != diagnostics_context ||
-            owner->source.runtime_video_frame != video_frame || owner->source.runtime_video_context != video_context)))
+            owner->source.runtime_video_frame != video_frame || owner->source.runtime_video_context != video_context ||
+            owner->source.runtime_frame_policy != frame_policy || owner->source.runtime_frame_context != frame_context)))
         return fail(error, "Source runtime callbacks require their actual idle renderer lifetime owner");
     owner->source.runtime_video_frame = video_frame; owner->source.runtime_video_context = video_context;
     owner->source.runtime_diagnostics = diagnostics; owner->source.runtime_diagnostics_context = diagnostics_context;
+    owner->source.runtime_frame_policy = frame_policy; owner->source.runtime_frame_context = frame_context;
     return true;
 }
 bool qa_material_source_scene_bank_metadata(const qa_material_source_scratch *source,
@@ -452,7 +472,7 @@ bool qa_render_source_attributes_resolve(qa_render_controls *controls,qa_scene_d
         return fail(error,"Source client arrays exceed their actual retained tess cells");
     if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && attributes->texture_unit!=0) {
         uint32_t first=draw->mesh.indices[0];
-        if (first>=draw->mesh.vertex_count || first>=QA_SOURCE_TESS_VERTICES)
+        if (first>=(draw->source_vertex_storage?draw->source_vertex_storage:draw->mesh.vertex_count) || first>=QA_SOURCE_TESS_VERTICES)
             return fail(error,"Source discrete color index is outside its actual tess cells");
         attributes->color=controls->source.colors[first];
         attributes->color_known=true;

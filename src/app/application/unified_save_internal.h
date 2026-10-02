@@ -14,7 +14,15 @@ bool application_unified_save_output(qa_source_save_io *, application_unified_ou
 bool application_unified_save_client(qa_source_save_io *, qa_net_client_id);
 bool application_unified_save_source(qa_source_save_io *, qa_application *,
     const application_unified_source *, application_unified_source *, bool historical);
+bool application_unified_save_source_obsolete(const application_unified_source *,
+    const application_unified_source *);
+bool application_unified_save_source_stamp_equal(const application_unified_source *,
+    const application_unified_source *);
+bool application_unified_save_retained_source(qa_source_save_io *, qa_application *,
+    const application_unified_source *, application_unified_source *);
 bool application_unified_save_player(qa_source_save_io *, const qa_unified_session_player *);
+bool application_unified_save_player_owned(qa_source_save_io *, qa_unified_session_player *, qa_buffer *);
+bool application_unified_save_player_equal(const qa_unified_session_player *, const qa_unified_session_player *);
 bool application_unified_save_output_equal(const application_unified_output *, const application_unified_output *);
 
 #endif

@@ -82,7 +82,9 @@ static bool walk_path(struct application_qc_state *engine,qa_qc_instance *vm,qa_
 {
     const qa_qc_definition *self=qa_qc_program_find_global(engine->provider->state.qc.program,"self");
     int32_t reference; qa_actor_id actor; float distance; qa_vec3 goal;
-    if(!self||self->type!=QA_QC_ENTITY||!qa_qc_global_int(vm,self->offset,&reference,error)||
+    if(!self||self->type!=QA_QC_ENTITY)
+        return application_fail(error,QA_ERROR_FORMAT,"QC monster path requires its actual entity self global");
+    if(!qa_qc_global_int(vm,self->offset,&reference,error)||
         !qa_qc_reference_actor(vm,reference,&actor,error)||
         !qa_qc_arg_float(vm,0,&distance,error)||!qa_qc_arg_vector(vm,1,&goal,error)) return false;
     qa_q1_path_result result=QA_Q1_PATH_ERROR;
@@ -422,7 +424,9 @@ bool application_qc_rerelease_import(struct application_qc_state *engine,qa_qc_i
 }
 void application_qc_rerelease_destroy(struct application_qc_state *engine)
 {
-    if (!engine || !engine->rerelease) return;
+    if(!engine) return;
+    qa_buffer_free(&engine->npc_restore);
+    if (!engine->rerelease) return;
     if (engine->rerelease->prompts) {
         for (uint32_t slot=1;slot<=engine->max_clients;++slot) prompt_clear(engine->rerelease->prompts+slot,0);
         free(engine->rerelease->prompts);
@@ -486,9 +490,9 @@ static bool fields(qa_source_save_io *io,struct application_qc_state *engine,
     struct application_qc_rerelease **out)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *out;
-    uint8_t magic[4]={'Q','Q','E','X'}; uint32_t version=2;
+    uint8_t magic[4]={'Q','Q','E','X'}; uint32_t version=3;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QQEX",4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_bool(io,&present)) return false;
+        !qa_source_save_u32(io,&version) || version!=3 || !qa_source_save_bool(io,&present)) return false;
     if (!present) return true;
     if (engine->profile!=QA_QC_RERELEASE) return false;
     if (reading) {
@@ -516,20 +520,41 @@ bool application_qc_rerelease_checkpoint(struct application_qc_state *engine,qa_
 {
     if (!engine || !out || out->data || out->size)
         return application_fail(error,QA_ERROR_ARGUMENT,"QC finale capture needs its actual owner and empty output");
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,engine->services.session,error) && fields(&io,engine,&engine->rerelease) && qa_source_save_finish(&io,out);
+    if(engine->npc_restore.size) return application_fail(error,QA_ERROR_ARGUMENT,"QC navigation is awaiting its actual restored source world");
+    qa_source_save_io io={0}; qa_buffer npc={0};
+    bool ok=application_bots_npc_capture(engine->provider,&npc,error);
+    size_t length=npc.size;
+    if(ok) ok=qa_source_save_writer(&io,engine->services.session,error) && fields(&io,engine,&engine->rerelease) &&
+        qa_source_save_count(&io,&length,SIZE_MAX)&&qa_source_save_bytes(&io,npc.data,length)&&qa_source_save_finish(&io,out);
+    qa_buffer_free(&npc);
     qa_source_save_dispose(&io);
     if (!ok && error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Invalid actual rerelease source continuation");
     return ok;
 }
 bool application_qc_rerelease_restore(struct application_qc_state *engine,qa_bytes bytes,qa_error *error)
 {
-    if (!engine || engine->rerelease)
+    if (!engine || engine->rerelease || engine->npc_restore.data || engine->npc_restore.size)
         return application_fail(error,QA_ERROR_ARGUMENT,"QC finale restore needs its empty isolated source owner");
     struct application_qc_rerelease *owner=NULL; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,engine->services.session,bytes,error) && fields(&io,engine,&owner) && qa_source_save_finish(&io,NULL);
+    size_t length=0;
+    bool ok=qa_source_save_reader(&io,engine->services.session,bytes,error) && fields(&io,engine,&owner) &&
+        qa_source_save_count(&io,&length,bytes.size-io.offset);
+    if(ok&&length) {
+        engine->npc_restore.data=malloc(length);
+        if(!engine->npc_restore.data) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining QC navigation until actual source reconnect");
+        else { engine->npc_restore.size=length; ok=qa_source_save_bytes(&io,engine->npc_restore.data,length); }
+    }
+    if(ok) ok=length!=0&&qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io); engine->rerelease=owner;
     if (!ok) application_qc_rerelease_destroy(engine);
     if (!ok && error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Invalid saved rerelease source continuation");
     return ok;
+}
+bool application_qc_npc_restore_finish(application_provider *provider,qa_error *error)
+{
+    struct application_qc_state *engine=provider?provider->state.qc.engine:NULL;
+    if(!engine) return application_fail(error,QA_ERROR_ARGUMENT,"QC navigation reconnect requires its actual source engine");
+    if(!engine->npc_restore.size) return true;
+    if(!application_bots_npc_restore(provider,(qa_bytes){engine->npc_restore.data,engine->npc_restore.size},error)) return false;
+    qa_buffer_free(&engine->npc_restore); return true;
 }

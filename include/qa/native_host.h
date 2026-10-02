@@ -124,6 +124,11 @@ typedef struct qa_native_host_engine_services {
      * the canonical effects of the actual import. */
     bool (*source_before)(void *, qa_error *);
     bool (*source_after)(void *, qa_error *);
+    /* Real Source precache selection. Transfers its retained file and owned
+     * opening; an absent selection leaves all owned outputs empty. */
+    bool (*resource_precache)(void *, qa_native_host_resource_kind, const char *,
+        const qa_vfs **actual_view, qa_resource **retained, qa_vfs_acquisition *owned_opening,
+        bool *found, qa_error *);
     bool (*source_import)(void *,const qa_native_import_call *,qa_native_value *,bool *handled,qa_error *);
 } qa_native_host_engine_services;
 
@@ -343,6 +348,10 @@ bool qa_native_host_client_userinfo_result(qa_native_host *, uint32_t slot,
     const char *userinfo, qa_buffer *returned_userinfo, qa_error *);
 bool qa_native_host_client_disconnect(qa_native_host *, uint32_t slot, qa_error *);
 bool qa_native_host_client_command(qa_native_host *, uint32_t slot, qa_error *);
+/* Synchronous continuation of an actual scanner region in this same instance.
+ * The event is borrowed only until its region callback returns. */
+bool qa_native_host_client_command_region(qa_native_host *, uint32_t slot,
+    const qa_native_region_event *, qa_error *);
 bool qa_native_host_client_think(qa_native_host *, uint32_t slot, qa_bytes source_usercmd,
                                  qa_error *);
 

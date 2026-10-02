@@ -1,10 +1,11 @@
 #include "remote_unified_private.h"
 #include "remote_unified_q2.h"
 #include "remote_unified_presentation.h"
+#include "remote_unified_save.h"
+#include "remote_q2_footsteps.h"
 #include "qa/hud_q2.h"
 #include "qa/caption_save.h"
 #include "qa/ui_preferences.h"
-#include "qa/format.h"
 #include "qa/text.h"
 #include <float.h>
 #include <math.h>
@@ -57,6 +58,8 @@ typedef struct q2_bank {
     qa_scene_resources *images;
     qa_material_library *materials;
     frontend_remote_q2_effects *effects;
+    frontend_q2_footsteps *footsteps;
+    qa_audio_bank *sounds;
     q2_activation *activation;
     frontend_remote_q2_effects_profile profile;
     char *source_provider;
@@ -88,10 +91,13 @@ struct frontend_unified_q2 {
     q2_activation *view_owner;
     char *view_content,*view_provider;
     frontend_remote_q2_effects_profile view_profile;
+    qa_vec3 view_gun_offset;
     uint64_t view_layouts, marker_frame, marker_wall_ns;
     uint32_t marker_count;
     bool marker_set;
     qa_scene_image *marker_image;
+    uint64_t effects_wall_ns;
+    float effects_frame_seconds;
     qa_localization_pool *localizations;
     q2_activation *help_owner[2];
     char **config;
@@ -148,7 +154,11 @@ static bool actor(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id
         frontend_remote_unified_actor(o->replica,(uint32_t)slot,generation,out,e);
 }
 static bool current(frontend_unified_q2 *o,qa_error *e)
-{ return o && frontend_unified_media_current(o->media) && frontend_remote_unified_current(o->replica,e); }
+{
+    return o && frontend_unified_media_current(o->media) &&
+        ((o->frontend->capture || o->frontend->source_restoring)?frontend_remote_unified_checkpoint_current(o->replica,e):
+            frontend_remote_unified_current(o->replica,e));
+}
 static void inventory_clear(frontend_unified_q2 *o)
 {
     for (size_t i=0;i<o->item_count;++i) { free(o->items[i].item); free(o->items[i].label); }
@@ -320,7 +330,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_do
     if (o->inventory_owner==a) inventory_clear(o);
     if (o->score_owner==a) scores_clear(o);
     if (o->view_owner==a) { free(o->view_content); free(o->view_provider); o->view_content=NULL; o->view_provider=NULL;
-        o->view_owner=NULL; o->view_profile=0; o->view_layouts=0; }
+        o->view_owner=NULL; o->view_profile=0; o->view_layouts=0; o->view_gun_offset=qa_v3(0,0,0); }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a)
         for (size_t i=0;i<256;++i) { free(b->styles[i]); b->styles[i]=NULL; b->style_sequences[i]=0; }
     a->retired=true; return true;
@@ -404,20 +414,25 @@ static bool viewer(void *ctx,qa_actor_id *out,qa_error *e)
     return out && current(b->owner,e) && frontend_remote_unified_player(b->owner->replica,out,&source_number);
 }
 static frontend_remote_q2_effects_source source(q2_bank *);
+static frontend_q2_footstep_source footstep_source(q2_bank *);
 static bool source_current(void *ctx,const frontend_remote_q2_effects_source *s,qa_error *e)
 {
     q2_bank *b=ctx;
     frontend_remote_q2_effects_source expected=source(b);
-    return s && s->context==b && s->identity==frontend_unified_events_audio_owner(b->owner->events) &&
+    bool okay=s && s->context==b && s->identity==frontend_unified_events_audio_owner(b->owner->events) &&
         s->content_generation==frontend_remote_unified_epoch(b->owner->replica) &&
         s->files==b->files && s->images==b->images && s->materials==b->materials &&
         s->world==frontend_unified_media_world(b->owner->media) &&
         s->map==qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)) &&
         s->session==expected.session && s->white==expected.white && s->protocol.kind==expected.protocol.kind &&
         s->profile==expected.profile && s->protocol.revision==expected.protocol.revision && s->protocol.flags==expected.protocol.flags &&
+        s->video_frame==expected.video_frame && s->video_context==expected.video_context &&
         s->current==expected.current && s->actor==expected.actor && s->actor_pose==expected.actor_pose && s->viewer==expected.viewer &&
         s->model==expected.model && s->sound==expected.sound && s->hit_marker==expected.hit_marker &&
         s->footstep==expected.footstep && s->trace==expected.trace && s->controls==expected.controls && current(b->owner,e);
+    if (okay && b->footsteps) { frontend_q2_footstep_source actual=footstep_source(b);
+        okay=frontend_q2_footsteps_current(b->footsteps,&actual,e); }
+    return okay;
 }
 static bool sound(void *ctx,const char *path,qa_vec3 origin,qa_actor_id actor_id,double ms,
     int32_t channel,float volume,float attenuation,double delay,qa_error *e)
@@ -480,6 +495,37 @@ static bool controls(void *ctx,frontend_remote_q2_effects_controls *out,qa_error
         .muzzleflashes=flashes->integer!=0,.dlight_hacks=(uint32_t)hacks->integer,
         .disable_particles=(uint32_t)particles->integer,.disable_explosions=(uint32_t)explosions->integer}; return true;
 }
+static bool footstep_current(void *ctx,const frontend_q2_footstep_source *s)
+{
+    q2_bank *b=ctx; frontend_q2_footstep_source actual=footstep_source(b);
+    return s && s->catalog==actual.catalog && s->product==actual.product && s->map==actual.map &&
+        s->files==actual.files && s->geometry==actual.geometry && s->sounds==actual.sounds && s->context==b &&
+        s->map_name && actual.map_name && !strcmp(s->map_name,actual.map_name) &&
+        s->current==actual.current && s->trace==actual.trace && s->sound==actual.sound && current(b->owner,NULL);
+}
+static frontend_q2_footstep_source footstep_source(q2_bank *b)
+{
+    qa_executable_recipe *recipe=frontend_remote_unified_recipe(b->owner->replica);
+    return (frontend_q2_footstep_source){.catalog=qa_executable_recipe_catalog(recipe),.product=b->product->id,
+        .map_name=qa_executable_recipe_choices(recipe)->world.map,.map=qa_executable_recipe_map(recipe),
+        .files=b->files,.geometry=qa_executable_recipe_geometry(recipe),.sounds=b->sounds,.context=b,
+        .current=footstep_current,.trace=trace,.sound=sound};
+}
+static bool footstep(void *ctx,const frontend_remote_q2_effects_pose *pose_value,uint32_t event,double ms,
+    qa_builtin_random *random,qa_error *e)
+{
+    q2_bank *b=ctx;
+    if (!b->footsteps || !pose_value || !current(b->owner,e)) return false;
+    const qa_cvar_view *control=qa_cvars_find(frontend_remote_unified_domain_read(b->owner->replica)->cvars,"cl_footsteps");
+    if (!control || !isfinite(control->number) || fabs(control->number)>FLT_MAX)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 footstep has no actual finite CLIENT control");
+    qa_body_state body;
+    if (!frontend_remote_unified_presentation_body(b->owner->replica,pose_value->actor,&body,e)) return false;
+    frontend_q2_footstep_source s=footstep_source(b);
+    frontend_q2_footstep_sample sample={.pose=*pose_value,.trace_bounds=body.bounds,.bottom=body.bounds.mins.z,
+        .footsteps=(float)control->number,.milliseconds=ms,.event=event};
+    return frontend_q2_footsteps_emit(b->footsteps,&s,&sample,random,e);
+}
 static frontend_remote_q2_effects_source source(q2_bank *b)
 {
     return (frontend_remote_q2_effects_source){.identity=frontend_unified_events_audio_owner(b->owner->events),
@@ -488,7 +534,7 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,
         .images=b->images,.materials=b->materials,.world=frontend_unified_media_world(b->owner->media),.white=qa_scene_white(b->images),.context=b,
         .current=source_current,.actor=pose,.actor_pose=full_pose,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
-        .controls=controls,.trace=trace};
+        .controls=controls,.trace=trace,.footstep=footstep};
 }
 static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activation_owner,const char *source_provider,
     frontend_remote_q2_effects_profile profile,bool effects,q2_bank **out,qa_error *e)
@@ -512,6 +558,7 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activ
         qa_font_library *fonts; qa_audio_bank *sounds;
         bool okay=qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&b->files,&b->product,e) &&
             b->product->family==QA_GAME_Q2 && frontend_unified_media_bank(o->media,content,&b->images,&b->materials,&fonts,&sounds,e);
+        if (okay) b->sounds=sounds;
         if (!okay) { free(b->source_provider); free(b->content); free(b); return false; }
         b->next=o->banks; o->banks=b;
     }
@@ -519,6 +566,10 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activ
     if (effects && !b->effects) {
         if (b->profile!=FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC && b->profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)
             return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 effects have no actual Source rules declaration");
+        if (b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE && !b->footsteps) {
+            frontend_q2_footstep_source footsteps=footstep_source(b);
+            if (!frontend_q2_footsteps_create(&footsteps,&b->footsteps,e)) return false;
+        }
         frontend_remote_q2_effects_source s=source(b);
         if (!frontend_remote_q2_effects_create(&s,&b->effects,e)) return false;
     }
@@ -562,6 +613,7 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     frontend_unified_q2 *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 normalized CLIENT state");
     o->frontend=f; o->replica=r; o->media=media; o->events=events;
+    o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
     qa_hud_options h=hud_options(o);
     if (!o->localizations || !current(o,e) || !qa_hud_create(&h,&o->hud,e)) { qa_localization_pool_destroy(o->localizations); free(o); return false; }
@@ -752,8 +804,8 @@ static bool player_overlay_valid(frontend_unified_q2 *o,const qa_unified_documen
     const qa_json_document *j=qa_unified_document_json(d); qa_json_id kind=get(j,event,"kind"); qa_actor_id a;
     if (!actor(o,d,get(j,event,"actor"),&a,e) || !a.registry) return false;
     if (qa_json_string_equal(j,kind,"view")) {
-        qa_json_id view=get(j,event,"view"); uint64_t layouts; qa_buffer selected={0};
-        bool okay=qa_json_u64(j,get(j,view,"layouts"),&layouts,e);
+        qa_json_id view=get(j,event,"view"); uint64_t layouts; qa_buffer selected={0}; qa_vec3 offset;
+        bool okay=qa_json_u64(j,get(j,view,"layouts"),&layouts,e) && vector(d,get(j,view,"gunOffset"),&offset,e);
         qa_json_id item=get(j,view,"selectedItem");
         if (okay && qa_json_type(j,item)!=QA_JSON_NULL) okay=string(d,item,&selected,e);
         qa_buffer_free(&selected); return okay;
@@ -787,8 +839,8 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
     q2_activation *owner=NULL;
     if (!activation(o,d,get(j,row,"owner"),&owner,e) || (owner && owner->retired)) return false;
     if (qa_json_string_equal(j,kind,"view")) {
-        qa_json_id view=get(j,event,"view"); uint64_t layouts;
-        if (!qa_json_u64(j,get(j,view,"layouts"),&layouts,e)) return false;
+        qa_json_id view=get(j,event,"view"); uint64_t layouts; qa_vec3 gun_offset;
+        if (!qa_json_u64(j,get(j,view,"layouts"),&layouts,e) || !vector(d,get(j,view,"gunOffset"),&gun_offset,e)) return false;
         qa_buffer provider={0},content={0}; frontend_remote_q2_effects_profile profile;
         bool declared=semantic_source(d,row,false,&provider,&profile,e) && string(d,get(j,row,"content"),&content,e);
         if (!declared) { qa_buffer_free(&provider); qa_buffer_free(&content); return false; }
@@ -803,6 +855,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
         o->view_content=(char *)content.data; o->view_provider=(char *)provider.data;
         o->view_profile=profile; o->view_owner=owner;
         o->view_layouts=layouts;
+        o->view_gun_offset=gun_offset;
         return true;
     }
     qa_json_id rows=get(j,event,qa_json_string_equal(j,kind,"inventory")?"entries":"rows"); size_t count=qa_json_size(j,rows);
@@ -840,7 +893,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
         char s[32],p[32],m[32];
         okay=string(d,get(j,r,"name"),&name,e) && number(d,get(j,r,"score"),&score,e) && number(d,get(j,r,"ping"),&ping,e) &&
             number(d,get(j,r,"minutes"),&minutes,e) && qa_json_bool(j,get(j,r,"spectator"),&spectator,e) &&
-            qa_format_number(score,s,e) && qa_format_number(ping,p,e) && qa_format_number(minutes,m,e);
+            qa_format_ecmascript_number(score,s,e) && qa_format_ecmascript_number(ping,p,e) && qa_format_ecmascript_number(minutes,m,e);
         if (okay && name.size<=SIZE_MAX-128) {
             scores[i]=malloc(name.size+128); okay=scores[i]!=NULL;
             if (okay) snprintf(scores[i],name.size+128,"%s  %s  %sms  %sm%s",s,(const char *)name.data,p,m,spectator?"  Spectator":"");
@@ -1262,8 +1315,11 @@ bool frontend_unified_q2_world(frontend_unified_q2 *o,const qa_scene_view *view,
     if (!o || !view || !frame || o->busy || !current(o,e)) return false;
     qa_actor_id viewer; uint32_t source_number;
     if (!frontend_remote_unified_player(o->replica,&viewer,&source_number)) return false;
+    const qa_cvar_view *hand=qa_cvars_find(frontend_remote_unified_domain_read(o->replica)->cvars,"hand");
     frontend_remote_q2_effects_sample sample={.milliseconds=o->seconds*1000,.server_milliseconds=o->seconds*1000,
-        .fraction=1,.frame_sequence=o->frame_number,.view=*view,.viewer=viewer,.hardware=o->frontend->gl!=NULL,.world_input=world};
+        .fraction=1,.frame_sequence=o->frame_number,.view=*view,.viewer=viewer,.hardware=o->frontend->gl!=NULL,
+        .hand=hand && hand->integer>=0 && hand->integer<=2?hand->integer:0,.gun_offset=o->view_gun_offset,
+        .frame_seconds=o->effects_frame_seconds,.world_input=world};
     ++o->busy; bool okay=true;
     for (q2_bank *b=o->banks;okay && b;b=b->next) if (b->effects) {
         frontend_remote_q2_effects_pose *rows=NULL;
@@ -1279,8 +1335,19 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
     if (!o || !view || !out || !count || o->busy || !current(o,e)) return false;
     qa_actor_id viewer; uint32_t number_id;
     if (!frontend_remote_unified_player(o->replica,&viewer,&number_id)) return false;
+    const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
+    const qa_cvar_view *steps=qa_cvars_find(registry,"cl_footsteps"),*hand=qa_cvars_find(registry,"hand");
+    bool has_effects=false;
+    for (q2_bank *b=o->banks;b;b=b->next) if (b->effects) has_effects=true;
+    if (has_effects && (!steps || !hand || !isfinite(steps->number) || fabs(steps->number)>FLT_MAX))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 effects sampling has no actual finite CLIENT routing controls");
+    o->effects_frame_seconds=o->frontend->wall_time_ns>=o->effects_wall_ns?
+        (float)((double)(o->frontend->wall_time_ns-o->effects_wall_ns)/1e9):0;
+    o->effects_wall_ns=o->frontend->wall_time_ns;
     frontend_remote_q2_effects_sample sample={.milliseconds=o->seconds*1000,.server_milliseconds=o->seconds*1000,
-        .fraction=1,.frame_sequence=o->frame_number,.view=*view,.viewer=viewer,.hardware=o->frontend->gl!=NULL,.world_input=world};
+        .fraction=1,.frame_sequence=o->frame_number,.view=*view,.viewer=viewer,.hardware=o->frontend->gl!=NULL,
+        .footsteps=steps?(float)steps->number:0,.hand=hand && hand->integer>=0 && hand->integer<=2?hand->integer:0,
+        .gun_offset=o->view_gun_offset,.frame_seconds=o->effects_frame_seconds,.world_input=world};
     o->light_count=0; ++o->busy; bool okay=true;
     for (q2_bank *b=o->banks;okay && b;b=b->next) if (b->effects) {
         const qa_scene_light *lights; size_t n;
@@ -1357,7 +1424,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (okay && o->inventory_visible) {
         okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_scene_vec4){1,1,1,1},e);
         for (size_t i=0;okay && i<o->item_count;++i) {
-            char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
+            char count[32]; if (!qa_format_ecmascript_number(o->items[i].count,count,e)) { okay=false; break; }
             size_t n=strlen(o->items[i].label); if (n>SIZE_MAX-64) { okay=false; break; }
             char *row=malloc(n+64); if (!row) { okay=false; break; }
             snprintf(row,n+64,"%s  %s",count,o->items[i].label);
@@ -1385,6 +1452,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->banks) {
         q2_bank *b=o->banks;
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
+        if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m->path); free(m); }
         for (size_t i=0;i<256;++i) free(b->styles[i]);
         o->banks=b->next; free(b->aliases); free(b->source_provider); free(b->content); free(b);
@@ -1401,6 +1469,14 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     free(o->layout); free(o->lights); free(o->muzzles); free(o); *slot=NULL; return true;
+}
+bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
+{
+    if (!o) return true;
+    if (!visitor || !frontend_unified_q2_idle(o)) return false;
+    for (q2_bank *b=o->banks;b;b=b->next)
+        if (!frontend_q2_footsteps_visit(b->footsteps,visitor,e)) return false;
+    return true;
 }
 static bool capsule(qa_source_save_io *io,qa_buffer *b)
 {
@@ -1507,7 +1583,8 @@ static bool saved_visuals(qa_source_save_io *io,frontend_unified_q2 *o,const fro
     if (!saved_activation(io,o,o->help_owner) || !saved_activation(io,o,o->help_owner+1)) return false;
     uint32_t view_profile=o->view_profile;
     if (!saved_text(io,&o->view_content) || !saved_text(io,&o->view_provider) || !qa_source_save_u32(io,&view_profile) ||
-        !saved_activation(io,o,&o->view_owner) || !qa_source_save_u64(io,&o->view_layouts)) return false;
+        !saved_activation(io,o,&o->view_owner) || !qa_source_save_u64(io,&o->view_layouts) ||
+        !qa_source_save_vec3(io,&o->view_gun_offset) || !qa_vec_finite(o->view_gun_offset)) return false;
     if (read) o->view_profile=(frontend_remote_q2_effects_profile)view_profile;
     if (o->view_provider && *o->view_provider) {
         qa_vfs *files; const qa_product *product;
@@ -1530,13 +1607,15 @@ static bool saved_visuals(qa_source_save_io *io,frontend_unified_q2 *o,const fro
 static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const frontend_unified_q2_refs *refs)
 {
     bool read=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[5]={'Q','U','Q','2','4'};
+    uint8_t magic[5]={'Q','U','Q','2','5'};
     uint32_t epoch=frontend_remote_unified_epoch(o->replica);
     uint32_t physical=frontend_remote_unified_domain_read(o->replica)->physical_seat;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ24",sizeof(magic)) ||
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ25",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=frontend_remote_unified_epoch(o->replica) ||
         !qa_source_save_u32(io,&physical) || physical!=frontend_remote_unified_domain_read(o->replica)->physical_seat ||
-        !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) || !qa_source_save_u64(io,&o->frame_number)) return false;
+        !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) || !qa_source_save_u64(io,&o->frame_number) ||
+        !qa_source_save_u64(io,&o->effects_wall_ns) || !qa_source_save_f32(io,&o->effects_frame_seconds) ||
+        !isfinite(o->effects_frame_seconds) || o->effects_frame_seconds<0) return false;
     bool frame=o->frame!=NULL;
     if (!qa_source_save_bool(io,&frame)) return false;
     if (frame) {
@@ -1669,9 +1748,19 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
                 !b->aliases[k].actor.registry) return false;
             for (size_t p=0;p<k;++p) if (b->aliases[p].number==b->aliases[k].number) return false;
         }
+        bool footsteps=b->footsteps!=NULL;
+        if (!qa_source_save_bool(io,&footsteps)) return false;
+        if (footsteps) {
+            if (!refs->content || b->profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) return false;
+            frontend_q2_footstep_source s=footstep_source(b); qa_buffer bytes={0};
+            bool okay=read?capsule(io,&bytes):frontend_q2_footsteps_checkpoint(b->footsteps,&s,refs->content,&bytes,io->error) && capsule(io,&bytes);
+            if (okay && read) okay=frontend_q2_footsteps_restore(&s,refs->content,(qa_bytes){bytes.data,bytes.size},&b->footsteps,io->error);
+            qa_buffer_free(&bytes); if (!okay) return false;
+        }
         bool effects=b->effects!=NULL;
         if (!qa_source_save_bool(io,&effects)) return false;
         if (effects) {
+            if (b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE && !b->footsteps) return false;
             qa_buffer bytes={0}; frontend_remote_q2_effects_source s=source(b);
             bool okay=read?capsule(io,&bytes):frontend_remote_q2_effects_checkpoint(b->effects,&refs->effects,&bytes,io->error) && capsule(io,&bytes);
             if (okay && read) okay=frontend_remote_q2_effects_restore(&s,&refs->effects,(qa_bytes){bytes.data,bytes.size},&b->effects,io->error);
@@ -1689,6 +1778,7 @@ bool frontend_unified_q2_checkpoint(frontend_unified_q2 *o,const frontend_unifie
 {
     if (!o || !refs || !refs->model_encode || !refs->effects.actor_encode || !out || out->data || out->size ||
         !frontend_unified_q2_idle(o) || !current(o,e)) return false;
+    if (!frontend_remote_unified_checkpoint_current(o->replica,e)) return false;
     qa_source_save_io io={0};
     bool okay=qa_source_save_writer(&io,NULL,e) && q2_fields(&io,o,refs) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return okay;
@@ -1697,6 +1787,7 @@ bool frontend_unified_q2_restore(qa_frontend *f,frontend_remote_unified *replica
     frontend_unified_events *events,const frontend_unified_q2_refs *refs,qa_bytes bytes,frontend_unified_q2 **out,qa_error *e)
 {
     if (!f || !replica || !media || !events || !refs || !refs->model_decode || !refs->effects.actor_decode || !out || *out) return false;
+    if (!frontend_remote_unified_checkpoint_current(replica,e)) return false;
     frontend_unified_q2 *o=calloc(1,sizeof(*o)); if (!o) return false;
     o->frontend=f; o->replica=replica; o->media=media; o->events=events;
     qa_source_save_io io={0};

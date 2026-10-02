@@ -573,22 +573,6 @@ static bool fire_source_exact(q2m_context *context, q2m_attack_kind kind,
   return q2m_fire(context, &spec, error);
 }
 
-static bool fire_predict_exact(q2m_context *context, q2m_attack_kind kind,
-                               float damage, int flash, float speed, bool eye,
-                               float offset, qa_error *error) {
-  qa_vec3 start, direction;
-  bool available;
-  if (!q2m_predict_shot(context, flash, speed, eye, offset, &start, &direction,
-                        &available, error))
-    return false;
-  if (!available || !q2m_alive(context))
-    return true;
-  q2m_fire_spec spec =
-      q2m_fire_default(context, kind, damage, flash, start, direction);
-  exact_projectile_speed(&spec, speed);
-  return q2m_fire(context, &spec, error);
-}
-
 static bool fire_forward_exact(q2m_context *context, q2m_attack_kind kind,
                                float damage, int flash, float speed,
                                qa_error *error) {
@@ -1099,7 +1083,7 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
             (context->game->options.product == QA_Q2_ROGUE ? 80.0f : 500.0f) &&
         (context->game->options.skill == 3 ||
          (context->game->options.product == QA_Q2_ROGUE &&
-          q2m_random(context->game) < 0.25f * context->game->options.skill)))
+          q2m_random(context->game) < 0.25f * (float)context->game->options.skill)))
       monster->next_frame = 111;
     monster->dodging = false;
     monster->charging = false;
@@ -1921,7 +1905,7 @@ static int widow_torso_frame(q2m_context *context, bool *turned,
     return 0;
   }
   for (int index = 0; index < 17; ++index)
-    if (angle >= 95.0f - index * 10.0f)
+    if (angle >= 95.0f - (float)index * 10.0f)
       return 62 + index;
   return 79;
 }
@@ -1973,7 +1957,7 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
       return true;
     qa_vec3 angles = q2m_vector_angles(direction);
     float yaw = context->body.angles.y;
-    float aim = 100.0f - 10.0f * (flash - 165);
+    float aim = 100.0f - 10.0f * (float)(flash - 165);
     if (aim <= 0.0f)
       aim += 360.0f;
     float target = yaw - angles.y;
@@ -2058,7 +2042,7 @@ static bool widow2_beam(q2m_context *context, qa_error *error) {
       return true;
     qa_vec3 angles = context->body.angles;
     angles.x += q2m_vector_angles(qa_vec_sub(enemy.origin, start)).x;
-    angles.y -= -40.0f + index * 8.0f;
+    angles.y -= -40.0f + (float)index * 8.0f;
     qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
   } else {
     monster->widow_previous_target = monster->saved_attack_position;
@@ -2276,7 +2260,7 @@ static bool conditional_transition(q2m_context *context, const char *callback,
       return false;
     float chance = context->game->options.edition == QA_Q2_RERELEASE ? 0.7f
                    : context->game->options.product == QA_Q2_ROGUE
-                       ? 0.6f + 0.05f * context->game->options.skill
+                       ? 0.6f + 0.05f * (float)context->game->options.skill
                        : 0.6f;
     bool repeat = visible && q2m_distance(context, monster->enemy) >= 80.0f &&
                   q2m_random(context->game) <= chance;
@@ -2449,7 +2433,7 @@ static bool conditional_transition(q2m_context *context, const char *callback,
 
   if (strcmp(callback, "widow2_disrupt_reattack") == 0) {
     if (q2m_random(context->game) <
-        0.25f + 0.15f * context->game->options.skill)
+        0.25f + 0.15f * (float)context->game->options.skill)
       monster->next_frame = 28;
     return true;
   }
@@ -2709,7 +2693,7 @@ static bool foundational_species_callback(q2m_context *context,
       return false;
     bool blind = monster->manual_steering;
     float speed = rerelease ? (heat ? 500.0f : 650.0f)
-                            : 500.0f + 100.0f * context->game->options.skill;
+                            : 500.0f + 100.0f * (float)context->game->options.skill;
     qa_vec3 point = blind ? monster->blind_fire_target : enemy.origin;
     if (!blind) {
       bool head = q2m_random(context->game) < 0.33f ||
@@ -3193,7 +3177,7 @@ static bool boss2_rockets(q2m_context *context, bool force_predictive,
         float travel = qa_vec_length(qa_vec_sub(enemy.origin, start)) / 750.0f;
         qa_vec3 point = qa_vec_add(
             enemy.origin,
-            qa_vec_scale(enemy.velocity, travel - 0.3f + index * 0.15f));
+            qa_vec_scale(enemy.velocity, travel - 0.3f + (float)index * 0.15f));
         direction = qa_vec_normalize(qa_vec_sub(point, start));
       }
     } else {

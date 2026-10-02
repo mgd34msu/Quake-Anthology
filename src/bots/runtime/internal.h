@@ -53,6 +53,8 @@ void bot_runtime_handles_close(qa_bot_runtime *);
 bool bot_runtime_chat_shutdown(qa_bot_runtime *,qa_error *);
 bool bot_runtime_weapons_shutdown(qa_bot_runtime *,qa_error *);
 bool bot_runtime_characters_shutdown(qa_bot_runtime *,qa_error *);
+bool bot_runtime_character_available(void *);
+bool bot_runtime_character_publish(void *, qa_bot_character *, qa_error *);
 bool bot_runtime_observations_resize(qa_bot_runtime *, size_t, qa_error *);
 bool bot_runtime_owners_create(qa_bot_runtime *, qa_error *);
 void bot_runtime_observations_clear(qa_bot_runtime *);

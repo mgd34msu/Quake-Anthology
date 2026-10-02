@@ -228,7 +228,7 @@ static bool font_layout(frontend_native_q2 *source, const char *text, int32_t sc
     if (!selected) { selection.primary = NULL; selection.fallbacks = NULL; selection.fallback_count = 0; }
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)},
         .scale = (float)scale, .color = color, .color_codes = QA_FONT_COLOR_LITERAL,
-        .alignment = alignment, .alternate = source->alternate, .line_height = (selected ? 10.f : 8.f) * scale};
+        .alignment = alignment, .alternate = source->alternate, .line_height = (selected ? 10.f : 8.f) * (float)scale};
     return qa_font_layout_build(&selection, &options, scratch, out, error);
 }
 static bool draw_text(frontend_native_q2 *source, const char *text, int32_t x, int32_t y,
@@ -241,7 +241,7 @@ static bool draw_text(frontend_native_q2 *source, const char *text, int32_t x, i
         if (alignment == QA_FONT_ALIGN_CENTER) origin_x -= layout.width * .5f;
         else if (alignment == QA_FONT_ALIGN_RIGHT) origin_x -= layout.width;
         qa_font_draw_options draw = {.seat = source->seat, .target = source->viewport,
-            .origin = {origin_x - source->viewport.x, (float)y - source->viewport.y},
+            .origin = {origin_x - (float)source->viewport.x, (float)y - (float)source->viewport.y},
             .space = QA_FONT_PIXELS, .shadow_offset = shadow ? (float)scale : 0};
         ok = qa_font_draw_layout(&source->frontend->frame, &layout, &draw, error);
     }
@@ -367,7 +367,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
         if (!qa_font_find_glyph(source->classic, character, &glyph) ||
             !glyph.visible || !glyph.image) return true;
         return qa_scene_frame_picture_f(&source->frontend->frame, glyph.image, source->viewport,
-            (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32, 8.f * scale, 8.f * scale},
+            (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32, 8.f * (float)scale, 8.f * (float)scale},
             glyph.uv, (qa_scene_vec4){1, 1, 1, 1}, error);
     }
     if (!strcmp(import->name, "Draw_RegisterPic") || !strcmp(import->name, "Draw_GetPicSize") ||

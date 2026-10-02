@@ -111,8 +111,12 @@ q3_service_result q3_bot_goals(q3_call *call, int32_t *result, qa_error *error)
         qa_buffer_free(&path);
         break;
     }
-    case 532: ok = q3_write_string(call, call->arguments[1], qa_bot_goals_name(goals, q3_integer(call, 0)),
-                                    q3_integer(call, 2), error); break;
+    case 532: {
+        const char *name=NULL;
+        ok=qa_bot_goals_name_read(goals,q3_integer(call,0),&name,error)&&
+            q3_write_string(call,call->arguments[1],name,q3_integer(call,2),error);
+        break;
+    }
     case 546: {
         int32_t client;
         ok = q3_bot_client_number(call,q3_integer(call,0),&client,error) &&

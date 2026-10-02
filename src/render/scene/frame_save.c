@@ -135,7 +135,8 @@ static bool allocation_slice(const void *base, size_t allocation, const void *po
     if (position<first || position-first>allocation*stride || (position-first)%stride) return false;
     *offset=(size_t)((position-first)/stride); return count<=allocation-*offset;
 }
-static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs, qa_scene_mesh *value)
+static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
+    size_t source_storage, qa_scene_mesh *value)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ; uint64_t geometry=UINT64_MAX;
     if (!reading && value->geometry) {
@@ -151,23 +152,25 @@ static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     FIELD(vec3,&value->bounds,mins); FIELD(vec3,&value->bounds,maxs);
     if (!qa_source_save_count(io,&value->vertex_count,SIZE_MAX/sizeof(*value->vertices)) ||
         !qa_source_save_count(io,&value->index_count,SIZE_MAX/sizeof(*value->indices))) return false;
+    if (source_storage && value->vertex_count>source_storage) return false;
+    size_t vertex_storage=source_storage?source_storage:value->vertex_count;
     bool retained_vertices=false, retained_indices=false; size_t vertex_offset=0, index_offset=0;
     if (!reading) {
-        retained_vertices=allocation_slice(retained.vertices,retained.vertex_count,value->vertices,value->vertex_count,sizeof(*value->vertices),&vertex_offset);
+        retained_vertices=allocation_slice(retained.vertices,retained.vertex_count,value->vertices,vertex_storage,sizeof(*value->vertices),&vertex_offset);
         retained_indices=allocation_slice(retained.indices,retained.index_count,value->indices,value->index_count,sizeof(*value->indices),&index_offset);
     }
     if (!qa_source_save_bool(io,&retained_vertices) || !qa_source_save_bool(io,&retained_indices)) return false;
     if (retained_vertices) {
-        if (!value->geometry || !retained.vertices || !qa_source_save_count(io,&vertex_offset,retained.vertex_count) || value->vertex_count>retained.vertex_count-vertex_offset) return false;
+        if (!value->geometry || !retained.vertices || !qa_source_save_count(io,&vertex_offset,retained.vertex_count) || vertex_storage>retained.vertex_count-vertex_offset) return false;
         if (reading) value->vertices=retained.vertices+vertex_offset;
     } else {
-        if (reading && value->vertex_count) {
-            if (value->vertex_count>(io->input.size-io->offset)/56) return false;
-            value->vertices=qa_arena_alloc(&frame->storage,value->vertex_count*sizeof(*value->vertices),_Alignof(qa_scene_vertex),io->error);
+        if (reading && vertex_storage) {
+            if (vertex_storage>(io->input.size-io->offset)/56) return false;
+            value->vertices=qa_arena_alloc(&frame->storage,vertex_storage*sizeof(*value->vertices),_Alignof(qa_scene_vertex),io->error);
             if (!value->vertices) return false;
         }
-        if (value->vertex_count && !value->vertices) return false;
-        for (size_t i=0;i<value->vertex_count;++i) {
+        if (vertex_storage && !value->vertices) return false;
+        for (size_t i=0;i<vertex_storage;++i) {
             qa_scene_vertex item=reading?(qa_scene_vertex){0}:value->vertices[i];
             if (!vertex(io,&item)) return false;
             if (reading) ((qa_scene_vertex *)value->vertices)[i]=item;
@@ -189,13 +192,17 @@ static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
             if (reading) ((uint32_t *)value->indices)[i]=item;
         }
     }
-    for (size_t i=0;i<value->index_count;++i) if (value->indices[i]>=value->vertex_count) return false;
+    for (size_t i=0;i<value->index_count;++i) if (value->indices[i]>=vertex_storage) return false;
     return true;
 }
 static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
     uint32_t schema, qa_scene_draw *value)
 {
-    if (!mesh(io,frame,refs,&value->mesh) || !matrix(io,&value->model) || !matrix(io,&value->mvp)) return false;
+    if (schema>=10) {
+        FIELD(u32,value,source_vertex_storage);
+        if (value->source_vertex_storage && value->source_vertex_storage!=1000) return false;
+    }
+    if (!mesh(io,frame,refs,value->source_vertex_storage,&value->mesh) || !matrix(io,&value->model) || !matrix(io,&value->mvp)) return false;
     FIELD(u8,value,texture_count); if (value->texture_count>2) return false;
     for (size_t i=0;i<2;++i) {
         if (!qa_source_save_bool(io,&value->retain_texture[i]) || (i<value->texture_count && !image(io,frame,&value->textures[i]))) return false;
@@ -228,6 +235,7 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
         FIELD(bool,value,source_stage_state);
     }
     if (schema>=8) { FIELD(bool,value,source_arrays); }
+    if (value->source_vertex_storage && !value->source_arrays) return false;
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
 static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
@@ -289,9 +297,9 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=9;
+    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=10;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
-        (schema<2 || schema>9)) return false;
+        (schema<2 || schema>10)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
     if (schema>=3) {
         FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);

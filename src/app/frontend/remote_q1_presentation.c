@@ -9,6 +9,29 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool frontend_remote_q1_initial_clear(qa_frontend *frontend, uint32_t seat,
+    bool *active, bool *clear, qa_error *error)
+{
+    if (!frontend || !active || !clear || seat >= frontend->options.seats) return false;
+    *active = false; *clear = true;
+    frontend_remote_q1 *selected = NULL;
+    for (frontend_remote_q1 *row = frontend->remote_q1; row; row = row->next) {
+        if (row->retired || row->options.domain.physical_seat != seat) continue;
+        if (selected) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Legacy clear has multiple actual Q1 receivers");
+        selected = row;
+    }
+    if (!selected || !selected->bound || !selected->world) return true;
+    frontend_remote_q1_player_view player; bool present;
+    if (!frontend_remote_q1_player_read(selected, &player, &present, error)) return false;
+    if (!present) return true;
+    const qa_product *product = qa_catalog_product(selected->content.catalog, selected->content.product);
+    frontend_legacy_render_policy policy;
+    if (!frontend_legacy_render_policy_read_registry(selected->options.domain.cvars, product, &policy, error) ||
+        !remote_q1_live(selected, error)) return false;
+    *active = true; *clear = policy.lighting.clear;
+    return true;
+}
+
 bool remote_q1_model_lighting(frontend_remote_q1 *row,
     const qa_scene_world_input *world, qa_scene_model_input *input, qa_error *error)
 {
@@ -141,6 +164,16 @@ static bool scene_blend(void *context,const qa_scene_world_input *world,qa_scene
     remote_scene *scene=context;
     return scene_current(scene) && remote_q1_effects_blend(scene->row,&world->view,world->seconds,blend,error);
 }
+static bool scene_policy(void *context, const qa_product *product,
+    frontend_legacy_render_policy *out, qa_error *error)
+{
+    remote_scene *scene = context;
+    frontend_remote_q1 *row = scene->row;
+    if (!scene_current(scene) || product != qa_catalog_product(row->content.catalog, row->content.product) ||
+        !frontend_legacy_render_policy_read_registry(row->options.domain.cvars, product, out, error)) return false;
+    if (row->max_clients > 1) out->lighting.fullbright = false;
+    return scene_current(scene);
+}
 bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     qa_audio_listener *listener, bool *rendered, qa_error *error)
 {
@@ -191,7 +224,7 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     }
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     frontend_legacy_scene_services services={.context=&scene,.current=scene_current,
-        .visuals=scene_visuals,.particles=scene_particles,.blend=scene_blend};
+        .visuals=scene_visuals,.particles=scene_particles,.blend=scene_blend,.policy=scene_policy};
     if(ok) {
         ++row->busy;
         ok=remote_q1_effects_scene(row,seconds,&world.lights,&world.light_count,error) &&

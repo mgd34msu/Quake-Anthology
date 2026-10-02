@@ -4,6 +4,7 @@
 #include "source_restore.h"
 #include "native_q2_save.h"
 #include "native_q3_client.h"
+#include "native_q3_video.h"
 #include "remote_q3_client.h"
 #include "remote_q3_initial.h"
 #include "remote_q3_modules.h"
@@ -377,7 +378,7 @@ static bool resource_scopes(frontend_resource_inventory *inventory,qa_error *err
     }
     for (size_t i=0;i<frontend_native_q3_count(f);++i) {
         frontend_native_q3_view v;
-        if (!frontend_native_q3_read(f,i,&v,error) || !scope_add(inventory,(resource_scope){
+        if (!(inventory->video?frontend_native_q3_video_read(f,i,&v,error):frontend_native_q3_read(f,i,&v,error)) || !scope_add(inventory,(resource_scope){
             .kind=RESOURCE_NATIVE_Q3,.ordinal=i,.owner=frontend_native_q3_at(f,i),.descriptor=v.source_launch,
             .provider=v.source_owner,.receiver=v.receiver,.service_owner=v.service_owner,.identity=v.identity,
             .seat=v.seat,.launch_seat=v.launch_seat,.actor=v.actor,.source_files=v.source_files,.mounts=v.mounts},error)) return false;
@@ -498,7 +499,7 @@ static bool hold(capture_row *row, qa_error *error)
     }
     row->held=ok; return ok;
 }
-static bool heaps(qa_frontend *f, owner_append append, void *context, qa_error *error)
+static bool heaps(qa_frontend *f, bool video, owner_append append, void *context, qa_error *error)
 {
     if (!append(context,CAPTURE_IMAGES,f->ui_images,error) || !append(context,CAPTURE_IMAGES,f->images,error) ||
         !append(context,CAPTURE_LIBRARY,f->materials,error) || !append(context,CAPTURE_FONTS,f->fonts,error) ||
@@ -534,8 +535,8 @@ static bool heaps(qa_frontend *f, owner_append append, void *context, qa_error *
     }
     for (size_t i=0;i<frontend_native_q3_count(f);++i) {
         frontend_native_q3_view owner;
-        if (!frontend_native_q3_read(f,i,&owner,error) || !owner.assets || !owner.images ||
-            !owner.materials || !owner.fonts || !owner.core)
+        if (!(video?frontend_native_q3_video_read(f,i,&owner,error):frontend_native_q3_read(f,i,&owner,error)) ||
+            (!video && (!owner.assets || !owner.images || !owner.materials || !owner.fonts || !owner.core)))
             return error && error->code!=QA_OK?false:
                 frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture native Q3 owner is incomplete");
         if (!append(context,CAPTURE_IMAGES,owner.images,error) || !append(context,CAPTURE_LIBRARY,owner.materials,error) ||
@@ -609,7 +610,7 @@ static bool registry_children(owner_append append, void *context, assets_read re
     }
     return true;
 }
-static bool registries(qa_frontend *f, owner_append append, void *context, qa_error *error)
+static bool registries(qa_frontend *f, bool video, owner_append append, void *context, qa_error *error)
 {
     bool ok=true;
     for (size_t i=0;ok && i<frontend_source_group_count(f);++i) {
@@ -618,7 +619,7 @@ static bool registries(qa_frontend *f, owner_append append, void *context, qa_er
     }
     for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
         frontend_native_q3_view owner;
-        ok=frontend_native_q3_read(f,i,&owner,error) && owner.assets &&
+        ok=(video?frontend_native_q3_video_read(f,i,&owner,error):frontend_native_q3_read(f,i,&owner,error)) && (video || owner.assets) &&
             append(context,CAPTURE_ASSETS,owner.assets,error);
     }
     for (size_t i=0;ok && i<frontend_equipment_q3_count(f);++i) {
@@ -649,6 +650,25 @@ static bool registries(qa_frontend *f, owner_append append, void *context, qa_er
         const qa_material_source_scratch *source=qa_render_controls_source_metadata(controls,error);
         const qa_q3_source_scene_bank *bank=NULL;
         if(!source || !qa_material_source_scene_bank_metadata(source,&bank,error)) return false;
+        size_t image_count=0;
+        if(!qa_render_controls_source_images_metadata(controls,&image_count,error)) return false;
+        for(size_t i=0;ok && i<image_count;++i) {
+            const qa_scene_image *image=NULL;
+            if(!qa_render_controls_source_image_metadata(controls,i,&image,error) || !image) return false;
+            qa_scene_resources *images=qa_scene_image_resource_owner(image);
+            ok=images && append(context,CAPTURE_IMAGES,images,error);
+        }
+        for(size_t i=0;ok && i<qa_material_source_library_count(source);++i) {
+            const qa_material_library *library=qa_material_source_library_at(source,i);
+            ok=library && append(context,CAPTURE_LIBRARY,library,error) &&
+                append(context,CAPTURE_IMAGES,qa_material_library_resource_owner(library),error);
+        }
+        for(size_t i=0;ok && i<qa_material_source_world_count(source);++i) {
+            const qa_scene_world *world=qa_material_source_world_at(source,i);
+            ok=world && append(context,CAPTURE_WORLD,world,error) &&
+                append(context,CAPTURE_IMAGES,qa_scene_world_resource_owner(world),error) &&
+                append(context,CAPTURE_LIBRARY,qa_scene_world_material_owner(world),error);
+        }
         for(size_t i=0;ok && i<qa_q3_source_scene_bank_registry_count(bank);++i) {
             qa_q3_presentation_assets *assets=qa_q3_source_scene_bank_registry_at(bank,i);
             ok=assets && append(context,CAPTURE_ASSETS,assets,error);
@@ -791,8 +811,8 @@ static bool resource_collect(frontend_resource_inventory *inventory,qa_error *er
 {
     qa_frontend *f=inventory->frontend;
     if (!resource_scopes(inventory,error) || (inventory->checking &&
-        inventory->scope_cursor!=inventory->checking->scope_count) || !registries(f,resource_add,inventory,error) ||
-        !heaps(f,resource_add,inventory,error)) return false;
+        inventory->scope_cursor!=inventory->checking->scope_count) || !registries(f,inventory->video!=NULL,resource_add,inventory,error) ||
+        !heaps(f,inventory->video!=NULL,resource_add,inventory,error)) return false;
     /* Metadata replay uses its own retained owner observations. Save capture
      * separately holds the actual ordinary remote and InitialUI resource cut. */
     for (size_t i=0;i<frontend_remote_q3_count(f);++i) {
@@ -885,7 +905,7 @@ static bool resource_parent_matches(const frontend_resource_inventory *inventory
     const qa_frontend *f=inventory?inventory->frontend:NULL;
     bool publishing=consuming && inventory && !inventory->engine_only;
     if (!f || f->resource_inventory!=inventory || f->application!=inventory->application ||
-        f->stepping || f->round || f->shutdown || f->capture || f->source_restoring ||
+        (f->stepping && !inventory->video) || f->round || f->shutdown || f->capture || f->source_restoring ||
         f->scene_world!=inventory->scene_world || f->map_resource!=inventory->map_resource ||
         &f->frame!=inventory->frame || f->seats!=inventory->seats || f->options.seats!=inventory->seat_count ||
         qa_application_launch(f->application)!=(publishing?inventory->candidate:inventory->launch) ||
@@ -942,7 +962,7 @@ static bool resource_inventory_collect(qa_frontend *f,qa_application *app,const 
 {
     if(f && (!frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     bool engine_only=!candidate && !client && !video && app && qa_application_startup_resource_phase(app,NULL);
-    if (!f || !app || f->application!=app || !out || *out || f->resource_inventory || f->stepping ||
+    if (!f || !app || f->application!=app || !out || *out || f->resource_inventory || (f->stepping && !video) ||
         f->round || f->shutdown || f->capture || f->source_restoring ||
         (client ? (!qa_application_client_prepare_associated(app,client) ||
             !qa_application_client_prepare_phase_is(client,QA_CLIENT_PREPARE_RESOURCES)) :
@@ -997,7 +1017,8 @@ bool frontend_resource_inventory_collect_video(qa_frontend *f,const frontend_vid
 static bool resource_roster_matches(const frontend_resource_inventory *inventory,bool metadata_only)
 {
     frontend_resource_inventory current={.frontend=inventory->frontend,.checking=inventory,
-        .rows=inventory->rows,.count=inventory->count,.metadata_only=metadata_only}; qa_error error={0};
+        .rows=inventory->rows,.count=inventory->count,.metadata_only=metadata_only,
+        .client=inventory->client,.video=inventory->video}; qa_error error={0};
     return resource_collect(&current,&error) && current.observation_cursor==inventory->observation_count &&
         current.scope_cursor==inventory->scope_count;
 }
@@ -1037,7 +1058,8 @@ bool frontend_resource_inventory_release(frontend_resource_inventory **address,q
     frontend_resource_inventory *inventory=*address;
     qa_frontend *f=inventory->frontend;
     if (!f || f->resource_inventory!=inventory || f->application!=inventory->application ||
-        f->stepping || f->round || f->shutdown || f->capture || f->source_restoring ||
+        (f->stepping && (!inventory->video || !frontend_video_guests_resources_associated(f,inventory->video))) ||
+        f->round || f->shutdown || f->capture || f->source_restoring ||
         !frontend_seat_callbacks_returned(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Resource metadata release lost its actual enclosing owner");
     for (size_t i=0;i<inventory->count;++i) {
@@ -1077,7 +1099,8 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Component scene roots require their actual saved namespace inventory");
     if(f && (!frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
-        !f->application || !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
+        !f->application || qa_application_client_prepare_active(f->application) ||
+        !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");
     if (!frontend_q3_source_color_publication_finish(f,error) ||
@@ -1085,11 +1108,12 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     frontend_capture *capture=calloc(1,sizeof(*capture));
     if (!capture) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the frontend capture lease");
     capture->frontend=f; f->capture=capture;
-    bool ok=registries(f,capture_add,capture,error) && remote_capture_roots(f,capture,error);
+    bool ok=registries(f,false,capture_add,capture,error) && remote_capture_roots(f,capture,error) &&
+        registry_children(capture_add,capture,capture_assets,error);
     /* Registry entry preflights strict child idle, so it precedes child tokens. */
     for (size_t i=0;ok && i<capture->count;++i)
         if(capture->rows[i].kind==CAPTURE_ASSETS) ok=hold(capture->rows+i,error);
-    ok=ok && heaps(f,capture_add,capture,error) && remote_capture_heaps(capture,error) &&
+    ok=ok && heaps(f,false,capture_add,capture,error) && remote_capture_heaps(capture,error) &&
         registry_children(capture_add,capture,capture_assets,error);
     for(size_t i=0;ok && i<capture->count;++i) if(capture->rows[i].kind==CAPTURE_IMAGES) {
         const qa_scene_resources *owner=capture->rows[i].owner;

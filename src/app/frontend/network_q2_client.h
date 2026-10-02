@@ -28,6 +28,10 @@ bool frontend_network_q2_client_idle(const frontend_network_q2_client *);
 bool frontend_network_q2_client_owns_input(const frontend_network_q2_client *,uint32_t physical_seat);
 bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_client *,
     const qa_application_client_source *);
+bool frontend_network_q2_client_configuration_advance(frontend_network_q2_client *,
+    qa_application_client_preparation *,bool *,qa_error *);
+bool frontend_network_q2_client_configuration_read(const frontend_network_q2_client *,
+    qa_application_client_source *,bool *ready,qa_error *);
 bool frontend_network_q2_client_admit(frontend_network_q2_client *,
     const qa_net_connect *, bool *recognized, qa_error *);
 void frontend_network_q2_client_disconnected(frontend_network_q2_client *, qa_net_client_id);

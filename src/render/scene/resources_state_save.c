@@ -217,6 +217,36 @@ static bool names_fields(qa_source_save_io *io, const qa_scene_resources *owner,
         if (!qa_strings_find(state->names->strings, (qa_bytes){(const uint8_t *)image->image.name, strlen(image->image.name)})) return false;
     return true;
 }
+static bool palette_source_fields(qa_source_save_io *io, qa_scene_resources *owner,
+    qa_scene_resources *state, unsigned family, const qa_scene_resource_checkpoint_refs *refs,
+    uint32_t version)
+{
+    qa_resource **resource = &state->palette_resources[family];
+    qa_vfs_acquisition *opening = &state->palette_openings[family];
+    if (!content_field(io, owner, refs, resource, &opening->mount, version)) return false;
+    if (!*resource) return !opening->resource_id && !opening->path && !opening->opening_present;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (state->palettes[family].size != 768) return false;
+    if (reading) opening->resource_id = qa_resource_id(*resource);
+    else if (opening->resource_id != qa_resource_id(*resource)) return false;
+    char **fields[] = {&opening->path, &opening->lookup_path, &opening->link_source, &opening->link_target};
+    for (unsigned i = 0; i < 4; ++i) {
+        const char *value = *fields[i]; char *owned = NULL;
+        bool ok = text_field(io, &value, &owned);
+        if (reading) *fields[i] = owned;
+        if (!ok) return false;
+    }
+    if (strcmp(opening->path, family == QA_SCENE_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx") ||
+        !qa_vfs_acquisition_opening_codec(io, owner->vfs, opening) || !opening->opening_present) return false;
+    qa_bytes bytes = qa_resource_bytes(*resource);
+    if (family == QA_SCENE_Q1)
+        return bytes.size == 768 && !memcmp(bytes.data, state->palettes[family].data, 768);
+    qa_image image = {0};
+    bool ok = qa_image_decode_pcx(bytes, QA_IMAGE_FORMAT, &image, io->error) && image.palette.size >= 1024;
+    for (size_t i = 0; ok && i < 256; ++i)
+        ok = !memcmp(image.palette.data + i * 4, state->palettes[family].data + i * 3, 3);
+    qa_image_free(&image); return ok;
+}
 
 static bool cache_options(qa_source_save_io *io, image_cache *entry, uint32_t version)
 {
@@ -394,9 +424,9 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
     const qa_scene_resource_checkpoint_refs *refs, sampling_state *sampling)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t version = 8, fullbright = state->fullbright_first;
+    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t version = 9, fullbright = state->fullbright_first;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QARS", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 2 || version > 8) || !names_fields(io, owner, state) ||
+        !qa_source_save_u32(io, &version) || (version < 2 || version > 9) || !names_fields(io, owner, state) ||
         !qa_source_save_bool(io, &state->registrations_started) || !qa_source_save_u32(io, &fullbright) || fullbright > 256 ||
         !image_field(io, refs, owner, &state->white) || !image_field(io, refs, owner, &state->missing)) return false;
     if (!builtin_image(state->white, false) || !builtin_image(state->missing, true) ||
@@ -421,6 +451,7 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             if (!state->palettes[family].data) return fail(io->error, QA_ERROR_MEMORY, "allocating saved resource palette");
         }
         if (!qa_source_save_bytes(io, state->palettes[family].data, palette)) return false;
+        if (version >= 9 && !palette_source_fields(io, owner, state, family, refs, version)) return false;
     }
     size_t count = state->cache_count, capacity = state->cache_capacity;
     if (!qa_source_save_count(io, &count, reading ? io->input.size / 43 : SIZE_MAX) ||
@@ -460,7 +491,10 @@ static void state_clear(qa_scene_resources *state)
         qa_resource_release(state->cache[i].source_record); qa_resource_release(state->cache[i].logical_record);
     }
     free(state->cache);
-    for (unsigned i = 0; i < 3; ++i) qa_buffer_free(&state->palettes[i]);
+    for (unsigned i = 0; i < 3; ++i) {
+        qa_buffer_free(&state->palettes[i]); qa_resource_release(state->palette_resources[i]);
+        qa_vfs_acquisition_dispose(&state->palette_openings[i]);
+    }
     qa_scene_image_release(state->white); qa_scene_image_release(state->missing);
     qa_scene_image_release(state->source_white); qa_scene_image_release(state->source_missing);
     qa_scene_image_release(state->source_identity);
@@ -509,6 +543,10 @@ bool qa_scene_resources_restore(qa_scene_resources *owner, qa_bytes bytes, const
         free(owner->cache);
         for (unsigned i = 0; i < 3; ++i) {
             qa_buffer_free(&owner->palettes[i]); owner->palettes[i] = state.palettes[i];
+            qa_resource_release(owner->palette_resources[i]);
+            qa_vfs_acquisition_dispose(&owner->palette_openings[i]);
+            owner->palette_resources[i] = state.palette_resources[i];
+            owner->palette_openings[i] = state.palette_openings[i];
             owner->policies[i] = state.policies[i]; owner->has_policy[i] = state.has_policy[i];
         }
         qa_scene_image_release(owner->white); qa_scene_image_release(owner->missing);

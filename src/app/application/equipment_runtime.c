@@ -360,10 +360,12 @@ bool application_equipment_runtime_actor_released(application_equipment_runtime 
         qa_error current = {0};
         if (runtime->sources[i].view.gear && !application_q3_gear_actor_released(
             runtime->sources[i].view.gear, record, &current)) {
-            if (okay) first = current; okay = false;
+            if (okay) first = current;
+            okay = false;
         }
     }
-    if (!okay && error) *error = first; return okay;
+    if (!okay && error) *error = first;
+    return okay;
 }
 
 application_equipment_events *application_equipment_runtime_events(const application_equipment_runtime *runtime)
@@ -497,14 +499,14 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
     qa_bytes *out, qa_error *error)
 {
     const qa_save_record *record = image ? qa_save_image_find(image, QA_SAVE_EQUIPMENT, "") : NULL;
-    if (!session || !record || !out || record->owner.schema_version != 3 ||
+    if (!session || !record || !out || record->owner.schema_version != 4 ||
         !record->owner.schema || strcmp(record->owner.schema, "qa.equipment"))
         return application_fail(error, QA_ERROR_FORMAT, "Equipment topology requires its actual save record");
     uint8_t magic[8] = {0}; uint32_t version = 0; bool present = false; qa_bytes source = {0};
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, session, record->payload, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QAEQUIP", sizeof(magic)) &&
-        qa_source_save_u32(&io, &version) && version == 3 &&
+        qa_source_save_u32(&io, &version) && version == 4 &&
         qa_source_save_bool(&io, &present) && present && saved_blob(&io, &source) && source.size;
     qa_source_save_dispose(&io);
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Equipment save lacks its genuine runtime topology");

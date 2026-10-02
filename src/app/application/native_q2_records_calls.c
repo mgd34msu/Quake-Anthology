@@ -137,6 +137,39 @@ bool application_native_q2_records_refresh(application_native_q2_records *o,qa_e
     if(ok) ok=nqr_rebase(o,e);
     --o->projection_depth; return ok;
 }
+static application_native_q2_pickup_scope *pickup_current(application_native_q2_records *o)
+{ return o->pickup&&o->pickup->frame==o->frame?o->pickup:NULL; }
+static bool pickup_ready(application_native_q2_pickup_scope *s,qa_error *e)
+{
+    return (s&&!s->closing&&qa_pickup_current(s->execution)&&nqr_live(s->owner,s->actor)&&
+        nqr_current(s->owner,e))||nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup lost its actual admitted resource execution");
+}
+static bool pickup_writes(application_native_q2_records *o,const nqr_observation *rows,size_t count,qa_error *e)
+{
+    application_native_q2_pickup_scope *s=pickup_current(o);
+    if(!s||!count||o->projection_depth) return true;
+    if(!pickup_ready(s,e)) return false;
+    size_t write_count=0; const qa_pickup_write *writes=qa_pickup_writes(s->execution,&write_count);
+    for(size_t i=0;i<count;++i) {
+        const nqr_field *f=rows[i].field;
+        if(!qa_actor_id_equal(rows[i].actor,s->actor)||(f->kind!=NQR_COUNT&&f->kind!=NQR_CAPACITY))
+            return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup changed an undeclared recipient resource");
+        bool allowed=false;
+        for(size_t j=0;!allowed&&j<write_count;++j) {
+            const qa_pickup_write *w=writes+j;
+            if(w->resource.kind==QA_PICKUP_INVENTORY)
+                allowed=w->resource.item==f->item&&(w->fields==QA_PICKUP_COUNT_CAPACITY||
+                    (f->kind==NQR_COUNT?w->fields==QA_PICKUP_COUNT:w->fields==QA_PICKUP_CAPACITY));
+            else if(w->resource.kind==QA_PICKUP_PROTECTION&&f->kind==NQR_COUNT) {
+                if(!s->protection_item||!s->protection_item(s->context,s->actor,w->resource.channel,f->item,&allowed,e))
+                    return false;
+                if(!pickup_ready(s,e)) return false;
+            }
+        }
+        if(!allowed) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup wrote outside its current resource authority");
+    }
+    return pickup_ready(s,e);
+}
 static bool capture(application_native_q2_records *o,qa_error *e)
 {
     application_native_q2_record_scope *frame=o->frame;
@@ -151,6 +184,7 @@ static bool capture(application_native_q2_records *o,qa_error *e)
         if(!next) { free(changed); return nqr_fail(e,QA_ERROR_MEMORY,"Retaining reached native canonical writes"); }
         changed=next; memcpy(row.bytes,raw,row.field->length); changed[count++]=row;
     }
+    if(!pickup_writes(o,changed,count,e)) { free(changed); return false; }
     size_t used=0;
     for(size_t i=0;i<count;++i) {
         nqr_observation row=changed[i];
@@ -176,7 +210,40 @@ static bool capture(application_native_q2_records *o,qa_error *e)
     if(!nqr_rebase(o,e)) { free(pending); return false; }
     free(frame->pending); frame->pending=pending; frame->pending_count=pending_count; return true;
 }
-static bool commit(application_native_q2_records *o,const nqr_observation *row,qa_error *e)
+typedef struct inventory_commit_context {
+    application_native_q2_records *owner;
+    application_native_q2_pickup_scope *pickup;
+    const application_native_q2_inventory_commit *protection;
+} inventory_commit_context;
+static bool inventory_committed(void *opaque,const qa_inventory_change *change,qa_error *e)
+{
+    inventory_commit_context *c=opaque; application_native_q2_records *o=c->owner;
+    if(!nqr_current(o,e)||(c->pickup&&!pickup_ready(c->pickup,e))) return false;
+    if(c->protection) {
+        const application_native_q2_inventory_commit *p=c->protection;
+        if(!p->current(p->context,e)) return false;
+        if(qa_actor_id_equal(p->actor,change->actor))
+            for(size_t i=0;i<p->count;++i) if(p->items[i]==change->after.item) {
+                if(!p->committed(p->context,change,e)) return false;
+                break;
+            }
+        if(!p->current(p->context,e)||!nqr_current(o,e)) return false;
+    }
+    nqr_observation *rows=NULL; size_t count=0;
+    if(!observations(o,&rows,&count,e)) return false;
+    ++o->projection_depth; bool ok=true;
+    for(size_t i=0;ok&&i<count;++i) {
+        nqr_observation *r=rows+i; const nqr_field *f=r->field;
+        if(!qa_actor_id_equal(r->actor,change->actor)||f->item!=change->after.item||
+            (f->kind!=NQR_COUNT&&f->kind!=NQR_CAPACITY)) continue;
+        uint8_t raw[8]; double value=f->kind==NQR_COUNT?change->after.count:change->after.capacity;
+        ok=nqr_scalar_encode(value,f->encoding,raw,e)&&qa_native_write(o->options.instance,r->address,(qa_bytes){raw,f->length},e)&&nqr_current(o,e);
+    }
+    --o->projection_depth; free(rows);
+    return ok&&nqr_rebase(o,e)&&application_native_q2_records_commit_inventory(o,c->protection,e);
+}
+static bool commit(application_native_q2_records *o,const nqr_observation *row,
+    const application_native_q2_inventory_commit *protection,qa_error *e)
 {
     if(o->options.client_rejected&&o->options.client_rejected(o->options.context,row->actor)) return true;
     nqr_actor *actor=nqr_find(o,row->actor);
@@ -188,7 +255,12 @@ static bool commit(application_native_q2_records *o,const nqr_observation *row,q
         if(row->capacity_present&&!qa_inventory_mutable_capacity(o->options.inventory,row->actor,f->item)) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native source wrote immutable inventory capacity");
         if(row->count_present) entry.count=row->count;
         if(row->capacity_present) entry.capacity=row->capacity;
-        return qa_inventory_configure(o->options.inventory,row->actor,&entry,NULL,NULL,e);
+        application_native_q2_pickup_scope *pickup=pickup_current(o);
+        if(pickup&&!pickup_ready(pickup,e)) return false;
+        inventory_commit_context context={o,pickup,protection};
+        if(!qa_inventory_configure(o->options.inventory,row->actor,&entry,
+            pickup||protection?inventory_committed:NULL,&context,e)) return false;
+        return !pickup||(pickup_ready(pickup,e)&&application_native_q2_records_refresh(o,e));
     }
     if(f->kind<=NQR_SCORE) {
         double value; if(!nqr_scalar_decode(row->bytes,f->encoding,&value,e)) return false;
@@ -223,14 +295,23 @@ static bool commit(application_native_q2_records *o,const nqr_observation *row,q
     return qa_world_body_write(o->options.world,row->actor,&body,e);
 }
 bool application_native_q2_records_commit(application_native_q2_records *o,qa_error *e)
+{ return application_native_q2_records_commit_inventory(o,NULL,e); }
+bool application_native_q2_records_commit_inventory(application_native_q2_records *o,
+    const application_native_q2_inventory_commit *protection,qa_error *e)
 {
+    if(protection&&(!protection->actor.registry||!protection->current||!protection->committed||
+        (protection->count&&!protection->items)||!protection->current(protection->context,e)))
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native protection commit requires its actual current reservoir owner");
     if(!nqr_current(o,e)||!capture(o,e)) return false;
     application_native_q2_record_scope *frame=o->frame; if(!frame) return true;
+    ++frame->committing; bool ok=true;
     while(frame->cursor<frame->pending_count) {
         nqr_observation row=frame->pending[frame->cursor++];
-        if(!commit(o,&row,e)) return false;
+        if(!commit(o,&row,protection,e)) { ok=false; break; }
     }
-    free(frame->pending); frame->pending=NULL; frame->pending_count=frame->cursor=0; return true;
+    --frame->committing;
+    if(ok) { free(frame->pending); frame->pending=NULL; frame->pending_count=frame->cursor=0; }
+    return ok;
 }
 bool application_native_q2_records_begin(application_native_q2_records *o,application_native_q2_record_scope **out,qa_error *e)
 {
@@ -249,7 +330,84 @@ bool application_native_q2_records_end(application_native_q2_records *o,applicat
 {
     application_native_q2_record_scope *frame=scope?*scope:NULL;
     if(!o||!frame||frame->owner!=o||o->frame!=frame) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native cleanup requires its actual innermost record scope");
+    if(frame->committing||(o->pickup&&o->pickup->frame==frame))
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native record cleanup retains its actual commit or pickup observations");
     if(succeeded&&!application_native_q2_records_commit(o,e)) return false;
     o->frame=frame->outer; free(frame->observations); free(frame->pending); free(frame); *scope=NULL;
     return nqr_releases(o,e);
+}
+static bool pickup_stored(void *context,qa_native_instance *instance,
+    const qa_native_write_event *event,qa_error *e)
+{
+    application_native_q2_pickup_scope *s=context;
+    (void)event;
+    if(!s||instance!=s->owner->options.instance)
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup observer changed its actual module owner");
+    application_native_q2_records *o=s->owner;
+    if(s->closing||o->pickup!=s||o->frame!=s->frame||o->projection_depth) return true;
+    return pickup_ready(s,e)&&application_native_q2_records_commit(o,e);
+}
+bool application_native_q2_records_pickup_end(application_native_q2_records *o,
+    application_native_q2_pickup_scope **scope,qa_error *e)
+{
+    if(!scope||!*scope) return true;
+    application_native_q2_pickup_scope *s=*scope;
+    if(!o||s->owner!=o||o->pickup!=s)
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup cleanup requires its returned innermost source scope");
+    s->closing=true;
+    if(s->frame!=o->frame||s->frame->committing)
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup cleanup retains its actual nested source frame or commit");
+    while(s->count) {
+        if(!qa_native_unobserve_writes(s->watches[s->count-1],e)) return false;
+        s->watches[--s->count]=NULL;
+    }
+    o->pickup=s->outer; free(s->watches); free(s); *scope=NULL; return true;
+}
+bool application_native_q2_records_pickup_begin(application_native_q2_records *o,qa_actor_id actor,
+    qa_pickup_execution *execution,application_native_q2_protection_item_fn protection_item,void *context,
+    application_native_q2_pickup_scope **out,qa_error *e)
+{
+    if(!o||!out||*out||!o->frame||o->closing||o->restoring||o->lifecycle_depth||
+        !qa_pickup_current(execution)||!nqr_live(o,actor)||!nqr_current(o,e))
+        return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup observation requires its actual admitted source transfer");
+    size_t write_count=0; const qa_pickup_write *writes=qa_pickup_writes(execution,&write_count);
+    if(!write_count||!writes) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native pickup has no actual admitted resource writes");
+    for(size_t i=0;i<write_count;++i)
+        if(writes[i].resource.kind==QA_PICKUP_PROTECTION&&!protection_item)
+            return nqr_fail(e,QA_ERROR_ARGUMENT,"Native protection pickup needs its actual bound reservoir membership reader");
+    size_t capacity=0;
+    for(nqr_actor *row=o->actors;row;row=row->next) {
+        if(row->retired) continue;
+        for(size_t i=0;i<o->record_count;++i) if(!o->records[i].client||row->client) {
+            if(capacity==SIZE_MAX/sizeof(qa_native_write_observer *))
+                return nqr_fail(e,QA_ERROR_MEMORY,"Native pickup watch roster overflows");
+            ++capacity;
+        }
+    }
+    application_native_q2_pickup_scope *s=calloc(1,sizeof(*s));
+    if(!s) return nqr_fail(e,QA_ERROR_MEMORY,"Retaining native pickup resource observation scope");
+    s->watches=capacity?calloc(capacity,sizeof(*s->watches)):NULL;
+    if(capacity&&!s->watches) { free(s); return nqr_fail(e,QA_ERROR_MEMORY,"Owning actual native pickup write subscriptions"); }
+    s->owner=o; s->outer=o->pickup; s->frame=o->frame; s->actor=actor;
+    s->execution=execution; s->protection_item=protection_item; s->context=context; s->capacity=capacity;
+    o->pickup=s; *out=s; bool ok=true;
+    for(nqr_actor *row=o->actors;ok&&row;row=row->next) {
+        if(row->retired) continue;
+        ok=nqr_actor_current(o,row,e);
+        for(size_t i=0;ok&&i<o->record_count;++i) {
+            nqr_record *record=o->records+i;
+            if(record->client&&!row->client) continue;
+            qa_native_address base;
+            ok=nqr_address(o,row,record,&base,e)&&qa_native_observe_writes(o->options.instance,base,
+                record->stride,pickup_stored,s,s->watches+s->count,e);
+            if(ok) ++s->count;
+        }
+    }
+    if(ok) ok=pickup_ready(s,e);
+    if(!ok) {
+        qa_error first=e?*e:(qa_error){0},cleanup={0};
+        (void)application_native_q2_records_pickup_end(o,out,&cleanup);
+        if(e) *e=first;
+    }
+    return ok;
 }

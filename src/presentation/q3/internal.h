@@ -45,6 +45,18 @@ typedef struct q3p_model {
     qa_bounds bounds;
     uint32_t inline_model;
     uint64_t scene_ordinals[3], world_ordinal;
+    qa_model source_md4_model;
+    const qa_model *source_md4;
+    qa_q3_asset_model_lease source_md4_lease;
+    qa_scene_model *source_md4_scene;
+    qa_resource *source_md4_resource;
+    qa_vfs_acquisition source_md4_opening;
+    int64_t source_md4_rank;
+    q3p_opening_order source_md4_order;
+    uint64_t source_md4_scene_ordinal;
+    qa_model_format source_kind;
+    uint32_t source_num_lods;
+    bool source_registration, registration_bad, source_md4_slots[3];
     bool has_lods, owns_world, borrowed_models, borrowed_scenes, borrowed_world;
 } q3p_model;
 typedef struct q3p_skin {

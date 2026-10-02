@@ -99,6 +99,8 @@ bool qa_application_network_q2_event_entity(qa_application_network_q2 *, qa_acto
     qa_actor_id, uint32_t *, qa_error *);
 bool qa_application_network_q2_event_resource(qa_application_network_q2 *, qa_actor_owner emitter,
     const qa_application_protocol_resource_reference *, uint32_t *, qa_error *);
+bool qa_application_network_q2_event_config(qa_application_network_q2 *, uint16_t wire_index,
+    const char **actual_text, qa_error *);
 bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,

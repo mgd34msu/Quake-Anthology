@@ -1,5 +1,6 @@
 #include "renderer_materials.h"
 #include "source_acoustics.h"
+#include "source_client_registry.h"
 #include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
 #include "qa/application_q3_components.h"
@@ -78,6 +79,7 @@ struct frontend_source {
     frontend_source_lease *lease_list;
     frontend_source_lease *retired_leases;
     source_render_scope *render_scope;
+    qa_q3_registry_retirement *world_retirement;
     frontend_source_role_identity *restore_roles;
     size_t restore_role_count;
     bool constructed, construction_started;
@@ -150,6 +152,38 @@ static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options 
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
+bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
+    frontend_source_client_registry *out,bool *present,qa_error *error)
+{
+    if (!f || !f->application || physical>=f->options.seats || !out || !present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source CLIENT registry requires its actual physical recipient");
+    *present=false; *out=(frontend_source_client_registry){0};
+    uint32_t seat; qa_application_presentation_view selected;
+    if (!frontend_seat_launch_id_read(f,physical,&seat) ||
+        !qa_application_presentation_read(f->application,seat,&selected) || !selected.source_hud) return true;
+    for (size_t i=0;i<qa_application_console_count(f->application);++i) {
+        qa_console *console=qa_application_console_at(f->application,i,NULL);
+        qa_application_console_scope scope;
+        if (!qa_application_console_scope_read(f->application,console,&scope) || scope.provider!=selected.hud ||
+            scope.seat!=seat || (scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2 && scope.kind!=QA_APPLICATION_CONSOLE_CLIENT)) continue;
+        if (*present && out->console!=console)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Source recipient has multiple physical CLIENT registries");
+        qa_cvars *cvars=qa_console_cvars(console);
+        if (!cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source CLIENT console lost its own registry");
+        *out=(frontend_source_client_registry){.publication=qa_application_launch(f->application),
+            .console=console,.cvars=cvars,.receiver=scope.provider,.physical_seat=physical,.launch_seat=seat,.kind=scope.kind};
+        *present=true;
+    }
+    return true;
+}
+bool frontend_source_client_registry_current(const qa_frontend *f,const frontend_source_client_registry *view)
+{
+    frontend_source_client_registry actual; bool present=false;
+    return view && frontend_source_client_registry_read(f,view->physical_seat,&actual,&present,NULL) && present &&
+        actual.publication==view->publication && actual.console==view->console && actual.cvars==view->cvars &&
+        actual.receiver==view->receiver && actual.launch_seat==view->launch_seat && actual.kind==view->kind;
+}
 static bool status_visible(void *context,const qa_q3_host *host,bool *out,qa_error *error)
 {
     const frontend_source_lease *lease=context;
@@ -991,10 +1025,13 @@ bool frontend_sources_idle(const qa_frontend *frontend)
         if (!source_idle(source)) return false;
     return true;
 }
+static bool shader_movies_current(void *context,const frontend_material_movie_source *view);
 static bool source_free(frontend_source *source)
 {
     if (!source) return true;
     qa_frontend *frontend = source->frontend;
+    qa_error retirement_error={0};
+    if (source->world_retirement && !qa_q3_presentation_retire_world_dispose(&source->world_retirement,&retirement_error)) return false;
     if (frontend->capture || frontend->resource_inventory || source->retired_leases || !source_idle(source) ||
         !frontend_selected_effects_idle(frontend)) return false;
     qa_error error = {0};
@@ -1987,18 +2024,41 @@ bool frontend_source_worlds_rebind_restored(qa_frontend *frontend,qa_error *erro
 }
 bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 {
+    for (frontend_source *source=frontend?frontend->sources:NULL;source;source=source->next)
+        if (source->world_retirement && !qa_q3_presentation_retire_world_dispose(&source->world_retirement,error)) return false;
     if (!source_worlds_ready(frontend,NULL,false,error) || !frontend_selected_effects_idle(frontend)) return false;
     for (frontend_source *source=frontend->sources;source;source=source->next)
         if (!source->private_map &&
             !frontend_selected_effects_retire_parent(frontend,source->presentation,error)) return false;
+    bool ready=true;
+    for (frontend_source *source=frontend->sources;ready && source;source=source->next) {
+        if (source->private_map) continue;
+        if (source->world_retirement &&
+            !qa_q3_presentation_retire_world_dispose(&source->world_retirement,error)) return false;
+        ready=qa_q3_presentation_retire_world_prepare(source->presentation,&source->world_retirement,error);
+    }
+    for (frontend_source *source=frontend->sources;ready && source;source=source->next)
+        if (!source->private_map) ready=qa_q3_presentation_retire_world_ready(source->world_retirement,error);
+    if (!ready) {
+        qa_error original=error?*error:(qa_error){0};
+        for (frontend_source *source=frontend->sources;source;source=source->next) {
+            qa_error cleanup={0};
+            if (source->world_retirement)
+                (void)qa_q3_presentation_retire_world_dispose(&source->world_retirement,&cleanup);
+        }
+        if (error) *error=original;
+        return false;
+    }
     source_worlds_bind(frontend,NULL,false);
-    for (frontend_source *source = frontend->sources; source; source = source->next) {
+    for (frontend_source *source=frontend->sources;source;source=source->next) {
         if (source->private_map) continue;
         qa_q3_presentation_assets *next=NULL;
-        if (!qa_q3_presentation_retire_world_retained(source->presentation,&next,error)) return false;
+        qa_q3_presentation_retire_world_commit(&source->world_retirement,&next);
         qa_q3_presentation_assets *previous=source->assets;
-        source->assets=next;
-        qa_q3_assets_release(previous);
+        source->assets=next; qa_q3_assets_release(previous);
+    }
+    for (frontend_source *source = frontend->sources; source; source = source->next) {
+        if (source->private_map) continue;
         if (source->music_attached) {
             qa_audio_engine_remove_music(frontend->audio, source->identity);
             source->music_attached = false;

@@ -16,6 +16,7 @@
 #include "ui_features.h"
 #include "campaign_menu.h"
 #include "campaign_cinematic.h"
+#include "network_recipient.h"
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
@@ -263,6 +264,49 @@ static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *
     seat->console = qa_seat_console_create(&console, error);
     return seat->console != NULL;
 }
+bool frontend_seat_client_recipient_ready_is(const qa_frontend *f,uint32_t physical,
+    const qa_application_client_source *source)
+{
+    if (!f || !source || !f->seats || physical>=f->options.seats ||
+        source->context.physical_seat!=physical || !source->context.console || !source->context.cvars ||
+        !qa_application_client_current(f->application,source)) return false;
+    const frontend_seat *seat=f->seats+physical;
+    return seat->frontend==f && seat->id==physical &&
+        qa_input_seat_recipient_ready_is(seat->input,source->context.console,source->context.cvars,&source->context.command) &&
+        qa_seat_console_recipient_ready_is(seat->console,source->context.console,&source->context.command);
+}
+bool frontend_seat_client_recipient_ready(qa_frontend *f,uint32_t physical,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if (!frontend_seat_client_recipient_ready_is(f,physical,source))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT input recipient lost its returned physical source");
+    frontend_seat *seat=f->seats+physical;
+    return qa_input_seat_recipient_ready(seat->input,source->context.console,source->context.cvars,
+        &source->context.command,error) && qa_seat_console_recipient_ready(seat->console,
+        source->context.console,&source->context.command,error);
+}
+void frontend_seat_client_recipient_publish(qa_frontend *f,uint32_t physical,
+    const qa_application_client_source *source)
+{
+    frontend_seat *seat=f->seats+physical;
+    qa_input_seat_recipient_publish(seat->input,source->context.console,source->context.cvars,&source->context.command);
+    qa_seat_console_recipient_publish(seat->console,source->context.console,&source->context.command);
+}
+bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->source_restoring || !f->seats)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input recipient import requires the actual restoring frontend");
+    frontend_network_client_recipient recipients[QA_INPUT_LOCAL_SEATS]={0};
+    bool present[QA_INPUT_LOCAL_SEATS]={0};
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        if (!frontend_network_client_recipient_read(f,i,recipients+i,present+i,error)) return false;
+        if (present[i] && (!recipients[i].ready || !frontend_seat_client_recipient_ready(f,i,&recipients[i].source,error)))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved input recipient has no completed physical CLIENT");
+    }
+    for (uint32_t i=0;i<f->options.seats;++i)
+        if (present[i]) frontend_seat_client_recipient_publish(f,i,&recipients[i].source);
+    return true;
+}
 bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend || !frontend->application || !frontend->seats || frontend->options.dedicated ||
@@ -386,6 +430,29 @@ static bool local_context(const qa_command_context *command, const frontend_seat
         !command->script && !command->console_text &&
         frontend_seat_context_ready((void *)seat,seat->id,command,NULL);
 }
+static bool same_recipient_command(const qa_command_context *a,const qa_command_context *b)
+{
+    return a && b && a->owner==b->owner && a->session==b->session && a->client==b->client &&
+        a->seat==b->seat && a->origin==b->origin && a->dialect==b->dialect && a->registry==b->registry &&
+        a->generation==b->generation && a->direct==b->direct && a->console_text==b->console_text &&
+        !a->script && !b->script && qa_actor_id_equal(a->actor,b->actor);
+}
+static bool recipient_services(const frontend_seat *seat,const qa_console *console,const qa_cvars *cvars,
+    const qa_command_context *command,bool *client)
+{
+    if (!seat || !seat->frontend || !console || !command || !client) return false;
+    if (!command->owner) {
+        *client=false;
+        return console==qa_application_console(seat->frontend->application) &&
+            (!cvars || cvars==qa_application_cvars(seat->frontend->application)) && local_context(command,seat);
+    }
+    frontend_network_client_recipient recipient; bool present;
+    *client=true;
+    return frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,NULL) &&
+        present && recipient.ready && console==recipient.source.context.console &&
+        (!cvars || cvars==recipient.source.context.cvars) &&
+        same_recipient_command(command,&recipient.source.context.command);
+}
 bool frontend_seat_ui_clock_ready(void *context,const qa_ui *ui,double (*clock)(void *),
     void *clock_context,qa_error *error)
 {
@@ -398,28 +465,38 @@ static bool input_services_encode(void *context, const qa_input_seat_options *op
     uint64_t *out, qa_error *error)
 {
     frontend_seat *seat=context;
+    bool client=false;
     if (!saved_seat_ready(seat) || !options || !out || options->seat!=seat->id ||
-        !local_context(&options->context,seat) ||
+        !recipient_services(seat,options->console,options->cvars,&options->context,&client) ||
         options->context.script || options->context.console_text ||
-        options->console!=qa_application_console(seat->frontend->application) ||
-        options->cvars!=qa_application_cvars(seat->frontend->application) ||
         options->ui!=input_handler || options->ui_user!=seat ||
         options->before_ui!=source_input || options->before_ui_user!=seat ||
         options->context_ready!=frontend_seat_context_ready || options->context_user!=seat)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved input services differ from their actual frontend seat binding");
-    *out=(uint64_t)seat->id+1; return true;
+    *out=((uint64_t)seat->id+1)|(client?UINT64_C(256):0); return true;
 }
 static bool input_services_decode(void *context, uint64_t key, qa_input_seat_options *out, qa_error *error)
 {
     frontend_seat *seat=context;
-    if (!saved_seat_ready(seat) || !out || key!=(uint64_t)seat->id+1)
+    bool client=(key&UINT64_C(256))!=0;
+    if (!saved_seat_ready(seat) || !out || (key&~UINT64_C(256))!=(uint64_t)seat->id+1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
     qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=QA_CONSOLE_Q1,.direct=true};
-    (void)frontend_seat_launch_id_read(seat->frontend,seat->id,&command.seat);
-    if (!local_context(&command,seat))
+    qa_console *console=qa_application_console(seat->frontend->application);
+    qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
+    if (client) {
+        frontend_network_client_recipient recipient; bool present;
+        if (!frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,error) ||
+            !present || !recipient.ready)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved input CLIENT recipient is absent or incomplete");
+        command=recipient.source.context.command; console=recipient.source.context.console; cvars=recipient.source.context.cvars;
+    }
+    else (void)frontend_seat_launch_id_read(seat->frontend,seat->id,&command.seat);
+    bool actual_client=false;
+    if (!recipient_services(seat,console,cvars,&command,&actual_client) || actual_client!=client)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input has no prepared current launch context");
     *out=(qa_input_seat_options){.seat=seat->id,.context=command,
-        .console=qa_application_console(seat->frontend->application),.cvars=qa_application_cvars(seat->frontend->application),
+        .console=console,.cvars=cvars,
         .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat,
         .context_ready=frontend_seat_context_ready,.context_user=seat};
     return true;

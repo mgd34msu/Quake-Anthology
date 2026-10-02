@@ -34,7 +34,8 @@ static bool number(qa_script *s, bool integer, double *out, qa_error *e) {
     *out = value;
     return true;
 }
-static bool vector(qa_script *s, qa_vec3 *out, qa_error *e) {
+static bool vector(qa_script *s, qa_vec3 *out, size_t *count, qa_error *e) {
+    *count = 0;
     if (!qa_script_expect(s, "{", e))
         return false;
     for (size_t i = 0; i < 3; ++i) {
@@ -52,6 +53,7 @@ static bool vector(qa_script *s, qa_vec3 *out, qa_error *e) {
             out->y = (float)value;
         else
             out->z = (float)value;
+        *count = i + 1;
         qa_script_token token;
         if (!bot_token(s, &token, e))
             return false;
@@ -63,7 +65,7 @@ static bool vector(qa_script *s, qa_vec3 *out, qa_error *e) {
     return true;
 }
 bool bot_structure_source(qa_script *s, void *out, const bot_field *fields, size_t field_count,
-                          void *context, bool (*written)(void *, qa_error *), qa_error *e) {
+                          void *context, bool (*written)(void *, const bot_field *, size_t, qa_error *), qa_error *e) {
     if (!qa_script_expect(s, "{", e))
         return false;
     for (;;) {
@@ -78,6 +80,7 @@ bool bot_structure_source(qa_script *s, void *out, const bot_field *fields, size
         if (index == field_count)
             return bot_fail(s, "Unknown bot structure field", e);
         const bot_field *field = fields + index;
+        size_t elements = 1;
         uint8_t *target = (uint8_t *)out + field->offset;
         if (field->kind == BOT_FIELD_STRING) {
             if (!bot_read_string(s, (char *)target, field->size, e))
@@ -85,7 +88,7 @@ bool bot_structure_source(qa_script *s, void *out, const bot_field *fields, size
         } else if (field->kind == BOT_FIELD_VECTOR) {
             qa_vec3 value;
             memcpy(&value, target, sizeof(value));
-            if (!vector(s, &value, e))
+            if (!vector(s, &value, &elements, e))
                 return false;
             memcpy(target, &value, sizeof(value));
         } else {
@@ -100,7 +103,7 @@ bool bot_structure_source(qa_script *s, void *out, const bot_field *fields, size
                 memcpy(target, &number, sizeof(number));
             }
         }
-        if (written && !written(context, e)) return false;
+        if (written && !written(context, field, elements, e)) return false;
     }
 }
 bool bot_structure(qa_script *s, void *out, const bot_field *fields, size_t field_count,

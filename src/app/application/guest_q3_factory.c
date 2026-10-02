@@ -128,7 +128,8 @@ bool qa_application_q3_preconstruction_source_read(qa_application *app,
         services->command_context.owner != receiver ||
         services->command_context.seat != (kind == QA_QVM_GAME ? 0 : seat))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation requires its real pending host construction");
-    application_provider *source = kind == QA_QVM_GAME ? provider : q3g_game_source(app);
+    application_provider *source = kind == QA_QVM_GAME ? provider :
+        role->client_source ? role->client_source : q3g_game_source(app);
     qa_console *console = NULL; qa_cvars *cvars = NULL;
     if (source) {
         if (source->close_pending || !source->product || !source->product_catalog ||

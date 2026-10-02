@@ -134,7 +134,8 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
             char *copy = qa_arena_alloc(&host->scratch, text.size + 1, 1, error);
             if (!copy) ok = false;
             else {
-                if (text.size) memcpy(copy, text.data, text.size); copy[text.size] = 0;
+                if (text.size) memcpy(copy, text.data, text.size);
+                copy[text.size] = 0;
                 ok = q3_write_string(call, call->arguments[0], copy, q3_integer(call, 1), error);
             }
         }

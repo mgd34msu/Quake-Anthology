@@ -47,6 +47,7 @@ bool qa_network_qw_peer(const qa_network_peer *);
 bool qa_network_nq_retirement_pending(const qa_network_peer *);
 bool qa_network_qw_retirement_pending(const qa_network_peer *);
 bool qa_network_q2_retirement_pending(const qa_network_peer *);
+bool qa_network_q1_client_retirement_pending(const qa_network_peer *);
 bool qa_network_qw_peer_matches(const qa_network_peer *, const qa_net_datagram *);
 struct qa_network_q1_client_policy;
 struct qa_network_q1_client_hooks;

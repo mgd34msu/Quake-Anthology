@@ -219,20 +219,20 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
     }
     return true;
 }
-static bool resolve(qa_input_platform *p, double time, qa_error *error) {
-    int32_t assignments[4] = {-1, -1, -1, -1};
-    bool ok = true;
+static void resolve_routes(const qa_input_platform *p, const struct seat_route routes[4],
+                           int32_t assignments[4]) {
+    for (unsigned slot = 0; slot < 4; ++slot) assignments[slot] = -1;
     for (unsigned pass = 0; pass < 2; ++pass)
         for (unsigned slot = 0; slot < 4; ++slot) {
-            struct seat_route *r = &p->seats[slot];
-            qa_controller_selection *s = &r->selection;
+            const struct seat_route *r = &routes[slot];
+            const qa_controller_selection *s = &r->selection;
             if (!r->seat || s->kind == QA_CONTROLLER_NONE ||
                 (s->kind == QA_CONTROLLER_AUTO) != (pass == 1))
                 continue;
-            struct device *match = NULL;
+            const struct device *match = NULL;
             unsigned matches = 0;
             for (size_t i = 0; i < p->device_count; ++i) {
-                struct device *d = &p->devices[i];
+                const struct device *d = &p->devices[i];
                 bool used = false;
                 for (unsigned j = 0; j < 4; ++j)
                     if (assignments[j] == d->info.instance) {
@@ -255,6 +255,11 @@ static bool resolve(qa_input_platform *p, double time, qa_error *error) {
             if (matches == 1)
                 assignments[slot] = match->info.instance;
         }
+}
+static bool resolve(qa_input_platform *p, double time, qa_error *error) {
+    int32_t assignments[4];
+    resolve_routes(p, p->seats, assignments);
+    bool ok = true;
     for (unsigned slot = 0; slot < 4; ++slot) {
         struct seat_route *r = &p->seats[slot];
         int32_t previous = r->instance;
@@ -1180,6 +1185,11 @@ struct qa_input_platform_settings_ticket {
     int previous_midi_device;
     unsigned haptic_routes, calibration_routes;
     struct seat_route routes[4];
+    struct seat_route next_routes[4];
+    SDL_GameController *next_handles[4];
+    struct device *route_devices;
+    size_t route_device_count;
+    bool selected_routes;
     qa_input_seat *configuration[4];
     bool gyro_enabled[4], previous_gyro_enabled[4];
     SDL_Window *window;
@@ -1239,16 +1249,20 @@ static bool motor_retirement_known(const input_motor_output *v, qa_error *error)
     return false;
 }
 static int32_t settings_controller(const qa_input_platform_settings_ticket *t, unsigned slot) {
-    const struct seat_route *r = &t->routes[slot];
+    const struct seat_route *r = &t->next_routes[slot];
     if (!r->seat) return -1;
     if (t->requirements.next_source_slot == (int)slot && t->joystick_instance >= 0)
         return t->joystick_instance;
     return r->instance == t->joystick_instance ? -1 : r->instance;
 }
+static bool settings_controller_changed(const qa_input_platform_settings_ticket *t, unsigned slot) {
+    return qa_input_platform_controller(t->platform, slot) != settings_controller(t, slot);
+}
 static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_error *error) {
     qa_input_platform *p = t->platform;
     for (unsigned slot = 0; slot < 4; ++slot) if (t->gyro_enabled[slot] &&
-        !t->previous_gyro_enabled[slot] && !device(p, settings_controller(t, slot))) {
+        (!t->previous_gyro_enabled[slot] || settings_controller_changed(t, slot)) &&
+        !device(p, settings_controller(t, slot))) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Requested gyro configuration has no native controller sensor owner");
         return false;
     }
@@ -1265,7 +1279,8 @@ static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_er
         for (unsigned slot = 0; slot < 4; ++slot) if (t->haptic_routes & (1u << slot)) {
             const struct seat_route *r = &t->routes[slot];
             if (d->info.instance == r->haptic_instance ||
-                ((t->requirements.controller_routes & (1u << slot)) && d->info.instance == r->instance)) affected = true;
+                ((t->requirements.controller_routes & (1u << slot)) &&
+                 (d->info.instance == r->instance || d->info.instance == t->next_routes[slot].instance))) affected = true;
         }
         if (t->requirements.source_changed &&
             (d->info.instance == p->joystick_instance || d->info.instance == t->joystick_instance)) affected = true;
@@ -1274,7 +1289,7 @@ static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_er
             if (((t->calibration_routes & (1u << slot)) && t->routes[slot].calibration_sensor &&
                     t->routes[slot].calibration_instance == d->info.instance) ||
                 ((qa_input_platform_controller(p, slot) == d->info.instance || settings_controller(t, slot) == d->info.instance) &&
-                t->gyro_enabled[slot] != t->previous_gyro_enabled[slot])) affected = true;
+                (t->gyro_enabled[slot] != t->previous_gyro_enabled[slot] || settings_controller_changed(t, slot)))) affected = true;
         if (!affected) continue;
         if (SDL_GameControllerGetAttached(d->handle) != SDL_TRUE)
             return failed(error, "Retained controller disconnected during input preparation");
@@ -1285,7 +1300,8 @@ static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_er
         v->retire_motors = retire_motors;
         for (unsigned slot = 0; slot < 4; ++slot)
             if (settings_controller(t, slot) == d->info.instance && t->gyro_enabled[slot] &&
-                !t->previous_gyro_enabled[slot] && !d->info.sensors[SDL_SENSOR_GYRO - 1]) {
+                (!t->previous_gyro_enabled[slot] || settings_controller_changed(t, slot)) &&
+                !d->info.sensors[SDL_SENSOR_GYRO - 1]) {
                 qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Prepared controller has no requested gyro sensor");
                 return false;
             }
@@ -1301,7 +1317,7 @@ static bool settings_outputs_prepare(qa_input_platform_settings_ticket *t, qa_er
                 if (r->seat && settings_controller(t, slot) == d->info.instance) {
                     if (t->gyro_enabled[slot]) enabled = true;
                 }
-                if (t->gyro_enabled[slot] != t->previous_gyro_enabled[slot] &&
+                if ((t->gyro_enabled[slot] != t->previous_gyro_enabled[slot] || settings_controller_changed(t, slot)) &&
                     (qa_input_platform_controller(p, slot) == d->info.instance ||
                         settings_controller(t, slot) == d->info.instance)) changed = true;
                 if ((t->calibration_routes & (1u << slot)) && r->calibration_sensor &&
@@ -1426,6 +1442,7 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
         p->joystick != t->previous_joystick || p->midi_fd != t->previous_midi_fd ||
         p->joystick_enabled!=t->previous_joystick_enabled ||
         p->midi_enabled!=t->previous_midi_enabled || p->requested_midi_device!=t->previous_midi_device ||
+        p->devices != t->route_devices || p->device_count != t->route_device_count ||
         p->window != t->window_id || p->keyboard != t->keyboard ||
         (t->window_id && SDL_GetWindowFromID(t->window_id) != t->window)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its actual native owner");
@@ -1532,7 +1549,8 @@ static bool settings_midi_warning(qa_input_platform_settings_ticket *t, const qa
     return true;
 }
 static bool settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
-    qa_input_seat *const configuration[4], double now, bool retry_source, bool retry_midi,
+    qa_input_seat *const configuration[4], const qa_controller_selection selections[4],
+    double now, bool retry_source, bool retry_midi,
     qa_input_platform_settings_ticket **out, qa_error *error) {
     if (!native_owner(p, error)) return false;
     if (!desired || !configuration || !out || *out || !isfinite(now) || now < 0 ||
@@ -1552,6 +1570,10 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     }
     qa_input_platform_settings_ticket *t = calloc(1, sizeof(*t));
     if (!t) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining input settings preparation"); return false; }
+    qa_controller_selection copied[4] = {0};
+    if (selections && !copy_routes(configuration, selections, p->keyboard, now, copied, error)) {
+        free(t); return false;
+    }
     t->platform = p; t->desired = *desired; t->now = now; t->keyboard = p->keyboard;
     t->revision = 1;
     t->previous_joystick = t->joystick = p->joystick;
@@ -1566,6 +1588,19 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     t->midi_devices = p->midi_devices; t->midi_count = p->midi_count;
     t->window_id = p->window; t->window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
     memcpy(t->routes, p->seats, sizeof(t->routes));
+    memcpy(t->next_routes, p->seats, sizeof(t->next_routes));
+    t->selected_routes = selections != NULL;
+    t->route_devices = p->devices; t->route_device_count = p->device_count;
+    if (selections) {
+        int32_t assignments[4];
+        for (unsigned slot = 0; slot < 4; ++slot) t->next_routes[slot].selection = copied[slot];
+        resolve_routes(p, t->next_routes, assignments);
+        for (unsigned slot = 0; slot < 4; ++slot) t->next_routes[slot].instance = assignments[slot];
+    }
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        struct device *d = device(p, t->next_routes[slot].instance);
+        t->next_handles[slot] = d ? d->handle : NULL;
+    }
     for (unsigned slot = 0; slot < 4; ++slot) {
         t->configuration[slot] = configuration[slot];
         t->gyro_enabled[slot] = configuration[slot] && qa_input_seat_gamepad_tuning(configuration[slot])->gyro_enabled;
@@ -1626,6 +1661,23 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
         .source_slot = p->source_slot, .next_source_slot = source,
         .midi_slot = p->midi_slot, .next_midi_slot = midi,
         .joystick_instance = p->joystick_instance, .next_joystick_instance = t->joystick_instance};
+    if (selections) for (unsigned slot = 0; slot < 4; ++slot) {
+        const struct seat_route *a = &t->routes[slot], *b = &t->next_routes[slot];
+        bool same_selection = a->selection.kind == b->selection.kind &&
+            a->selection.ordinal == b->selection.ordinal &&
+            !memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) &&
+            ((!a->selection.serial && !b->selection.serial) ||
+             (a->selection.serial && b->selection.serial && !strcmp(a->selection.serial, b->selection.serial)));
+        if (a->seat && (!same_selection || a->instance != b->instance)) r->controller_routes |= 1u << slot;
+        if (a->seat && b->instance >= 0 && a->instance != b->instance) {
+            if (configuration[slot] == a->seat) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                    "Controller reassignment requires a distinct prepared physical seat configuration");
+                return false;
+            }
+            if (!qa_input_seat_remap_controller(configuration[slot], b->instance, error)) return false;
+        }
+    }
     if (r->source_changed) for (unsigned i = 0; i < 4; ++i)
         if (p->seats[i].seat && (desired->restart_requested || (p->seats[i].instance >= 0 &&
             (p->seats[i].instance == p->joystick_instance || p->seats[i].instance == t->joystick_instance))))
@@ -1647,7 +1699,16 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
 }
 bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
     qa_input_seat *const configuration[4], double now, qa_input_platform_settings_ticket **out, qa_error *error) {
-    return settings_prepare(p, desired, configuration, now, false, false, out, error);
+    return settings_prepare(p, desired, configuration, NULL, now, false, false, out, error);
+}
+bool qa_input_platform_settings_prepare_selected(qa_input_platform *p, const qa_input_platform_settings *desired,
+    qa_input_seat *const configuration[4], const qa_controller_selection selections[4], double now,
+    qa_input_platform_settings_ticket **out, qa_error *error) {
+    if (!selections) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Selected input settings require all physical controller selectors");
+        return false;
+    }
+    return settings_prepare(p, desired, configuration, selections, now, false, false, out, error);
 }
 bool qa_input_platform_reconnect_prepare(qa_input_platform *p, double now,
     qa_input_platform_settings_ticket **out, qa_error *error) {
@@ -1671,7 +1732,7 @@ bool qa_input_platform_reconnect_prepare(qa_input_platform *p, double now,
         .joystick_ball_scale = variable(p, "in_joyBallScale", .02f)};
     qa_input_seat *configuration[4];
     for (unsigned slot = 0; slot < 4; ++slot) configuration[slot] = p->seats[slot].seat;
-    return settings_prepare(p, &desired, configuration, now, source, midi, out, error);
+    return settings_prepare(p, &desired, configuration, NULL, now, source, midi, out, error);
 }
 bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *t,
     qa_input_platform_settings_requirements *out, qa_error *error) {
@@ -1844,6 +1905,12 @@ bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
     return settings_current(t, error);
 }
 static bool settings_devices_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->next_routes[slot].instance >= 0) {
+        struct device *d = device(t->platform, t->next_routes[slot].instance);
+        if (!d || !t->next_handles[slot] || d->handle != t->next_handles[slot] ||
+            SDL_GameControllerGetAttached(d->handle) != SDL_TRUE)
+            return failed(error, "Prepared controller route lost its retained native device");
+    }
     if (t->joystick && SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
         return failed(error, "Prepared source joystick disconnected");
     if (t->midi_fd >= 0) {
@@ -2039,6 +2106,10 @@ bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket
         p->options.assignment_changed != t->ready_options.assignment_changed) return false;
     for (unsigned slot = 0; slot < 4; ++slot) {
         const struct seat_route *a = &p->seats[slot], *b = &t->routes[slot];
+        if (t->next_routes[slot].instance >= 0) {
+            struct device *d = device((qa_input_platform *)p, t->next_routes[slot].instance);
+            if (!d || !t->next_handles[slot] || d->handle != t->next_handles[slot]) return false;
+        }
         if ((release ? release[slot] : NULL) != t->ready_release[slot] ||
             a->platform != b->platform || a->slot != b->slot || a->seat != b->seat ||
             a->instance != b->instance || a->selection.kind != b->selection.kind ||
@@ -2220,6 +2291,12 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
     }
     for (unsigned slot = 0; slot < 4; ++slot) {
         struct seat_route *r = &p->seats[slot];
+        if (t->selected_routes) {
+            qa_controller_selection previous = r->selection;
+            r->selection = t->next_routes[slot].selection;
+            t->next_routes[slot].selection = previous;
+            r->instance = t->next_routes[slot].instance;
+        }
         if (t->haptic_routes & (1u << slot)) {
             qa_haptic_pattern_release(r->haptic.pattern);
             r->haptic.pattern = NULL; r->haptic.last_index = -1;
@@ -2251,6 +2328,8 @@ bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket
         qa_error_set(error, QA_ERROR_IO, 0, "Closing prepared MIDI input: %s", strerror(errno)); success = false;
     }
     if (t->owns_midi_devices) free(t->midi_devices);
+    if (t->selected_routes) for (unsigned slot = 0; slot < 4; ++slot)
+        free((void *)t->next_routes[slot].selection.serial);
     free(t->outputs);
     free(t); return success;
 }

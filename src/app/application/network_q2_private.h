@@ -18,7 +18,9 @@
 typedef enum application_q2_held_kind {
     APPLICATION_Q2_HELD_MODEL,
     APPLICATION_Q2_HELD_DEPENDENCY,
-    APPLICATION_Q2_HELD_MATERIAL
+    APPLICATION_Q2_HELD_MATERIAL,
+    APPLICATION_Q2_HELD_EVENT,
+    APPLICATION_Q2_HELD_IMAGE
 } application_q2_held_kind;
 typedef struct application_q2_held_resource {
     qa_actor_owner provider;
@@ -37,6 +39,12 @@ typedef struct application_q2_held_resource {
     qa_buffer catalog_bytes;
     qa_sha256_digest sky_group;
     uint8_t sky_face;
+    qa_native_host_resource_kind event_kind;
+    char event_key[81];
+    qa_scene_image_options image_options;
+    qa_buffer image_palette, image_translation;
+    size_t image_palette_dependency;
+    qa_sha256_digest image_palette_source;
 } application_q2_held_resource;
 
 typedef struct application_q2_resource_table {
@@ -96,10 +104,18 @@ bool application_network_q2_dependency(qa_application_network_q2 *,
 bool application_network_q2_dependency_receipt(qa_application_network_q2 *,
     const application_q2_held_resource *, const char *, const qa_resource *,
     const qa_vfs_acquisition *, size_t *, qa_error *);
+bool application_network_q2_dependency_image(qa_application_network_q2 *,
+    const application_q2_held_resource *, const char *, const qa_resource *, const qa_vfs_acquisition *,
+    const qa_scene_image_options *, qa_bytes palette_rgb, const char *palette_path,
+    const qa_resource *palette_resource, const qa_vfs_acquisition *palette_opening,
+    qa_bytes derived_png, size_t *, qa_error *);
+bool application_network_q2_materials_image_validate(const qa_application_network_q2 *,
+    const application_q2_held_resource *, qa_error *);
 bool application_network_q2_dependency_of(const application_q2_held_resource *,
     const application_q2_held_resource *);
 bool application_network_q2_material_resource(qa_application_network_q2 *,
     const application_q2_held_resource *, const qa_material_script_view *, qa_bytes,
+    qa_scene_family, qa_bytes palette_rgb, const qa_scene_palette_source *,
     const size_t *, size_t, size_t *, qa_error *);
 bool application_network_q2_sky_dependencies(qa_application_network_q2 *,
     const application_q2_held_resource *, const char *, const char *const [6],

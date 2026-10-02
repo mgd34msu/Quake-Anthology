@@ -1389,7 +1389,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
         players->snapshot.ids[eligible++] = id;
     }
     if (eligible != 0) {
-      size_t selected = (size_t)floorf(q2m_random(context->game) * eligible);
+      size_t selected = (size_t)floorf(q2m_random(context->game) * (float)eligible);
       if (selected >= eligible)
         selected = eligible - 1;
       candidate = players->snapshot.ids[selected];
@@ -1723,7 +1723,7 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
   }
   if (m->definition->locomotion == Q2M_FLY &&
       (!rerelease || m->strafe_ns <= game->now_ns)) {
-    float chance = classic_boss || !rogue ? .3f : species == Q2M_DAEDALUS ? .8f : .6f;
+    chance = classic_boss || !rogue ? .3f : species == Q2M_DAEDALUS ? .8f : .6f;
     if (!classic_boss && rogue) {
       const char *name = qa_strings_cstr(qa_session_strings(game->services.session), traits.classname);
       if (name && (!strcmp(name, "tesla") || (rerelease && !strcmp(name, "tesla_mine"))))
@@ -2235,7 +2235,7 @@ static bool select_species_attack(q2m_context *context, const char **move,
         context->game->now_ns,
         context->game->options.edition == QA_Q2_RERELEASE
             ? 1.0 + q2m_random(context->game) * 1.6
-            : (10.0 + floorf(q2m_random(context->game) * 16.0)) * 0.1);
+            : (10.0 + floorf(q2m_random(context->game) * 16.0f)) * 0.1);
     *move = "actor_move_attack";
     break;
   case Q2M_GEKK:

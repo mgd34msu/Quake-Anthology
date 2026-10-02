@@ -45,6 +45,8 @@ struct qa_scene_resources {
     image_cache *cache;
     size_t cache_count, cache_capacity;
     qa_buffer palettes[3];
+    qa_resource *palette_resources[3];
+    qa_vfs_acquisition palette_openings[3];
     qa_scene_image_policy policies[3];
     bool has_policy[3], registrations_started;
     unsigned fullbright_first;

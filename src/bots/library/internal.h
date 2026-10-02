@@ -57,7 +57,7 @@ struct qa_bot_items {
     qa_bot_memory_allocation allocation;
     qa_script *reader;
     struct bot_character_reader *script_host;
-    bool ready, active;
+    bool ready, active, reader_retired;
     qa_bot_items_view view;
     qa_bot_item_info *items;
     uint32_t *members;
@@ -81,6 +81,9 @@ struct qa_bot_library {
     qa_bot_weights *weights;
     qa_bot_character *characters, *last_character;
     struct bot_character_store *character_store;
+    void *character_context;
+    bool (*character_available)(void *);
+    bool (*character_publish)(void *, qa_bot_character *, qa_error *);
     qa_bot_weapons *weapon_configs;
     qa_bot_items *item_configs;
     struct qa_bot_chat_asset *chat_assets;
@@ -110,7 +113,7 @@ typedef struct bot_field {
 } bot_field;
 bool bot_structure(qa_script *, void *, const bot_field *, size_t, qa_error *);
 bool bot_structure_source(qa_script *, void *, const bot_field *, size_t, void *,
-                          bool (*)(void *, qa_error *), qa_error *);
+                          bool (*)(void *, const bot_field *, size_t, qa_error *), qa_error *);
 bool bot_read_string(qa_script *, char *, size_t, qa_error *);
 void bot_chat_assets_close(qa_bot_library *);
 #endif

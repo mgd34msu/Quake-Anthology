@@ -265,7 +265,7 @@ bool frontend_selected_effects_restore(qa_frontend *frontend, size_t ordinal, qa
         (copy.event_generation != qa_application_protocol_events_generation(frontend->application) ||
             copy.event_cursor <= qa_application_event_count(frontend->application));
     qa_source_save_dispose(&io);
-    q3n_media_options media_options = {target->view.q3_product, target->view.assets};
+    q3n_media_options media_options = {.product=target->view.q3_product, .assets=target->view.assets};
     q3n_event_options event_options = {.product = target->view.q3_product, .assets = target->view.assets,
         .context = target, .trace = target->view.events->options.trace,
         .point_contents = target->view.events->options.point_contents, .mark_fragments = target->view.events->options.mark_fragments};

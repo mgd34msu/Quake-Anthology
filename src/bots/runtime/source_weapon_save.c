@@ -7,7 +7,8 @@ static bool allocation_fields(qa_source_save_io *io,qa_bot_memory *memory,qa_bot
     bool ok=reading || qa_bot_memory_reference(memory,*allocation,&reference,io->error);
     if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
     if(ok && reading) ok=qa_bot_memory_resolve(memory,reference,allocation,io->error);
-    if(!ok) io->failed=true;return ok;
+    if(!ok) io->failed=true;
+    return ok;
 }
 bool bot_weapon_record_fields(qa_source_save_io *io,qa_bot_memory *memory,bot_weapon_record *record) {
     qa_bot_memory_allocation allocation=record->allocation;
@@ -28,7 +29,8 @@ static bool config_fields(qa_source_save_io *io,const bot_weapon_weight_refs *re
         ok=qa_source_save_u64(io,&id);
         if(ok && reading) ok=refs->resolve(refs->context,id,config,io->error);
     }
-    if(!ok) io->failed=true;return ok;
+    if(!ok) io->failed=true;
+    return ok;
 }
 static bool fields(qa_source_save_io *io,qa_bot_memory *memory,bot_weapon_pointers *pointers,
     const bot_weapon_weight_refs *refs) {

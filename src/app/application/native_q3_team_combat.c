@@ -7,6 +7,7 @@
 #include "qa/game_q3_source.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -173,8 +174,11 @@ static bool in_pvs(const team_combat_scope *scope, qa_vec3 first, qa_vec3 second
     qa_collision_leaf a, b;
     *out = false;
     if (!live(scope, error) || !qa_collision_point_leaf(scope->geometry, first, &a, error) ||
-        !qa_collision_point_leaf(scope->geometry, second, &b, error) ||
-        !qa_collision_cluster_visible(scope->geometry, a.cluster, b.cluster, false, out, error))
+        !qa_collision_point_leaf(scope->geometry, second, &b, error)) return false;
+    if (a.cluster < -1 || a.cluster > INT32_MAX || b.cluster < -1 || b.cluster > INT32_MAX ||
+        a.area < 0 || a.area > INT32_MAX || b.area < 0 || b.area > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "native TEAM PVS leaf exceeds its source index ABI");
+    if (!qa_collision_cluster_visible(scope->geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, out, error))
         return false;
     if (!*out) return true;
     qa_cvars *registry = application_native_q3_console_registry(scope->provider);
@@ -182,7 +186,7 @@ static bool in_pvs(const team_combat_scope *scope, qa_vec3 first, qa_vec3 second
     if (!no_areas)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native TEAM PVS lost its source area policy");
     if (no_areas->number != 0) return true;
-    return qa_collision_areas_connected(scope->geometry, a.area, b.area, out, error);
+    return qa_collision_areas_connected(scope->geometry, (int32_t)a.area, (int32_t)b.area, out, error);
 }
 
 static float distance(qa_vec3 first, qa_vec3 second)

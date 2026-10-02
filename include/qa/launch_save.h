@@ -27,6 +27,8 @@ typedef struct qa_launch_restore_content {
     bool (*instance)(void *, const qa_launch_provider *, qa_launch_restored_instance *, qa_error *);
     size_t resource_count;
     bool (*resource)(void *, size_t, qa_launch_resource *, qa_error *);
+    /* Transfers content's actual view reference; the other fields borrow. */
+    bool (*resource_origin)(void *, size_t, qa_launch_resource_origin *, qa_error *);
 } qa_launch_restore_content;
 /* Fresh isolated manager only. Preparation retains real content and constructs
  * actual provider states. Ordinary publication callbacks never run on this

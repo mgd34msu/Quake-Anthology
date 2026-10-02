@@ -152,7 +152,7 @@ static bool receive_pending(const qa_network_runtime *runtime) {
 static bool retirement_pending(const qa_network_peer *peer)
 {
     return qa_network_nq_retirement_pending(peer) || qa_network_qw_retirement_pending(peer) ||
-        qa_network_q2_retirement_pending(peer);
+        qa_network_q2_retirement_pending(peer) || qa_network_q1_client_retirement_pending(peer);
 }
 bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error) {
     if (!runtime || runtime->pumping || runtime->callback || now < runtime->now_ns)

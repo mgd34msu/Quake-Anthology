@@ -132,6 +132,10 @@ typedef struct q2_mt_random {
     uint32_t words[624], index;
     uint64_t draws;
 } q2_mt_random;
+typedef struct q2_wire_reference {
+    qa_actor_id actor;
+    uint32_t number;
+} q2_wire_reference;
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
@@ -169,6 +173,8 @@ struct qa_q2_game {
     uint64_t sequence, actor_sequence, now_ns, frame_ns;
     qa_actor_id *wire_actors;
     uint64_t *wire_freed_ns;
+    q2_wire_reference *wire_references;
+    size_t wire_reference_count, wire_reference_capacity;
     uint32_t wire_capacity, wire_extent, wire_clients;
     uint64_t wire_frame;
     qa_string_id wire_lightstyles[256];

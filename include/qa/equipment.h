@@ -71,6 +71,8 @@ typedef struct qa_equipment_state {
     bool slot_requested, slot_active, slot_holstering, slot_lowering, configuration_pending;
     bool previous_jump, teleport_seen;
     uint32_t teleport_sequence;
+    qa_actor_owner primary_request_owner;
+    qa_item_id primary_request_item;
 } qa_equipment_state;
 typedef struct qa_equipment_options {
     qa_builtin_services services;
@@ -91,6 +93,8 @@ typedef struct qa_equipment_options {
     bool (*primary_holster)(void *, qa_actor_id, qa_error *);
     bool (*primary_holstered)(void *, qa_actor_id);
     bool (*primary_resume)(void *, qa_actor_id, qa_error *);
+    bool (*primary_accepts)(void *, qa_actor_id, qa_actor_owner, qa_item_id, bool *, qa_error *);
+    bool (*primary_select)(void *, qa_actor_id, qa_actor_owner, qa_item_id, bool *, qa_error *);
     bool (*select_weapon)(void *, qa_actor_id, qa_item_id, qa_error *);
     qa_q2_hand_projection_fn grenade_projection;
     bool (*grenade_interval)(void *, qa_actor_id, qa_actor_owner, uint64_t native_ns,
@@ -113,6 +117,11 @@ bool qa_equipment_configure_sources(qa_equipment *, qa_actor_id, const qa_equipm
 bool qa_equipment_respawn(qa_equipment *, qa_actor_id, qa_error *);
 bool qa_equipment_input(qa_equipment *, qa_actor_id, const qa_equipment_controls *, qa_error *);
 bool qa_equipment_select_grapple(qa_equipment *, qa_actor_id, bool selected, qa_error *);
+/* Retains the real destination through outgoing source holster. Selection is
+ * delivered only after primary resume; no source animation advances here. */
+bool qa_equipment_request_primary(qa_equipment *, qa_actor_id, qa_actor_owner,
+    qa_item_id, bool *accepted, qa_error *);
+bool qa_equipment_reconcile(qa_equipment *,qa_actor_id,qa_error *);
 bool qa_equipment_step(qa_equipment *, qa_actor_id, uint64_t now_ns, uint64_t elapsed_ns,
                        qa_q2_hand_lifecycle, qa_error *);
 bool qa_equipment_after_movement(qa_equipment *, qa_actor_id, bool damage_pulse, uint64_t now_ns,

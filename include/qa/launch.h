@@ -188,6 +188,13 @@ typedef struct qa_launch_resource {
     const char *path;
     const qa_resource *resource;
 } qa_launch_resource;
+typedef struct qa_launch_resource_origin {
+    qa_catalog *catalog;
+    qa_vfs *content;
+    qa_product_id product;
+    qa_mount_id catalog_mount;
+    const qa_vfs_acquisition *acquisition;
+} qa_launch_resource_origin;
 
 /* Retains the immutable descriptor/resources without retaining execution or
  * the snapshot. The lease view preserves this view's snapshot-local roles.
@@ -296,5 +303,8 @@ const qa_launch_instance *qa_launch_snapshot_instance(const qa_launch_snapshot *
 const qa_launch_instance *qa_launch_snapshot_find(const qa_launch_snapshot *, const char *instance);
 size_t qa_launch_snapshot_resource_count(const qa_launch_snapshot *);
 const qa_launch_resource *qa_launch_snapshot_resource(const qa_launch_snapshot *, size_t);
+/* Borrows the actual resource opening owner until this snapshot is released. */
+bool qa_launch_snapshot_resource_origin(const qa_launch_snapshot *, size_t,
+    qa_launch_resource_origin *);
 
 #endif

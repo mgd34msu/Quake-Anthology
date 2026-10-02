@@ -289,7 +289,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                 .object = {.kind = QA_MODE_OBJECT_BALL, .origin = neutral->origin}};
             if (!planned(out, capacity, count, generated, e))
                 return false;
-            *missing &= ~QA_MODE_MAP_BALL;
+            *missing &= ~(uint32_t)QA_MODE_MAP_BALL;
         }
         if (*missing & QA_MODE_MAP_BALL_SPAWN) {
             qa_mode_map_admission generated = {
@@ -299,7 +299,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                                      &generated.spawn.classname, e) ||
                 !planned(out, capacity, count, generated, e))
                 return false;
-            *missing &= ~QA_MODE_MAP_BALL_SPAWN;
+            *missing &= ~(uint32_t)QA_MODE_MAP_BALL_SPAWN;
         }
         for (unsigned i = 0; i < 2; ++i)
             if (separated && (*missing & (QA_MODE_MAP_RED_GOAL << i))) {
@@ -314,7 +314,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                                .value = 10}};
                 if (!planned(out, capacity, count, generated, e))
                     return false;
-                *missing &= ~(QA_MODE_MAP_RED_GOAL << i);
+                *missing &= ~((uint32_t)QA_MODE_MAP_RED_GOAL << i);
             }
     }
     if (*missing & QA_MODE_MAP_TAG) {
@@ -323,7 +323,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
             .object = {.kind = QA_MODE_OBJECT_TAG, .origin = neutral->origin}};
         if (!planned(out, capacity, count, generated, e))
             return false;
-        *missing &= ~QA_MODE_MAP_TAG;
+        *missing &= ~(uint32_t)QA_MODE_MAP_TAG;
     }
     if (kind == QA_MODE_HORDE) {
         if (*missing & QA_MODE_MAP_HORDE_CONTROLLER) {
@@ -333,7 +333,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                                      e) ||
                 !planned(out, capacity, count, generated, e))
                 return false;
-            *missing &= ~QA_MODE_MAP_HORDE_CONTROLLER;
+            *missing &= ~(uint32_t)QA_MODE_MAP_HORDE_CONTROLLER;
         }
         if ((*missing & QA_MODE_MAP_MONSTER_SPAWN) && separated) {
             for (size_t i = 0; i < n; ++i)
@@ -346,7 +346,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                     if (!planned(out, capacity, count, generated, e))
                         return false;
                 }
-            *missing &= ~QA_MODE_MAP_MONSTER_SPAWN;
+            *missing &= ~(uint32_t)QA_MODE_MAP_MONSTER_SPAWN;
         }
         for (unsigned i = 0; i < 3; ++i)
             if (!horde_loot[i]) {
@@ -393,7 +393,7 @@ bool mode_relic_spawn_all(qa_modes *m, mode_instance *v, qa_error *e) {
     static const qa_relic_kind lm_order[] = {QA_RELIC_STRENGTH, QA_RELIC_HASTE, QA_RELIC_RESISTANCE,
                                              QA_RELIC_REGENERATION, QA_RELIC_VAMPIRE};
     for (int ordinal = 0; ordinal < count; ++ordinal) {
-        int i = v->value.rules.source == QA_MODE_LMCTF ? lm_order[ordinal] : ordinal;
+        int i = v->value.rules.source == QA_MODE_LMCTF ? (int)lm_order[ordinal] : ordinal;
         int bit = i == QA_RELIC_STRENGTH ? 1 : i == QA_RELIC_RESISTANCE ? 2 : 1 << i;
         if (v->value.rules.source == QA_MODE_LMCTF && !(v->value.rules.rune_mask & bit))
             continue;

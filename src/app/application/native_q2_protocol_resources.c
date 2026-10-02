@@ -2,6 +2,7 @@
 #include "unified_events.h"
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/application_network_q2.h"
 
 typedef struct resource_capture {
     struct application_native_q2 *engine;
@@ -29,6 +30,9 @@ static bool retain_entity(resource_capture *capture, size_t offset, uint32_t sou
     qa_native_host_q2_entity actual;
     if (!qa_native_host_q2_wire_entity_import(capture->engine->provider->state.native.host,
         source_slot, &actual, error)) return false;
+    uint32_t admitted_number;
+    if (!qa_application_network_q2_entity_number(capture->engine->provider->application,
+        capture->engine->provider->owner, actual.binding.actor, &admitted_number, error)) return false;
     if (out->reference_count == out->reference_capacity) {
         size_t capacity = out->reference_capacity ? out->reference_capacity * 2 : 8;
         if (capacity <= out->reference_capacity || capacity > SIZE_MAX / sizeof(*out->references))
@@ -88,8 +92,8 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
     if (!owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 emitted resource spelling");
     memcpy(owned, name, length + 1); row.name = owned;
     bool found = false;
-    if (*name && !application_unified_event_resource_lookup(capture->engine->provider->application,
-        capture->engine->provider->owner, name, row.resource_key, &found, error)) { free(owned); return false; }
+    if (*name && !application_unified_event_resource_lookup_kind(capture->engine->provider->application,
+        capture->engine->provider->owner, kind, name, row.resource_key, &found, error)) { free(owned); return false; }
     if (resources->count == resources->capacity) {
         size_t capacity = resources->capacity ? resources->capacity * 2 : 8;
         if (capacity <= resources->capacity || capacity > SIZE_MAX / sizeof(*resources->rows)) {

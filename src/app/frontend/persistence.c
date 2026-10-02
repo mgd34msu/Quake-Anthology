@@ -19,6 +19,7 @@
 #include "native_q2_baseline.h"
 #include "player_inventory.h"
 #include "seat_inventory.h"
+#include "seat_save.h"
 #include "tools_restore.h"
 #include "source_restore.h"
 #include "rankings.h"
@@ -1078,6 +1079,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_tools_checkpoint_resolvers(f,&tools,&llm,error) && frontend_tools_restore(f,&tools,&llm,section(set,SECTION_TOOLS),error) &&
         frontend_save_commands_restore(f,section(set,SECTION_SAVE_COMMANDS),error) &&
         (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),error)) &&
+        frontend_seats_recipients_restore(f,error) &&
         frontend_seats_restore(f,operation->space,section(set,SECTION_SEATS_INPUT),section(set,SECTION_SEATS_PRESENTATION),error) &&
         frontend_equipment_events_restore(f->gear_events,section(set,SECTION_GEAR_EVENTS),error) &&
         frontend_players_restore(f,section(set,SECTION_PLAYERS),error) &&

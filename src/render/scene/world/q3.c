@@ -36,6 +36,10 @@ static float fog_byte(float value) {
 }
 
 static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error) {
+    bool source=qa_material_library_has_source_profile(world->materials);
+    qa_material_profile profile={0};
+    if (source && !qa_material_library_source_profile_read(world->materials,&profile,error)) return false;
+    if (source && (profile.vertex_lighting || profile.permedia2)) return true;
     qa_bytes bytes = world->bsp.lumps[QA_BSP_LIGHTING].bytes;
     if (bytes.size % Q3_LIGHTMAP_BYTES) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q3 lightmap lump is not a sequence of 128x128 RGB images");
@@ -59,6 +63,12 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
         if (!qa_scene_image_create(world->resources, name, QA_SCENE_RGB8, &level, 1,
                                   QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0},
                                   data->lightmaps + i, error)) { free(pixels); return false; }
+        if (source) {
+            data->lightmaps[i]->source_mipmap=false;
+            if (!qa_scene_image_source_admit(world->resources,data->lightmaps[i],profile.multitexture?1u:0u,error)) {
+                free(pixels); return false;
+            }
+        }
     }
     free(pixels); return true;
 }

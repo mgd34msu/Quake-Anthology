@@ -77,6 +77,9 @@ bool qa_q2_wire_policy(const qa_q2_game *, uint32_t *entity_capacity,
 /* The actual one-world birth/link owner supplies real canonical generations.
  * This admits only an Engine namespace row; no actor or GAME behavior is made. */
 bool qa_q2_wire_admit_actor(qa_q2_game *, qa_actor_id, qa_error *);
+/* Emission-time Engine admission retains full-generation provenance through
+ * retirement. This does not grant live access to a retired actor. */
+bool qa_q2_wire_entity_number(qa_q2_game *, qa_actor_id, uint32_t *, qa_error *);
 bool qa_q2_wire_linked(qa_q2_game *, const qa_linked_body *, qa_error *);
 bool qa_q2_wire_binding_read(const qa_q2_game *, uint32_t,
     qa_q2_wire_binding *, qa_error *);

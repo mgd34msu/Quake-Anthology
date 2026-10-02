@@ -363,6 +363,8 @@ A valid MD3 with 500 retained vertices and one triangle supplies 500 vertices to
 
 Common, NativeView and Root received the real Source MD3/MD4 geometry producer, physical count/order/index, shadow/overflow and current/cold ownership joins. The generic cross-family optimized topology remains useful but cannot provide the authentic retained Source writer allocation by itself.
 
+Fresh whole current topology and private-header reads, followed by actual pose/cold-codec cuts, corroborate a genuine Source-profile MD3/MD4 topology tag, allocation of every raw vertex in file order, direct triangle indices and matching physical geometry extents in QMON4. The generic welded topology remains separate. This corrects the bounded raw-count/order producer; complete final model ownership and Source stage/backend continuation remain changing joins.
+
 ### R52. Source MD4 appending uses the wrong triangle-index offset
 
 Verdict confirmed through the complete original `tr_animation.c`, family `SourceTessState.appendMd4` and actual native `source_append`. Original `RB_SurfaceAnim` writes each new triangle index as `baseIndex + triangles[j]`, where `baseIndex` is the preceding index count. The family implementation preserves that observable index-count offset. Native uses the preceding vertex count for every writer.
@@ -370,6 +372,8 @@ Verdict confirmed through the complete original `tr_animation.c`, family `Source
 A valid MD4 with two same-shader surfaces on one entity can make the result defined within the active allocation. Let the first surface contain four vertices and triangles 0,1,2 and 0,2,3; let the second contain five valid vertices and one triangle 0,1,2. Both donor writers append the second triangle as 6,7,8, all within the nine active vertices, selecting the second surface's vertices 2,3,4. Native offsets by four and selects vertices 0,1,2 instead. Its current generic topology also drops the unused vertices, as independently recorded in R51.
 
 Common, NativeView and Root received the concrete writer distinction. A genuine Source MD4 producer must carry its own index-count offset together with the raw physical geometry; the generic cross-family MD4 path keeps its ordinary topology. No malformed input or native image result is claimed.
+
+Current focused producer/submission reads now corroborate a distinct Source MD4 writer and its genuine index-count offset. The related allocated-tail draw join remains required: a valid first surface with four vertices/six indices followed by three vertices/three indices reads indices 6,7,8 while the active count is seven. Both donors can read retained physical cells seven/eight within the thousand-cell allocation. Enlarging active counts would wrongly deform/evaluate those tail cells; rejecting the draw would cut authentic behavior. Common received this distinct active-count versus physical-indexed-read obligation.
 
 ### R53. Source MD4 admission inherits unrelated MD3 model policies
 
@@ -379,6 +383,8 @@ A valid visible MD4 with an authored red surface shader and a valid blue custom 
 
 NativeView, Common and Root received the actual Source-specific producer distinction. Generic cross-family MD4 overrides, culling and the existing shadow union keep their own supported contract; this finding does not authorize removing those capabilities. No native image result is claimed.
 
+Fresh focused current lower normalization and draw-consumer reads corroborate ignored overrides, zero fog, no frontend model cull and bypass of primary-view personal-model suppression for the genuine Source MD4 topology. The separate retained-lighting producer is still concrete R55; this bounded admission correction does not establish complete MD4 Source behavior.
+
 ### R54. Source MD3 admission culls sampled surfaces instead of authored frame bounds
 
 Verdict confirmed through original `R_CullModel`, family `model-geometry.ts` and actual native model submission. Both Source donors cull the complete selected-LOD model using the current/previous frame spheres and their merged authored frame bounds, against four side planes. Native `cull_bounds` uses each sampled surface's vertex bounds and the generic transformed-AABB test; a portal view also adds its clip plane to that frontend test.
@@ -386,6 +392,32 @@ Verdict confirmed through original `R_CullModel`, family `model-geometry.ts` and
 A valid MD3 can have a tiny triangle, authored frame bounds from -2000 to 2000 and radius 4000, placed at world origin 10,1000,0 in a view looking along positive X. An authored cull-none shader with `deformVertexes move 0 -1000 0 sin 1 0 0 0` moves the reached triangle to 10,0,0. Both donor frame tests admit the model and reach that deformation. Native rejects the narrow undeformed surface before its material runs. This is a valid source-derived geometry witness; no native image execution is claimed.
 
 NativeView, Common and Root received the genuine selected-LOD whole-model admission and retained-writer joins. Source admission must not be followed by the unrelated generic per-surface cull. Cross-family model culling retains its supported native policy.
+
+Fresh current helper/caller reads now corroborate authored selected-frame spheres, merged oriented frame bounds, four side planes and bypass of generic per-surface reculling. One exact Source boundary remained different in that read: box corners used `>=` instead of the strict `>` in both donors. A box wholly on one side plane is out in the donors but admitted natively; this predicate correction was sent directly to NativeView. No complete moving model-owner acceptance is inferred.
+
+### R55. Source backend selection reconstructs lighting that the frontend never published
+
+Verdict confirmed through the actual Q3 model lighting producer, retained bank and backend selection. Native `selected_lighting` calculates illumination for every model format, and `source_entity_select` then writes that prepared context into the physical bank through `qa_q3_source_scene_bank_entity_lighting`. Original and family MD4 surface preparation never call entity lighting setup. A fresh physical entity cell's derived lighting remains zero; reused cells retain their actual previous derived values.
+
+A first-ever valid visible MD4 in entity cell zero, with an authored white-image `rgbGen lightingDiffuse` stage, therefore consumes zero ambient/directed lighting in both donors. Native instead calculates the no-world 150-plus-32 illumination and publishes it when the backend selects the entity. No malformed input or measured image result is claimed.
+
+Common, Foundations, NativeView and Root received the actual producer/timing distinction. Genuine frontend MD3/inline lighting setup must own `lightingCalculated` and derived-cell publication; backend selection reads those real retained cells. The full primitive bank and its cold references alone cannot establish that production join.
+
+### R56. Source constant-RGB error prefix clears the retained constant alpha
+
+Verdict confirmed against the original SDK's actual retained stage storage and native Source color execution. Original `ComputeColors` copies all four `constantColor` bytes for `CGEN_CONST` before evaluating alpha. Repeated alpha directives retain that physical constant byte even after selecting a different alpha generator. Native Source RGB execution calls the generic color helper with alpha skip, which replaces constant alpha with zero unless the currently selected generator is constant.
+
+An authored stage containing `rgbGen const ( 1 0 0 )`, `alphaGen const 0.4`, then `alphaGen wave noise 0 1 0 1` registers successfully. At reached stage execution, the original SDK copies alpha 102 and then reports the invalid alpha-wave table; native leaves alpha zero before the same error. The actual native parser already retains the constant byte in `stage.constant.w`, and renderer capsules retain all Source stage-color cells.
+
+Common and Root received the bounded original-SDK prefix/cold continuation witness. The shared TypeScript color evaluator also reconstructs alpha zero here, so this finding explicitly distinguishes the donors; it does not assert both-donor agreement or a successful rendered-image difference. The original retained Source RGB copy can preserve its real physical byte while generic evaluation retains its separate contract.
+
+### R57. Source model geometry is posed before the actual backend entity is selected
+
+Verdict confirmed through actual native pose/collection and both original Source writers. Native `mesh_geometry` samples the model's frame, old frame and interpolation at frontend submission. Source collection deep-copies those posed vertices. Original `RB_SurfaceMesh`/`LerpMeshVertexes` and `RB_SurfaceAnim`, and both family tess appenders, sample the raw surface using the reached backend current entity's actual pose fields.
+
+The valid R47 insertion sequence supplies a concrete witness. Admit entity zero at frame zero and entity one at frame one using the same valid two-frame MD3. Queue entity one's high-sort surface, then insert a lower-sort shader before issue. The genuine queued packed-sort mutation selects entity zero at dispatch, so both donors' model writer samples frame zero. Native updates its selected entity context but appends the already copied frame-one geometry.
+
+Common, NativeView and Root received the authentic retained model/surface owner and late pose-writer join. Raw physical vertex order alone does not establish the reached model writer. The related Source MD3 frame repair also mutates the real entity cell in both donors; native currently repairs a local model input. These actual primitive and geometry producers require the genuine bank/registry lifetime, not a copied closure. No native image execution is claimed.
 
 ## Required source behavior gaps
 
@@ -501,7 +533,7 @@ Read completely in this lane so far:
 - Subsequent frontend Movie roster/resolver (300) and codec (366) are freshly read in full. Exact production searches now establish actual create/restore calls in Source, native Q3, remote Q3, Initial UI and visual owners; those parent bodies and their aggregate current/cold installation remain under implementation.
 - Current media library (251), shader admission, library preparation (88) and private/public preparation headers are freshly read in full. Shader-specific loading opens the actual VFS before format validation. Subsequent whole cinematic scene publication (193), material registry (130), material initial-image qualifier and cinematic presentation codec (85) reads establish the bounded CIN/OGV initial-publication correction recorded as R19; actual aggregate movie current/cold callers remain under implementation.
 - Family Q1 rerelease `ref_gl/gl_sky.ts` (309) and `client/sky_cmd.ts` (43), shared TypeScript `app/bootstrap/q1-service-presentation.ts` (128), and original enhanced `quakespasm/Quake/gl_sky.c` (1138) are read in full. The actual Q1 sky service, map and command joins remain open as R16.
-- Original Q3 `code/renderer/tr_shade.c`, `tr_init.c`, `tr_mesh.c`, `tr_flares.c`, `tr_backend.c` (1143), `tr_surface.c` (1215), `tr_sky.c` (845) and `tr_animation.c` (171) are read in full. Fresh MD4 append/caller cuts establish R52; this does not count as a complete review of the changing native Source writer.
+- Original Q3 `code/renderer/tr_shade.c`, `tr_shade_calc.c` (1205), `tr_init.c`, `tr_mesh.c`, `tr_flares.c`, `tr_backend.c` (1143), `tr_surface.c` (1215), `tr_sky.c` (845) and `tr_animation.c` (171) are read in full. Fresh MD4 append/caller and retained color-prefix cuts establish R52 and R56; this does not count as a complete review of the changing native Source writer.
 - Original Q3 `tr_world.c` (668), `tr_shadows.c` and family TypeScript `stencil-shadows.ts` are also read in full. Current native stencil effect owner and actual deferred shadow end have fresh whole/focused reads respectively; complete source scratch/current/cold assembly remains moving.
 - Family TypeScript `draw2d.ts` is read in full, with fresh focused picture-material/command/backend reads establishing R24. Those focused enclosing reads do not count as a new whole final Source renderer review.
 - Family TypeScript `scene-entities.ts` (218) is freshly read in full. Original frame rollover/AddRefEntity and the live tess context getter have focused reads establishing R31; the enclosing native Source entity allocation and aggregate continuation remain required implementation.

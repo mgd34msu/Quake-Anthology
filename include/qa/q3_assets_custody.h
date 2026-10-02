@@ -11,6 +11,16 @@ bool qa_q3_assets_retired(const qa_q3_presentation_assets *);
 /* After the real presentation parent closes, retire borrowed service pointers
  * without touching retained handle values or their actual owned references. */
 bool qa_q3_assets_services_retire(qa_q3_presentation_assets *, qa_error *);
+typedef struct qa_q3_registry_retirement qa_q3_registry_retirement;
+/* Preparation holds the real parent mutation lease and changes no published
+ * namespace. Dispose failed preparations before resuming Source dispatch. */
+bool qa_q3_presentation_retire_world_prepare(qa_q3_presentation *,
+    qa_q3_registry_retirement **, qa_error *);
+bool qa_q3_presentation_retire_world_ready(const qa_q3_registry_retirement *, qa_error *);
+bool qa_q3_presentation_retire_world_dispose(qa_q3_registry_retirement **, qa_error *);
+/* After ready for the whole roster, commit transfers one owning registry ref. */
+void qa_q3_presentation_retire_world_commit(qa_q3_registry_retirement **,
+    qa_q3_presentation_assets **);
 /* Returns one owning reference to the new registry installed on presentation. */
 bool qa_q3_presentation_retire_world_retained(qa_q3_presentation *,
     qa_q3_presentation_assets **, qa_error *);

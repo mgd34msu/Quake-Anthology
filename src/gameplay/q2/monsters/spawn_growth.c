@@ -1,4 +1,5 @@
 #include "reinforcements.h"
+#include "../items/internal.h"
 
 static bool show_growth(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     q2_projectile *p = &actor->projectile;

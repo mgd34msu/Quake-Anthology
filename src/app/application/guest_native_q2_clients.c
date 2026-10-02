@@ -366,8 +366,10 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
     const qa_command_invocation *command, bool *handled, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    if (!handled || !command || !engine || !engine->initialized || engine->calls ||
-        !qa_world_idle(engine->world) || !qa_native_host_destroy_ready(provider->state.native.host) ||
+    const qa_native_region_event *event = engine ?
+        application_native_q2_inventory_scanner_command_event(engine->inventory_scanner, actor) : NULL;
+    if (!handled || !command || !engine || !engine->initialized || (engine->calls && !event) ||
+        !qa_world_idle(engine->world) || (!event && !qa_native_host_destroy_ready(provider->state.native.host)) ||
         engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
         !command->argc || command->argc > INT32_MAX || !command->argv || !command->args_text ||
         !qa_actors_get(qa_session_actors(provider->application->session), actor))
@@ -420,7 +422,8 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
         declared_handled=qa_json_size(d,qa_json_get(d,clients,"command"))!=0;
         bool accepted;
         ok=declared_client(engine,slot,"clients.command",(qa_bytes){0},&accepted,error);
-    } else ok = qa_native_host_client_command(provider->state.native.host, slot, error);
+    } else ok = event ? qa_native_host_client_command_region(provider->state.native.host, slot, event, error) :
+        qa_native_host_client_command(provider->state.native.host, slot, error);
     --engine->calls;
     engine->current_client = prior_client;
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;

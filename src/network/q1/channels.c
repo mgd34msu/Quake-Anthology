@@ -73,6 +73,9 @@ void qa_nq_channel_destroy(qa_nq_channel *channel) {
 bool qa_nq_channel_ready(const qa_nq_channel *channel) {
     return channel && qa_net_stopwait_ready(channel->reliable);
 }
+uint32_t qa_nq_channel_unreliable_sequence(const qa_nq_channel *channel) {
+    return channel ? channel->unreliable_send : 0;
+}
 bool qa_nq_channel_queue(qa_nq_channel *channel, qa_bytes payload, qa_error *error) {
     return channel ? qa_net_stopwait_begin(channel->reliable, payload, error) : invalid(error, "Missing NetQuake channel");
 }

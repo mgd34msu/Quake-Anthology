@@ -265,6 +265,29 @@ static void model_fog(qa_q3_presentation *p, const qa_q3_scene_options *options,
 
 static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
     qa_scene_family, const qa_q3_ref_entity *, qa_scene_model_input *);
+static bool source_model_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
+    const qa_q3_ref_entity *entity, qa_scene_model_input *input, bool calculate, qa_error *error)
+{
+    if (!input->source_entity_cell || !input->source_scratch) {
+        if (calculate) model_lighting(p, options, entity, input);
+        return true;
+    }
+    qa_q3_source_scene_bank *bank = qa_material_source_scene_bank(input->source_scratch, error);
+    qa_q3_source_entity_cell cell;
+    if (!bank || !qa_q3_source_scene_bank_entity_read(bank, input->entity, &cell)) {
+        if (!error || error->code == QA_OK) q3p_fail(error, QA_ERROR_ARGUMENT, "Source lighting lost its actual physical entity");
+        return false;
+    }
+    if (calculate && !cell.lighting_calculated) {
+        model_lighting(p, options, entity, input);
+        if (!qa_q3_source_scene_bank_entity_lighting(bank, input->entity, input->ambient, input->directed,
+            input->light_direction, 1, cell.axis_length, cell.need_lights))
+            return q3p_fail(error, QA_ERROR_ARGUMENT, "Source lighting lost its admitted entity cell");
+    } else {
+        input->ambient = cell.ambient; input->directed = cell.directed; input->light_direction = cell.light_direction;
+    }
+    return true;
+}
 
 static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
     const qa_q3_presentation_assets *skin_assets, const qa_q3_presentation_assets *shader_assets,
@@ -340,7 +363,14 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     if (model->provider.family == QA_SCENE_Q3 || skin_assets != assets || shader_assets != assets)
         input.material_library = shader_assets->options.provider.materials;
     model_fog(p, options, entity, selected, &input, radius);
-    selected_lighting(p, options, model->provider.family, entity, &input);
+    if (source_order && (selected->format == QA_MODEL_MD3 || selected->format == QA_MODEL_MD4)) {
+        bool visible;
+        if (!qa_scene_model_source_admission(model->scene[model->has_lods ? input.lod : 0], &input, &visible, error)) return false;
+        if (!visible) return true;
+        bool calculate = selected->format == QA_MODEL_MD3 &&
+            (!(entity->flags & 2) || input.view.clip_enabled || options->shadow_mode > 1);
+        if (!source_model_lighting(p, options, entity, &input, calculate, error)) return false;
+    } else selected_lighting(p, options, model->provider.family, entity, &input);
     return qa_scene_model_submit(model->scene[model->has_lods ? input.lod : 0], &input, p->frame, error);
 }
 

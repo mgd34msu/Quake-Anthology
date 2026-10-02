@@ -1,4 +1,5 @@
 #include "unified_output_capture_save.h"
+#include "internal.h"
 #include "unified_output_capture_private.h"
 #include "unified_components_save.h"
 #include "unified_save_internal.h"

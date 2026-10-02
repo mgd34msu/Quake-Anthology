@@ -440,6 +440,20 @@ const qa_json_document *application_native_q2_attack_declaration_read(const stru
     const struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
     return p && p->engine == engine && p->items_ready ? p->document : NULL;
 }
+bool application_native_q2_attack_descriptor_item(struct application_native_q2 *engine,
+    qa_native_address descriptor,qa_item_id *out,qa_error *error)
+{
+    const struct application_native_q2_attack *p=engine?engine->source_attack:NULL;
+    if(!p||p->engine!=engine||!p->items_ready||!out||!engine->provider->state.native.host||
+        qa_native_get_module(instance((struct application_native_q2_attack *)p))!=engine->provider->state.native.module)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native descriptor lookup lost its actual prepared roster");
+    *out=0;
+    for(size_t i=0;i<p->count;++i) if(p->items[i].descriptor==descriptor) {
+        if(*out) return application_fail(error,QA_ERROR_FORMAT,"Native descriptor repeats its actual admitted identity");
+        *out=p->items[i].item;
+    }
+    return true;
+}
 void application_native_q2_attack_released(struct application_native_q2 *engine, qa_actor_id actor)
 {
     struct application_native_q2_attack *p = engine->source_attack;

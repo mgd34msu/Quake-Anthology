@@ -20,6 +20,10 @@
 #define Q3_SURF_NOIMPACT 16
 #define Q3_PI 3.14159265358979323846f
 
+static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {
+    return axis == 0 ? vector.x : axis == 1 ? vector.y : vector.z;
+}
+
 static inline float q3_source_float_multiply(float left, float right) {
     volatile float value = left * right;
     return value;

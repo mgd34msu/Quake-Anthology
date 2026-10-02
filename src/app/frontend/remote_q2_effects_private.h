@@ -107,6 +107,7 @@ bool q2fx_fail(qa_error *, qa_status, const char *);
 bool q2fx_source_valid(const frontend_remote_q2_effects_source *);
 bool q2fx_source_current(const frontend_remote_q2_effects *, qa_error *);
 bool q2fx_controls(frontend_remote_q2_effects *, frontend_remote_q2_effects_controls *, qa_error *);
+bool q2fx_frame_milliseconds(frontend_remote_q2_effects *, double *, qa_error *);
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *);
 bool q2fx_model_admit(frontend_remote_q2_effects *, q2fx_model, qa_error *);
 bool q2fx_state_fields(qa_source_save_io *, frontend_remote_q2_effects *, const frontend_remote_q2_effects_refs *);

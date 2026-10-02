@@ -22,6 +22,10 @@ typedef struct qa_native_process_options {
     /* Nonempty continuation selects detached restoration instead of fresh
      * loading. Bindings borrow already prepared durable capabilities. */
     qa_bytes continuation;
+    /* Stage original CPU/RAM first; the actual host decodes canonical actors
+     * after its enclosing world foundation has been restored. Source calls
+     * remain fenced until restore_host commits the retained HOST capsule. */
+    bool defer_host_restore;
     union {
         const qa_native_sysv_process_restore_bindings *sysv;
         const qa_native_windows_process_restore_bindings *windows;
@@ -31,5 +35,7 @@ typedef struct qa_native_process_options {
 } qa_native_process_options;
 
 bool qa_native_process_checkpoint(qa_native_instance *, qa_buffer *, qa_error *);
+bool qa_native_process_restore_host(qa_native_instance *, qa_bytes expected_host, qa_error *);
+bool qa_native_process_restore_pending(const qa_native_instance *);
 
 #endif

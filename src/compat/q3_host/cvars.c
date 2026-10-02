@@ -1,6 +1,6 @@
 #include "internal.h"
 #include "qa/console_cvars_prepare.h"
-#include "qa/cvars_observer.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/cvars_alias.h"
 #include "qa/source_save.h"
 

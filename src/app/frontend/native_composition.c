@@ -347,7 +347,8 @@ static bool checkpoint(const void *context, qa_buffer *out, qa_error *error)
         qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &version);
     for (unsigned i = 0; okay && i < 2; ++i) { qa_bytes bytes = {children[i].data, children[i].size}; okay = blob(&io, &bytes); }
     okay = okay && qa_source_save_finish(&io, out); qa_source_save_dispose(&io);
-    for (unsigned i = 0; i < 2; ++i) qa_buffer_free(children + i); return okay;
+    for (unsigned i = 0; i < 2; ++i) qa_buffer_free(children + i);
+    return okay;
 }
 static bool restore(void *context, const qa_application_q3_client_context *client, qa_bytes bytes, qa_error *error)
 {

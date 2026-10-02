@@ -70,16 +70,18 @@ static bool create(const frontend_remote_snapshots_options *o,
         !o->transition_player || !o->lagometer || !o->warning || !source || !out || *out ||
         (o->product!=QA_Q3_ARENA && o->product!=QA_Q3_TEAM_ARENA) ||
         source->owner!=o->source || source->basis.application!=qa_frontend_application(o->frontend) ||
-        source->basis.product!=o->product || !q3n_remote_source_current(source))
+        source->basis.product!=o->product || !q3n_remote_source_current(source) ||
+        (video && (source->publication.server_message<source->publication.initial_message ||
+            (source->publication.has_snapshot && source->publication.server_message<source->publication.latest_message))))
         return fail(e,QA_ERROR_ARGUMENT,"Remote centities require actual Init history and native consumers");
     frontend_remote_snapshots *s=calloc(1,sizeof(*s));
     if(!s) return fail(e,QA_ERROR_MEMORY,"Allocating remote native centities");
     s->options=*o; s->source=*source;
-    s->constructor_message=video && source->publication.has_snapshot?
-        source->publication.latest_message:source->publication.initial_message;
+    s->constructor_message=video?source->publication.server_message:source->publication.initial_message;
     s->processed=s->constructor_message;
     for(uint32_t i=0;i<QA_Q3_ENTITIES;++i) s->entities[i].presentation=&s->presentations[i];
-    s->latest=s->constructor_message; s->revision=1;
+    s->latest=video && source->publication.has_snapshot?source->publication.latest_message:s->constructor_message;
+    s->revision=1;
     s->command_sequence=source->reached_command;
     *out=s; return true;
 }
@@ -518,21 +520,22 @@ static bool codec(qa_source_save_io *io,frontend_remote_snapshots *s)
         !same_i32(io,s->source.publication.executed_command) || !map_fields(io,source->map) ||
         !qa_source_save_i32(io,&s->constructor_message) ||
         s->constructor_message<s->source.publication.initial_message ||
-        (s->source.publication.has_snapshot?s->constructor_message>s->source.publication.latest_message:
-            s->constructor_message!=s->source.publication.initial_message) ||
+        s->constructor_message>s->source.publication.server_message ||
         !qa_source_save_i32(io,&s->processed) || !qa_source_save_i32(io,&s->latest) ||
         !qa_source_save_i32(io,&s->time) || !qa_source_save_i32(io,&s->command_sequence) ||
         s->command_sequence<s->source.publication.initial_command ||
         s->command_sequence!=s->source.reached_command || s->command_sequence>s->source.publication.received_command ||
         !qa_source_save_u64(io,&s->revision) || !s->revision ||
-        s->processed<s->constructor_message || s->processed>s->latest ||
+        s->processed<s->constructor_message || s->processed>s->source.publication.server_message ||
         (s->source.publication.has_snapshot?s->latest>s->source.publication.latest_message:
             s->latest!=s->constructor_message) ||
         !qa_source_save_bool(io,&s->has_snap) || !qa_source_save_bool(io,&s->has_next) ||
+        (s->processed>s->latest && (s->has_snap || s->processed!=s->constructor_message)) ||
         (s->has_next && !s->has_snap) || (!s->source.publication.has_snapshot && (s->has_snap || s->has_next)) ||
         !qa_source_save_bool(io,&s->this_teleport) ||
         !qa_source_save_bool(io,&s->next_teleport)) return false;
     if(s->has_snap && (!snapshot_fields(io,&s->snap,s->options.product) || s->snap.value.message_number>s->processed ||
+        s->snap.value.message_number<=s->constructor_message ||
         s->snap.value.server_time>s->time)) return false;
     if(s->has_next && (!snapshot_fields(io,&s->next,s->options.product) ||
         s->next.value.message_number>s->processed || s->next.value.message_number<=s->snap.value.message_number ||

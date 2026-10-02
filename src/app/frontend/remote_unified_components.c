@@ -1,5 +1,6 @@
 #include "remote_unified_components_private.h"
 #include "remote_unified_private.h"
+#include "remote_unified_save.h"
 #include "component_scene.h"
 #include <limits.h>
 #include <stdlib.h>
@@ -9,6 +10,14 @@ bool frontend_unified_components_current(const frontend_unified_components *o)
 {
     return o&&!o->closing&&!o->restoring&&!o->failed&&frontend_unified_media_current(o->media)&&
         o->recipe==frontend_remote_unified_recipe(o->replica)&&frontend_remote_unified_current(o->replica,NULL);
+}
+bool frontend_unified_components_retained_current(const frontend_unified_components *o)
+{
+    return o&&!o->closing&&!o->failed&&!o->busy&&
+        o->recipe==frontend_remote_unified_recipe(o->replica)&&
+        o->recipe==frontend_unified_media_recipe(o->media)&&
+        (frontend_unified_media_current(o->media)||frontend_unified_media_importing(o->media))&&
+        frontend_remote_unified_checkpoint_current(o->replica,NULL);
 }
 bool frontend_unified_components_events_bind(frontend_unified_components *o,frontend_unified_events *events,qa_error *e)
 {
@@ -40,7 +49,7 @@ bool frontend_unified_components_recipient_content(const frontend_unified_compon
 bool frontend_unified_components_recipient_current(const frontend_unified_components *o,const char *content,
     const qa_recipe_provider *provider)
 {
-    if(!content||!provider||!frontend_unified_components_current(o)) return false;
+    if(!content||!provider||(!frontend_unified_components_current(o)&&!frontend_unified_components_retained_current(o))) return false;
     for(size_t i=0;i<o->count;++i) {
         const remote_component *r=o->rows[i];
         if(!r||r->state.provider_row!=provider||!r->state.mod) continue;
@@ -91,7 +100,8 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     remote_component **next=count?calloc(count,sizeof(*next)):NULL;
     remote_component_state *states=count?calloc(count,sizeof(*states)):NULL;
     bool *created=count?calloc(count,sizeof(*created)):NULL;
-    if(count&&(!next||!states||!created)) { free(next); free(states); free(created); return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining genuine reliable component candidate"); }
+    bool *admitted=count?calloc(count,sizeof(*admitted)):NULL;
+    if(count&&(!next||!states||!created||!admitted)) { free(next); free(states); free(created); free(admitted); return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining genuine reliable component candidate"); }
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         qa_json_id row=qa_json_at(j,sources,i),owner=qa_json_get(j,row,"owner"); qa_buffer provider={0};
@@ -112,17 +122,23 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         }
     }
     if(ok&&!frontend_unified_components_current(o)) ok=q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component candidate lost its admitted recipe");
-    bool publishing=ok;
+    bool publishing=false;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),states[i].mod->product);
-        ok=product&&frontend_unified_events_component_admit(o->events,states[i].presentation_owner,product->identity,e);
+        ok=product&&frontend_unified_events_component_admit_created(o->events,states[i].presentation_owner,product->identity,admitted+i,e);
     }
+    publishing=ok;
     /* Retire old physical clients before replacing their activation metadata.
      * Refusal leaves both old owners and all newly created candidates reachable. */
     for(size_t i=0;ok&&i<o->count;++i) {
         bool retained=false; for(size_t k=0;k<count;++k) if(next[k]==o->rows[i]) retained=true;
-        if(!retained&&o->rows[i]) ok=frontend_unified_events_component_retire(o->events,o->rows[i]->state.presentation_owner,e)&&
-            q3remote_component_close(o->rows+i,e);
+        if(!retained&&o->rows[i]) {
+            bool retire=false;
+            for(size_t k=0;k<count;++k) if(!strcmp(states[k].provider,o->rows[i]->state.provider))
+                retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
+            if(retire) ok=frontend_unified_events_component_retire(o->events,o->rows[i]->state.presentation_owner,e);
+            if(ok) ok=q3remote_component_close(o->rows+i,e);
+        }
     }
     if(ok) {
         for(size_t i=0;i<count;++i) {
@@ -132,10 +148,16 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         free(o->rows); o->rows=next; o->count=count; o->revision=revision; next=NULL;
     } else {
         if(publishing) o->failed=true;
+        qa_error original={0}; if(e) original=*e;
+        for(size_t i=0;i<count;++i) if(admitted[i]) {
+            qa_error cleanup={0};
+            if(!frontend_unified_events_component_cancel(o->events,states[i].presentation_owner,&cleanup)) o->failed=true;
+        }
+        if(e) *e=original;
         for(size_t i=0;i<count;++i) if(created[i]) { free(next[i]); next[i]=NULL; }
     }
     for(size_t i=0;i<count;++i) q3remote_component_state_free(states+i);
-    free(states); free(created); free(next); return ok;
+    free(states); free(created); free(admitted); free(next); return ok;
 }
 void frontend_unified_components_frame_abort(frontend_unified_component_frame **slot)
 {
@@ -212,8 +234,6 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
     if(!frontend_unified_components_idle(o)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component retirement retains actual guest output");
     o->closing=true;
     for(size_t i=0;i<o->count;++i) {
-        if(o->rows[i]&&o->events&&!o->restoring&&
-            !frontend_unified_events_component_retire(o->events,o->rows[i]->state.presentation_owner,e)) return false;
         if(!q3remote_component_close(o->rows+i,e)) return false;
     }
     free(o->rows); free(o->lights); free(o); *slot=NULL; return true;

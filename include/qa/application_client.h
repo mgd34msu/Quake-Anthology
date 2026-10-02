@@ -23,6 +23,11 @@ typedef struct qa_application_client_source {
     qa_net_seat_id network_seat;
     uint64_t connection_epoch, configuration_generation;
 } qa_application_client_source;
+typedef struct qa_application_client_entity_publication {
+    bool published;
+    uint64_t map_generation, received_ns;
+    int32_t source_frame;
+} qa_application_client_entity_publication;
 typedef struct qa_application_client_owner {
     void *context;
     bool (*retain)(void *, qa_error *);
@@ -39,6 +44,10 @@ typedef struct qa_application_client_owner {
      * canonical observer ID; their source number is never cast to an actor. */
     bool (*entity_current)(void *, const qa_application_client_source *, uint32_t,
         uint64_t *map_generation);
+    /* Pure complete decoded-publication proof. published=false proves the
+     * authenticated receiver currently holds no admitted frame. */
+    bool (*entity_publication)(void *, const qa_application_client_source *,
+        qa_application_client_entity_publication *);
 } qa_application_client_owner;
 typedef struct qa_application_client_options {
     const qa_launch_instance *descriptor;
@@ -83,6 +92,10 @@ bool qa_application_client_rebind(qa_application *, const qa_application_client_
     qa_application_client_source *, qa_error *);
 bool qa_application_client_entity_read(qa_application *, const qa_application_client_source *,
     uint32_t source_number, qa_actor_id *, qa_error *);
+/* Retires absent observer identities at genuine decoded-frame publication.
+ * Surviving source rows retain their existing full actor identities. */
+bool qa_application_client_entities_refresh(qa_application *,
+    const qa_application_client_source *, qa_error *);
 bool qa_application_client_idle(qa_application *, const qa_application_client_source *);
 /* Retires observer actors before releasing the physical owner lease. A
  * rejected release retains a retryable row and all remaining ownership. */

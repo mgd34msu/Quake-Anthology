@@ -627,7 +627,8 @@ static bool q1_effects(qa_frontend *frontend, frontend_event_state *state, qa_er
         qa_application_visual_view view; qa_error observed = {0};
         if (!qa_application_visual_read(frontend->application, record->id, &view, &observed)) {
             if (observed.code == QA_ERROR_NOT_FOUND) continue;
-            if (error) *error = observed; return false;
+            if (error) *error = observed;
+            return false;
         }
         uint32_t effects = view.q1_effects | (view.family == QA_GAME_Q1 ? (uint32_t)view.effects : 0);
         if (!(effects & 14)) continue;
@@ -1272,6 +1273,27 @@ static bool retained_asset(qa_source_save_io *io, qa_frontend *frontend, const q
     if (reading) free(name);
     return ok;
 }
+static bool audio_owner_fields(qa_source_save_io *io, qa_application *application,
+    uint64_t *owner, qa_audio_family *family)
+{
+    if (io->direction == QA_SOURCE_SAVE_WRITE && *owner > UINT32_MAX)
+        return frontend_fail(io->error, QA_ERROR_ARGUMENT, "Audio owner has no actor-owner namespace identity");
+    qa_actor_owner provider = io->direction == QA_SOURCE_SAVE_READ ? 0 : (qa_actor_owner)*owner;
+    if (!frontend_save_sound_owner(io, application, &provider, family)) return false;
+    *owner = provider;
+    return true;
+}
+static bool retained_audio_asset(qa_source_save_io *io, qa_frontend *frontend,
+    const qa_audio_asset_inventory *inventory, uint64_t *owner,
+    qa_audio_family *family, qa_audio_asset **asset)
+{
+    if (io->direction == QA_SOURCE_SAVE_WRITE && *owner > UINT32_MAX)
+        return frontend_fail(io->error, QA_ERROR_ARGUMENT, "Audio asset owner has no actor-owner namespace identity");
+    qa_actor_owner provider = io->direction == QA_SOURCE_SAVE_READ ? 0 : (qa_actor_owner)*owner;
+    if (!retained_asset(io, frontend, inventory, &provider, family, asset)) return false;
+    *owner = provider;
+    return true;
+}
 static bool audio_identity_matches(const qa_frontend *frontend, qa_actor_id actor, uint64_t identity)
 {
     if (!actor.registry) return identity == QA_AUDIO_NO_ACTOR;
@@ -1303,12 +1325,12 @@ static bool audio_projection_fields(qa_source_save_io *io, qa_frontend *frontend
     entry->kind = (frontend_audio_projection_kind)kind;
     if (kind == FRONTEND_AUDIO_STOP_CHANNEL) {
         if (entry->recipient.registry) return false;
-        if (!frontend_save_sound_owner(io, frontend->application, &sound->owner, &sound->family) || !sound->owner ||
+        if (!audio_owner_fields(io, frontend->application, &sound->owner, &sound->family) || !sound->owner ||
             !qa_source_save_i32(io, &sound->channel)) return false;
         return true;
     }
     uint32_t origin_kind = sound->origin_kind, audience = sound->audience;
-    if (!retained_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
+    if (!retained_audio_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
         !frontend_save_text(io, &entry->name) || !qa_source_save_i32(io, &entry->milliseconds) ||
         !qa_source_save_u32(io, &origin_kind) || !qa_source_save_u32(io, &audience) ||
         !qa_source_save_vec3(io, &sound->origin) || !qa_vec_finite(sound->origin) ||
@@ -1436,7 +1458,7 @@ static bool sound_fields(qa_source_save_io *io, qa_frontend *frontend, const qa_
     if (!reading) for (unsigned i = 0; i < frontend->options.seats; ++i) if (entry->static_mixers[i]) seats |= 1u << i;
     if (!qa_source_save_actor(io, &entry->actor) || !qa_source_save_u64(io, &sound->actor) ||
         !audio_identity_matches(frontend, entry->actor, sound->actor) ||
-        !retained_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
+        !retained_audio_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
         !qa_source_save_bool(io, &is_static) || !qa_source_save_u64(io, &static_key) ||
         is_static != (static_key != 0) || !qa_source_save_u32(io, &seats) || seats >= (1u << frontend->options.seats) ||
         !qa_source_save_u32(io, &origin_kind) || !qa_source_save_u32(io, &audience) ||

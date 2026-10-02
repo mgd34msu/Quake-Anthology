@@ -95,7 +95,11 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       !finite3(draw->fog.color) || !isfinite(draw->fog.density) ||
       !isfinite(draw->fog.amount) || !isfinite(draw->shade_scale) ||
       !isfinite(draw->shadow_near) ||
+      (draw->source_vertex_storage && (!draw->source_arrays ||
+       draw->source_vertex_storage != QA_SOURCE_TESS_VERTICES ||
+       draw->mesh.vertex_count > draw->source_vertex_storage)) ||
       (draw->mesh.vertex_count && !draw->mesh.vertices) ||
+      (draw->source_vertex_storage && !draw->mesh.vertices) ||
       (draw->mesh.index_count && !draw->mesh.indices) ||
       (draw->light_count && !draw->lights)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -155,6 +159,13 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
 static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                       qa_render_primitive_mode mode, qa_error *error) {
   size_t count = draw->mesh.vertex_count;
+  bool referenced[QA_SOURCE_TESS_VERTICES]={0};
+  if (draw->source_vertex_storage)
+    for (size_t i=0;i<draw->mesh.index_count;++i) {
+      size_t index=draw->mesh.indices[i];
+      referenced[index]=true;
+      if (index>=count) count=index+1;
+    }
   if (count > SIZE_MAX / sizeof(cpu_vertex)) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
                  "CPU transformed vertex storage overflow");
@@ -196,6 +207,7 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     for (size_t c = 0; c < 9; ++c)
       normal[c] /= determinant;
   for (size_t i = 0; i < count; ++i) {
+    if (draw->source_vertex_storage && i>=draw->mesh.vertex_count && !referenced[i]) continue;
     const qa_scene_vertex *v = &draw->mesh.vertices[i];
     if (!finite3(v->position) || !finite3(v->normal) || !finite4(v->color) ||
         !isfinite(v->texcoord.x) || !isfinite(v->texcoord.y) ||
@@ -774,7 +786,7 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     return false;
   }
   for (size_t i = 0; i < draw->mesh.index_count; ++i)
-    if (draw->mesh.indices[i] >= draw->mesh.vertex_count) {
+    if (draw->mesh.indices[i] >= (draw->source_vertex_storage ? draw->source_vertex_storage : draw->mesh.vertex_count)) {
       qa_error_set(error, QA_ERROR_ARGUMENT, i,
                    "CPU draw index is outside vertex storage");
       return false;

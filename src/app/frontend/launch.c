@@ -3,6 +3,7 @@
 #include "view_bindings.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_client.h"
 bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
 {
     if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
@@ -61,6 +62,21 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
 {
     const frontend_seat *seat=context;
     const qa_frontend *f=seat?seat->frontend:NULL;
+    if (f && f->application && f->seats && ordinal<f->options.seats && seat==f->seats+ordinal &&
+        seat->id==ordinal && command && command->owner) {
+        qa_application_client_source source;
+        if (qa_application_client_read(f->application,command->owner,command->seat,&source,NULL) &&
+            source.context.physical_seat==ordinal && qa_application_client_current(f->application,&source)) {
+            const qa_command_context *actual=&source.context.command;
+            if (command->origin==QA_COMMAND_SEAT && !command->script && !command->console_text &&
+                command->owner==actual->owner && command->session==actual->session &&
+                command->client==actual->client && command->seat==actual->seat &&
+                command->dialect==actual->dialect && command->registry==actual->registry &&
+                command->generation==actual->generation && command->direct==actual->direct &&
+                qa_actor_id_equal(command->actor,actual->actor)) return true;
+        }
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input context lost its actual physical CLIENT namespace");
+    }
     if (!f || !f->application || !f->seats || ordinal>=f->options.seats || seat!=f->seats+ordinal ||
         seat->id!=ordinal || !command || command->origin!=QA_COMMAND_SEAT || command->owner ||
         command->session || command->client || command->script || command->console_text || !command->direct ||

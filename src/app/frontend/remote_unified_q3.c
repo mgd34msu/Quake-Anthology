@@ -2,6 +2,7 @@
 #include "remote_unified_q3.h"
 #include "remote_unified_events.h"
 #include "remote_unified_components.h"
+#include "remote_unified_save.h"
 #include "q3_render_policy.h"
 #include "qa/q3_source_scene_bank.h"
 #include "../../presentation/q3_native/events.h"
@@ -75,6 +76,8 @@ struct frontend_unified_q3 {
     unified_q3_bank *banks;
     qa_q3_source_scene_bank *scene_bank;
     unified_q3_character *characters;
+    unified_q3_character **character_order;
+    size_t character_count, character_capacity;
     unified_q3_ballistic *ballistics;
     qa_unified_document *frame, *candidate;
     const qa_unified_document *candidate_input;
@@ -153,9 +156,22 @@ static bool actor(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_
 }
 bool frontend_unified_q3_current(const frontend_unified_q3 *o)
 { return o && o->epoch == frontend_remote_unified_epoch(o->replica) &&
+    frontend_unified_media_recipe(o->media)==frontend_remote_unified_recipe(o->replica) &&
     frontend_unified_media_current(o->media) && frontend_remote_unified_current(o->replica,NULL); }
 static bool current(frontend_unified_q3 *o, qa_error *e)
 { return frontend_unified_q3_current(o) || frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q3 CLIENT owner changed"); }
+static bool retained_current(const frontend_unified_q3 *o,qa_error *e)
+{
+    if(!o || !o->frontend || o->epoch!=frontend_remote_unified_epoch(o->replica) ||
+        frontend_unified_media_recipe(o->media)!=frontend_remote_unified_recipe(o->replica) ||
+        !frontend_unified_media_current(o->media))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q3 retained CLIENT owner changed");
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    if(!domain || domain->application!=o->frontend->application)
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q3 retained CLIENT lost its actual application");
+    return o->frontend->source_restoring || o->frontend->capture?
+        frontend_remote_unified_checkpoint_current(o->replica,e):frontend_remote_unified_current(o->replica,e);
+}
 static bool effect_current(const q3n_unified_effect_source *s)
 {
     unified_q3_bank *b = s ? s->context : NULL;
@@ -325,7 +341,7 @@ bool frontend_unified_q3_create(qa_frontend *f, frontend_remote_unified *r,
     frontend_unified_q3 *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating persistent Unified Q3 CLIENT");
     o->frontend=f; o->replica=r; o->media=m; o->epoch=frontend_remote_unified_epoch(r);
-    if (!current(o,e)) { free(o); return false; } *out=o; return true;
+    if (!retained_current(o,e)) { free(o); return false; } *out=o; return true;
 }
 bool frontend_unified_q3_audio(frontend_unified_q3 *o, uint64_t owner, void *context,
     bool (*resolve)(void *,qa_actor_id,uint64_t *,qa_error *), qa_error *e)
@@ -346,7 +362,8 @@ bool frontend_unified_q3_events(frontend_unified_q3 *o, frontend_unified_events 
 bool frontend_unified_q3_components(frontend_unified_q3 *o,frontend_unified_components *components,qa_error *e)
 {
     if(!o || o->busy || !components || (o->components && o->components!=components) ||
-        !frontend_unified_components_current(components))return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 component submission requires its real retained CLIENT child");
+        (!frontend_unified_components_current(components) && !frontend_unified_components_retained_current(components)))
+        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 component submission requires its real retained CLIENT child");
     o->components=components;return true;
 }
 static bool component_bank_read(frontend_unified_q3 *o,qa_error *e)
@@ -953,9 +970,21 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     for (unified_q3_character *c=o->characters;c;c=c->next) c->visible=false;
     const qa_json_document *j=qa_unified_document_json(o->frame);
     qa_json_id rows=field(j,field(j,qa_unified_document_root(o->frame),"output"),"characters");
-    for (size_t i=0;okay && i<qa_json_size(j,rows);++i) {
+    size_t character_count=qa_json_size(j,rows);
+    o->character_count=0;
+    if(okay && character_count>o->character_capacity) {
+        if(character_count>SIZE_MAX/sizeof(*o->character_order))
+            okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 character order exceeds native storage");
+        else {
+            unified_q3_character **order=realloc(o->character_order,character_count*sizeof(*order));
+            if(!order)okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual FRAME character order");
+            else { o->character_order=order; o->character_capacity=character_count; }
+        }
+    }
+    for (size_t i=0;okay && i<character_count;++i) {
         unified_q3_character *c;
         okay=character_read(o,qa_json_at(j,rows,i),&c,e);
+        if(okay)o->character_order[o->character_count++]=c;
     }
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired) {
         q3n_frame frame=effect_frame(o,b,o->time); frame.event_settings=&effect_settings; frame.weapon_settings=&weapon_settings;
@@ -966,13 +995,15 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
             qa_q3_presentation_clear(b->backend,e);
         frame.presentation=b->backend;
         if (okay) okay=q3n_media_load_unified_effects(b->media,&b->source,e) && q3n_particles_load_unified(b->particles,&frame,e);
-        for (unified_q3_character *c=o->characters;okay && c;c=c->next)
-            if (c->visible && c->bank==b) okay=character_draw(o,c,e);
+        for(size_t i=0;okay && i<o->character_count;++i) {
+            unified_q3_character *c=o->character_order[i];
+            if(c->visible && c->bank==b)okay=character_draw(o,c,e);
+        }
         if(okay)okay=ballistic_draw(o,b,e);
         if (okay) okay=q3n_marks_submit(&frame,e) && q3n_particles_add(&frame,e);
         qa_bounds bounds;
         if(okay)okay=qa_collision_model_bounds(frontend_remote_unified_geometry(o->replica),0,&bounds,e);
-        if(okay){frame.refdef.origin=qa_vec_add(bounds.max,qa_v3(65536,65536,65536));okay=q3n_local_submit(&frame,e);}
+        if(okay){frame.refdef.origin=qa_vec_add(bounds.maxs,qa_v3(65536,65536,65536));okay=q3n_local_submit(&frame,e);}
         const qa_scene_light *lights=NULL; size_t count=0;
         if (okay) okay=qa_q3_presentation_lights_read(b->backend,&lights,&count,e);
         if (okay && count>SIZE_MAX-o->light_count) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 light count overflow");
@@ -1089,7 +1120,8 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         qa_resource_release(c->animation_holder); free(c); }
     while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
     for (size_t i=0; i<1024; ++i) free(o->configstrings[i]);
-    qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate); free(o->lights); free(o); *address=NULL; return true;
+    qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
+    free(o->character_order); free(o->lights); free(o); *address=NULL; return true;
 }
 bool frontend_unified_q3_visit(const frontend_unified_q3 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
@@ -1132,7 +1164,7 @@ static bool saved_actor(qa_source_save_io *io,frontend_unified_q3 *o,qa_actor_id
     if(!present){if(io->direction==QA_SOURCE_SAVE_READ)*id=(qa_actor_id){0};return true;}
     if(io->direction==QA_SOURCE_SAVE_WRITE && !frontend_remote_unified_wire_actor(o->replica,*id,&wire))return false;
     if(!qa_source_save_u32(io,&wire.slot) || !qa_source_save_u64(io,&wire.generation))return false;
-    return io->direction!=QA_SOURCE_SAVE_READ || frontend_remote_unified_actor(o->replica,wire.slot,wire.generation,id,io->error);
+    return io->direction!=QA_SOURCE_SAVE_READ || frontend_remote_unified_actor_retained(o->replica,wire.slot,wire.generation,id,io->error);
 }
 static bool saved_float(qa_source_save_io *io,float *value)
 {return qa_source_save_f32(io,value) && isfinite(*value);}
@@ -1302,7 +1334,7 @@ static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa
 }
 bool frontend_unified_q3_checkpoint(frontend_unified_q3 *o,const qa_application_content_graph *content,qa_buffer *out,qa_error *e)
 {
-    if(!o || !content || !out || out->data || out->size || o->busy || o->prepared || o->sampled || !current(o,e))return false;
+    if(!o || !content || !out || out->data || out->size || o->busy || o->prepared || o->sampled || !retained_current(o,e))return false;
     o->busy=true;qa_source_save_io io={0};bool okay=qa_source_save_writer(&io,NULL,e) && capsule_fields(&io,o,content) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);o->busy=false;
     if(!okay && e && e->code==QA_OK)frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 CLIENT cold continuation is inconsistent");
@@ -1318,6 +1350,7 @@ bool frontend_unified_q3_restore(qa_frontend *f,frontend_remote_unified *replica
     }
     qa_source_save_io io={0};bool okay=qa_source_save_reader(&io,NULL,bytes,e) && capsule_fields(&io,o,content) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
+    if(okay)okay=retained_current(o,e);
     if(!okay){if(e && e->code==QA_OK)frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid saved Q3 CLIENT continuation");
         qa_error cleanup={0};if(!frontend_unified_q3_destroy(&o,&cleanup))*out=o;
         return false;}

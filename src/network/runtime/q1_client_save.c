@@ -15,6 +15,28 @@ static qa_q1_peer_save_admission admission(const q1_runtime_client *c, const qa_
 static bool valid(const q1_runtime_client *c, const qa_net_client *client, qa_error *e)
 {
     bool qw = c->qw != NULL;
+    if (!q1_client_retirement_valid(&c->retirement, c->retiring, qw,
+            c->policy.message_bytes + 10, e)) return false;
+    const qa_buffer *packet = &c->retirement.packet;
+    if (packet->size) {
+        if (qw) {
+            if (packet->size < 10 || qa_load_u16le(packet->data + 8) != c->policy.qport ||
+                (qa_load_u32le(packet->data) & INT32_MAX) + 1 !=
+                    qa_qw_channel_get_stats(c->native.channel.qw).outgoing_sequence)
+                return qa_network_fail(e, "QW CLIENT retirement packet differs from its actual channel cut");
+        } else {
+            uint32_t header = packet->size >= 8 ?
+                (uint32_t)packet->data[0] << 24 | (uint32_t)packet->data[1] << 16 |
+                (uint32_t)packet->data[2] << 8 | packet->data[3] : 0;
+            uint32_t sequence = packet->size >= 8 ?
+                (uint32_t)packet->data[4] << 24 | (uint32_t)packet->data[5] << 16 |
+                (uint32_t)packet->data[6] << 8 | packet->data[7] : 0;
+            if (packet->size != 9 || header != (QA_NQ_FLAG_UNRELIABLE | 9u) ||
+                packet->data[8] != QA_Q1_CLC_DISCONNECT ||
+                sequence + 1u != qa_nq_channel_unreliable_sequence(c->native.channel.nq))
+                return qa_network_fail(e, "NQ CLIENT retirement packet differs from its actual channel cut");
+        }
+    }
     if (!client || c->busy || client->seat_count != 1 ||
         c->admitted_protocol.kind != client->protocol.kind || c->admitted_protocol.revision != client->protocol.revision ||
         c->admitted_protocol.flags != client->protocol.flags || !qa_q1_profile_valid(c->protocol, e) ||
@@ -131,13 +153,14 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
     }
     if (ok && c->command_count > (SIZE_MAX - capacity) / 24) ok = qa_network_fail(e, "Q1 CLIENT command extent overflows");
     if (ok) capacity += c->command_count * 24;
+    if (ok) ok = q1_client_retirement_extent(&c->retirement, &capacity, e);
     qa_buffer bytes = {0}; qa_net_writer w;
     if (ok) {
         bytes.data = malloc(capacity);
         if (!bytes.data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding Q1 CLIENT continuation"); ok = false; }
         else qa_net_writer_init(&w,bytes.data,capacity,e);
     }
-    if (ok) ok = qa_net_write_u32(&w,UINT32_C(0x4c314151)) && qa_net_write_u32(&w,1) &&
+    if (ok) ok = qa_net_write_u32(&w,UINT32_C(0x4c314151)) && qa_net_write_u32(&w,2) &&
         write_policy(&w,&c->policy) && write_protocol(&w,c->protocol) && write_protocol(&w,c->before_protocol) &&
         qa_net_write_u8(&w,c->started) && qa_net_write_u8(&w,c->held) &&
         qa_net_write_u8(&w,c->active) && qa_net_write_u8(&w,c->retiring) && qa_net_write_u8(&w,c->has_delta) &&
@@ -149,6 +172,7 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
     for (size_t i=0;ok && i<Q1_CLIENT_PARTS;++i) ok = qa_net_write_u64(&w,parts[i].size) && qa_net_write_data(&w,parts[i].data,parts[i].size);
     for (q1_client_pending *p=c->first;ok && p;p=p->next) ok = qa_net_write_u64(&w,p->bytes.size) && qa_net_write_data(&w,p->bytes.data,p->bytes.size);
     for (size_t i=0;ok && i<c->command_count;++i) ok = write_move(&w,qw,&c->commands[i]);
+    if (ok) ok = q1_client_retirement_write(&c->retirement, &w);
     for (size_t i=0;i<4;++i) qa_buffer_free(&parts[i]);
     if (!ok) { qa_buffer_free(&bytes); return false; }
     bytes.size = qa_net_writer_size(&w); *out = bytes; return true;
@@ -160,7 +184,7 @@ bool qa_network_q1_client_restore_peer(qa_network_runtime *runtime, const qa_net
     if (!runtime || !client || !policy || !hooks || !out || out->state || !bytes.data)
         return qa_network_fail(e, "Q1 CLIENT restore requires actual empty candidate source admission");
     qa_net_reader r; qa_net_reader_init(&r,bytes,e);
-    if (qa_net_read_u32(&r) != UINT32_C(0x4c314151) || qa_net_read_u32(&r) != 1 || !read_policy(&r,policy))
+    if (qa_net_read_u32(&r) != UINT32_C(0x4c314151) || qa_net_read_u32(&r) != 2 || !read_policy(&r,policy))
         return qa_net_reader_fail(&r,"Invalid Q1 CLIENT continuation schema or policy");
     qa_net_protocol_id protocol=read_protocol(&r), before=read_protocol(&r);
     uint8_t started=qa_net_read_u8(&r), held=qa_net_read_u8(&r), active=qa_net_read_u8(&r), retiring=qa_net_read_u8(&r), delta=qa_net_read_u8(&r);
@@ -223,7 +247,8 @@ bool qa_network_q1_client_restore_peer(qa_network_runtime *runtime, const qa_net
         c->started=started!=0; c->active=active!=0; c->retiring=retiring!=0; c->has_delta=delta!=0;
         c->waiting_skins=waiting!=0;
         c->moves=moves; c->last_frame=last; c->sequence=sequence; c->acknowledged=acknowledged; c->received_ns=received;
-        ok=qa_net_reader_finish(&r) && valid(c,client,e);
+        ok=q1_client_retirement_read(&c->retirement, &r, c->retiring, qw,
+            c->policy.message_bytes + 10, e) && qa_net_reader_finish(&r) && valid(c,client,e);
     }
     if (!ok) { q1_client_close(c); return false; }
     *out=(qa_network_peer){.id=client->id,.ops=qa_network_q1_client_ops,.state=c}; return true;

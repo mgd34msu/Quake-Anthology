@@ -105,6 +105,13 @@ typedef struct qa_input_platform_settings_requirements {
  * destruction. Readiness must precede publication under the held boundary. */
 bool qa_input_platform_settings_prepare(qa_input_platform *, const qa_input_platform_settings *,
     qa_input_seat *const configuration[4], double now_ms, qa_input_platform_settings_ticket **, qa_error *);
+/* Copy all four physical selectors and resolve them against the retained native
+ * controller inventory. Changed assignments remap only distinct prepared seat
+ * configurations. Active routes and their old release identities remain intact
+ * until publication; abort keeps them intact and destroys the copied selectors. */
+bool qa_input_platform_settings_prepare_selected(qa_input_platform *, const qa_input_platform_settings *,
+    qa_input_seat *const configuration[4], const qa_controller_selection selections[4], double now_ms,
+    qa_input_platform_settings_ticket **, qa_error *);
 /* Poll the retained 1000ms clock using actual active settings and physical
  * seats. A successful NULL ticket means no disconnected endpoint needs an
  * attempt. A returned ticket uses the same checked release and publication

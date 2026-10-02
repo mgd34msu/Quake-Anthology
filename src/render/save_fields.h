@@ -39,12 +39,12 @@ static inline bool render_save_pipeline(qa_source_save_io *io,qa_scene_state *st
     }
     return true;
 }
-static bool render_save_rect(qa_source_save_io *io,qa_scene_rect *rect)
+static inline bool render_save_rect(qa_source_save_io *io,qa_scene_rect *rect)
 {
     return qa_source_save_i32(io,&rect->x) && qa_source_save_i32(io,&rect->y) &&
         qa_source_save_u32(io,&rect->width) && qa_source_save_u32(io,&rect->height);
 }
-static bool render_save_view(qa_source_save_io *io,qa_scene_view *view)
+static inline bool render_save_view(qa_source_save_io *io,qa_scene_view *view)
 {
     if (!render_save_rect(io,&view->viewport) || !qa_source_save_vec3(io,&view->origin)) return false;
     for (size_t i=0;i<3;++i) if (!qa_source_save_vec3(io,view->axis+i)) return false;
@@ -57,7 +57,7 @@ static bool render_save_view(qa_source_save_io *io,qa_scene_view *view)
         qa_source_save_vec3(io,&view->clip_plane.normal) && qa_source_save_f32(io,&view->clip_plane.distance) &&
         qa_source_save_u32(io,&view->seat);
 }
-static bool render_save_image(qa_source_save_io *io,const qa_render_checkpoint_refs *refs,const qa_scene_image **image)
+static inline bool render_save_image(qa_source_save_io *io,const qa_render_checkpoint_refs *refs,const qa_scene_image **image)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ; uint64_t key=0;
     if (!reading && *image && (!refs || !refs->image_encode ||

@@ -31,7 +31,7 @@ static bool direction(bot_travel *t, const qa_bot_vector_source *direction, floa
             *moved = true;
             return true;
         }
-        s->flags &= ~QA_BOT_MOVE_BARRIER_JUMP;
+        s->flags &= ~(uint32_t)QA_BOT_MOVE_BARRIER_JUMP;
         uint32_t presence =
             (type & QA_BOT_DIRECTION_CROUCH) && !(type & QA_BOT_DIRECTION_JUMP) ? 4 : 2;
         qa_vec3 horizontal = {0};

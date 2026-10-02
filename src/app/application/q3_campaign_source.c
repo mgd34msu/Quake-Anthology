@@ -1,4 +1,5 @@
 #include "q3_campaign_source.h"
+#include "qa/settings.h"
 #include "map_players_private.h"
 #include "native_q3_console.h"
 #include "native_q3_settings.h"

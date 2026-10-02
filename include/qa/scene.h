@@ -247,6 +247,13 @@ bool qa_scene_resources_palette(qa_scene_resources *, qa_scene_family, qa_bytes 
 /* Read the already installed palette without acquisition or cache changes.
  * The borrowed span lasts until resource-owner restoration/destruction. */
 bool qa_scene_resources_palette_read(const qa_scene_resources *, qa_scene_family, qa_bytes *);
+typedef struct qa_scene_palette_source {
+    const qa_resource *resource;
+    const qa_vfs_acquisition *opening;
+} qa_scene_palette_source;
+/* Exact palette admission retained by this bank; no historical-name lookup. */
+bool qa_scene_resources_palette_source_read(const qa_scene_resources *, qa_scene_family,
+                                           qa_scene_palette_source *);
 bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_kind,
                           const qa_scene_image_level *, size_t, qa_scene_wrap,
                           qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);
@@ -256,6 +263,19 @@ bool qa_scene_image_load(qa_scene_resources *, const char *, const qa_scene_imag
  * cache retains this admission rule through policy preparation and restore. */
 bool qa_scene_image_load_exact(qa_scene_resources *, const char *, const qa_scene_image_options *,
                               qa_scene_image **, qa_error *);
+/* Decode owned immutable input without filesystem lookup or cache admission.
+ * Indexed formats that need an external palette require its explicit RGB span. */
+bool qa_scene_image_decode_retained(qa_scene_resources *, const char *request, const char *source_path,
+    qa_bytes source, const qa_scene_image_options *, qa_scene_image **, qa_error *);
+typedef struct qa_scene_image_load_receipt {
+    qa_resource *source, *logical_source;
+    qa_mount_id source_mount, logical_mount;
+} qa_scene_image_load_receipt;
+/* Observes the ordinary load winner even if its decode is rejected. Both real
+ * resources remain retained until disposal; a missing search leaves it empty. */
+bool qa_scene_image_load_observed(qa_scene_resources *, const char *, const qa_scene_image_options *,
+    qa_scene_image **, qa_scene_image_load_receipt *empty_receipt, qa_error *);
+void qa_scene_image_load_receipt_dispose(qa_scene_image_load_receipt *);
 /* Normalize an authored external model image path within its content root.
  * The caller owns the result. This is the same admission used by model images. */
 char *qa_scene_model_image_path(const char *, qa_error *);
@@ -409,6 +429,8 @@ typedef struct qa_scene_draw {
     bool source_retain_polygon_offset;
     bool source_stage_state;
     bool source_arrays;
+    /* Source tess indices can address retained cells beyond the active count. */
+    uint32_t source_vertex_storage;
     /* Packed Q3 shader/entity/fog/light order or caller's ordered sequence. */
     uint64_t sort_key;
     uint32_t entity, fog_index, light_mask;
@@ -560,6 +582,7 @@ typedef enum qa_scene_legacy_world_phase {
 } qa_scene_legacy_world_phase;
 typedef struct qa_scene_legacy_policy {
     bool present, fullbright, lightmap, dynamic, saturate, polyblend, cull, clear, flares;
+    bool planar_shadows, double_eyes;
     float modulate;
     uint8_t monolightmap;
 } qa_scene_legacy_policy;
@@ -661,6 +684,8 @@ bool qa_scene_world_submit(qa_scene_world *, const qa_scene_world_input *, qa_sc
 bool qa_scene_world_submit_model(qa_scene_world *, uint32_t model, const qa_model_transform *,
                                  const qa_scene_world_input *, uint32_t entity,
                                  qa_scene_vec4 color, qa_scene_frame *, qa_error *);
+bool qa_scene_world_source_model_admission(const qa_scene_world *, uint32_t model,
+    const qa_model_transform *, const qa_scene_world_input *, bool *visible, qa_error *);
 bool qa_scene_world_sample_light(const qa_scene_world *, qa_vec3 point, qa_vec3 *ambient,
                                  qa_vec3 *directed, qa_vec3 *direction);
 /* Samples the same static point light with the caller's entered lightstyles.
@@ -777,6 +802,9 @@ bool qa_scene_model_create(const qa_model *, qa_scene_resources *, qa_material_l
 void qa_scene_model_destroy(qa_scene_model *);
 uint32_t qa_scene_model_effect_flags(const qa_scene_model *);
 bool qa_scene_model_submit(qa_scene_model *, const qa_scene_model_input *, qa_scene_frame *, qa_error *);
+/* Pure Source whole-model admission before reached entity lighting setup. */
+bool qa_scene_model_source_admission(const qa_scene_model *, const qa_scene_model_input *,
+                                    bool *visible, qa_error *);
 uint32_t qa_scene_model_select_lod(const qa_scene_model_input *, uint32_t count,
                                   float radius, float lod_scale, float lod_bias);
 

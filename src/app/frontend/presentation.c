@@ -141,6 +141,18 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (published) (void)qa_application_presentation_read(frontend->application, launch_seat, &source);
         qa_scene_view view = {.viewport = rect, .seat = i, .clear_color = true, .clear_depth = true,
             .color = {.015f, .02f, .03f, 1}, .depth = 1};
+        bool legacy_receiver=false,legacy_clear=true;
+        if (!frontend_remote_q1_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
+        if (!legacy_receiver && !frontend_remote_q2_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
+        if (legacy_receiver) view.clear_color=legacy_clear;
+        else if (live && !ui.fullscreen && !source.source_world && frontend->scene_world && native_ready) {
+            const qa_product *product=qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation);
+            if (product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2)) {
+                frontend_legacy_render_policy policy;
+                if (!frontend_legacy_render_policy_read(frontend,product,&policy,error)) return false;
+                view.clear_color=policy.lighting.clear;
+            }
+        }
         if (live) {
             view.origin = qa_vec_add(camera.origin, camera.view_offset);
             qa_vec3 angles = camera.angles;

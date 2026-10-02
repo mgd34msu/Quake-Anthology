@@ -565,6 +565,28 @@ bool qa_application_map_read(const qa_application *application,
     return true;
 }
 
+bool qa_application_map_origin_read(const qa_application *app, qa_launch_resource_origin *out)
+{
+    if (!app || !out || !app->map_resource) return false;
+    const qa_launch_snapshot *snapshots[] = {app->routing_snapshot, qa_application_launch(app)};
+    for (size_t j = 0; j < 2; ++j) {
+        const qa_launch_snapshot *snapshot = snapshots[j];
+        const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+        if (!choices) continue;
+        for (size_t i = 0; i < qa_launch_snapshot_resource_count(snapshot); ++i) {
+            const qa_launch_resource *resource = qa_launch_snapshot_resource(snapshot, i);
+            if (resource->resource != app->map_resource || resource->product != choices->world.geometry ||
+                strcmp(resource->path, choices->world.map)) continue;
+            qa_launch_resource_origin origin;
+            if (!qa_launch_snapshot_resource_origin(snapshot, i, &origin) || !origin.acquisition ||
+                origin.acquisition->resource_id != qa_resource_id(app->map_resource) ||
+                !qa_vfs_acquisition_retained(origin.content, origin.acquisition, NULL)) return false;
+            *out = origin; return true;
+        }
+    }
+    return false;
+}
+
 bool qa_application_motion_read(const qa_application *application,
                                 qa_actor_id actor,
                                 qa_application_motion_view *out)
@@ -633,6 +655,7 @@ bool qa_application_rediscover(qa_application *application, bool discover_mods,
                                qa_error *error)
 {
     if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        application->client_preparation ||
         !application_rankings_idle(application) ||
         application->state == QA_APPLICATION_FAULTED ||
         application->state == QA_APPLICATION_STOPPING)
@@ -663,6 +686,7 @@ bool qa_application_apply(qa_application *application,
                           const qa_launch_draft *draft, qa_error *error)
 {
     if (application == NULL || draft == NULL ||
+        application->client_preparation ||
         application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
@@ -736,6 +760,7 @@ uint64_t application_frame_revision(const qa_application *application)
 bool qa_application_complete_frame(qa_application *application, qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        application->client_preparation ||
         application->q1_original_save ||
         application->publication_started || application->destroy_requested ||
         application->finalizing || application->pending_close ||
@@ -798,6 +823,7 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     bool pending_map = qa_application_travel_read(application, &travel) &&
         travel.target.kind == QA_TRAVEL_MAP;
     if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        application->client_preparation ||
         qa_application_startup_pending(application) || pending_map || application->q1_original_save ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         application->state != QA_APPLICATION_RUNNING)
@@ -890,6 +916,9 @@ bool qa_application_retire_sources(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
+    if (application->client_preparation)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "CLIENT preparation still retains the application");
     if (!retire_control_inputs(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing || application->destroy_requested ||
         !qa_console_idle(application->console) ||
@@ -927,6 +956,9 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
         return true;
     if (application->engine_shutdown)
         return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE shutdown still retains its application parents");
+    if (application->client_preparation)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "CLIENT preparation still retains the application");
     if (!retire_control_inputs(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         !qa_console_destroy_ready(application->console) ||

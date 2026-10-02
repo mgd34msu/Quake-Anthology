@@ -25,8 +25,8 @@ bool frontend_unified_q3_snapshots_create(const frontend_unified_q3_snapshots_op
     frontend_unified_q3_snapshots **, qa_error *);
 bool frontend_unified_q3_snapshots_destroy(frontend_unified_q3_snapshots **, qa_error *);
 bool frontend_unified_q3_snapshots_idle(const frontend_unified_q3_snapshots *);
-/* Runs real child Init in its lexical scope. No snapshot or predicted state is
- * admitted until that constructor returns and marks the CLIENT initialized. */
+/* Runs real child Init in its lexical scope. CG's private PlayerStateRecord
+ * already exists; snapshots are admitted after that constructor returns. */
 bool frontend_unified_q3_snapshots_initialize(frontend_unified_q3_snapshots *,
     bool (*)(void *, const q3n_compiled_frame *, qa_error *), void *, qa_error *);
 bool frontend_unified_q3_snapshots_process(frontend_unified_q3_snapshots *, int32_t presentation_time,

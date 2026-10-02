@@ -762,6 +762,25 @@ bool qa_native_host_client_command(qa_native_host *host, uint32_t slot, qa_error
            client_entity_call(host, "ClientCommand", slot, error);
 }
 
+bool qa_native_host_client_command_region(qa_native_host *host, uint32_t slot,
+    const qa_native_region_event *event, qa_error *error)
+{
+    qa_native_address entity, entry;
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !slot || !event ||
+        qa_native_get_lifecycle(host->instance) != QA_NATIVE_INITIALIZED ||
+        !qa_native_entity_address(host->instance, slot, &entity, error) ||
+        !qa_native_entry_address(host->instance, "ClientCommand", &entry, error))
+        return false;
+    const qa_native_signature *signature = qa_native_entry_signature(host->instance, "ClientCommand");
+    if (!signature)
+        return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
+            "Native Q2 has no actual ClientCommand export");
+    qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = entity};
+    return native_host_refresh_cvars(host, error) &&
+        qa_native_region_invoke(host->instance, event, entry, signature, &argument, 1, NULL, error) &&
+        native_host_reconcile(host, error);
+}
+
 bool qa_native_host_client_think(qa_native_host *host, uint32_t slot,
                                  qa_bytes source_usercmd, qa_error *error)
 {

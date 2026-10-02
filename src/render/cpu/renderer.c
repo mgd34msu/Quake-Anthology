@@ -439,6 +439,19 @@ bool qa_cpu_gamma_read(const qa_cpu_renderer *renderer,float *out,qa_error *erro
   }
   *out=renderer->gamma_value; return true;
 }
+bool qa_cpu_output_domain_read(const qa_cpu_renderer *renderer,qa_scene_rect rect,bool *out,qa_error *error)
+{
+  if (!cpu_surface_idle(renderer,error)) return false;
+  if (!qa_cpu_render_controls_current(&renderer->controls)) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Output domain read requires its returned CPU renderer"); return false;
+  }
+  if (renderer->current!=&renderer->display || rect.x<0 || rect.y<0 ||
+      (uint64_t)(uint32_t)rect.x+rect.width>renderer->display.width ||
+      (uint64_t)(uint32_t)rect.y+rect.height>renderer->display.height) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Output domain read requires its actual CPU display region"); return false;
+  }
+  return qa_output_domains_rect_read(&renderer->output_domains,rect,QA_DRAW_BACK,out,error);
+}
 qa_bytes qa_cpu_pixels(qa_cpu_renderer *renderer) {
   if (!renderer || renderer->surface_ticket)
     return (qa_bytes){0};
@@ -500,8 +513,9 @@ bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   qa_scene_frame_init(&frame,renderer->options.owner);
   frame.source_backend=true;
   bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
+  bool skip=frame.source_skip_backend;
   qa_scene_frame_destroy(&frame);
-  return ok && cpu_present_frame(renderer,error);
+  return ok && (skip || cpu_present_frame(renderer,error));
 }
 bool qa_cpu_read_depth(const qa_cpu_renderer *renderer, uint32_t x, uint32_t y,
                        float *out, qa_error *error) {

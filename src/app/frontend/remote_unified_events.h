@@ -28,6 +28,8 @@ bool frontend_unified_events_control(frontend_unified_events *, const qa_unified
 /* Literal reliable component metadata is retained independently of the live
  * component VM. Retired tokens remain available to pending historical events. */
 bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_unified_document *, const char *content, qa_error *);
+bool frontend_unified_events_component_admit_created(frontend_unified_events *, const qa_unified_document *, const char *content, bool *created, qa_error *);
+bool frontend_unified_events_component_cancel(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_unified_document *, const char *content, bool *active, qa_error *);
 bool frontend_unified_events_frame_prepare(frontend_unified_events *, const qa_unified_document *, qa_error *);

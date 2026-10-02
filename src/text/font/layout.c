@@ -40,7 +40,7 @@ static float cell_scale(const layout_cell *cell, float line_height) {
 static float cell_advance(const layout_cell *cell, float width, float line_height,
                           uint32_t tab_columns) {
     if (cell->tab) {
-        float tab = line_height * tab_columns;
+        float tab = line_height * (float)tab_columns;
         float remainder = fmodf(width, tab);
         return remainder != 0 ? tab - remainder : tab;
     }

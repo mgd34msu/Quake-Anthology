@@ -242,9 +242,9 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
   qa_actor_id id = context->actor->id;
   int count = context->monster->count;
   qa_vec3 origin = context->body.origin, point = origin;
-  point.z += 24 + ((uint32_t)((double)q2_random(game) * 2147483648.0) & 15u);
+  point.z += (float)(24 + ((uint32_t)((double)q2_random(game) * 2147483648.0) & 15u));
   if (count < 8)
-    point.z += 24 + ((uint32_t)((double)q2_random(game) * 2147483648.0) & 31u);
+    point.z += (float)(24 + ((uint32_t)((double)q2_random(game) * 2147483648.0) & 31u));
   static const qa_vec3 offsets[] = {{-24,-24,0},{24,24,0},{24,-24,0},{-24,24,0},
       {-48,-48,0},{48,48,0},{-48,48,0},{48,-48,0},
       {18,18,48},{-18,18,48},{18,-18,48},{-18,-18,48}};

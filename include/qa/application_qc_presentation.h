@@ -94,4 +94,5 @@ bool qa_application_qc_message_player_ui_definition(qa_application *,const qa_ap
 /* Writes the actual selected QC client's declared impulse. An unavailable or
  * unowned weapon returns accepted=false without staging a Source command. */
 bool qa_application_qc_weapon_request(qa_application *,qa_actor_id,qa_item_id,bool *accepted,qa_error *);
+bool qa_application_qc_weapon_settled(qa_application *,qa_actor_id,bool *,qa_error *);
 #endif

@@ -386,6 +386,8 @@ qa_world *qa_application_world(qa_application *);
  * Retirement hides it before geometry replacement. Names/resources borrow the
  * application until mutation; retain the resource for longer frontend use. */
 bool qa_application_map_read(const qa_application *, qa_application_map_view *);
+/* Actual admitted map opening, including during real candidate routing. */
+bool qa_application_map_origin_read(const qa_application *, qa_launch_resource_origin *);
 bool qa_application_visual_read(qa_application *, qa_actor_id,
                                   qa_application_visual_view *, qa_error *);
 bool qa_application_weapon_read(qa_application *, qa_actor_id, qa_item_id *, qa_error *);

@@ -31,11 +31,16 @@ static bool fail(qa_source_save_io *io, const char *message)
 { return frontend_fail(io->error, QA_ERROR_FORMAT, message); }
 static bool int_field(qa_source_save_io *io, int *value)
 {
+#if INT_MAX > INT32_MAX || INT_MIN < INT32_MIN
     if (io->direction == QA_SOURCE_SAVE_WRITE &&
         ((int64_t)*value < INT32_MIN || (int64_t)*value > INT32_MAX))
         return fail(io, "Player projection integer exceeds its source word");
+#endif
     int32_t word = io->direction == QA_SOURCE_SAVE_WRITE ? (int32_t)*value : 0;
-    if (!qa_source_save_i32(io, &word) || (int64_t)word < INT_MIN || (int64_t)word > INT_MAX) return false;
+    if (!qa_source_save_i32(io, &word)) return false;
+#if INT_MAX < INT32_MAX || INT_MIN > INT32_MIN
+    if ((int64_t)word < INT_MIN || (int64_t)word > INT_MAX) return false;
+#endif
     if (io->direction == QA_SOURCE_SAVE_READ) *value = (int)word;
     return true;
 }

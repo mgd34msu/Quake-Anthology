@@ -37,17 +37,29 @@ struct frontend_equipment_source {
     qa_q3_ref_entity view_entity;
     qa_vec3 view_offset;
     uint32_t first_order, reserved;
-    bool borrowed, drawing, view_ready, world_ready, submitting;
+    bool borrowed, drawing, view_ready, world_ready, submitting, original_q3_view;
 };
+
+static bool original_q3_match(const frontend_equipment_source *owner,
+    const qa_application_equipment_view *source, bool *matching, qa_error *error)
+{
+    *matching = false;
+    if (!source->original_qvm || source->equipment_slot ||
+        owner->client.source_owner != source->provider) return true;
+    return qa_application_equipment_q3_source_draw_match(owner->options.frontend->application,
+        source, owner->options.receiver, owner->options.seat, owner->options.assets, matching, error);
+}
 
 static bool current_owner(const frontend_equipment_source *owner)
 {
+    bool matching = false;
     return owner && owner->client.frontend_lifetime == owner->options.lease &&
         owner->client.receiver == owner->options.receiver && owner->client.seat == owner->options.seat &&
         owner->client.session == qa_application_session(owner->options.frontend->application) &&
         owner->options.current(owner->options.lease, &owner->client) &&
         (!owner->draw.selected || qa_application_equipment_current(owner->options.frontend->application,
-            &owner->selection));
+            &owner->selection)) && (!owner->original_q3_view ||
+            (original_q3_match(owner, &owner->selection, &matching, NULL) && matching));
 }
 
 static bool current_draw(void *context, const qa_application_q3_equipment_draw *draw)
@@ -106,7 +118,7 @@ static void release_draw(void *context)
     frontend_equipment_q3_release(owner->q3_presenter); owner->q3_presenter = NULL;
     frontend_equipment_gear_release(owner->gear_presenter); owner->gear_presenter = NULL;
     owner->selection = owner->hud;
-    owner->drawing = false;
+    owner->drawing = false; owner->original_q3_view = false;
     if (owner->borrowed) {
         owner->borrowed = false;
         owner->options.release(owner->options.lease);
@@ -125,6 +137,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
     owner->hud = (qa_application_equipment_view){0};
     free(owner->hud_label); owner->hud_label = NULL;
     owner->client = (qa_application_q3_client_context){0};
+    owner->original_q3_view = false;
     if (!owner->options.borrow(owner->options.lease, &owner->client, error)) return false;
     owner->borrowed = true;
     if (!current_owner(owner) || !owner->client.initialized)
@@ -134,7 +147,11 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
         if (!qa_application_equipment_read(owner->options.frontend->application, owner->draw.actor,
                 &owner->selection, error) || !current_owner(owner)) return false;
         if (owner->selection.selected) {
-            if (owner->selection.view_model && owner->selection.view_model[0]) {
+            if (!original_q3_match(owner, &owner->selection, &owner->original_q3_view, error)) return false;
+            if (owner->original_q3_view) {
+                if (!current_owner(owner))
+                    return frontend_fail(error, QA_ERROR_ARGUMENT, "Original weapon view lost its actual Source Draw namespace");
+            } else if (owner->selection.view_model && owner->selection.view_model[0]) {
                 if (owner->selection.equipment_slot) {
                     application_equipment_gear_presentation gear; bool selected;
                     if (!application_equipment_gear_presentation_read(owner->options.frontend->application,
@@ -158,7 +175,8 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
                 }
             } else if (owner->selection.visible || owner->selection.item)
                 return frontend_fail(error, QA_ERROR_FORMAT, "Selected equipment has no actual view model producer");
-            owner->draw.selected = true; owner->draw.warning = owner->selection.warning;
+            owner->draw.selected = !owner->original_q3_view;
+            owner->draw.warning = owner->selection.warning;
         }
     }
     if (!current_owner(owner))
@@ -239,6 +257,16 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
     *selected = false;
     qa_application_equipment_view source;
     if (!qa_application_equipment_read(owner->options.frontend->application, actor, &source, error)) return false;
+    if (source.selected && source.original_qvm) {
+        bool original;
+        if (!original_q3_match(owner, &source, &original, error)) return false;
+        if (original) {
+            if (parent_assets != owner->options.assets)
+                return frontend_fail(error, QA_ERROR_ARGUMENT, "Original held weapon displaced its actual CG parent registry");
+            return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
+                "Original held weapon lost its genuine Source Draw");
+        }
+    }
     if (!source.selected || !source.view_model || !source.view_model[0]) return true;
     equipment_packet *packet = calloc(1, sizeof(*packet));
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held source invocation");
@@ -503,6 +531,7 @@ bool frontend_equipment_source_native_view(frontend_equipment_source *owner, flo
     if (!owner || !consumed || !owner->drawing || !current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native view admission requires its actual prepared draw");
     if (!owner->draw.selected) return true;
+    if (owner->original_q3_view) return true;
     bool hud, requested;
     if (!requests(owner, &hud, &requested, error)) return false;
     owner->view_ready = false;

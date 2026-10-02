@@ -23,9 +23,12 @@ bool frontend_unified_q3_client_create(frontend_remote_unified *,
 bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *,
     const frontend_unified_q3_source_view *, frontend_unified_q3_client_frame **, qa_error *);
 bool frontend_unified_q3_client_ready(const frontend_unified_q3_client_frame *);
+const q3n_compiled_source_rebind_ticket *frontend_unified_q3_client_frame_rebind(const frontend_unified_q3_client_frame *);
+const qa_command_context *frontend_unified_q3_client_frame_context(const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_client_commit(frontend_unified_q3_client_frame **);
 void frontend_unified_q3_client_abort(frontend_unified_q3_client_frame **);
 bool frontend_unified_q3_client_current(const frontend_unified_q3_client *);
+bool frontend_unified_q3_client_checkpoint_current(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_matches(const frontend_unified_q3_client *, const frontend_unified_q3_source_view *);
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **, qa_error *);

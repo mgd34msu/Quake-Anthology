@@ -53,7 +53,7 @@ static bool requirements_fields(qa_source_save_io *io, qa_bots_save_requirements
     qa_script_options *preprocessor = &runtime->library.preprocessor;
     uint32_t profile = (uint32_t)runtime->observations;
     bool ok = qa_source_save_u32(io, &runtime->maximum_states) && runtime->maximum_states &&
-        runtime->maximum_states <= INT32_MAX && runtime->maximum_states <= SIZE_MAX / sizeof(bot_weapon_state) &&
+        runtime->maximum_states <= INT32_MAX && sizeof(bot_weapon_state) <= SIZE_MAX / runtime->maximum_states &&
         qa_source_save_u32(io, &runtime->minimum_clients) && qa_source_save_u32(io, &profile) &&
         profile <= QA_BOT_OBSERVATION_MODULE && qa_source_save_bool(io, &runtime->debug) &&
         qa_source_save_bool(io, &runtime->library.reload_characters) &&
@@ -71,13 +71,13 @@ static bool requirements_fields(qa_source_save_io *io, qa_bots_save_requirements
         bot_save_text(io, &runtime->library.scripts.date) && bot_save_text(io, &runtime->library.scripts.time) &&
         qa_source_save_u32(io, &requirements->action_capacity) &&
         requirements->action_capacity <= INT32_MAX / 40 &&
-        requirements->action_capacity <= SIZE_MAX / sizeof(qa_bot_input) &&
+        (!requirements->action_capacity || sizeof(qa_bot_input) <= SIZE_MAX / requirements->action_capacity) &&
         qa_source_save_bool(io, &requirements->population) &&
         qa_source_save_u32(io, &requirements->population_client_capacity) &&
         requirements->population_client_capacity <= INT32_MAX &&
-        requirements->population_client_capacity <= SIZE_MAX / sizeof(bot_ai_state *) &&
+        (!requirements->population_client_capacity || sizeof(bot_ai_state *) <= SIZE_MAX / requirements->population_client_capacity) &&
         qa_source_save_u32(io, &requirements->population_actor_capacity) &&
-        requirements->population_actor_capacity <= SIZE_MAX / sizeof(uint32_t) &&
+        (!requirements->population_actor_capacity || sizeof(uint32_t) <= SIZE_MAX / requirements->population_actor_capacity) &&
         (requirements->population ||
         (!requirements->population_client_capacity && !requirements->population_actor_capacity));
     if (ok) ok = globals_fields(io, &preprocessor->globals);

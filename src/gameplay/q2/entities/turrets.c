@@ -24,7 +24,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
         body->origin,
         qa_vec_add(qa_vec_add(qa_vec_scale(forward, s->muzzle.x), qa_vec_scale(right, s->muzzle.y)),
                    qa_vec_scale(up, s->muzzle.z)));
-    float damage = truncf(100 + q2_random(g) * 50), speed = 550 + 50 * g->options.skill;
+    float damage = truncf(100 + q2_random(g) * 50), speed = (float)(550 + 50 * g->options.skill);
     if (!q2_fire_actor_rocket(g, driver->id, driver->id, start, forward, damage, speed, damage, 150,
                               8, 9, e))
         return false;
@@ -281,7 +281,7 @@ bool qa_q2_turret_driver_detach(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     }
     s->turret->breach = (qa_actor_id){0};
     s->team_master = s->team_next = (qa_actor_id){0};
-    a->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+    a->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
     a->physics.angular_velocity = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_STEP;
     q2_entity_schedule(g, a, Q2ET_NONE, 0);

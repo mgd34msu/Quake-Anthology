@@ -16,14 +16,16 @@ static bool file(q3n_server_commands *o, const q3n_frame *f, const char *filenam
     char *normalized = qa_vfs_normalize_path(filename, &local);
     if (!normalized) {
         if (!missing_warning && (local.code == QA_ERROR_ARGUMENT || local.code == QA_ERROR_FORMAT)) return true;
-        if (e) *e = local; return false;
+        if (e) *e = local;
+        return false;
     }
     bool ok = qa_vfs_acquire(o->options.content, normalized, out, NULL, &local);
     free(normalized);
     if (!ok) {
         if (local.code == QA_ERROR_NOT_FOUND)
             return !missing_warning || warn(o, f, e, "voice chat file not found", filename);
-        if (e) *e = local; return false;
+        if (e) *e = local;
+        return false;
     }
     qa_bytes bytes = qa_resource_bytes(*out);
     if (bytes.size >= 16384) {

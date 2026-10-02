@@ -596,11 +596,6 @@ bool qa_bot_goals_name_read(const qa_bot_goals *g, int32_t number, const char **
     if (item.info >= items->count) return bot_goal_fail(e, "Goal-name info exceeds its source configuration");
     *out = items->items[item.info].name;return true;
 }
-const char *qa_bot_goals_name(const qa_bot_goals *g, int32_t number) {
-    const char *out = "";
-    (void)qa_bot_goals_name_read(g, number, &out, NULL);
-    return out;
-}
 bool qa_bot_goals_level_item(const qa_bot_goals *g, int32_t after, const char *name,
                               qa_bot_goal *out, bool *found, qa_error *e) {
     if (!g || !name || !out || !found) return bot_goal_fail(e, "invalid level item query");

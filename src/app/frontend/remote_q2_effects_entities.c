@@ -216,8 +216,8 @@ bool q2fx_entities(frontend_remote_q2_effects *o,const frontend_remote_q2_effect
             } else {
                 q2fx_sampled_light(o,qa_vec_lerp(query.start,query.end,flashlight_fraction),256,qa_v3(1,1,1),0);
                 if (advance) {
-                    float delta=hit.fraction-flashlight_fraction;
-                    flashlight_fraction+=fminf(s->frame_seconds,fmaxf(-s->frame_seconds,delta));
+                    float fraction_delta=hit.fraction-flashlight_fraction;
+                    flashlight_fraction+=fminf(s->frame_seconds,fmaxf(-s->frame_seconds,fraction_delta));
                 }
             }
         }

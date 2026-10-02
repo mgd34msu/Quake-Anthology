@@ -38,7 +38,7 @@ bool q3n_events_create_compiled(const q3n_event_options *options,q3n_events **ou
 {
     q3n_compiled_source_view view;
     if (!options || !options->compiled_source || !out || *out ||
-        !q3n_compiled_source_read(options->compiled_source,&view,error) ||
+        !q3n_compiled_source_checkpoint_read(options->compiled_source,&view,error) ||
         view.basis.assets!=options->assets || view.basis.product!=options->product)
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Compiled Q3 events require their actual source and assets");
     return q3n_events_create(options,out,error);

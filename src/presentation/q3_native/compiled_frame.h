@@ -9,7 +9,8 @@ typedef struct q3n_compiled_frame q3n_compiled_frame;
 typedef enum q3n_compiled_stage {
     Q3N_COMPILED_INITIALIZATION, Q3N_COMPILED_SNAPSHOT_CALLBACK,
     Q3N_COMPILED_PLAYER_TRANSITION, Q3N_COMPILED_COMPLETED_FRAME,
-    Q3N_COMPILED_CONSOLE, Q3N_COMPILED_AWAITING_SNAPSHOT
+    Q3N_COMPILED_CONSOLE, Q3N_COMPILED_AWAITING_SNAPSHOT,
+    Q3N_COMPILED_LOADING_INFORMATION
 } q3n_compiled_stage;
 typedef struct q3n_compiled_entity {
     const q3n_compiled_frame *frame;

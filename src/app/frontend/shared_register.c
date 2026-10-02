@@ -1,4 +1,5 @@
 #include "shared_register.h"
+#include "legacy_render_policy.h"
 #include "shared_settings.h"
 #include "qa/cvars_alias.h"
 #include "qa/console_cvar_observer.h"
@@ -282,6 +283,30 @@ bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_err
         if (value && !qa_cvars_set(registry,names[i],value,true,error)) return false;
     }
     return true;
+}
+bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,qa_cvars *registry,
+    const qa_command_context *command,qa_error *error)
+{
+    qa_catalog *catalog=descriptor?qa_launch_instance_catalog(descriptor):NULL;
+    const qa_product *profile=descriptor?qa_catalog_product(catalog,descriptor->selection.product):NULL;
+    if (!profile || profile->family!=QA_GAME_Q2 || !profile->builtin ||
+        descriptor->selection.runtime!=QA_PROGRAM_BUILTIN || !descriptor->storage || !descriptor->content ||
+        !registry || !command || !command->owner || command->origin!=QA_COMMAND_SEAT ||
+        (profile->edition!=QA_EDITION_CLASSIC && profile->edition!=QA_EDITION_RERELEASE) ||
+        command->dialect!=(profile->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2) ||
+        qa_cvars_dialect(registry)!=command->dialect || !qa_cvars_observer_idle(registry))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT declarations require their actual normalized profile and new private heap");
+    static const struct { const char *name,*value; } rows[]={
+        {"ch_alpha","1"},{"ch_scale","1"},{"ch_x","0"},{"ch_y","0"},
+        {"cl_smooth_explosions","1"}
+    };
+    for (size_t i=0;i<sizeof(rows)/sizeof(*rows);++i)
+        if (!qa_cvars_register(registry,rows[i].name,rows[i].value,0,command->owner,"",error)) return false;
+    return frontend_legacy_source_register(registry,command->dialect,command->owner,error) &&
+        qa_cvars_register(registry,"hand","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO,command->owner,"",error) &&
+        qa_cvars_register(registry,"cl_footsteps","1",0,command->owner,"",error) &&
+        qa_cvars_register(registry,"crosshair",profile->edition==QA_EDITION_RERELEASE?"3":"0",
+        QA_CVAR_ARCHIVE,command->owner,"",error);
 }
 bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     qa_audio_output_format output,float gamma,qa_error *error)

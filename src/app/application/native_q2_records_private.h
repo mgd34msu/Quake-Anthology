@@ -4,6 +4,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/source_save.h"
+#include "qa/native_observe.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,6 +53,19 @@ struct application_native_q2_record_scope {
     struct application_native_q2_record_scope *outer;
     nqr_observation *observations,*pending;
     size_t observation_count,pending_count,cursor;
+    unsigned committing;
+};
+struct application_native_q2_pickup_scope {
+    application_native_q2_records *owner;
+    struct application_native_q2_pickup_scope *outer;
+    application_native_q2_record_scope *frame;
+    qa_actor_id actor;
+    qa_pickup_execution *execution;
+    application_native_q2_protection_item_fn protection_item;
+    void *context;
+    qa_native_write_observer **watches;
+    size_t count,capacity;
+    bool closing;
 };
 struct application_native_q2_records {
     application_native_q2_records_options options;
@@ -61,6 +75,7 @@ struct application_native_q2_records {
     uint32_t client_maximum;
     nqr_actor *actors;
     application_native_q2_record_scope *frame;
+    application_native_q2_pickup_scope *pickup;
     unsigned projection_depth,lifecycle_depth;
     bool restoring,closing;
     bool has_pose;

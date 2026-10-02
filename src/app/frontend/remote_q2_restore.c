@@ -8,13 +8,14 @@
 #include "qa/archive.h"
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_footsteps.h"
+#include "remote_q2_material_movies_bridge.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 typedef struct saved_q2 {
     uint64_t domain_catalog, catalog, mounts, map_pool, map_resource;
-    bool bound, selected, ready, retired, images, materials, fonts, sounds;
+    bool bound, selected, ready, retired, images, materials, fonts, sounds, media;
     frontend_remote_q2_domain domain;
     qa_buffer input, stage, geometry, footsteps;
 } saved_q2;
@@ -167,16 +168,17 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 7;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 8;
     bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 7 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 8 || !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
         !qa_source_save_bool(io, &saved->ready) || !qa_source_save_bool(io, &saved->retired) ||
         !qa_source_save_bool(io, &saved->images) || !qa_source_save_bool(io, &saved->materials) ||
         !qa_source_save_bool(io, &saved->fonts) || !qa_source_save_bool(io, &saved->sounds) ||
+        !qa_source_save_bool(io, &saved->media) || (saved->media && (!saved->images || !saved->materials)) ||
         !qa_source_save_u64(io, &saved->domain_catalog) || !qa_source_save_u64(io, &saved->catalog) ||
         !qa_source_save_u64(io, &saved->mounts) || !qa_source_save_u32(io, &row->content.selected) ||
         !qa_source_save_u32(io, &row->content.base) || !qa_source_save_u64(io, &row->identity) ||
@@ -319,7 +321,7 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
     saved_q2 saved = {.domain = row->options.domain, .bound = row->bound, .selected = row->selected,
         .ready = row->media_ready, .retired = row->retired,
         .images = row->images != NULL, .materials = row->materials != NULL,
-        .fonts = row->fonts != NULL, .sounds = row->sounds != NULL,
+        .fonts = row->fonts != NULL, .sounds = row->sounds != NULL, .media = row->media != NULL,
         .domain_catalog = qa_application_content_catalog_id(refs->content, row->options.domain.catalog),
         .catalog = qa_application_content_catalog_id(refs->content, row->content.catalog),
         .mounts = qa_application_content_view_id(refs->content, row->content.mounts)};
@@ -399,12 +401,13 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
         (!saved.ready || row->geometry);
     row->bound = saved.bound; row->selected = saved.selected; row->retired = saved.retired;
     row->restore_media_ready = saved.ready;
+    if (ok && saved.sounds) ok = qa_audio_bank_create(row->content.mounts, &row->sounds, error);
     if (ok) ok = (!(saved.ready && row->layout.max_models == 8192) || saved.footsteps.size) &&
         remote_q2_footsteps_restore(row, refs->content, (qa_bytes){saved.footsteps.data, saved.footsteps.size}, error);
     if (ok && saved.images) { row->images = qa_scene_resources_create_detached(row->content.mounts, error); ok = row->images != NULL; }
     if (ok && saved.materials) { row->materials = qa_material_library_create_detached(row->images, error); ok = row->materials != NULL; }
+    if (ok && saved.media) ok = remote_q2_material_movies_prepare_restored(row, error);
     if (ok && saved.fonts) { row->fonts = qa_font_library_create(row->content.mounts, row->images, error); ok = row->fonts != NULL; }
-    if (ok && saved.sounds) ok = qa_audio_bank_create(row->content.mounts, &row->sounds, error);
     if (ok && row->download_path) {
         row->download_root = remote_q2_download_destination(row, row->download_path);
         if (row->download_root) qa_fs_root_retain(row->download_root);

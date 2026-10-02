@@ -19,7 +19,7 @@ typedef struct application_bot_graph {
     qa_nav_graph *graph;
     qa_navigation *navigation;
     qa_resource *asset_resource;
-    size_t asset_mount_ordinal;
+    qa_vfs_acquisition asset_acquisition;
     struct application_bot_graph *next;
 } application_bot_graph;
 typedef struct application_bot_seat {
@@ -62,6 +62,7 @@ typedef struct application_bots {
     struct application_bot_world_binding *shared_binding;
     struct application_bot_transport *transport;
     qa_vfs *files;
+    qa_vfs *navigation_files;
     bool files_launch;
     qa_string_id files_product;
     qa_resource *map_resource;
@@ -87,8 +88,6 @@ typedef struct application_bots {
     qa_bytes saved_bot_record, saved_navigation_record, saved_runtime, saved_population;
     qa_bytes saved_shared_world,saved_transport;
     qa_bytes saved_catalogue;
-    bool *saved_file_references;
-    size_t saved_file_reference_count;
     application_bot_round_phase round_phase;
     struct application_bots_round *round;
     struct application_bots_original *original;

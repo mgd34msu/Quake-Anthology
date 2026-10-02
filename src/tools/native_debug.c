@@ -1,4 +1,5 @@
 #include "tools_internal.h"
+#include "qa/binary.h"
 #include <math.h>
 #include <string.h>
 

@@ -310,9 +310,11 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
     if (!path || !path[0])
         return qa_font_fail(error, QA_ERROR_NOT_FOUND, 0,
                             "Q3 font DAT is absent and no TrueType source was supplied");
+#if LONG_MAX / 64 < INT32_MAX
     if (point_size > LONG_MAX / 64)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0,
                             "Q3 point size exceeds FreeType 26.6 range");
+#endif
     qa_resource *source = NULL;
     if (!qa_vfs_acquire(library->vfs, path, &source, NULL, error))
         return false;
@@ -325,7 +327,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
         qa_font_internal_destroy(font);
         return false;
     }
-    font->q3_record.glyph_scale = 48.0f / point_size;
+    font->q3_record.glyph_scale = 48.0f / (float)point_size;
     set_name(font->q3_record.name, sizeof(font->q3_record.name), cache_name);
 
     FT_Library freetype;

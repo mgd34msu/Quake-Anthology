@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/input_release.h"
 #include <stdio.h>
 
 bool qa_input_reserve(void **data, size_t *capacity, size_t needed, size_t stride,
@@ -147,6 +148,37 @@ bool qa_input_seat_context_ready(const qa_input_seat *s,
 }
 void qa_input_seat_context_publish(qa_input_seat *s, const qa_command_context *context) {
     s->options.context = *context;
+}
+bool qa_input_seat_recipient_read(const qa_input_seat *s,qa_console **console,qa_cvars **cvars,
+    qa_command_context *command) {
+    if (!s || !console || !cvars || !command) return false;
+    *console=s->options.console; *cvars=s->options.cvars; *command=s->options.context; return true;
+}
+bool qa_input_seat_recipient_ready_is(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command) {
+    if (!s || !console || !cvars || !command || !qa_console_idle(s->options.console) ||
+        !qa_console_idle(console) || qa_console_cvars(console)!=cvars ||
+        command->origin!=QA_COMMAND_SEAT || command->script || command->console_text ||
+        command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3) return false;
+    qa_input_release_scope all={.all=true,.controller=-1};
+    qa_input_release_scope empty={.controller=-1};
+    return s->release?(qa_input_release_completed_is(s->release,s,&all) ||
+        (!qa_input_seat_has_held(s) && qa_input_release_completed_empty_is(s->release,s,&empty))):
+        !qa_input_seat_has_held(s);
+}
+bool qa_input_seat_recipient_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command,qa_error *error) {
+    if (!qa_input_seat_recipient_ready_is(s,console,cvars,command)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input recipient requires its returned consoles and completed ALL release");
+        return false;
+    }
+    qa_input_seat_options options=s->options;
+    options.console=console; options.cvars=cvars; options.context=*command;
+    return context_ready(&options,command,error);
+}
+void qa_input_seat_recipient_publish(qa_input_seat *s,qa_console *console,qa_cvars *cvars,
+    const qa_command_context *command) {
+    s->options.console=console; s->options.cvars=cvars; s->options.context=*command;
 }
 qa_input_focus qa_input_seat_focus(const qa_input_seat *s) { return s->focus; }
 bool qa_input_seat_focused(const qa_input_seat *s) { return s->focused; }
@@ -320,6 +352,30 @@ bool qa_input_seat_configuration_ready(const qa_input_seat *active,
     }
     return qa_input_seat_context_ready(active,&active->options.context,error) &&
         qa_input_seat_context_ready(candidate,&candidate->options.context,error);
+}
+bool qa_input_seat_configuration_clone(const qa_input_seat *source,qa_input_seat **out,qa_error *error) {
+    if (!source || !out || *out || !qa_console_idle(source->options.console) ||
+        source->binding_count>SIZE_MAX/sizeof(*source->bindings)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input configuration clone requires its returned actual dictionary");
+        return false;
+    }
+    for (size_t i=0;i<source->binding_count;++i) if (source->bindings[i]->references==SIZE_MAX) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Input binding reference count exceeds storage"); return false;
+    }
+    qa_input_seat *copy=qa_input_seat_create(&source->options,error);
+    if (!copy) return false;
+    if (source->binding_count) {
+        copy->bindings=malloc(source->binding_count*sizeof(*copy->bindings));
+        if (!copy->bindings) {
+            qa_input_seat_destroy(copy);
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining the prepared input dictionary"); return false;
+        }
+        copy->binding_capacity=source->binding_count;
+        for (size_t i=0;i<source->binding_count;++i) {
+            copy->bindings[i]=source->bindings[i]; ++copy->bindings[i]->references; ++copy->binding_count;
+        }
+    }
+    *out=copy; return true;
 }
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate) {
     qa_binding_record **bindings = active->bindings;

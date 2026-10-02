@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_inventory_source.h"
+#include "qa/text.h"
 #include "qa/json.h"
 #include <math.h>
 
@@ -585,9 +586,18 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
         size_t length = strlen(label);
         application_native_q2_ui_item *item = &value.items[value.count++];
         *item = (application_native_q2_ui_item){.item = row->item, .count = count, .source_index = row->index};
-        item->label = malloc(length + 1);
+        size_t maximum=engine->profile==QA_NATIVE_Q2_GAME_API3?length*2:length;
+        if(maximum<length||maximum==SIZE_MAX) { ok=application_fail(error,QA_ERROR_MEMORY,"Native source label extent overflows"); break; }
+        item->label = malloc(maximum + 1);
         if (!item->label) { ok = application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 source item label"); break; }
-        memcpy(item->label, label, length + 1);
+        if(engine->profile==QA_NATIVE_Q2_GAME_API3) {
+            size_t used=0;
+            for(size_t n=0;n<length;++n) { char bytes[4]; size_t encoded=qa_utf8_encode((uint8_t)label[n],bytes); memcpy(item->label+used,bytes,encoded); used+=encoded; }
+            item->label[used]=0;
+        } else {
+            if(!qa_utf8_valid((qa_bytes){(const uint8_t *)label,length})) { ok=application_fail(error,QA_ERROR_FORMAT,"Native source item label is not valid UTF-8"); break; }
+            memcpy(item->label, label, length + 1);
+        }
     }
     if (ok) {
         qa_native_address after;

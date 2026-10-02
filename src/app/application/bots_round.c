@@ -148,7 +148,8 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
         application_provider *previous=publication->removed[i],*next=NULL;
         for(size_t j=0;j<publication->next_count;++j) {
             if(!original_instance(previous,publication->next[j])) continue;
-            if(next) goto invalid;next=publication->next[j];
+            if(next) goto invalid;
+            next=publication->next[j];
         }
         if(!next || !previous->constructed || !next->constructed || next->attached) goto invalid;
         for(size_t j=0;j<i;++j)

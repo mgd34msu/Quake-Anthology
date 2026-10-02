@@ -23,8 +23,10 @@ static bool current(const frontend_remote_q2_effects_policy *t, bool parent)
         t->owner->source.viewer!=t->source.viewer ||
         t->owner->source.model!=t->source.model || t->owner->source.sound!=t->source.sound ||
         t->owner->source.hit_marker!=t->source.hit_marker || t->owner->source.controls!=t->source.controls ||
+        t->owner->source.frame_milliseconds!=t->source.frame_milliseconds ||
         t->owner->source.footstep!=t->source.footstep ||
         t->owner->source.trace!=t->source.trace ||
+        t->owner->source.video_frame!=t->source.video_frame || t->owner->source.video_context!=t->source.video_context ||
         t->owner->source.white!=(t->published?t->prepared_white:t->white) ||
         t->owner->particle_image!=(t->published?t->prepared_particle:t->particle)) return false;
     qa_error e={0}; return !parent || q2fx_source_current(t->owner,&e);

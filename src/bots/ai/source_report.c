@@ -115,7 +115,7 @@ bool bot_ai_source_report(qa_bots *bots,qa_error *error)
            !qa_bot_source_record_text_read(&bots->services.memory,state->source_record,
                 QA_BOT_SOURCE_TEAM_LEADER,leader,sizeof(leader),error) ||
            !carrying(bots,state,client,cargo,error) || !action(bots,state,description,error)) return false;
-        snprintf(value,sizeof(value),"l\\%s\\c\\%s\\a\\%s",same_name(name,leader)?"L":" ",cargo,description);
+        snprintf(value,sizeof(value),"l\\%s\\c\\%.31s\\a\\%.255s",same_name(name,leader)?"L":" ",cargo,description);
         if(!bots->services.set_configstring(bots->services.context,25u+(uint32_t)client,value,error)) return false;
     }
     return true;

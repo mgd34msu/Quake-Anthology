@@ -42,17 +42,26 @@ typedef struct q3n_compiled_source_options {
     /* Pure actual wire-history provenance. Retired cached actors remain
      * observations; this grants no live source or gameplay authority. */
     bool (*actor_known)(void *, qa_actor_id);
+    bool (*checkpoint_read)(void *, q3n_compiled_source_basis *, qa_error *);
+    bool (*checkpoint_current)(void *, const q3n_compiled_source_basis *);
 } q3n_compiled_source_options;
 bool q3n_compiled_source_create(const q3n_compiled_source_options *, q3n_compiled_source **, qa_error *);
+bool q3n_compiled_source_create_restored(const q3n_compiled_source_options *, q3n_compiled_source **, qa_error *);
 bool q3n_compiled_source_destroy(q3n_compiled_source **, qa_error *);
 bool q3n_compiled_source_read(const q3n_compiled_source *, q3n_compiled_source_view *, qa_error *);
 bool q3n_compiled_source_current(const q3n_compiled_source_view *);
+/* Retained terminal observations permit exact retired wire actors only for
+ * pure construction and codecs. They grant no frame or resource operation. */
+bool q3n_compiled_source_checkpoint_read(const q3n_compiled_source *, q3n_compiled_source_view *, qa_error *);
+bool q3n_compiled_source_checkpoint_current(const q3n_compiled_source_view *);
 /* The actual receiver calls this after committing a real round bit toggle.
  * Only the snapshot bit and full viewer may change in the constructor tuple. */
 bool q3n_compiled_source_rebind(q3n_compiled_source *, const q3n_compiled_source_view *, qa_error *);
 bool q3n_compiled_source_rebind_prepare(q3n_compiled_source *, const q3n_compiled_source_view *,
     const q3n_compiled_source_basis *, q3n_compiled_source_rebind_ticket **, qa_error *);
 bool q3n_compiled_source_rebind_ready(const q3n_compiled_source_rebind_ticket *);
+bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *,
+    const q3n_compiled_source *, const qa_command_context *, const qa_command_context *);
 void q3n_compiled_source_rebind_commit(q3n_compiled_source_rebind_ticket **);
 void q3n_compiled_source_rebind_abort(q3n_compiled_source_rebind_ticket **);
 bool q3n_compiled_source_configstring(const q3n_compiled_source *, uint32_t,

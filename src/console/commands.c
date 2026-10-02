@@ -545,6 +545,11 @@ bool qa_console_set_profile(qa_console *console, qa_console_dialect dialect,
     return true;
 }
 
+qa_cvars *qa_console_cvars(const qa_console *console)
+{
+    return console ? console->options.cvars : NULL;
+}
+
 #define COMMAND(n, d, u) {.name = n, .description = d, .engine_command = true, \
     .documentation = &(const qa_console_documentation){.usage = u}}
 static const qa_console_entry builtin_entries[] = {

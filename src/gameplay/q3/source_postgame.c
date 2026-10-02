@@ -41,8 +41,8 @@ static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
     for (unsigned axis = 0; axis < 3; ++axis) {
         if (!game->options.hooks.postgame_cvar_integer(game->options.hooks.context,
                 "g_podiumDist", &distance, error)) return false;
-        float component = q3_source_float_add(qa_vec_component(origin, axis),
-            q3_source_float_multiply(qa_vec_component(forward, axis), (float)distance));
+        float component = q3_source_float_add(q3_source_vec_component(origin, axis),
+            q3_source_float_multiply(q3_source_vec_component(forward, axis), (float)distance));
         if (!axis) origin.x = component;
         else if (axis == 1) origin.y = component;
         else origin.z = component;
@@ -408,8 +408,8 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_VICTORY_MODEL) return true;
         entry->state.postgame.entity.groundEntityNum = trace.hit == QA_TRACE_HIT_WORLD
-            ? QA_Q3_SOURCE_WORLD : trace.hit == QA_TRACE_HIT_ACTOR
-                ? q3_entity_number(game, trace.actor) : QA_Q3_SOURCE_NONE;
+            ? (int32_t)QA_Q3_SOURCE_WORLD : trace.hit == QA_TRACE_HIT_ACTOR
+                ? q3_entity_number(game, trace.actor) : (int32_t)QA_Q3_SOURCE_NONE;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
         body.ground = trace.hit == QA_TRACE_HIT_WORLD ? game->source_entities[QA_Q3_SOURCE_WORLD].actor
             : trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};

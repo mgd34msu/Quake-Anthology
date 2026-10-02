@@ -17,6 +17,8 @@ bool qa_output_domains_assign(qa_output_domains *, qa_scene_rect, qa_scene_draw_
     bool source, uint32_t width, uint32_t height, qa_error *);
 bool qa_output_domains_source(const qa_output_domains *, uint32_t x, uint32_t y,
     qa_scene_draw_buffer);
+bool qa_output_domains_rect_read(const qa_output_domains *, qa_scene_rect,
+    qa_scene_draw_buffer, bool *, qa_error *);
 bool qa_output_domains_codec(qa_source_save_io *, qa_output_domains *, uint32_t width, uint32_t height);
 void qa_output_domains_destroy(qa_output_domains *);
 #endif

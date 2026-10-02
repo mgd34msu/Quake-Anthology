@@ -10,13 +10,17 @@
 
 enum { NATIVE_RECORD_HEADER = 88, NATIVE_RECORD_PARTS = 6 };
 
-static bool complete(const qa_native_checkpoint *state, qa_error *error)
+static bool complete(const qa_native_checkpoint *state, bool callbacks, qa_error *error)
 {
     return ((state->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC ||
              state->kind == QA_NATIVE_CHECKPOINT_Q2_RERELEASE) &&
-            state->has_game && state->has_level && state->has_host &&
-            state->game.size && state->level.size && state->host.size) ||
-        application_fail(error, QA_ERROR_FORMAT, "native Q2 record requires actual GAME LEVEL and HOST continuation");
+            state->has_host && state->host.size &&
+            (callbacks ? state->has_process && state->process.size &&
+                !state->has_game && !state->has_level :
+                state->has_game && state->has_level && state->game.size && state->level.size)) ||
+        application_fail(error, QA_ERROR_FORMAT, callbacks ?
+            "Native callback record requires its complete original process and HOST continuation" :
+            "Native primary record requires actual GAME LEVEL and HOST continuation");
 }
 
 static const char *source_text(application_provider *provider, qa_string_id id)
@@ -36,7 +40,7 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual provider envelope");
     qa_bytes bytes = {record->payload.data + 32, record->payload.size - 32};
     if (bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
-        qa_load_u32le(bytes.data + 4) != 2)
+        (qa_load_u32le(bytes.data + 4) != 2 && qa_load_u32le(bytes.data + 4) != 3))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual source envelope");
     size_t offset = NATIVE_RECORD_HEADER;
     qa_bytes recipe = {0};
@@ -51,6 +55,21 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe is absent or has trailing bytes");
     *out = recipe;
     return true;
+}
+
+bool application_native_q2_save_process(const qa_save_record *record,
+    qa_native_checkpoint *out, qa_error *error)
+{
+    qa_bytes recipe;
+    if (!out || !application_native_q2_save_resource_recipe(record, &recipe, error)) return false;
+    qa_bytes bytes = {record->payload.data + 32, record->payload.size - 32};
+    if (qa_load_u32le(bytes.data + 4) != 3)
+        return application_fail(error, QA_ERROR_FORMAT, "Callback cold construction requires its owned source record");
+    uint64_t length = qa_load_u64le(bytes.data + 40);
+    if (!qa_native_checkpoint_decode((qa_bytes){bytes.data + NATIVE_RECORD_HEADER, (size_t)length}, out, error)) return false;
+    if (complete(out, true, error)) return true;
+    qa_native_checkpoint_free(out);
+    return false;
 }
 
 bool application_native_q2_save_capture(application_provider *provider, qa_save_purpose purpose,
@@ -69,10 +88,10 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
         if (!texts[i]) return application_fail(error, QA_ERROR_FORMAT, "native Q2 source map text has no actual owner");
     qa_native_checkpoint snapshot = {0};
     qa_buffer parts[NATIVE_RECORD_PARTS] = {0};
-    qa_native_checkpoint_request request = {.game = true, .level = true,
+    qa_native_checkpoint_request request = {.game = engine->callbacks == NULL, .level = engine->callbacks == NULL,
         .autosave = purpose == QA_SAVE_LEVEL_ENTRY};
     bool ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
-        request, &snapshot, error) && complete(&snapshot, error) &&
+        request, &snapshot, error) && complete(&snapshot, engine->callbacks != NULL, error) &&
         application_native_q2_continuation_capture(provider, &snapshot, parts + 1, error) &&
         qa_native_checkpoint_encode(&snapshot, parts, error);
     if (ok && engine->process.resources) {
@@ -102,7 +121,7 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     }
     if (ok) {
         memcpy(bytes.data, "QAN2", 4);
-        qa_store_u32le(bytes.data + 4, 2);
+        qa_store_u32le(bytes.data + 4, engine->callbacks ? 3u : 2u);
         memcpy(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32);
         size_t offset = NATIVE_RECORD_HEADER;
         for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
@@ -122,7 +141,7 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
     qa_bytes out[NATIVE_RECORD_PARTS], qa_error *error)
 {
     if (!bytes.data || bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
-        qa_load_u32le(bytes.data + 4) != 2 || !provider->application->map_resource ||
+        qa_load_u32le(bytes.data + 4) != (provider->state.native.q2_engine->callbacks ? 3u : 2u) || !provider->application->map_resource ||
         memcmp(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32))
         return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation map identity differs");
     size_t offset = NATIVE_RECORD_HEADER;
@@ -162,7 +181,7 @@ bool application_native_q2_save_matches(application_provider *provider, qa_bytes
     qa_buffer private = {0};
     bool ok = application_native_q2_continuation_portable(provider, error) &&
         record_parts(provider, bytes, parts, error) &&
-        qa_native_checkpoint_decode(parts[0], &saved, error) && complete(&saved, error);
+        qa_native_checkpoint_decode(parts[0], &saved, error) && complete(&saved, engine->callbacks != NULL, error);
     const char *texts[] = {source_text(provider, engine->map_name), engine->entity_text,
                           source_text(provider, engine->spawn_point)};
     for (size_t i = 0; ok && i < 3; ++i)
@@ -185,6 +204,9 @@ bool application_native_q2_save_matches(application_provider *provider, qa_bytes
         !qa_sha256_equal(&actual.image.digest, &saved.image.digest) ||
         actual.host.size != saved.host.size || memcmp(actual.host.data, saved.host.data, actual.host.size)))
         ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 actual HOST continuation changed after restoration");
+    if (ok && engine->callbacks && (!actual.has_process || actual.process.size != saved.process.size ||
+        memcmp(actual.process.data, saved.process.data, actual.process.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Native callback original CPU/RAM continuation changed after restoration");
     qa_buffer_free(&private);
     qa_native_checkpoint_free(&actual);
     qa_native_checkpoint_free(&saved);
@@ -205,13 +227,31 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
     qa_native_checkpoint snapshot = {0};
     struct application_native_q2_continuation *private = NULL;
     bool ok = record_parts(provider, bytes, parts, error) &&
-        qa_native_checkpoint_decode(parts[0], &snapshot, error) && complete(&snapshot, error);
+        qa_native_checkpoint_decode(parts[0], &snapshot, error) && complete(&snapshot, engine->callbacks != NULL, error);
     const qa_actor_record *world = qa_actors_at_source(qa_session_actors(app->session), provider->owner, 0);
     if (ok && !world) ok = application_fail(error, QA_ERROR_FORMAT, "native Q2 saved world actor is missing");
     if (ok) {
         engine->world_actor = world->id;
         ok = application_native_q2_activate(engine, error) &&
             application_native_q2_prepare_restore(provider, error);
+    }
+    if (engine->callbacks) {
+        if (ok) ok = application_native_q2_continuation_prepare(provider, &snapshot, parts[1], &private, error) &&
+            qa_native_process_restore_host(qa_native_host_instance(provider->state.native.host),
+                (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
+            application_startup_source_restore(provider, engine->console, engine->cvars,
+                &engine->command_context, error) &&
+            application_native_q2_continuation_apply(provider, private, error);
+        if (ok) {
+            const char *name = source_text(provider, engine->map_name), *spawn = source_text(provider, engine->spawn_point);
+            ok = name && spawn && engine->entity_text &&
+                !strcmp(name, (const char *)parts[2].data) && !strcmp(engine->entity_text, (const char *)parts[3].data) &&
+                !strcmp(spawn, (const char *)parts[4].data);
+            if (!ok) application_fail(error, QA_ERROR_FORMAT, "Native callback restored map differs from its saved source owner");
+        }
+        application_native_q2_continuation_abort(private);
+        qa_native_checkpoint_free(&snapshot);
+        return ok;
     }
     if (ok)
         ok = qa_native_host_restore_cvars(provider->state.native.host,

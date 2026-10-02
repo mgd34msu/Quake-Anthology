@@ -62,6 +62,49 @@ bool qa_catalog_product_view_current(const qa_catalog *c, qa_product_id id, cons
         QA_ARCHIVE_CASE_INSENSITIVE, c->q3_demo_restricted && product->family == QA_GAME_Q3);
 }
 
+bool qa_catalog_product_mount_origin(const qa_catalog *c, qa_product_id selected,
+    const qa_vfs *view, qa_mount_id mount, qa_product_id *content, qa_mount_id *physical)
+{
+    if (!content || !physical || !mount || !qa_catalog_product_view_current(c, selected, view)) return false;
+    const catalog_product *entry = &c->products[selected - 1];
+    qa_mount_id source = 0;
+    for (size_t i = 0; i < entry->mount_count; ++i) {
+        qa_vfs_mount_info actual;
+        if (!qa_vfs_mount_at(view, i, &actual)) return false;
+        if (actual.id == mount) { source = entry->mounts[i]; break; }
+    }
+    if (!source) return false;
+    for (size_t depth = 0; selected && depth < c->product_count; ++depth) {
+        const qa_product *product = qa_catalog_product(c, selected);
+        if (!product) return false;
+        const catalog_product *owner = &c->products[selected - 1];
+        if (contains(owner->own_mounts, owner->own_count, source)) {
+            *content = selected; *physical = source; return true;
+        }
+        selected = product->base;
+    }
+    return false;
+}
+
+bool qa_catalog_product_acquisition_origin(const qa_catalog *c, qa_product_id selected,
+    const qa_vfs *view, const qa_vfs_acquisition *receipt, qa_product_id *content,
+    qa_mount_id *physical, qa_error *error)
+{
+    if (!receipt || !receipt->opening_present || !receipt->link_source || *receipt->link_source ||
+        !receipt->link_target || *receipt->link_target || receipt->opening.prefix ||
+        receipt->opening.user_overlay || receipt->opening.rank < 0 ||
+        receipt->opening.order_count != qa_vfs_mount_count(view) ||
+        (uint64_t)receipt->opening.rank >= receipt->opening.order_count || !receipt->opening.order ||
+        receipt->opening.order[receipt->opening.rank] != receipt->mount ||
+        !qa_catalog_product_mount_origin(c, selected, view, receipt->mount, content, physical) ||
+        !qa_vfs_acquisition_retained(view, receipt, error)) return false;
+    for (size_t i = 0; i < receipt->opening.order_count; ++i) {
+        qa_vfs_mount_info actual;
+        if (!qa_vfs_mount_at(view, i, &actual) || receipt->opening.order[i] != actual.id) return false;
+    }
+    return true;
+}
+
 static bool append_product(const qa_catalog *c, qa_product_id id, qa_mount_id *ids,
                             size_t *count, qa_error *error)
 {

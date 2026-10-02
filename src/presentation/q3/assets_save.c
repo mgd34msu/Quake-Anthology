@@ -39,6 +39,13 @@ bool qa_q3_assets_model_holder(const qa_q3_presentation_assets *a, size_t ordina
     if (!m) return true;
     out->present = true; out->has_lods = m->has_lods; out->owns_world = m->owns_world;
     out->shared_parent = q3p_model_shared(a, m);
+    out->source_registration = m->source_registration;
+    out->registration_bad = m->registration_bad; out->source_kind = m->source_kind;
+    out->source_num_lods = m->source_num_lods;
+    out->source_md4 = m->borrowed_models ? m->source_md4 :
+        (m->source_md4_resource ? &m->source_md4_model : NULL);
+    out->source_md4_resource = m->source_md4_resource;
+    out->source_md4_scene = m->source_md4_scene;
     out->provider = m->provider; out->resource = m->resource; out->world = m->world;
     out->inline_model = m->inline_model; out->lods = m->has_lods ? &m->lods : NULL;
     for (unsigned i = 0; i < 3; ++i) {
@@ -91,9 +98,9 @@ static bool resource_owned(const qa_q3_presentation_provider *provider, const qa
 static bool reading(const qa_source_save_io *io) { return io->direction == QA_SOURCE_SAVE_READ; }
 static bool signature(qa_source_save_io *io, uint32_t *schema)
 {
-    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 5;
+    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 6;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3AS", 4) ||
-        !qa_source_save_u32(io, &version) || version < 3 || version > 5) return false;
+        !qa_source_save_u32(io, &version) || version < 3 || version > 6) return false;
     *schema = version; return true;
 }
 static bool refs_ready(const qa_q3_asset_owner_refs *r)
@@ -336,7 +343,7 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
         q3p_model_source(m, i) != q3p_model_source(m, m->lods.aliases[i])) return false;
     return true;
 }
-static bool model_fields(qa_source_save_io *io, q3p_model *m,
+static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
     qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
     if (!provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||

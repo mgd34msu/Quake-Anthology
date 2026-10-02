@@ -643,15 +643,15 @@ static bool close_bots(application_bots *bots,qa_error *error) {
         qa_bot_navigation_destroy(target->navigation);free(target);}
     while(bots->graphs) {application_bot_graph *graph=bots->graphs;bots->graphs=graph->next;
         qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);
-        qa_resource_release(graph->asset_resource);free(graph);}
+        qa_resource_release(graph->asset_resource);qa_vfs_acquisition_dispose(&graph->asset_acquisition);free(graph);}
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
     application_bots_knowledge_dispose(bots);
     qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
     qa_resource_release(bots->source_map_resource);qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
+    qa_vfs_destroy(bots->navigation_files);
     qa_bots_save_requirements_free(&bots->saved_requirements);
     application_bots_round_detach(bots->round);
     application_bots_original_detach(bots->original);
-    free(bots->saved_file_references);
     free(bots->train_stops);free(bots->seats);free(bots);return true;
 }
 bool application_bots_can_destroy(const qa_application *application) {

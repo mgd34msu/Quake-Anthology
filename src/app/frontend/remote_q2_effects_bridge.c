@@ -2,6 +2,7 @@
 #include "remote_q2_private.h"
 #include "remote_q2_restore.h"
 #include "remote_q2_footsteps.h"
+#include "remote_q2_material_movies_bridge.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@ static bool actor_pose(void *, qa_actor_id, frontend_remote_q2_effects_pose *, q
 static bool hit_marker(void *, int32_t, qa_error *);
 static bool controls(void *, frontend_remote_q2_effects_controls *, qa_error *);
 static bool viewer(void *, qa_actor_id *, qa_error *);
+static bool frame_milliseconds(void *, double *, qa_error *);
 static bool source_current(void *context, const frontend_remote_q2_effects_source *source, qa_error *error)
 {
     frontend_remote_q2 *row = context; frontend_remote_q2_view view;
@@ -21,8 +23,10 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
     if (!retained || !source || source->context != row || row->frontend->application != row->options.domain.application ||
         source->profile != (row->layout.max_models == 8192 ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC) ||
         source->current != source_current || source->actor != actor || source->actor_pose != actor_pose ||
+        source->video_frame != frontend_material_movies_frontend_resolve || source->video_context != row->frontend ||
         source->model != model || source->sound != remote_q2_effect_sound || source->hit_marker != hit_marker ||
         source->controls != controls ||
+        source->frame_milliseconds != frame_milliseconds ||
         source->viewer != viewer ||
         source->footstep != remote_q2_footstep || source->trace != remote_q2_trace ||
         source->session != qa_application_session(row->options.domain.application) || source->identity != row->identity ||
@@ -161,7 +165,7 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
         if (row->frame.valid && index < row->frame.player_count) {
             const qa_q2_player *player = &row->frame.players[index].player;
             position = row->layout.max_models == 8192 ? vector(player->pmove.origin_f) :
-                qa_v3(player->pmove.origin[0] * .125f, player->pmove.origin[1] * .125f, player->pmove.origin[2] * .125f);
+                qa_v3((float)player->pmove.origin[0] * .125f, (float)player->pmove.origin[1] * .125f, (float)player->pmove.origin[2] * .125f);
             position = qa_vec_add(position, vector(player->viewoffset));
         }
         return remote_q2_effect_sound(row, "weapons/marker.wav", position, (qa_actor_id){0},
@@ -186,6 +190,23 @@ static bool controls(void *context, frontend_remote_q2_effects_controls *out, qa
         .disable_explosions = (uint32_t)explosions->integer};
     return true;
 }
+static bool frame_milliseconds(void *context, double *out, qa_error *error)
+{
+    frontend_remote_q2 *row = context;
+    if (!out || !row || !remote_q2_live(row, error) || !isfinite(row->frame_ms) || row->frame_ms <= 0) return false;
+    *out = row->frame_ms; return true;
+}
+bool remote_q2_hit_marker_sample(frontend_remote_q2 *row, qa_error *error)
+{
+    if (!row || !remote_q2_live(row, error)) return false;
+    if (row->layout.max_models != 8192 || !row->media_ready || !row->frame.valid) return true;
+    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_hit_markers");
+    if (!setting || !setting->integer) return true;
+    uint32_t seat;
+    if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
+    int32_t damage = row->frame.players[seat].player.stats[50];
+    return !damage || hit_marker(row, damage < 0 ? -damage : damage, error);
+}
 bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_effects_source *out, qa_error *error)
 {
     if (!row || !out) return false;
@@ -194,8 +215,10 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
         .profile = row->layout.max_models == 8192 ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
         .map = row->map, .files = row->content.mounts, .images = row->images, .materials = row->materials, .world = row->world,
         .white = row->white, .context = row, .current = source_current, .actor = actor, .actor_pose = actor_pose, .viewer = viewer,
+        .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend,
         .model = model, .sound = remote_q2_effect_sound, .hit_marker = hit_marker,
         .controls = controls,
+        .frame_milliseconds = frame_milliseconds,
         .footstep = remote_q2_footstep, .trace = remote_q2_trace};
     return source_current(row, out, error);
 }

@@ -295,7 +295,7 @@ bool bot_reset_grapple(bot_travel *t, qa_error *e) {
         ((s->input.flags & QA_BOT_MOVE_ACTIVE_GRAPPLE) || s->grapple_visible_time != 0)) {
         if (!grapple_command(t, false, e))
             return false;
-        s->input.flags &= ~QA_BOT_MOVE_ACTIVE_GRAPPLE;
+        s->input.flags &= ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE;
         s->grapple_visible_time = 0;
     }
     return true;
@@ -341,7 +341,7 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
     if (s->flags & QA_BOT_MOVE_GRAPPLE_RESET) {
         if (!grapple_command(t, false, e))
             return false;
-        s->flags &= ~QA_BOT_MOVE_ACTIVE_GRAPPLE;
+        s->flags &= ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE;
         return true;
     }
     bool hand_weapon = truncf(bot_variable(t, BOT_OFFHAND_GRAPPLE)) == 0;
@@ -365,7 +365,7 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
         if (reset) {
             if (!grapple_command(t, false, e))
                 return false;
-            s->flags = (s->flags & ~QA_BOT_MOVE_ACTIVE_GRAPPLE) | QA_BOT_MOVE_GRAPPLE_RESET;
+            s->flags = (s->flags & ~(uint32_t)QA_BOT_MOVE_ACTIVE_GRAPPLE) | QA_BOT_MOVE_GRAPPLE_RESET;
             state->reachability_time = 0;
             return true;
         }

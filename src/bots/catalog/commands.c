@@ -238,7 +238,7 @@ static bool add_random(qa_bot_catalog *c,int32_t team,const qa_bot_catalog_clock
         if(!bot_catalog_cvar(c,"g_spSkill",skill,sizeof(skill),NULL,e) || !fixed(bot_catalog_atof(skill),6,decimal,sizeof(decimal),e)) return false;
         if(strlen(name)>35) name[35]=0;
         clean(name);
-        snprintf(command,sizeof(command),"addbot %s %s %s 0\n",name,decimal,team==1?"red":team==2?"blue":"");
+        snprintf(command,sizeof(command),"addbot %.35s %.63s %s 0\n",name,decimal,team==1?"red":team==2?"blue":"");
         return c->services.insert_command(c->services.context,command,e);
     }
     return true;

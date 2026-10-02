@@ -216,15 +216,42 @@ bool q2_save_wire(q2_save_io *io)
                 ok = q2_save_fail(io, "Q2 continuation aliases a Source shadow light");
         if (ok && io->reading) s->actor = record->id;
     }
+    size_t reference_count = io->reading ? 0 : g->wire_reference_count;
+    void *reference_storage = io->reading ? NULL : g->wire_references;
+    if (ok) ok = q2_save_count(io, &reference_count, 17, sizeof(q2_wire_reference), &reference_storage);
+    q2_wire_reference *references = reference_storage;
+    for (size_t i = 0; ok && i < reference_count; ++i) {
+        qa_q2_saved_reference saved = {0};
+        if (!io->reading) ok = q2_save_reference(g, references[i].actor, &saved, io->error);
+        ok = ok && q2_save_ref(io, &saved) && saved.present &&
+            q2_save_u32(io, &references[i].number) && references[i].number < extent;
+        if (ok && io->reading) ok = q2_resolve_reference(g, saved, &references[i].actor, io->error);
+        for (size_t j = 0; ok && j < i; ++j)
+            if (qa_actor_id_equal(references[i].actor, references[j].actor))
+                ok = q2_save_fail(io, "Q2 Engine provenance aliases a full actor generation");
+        const qa_actor_record *live = ok ? qa_actors_get(qa_session_actors(g->services.session), references[i].actor) : NULL;
+        if (live && !qa_actor_id_equal(actors[references[i].number], live->id))
+            ok = q2_save_fail(io, "Q2 live Engine provenance differs from its physical admission");
+    }
+    for (uint32_t slot = 0; ok && slot < extent; ++slot) {
+        if (!actors[slot].registry) continue;
+        bool admitted = false;
+        for (size_t i = 0; i < reference_count; ++i)
+            if (references[i].number == slot && qa_actor_id_equal(references[i].actor, actors[slot])) admitted = true;
+        if (!admitted) ok = q2_save_fail(io, "Q2 Engine row lost its actual admission provenance");
+    }
     if (ok && io->reading) {
         free(g->wire_actors); free(g->wire_freed_ns);
+        free(g->wire_references);
+        g->wire_references = references;
+        g->wire_reference_count = g->wire_reference_capacity = reference_count;
         g->wire_actors = actors; g->wire_freed_ns = freed;
         g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = extent;
         g->wire_frame = frame;
         memcpy(g->wire_lightstyles, styles, sizeof(styles));
         g->wire_music = music; g->wire_music_present = music_present;
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;
-    } else if (io->reading) { free(actors); free(freed); }
+    } else if (io->reading) { free(actors); free(freed); free(references); }
     free(seen);
     return ok;
 }

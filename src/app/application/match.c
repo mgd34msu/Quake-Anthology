@@ -5,6 +5,7 @@
 #include "native_q3_objectives.h"
 #include "map_travel_private.h"
 #include "equipment_runtime.h"
+#include "equipment_requests.h"
 #include "guest_input_private.h"
 #include "native_q1_composition.h"
 #include "native_q1_composition_player.h"
@@ -403,6 +404,8 @@ bool application_match_prepare_equipment(qa_application *application,
         .primary_holster = equipment_holster,
         .primary_holstered = equipment_holstered,
         .primary_resume = equipment_resume,
+        .primary_accepts = application_equipment_primary_accepts,
+        .primary_select = application_equipment_primary_select,
         .grenade_interval = application_q3_weapons_services_grenade_interval,
     };
     application_equipment_runtime_options runtime = {.application = application,

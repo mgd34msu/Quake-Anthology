@@ -5,6 +5,7 @@
 #include "q3_render_policy.h"
 #include "qa/display_settings.h"
 #include "qa/material_library_save.h"
+#include "qa/material_source_scratch.h"
 #include "qa/source_save.h"
 #include <limits.h>
 #include <math.h>
@@ -211,15 +212,22 @@ bool frontend_q3_generic_overlay_begin(qa_frontend *f,qa_scene_rect rect,qa_erro
 {
     if (!f || !rect.width || !rect.height)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic overlay requires its actual entered viewport");
-    bool source=false;
+    if ((f->cpu && f->gl) || (!f->cpu && !f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic overlay lost its actual physical renderer");
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+    qa_material_source_scratch *scratch=qa_render_controls_source_scratch(controls,error);
+    if (!scratch || !qa_material_source_swap_end(scratch,&f->frame,error)) return false;
+    bool source=false,found=false;
     for (size_t i=f->frame.command_count;i;--i) {
         const qa_scene_command *command=f->frame.commands+i-1;
         if (command->kind!=QA_SCENE_COMMAND_OUTPUT_DOMAIN) continue;
         qa_scene_rect actual=command->data.output_domain.rect;
         if (actual.x==rect.x && actual.y==rect.y && actual.width==rect.width && actual.height==rect.height) {
-            source=command->data.output_domain.source; break;
+            source=command->data.output_domain.source; found=true; break;
         }
     }
+    if (!found && !(f->cpu?qa_cpu_output_domain_read(f->cpu,rect,&source,error):
+        qa_gl_output_domain_read(f->gl,rect,&source,error))) return false;
     bool preblend=false;
     if (source) {
         if (!f->source_color || !current(f->source_color,error) ||

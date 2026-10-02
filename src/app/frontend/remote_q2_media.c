@@ -4,6 +4,7 @@
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_footsteps.h"
 #include "remote_q2_clientinfo.h"
+#include "remote_q2_material_movies_bridge.h"
 #include "qa/material.h"
 #include "qa/hash.h"
 #include "qa/scene_world_save.h"
@@ -97,6 +98,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || row->image_policy)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 media remains held by its image policy transaction");
+    if (!remote_q2_material_movies_clear(row, error)) return false;
     if (!frontend_remote_q2_effects_destroy(&row->effects, error)) return false;
     qa_buffer_free(&row->saved_effects);
     row->effects_imported = false;
@@ -156,6 +158,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);
     row->fonts = qa_font_library_create(row->content.mounts, row->images, error);
     if (!row->materials || !row->fonts || !qa_audio_bank_create(row->content.mounts, &row->sounds, error)) return false;
+    if (!remote_q2_material_movies_create(row, error)) return false;
     const uint8_t pixel[4] = {255, 255, 255, 255};
     qa_scene_image_level level = {1, 1, pixel, sizeof(pixel)};
     qa_scene_image *white = NULL;
