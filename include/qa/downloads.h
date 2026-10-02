@@ -26,6 +26,8 @@ typedef struct qa_download_view {
     bool published, mounted;
     qa_sha256_digest digest;
     uint64_t stage_nonce;
+    /* Inspection completed; the exact sealed publication still needs retry. */
+    bool publication_pending;
 } qa_download_view;
 typedef struct qa_download_hooks {
     void *context;
@@ -53,7 +55,8 @@ bool qa_downloads_append(qa_downloads *, qa_download_id, uint64_t offset, qa_byt
 bool qa_downloads_finish(qa_downloads *, qa_download_id, qa_error *);
 /* Publish/inspection may complete inside HTTP callbacks. Installation runs
  * once here, after the shared HTTP pump returns, at the application's idle
- * publication boundary. Individual failures remain in each job's view. */
+ * publication boundary. Pending sealed publication retries here without
+ * rerunning inspection; individual failures remain in each job's view. */
 bool qa_downloads_pump(qa_downloads *, qa_error *);
 void qa_downloads_cancel(qa_downloads *, qa_download_id);
 /* Stops callbacks and retains the private stage for a fresh-process resume.

@@ -28,7 +28,10 @@ typedef struct qa_download_checkpoint_refs {
 } qa_download_checkpoint_refs;
 /* Real job inventory, HTTP consumer identities and native staged prefixes.
  * HTTP recipes and handles belong to the separate HTTP owner. Closed retained
- * artifacts are inspected through their actual read-only native owner. */
+ * artifacts are inspected through their actual read-only native owner. An
+ * accepted pending publication acquires its qualified target through root,
+ * compares its complete saved prefix, and retains actual native durability
+ * continuation; it does not allocate a replacement private stage. */
 bool qa_downloads_checkpoint(const qa_downloads *, qa_buffer *, qa_error *);
 bool qa_downloads_restore_checkpoint(qa_bytes, qa_http *, qa_fs_root *, const qa_download_options *,
     const qa_download_checkpoint_refs *, qa_downloads **, qa_error *);

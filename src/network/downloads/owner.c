@@ -13,6 +13,7 @@ typedef struct download_job {
     qa_download_view view;
     qa_download_request request;
     qa_fs_stage *stage;
+    qa_fs_identity publication_identity;
     uint64_t native_stage_nonce;
     qa_http_request_id http_id;
     char *http_url;
@@ -51,6 +52,7 @@ static void discard_stage(download_job *job, bool keep) {
         qa_fs_stage_close(job->stage, keep); job->stage = NULL;
         if (!keep) job->native_stage_nonce = 0;
     }
+    job->view.publication_pending=false;
 }
 static void rejected(download_job *job, const qa_error *error, bool recoverable) {
     job->view.state = QA_DOWNLOAD_FAILED;
@@ -74,7 +76,7 @@ static void stop(qa_downloads *owner, qa_download_id id, bool keep) {
     download_job *job = lookup(owner, id);
     if (!job || owner->callback || job->view.state != QA_DOWNLOAD_RECEIVING) return;
     qa_http_cancel(owner->http, job->http_id); job->http_id = 0;
-    job->view.state = QA_DOWNLOAD_CANCELED; discard_stage(job, keep); notify(job);
+    job->view.state = QA_DOWNLOAD_CANCELED; discard_stage(job, keep && !job->view.published); notify(job);
 }
 void qa_downloads_cancel(qa_downloads *owner, qa_download_id id) { stop(owner, id, false); }
 void qa_downloads_suspend(qa_downloads *owner, qa_download_id id) { stop(owner, id, true); }
@@ -90,7 +92,7 @@ void qa_downloads_destroy(qa_downloads *owner) {
     qa_fs_root_close(owner->root); free(owner->jobs); free(owner);
 }
 static bool append(download_job *job, uint64_t offset, qa_bytes bytes, qa_error *error) {
-    if (job->view.state != QA_DOWNLOAD_RECEIVING || !job->stage || (bytes.size && !bytes.data) || offset > job->view.received)
+    if (job->view.state != QA_DOWNLOAD_RECEIVING || job->view.publication_pending || !job->stage || (bytes.size && !bytes.data) || offset > job->view.received)
         return fail(error, "Invalid download block/state");
     if (offset < job->view.received) {
         if ((uint64_t)bytes.size > job->view.received - offset)
@@ -118,9 +120,25 @@ bool qa_downloads_append(qa_downloads *owner, qa_download_id id, uint64_t offset
     if (!job || owner->callback || job->http_id) return fail(error, "Native download block does not own this job");
     bool ok = append(job, offset, bytes, error); if (ok) notify(job); return ok;
 }
+static bool publish(download_job *job,qa_error *error) {
+    bool created=false;
+    if (!qa_fs_stage_publish(job->stage,&job->publication_identity,true,&created,error)) {
+        job->view.published=created;
+        if (error) job->view.failure=*error;
+        notify(job); return false;
+    }
+    if (!created) {
+        job->view.publication_pending=false;
+        return fail(error,"Download destination already exists");
+    }
+    job->view.published=true; job->view.failure=(qa_error){0};
+    job->view.state=QA_DOWNLOAD_INSTALLING;
+    discard_stage(job,false); notify(job); return true;
+}
 static bool finish(download_job *job, qa_error *error) {
     qa_downloads *owner = job->owner;
     if (job->view.state != QA_DOWNLOAD_RECEIVING || !job->stage) return fail(error, "Download is not receiving");
+    if (job->view.publication_pending) return publish(job,error);
     uint64_t bytes;
     if (!qa_fs_stage_size(job->stage, &bytes, error)) return false;
     if (bytes != job->view.received || (job->request.exact_identity && bytes != job->request.expected_bytes) ||
@@ -143,20 +161,21 @@ static bool finish(download_job *job, qa_error *error) {
     bool ok = owner->options.hooks.inspect(owner->options.hooks.context, job->view.path, job->stage, bytes, error);
     owner->callback = previous;
     if (!ok) return false;
-    bool created = false;
-    if (!qa_fs_stage_publish(job->stage, &identity, true, &created, error)) {
-        job->view.published = created; return false;
-    }
-    if (!created) return fail(error, "Download destination already exists");
-    job->view.published = true;
-    job->view.state = QA_DOWNLOAD_INSTALLING;
-    discard_stage(job, false); notify(job); return true;
+    job->publication_identity=identity; job->view.publication_pending=true;
+    return publish(job,error);
 }
 bool qa_downloads_pump(qa_downloads *owner, qa_error *error) {
     if (!owner || owner->callback || !qa_http_callbacks_idle(owner->http))
         return fail(error, "Download installation requires shared HTTP callbacks to return");
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
         download_job *job = &owner->jobs[i];
+        if (job->view.id && job->view.publication_pending) {
+            qa_error failure={0};
+            if (!publish(job,&failure)) {
+                if (!job->view.publication_pending) rejected(job,&failure,false);
+                continue;
+            }
+        }
         if (!job->view.id || job->view.state != QA_DOWNLOAD_INSTALLING) continue;
         qa_error failure = {0}; owner->callback = true;
         bool ok = owner->options.hooks.remount(owner->options.hooks.context, job->view.path, &job->view.digest, &failure);
@@ -176,7 +195,8 @@ bool qa_downloads_finish(qa_downloads *owner, qa_download_id id, qa_error *error
     download_job *job = lookup(owner, id);
     if (!job || owner->callback || job->http_id) return fail(error, "Native download completion does not own job");
     if (finish(job, error)) return true;
-    rejected(job, error, false); return false;
+    if (!job->view.publication_pending) rejected(job, error, false);
+    return false;
 }
 static bool headers(void *context, qa_http_request_id id, const qa_http_response *response, qa_error *error) {
     download_job *job = context; (void)id;
@@ -207,7 +227,7 @@ static void complete(void *context, qa_http_request_id id, const qa_http_respons
         qa_error failure = {0};
         if (response->status != 200 && response->status != 206) {
             fail(&failure, "HTTP download did not complete successfully"); rejected(job, &failure, true);
-        } else if (!finish(job, &failure)) rejected(job, &failure, false);
+        } else if (!finish(job, &failure) && !job->view.publication_pending) rejected(job, &failure, false);
     }
     job->owner->callback = previous;
 }
@@ -327,13 +347,14 @@ static bool download_job_valid(const qa_downloads *owner, const download_job *jo
             (owner->next_id && view->id >= owner->next_id) ||
             staged != (view->state == QA_DOWNLOAD_RECEIVING) ||
             (job->http_id && !staged) ||
-            (job->stage && !job->native_stage_nonce) ||
+            (job->stage && !job->native_stage_nonce && !view->published) ||
+            (view->publication_pending && (!staged || job->http_id || view->mounted)) ||
             (job->retained_stage && (staged || job->http_id || view->published || view->mounted ||
                 (view->state != QA_DOWNLOAD_FAILED && view->state != QA_DOWNLOAD_CANCELED))) ||
             (view->state == QA_DOWNLOAD_INSTALLING && (!view->published || view->mounted)) ||
             (view->state == QA_DOWNLOAD_COMPLETE && (!view->published || !view->mounted)) ||
             (view->mounted && view->state != QA_DOWNLOAD_COMPLETE) ||
-            (staged && (view->published || view->mounted)) ||
+            (staged && ((view->published && !view->publication_pending) || view->mounted)) ||
             (view->published && request->exact_identity &&
                 (view->received != request->expected_bytes || !qa_sha256_equal(&view->digest, &request->digest)))) return false;
     char *normalized = qa_vfs_normalize_path(view->path, NULL);
@@ -378,13 +399,14 @@ static bool download_save_job(qa_net_writer *w, const download_job *job)
         qa_net_write_data(w, view->digest.bytes, sizeof(view->digest.bytes)) && qa_net_write_u64(w, view->stage_nonce) &&
         qa_net_write_u64(w, job->http_start) && qa_net_write_u64(w, job->http_total) && qa_net_write_u8(w, job->has_http_total) &&
         qa_net_write_u64(w, job->http_id) && qa_net_write_u8(w, job->http_url != NULL) &&
-        (!job->http_url || qa_net_write_string(w, job->http_url)) && qa_net_write_u8(w, job->retained_stage);
+        (!job->http_url || qa_net_write_string(w, job->http_url)) && qa_net_write_u8(w, job->retained_stage) &&
+        qa_net_write_u8(w,view->publication_pending);
 }
 bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error *error)
 {
-    if (!out || !download_checkpoint_valid(owner) || (size_t)530 > (SIZE_MAX - 36) / (size_t)owner->options.jobs)
+    if (!out || !download_checkpoint_valid(owner) || (size_t)531 > (SIZE_MAX - 36) / (size_t)owner->options.jobs)
         return fail(error, "Download continuation requires idle native jobs and HTTP callbacks");
-    size_t capacity = 36 + (size_t)owner->options.jobs * 530;
+    size_t capacity = 36 + (size_t)owner->options.jobs * 531;
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
         const download_job *job = &owner->jobs[i]; if (!job->view.id) continue;
         size_t length = strlen(job->view.path);
@@ -407,7 +429,7 @@ bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding native download continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) && qa_net_write_u32(&w, 3) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) && qa_net_write_u32(&w, 4) &&
         qa_net_write_u32(&w, owner->options.jobs) && qa_net_write_u64(&w, owner->options.maximum_pending_bytes) &&
         qa_net_write_u64(&w, owner->next_id) && qa_net_write_u64(&w, owner->reserved);
     uint8_t scratch[65536];
@@ -434,7 +456,7 @@ bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error
     if (!ok || w.failed) { free(data); if (!error || !error->code) fail(error, "Native stage changed during continuation capture"); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
 }
-static bool download_restore_job(qa_net_reader *r, download_job *job)
+static bool download_restore_job(qa_net_reader *r, download_job *job,uint32_t version)
 {
     qa_download_request *request = &job->request; qa_download_view *view = &job->view;
     view->id = qa_net_read_u64(r); uint64_t length = qa_net_read_u64(r);
@@ -459,7 +481,9 @@ static bool download_restore_job(qa_net_reader *r, download_job *job)
     job->has_http_total = q3_save_bool(r); job->http_id = qa_net_read_u64(r);
     bool has_url = q3_save_bool(r);
     if (has_url && !service_restore_text(r, &job->http_url, 65535)) return false;
-    job->retained_stage = q3_save_bool(r); return !r->failed;
+    job->retained_stage = q3_save_bool(r);
+    if(version>=4) view->publication_pending=q3_save_bool(r);
+    return !r->failed;
 }
 static bool download_stage_matches(qa_fs_stage *stage, qa_bytes prefix, bool writable, qa_error *error)
 {
@@ -480,7 +504,8 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     if (!out || *out || !options || !refs || !refs->resource || (bytes.size && !bytes.data))
         return fail(error, "Native download restore requires qualified candidate filesystem resources");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x4a444151) || qa_net_read_u32(&r) != 3 ||
+    uint32_t magic=qa_net_read_u32(&r),version=qa_net_read_u32(&r);
+    if (magic != UINT32_C(0x4a444151) || (version!=3 && version!=4) ||
         qa_net_read_u32(&r) != options->jobs || qa_net_read_u64(&r) != options->maximum_pending_bytes)
         return fail(error, "Native download continuation schema/policy differs");
     uint64_t next = qa_net_read_u64(&r), reserved = qa_net_read_u64(&r);
@@ -495,7 +520,7 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     for (uint32_t i = 0; ok && !r.failed && i < options->jobs; ++i) {
         bool present = q3_save_bool(&r); if (!present) continue;
         download_job *job = &owner->jobs[i]; job->owner = owner;
-        ok = download_restore_job(&r, job); staged[i] = q3_save_bool(&r);
+        ok = download_restore_job(&r, job,version); staged[i] = q3_save_bool(&r);
         if (ok && (staged[i] || job->retained_stage)) {
             uint64_t size = qa_net_read_u64(&r);
             ok = size <= SIZE_MAX && (staged[i] ? size == job->view.received : size >= job->view.received) &&
@@ -509,14 +534,23 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
         ok = refs->resource(refs->context, &job->request, &job->view, staged[i], error);
         if (ok && staged[i]) {
             qa_fs_stage *stage = NULL; uint64_t nonce = 0;
-            ok = refs->stage && job->view.limit <= options->maximum_pending_bytes - owner->reserved &&
-                refs->stage(refs->context, &job->request, &job->view, prefixes[i], &stage, &nonce, error);
-            if (ok && stage) {
+            ok=job->view.limit <= options->maximum_pending_bytes-owner->reserved;
+            if(ok && job->view.published)
+                ok=qa_fs_stage_open_published_checked(root,job->view.path,prefixes[i],&stage,&job->publication_identity,error);
+            else if(ok) ok=refs->stage &&
+                refs->stage(refs->context,&job->request,&job->view,prefixes[i],&stage,&nonce,error);
+            if (stage) {
                 for (uint32_t j = 0; j < i; ++j) if (owner->jobs[j].stage == stage) { stage = NULL; ok = false; break; }
                 if (stage) {
                     job->stage = stage; owner->reserved += job->view.limit;
-                    ok = nonce && nonce != job->view.stage_nonce && download_stage_matches(stage, prefixes[i], true, error);
+                    ok = ok && (job->view.published || (nonce && nonce != job->view.stage_nonce)) &&
+                        download_stage_matches(stage,prefixes[i],!job->view.published,error);
                     if (ok) job->native_stage_nonce = nonce;
+                    if(ok && job->view.publication_pending) {
+                        qa_sha256_digest digest; qa_sha256(prefixes[i],&digest);
+                        ok=qa_sha256_equal(&digest,&job->view.digest);
+                        if(ok && !job->view.published) ok=qa_fs_stage_seal(stage,&job->publication_identity,error);
+                    }
                 }
             } else if (ok) ok = false;
         }
@@ -581,5 +615,7 @@ void qa_downloads_handoff_publish(qa_downloads *active, qa_downloads *candidate)
         if (!old->stage) continue;
         qa_fs_stage *stage = old->stage; old->stage = next->stage; next->stage = stage;
         uint64_t nonce = old->native_stage_nonce; old->native_stage_nonce = next->native_stage_nonce; next->native_stage_nonce = nonce;
+        qa_fs_identity identity=old->publication_identity;
+        old->publication_identity=next->publication_identity; next->publication_identity=identity;
     }
 }
