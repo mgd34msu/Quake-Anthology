@@ -186,8 +186,8 @@ static bool think(void *context, const qa_q2_usercmd *command, qa_error *error)
     if (seat->applying || server->source_sequence[index] == UINT64_MAX)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source input counter is exhausted or recursively applying");
     qa_network_q2_player physical = {0};
-    if (!server->hooks.player(server->hooks.context, session->id, seat->id, &physical, error) ||
-        !physical.actor.registry || !physical.actor.generation || !physical.source_owner || !physical.source_slot)
+    if (!server->hooks.player(server->hooks.context, session->id, seat->id, &physical, error)) return false;
+    if (!physical.actor.registry || !physical.source_owner || !physical.source_slot)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 input lacks a physical Source player receipt");
     seat->applying = true;
     bool ok = session->runtime->options.hooks.controlled(session->runtime->options.hooks.context,
