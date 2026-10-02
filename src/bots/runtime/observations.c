@@ -143,7 +143,10 @@ bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
 }
 bool qa_bot_runtime_entity(const qa_bot_runtime *r, int32_t number,
                             qa_bot_entity_info *out, bool *found, qa_error *e) {
-    if (!r || !out || !found) return bot_runtime_fail(e, "missing bot entity observation output");
+    if (!r || !out || !found) {
+        (void)bot_runtime_fail(e, "missing bot entity observation output");
+        return false;
+    }
     const qa_bot_entity_info *info = bot_runtime_observation(r, number);
     *found = info != NULL;
     *out = info ? *info : (qa_bot_entity_info){.number = number};

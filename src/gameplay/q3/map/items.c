@@ -129,26 +129,36 @@ static bool team_member(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
     qa_q3_map_actor_state *master = q3_map_get(
         game, state->team_master.registry ? state->team_master : state->actor);
-    if (!master)
-        return q3_map_fail(error, "Q3 item team has no live master");
+    if (!master) {
+        q3_map_fail(error, "Q3 item team has no live master");
+        return false;
+    }
     size_t count = 0;
     qa_q3_map_actor_state *cursor = master;
     while (cursor) {
-        if (cursor->kind != QA_Q3_MAP_ITEM || cursor->team != master->team)
-            return q3_map_fail(error, "broken Q3 item team chain");
-        if (++count > game->map->capacity)
-            return q3_map_fail(error, "cyclic Q3 item team chain");
+        if (cursor->kind != QA_Q3_MAP_ITEM || cursor->team != master->team) {
+            q3_map_fail(error, "broken Q3 item team chain");
+            return false;
+        }
+        if (++count > game->map->capacity) {
+            q3_map_fail(error, "cyclic Q3 item team chain");
+            return false;
+        }
         if (!cursor->team_next.registry)
             cursor = NULL;
-        else if (!(cursor = q3_map_get(game, cursor->team_next)))
-            return q3_map_fail(error, "broken Q3 item team chain");
+        else if (!(cursor = q3_map_get(game, cursor->team_next))) {
+            q3_map_fail(error, "broken Q3 item team chain");
+            return false;
+        }
     }
     size_t choice = (size_t)(q3_rand(game) % (uint32_t)count);
     cursor = master;
     while (choice--) {
         cursor = q3_map_get(game, cursor->team_next);
-        if (!cursor)
-            return q3_map_fail(error, "broken Q3 item team selection");
+        if (!cursor) {
+            q3_map_fail(error, "broken Q3 item team selection");
+            return false;
+        }
     }
     *out = cursor;
     return true;

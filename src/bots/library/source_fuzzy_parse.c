@@ -25,7 +25,8 @@ static bool diagnostic(fuzzy_parser *parser,qa_script_severity severity,const ch
 static bool fail(fuzzy_parser *parser,const char *message,qa_error *error) {
     if(!diagnostic(parser,QA_SCRIPT_ERROR,message,error)) {parser->language_failure=false;return false;}
     parser->language_failure=true;
-    return bot_fail(parser->source,message,error);
+    (void)bot_fail(parser->source,message,error);
+    return false;
 }
 static bool token_failure(fuzzy_parser *parser,const char *prefix,const qa_script_token *token,
     const char *suffix,qa_error *error) {
@@ -159,7 +160,11 @@ static bool parse_switch(fuzzy_parser *parser,qa_script_location location,uint32
             }
             uint32_t first=frame->first;
             --count;
-            if(!count) *out=first;
+            if(!count) {
+                *out=first;
+                free(stack);
+                return true;
+            }
             else {
                 bot_fuzzy_separator parent;
                 ok=bot_fuzzy_separator_bind(parser->heap,stack[count-1].last,&parent,error) &&
@@ -201,7 +206,7 @@ static bool parse_switch(fuzzy_parser *parser,qa_script_location location,uint32
             }
         }
     }
-    free(stack);return ok;
+    free(stack);return false;
 }
 bool bot_fuzzy_parse(qa_bot_library *library,qa_script *source,bot_fuzzy_heap *heap,const char *filename,
     bot_fuzzy_config *out,bool *source_failure,const bot_fuzzy_parser_host *host,qa_error *error) {

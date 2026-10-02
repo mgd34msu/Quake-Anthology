@@ -61,8 +61,10 @@ static bool number(qa_q3_game *game, const qa_q3_map_fields *fields, const char 
     double value;
     if (!q3_map_number(fields, key, fallback, &value, error))
         return false;
-    if (!isfinite(value) || value < -FLT_MAX || value > FLT_MAX)
-        return q3_map_fail(error, "Q3 mover numeric field is outside float range");
+    if (!isfinite(value) || value < -FLT_MAX || value > FLT_MAX) {
+        q3_map_fail(error, "Q3 mover numeric field is outside float range");
+        return false;
+    }
     *out = (float)value;
     return true;
 }

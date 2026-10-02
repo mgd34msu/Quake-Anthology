@@ -75,6 +75,7 @@ bool qa_bot_character_restore(const qa_bot_character_view *view, qa_bot_characte
 }
 static bool parse(qa_bot_library *library, const char *path, int desired, qa_bot_character **out,
                   bool *found, bool *source_failure, qa_error *e) {
+    *out = NULL;
     *found = false;
     *source_failure = false;
     qa_script *s = NULL; bot_character_reader *host = NULL;

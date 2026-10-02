@@ -29,7 +29,8 @@ static inline bool bot_save_signature(qa_source_save_io *io, const uint8_t expec
 /* These strings belong to bot assets and never enter the canonical table. */
 static inline bool bot_save_text(qa_source_save_io *io, const char **text)
 {
-    bool present = io->direction == QA_SOURCE_SAVE_WRITE && *text != NULL;
+    const char *source = io->direction == QA_SOURCE_SAVE_WRITE ? *text : NULL;
+    bool present = source != NULL;
     if (!qa_source_save_bool(io, &present))
         return false;
     if (!present) {
@@ -37,11 +38,11 @@ static inline bool bot_save_text(qa_source_save_io *io, const char **text)
             *text = NULL;
         return true;
     }
-    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*text) : 0;
+    size_t length = source ? strlen(source) : 0;
     if (!qa_source_save_count(io, &length, SIZE_MAX - 1))
         return false;
     if (io->direction == QA_SOURCE_SAVE_WRITE)
-        return qa_source_save_bytes(io, (void *)*text, length);
+        return qa_source_save_bytes(io, (void *)source, length);
     if (io->offset > io->input.size || length > io->input.size - io->offset)
         return bot_save_fail(io, QA_ERROR_FORMAT, "Truncated private bot string");
     char *owned = malloc(length + 1);
