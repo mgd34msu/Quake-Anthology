@@ -67,12 +67,10 @@ bool application_native_q1_qw_world(qa_application *app, qa_application_network_
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
     qa_q1_wire_world world; qa_application_map_view map;
     qa_application_network_qw_world value={0};
-    const qa_product *product=source.provider->product;
     bool okay=source_view(&source,&value.source,error) && qa_q1_wire_world_read(&source.receipt,&world) &&
-        qa_application_map_read(app,&map) && map.resource && product && product->directory && *product->directory;
+        qa_application_map_read(app,&map) && map.resource &&
+        application_native_q1_source_visible_gamedir(source.provider,&value.game_directory,error);
     if (okay) {
-        const char *separator=strrchr(product->directory,'/');
-        value.game_directory=separator?separator+1:product->directory;
         value.map=text(app,world.map); value.level=text(app,world.level);
         value.map_bytes=qa_resource_bytes(map.resource);
         value.protocol=(qa_net_protocol_id){.kind=QA_NET_QW28}; value.max_clients=source.receipt.client_slots;

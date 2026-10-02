@@ -346,6 +346,19 @@ bool application_native_q1_world_info(void *opaque, const char *key, qa_string_i
     return qa_strings_intern(qa_session_strings(provider->application->session),
         (qa_bytes){(const uint8_t *)value, size}, out, error);
 }
+bool application_native_q1_source_visible_gamedir(application_provider *provider,
+    const char **out, qa_error *error)
+{
+    const char *server, *value; size_t size;
+    if (!out || !application_native_q1_source_info(provider, false, &server, error)) return false;
+    info_value(server, "*gamedir", &value, &size);
+    if (!size) { *out = "qw"; return true; }
+    qa_string_id directory;
+    if (!qa_strings_intern(qa_session_strings(provider->application->session),
+        (qa_bytes){(const uint8_t *)value, size}, &directory, error)) return false;
+    *out = qa_strings_cstr(qa_session_strings(provider->application->session), directory);
+    return true;
+}
 void application_native_q1_source_info_map_reset(void *opaque)
 {
     application_provider *provider = opaque;
