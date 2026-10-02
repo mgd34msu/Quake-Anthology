@@ -202,7 +202,7 @@ static bool expand(qa_kex_channel*c,uint8_t kind,qa_bytes b,qa_kex_message*out,q
     z.avail_out=QA_KEX_MESSAGE_BYTES;
     int status=inflateInit(&z);
     if(status!=Z_OK) {
-        qa_error_set(e,QA_ERROR_FORMAT,0,"KEX inflater initialization failed");
+        qa_error_set(e,status==Z_MEM_ERROR?QA_ERROR_MEMORY:QA_ERROR_FORMAT,0,"KEX inflater initialization failed");
         return false;
     }
     status=inflate(&z,Z_FINISH);
@@ -210,7 +210,8 @@ static bool expand(qa_kex_channel*c,uint8_t kind,qa_bytes b,qa_kex_message*out,q
     bool valid=status==Z_STREAM_END&&z.total_in==b.size-1;
     inflateEnd(&z);
     if(!valid) {
-        qa_error_set(e,QA_ERROR_FORMAT,0,"Malformed compressed KEX message");
+        qa_error_set(e,status==Z_MEM_ERROR?QA_ERROR_MEMORY:QA_ERROR_FORMAT,0,
+            status==Z_MEM_ERROR?"KEX inflater allocation failed":"Malformed compressed KEX message");
         return false;
     }
     c->expanded_size=size;
@@ -375,7 +376,25 @@ bool qa_kex_channel_receive(qa_kex_channel *c, qa_bytes bytes, uint64_t now,
                             qa_kex_message *out, bool *present, qa_error *e)
 {
     if (!enter(c, e)) return false;
-    bool ok = receive_body(c, bytes, now, out, present, e);
+    uint16_t incoming_sequence=c->incoming_sequence,incoming_reliable=c->incoming_reliable,
+        fragment_sequence=c->fragment_sequence;
+    uint8_t fragment_kind=c->fragment_kind,ack=c->ack;
+    bool fragmented=c->fragmented;
+    size_t fragment_size=c->fragment_size;
+    uint64_t received_at=c->received_at;
+    qa_error operation={0};
+    bool ok = receive_body(c, bytes, now, out, present, &operation);
+    if(!ok && operation.code==QA_ERROR_MEMORY) {
+        c->incoming_sequence=incoming_sequence;
+        c->incoming_reliable=incoming_reliable;
+        c->fragment_sequence=fragment_sequence;
+        c->fragment_kind=fragment_kind;
+        c->ack=ack;
+        c->fragmented=fragmented;
+        c->fragment_size=fragment_size;
+        c->received_at=received_at;
+    }
+    if(!ok && e) *e=operation;
     c->entered = false;
     return ok;
 }
