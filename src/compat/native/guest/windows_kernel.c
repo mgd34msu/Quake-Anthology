@@ -22,7 +22,7 @@ enum kernel_operation {
     K_STD_GET, K_STD_SET, K_HANDLE_COUNT, K_FILE_TYPE, K_STARTUP, K_FILE_CREATE,
     K_FILE_READ, K_FILE_WRITE, K_FILE_CLOSE, K_FILE_FLUSH, K_FILE_SEEK, K_FILE_END,
     K_MULTI_WIDE, K_WIDE_MULTI, K_STRING_TYPE_A, K_STRING_TYPE_W, K_MAP_A, K_MAP_W,
-    K_LOCALE_INFO_A, K_LOCALE_INFO_W
+    K_LOCALE_INFO_A, K_LOCALE_INFO_W, K_COMPARE_A, K_COMPARE_W
 };
 typedef struct kernel_descriptor {
     const char *name; uint32_t operation; qa_native_value_type result;
@@ -70,7 +70,8 @@ static const kernel_descriptor descriptors[] = {
     D("MultiByteToWideChar",K_MULTI_WIDE,I,6,U,U,P,I,P,I), D("WideCharToMultiByte",K_WIDE_MULTI,I,8,U,U,P,I,P,I,P,P),
     D("GetStringTypeA",K_STRING_TYPE_A,I,5,U,U,P,I,P), D("GetStringTypeW",K_STRING_TYPE_W,I,4,U,P,I,P),
     D("LCMapStringA",K_MAP_A,I,6,U,U,P,I,P,I), D("LCMapStringW",K_MAP_W,I,6,U,U,P,I,P,I),
-    D("GetLocaleInfoA",K_LOCALE_INFO_A,I,4,U,U,P,I), D("GetLocaleInfoW",K_LOCALE_INFO_W,I,4,U,U,P,I)
+    D("GetLocaleInfoA",K_LOCALE_INFO_A,I,4,U,U,P,I), D("GetLocaleInfoW",K_LOCALE_INFO_W,I,4,U,U,P,I),
+    D("CompareStringA",K_COMPARE_A,I,6,U,U,P,I,P,I), D("CompareStringW",K_COMPARE_W,I,6,U,U,P,I,P,I)
 };
 #undef D
 #undef P
@@ -627,6 +628,42 @@ static bool locale_information(windows_service *service, const qa_native_value *
     result(out,QA_NATIVE_I32,needed); return true;
 }
 
+static bool comparison_text(guest_windows *owner, uint64_t address, int32_t count,
+    bool wide, uint16_t **out, size_t *length, qa_error *error)
+{
+    if (count < 0) return windows_string(owner,address,wide,out,length,error);
+    if (count > 1048576)
+        return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"Windows comparison exceeds retained input limit");
+    return input_text(owner,address,count,wide,out,length,error);
+}
+static bool compare_strings(windows_service *service, const qa_native_value *args,
+    qa_native_value *out, qa_error *error)
+{
+    guest_windows *owner = service->owner; uint32_t locale = (uint32_t)integer(args);
+    if ((locale & UINT32_C(0xfff00000)) || !integer(args + 2) || !integer(args + 4))
+        return invalid_result(owner,out,QA_NATIVE_I32,87,0,error);
+    const qa_native_windows_locale_profile *profile = &owner->capabilities.locale;
+    const qa_native_windows_locale *record = locale == 0 || locale == 0x0400 ? &profile->user :
+        locale == 0x0800 ? &profile->system : locale == profile->user.lcid ? &profile->user :
+        locale == profile->system.lcid ? &profile->system : NULL;
+    if (!record || !record->lcid)
+        return guest_fail(error,QA_ERROR_UNSUPPORTED,locale,"Windows comparison has no acquired matching locale");
+    bool wide = service->operation == K_COMPARE_W;
+    uint16_t *a = NULL, *b = NULL; size_t a_count = 0, b_count = 0;
+    bool okay = comparison_text(owner,integer(args + 2),args[3].as.i32,wide,&a,&a_count,error) &&
+        comparison_text(owner,integer(args + 4),args[5].as.i32,wide,&b,&b_count,error);
+    int32_t compared = 0; uint32_t source_error = 0;
+    if (okay) okay = owner->capabilities.compare_string ?
+        owner->capabilities.compare_string(owner->capabilities.context,locale,(uint32_t)integer(args + 1),wide,
+            a,a_count,b,b_count,&compared,&source_error,error) :
+        guest_fail(error,QA_ERROR_UNSUPPORTED,locale,"Windows comparison has no retained Windows-compatible collation producer");
+    free(a); free(b);
+    if (!okay) return false;
+    if (compared < 0 || compared > 3)
+        return guest_fail(error,QA_ERROR_FORMAT,locale,"Windows comparison capability returned an invalid source result");
+    if (!compared) return invalid_result(owner,out,QA_NATIVE_I32,source_error,0,error);
+    result(out,QA_NATIVE_I32,(uint32_t)compared); return true;
+}
 static bool locale_operation(windows_service *service, const qa_native_value *args,
     qa_native_value *out, qa_error *error)
 {
@@ -738,6 +775,7 @@ bool windows_kernel_invoke(windows_service *service, const qa_native_value *args
     result(out, type, 0);
     if (operation >= K_STD_GET && operation <= K_FILE_END) return file_operation(service, args, out, error);
     if (operation == K_LOCALE_INFO_A || operation == K_LOCALE_INFO_W) return locale_information(service, args, out, error);
+    if (operation == K_COMPARE_A || operation == K_COMPARE_W) return compare_strings(service,args,out,error);
     if (operation >= K_MULTI_WIDE) return locale_operation(service, args, out, error);
     switch (operation) {
     case K_ENCODE: result(out, type, a ^ kernel->pointer_secret); return true;

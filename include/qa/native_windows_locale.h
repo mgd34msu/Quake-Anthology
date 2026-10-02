@@ -3,12 +3,17 @@
 #include "qa/common.h"
 #include <string.h>
 
-enum { QA_NATIVE_WINDOWS_LOCALE_UNITS = 16 };
+enum { QA_NATIVE_WINDOWS_LOCALE_UNITS = 16, QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS = 85 };
 /* source=0 has no acquired default; 1 maps an acquired POSIX numeric locale;
  * 2 holds actual Windows NLS user/system records. These are immutable snapshots,
  * including user overrides and their separately acquired default values. */
 typedef struct qa_native_windows_locale {
     uint32_t lcid, language_id, ansi_code_page, oem_code_page;
+    /* Actual named NLS collation and complete version identity. POSIX mappings
+     * have no Windows-compatible collation producer and leave these zero. */
+    uint32_t sort_version, sort_defined_version, sort_effective_id;
+    uint8_t sort_custom_version[16];
+    uint16_t collation_name[QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS];
     uint16_t decimal[QA_NATIVE_WINDOWS_LOCALE_UNITS];
     uint16_t thousands[QA_NATIVE_WINDOWS_LOCALE_UNITS];
     uint16_t grouping[QA_NATIVE_WINDOWS_LOCALE_UNITS];
@@ -25,6 +30,10 @@ static inline bool qa_native_windows_locale_equal(const qa_native_windows_locale
 {
     return a->lcid == b->lcid && a->language_id == b->language_id &&
         a->ansi_code_page == b->ansi_code_page && a->oem_code_page == b->oem_code_page &&
+        a->sort_version == b->sort_version && a->sort_defined_version == b->sort_defined_version &&
+        a->sort_effective_id == b->sort_effective_id &&
+        !memcmp(a->sort_custom_version,b->sort_custom_version,sizeof(a->sort_custom_version)) &&
+        !memcmp(a->collation_name,b->collation_name,sizeof(a->collation_name)) &&
         !memcmp(a->decimal,b->decimal,sizeof(a->decimal)) && !memcmp(a->thousands,b->thousands,sizeof(a->thousands)) &&
         !memcmp(a->grouping,b->grouping,sizeof(a->grouping)) && !memcmp(a->default_decimal,b->default_decimal,sizeof(a->default_decimal)) &&
         !memcmp(a->default_thousands,b->default_thousands,sizeof(a->default_thousands)) &&
@@ -36,14 +45,22 @@ static inline bool qa_native_windows_locale_profile_equal(const qa_native_window
     return a->source == b->source && a->ansi_code_page == b->ansi_code_page && a->oem_code_page == b->oem_code_page &&
         qa_native_windows_locale_equal(&a->user,&b->user) && qa_native_windows_locale_equal(&a->system,&b->system);
 }
-static inline bool qa_native_windows_locale_text_valid(const uint16_t *text)
+static inline bool qa_native_windows_locale_units_valid(const uint16_t *text, size_t count)
 {
     bool terminated = false;
-    for (size_t i = 0; i < QA_NATIVE_WINDOWS_LOCALE_UNITS; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         if (!text[i]) terminated = true;
         else if (terminated) return false;
     }
     return terminated;
+}
+static inline bool qa_native_windows_locale_text_valid(const uint16_t *text)
+{ return qa_native_windows_locale_units_valid(text,QA_NATIVE_WINDOWS_LOCALE_UNITS); }
+static inline bool qa_native_windows_locale_collation_empty(const qa_native_windows_locale *locale)
+{
+    const uint8_t guid[16] = {0}; const uint16_t name[QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS] = {0};
+    return !locale->sort_version && !locale->sort_defined_version && !locale->sort_effective_id &&
+        !memcmp(locale->sort_custom_version,guid,sizeof(guid)) && !memcmp(locale->collation_name,name,sizeof(name));
 }
 static inline bool qa_native_windows_locale_valid(const qa_native_windows_locale *locale)
 {
@@ -51,6 +68,7 @@ static inline bool qa_native_windows_locale_valid(const qa_native_windows_locale
     if (!locale->lcid) return qa_native_windows_locale_equal(locale,&empty);
     return !(locale->lcid & UINT32_C(0xfff00000)) && locale->language_id && locale->language_id <= 65535 &&
         locale->ansi_code_page <= 65535 && locale->oem_code_page <= 65535 &&
+        qa_native_windows_locale_units_valid(locale->collation_name,QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS) &&
         locale->decimal[0] && locale->grouping[0] && locale->default_decimal[0] && locale->default_grouping[0] &&
         qa_native_windows_locale_text_valid(locale->decimal) && qa_native_windows_locale_text_valid(locale->thousands) &&
         qa_native_windows_locale_text_valid(locale->grouping) && qa_native_windows_locale_text_valid(locale->default_decimal) &&
@@ -64,7 +82,10 @@ static inline bool qa_native_windows_locale_profile_valid(const qa_native_window
         !profile->oem_code_page || profile->oem_code_page > 65535 ||
         !qa_native_windows_locale_valid(&profile->user) || !qa_native_windows_locale_valid(&profile->system)) return false;
     if (profile->source == 1) return (profile->user.lcid == 0 || profile->user.lcid == 0x007f || profile->user.lcid == 0x0409) &&
-        qa_native_windows_locale_equal(&profile->user,&profile->system);
-    return profile->user.lcid && profile->system.lcid;
+        qa_native_windows_locale_equal(&profile->user,&profile->system) &&
+        qa_native_windows_locale_collation_empty(&profile->user);
+    return profile->user.lcid && profile->system.lcid && profile->user.sort_version && profile->system.sort_version &&
+        (profile->user.collation_name[0] || profile->user.lcid == 0x007f) &&
+        (profile->system.collation_name[0] || profile->system.lcid == 0x007f);
 }
 #endif

@@ -36,6 +36,10 @@ int64_t qa_native_process_platform_frequency(const qa_native_process_platform *)
  * mappings retain an unavailable default, never an assumed English locale. */
 bool qa_native_process_platform_locale_read(const qa_native_process_platform *,
     qa_native_windows_locale_profile *, qa_error *);
+/* Genuine named Windows NLS comparison. The retained formatting profile and
+ * sort version qualify the provider; other hosts have no substitute. */
+bool qa_native_process_platform_compare_string(void *, uint32_t, uint32_t, bool,
+    const uint16_t *, size_t, const uint16_t *, size_t, int32_t *, uint32_t *, qa_error *);
 bool qa_native_process_platform_calendar(void *, int64_t, bool,
     qa_native_windows_calendar *, qa_error *);
 /* Actual Linux security credentials/kernel personality and owned stream

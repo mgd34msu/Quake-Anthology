@@ -109,11 +109,11 @@ static bool stream_identity(int descriptor, uint64_t *device, uint64_t *object)
     return true;
 }
 #if defined(_WIN32)
-static bool locale_text(qa_native_process_platform *owner, LCID id, LCTYPE type,
+static bool locale_text(qa_native_process_platform *owner, LPCWSTR name, LCTYPE type,
     uint16_t out[QA_NATIVE_WINDOWS_LOCALE_UNITS], qa_error *error)
 {
     WCHAR text[QA_NATIVE_WINDOWS_LOCALE_UNITS];
-    int count = GetLocaleInfoW(id,type,text,QA_NATIVE_WINDOWS_LOCALE_UNITS);
+    int count = GetLocaleInfoEx(name,type,text,QA_NATIVE_WINDOWS_LOCALE_UNITS);
     if (!count) return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows locale text");
     if (count > QA_NATIVE_WINDOWS_LOCALE_UNITS || text[count - 1])
         return fail(error,QA_ERROR_FORMAT,"Actual Windows locale text is unterminated");
@@ -123,18 +123,30 @@ static bool locale_text(qa_native_process_platform *owner, LCID id, LCTYPE type,
 static bool locale_record(qa_native_process_platform *owner, LCID id,
     qa_native_windows_locale *out, qa_error *error)
 {
+    WCHAR name[QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS];
+    int count = GetLocaleInfoW(id,LOCALE_SNAME,name,QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS);
+    if (!count) return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows NLS locale name");
+    if (count > QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS || name[count - 1])
+        return fail(error,QA_ERROR_FORMAT,"Actual Windows NLS locale name is unterminated");
+    for (int i = 0; i < count; ++i) out->collation_name[i] = (uint16_t)name[i];
+    NLSVERSIONINFOEX sort = {.dwNLSVersionInfoSize = sizeof(sort)};
+    if (!GetNLSVersionEx(COMPARE_STRING,name,&sort))
+        return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows NLS sort version");
+    out->sort_version = sort.dwNLSVersion; out->sort_defined_version = sort.dwDefinedVersion;
+    out->sort_effective_id = sort.dwEffectiveId;
+    memcpy(out->sort_custom_version,&sort.guidCustomVersion,sizeof(out->sort_custom_version));
     DWORD language = 0, ansi = 0, oem = 0;
-    if (!GetLocaleInfoW(id,LOCALE_ILANGUAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&language,2) ||
-        !GetLocaleInfoW(id,LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&ansi,2) ||
-        !GetLocaleInfoW(id,LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&oem,2))
+    if (!GetLocaleInfoEx(name,LOCALE_ILANGUAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&language,2) ||
+        !GetLocaleInfoEx(name,LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&ansi,2) ||
+        !GetLocaleInfoEx(name,LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,(LPWSTR)&oem,2))
         return platform_fail_windows(owner,GetLastError(),error,"Acquiring actual Windows locale code pages");
     out->lcid = id; out->language_id = language; out->ansi_code_page = ansi; out->oem_code_page = oem;
-    return locale_text(owner,id,LOCALE_SDECIMAL,out->decimal,error) &&
-        locale_text(owner,id,LOCALE_STHOUSAND,out->thousands,error) &&
-        locale_text(owner,id,LOCALE_SGROUPING,out->grouping,error) &&
-        locale_text(owner,id,LOCALE_SDECIMAL | LOCALE_NOUSEROVERRIDE,out->default_decimal,error) &&
-        locale_text(owner,id,LOCALE_STHOUSAND | LOCALE_NOUSEROVERRIDE,out->default_thousands,error) &&
-        locale_text(owner,id,LOCALE_SGROUPING | LOCALE_NOUSEROVERRIDE,out->default_grouping,error);
+    return locale_text(owner,name,LOCALE_SDECIMAL,out->decimal,error) &&
+        locale_text(owner,name,LOCALE_STHOUSAND,out->thousands,error) &&
+        locale_text(owner,name,LOCALE_SGROUPING,out->grouping,error) &&
+        locale_text(owner,name,LOCALE_SDECIMAL | LOCALE_NOUSEROVERRIDE,out->default_decimal,error) &&
+        locale_text(owner,name,LOCALE_STHOUSAND | LOCALE_NOUSEROVERRIDE,out->default_thousands,error) &&
+        locale_text(owner,name,LOCALE_SGROUPING | LOCALE_NOUSEROVERRIDE,out->default_grouping,error);
 }
 #else
 static bool locale_ascii(const char *source, uint16_t out[QA_NATIVE_WINDOWS_LOCALE_UNITS])
@@ -398,6 +410,87 @@ bool qa_native_process_platform_performance(void *context, int64_t *out, qa_erro
 }
 int64_t qa_native_process_platform_frequency(const qa_native_process_platform *owner)
 { return owner ? owner->frequency : 0; }
+#if defined(_WIN32)
+static bool comparison_sort_current(qa_native_process_platform *owner,
+    const qa_native_windows_locale *record, LPCWSTR name, qa_error *error)
+{
+    NLSVERSIONINFOEX sort = {.dwNLSVersionInfoSize = sizeof(sort)};
+    if (!GetNLSVersionEx(COMPARE_STRING,name,&sort))
+        return platform_fail_windows(owner,GetLastError(),error,"Qualifying retained Windows NLS collation");
+    if (sort.dwNLSVersion != record->sort_version || sort.dwDefinedVersion != record->sort_defined_version ||
+        sort.dwEffectiveId != record->sort_effective_id ||
+        memcmp(&sort.guidCustomVersion,record->sort_custom_version,sizeof(record->sort_custom_version)))
+        return fail(error,QA_ERROR_UNSUPPORTED,"Actual Windows NLS sort version differs from its retained owner");
+    return true;
+}
+static bool comparison_input(const uint16_t *source, size_t count, bool wide,
+    uint32_t code_page, WCHAR **out, int *length, uint32_t *source_error, qa_error *error)
+{
+    if (count > INT_MAX || count > SIZE_MAX / sizeof(WCHAR) - 1)
+        return fail(error,QA_ERROR_UNSUPPORTED,"Windows comparison exceeds native count domain");
+    if (wide || !count) {
+        WCHAR *text = malloc((count + 1) * sizeof(*text));
+        if (!text) return fail(error,QA_ERROR_MEMORY,"Retaining Windows comparison input");
+        for (size_t i = 0; i < count; ++i) text[i] = (WCHAR)source[i];
+        text[count] = 0; *out = text; *length = (int)count; return true;
+    }
+    char *bytes = malloc(count);
+    if (!bytes) return fail(error,QA_ERROR_MEMORY,"Retaining ANSI comparison input");
+    for (size_t i = 0; i < count; ++i) {
+        if (source[i] > 255) { free(bytes); return fail(error,QA_ERROR_FORMAT,"ANSI comparison input exceeds literal byte domain"); }
+        bytes[i] = (char)(uint8_t)source[i];
+    }
+    int needed = MultiByteToWideChar(code_page,0,bytes,(int)count,NULL,0);
+    if (!needed) { *source_error = GetLastError(); free(bytes); return true; }
+    if ((size_t)needed > SIZE_MAX / sizeof(WCHAR) - 1) {
+        free(bytes); return fail(error,QA_ERROR_UNSUPPORTED,"NLS ANSI conversion exceeds native storage domain");
+    }
+    WCHAR *text = malloc(((size_t)needed + 1) * sizeof(*text));
+    if (!text) { free(bytes); return fail(error,QA_ERROR_MEMORY,"Retaining actual NLS ANSI conversion"); }
+    int completed = MultiByteToWideChar(code_page,0,bytes,(int)count,text,needed);
+    free(bytes);
+    if (!completed) { *source_error = GetLastError(); free(text); return true; }
+    text[completed] = 0; *out = text; *length = completed; return true;
+}
+#endif
+bool qa_native_process_platform_compare_string(void *context, uint32_t locale, uint32_t flags,
+    bool wide, const uint16_t *first, size_t first_count, const uint16_t *second, size_t second_count,
+    int32_t *out, uint32_t *source_error, qa_error *error)
+{
+    if (!out || !source_error || !first || !second)
+        return fail(error,QA_ERROR_ARGUMENT,"Windows comparison requires actual inputs and outputs");
+    if (!qa_native_process_platform_current(context,error)) return false;
+    qa_native_process_platform *owner = context;
+    if (owner->locale.source != 2)
+        return fail(error,QA_ERROR_UNSUPPORTED,"Native platform has no Windows-compatible collation producer");
+#if defined(_WIN32)
+    const qa_native_windows_locale *record = locale == 0 || locale == 0x0400 ? &owner->locale.user :
+        locale == 0x0800 ? &owner->locale.system : locale == owner->locale.user.lcid ? &owner->locale.user :
+        locale == owner->locale.system.lcid ? &owner->locale.system : NULL;
+    if (!record) return fail(error,QA_ERROR_UNSUPPORTED,"Comparison locale differs from its acquired NLS profile");
+    WCHAR name[QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS];
+    for (size_t i = 0; i < QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS; ++i) name[i] = (WCHAR)record->collation_name[i];
+    if (!comparison_sort_current(owner,record,name,error)) return false;
+    uint32_t code_page = flags & LOCALE_USE_CP_ACP ? owner->locale.ansi_code_page : record->ansi_code_page;
+    if (!wide && !code_page)
+        return fail(error,QA_ERROR_UNSUPPORTED,"ANSI comparison locale has no acquired code page");
+    WCHAR *a = NULL, *b = NULL; int a_count = 0, b_count = 0; uint32_t native_error = 0;
+    bool okay = comparison_input(first,first_count,wide,code_page,&a,&a_count,&native_error,error) &&
+        (!a || comparison_input(second,second_count,wide,code_page,&b,&b_count,&native_error,error));
+    if (okay && a && b) {
+        int compared = CompareStringEx(name,flags,a,a_count,b,b_count,NULL,NULL,0);
+        if (!compared) native_error = GetLastError();
+        okay = comparison_sort_current(owner,record,name,error);
+        if (okay) *out = compared;
+    } else if (okay) *out = 0;
+    free(a); free(b);
+    if (okay) *source_error = native_error;
+    return okay;
+#else
+    (void)locale; (void)flags; (void)wide; (void)first_count; (void)second_count;
+    return fail(error,QA_ERROR_UNSUPPORTED,"Native platform has no Windows NLS provider");
+#endif
+}
 /* Date arithmetic is used only to compare the actual libc local/UTC calendar
  * rows; timezone and daylight values are never chosen from a fixed locale. */
 static int64_t civil_days(int64_t year, unsigned month, unsigned day)
@@ -838,10 +931,10 @@ bool qa_native_process_platform_program_files(qa_native_process_platform *owner,
 static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner)
 {
     uint8_t magic[4] = {'Q','N','P','L'};
-    uint32_t version = 3; uint64_t id = owner->id; int64_t frequency = owner->frequency;
+    uint32_t version = 4; uint64_t id = owner->id; int64_t frequency = owner->frequency;
     bool terminal = owner->terminal;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNPL", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_u64(io, &id) || id != owner->id ||
         !qa_source_save_i64(io, &frequency) || frequency != owner->frequency ||
         !qa_source_save_bool(io, &terminal) || terminal != owner->terminal) return false;

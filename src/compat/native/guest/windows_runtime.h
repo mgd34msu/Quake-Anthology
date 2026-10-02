@@ -29,6 +29,11 @@ typedef struct guest_windows_stream_capability {
 typedef struct guest_windows_capabilities {
     uint64_t id;
     qa_native_windows_locale_profile locale;
+    /* A input units are literal bytes; W units are UTF-16. Counts exclude an
+     * automatically consumed terminator. A source failure returns true with
+     * result=0 and its real Win32 error; capability failure returns false. */
+    bool (*compare_string)(void *, uint32_t, uint32_t, bool, const uint16_t *, size_t,
+        const uint16_t *, size_t, int32_t *, uint32_t *, qa_error *);
     bool (*entropy)(void *, void *, size_t, qa_error *);
     bool (*milliseconds)(void *, int64_t *, qa_error *);
     bool (*performance)(void *, int64_t *, qa_error *);

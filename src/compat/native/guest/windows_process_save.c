@@ -43,7 +43,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 static bool process_fields(qa_source_save_io *io, qa_native_windows_process *owner)
 {
-    uint8_t magic[] = {'Q','W','P','R',3}, expected[] = {'Q','W','P','R',3};
+    uint8_t magic[] = {'Q','W','P','R',4}, expected[] = {'Q','W','P','R',4};
     qa_native_windows_process_options *o = &owner->options;
     qa_native_windows_capabilities *c = &o->capabilities;
     uint32_t backend = o->guest.backend;
@@ -199,7 +199,8 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
         !bindings->capabilities.id || !bindings->capabilities.current || !bindings->capabilities.entropy ||
         !bindings->capabilities.milliseconds || !bindings->capabilities.performance || !bindings->capabilities.calendar ||
         bindings->capabilities.performance_frequency <= 0 ||
-        !qa_native_windows_locale_profile_valid(&bindings->capabilities.locale))
+        !qa_native_windows_locale_profile_valid(&bindings->capabilities.locale) ||
+        (bindings->capabilities.locale.source == 2) != (bindings->capabilities.compare_string != NULL))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows restore needs its actual prepared capability graph");
     qa_native_windows_process *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning cold Windows process");

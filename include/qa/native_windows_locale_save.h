@@ -7,7 +7,11 @@ static inline bool qa_native_windows_locale_save(qa_source_save_io *io, qa_nativ
 {
     if (!qa_source_save_u32(io,&locale->lcid) || !qa_source_save_u32(io,&locale->language_id) ||
         !qa_source_save_u32(io,&locale->ansi_code_page) ||
-        !qa_source_save_u32(io,&locale->oem_code_page)) return false;
+        !qa_source_save_u32(io,&locale->oem_code_page) || !qa_source_save_u32(io,&locale->sort_version) ||
+        !qa_source_save_u32(io,&locale->sort_defined_version) || !qa_source_save_u32(io,&locale->sort_effective_id) ||
+        !qa_source_save_bytes(io,locale->sort_custom_version,sizeof(locale->sort_custom_version))) return false;
+    for (size_t i = 0; i < QA_NATIVE_WINDOWS_LOCALE_NAME_UNITS; ++i)
+        if (!qa_source_save_u16(io,locale->collation_name + i)) return false;
     uint16_t *fields[] = {locale->decimal,locale->thousands,locale->grouping,
         locale->default_decimal,locale->default_thousands,locale->default_grouping};
     for (size_t i = 0; i < sizeof(fields)/sizeof(*fields); ++i)

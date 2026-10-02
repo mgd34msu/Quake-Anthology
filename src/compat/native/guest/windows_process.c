@@ -47,6 +47,15 @@ static bool calendar(void *context, int64_t when, bool local, guest_windows_cale
         actual.daylight, actual.timezone_minutes};
     return true;
 }
+static bool compare_string(void *context, uint32_t locale, uint32_t flags, bool wide,
+    const uint16_t *first, size_t first_count, const uint16_t *second, size_t second_count,
+    int32_t *out, uint32_t *source_error, qa_error *error)
+{
+    qa_native_windows_process *owner = context;
+    return windows_process_current(owner,error) &&
+        owner->options.capabilities.compare_string(owner->options.capabilities.context,locale,flags,wide,
+            first,first_count,second,second_count,out,source_error,error);
+}
 static bool open_file(void *context, const char *path, uint32_t mode, uint32_t creation,
     guest_runtime_file_capability *out, bool *opened, qa_error *error)
 {
@@ -83,7 +92,7 @@ guest_windows_capabilities windows_process_capabilities(qa_native_windows_proces
 {
     const qa_native_windows_capabilities *source = &owner->options.capabilities;
     guest_windows_capabilities out = {.id = source->id, .entropy = entropy,
-        .locale = source->locale,
+        .locale = source->locale, .compare_string = source->compare_string ? compare_string : NULL,
         .milliseconds = milliseconds, .performance = performance,
         .performance_frequency = source->performance_frequency, .calendar = calendar,
         .open_file = source->open_file ? open_file : NULL, .resolve_file = resolve_file, .context = owner};
@@ -123,6 +132,7 @@ static bool options_valid(const qa_native_windows_process_options *o, qa_error *
         o->artifact_count > SIZE_MAX / sizeof(windows_process_image) || !o->stack_bytes ||
         o->stack_bytes % QA_NATIVE_GUEST_PAGE || o->guest.image.target.os != QA_NATIVE_OS_WINDOWS ||
         !o->capabilities.id || !qa_native_windows_locale_profile_valid(&o->capabilities.locale) ||
+        (o->capabilities.locale.source == 2) != (o->capabilities.compare_string != NULL) ||
         !o->capabilities.entropy || !o->capabilities.milliseconds ||
         !o->capabilities.performance || !o->capabilities.calendar || !o->capabilities.current ||
         o->capabilities.performance_frequency <= 0 ||

@@ -184,6 +184,16 @@ static bool platform_calendar(void *context, int64_t time, bool local, qa_native
         qa_native_process_platform_calendar(owner->options.platform, time, local, out, error) &&
         qa_native_process_resources_current(owner, error);
 }
+static bool platform_compare_string(void *context, uint32_t locale, uint32_t flags, bool wide,
+    const uint16_t *first, size_t first_count, const uint16_t *second, size_t second_count,
+    int32_t *out, uint32_t *source_error, qa_error *error)
+{
+    qa_native_process_resources *owner = context;
+    return qa_native_process_resources_current(owner,error) &&
+        qa_native_process_platform_compare_string(owner->options.platform,locale,flags,wide,
+            first,first_count,second,second_count,out,source_error,error) &&
+        qa_native_process_resources_current(owner,error);
+}
 static bool file_read(void *context, uint64_t offset, void *out, size_t bytes, size_t *done, qa_error *error)
 {
     if (done) *done = 0;
@@ -691,6 +701,7 @@ static bool resources_create(const qa_native_process_resources_options *options,
         .performance_frequency = qa_native_process_platform_frequency(options->platform), .calendar = platform_calendar,
         .open_file = windows_open, .resolve_file = windows_resolve, .current = current_callback, .context = owner};
     if (!qa_native_process_platform_locale_read(options->platform,&capabilities.locale,error)) return false;
+    capabilities.compare_string = capabilities.locale.source == 2 ? platform_compare_string : NULL;
     if (!qa_native_process_platform_windows_streams(options->platform, capabilities.streams, error)) return false;
     owner->windows = (qa_native_windows_process_options){.guest = guest, .artifacts = owner->windows_artifacts,
         .artifact_count = owner->artifact_count, .primary_image = qa_resource_id(owner->artifacts[options->primary].resource),
