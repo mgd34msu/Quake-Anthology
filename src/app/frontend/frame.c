@@ -478,9 +478,13 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (ok && terminal_console!=console &&
         !qa_application_startup_console_queued(frontend->application,terminal_console))
         ok=qa_console_drain(terminal_console,4096,&executed,error);
-    if (ok) ok = (qa_application_startup_console_queued(frontend->application,console) ||
-        qa_console_drain(console, 4096, &executed, error)) &&
-        frontend_tools_sync(frontend, error) && frontend_network_pump(frontend, error);
+    if (ok) ok = qa_application_startup_console_queued(frontend->application,console) ||
+        qa_console_drain(console, 4096, &executed, error);
+    if (ok && qa_application_should_stop(frontend->application)) {
+        frontend->stepping=false;
+        return true;
+    }
+    if (ok) ok=frontend_tools_sync(frontend,error) && frontend_network_pump(frontend,error);
     if (ok) ok=frontend_cinematic_drain(frontend,error);
     if (ok) ok=frontend_restart_drain_frame(frontend->restart,error);
     if (ok && frontend->restart && !frontend_restart_idle(frontend->restart)) {
