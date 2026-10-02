@@ -429,7 +429,10 @@ typedef struct codec { qa_bytes in; qa_buffer out; size_t at, capacity; bool rea
 static bool blob(codec *c, void *data, size_t bytes)
 {
     if (c->read) {
-        if (bytes > c->in.size - c->at) return guest_fail(c->e, QA_ERROR_FORMAT, c->at, "import checkpoint is truncated");
+        if (bytes > c->in.size - c->at) {
+            guest_fail(c->e, QA_ERROR_FORMAT, c->at, "import checkpoint is truncated");
+            return false;
+        }
         if (bytes) memcpy(data, c->in.data + c->at, bytes);
         c->at += bytes; return true;
     }

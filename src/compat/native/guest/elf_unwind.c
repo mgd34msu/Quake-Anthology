@@ -12,7 +12,10 @@ typedef struct unwind_reader {
 typedef struct unwind_number { uint64_t magnitude; bool negative; } unwind_number;
 
 static bool fail(unwind_reader *r, const char *message)
-{ return guest_fail(r->error, QA_ERROR_FORMAT, r->cursor, message); }
+{
+    guest_fail(r->error, QA_ERROR_FORMAT, r->cursor, message);
+    return false;
+}
 
 static bool take(unwind_reader *r, size_t count, const uint8_t **out)
 {

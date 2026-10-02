@@ -29,8 +29,10 @@ size_t guest_abi_result_bytes(const guest_abi_plan *plan)
 
 static bool align_size(size_t size, size_t alignment, size_t *out, qa_error *error)
 {
-    if (!alignment || alignment & (alignment - 1) || size > SIZE_MAX - (alignment - 1))
-        return guest_fail(error, QA_ERROR_ARGUMENT, size, "guest ABI alignment overflows");
+    if (!alignment || alignment & (alignment - 1) || size > SIZE_MAX - (alignment - 1)) {
+        guest_fail(error, QA_ERROR_ARGUMENT, size, "guest ABI alignment overflows");
+        return false;
+    }
     *out = (size + alignment - 1) & ~(alignment - 1);
     return true;
 }

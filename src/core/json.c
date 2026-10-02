@@ -497,6 +497,10 @@ bool qa_json_u64(const qa_json_document *document, qa_json_id id, uint64_t *out,
 bool qa_json_string(const qa_json_document *document, qa_json_id id, qa_buffer *out, qa_error *error) {
     if (!require_kind(document,id,QA_JSON_STRING,out,error)) return false;
     qa_bytes source=qa_json_source(document,id);
+    if (source.size<2) {
+        qa_error_set(error,QA_ERROR_FORMAT,document->nodes[id].start,"JSON string has no quoted source");
+        return false;
+    }
     uint8_t *output=malloc(source.size-1);
     if (!output) { qa_error_set(error,QA_ERROR_MEMORY,document->nodes[id].start,"allocating JSON string"); return false; }
     size_t cursor=1, count=0;

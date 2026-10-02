@@ -12,8 +12,10 @@ typedef struct guest_codec {
 static bool bytes(guest_codec *io, void *data, size_t amount)
 {
     if (io->reading) {
-        if (amount > io->input.size - io->offset)
-            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest checkpoint is truncated");
+        if (amount > io->input.size - io->offset) {
+            guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest checkpoint is truncated");
+            return false;
+        }
         if (amount) memcpy(data, io->input.data + io->offset, amount);
         io->offset += amount;
         return true;

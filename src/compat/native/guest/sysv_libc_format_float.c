@@ -68,7 +68,10 @@ static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int
     } else *scale = 0;
     if (!ok) { free(n.words); return false; }
     char *digits = malloc(n.count*9+1);
-    if (!digits) { free(n.words); return sysv_fail(error,QA_ERROR_MEMORY,"allocating exact guest floating decimal digits"); }
+    if (!digits) {
+        free(n.words); sysv_fail(error,QA_ERROR_MEMORY,"allocating exact guest floating decimal digits");
+        return false;
+    }
     size_t at = unsigned_digits(n.words[n.count-1],10,digits);
     for (size_t i = n.count-1; i; --i) {
         char chunk[9]; size_t bytes = unsigned_digits(n.words[i-1],10,chunk);

@@ -105,7 +105,10 @@ static bool qualify(const qa_qvm_image *, uint32_t, uint32_t, uint32_t,
                     const qa_qvm_region_evaluation *, bool, qa_error *);
 
 static bool error_at(qa_error *error, size_t offset, const char *message)
-{ return qa_qvm_error(error, QA_ERROR_ARGUMENT, offset, message); }
+{
+    qa_qvm_error(error, QA_ERROR_ARGUMENT, offset, message);
+    return false;
+}
 
 static execution *state(const qa_qvm *vm) { return vm == NULL ? NULL : vm->execution; }
 static void latch(qa_qvm *vm, const qa_error *error)

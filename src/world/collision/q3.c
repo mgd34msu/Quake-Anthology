@@ -373,11 +373,11 @@ bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t
     work.start = qa_vec_add(query->start, center); work.end = qa_vec_add(query->end, center);
     work.stationary = q3_same_point(query->start, query->end);
     bool rotated = transformed && !q3_same_point(query->target.angles, qa_v3(0, 0, 0));
+    if (rotated) qa_collision_basis(query->target.angles, basis);
     if (transformed) {
         work.start = qa_vec_sub(work.start, query->target.origin);
         work.end = qa_vec_sub(work.end, query->target.origin);
         if (rotated) {
-            qa_collision_basis(query->target.angles, basis);
             work.start = qa_collision_to_local(work.start, basis); work.end = qa_collision_to_local(work.end, basis);
             if (work.shape.kind == QA_SHAPE_CAPSULE) q3_rotate_capsule(&work.shape, basis);
         }

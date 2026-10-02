@@ -156,7 +156,10 @@ static bool text(guest_windows *owner, uint64_t address, char **out, qa_error *e
 
 static bool extent(uint64_t value, size_t *out, qa_error *error)
 {
-    if (value > 0x10000000) return guest_fail(error, QA_ERROR_ARGUMENT, value, "CRT byte count exceeds source limit");
+    if (value > 0x10000000) {
+        guest_fail(error, QA_ERROR_ARGUMENT, value, "CRT byte count exceeds source limit");
+        return false;
+    }
     *out = (size_t)value; return true;
 }
 

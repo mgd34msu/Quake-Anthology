@@ -112,8 +112,10 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
 }
 static bool extent(uint64_t value, size_t *out, qa_error *error)
 {
-    if (value > SYSV_MAX_ALLOCATION || value > SIZE_MAX)
-        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V memory count exceeds its supported actual extent");
+    if (value > SYSV_MAX_ALLOCATION || value > SIZE_MAX) {
+        sysv_fail(error, QA_ERROR_ARGUMENT, "System V memory count exceeds its supported actual extent");
+        return false;
+    }
     *out = (size_t)value; return true;
 }
 static bool memory_copy(guest_sysv_runtime *r, uint64_t destination,

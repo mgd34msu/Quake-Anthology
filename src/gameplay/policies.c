@@ -91,8 +91,10 @@ static bool lethal_health(qa_combat *combat, const qa_combat_policy *policy,
 
 static bool integer(float value, int32_t *out, qa_error *error) {
     double truncated = trunc((double)value);
-    if (truncated < INT32_MIN || truncated > INT32_MAX || !isfinite(truncated))
-        return qa_combat_argument(error, "source damage exceeds its signed integer representation");
+    if (truncated < INT32_MIN || truncated > INT32_MAX || !isfinite(truncated)) {
+        qa_combat_argument(error, "source damage exceeds its signed integer representation");
+        return false;
+    }
     *out = (int32_t)truncated;
     return true;
 }

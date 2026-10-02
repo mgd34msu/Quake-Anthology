@@ -46,7 +46,8 @@ static bool descriptor_room(qa_native_sysv_program *owner, int32_t minimum,
                 owner->descriptor_count + 1, sizeof(*owner->descriptors), error)) return false;
             *out = number; return true;
         }
-    return guest_fail(error, QA_ERROR_MEMORY, 0, "Linux descriptor namespace exhausted");
+    guest_fail(error, QA_ERROR_MEMORY, 0, "Linux descriptor namespace exhausted");
+    return false;
 }
 static bool close_description(program_file *entry, qa_error *error)
 {

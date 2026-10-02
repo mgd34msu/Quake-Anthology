@@ -28,8 +28,10 @@ static bool power_of_two(uint32_t value, bool down, uint32_t *out, qa_error *err
 {
     uint32_t result = 1;
     while (result < value) {
-        if (result > (uint32_t)INT32_MAX / 2)
-            return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source image power-of-two rounding exceeds signed int32");
+        if (result > (uint32_t)INT32_MAX / 2) {
+            qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source image power-of-two rounding exceeds signed int32");
+            return false;
+        }
         result *= 2;
     }
     *out = down && result > value ? result / 2 : result;

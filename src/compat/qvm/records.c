@@ -51,9 +51,11 @@ static bool offset(qa_q3_abi_record *record, size_t pointer, size_t size,
                     size_t *out, qa_error *error)
 {
     if (!record_live(record, error)) return false;
-    if (pointer > record->bytes.size || size > record->bytes.size - pointer)
-        return qa_qvm_error(error, QA_ERROR_ARGUMENT, pointer,
-                            "Q3 source record exceeds admitted bytes");
+    if (pointer > record->bytes.size || size > record->bytes.size - pointer) {
+        qa_qvm_error(error, QA_ERROR_ARGUMENT, pointer,
+                     "Q3 source record exceeds admitted bytes");
+        return false;
+    }
     *out = pointer;
     return true;
 }

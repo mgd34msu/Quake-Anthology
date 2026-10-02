@@ -231,7 +231,10 @@ bool windows_kernel_close_pending(guest_windows *owner, qa_error *error)
 
 static bool native_count(uint64_t value, size_t *out, qa_error *error)
 {
-    if (value > 0x10000000) return guest_fail(error, QA_ERROR_ARGUMENT, value, "Windows byte count exceeds source native allocation limit");
+    if (value > 0x10000000) {
+        guest_fail(error, QA_ERROR_ARGUMENT, value, "Windows byte count exceeds source native allocation limit");
+        return false;
+    }
     *out = (size_t)value; return true;
 }
 

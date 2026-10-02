@@ -226,7 +226,10 @@ static bool map_identity(qa_console_program *program, qa_console_program_identit
     if (!source) { *out = 0; return true; }
     uint64_t mapped = 0;
     if (!program->resolve.identity(program->resolve.context, kind, source, &mapped, error)) return false;
-    if (!mapped) return qac_fail(error, QA_ERROR_ARGUMENT, "command program lifetime has no candidate declaration");
+    if (!mapped) {
+        qac_fail(error, QA_ERROR_ARGUMENT, "command program lifetime has no candidate declaration");
+        return false;
+    }
     *out = mapped; return true;
 }
 
