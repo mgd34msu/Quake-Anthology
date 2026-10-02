@@ -96,6 +96,34 @@ bool q2_wire_bind(qa_q2_game *g, q2_actor *a, uint32_t slot, qa_error *error)
     return bind(g, a, a->id, slot, error);
 }
 
+static bool spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
+{
+    uint32_t slot=g->wire_extent;
+    for(uint32_t i=g->wire_clients+1;i<g->wire_extent;++i) {
+        uint64_t freed=g->wire_freed_ns[i];
+        if(!g->wire_actors[i].registry&&(freed<2*Q2_NS||
+            (g->now_ns>freed&&g->now_ns-freed>Q2_NS/2))) {
+            slot=i;break;
+        }
+    }
+    if(slot>=g->wire_capacity) {
+        qa_error_set(error,QA_ERROR_MEMORY,slot,"Q2 physical Source edict table is full");
+        return false;
+    }
+    *out=slot;return true;
+}
+
+bool qa_q2_wire_spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
+{
+    if(!g||!out||g->restoring_continuation||g->continuation_pending||g->continuation_failed||
+        g->release_failed||!g->wire_actors||!g->wire_freed_ns||
+        g->wire_extent<g->wire_clients+1||g->wire_extent>g->wire_capacity) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 Source spawn requires its actual physical edict namespace");
+        return false;
+    }
+    return spawn_slot(g,out,error);
+}
+
 bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
 {
     if (g->restoring_continuation || a->wire_bound) return true;
@@ -106,15 +134,8 @@ bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
     }
     if (record->has_source && record->owner == g->options.owner)
         return bind(g, a, id, record->source_slot, error);
-    uint32_t slot = g->wire_extent;
-    for (uint32_t i = g->wire_clients + 1; i < g->wire_extent; ++i) {
-        uint64_t freed = g->wire_freed_ns[i];
-        if (!g->wire_actors[i].registry && (freed < 2 * Q2_NS ||
-            (g->now_ns > freed && g->now_ns - freed > Q2_NS / 2))) {
-            slot = i;
-            break;
-        }
-    }
+    uint32_t slot;
+    if(!spawn_slot(g,&slot,error))return false;
     return bind(g, a, id, slot, error);
 }
 

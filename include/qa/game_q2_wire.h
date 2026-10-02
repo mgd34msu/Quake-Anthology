@@ -71,6 +71,9 @@ typedef struct qa_q2_wire_source_entity {
  * dynamic admission. Configure only an empty, idle GAME namespace. */
 bool qa_q2_wire_configure(qa_q2_game *, uint32_t entity_capacity,
     uint32_t client_slots, qa_error *);
+/* Reads the actual next G_Spawn slot without admitting an actor. The caller
+ * uses it immediately for canonical Source provenance before physical birth. */
+bool qa_q2_wire_spawn_slot(const qa_q2_game *, uint32_t *, qa_error *);
 bool qa_q2_wire_extent(const qa_q2_game *, uint32_t *, qa_error *);
 bool qa_q2_wire_policy(const qa_q2_game *, uint32_t *entity_capacity,
     uint32_t *client_slots, qa_error *);

@@ -864,6 +864,30 @@ bool application_players_point(application_player_travel *travel, qa_mode_spawnp
     return true;
 }
 
+bool application_players_q2_points(application_player_travel *travel,
+    uint32_t clients, const qa_q2_wire_binding *bindings, size_t count,
+    qa_error *error)
+{
+    struct application_player_roster *roster = travel->roster;
+    const qa_actor_registry *actors =
+        qa_session_actors(roster->map_provider->application->session);
+    size_t retained = 0;
+    for (size_t i = 0; i < roster->point_count; ++i) {
+        application_player_point point = roster->points[i];
+        if (point.ordinal < clients || point.ordinal - clients >= count)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q2 spawn point lost its authored entity binding");
+        const qa_q2_wire_binding *binding = bindings + (point.ordinal - clients);
+        if (!binding->in_use || !qa_actors_get(actors, binding->actor))
+            continue;
+        point.ordinal = binding->source_slot;
+        point.point.actor = binding->actor;
+        roster->points[retained++] = point;
+    }
+    roster->point_count = retained;
+    return true;
+}
+
 void application_players_world_type(application_player_travel *travel, int32_t world_type)
 {
     travel->roster->world_type = world_type;

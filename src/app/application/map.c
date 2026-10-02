@@ -260,6 +260,22 @@ bool application_map_prepare_points(qa_application *application,
 {
     const qa_launch_choices *choices =
         qa_launch_snapshot_choices(publication->candidate);
+    size_t source_clients = choices->seat_count;
+    if (publication->map_provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_options source;
+        double seconds;
+        if (!qa_q1_source_respawn_options_read(publication->map_provider->state.q1,
+            &source, &seconds, error)) return false;
+        source_clients = source.max_clients;
+    } else if (publication->map_provider->kind == APPLICATION_PROVIDER_Q2) {
+        int32_t clients;
+        if (!application_native_q2_source_integer(publication->map_provider,
+            "maxclients", &clients, error)) return false;
+        if (clients < 1 || clients > 256)
+            return application_fail(error, QA_ERROR_FORMAT,
+                "Q2 spawn points lost their actual client reservation");
+        source_clients = (uint32_t)clients;
+    }
     qa_strings *strings = qa_session_strings(application->session);
     for (size_t i = 0; i < publication->entities.count; ++i) {
         qa_bytes name;
@@ -287,14 +303,6 @@ bool application_map_prepare_points(qa_application *application,
                     (qa_mode_spawnpoint){0}, target, (uint32_t)i, error))
                 return false;
             continue;
-        }
-        size_t source_clients = choices->seat_count;
-        if (publication->map_provider->kind == APPLICATION_PROVIDER_Q1) {
-            qa_q1_options source;
-            double seconds;
-            if (!qa_q1_source_respawn_options_read(publication->map_provider->state.q1,
-                &source, &seconds, error)) return false;
-            source_clients = source.max_clients;
         }
         if (source_clients > UINT32_MAX || i > UINT32_MAX - source_clients)
             return application_fail(error, QA_ERROR_MEMORY, "authored client source slots are exhausted");
@@ -1741,7 +1749,8 @@ static bool q2_spawn(void *opaque, const char *classname, qa_vec3 origin,
 
 static bool q2_spawn_map(application_provider *provider,
                          const qa_launch_choices *choices,
-                         const qa_entities *entities, qa_error *error)
+                         const qa_entities *entities,
+                         application_player_travel *players, qa_error *error)
 {
     int32_t clients, capacity;
     if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
@@ -1756,21 +1765,41 @@ static bool q2_spawn_map(application_provider *provider,
     services.spawn = q2_spawn;
     if (!qa_q2_entities_configure(provider->state.q2, &services, error))
         return false;
+    if (entities->count > SIZE_MAX / sizeof(qa_q2_wire_binding))
+        return application_fail(error, QA_ERROR_MEMORY,
+                                "Q2 authored spawn bindings are exhausted");
+    qa_q2_wire_binding *bindings = calloc(entities->count ? entities->count : 1,
+                                         sizeof(*bindings));
+    if (!bindings)
+        return application_fail(error, QA_ERROR_MEMORY,
+                                "Cannot retain Q2 authored spawn bindings");
+    bool ok = true;
     for (size_t index = 0; index < entities->count; ++index) {
-        if (index > UINT32_MAX - (uint32_t)clients)
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "Q2 authored entity ordinal is exhausted");
+        uint32_t source_slot = 0;
+        if (index && !qa_q2_wire_spawn_slot(provider->state.q2, &source_slot, error)) {
+            ok = false;
+            break;
+        }
         qa_actor_id actor = {0};
         if (!q2_spawn_fields(provider, choices, entities, index, true,
-                             index == 0 ? 0u : (uint32_t)(index + (uint32_t)clients), &actor, error))
-            return false;
+                             source_slot, &actor, error)) {
+            ok = false;
+            break;
+        }
+        bindings[index] = (qa_q2_wire_binding){.actor = actor,
+            .source_owner = provider->owner, .source_slot = source_slot,
+            .in_use = actor.registry != 0};
         qa_bytes classname;
         if (qa_entity_value(entities, index, "classname", &classname) &&
             classname.size == 10 &&
             memcmp(classname.data, "worldspawn", 10) == 0 && actor.registry)
             provider->application->physics->world_actor = actor;
     }
-    return qa_q2_entities_post_spawn(provider->state.q2, error);
+    if (ok) ok = qa_q2_entities_post_spawn(provider->state.q2, error) &&
+        application_players_q2_points(players, (uint32_t)clients,
+            bindings, entities->count, error);
+    free(bindings);
+    return ok;
 }
 
 static bool q3_area_portal(application_provider *provider,
@@ -2237,7 +2266,7 @@ bool application_map_publish(qa_application *application,
     }
     case APPLICATION_PROVIDER_Q2:
         spawned = q2_spawn_map(publication->map_provider, choices,
-                            &publication->entities, error);
+                            &publication->entities, publication->players, error);
         break;
     case APPLICATION_PROVIDER_Q3:
         spawned = q3_spawn_map(publication->map_provider,
