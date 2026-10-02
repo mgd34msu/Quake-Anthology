@@ -29,6 +29,18 @@ static bool current(const qa_scene_q1_sky *sky, const qa_scene_frame *frame)
     return sky && sky->frame == frame && sky->sequence == frame->sequence &&
         sky->world->identity == sky->identity && sky->world->revision == sky->revision && !sky->finished;
 }
+static bool same_view(const qa_scene_view *a, const qa_scene_view *b)
+{
+    return !memcmp(&a->viewport, &b->viewport, sizeof(a->viewport)) &&
+        !memcmp(&a->origin, &b->origin, sizeof(a->origin)) &&
+        !memcmp(a->axis, b->axis, sizeof(a->axis)) &&
+        !memcmp(&a->projection, &b->projection, sizeof(a->projection)) &&
+        a->clear_color == b->clear_color && a->clear_depth == b->clear_depth &&
+        a->clear_stencil == b->clear_stencil && a->clip_enabled == b->clip_enabled &&
+        a->mirror == b->mirror && !memcmp(&a->color, &b->color, sizeof(a->color)) &&
+        !memcmp(&a->depth, &b->depth, sizeof(a->depth)) &&
+        !memcmp(&a->clip_plane, &b->clip_plane, sizeof(a->clip_plane)) && a->seat == b->seat;
+}
 bool qa_scene_world_q1_sky_begin(qa_scene_world *world, const qa_scene_world_input *input,
     qa_scene_frame *frame, qa_scene_q1_sky **out, qa_error *error)
 {
@@ -71,7 +83,7 @@ bool qaw_q1_sky_collect(qa_scene_q1_sky *sky, const qa_scene_mesh *source,
     const qa_material_context *context, qa_scene_frame *frame, qa_error *error)
 {
     if (!current(sky, frame) || !source || !context ||
-        memcmp(&context->view, &sky->input.view, sizeof(context->view)))
+        !same_view(&context->view, &sky->input.view))
         return fail(error, "Q1 sky footprint belongs to another actual view");
     q1_sky_polygon *polygon = qa_arena_alloc(&frame->storage, sizeof(*polygon), _Alignof(q1_sky_polygon), error);
     if (!polygon) return false;
@@ -186,7 +198,7 @@ bool qa_scene_world_q1_sky_finish(qa_scene_q1_sky *sky, qa_scene_frame *frame, q
     if (!current(sky, frame)) return fail(error, "Q1 sky finish lost its actual frame and world");
     if (!sky->head) { sky->finished = true; return true; }
     if (sky->first >= frame->command_count || frame->commands[sky->first].kind != QA_SCENE_COMMAND_VIEW ||
-        memcmp(&frame->commands[sky->first].data.view, &sky->input.view, sizeof(sky->input.view)))
+        !same_view(&frame->commands[sky->first].data.view, &sky->input.view))
         return fail(error, "Q1 sky has no reached view command");
     size_t old_count = frame->command_count;
     for (q1_sky_polygon *polygon = sky->head; polygon; polygon = polygon->next)
