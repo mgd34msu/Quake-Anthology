@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=28;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=29;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==28?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==29?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -50,18 +50,33 @@ static bool player_fields(qa_source_save_io *io, qa_bot_player *player)
     F(player->air_time); F(player->teleport_time); L(player->spawn_sequence); L(player->teleport_sequence);
     return true;
 }
-static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *order) {
-    I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);
+static bool waypoint_fields(qa_source_save_io *io,const bot_source_orders_state *owner,
+                             bot_source_orders_state *target,bot_source_waypoint **point) {
+    int32_t index=-1;
+    if(io->direction==QA_SOURCE_SAVE_WRITE && !bot_ai_source_waypoint_index(owner,*point,&index))
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Waypoint reference escapes its actual AI bank");
+    I(index);
+    if(index<-1 || index>=BOT_SOURCE_WAYPOINTS)
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Waypoint continuation reference is outside its AI bank");
+    if(io->direction==QA_SOURCE_SAVE_READ) *point=index<0?NULL:&target->points[index];
     return true;
 }
-static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders) {
-    I(orders->free_point);I(orders->find_client_maxclients);I(orders->find_enemy_maxclients);
+static bool source_order_fields(qa_source_save_io *io,const bot_source_orders_state *owner,
+                                 bot_source_orders_state *target,bot_source_order_state *order) {
+    return waypoint_fields(io,owner,target,&order->checkpoints) &&
+        waypoint_fields(io,owner,target,&order->patrol_points) &&
+        waypoint_fields(io,owner,target,&order->current_patrol_point);
+}
+static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders,
+                                  const bot_source_orders_state *owner) {
+    if(!waypoint_fields(io,owner,orders,&orders->free_point)) return false;
+    I(orders->find_client_maxclients);I(orders->find_enemy_maxclients);
     I(orders->same_team_maxclients);I(orders->client_name_maxclients);I(orders->team_name_maxclients);
     for(size_t i=0;i<BOT_SOURCE_WAYPOINTS;++i) {
         bot_source_waypoint *point=&orders->points[i];B(point->inuse);
         if(!qa_source_save_bytes(io,point->name,sizeof(point->name)) ||
            !memchr(point->name,0,sizeof(point->name)) || !goal_fields(io,&point->goal)) return false;
-        I(point->next);I(point->prev);
+        if(!waypoint_fields(io,owner,orders,&point->next) || !waypoint_fields(io,owner,orders,&point->prev)) return false;
     }
     return true;
 }
@@ -79,7 +94,8 @@ static bool source_policy_globals_fields(qa_source_save_io *io,bot_source_team_p
     }
     return true;
 }
-static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
+static bool state_fields(qa_source_save_io *io, bot_ai_state *state,const bot_source_orders_state *owner,
+                          bot_source_orders_state *target)
 {
     B(state->inuse);B(state->counted);
     bot_source_setup_state *setup=&state->source_setup;
@@ -113,7 +129,7 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     B(state->team_arena); B(state->retired);
     L(state->command_sequence);
 
-    if(!source_order_fields(io,&state->source_order)) return false;
+    if(!source_order_fields(io,owner,target,&state->source_order)) return false;
     uint32_t phase=state->shutdown_phase;U(phase);if(phase>BOT_SHUTDOWN_FAILED) return false;
     state->shutdown_phase=(bot_shutdown_phase)phase;
     B(state->shutdown_restart); B(state->shutdown_chat_pending);
@@ -145,13 +161,14 @@ static bool snapshot_fields(qa_source_save_io *io, qa_builtin_actor_snapshot *sn
     for (size_t i = 0; i < snapshot->count; ++i) A(snapshot->ids[i]);
     return true;
 }
-static bool waypoint_index(int32_t index) {return index>=-1 && index<BOT_SOURCE_WAYPOINTS;}
-static bool waypoint_chain(const bot_source_orders_state *orders,int32_t first,bool seen[BOT_SOURCE_WAYPOINTS]) {
-    while(first>=0) {
-        if(!waypoint_index(first) || seen[first]) return false;
-        seen[first]=true;first=orders->points[first].next;
+static bool waypoint_chain(const bot_source_orders_state *orders,const bot_source_waypoint *point,
+                            bool seen[BOT_SOURCE_WAYPOINTS]) {
+    while(point) {
+        int32_t index=-1;
+        if(!bot_ai_source_waypoint_index(orders,point,&index) || index<0 || seen[index]) return false;
+        seen[index]=true;point=point->next;
     }
-    return first==-1;
+    return true;
 }
 static bool topology(const qa_bots *bots, qa_error *error)
 {
@@ -163,9 +180,12 @@ static bool topology(const qa_bots *bots, qa_error *error)
     if(bots->shutdown_actor.registry && (!bots->shutting_down ||
        !bot_ai_actor(bots,bots->shutdown_actor) || !bot_ai_live(bots,bots->shutdown_actor))) goto invalid;
     bool waypoint_seen[BOT_SOURCE_WAYPOINTS]={0};
+    int32_t waypoint=-1;
     for(size_t i=0;i<BOT_SOURCE_WAYPOINTS;++i) {
         const bot_source_waypoint *point=&bots->source_orders.points[i];
-        if(!waypoint_index(point->next) || !waypoint_index(point->prev) || !memchr(point->name,0,sizeof(point->name))) goto invalid;
+        if(!bot_ai_source_waypoint_index(&bots->source_orders,point->next,&waypoint) ||
+           !bot_ai_source_waypoint_index(&bots->source_orders,point->prev,&waypoint) ||
+           !memchr(point->name,0,sizeof(point->name))) goto invalid;
     }
     if(!waypoint_chain(&bots->source_orders,bots->source_orders.free_point,waypoint_seen) ||
        bots->source_team_policy.red_route_count>BOT_SOURCE_ALTERNATE_ROUTES ||
@@ -178,6 +198,9 @@ static bool topology(const qa_bots *bots, qa_error *error)
         if(!actual.source_span.data && !qa_bot_source_record_span(&bots->services.memory,
             actual.source_record,&actual.source_span,error)) goto invalid;
         if(!bot_ai_activation_validate(&actual,error)) goto invalid;
+        if(!bot_ai_source_waypoint_index(&bots->source_orders,state->source_order.current_patrol_point,&waypoint) ||
+           !waypoint_chain(&bots->source_orders,state->source_order.checkpoints,waypoint_seen) ||
+           !waypoint_chain(&bots->source_orders,state->source_order.patrol_points,waypoint_seen)) goto invalid;
         if(!state->view.actor.registry) {
             if(state->view.actor.slot || state->view.actor.generation || state->inuse || state->counted ||
                state->character || state->goals || state->weapons || state->chat || state->movement ||
@@ -201,10 +224,7 @@ static bool topology(const qa_bots *bots, qa_error *error)
            (state->shutdown_phase!=BOT_SHUTDOWN_RUNNING && (!bots->shutting_down ||
             state->shutdown_restart!=bots->shutdown_restart ||
             (bots->shutdown_actor.registry && !qa_actor_id_equal(bots->shutdown_actor,state->view.actor))))) goto invalid;
-        if(!waypoint_index(state->source_order.current_patrol_point) ||
-           !waypoint_chain(&bots->source_orders,state->source_order.checkpoints,waypoint_seen) ||
-           !waypoint_chain(&bots->source_orders,state->source_order.patrol_points,waypoint_seen) ||
-           bot_ai_num_prox_mines(state)<0 || bot_ai_num_prox_mines(state)>BOT_SOURCE_PROX_MINES) goto invalid;
+        if(bot_ai_num_prox_mines(state)<0 || bot_ai_num_prox_mines(state)>BOT_SOURCE_PROX_MINES) goto invalid;
         if(!memchr(state->source_setup.team,0,sizeof(state->source_setup.team))) goto invalid;
         const bot_source_setup_progress *setup=&state->source_setup.progress;
         if(setup->kind>BOT_SOURCE_SETUP_COMPLETE || setup->kind==BOT_SOURCE_SETUP_EMPTY) goto invalid;
@@ -266,7 +286,7 @@ static void clear(qa_bots *bots)
     free(bots->clients); free(bots->actor_clients);
     qa_builtin_snapshot_free(&bots->entities); qa_builtin_snapshot_free(&bots->players);
 }
-static bool fields(qa_source_save_io *io, qa_bots *bots)
+static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_state *waypoints)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     U(bots->client_capacity); U(bots->actor_capacity); U(bots->count);
@@ -295,7 +315,7 @@ static bool fields(qa_source_save_io *io, qa_bots *bots)
        !goal_fields(io,&source->neutral_flag) || !goal_fields(io,&source->red_obelisk) ||
        !goal_fields(io,&source->blue_obelisk) || !goal_fields(io,&source->neutral_obelisk)) return false;
     I(source->game_type);I(source->max_clients);I(source->max_bsp_model_index);
-    if(!source_orders_fields(io,&bots->source_orders) || !source_policy_globals_fields(io,&bots->source_team_policy)) return false;
+    if(!source_orders_fields(io,&bots->source_orders,waypoints) || !source_policy_globals_fields(io,&bots->source_team_policy)) return false;
     V(bots->source_event_globals.last_teleport_origin);F(bots->source_event_globals.last_teleport_time);
     for (size_t i = 0; i < QA_BOT_INVENTORY_SIZE; ++i) I(bots->inventory_scratch[i]);
     if (reading) {
@@ -318,7 +338,7 @@ static bool fields(qa_source_save_io *io, qa_bots *bots)
         if(reading) state->acquired_source_client=i;
         if(!qa_bot_source_record_fields(io,&bots->services.memory,&state->source_record) ||
            !bot_ai_source_alias_bind(bots,state,io->error)) return false;
-        if (!state_fields(io, state)) return false;
+        if (!state_fields(io,state,waypoints,&bots->source_orders)) return false;
         if(reading && state->view.actor.registry) {
             if(state->view.client>=bots->client_capacity || bots->clients[state->view.client]) return false;
             bots->clients[state->view.client]=state;
@@ -333,7 +353,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
         !qa_bot_runtime_can_destroy(bots->runtime) || bots->runtime->restore_pending || !topology(bots, error)) return false;
     qa_source_save_io io = {0}; qa_bots view = *bots;
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
-        fields(&io, &view) && qa_source_save_finish(&io, out);
+        fields(&io,&view,&bots->source_orders) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
@@ -347,8 +367,12 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     }
     qa_bots scratch = {.runtime = bots->runtime, .services = bots->services}; qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
-        fields(&io, &scratch) && scratch.client_capacity == bots->client_capacity &&
+        fields(&io,&scratch,&scratch.source_orders) && scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
+    for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])
+        ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,
+            &bots->source_orders,error);
+    if(ok) ok=bot_ai_source_orders_rebase(&scratch.source_orders,&scratch.source_orders,&bots->source_orders,error);
     if (ok) { qa_bots old = *bots; *bots = scratch; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot population continuation");

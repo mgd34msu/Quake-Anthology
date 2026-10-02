@@ -370,30 +370,28 @@ static bool patrol(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_er
     bot_source_order_state *order=&s->source_order;
     if(bot_ai_team_message_time(s) && bot_ai_team_message_time(s)<b->time) {
         char route[BOT_SOURCE_WAYPOINTS*36];size_t at=0;
-        for(int32_t point=order->patrol_points;point>=0;point=b->source_orders.points[point].next) {
-            const bot_source_waypoint *waypoint=&b->source_orders.points[point];
+        for(const bot_source_waypoint *waypoint=order->patrol_points;waypoint;waypoint=waypoint->next) {
             size_t length=strlen(waypoint->name);memcpy(route+at,waypoint->name,length);at+=length;
-            if(waypoint->next>=0) {memcpy(route+at," to ",4);at+=4;}
+            if(waypoint->next) {memcpy(route+at," to ",4);at+=4;}
         }
         route[at]=0;
         SOURCE_CALL(acknowledge(b,s,"patrol_start",route,e));
     }
-    int32_t point=order->current_patrol_point;
-    if(point<0) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
-    bot_source_waypoint *current=&b->source_orders.points[point];
+    bot_source_waypoint *current=order->current_patrol_point;
+    if(!current) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
     if(qa_bot_goal_touching(s->player.origin,&current->goal)) {
         if(bot_ai_patrol_flags(s)&4) {
-            if(current->prev>=0) order->current_patrol_point=current->prev;
+            if(current->prev) order->current_patrol_point=current->prev;
             else {order->current_patrol_point=current->next;bot_ai_patrol_flags_set(s,bot_ai_patrol_flags(s)&~4);}
-        } else if(current->next>=0) order->current_patrol_point=current->next;
+        } else if(current->next) order->current_patrol_point=current->next;
         else {order->current_patrol_point=current->prev;bot_ai_patrol_flags_set(s,bot_ai_patrol_flags(s)|4);}
     }
     if(bot_ai_team_goal_time(s)<b->time) {
         SOURCE_CALL(chat(b,s,"patrol_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));
         bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
     }
-    if(order->current_patrol_point<0) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
-    *out=b->source_orders.points[order->current_patrol_point].goal;*found=true;return true;
+    if(!order->current_patrol_point) {bot_ai_long_term_goal_set(s,BOT_LTG_NONE);return true;}
+    *out=order->current_patrol_point->goal;*found=true;return true;
 }
 
 static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {

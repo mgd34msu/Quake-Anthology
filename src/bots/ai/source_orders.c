@@ -264,41 +264,77 @@ bool bot_ai_source_locate(qa_bots *b,bot_ai_state *s,int32_t client,uint32_t off
     bot_ai_goal_point_set(s,offset,client,(int32_t)area,entity.state.origin);return true;
 }
 void bot_ai_source_orders_init(bot_source_orders_state *state) {
-    memset(state,0,sizeof(*state));state->free_point=-1;
+    state->free_point=NULL;
     for(int32_t i=0;i<BOT_SOURCE_WAYPOINTS;++i) {
-        state->points[i].next=state->free_point;state->points[i].prev=-1;state->free_point=i;
+        state->points[i].next=state->free_point;state->free_point=&state->points[i];
     }
 }
 void bot_ai_source_order_init(bot_source_order_state *state) {
-    memset(state,0,sizeof(*state));state->checkpoints=-1;state->patrol_points=-1;state->current_patrol_point=-1;
+    *state=(bot_source_order_state){0};
 }
-static void free_points(qa_bots *b,int32_t first) {
-    while(first>=0) {
-        bot_source_waypoint *point=&b->source_orders.points[first];int32_t next=point->next;
-        point->next=b->source_orders.free_point;b->source_orders.free_point=first;first=next;
+bool bot_ai_source_waypoint_index(const bot_source_orders_state *owner,const bot_source_waypoint *point,
+                                  int32_t *out) {
+    if(!point) {*out=-1;return true;}
+    for(int32_t i=0;i<BOT_SOURCE_WAYPOINTS;++i)
+        if(point==&owner->points[i]) {*out=i;return true;}
+    return false;
+}
+static bot_source_waypoint *waypoint_at(bot_source_orders_state *owner,int32_t index) {
+    return index<0?NULL:&owner->points[index];
+}
+bool bot_ai_source_orders_rebase(const bot_source_orders_state *owner,bot_source_orders_state *copy,
+                                  bot_source_orders_state *target,qa_error *e) {
+    int32_t free_point=-1,next[BOT_SOURCE_WAYPOINTS],prev[BOT_SOURCE_WAYPOINTS];
+    if(!bot_ai_source_waypoint_index(owner,copy->free_point,&free_point)) goto invalid;
+    for(int32_t i=0;i<BOT_SOURCE_WAYPOINTS;++i)
+        if(!bot_ai_source_waypoint_index(owner,copy->points[i].next,&next[i]) ||
+           !bot_ai_source_waypoint_index(owner,copy->points[i].prev,&prev[i])) goto invalid;
+    copy->free_point=waypoint_at(target,free_point);
+    for(int32_t i=0;i<BOT_SOURCE_WAYPOINTS;++i) {
+        copy->points[i].next=waypoint_at(target,next[i]);copy->points[i].prev=waypoint_at(target,prev[i]);
+    }
+    return true;
+invalid:
+    qa_error_set(e,QA_ERROR_FORMAT,0,"Waypoint reference escapes its actual AI bank");return false;
+}
+bool bot_ai_source_order_rebase(const bot_source_orders_state *owner,bot_source_order_state *copy,
+                                 bot_source_orders_state *target,qa_error *e) {
+    int32_t checkpoints=-1,patrol=-1,current=-1;
+    if(!bot_ai_source_waypoint_index(owner,copy->checkpoints,&checkpoints) ||
+       !bot_ai_source_waypoint_index(owner,copy->patrol_points,&patrol) ||
+       !bot_ai_source_waypoint_index(owner,copy->current_patrol_point,&current)) {
+        qa_error_set(e,QA_ERROR_FORMAT,0,"Bot waypoint reference escapes its actual AI bank");return false;
+    }
+    copy->checkpoints=waypoint_at(target,checkpoints);copy->patrol_points=waypoint_at(target,patrol);
+    copy->current_patrol_point=waypoint_at(target,current);return true;
+}
+static void free_points(qa_bots *b,bot_source_waypoint *point) {
+    while(point) {
+        bot_source_waypoint *next=point->next;
+        point->next=b->source_orders.free_point;b->source_orders.free_point=point;point=next;
     }
 }
 void bot_ai_source_order_clear(qa_bots *b,bot_ai_state *s) {
     free_points(b,s->source_order.checkpoints);free_points(b,s->source_order.patrol_points);
     bot_ai_source_order_init(&s->source_order);
 }
-static int32_t find_point(qa_bots *b,int32_t first,const char *name) {
-    for(int32_t at=first;at>=0;at=b->source_orders.points[at].next)
-        if(same(b->source_orders.points[at].name,name)) return at;
-    return -1;
+static bot_source_waypoint *find_point(bot_source_waypoint *point,const char *name) {
+    for(;point;point=point->next) if(same(point->name,name)) return point;
+    return NULL;
 }
 static bool create_point(qa_bots *b,const char *name,qa_vec3 origin,int32_t area,
-                          int32_t *out,qa_error *e) {
-    int32_t index=b->source_orders.free_point;
-    *out=index;
-    if(index<0) {
+                          bot_source_waypoint **out,qa_error *e) {
+    bot_source_waypoint *point=b->source_orders.free_point;
+    *out=point;
+    if(!point) {
         return bot_ai_source_print(b,"^3Warning: BotCreateWayPoint: Out of waypoints\n",e);
     }
-    bot_source_waypoint *point=&b->source_orders.points[index];b->source_orders.free_point=point->next;
+    b->source_orders.free_point=point->next;
+    memset(point->name,0,sizeof(point->name));
     copy_name(point->name,sizeof(point->name),name);
     point->goal.origin=origin;point->goal.area=area;
     point->goal.mins=qa_v3(-8,-8,-8);point->goal.maxs=qa_v3(8,8,8);
-    point->next=-1;point->prev=-1;return true;
+    point->next=NULL;point->prev=NULL;return true;
 }
 bool bot_ai_source_message_goal(qa_bots *b,bot_ai_state *s,const char *name,
                                 qa_bot_goal *goal,bool *found,qa_error *e) {
@@ -310,8 +346,8 @@ bool bot_ai_source_message_goal(qa_bots *b,bot_ai_state *s,const char *name,
         index=goal->number;
         if(index>0 && !(goal->flags&QA_BOT_GOAL_DROPPED)) {*found=true;return true;}
     } while(index>0);
-    int32_t point=find_point(b,s->source_order.checkpoints,name);
-    if(point>=0) {*goal=b->source_orders.points[point].goal;*found=true;}
+    bot_source_waypoint *point=find_point(s->source_order.checkpoints,name);
+    if(point) {*goal=point->goal;*found=true;}
     return true;
 }
 static bool bot_ai_source_message_goal_record(qa_bots *b,bot_ai_state *s,const char *name,
@@ -326,8 +362,8 @@ static bool bot_ai_source_message_goal_record(qa_bots *b,bot_ai_state *s,const c
         index=bot_ai_goal_record(s,offset).number;
         if(index>0 && !(bot_ai_goal_record(s,offset).flags&QA_BOT_GOAL_DROPPED)) {*found=true;return true;}
     } while(index>0);
-    int32_t point=find_point(b,s->source_order.checkpoints,name);
-    if(point>=0) {bot_ai_goal_record_set(s,offset,b->source_orders.points[point].goal);*found=true;}
+    bot_source_waypoint *point=find_point(s->source_order.checkpoints,name);
+    if(point) {bot_ai_goal_record_set(s,offset,point->goal);*found=true;}
     return true;
 }
 static bool deadline(qa_bots *b,const qa_bot_chat_match *m,float *out,qa_error *e) {
@@ -491,32 +527,32 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
 }
 static bool patrol_points(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,bool *out,qa_error *e) {
     char text[256];if(!variable(m,VAR_AREA,text,e)) return false;
-    int32_t points=-1,tail=-1,flags=0;qa_bot_goal goal={0};*out=false;
+    bot_source_waypoint *points=NULL,*tail=NULL;int32_t flags=0;qa_bot_goal goal={0};*out=false;
     for(;;) {
         qa_bot_chat_match area;bool found;
         if(!match_text(b,text,64,&area,&found,e)) {free_points(b,points);return false;}
         if(!found) {
             bool ok=say(b,s,"what do you say?",e);
-            free_points(b,points);s->source_order.patrol_points=-1;return ok;
+            free_points(b,points);s->source_order.patrol_points=NULL;return ok;
         }
         char name[256];
         if(!variable(&area,VAR_AREA,name,e) || !bot_ai_source_message_goal(b,s,name,&goal,&found,e)) {
             free_points(b,points);return false;
         }
-        if(!found) {free_points(b,points);s->source_order.patrol_points=-1;return true;}
-        int32_t point;if(!create_point(b,name,goal.origin,goal.area,&point,e)) {
+        if(!found) {free_points(b,points);s->source_order.patrol_points=NULL;return true;}
+        bot_source_waypoint *point=NULL;if(!create_point(b,name,goal.origin,goal.area,&point,e)) {
             free_points(b,points);return false;
         }
-        if(point<0) break;
-        b->source_orders.points[point].prev=tail;
-        if(tail>=0) b->source_orders.points[tail].next=point;else points=point;
+        if(!point) break;
+        point->prev=tail;
+        if(tail) tail->next=point;else points=point;
         tail=point;
         if(area.subtype&MATCH_BACK) {flags=1;break;}
         if(area.subtype&MATCH_REVERSE) {flags=2;break;}
         if(!(area.subtype&MATCH_MORE)) break;
         if(!variable(&area,VAR_TIME,text,e)) {free_points(b,points);return false;}
     }
-    if(points<0 || b->source_orders.points[points].next<0) {
+    if(!points || !points->next) {
         bool ok=say(b,s,"I need more key points to patrol\n",e);free_points(b,points);return ok;
     }
     free_points(b,s->source_order.patrol_points);
@@ -552,19 +588,18 @@ static bool checkpoint(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_
         return !allowed || send_chat(b,s,"checkpoint_invalid",NULL,NULL,client,QA_BOT_CHAT_TELL,e);
     }
     if(!variable(m,VAR_TIME,name,e)) return false;
-    int32_t old=find_point(b,s->source_order.checkpoints,name);
-    if(old>=0) {
-        bot_source_waypoint *point=&b->source_orders.points[old];
-        if(point->next>=0) b->source_orders.points[point->next].prev=point->prev;
-        if(point->prev>=0) b->source_orders.points[point->prev].next=point->next;
-        else s->source_order.checkpoints=point->next;
-        point->inuse=false;
+    bot_source_waypoint *old=find_point(s->source_order.checkpoints,name);
+    if(old) {
+        if(old->next) old->next->prev=old->prev;
+        if(old->prev) old->prev->next=old->next;
+        else s->source_order.checkpoints=old->next;
+        old->inuse=false;
     }
-    int32_t index;if(!create_point(b,name,position,(int32_t)area,&index,e)) return false;
-    if(index<0) return bot_ai_fail(e,"Source CheckPoint exhausted its waypoint heap");
-    bot_source_waypoint *point=&b->source_orders.points[index];point->next=s->source_order.checkpoints;
-    if(point->next>=0) b->source_orders.points[point->next].prev=index;
-    s->source_order.checkpoints=index;
+    bot_source_waypoint *point=NULL;if(!create_point(b,name,position,(int32_t)area,&point,e)) return false;
+    if(!point) return bot_ai_fail(e,"Source CheckPoint exhausted its waypoint heap");
+    point->next=s->source_order.checkpoints;
+    if(point->next) point->next->prev=point;
+    s->source_order.checkpoints=point;
     if(!addressed(b,s,m,&allowed,e)) return false;
     if(!allowed) return true;
     char coordinates[256],x[32],y[32],z[32];

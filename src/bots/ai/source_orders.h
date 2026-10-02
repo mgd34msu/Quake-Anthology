@@ -9,16 +9,16 @@ typedef struct bot_source_waypoint {
     bool inuse;
     char name[32];
     qa_bot_goal goal;
-    int32_t next, prev;
+    struct bot_source_waypoint *next, *prev;
 } bot_source_waypoint;
 typedef struct bot_source_orders_state {
     bot_source_waypoint points[BOT_SOURCE_WAYPOINTS];
-    int32_t free_point;
+    bot_source_waypoint *free_point;
     int32_t find_client_maxclients, find_enemy_maxclients, same_team_maxclients;
     int32_t client_name_maxclients, team_name_maxclients;
 } bot_source_orders_state;
 typedef struct bot_source_order_state {
-    int32_t checkpoints, patrol_points, current_patrol_point;
+    bot_source_waypoint *checkpoints, *patrol_points, *current_patrol_point;
 } bot_source_order_state;
 
 struct qa_bots;
@@ -26,6 +26,11 @@ struct bot_ai_state;
 void bot_ai_source_orders_init(bot_source_orders_state *);
 void bot_ai_source_order_init(bot_source_order_state *);
 void bot_ai_source_order_clear(struct qa_bots *, struct bot_ai_state *);
+bool bot_ai_source_waypoint_index(const bot_source_orders_state *, const bot_source_waypoint *, int32_t *);
+bool bot_ai_source_orders_rebase(const bot_source_orders_state *, bot_source_orders_state *,
+                                bot_source_orders_state *, qa_error *);
+bool bot_ai_source_order_rebase(const bot_source_orders_state *, bot_source_order_state *,
+                               bot_source_orders_state *, qa_error *);
 bool bot_ai_source_order_message(struct qa_bots *, struct bot_ai_state *, const char *,
                                   bool *matched, qa_error *);
 bool bot_ai_source_team(struct qa_bots *, int32_t client, int32_t *, qa_error *);

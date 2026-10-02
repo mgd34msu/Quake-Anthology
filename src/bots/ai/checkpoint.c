@@ -76,6 +76,7 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     checkpoint->source_chat=b->source_chat;
     checkpoint->source_match=b->source_match;
     checkpoint->bot_count=b->count;
+    if(!bot_ai_source_orders_rebase(&b->source_orders,&checkpoint->source_orders,&checkpoint->source_orders,e)) goto failed;
     if(!qa_bot_memory_checkpoint_capture(qa_bot_runtime_memory(b->runtime),&checkpoint->memory,e) ||
        !bot_define_history_capture(qa_bot_runtime_library(b->runtime),&checkpoint->defines,e) ||
        !bot_move_history_capture(qa_bot_runtime_moves(b->runtime),&checkpoint->movement,e) ||
@@ -96,6 +97,7 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         record->state=*s;
         record->state.admitted_character=NULL;
         record->state.admitted_name=NULL;
+        if(!bot_ai_source_order_rebase(&b->source_orders,&record->state.source_order,&checkpoint->source_orders,e)) goto failed;
         bot_ai_state captured=record->state;
         captured.source_span=(qa_bot_source_span){record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
         if(!bot_ai_activation_validate(&captured,e)) goto failed;
@@ -139,12 +141,15 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     if(!checkpoint || checkpoint->destroy_pending || b->checking_spawn || b->source_match_exit_depth ||
        checkpoint->count!=acquired || checkpoint->bot_count!=b->count ||
        checkpoint->client_capacity!=b->client_capacity) return bot_ai_fail(e,"bot checkpoint roster differs from live bindings");
+    bot_source_orders_state orders=checkpoint->source_orders;
+    if(!bot_ai_source_orders_rebase(&checkpoint->source_orders,&orders,&b->source_orders,e)) return false;
     for(uint32_t i=0;i<checkpoint->count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
         const bot_ai_state *saved=&record->state;
         bot_ai_state captured=*saved;
         captured.source_span=(qa_bot_source_span){(uint8_t *)record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
         if(!bot_ai_activation_validate(&captured,e)) return false;
+        if(!bot_ai_source_order_rebase(&checkpoint->source_orders,&captured.source_order,&b->source_orders,e)) return false;
         bot_ai_state *live=saved->acquired_source_client<64?b->source_cells[saved->acquired_source_client]:NULL;
         if(!live || live->retired || !qa_actor_id_equal(live->view.actor,saved->view.actor) ||
            live->source_record.offset!=saved->source_record.offset ||
@@ -179,13 +184,18 @@ bool qa_bots_checkpoint_validate(qa_bots *b,const qa_bots_checkpoint *checkpoint
 }
 typedef struct bot_prepared_record {
     qa_bot_source_span source_span;
+    bot_source_order_state source_order;
     char *character_request;
     char *admission_name;
 } bot_prepared_record;
 static bool prepare(qa_bots *b,const qa_bots_checkpoint *checkpoint,bot_prepared_record *prepared,
-                    qa_error *e) {
+                    bot_source_orders_state *orders,qa_error *e) {
+    *orders=checkpoint->source_orders;
+    if(!bot_ai_source_orders_rebase(&checkpoint->source_orders,orders,&b->source_orders,e)) return false;
     for(uint32_t i=0;i<checkpoint->count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
+        prepared[i].source_order=record->state.source_order;
+        if(!bot_ai_source_order_rebase(&checkpoint->source_orders,&prepared[i].source_order,&b->source_orders,e)) return false;
         if(!qa_bot_source_record_span(&b->services.memory,record->state.source_record,
             &prepared[i].source_span,e)) return false;
         size_t path_size=record->state.admitted_character?strlen(record->state.admitted_character)+1:0;
@@ -220,6 +230,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     b->busy=true;
     uint32_t count=checkpoint->count;
     bot_prepared_record *prepared=count?calloc(count,sizeof(*prepared)):NULL;
+    bot_source_orders_state orders={0};
     bot_chat_history_restore *chat=NULL;
     qa_bot_memory_prepared *memory=NULL;
     bot_fuzzy_history_restore *fuzzy=NULL;
@@ -238,7 +249,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
            (record->state.view.actor.registry && !bot_ai_live(b,record->state.view.actor))))
             ok=bot_ai_fail(e,"bot checkpoint or actor retired during navigation validation");
     }
-    if(ok) ok=validate(b,checkpoint,e) && prepare(b,checkpoint,prepared,e);
+    if(ok) ok=validate(b,checkpoint,e) && prepare(b,checkpoint,prepared,&orders,e);
     if(ok) ok=qa_bot_memory_checkpoint_prepare(qa_bot_runtime_memory(b->runtime),checkpoint->memory,&memory,e) &&
         bot_define_history_prepare(qa_bot_runtime_library(b->runtime),checkpoint->defines,memory,&defines,e) &&
         bot_move_history_prepare(qa_bot_runtime_moves(b->runtime),checkpoint->movement,memory,&movement,e) &&
@@ -272,6 +283,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             bot_ai_state *state=b->source_cells[record->state.acquired_source_client];
             free(state->admitted_character);free(state->admitted_name);*state=record->state;
             state->source_span=prepared[i].source_span;
+            state->source_order=prepared[i].source_order;
             state->admitted_character=prepared[i].character_request;prepared[i].character_request=NULL;
             state->admitted_name=prepared[i].admission_name;prepared[i].admission_name=NULL;
         }
@@ -287,7 +299,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         b->shutdown_actor=checkpoint->shutdown_actor;
         memcpy(b->team_preferences,checkpoint->team_preferences,sizeof(b->team_preferences));
         memcpy(b->not_leader,checkpoint->not_leader,sizeof(b->not_leader));b->source_goals=checkpoint->source_goals;
-        b->source_orders=checkpoint->source_orders;b->source_team_policy=checkpoint->source_team_policy;
+        b->source_orders=orders;b->source_team_policy=checkpoint->source_team_policy;
         b->source_event_globals=checkpoint->source_event_globals;
         b->source_chat=checkpoint->source_chat;
         b->source_match=checkpoint->source_match;
