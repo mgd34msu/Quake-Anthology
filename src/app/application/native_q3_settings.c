@@ -1,5 +1,6 @@
 #include "native_q3_settings.h"
 #include "native_q3_console.h"
+#include "startup_flow.h"
 #include "qa/source_save.h"
 
 #include <stdio.h>
@@ -138,8 +139,13 @@ static bool prepare_table(application_provider *provider, const setting_definiti
     for (size_t i = 0; i < count; ++i) {
         const setting_definition *definition = table + i;
         qa_cvars *registry = application_native_q3_cvar_owner(provider, definition->name);
-        if (!qa_cvars_register(registry, definition->name, definition->value, definition->flags,
-            !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner, NULL, error)) return false;
+        uint64_t owner = !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner;
+        bool ok = registry == qa_application_cvars(provider->application)
+            ? application_startup_root_register(provider, definition->name, definition->value,
+                definition->flags, owner, error)
+            : qa_cvars_register(registry, definition->name, definition->value, definition->flags,
+                owner, NULL, error);
+        if (!ok) return false;
     }
     return true;
 }

@@ -136,6 +136,9 @@ bool qa_application_startup_bootstrap(qa_application *, qa_error *);
 bool qa_application_startup_bootstrap_images_advance(qa_application *, bool *complete, qa_error *);
 bool qa_application_startup_bootstrap_images_ready(const qa_application *);
 bool qa_application_startup_root_phase(const qa_application *, const qa_launch_snapshot *);
+/* Only the entered definition registration of an actual candidate source
+ * borrows the retained ENGINE root before physical source configuration. */
+bool qa_application_startup_root_definition_phase(const qa_application *, const qa_launch_snapshot *);
 /* Borrow the actual retained canonical tuple through preparation, consumption
  * and checked cleanup. Execution requires the separate root phase proof. */
 bool qa_application_startup_root_read(const qa_application *, const qa_launch_snapshot *,

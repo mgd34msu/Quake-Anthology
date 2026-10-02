@@ -41,6 +41,7 @@ struct application_startup_flow {
     bool images_advancing, images_waiting, images_completed;
     bool candidate_abort_refused;
     bool engine_only, root_admitted, root_preparing, root_prepared, root_settled;
+    application_provider *root_definition_provider;
 };
 
 static bool source_consoles_idle(const struct application_startup_flow *);
@@ -112,6 +113,62 @@ bool qa_application_startup_root_phase(const qa_application *app,
         (flow->root_preparing || flow->images_advancing || flow->resource_advancing)) ||
         (app->operation == APPLICATION_IDLE && !flow->advancing &&
          (flow->images_waiting || flow->resource_waiting));
+}
+
+bool qa_application_startup_root_definition_phase(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    application_provider *provider = flow ? flow->root_definition_provider : NULL;
+    if (!provider || !candidate || !flow->root_prepared || !flow->advancing ||
+        app->operation != APPLICATION_CONFIGURING || flow->generation != app->command_generation ||
+        flow->configured || flow->validated || flow->committed || flow->cancelling ||
+        flow->resources || flow->resources_consumed || app->publication_started ||
+        app->frame_preparing || app->q3_round_active || app->destroy_requested ||
+        qa_application_should_stop(app) || !flow->publication ||
+        flow->publication->candidate != candidate || flow->publication->published ||
+        provider->application != app || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        provider->constructed || provider->attached || provider->close_pending || !provider->launch ||
+        !qa_application_startup_root_read(app, candidate, NULL, NULL, NULL, NULL) ||
+        !qa_console_idle(flow->console) || !source_consoles_idle(flow)) return false;
+    const qa_launch_instance *selected = qa_launch_snapshot_find(candidate,
+        provider->launch->selection.instance);
+    if (!selected || selected->state != provider || selected->storage != provider->launch->storage)
+        return false;
+    for (size_t i = 0; i < flow->publication->next_count; ++i)
+        if (flow->publication->next[i] == provider) return true;
+    return false;
+}
+
+bool application_startup_root_register(application_provider *provider, const char *name,
+    const char *value, uint32_t flags, uint64_t owner, qa_error *error)
+{
+    qa_application *app = provider ? provider->application : NULL;
+    struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!app || !app->cvars)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Shared definition lost its actual ENGINE registry");
+    if (!flow || !flow->hooks.prepare_root)
+        return qa_cvars_register(app->cvars, name, value, flags, owner, NULL, error);
+    if (flow->root_definition_provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Shared definition already has an entered source owner");
+    flow->root_definition_provider = provider;
+    qa_cvars_edit *edit = NULL;
+    bool ok = qa_application_startup_root_definition_phase(app, flow->candidate);
+    if (!ok)
+        application_fail(error, QA_ERROR_ARGUMENT, "Shared definition lost its actual preparing source and ENGINE root");
+    if (ok) ok = application_startup_console_cvar_edit(app, flow->console,
+        &flow->root_command, flow->cvars, &edit, error);
+    if (ok) {
+        if (edit) {
+            if (qa_cvars_edit_registry(edit) != flow->cvars)
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Shared definition received another canonical edit");
+            else ok = qa_cvars_edit_apply(edit,
+                &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_REGISTER,
+                    .name = name, .value = value, .flags = flags, .owner = owner}, error);
+        } else ok = qa_cvars_register(flow->cvars, name, value, flags, owner, NULL, error);
+    }
+    flow->root_definition_provider = NULL;
+    return ok;
 }
 
 application_provider *application_startup_flow_provider(const qa_application *app, uint64_t owner)

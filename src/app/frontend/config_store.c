@@ -654,6 +654,14 @@ bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_applicati
     if (application==manager->shared_application && console==manager->root_console &&
         registry==manager->root_cvars && root_current(manager) &&
         same_command(command,&manager->root_command) &&
+        qa_application_startup_root_definition_phase(application,manager->shared_candidate) &&
+        frontend_config_store_shared(manager,application,manager->shared_candidate)) {
+        qa_cvars *actual=NULL;
+        return frontend_shared_values_root_definition_access(values,console,command,&actual,out,error) && actual==registry;
+    }
+    if (application==manager->shared_application && console==manager->root_console &&
+        registry==manager->root_cvars && root_current(manager) &&
+        same_command(command,&manager->root_command) &&
         qa_application_startup_bootstrap_images_ready(application) && qa_console_idle(console) &&
         frontend_config_store_shared(manager,application,manager->shared_candidate)) {
         qa_cvars *actual=NULL;

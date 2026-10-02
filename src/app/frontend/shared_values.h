@@ -21,6 +21,10 @@ bool frontend_shared_values_begin_root(qa_frontend *,frontend_config_store *,qa_
  * canonical edit while its actual ENGINE console has returned. */
 bool frontend_shared_values_root_access(const frontend_shared_values *,const qa_console *,
     const qa_command_context *,qa_cvars **,qa_cvars_edit **,qa_error *);
+/* Genuine provider declarations before its private source joins use the
+ * retained root edit only inside the actual definition callback. */
+bool frontend_shared_values_root_definition_access(const frontend_shared_values *,const qa_console *,
+    const qa_command_context *,qa_cvars **,qa_cvars_edit **,qa_error *);
 bool frontend_shared_values_begin_client(qa_frontend *,frontend_config_store *,qa_application *,
     qa_application_client_preparation *,frontend_shared_values **,qa_error *);
 bool frontend_shared_values_client_access(const frontend_shared_values *,
