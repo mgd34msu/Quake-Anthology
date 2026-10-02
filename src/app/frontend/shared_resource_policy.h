@@ -23,6 +23,11 @@ double frontend_model_policy_distance(const frontend_model_policy *, const qa_mo
 /* Apply committed ENGINE use/distance values to already admitted replacements
  * at the returned frame boundary. Asset admission remains a resource ticket. */
 bool frontend_model_policy_sync(qa_frontend *, qa_error *);
+bool frontend_shared_resource_policy_live_sync(qa_frontend *, qa_error *);
+bool frontend_shared_resource_policy_live_retire(qa_frontend *, qa_error *);
+bool frontend_shared_resource_policy_live_destroy(qa_frontend *, qa_error *);
+bool frontend_shared_resource_policy_live_checkpoint(const qa_frontend *, qa_buffer *, qa_error *);
+bool frontend_shared_resource_policy_live_restore(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_image_policy_read(const qa_frontend *, qa_scene_image_policy policies[3], qa_error *);
 bool frontend_image_policy_edit_read(const qa_cvars_edit *, qa_scene_image_policy policies[3], qa_error *);
 /* Fresh live banks use the exact pending candidate edit when one is held.

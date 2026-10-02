@@ -400,6 +400,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
+    if (!frontend_shared_resource_policy_live_retire(frontend,error)) return false;
     if (frontend_constructor_pending(frontend)) {
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
@@ -438,7 +439,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         !frontend_source_publish_music(frontend,error) ||
         !frontend_view_bindings_finish_restore(frontend,error) ||
         !frontend_startup_replay(frontend,error) ||
-        !frontend_model_policy_sync(frontend,error)) return false;
+        !frontend_shared_resource_policy_live_sync(frontend,error)) return false;
     bool client_only=frontend_network_client_only(frontend);
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&

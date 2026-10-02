@@ -159,6 +159,7 @@ struct qa_frontend {
     qa_application_q3_round_cut *round;
     frontend_capture *capture;
     frontend_resource_inventory *resource_inventory;
+    struct frontend_live_resource_policy *live_resource_policy;
     frontend_save_commands *save_commands;
     frontend_campaign *campaign;
     frontend_music_sources *music_sources;

@@ -54,6 +54,7 @@
 #include "equipment_q3_save.h"
 #include "equipment_gear_save.h"
 #include "shared_register.h"
+#include "shared_resource_policy.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
 #include "remote_q3_initial.h"
@@ -113,7 +114,8 @@ typedef enum frontend_section {
     SECTION_GLOBAL_SETTINGS, SECTION_REMOTE_GRAPH, SECTION_MUSIC_SOURCES, SECTION_VIEW_SETTINGS,
     SECTION_MATERIAL_MOVIES, SECTION_Q1_SKY, SECTION_QC_MESSAGES, SECTION_SOURCE_COLOR,
     SECTION_RENDERER_MATERIALS, SECTION_RESTART, SECTION_RENDERER_WORLDS, SECTION_COMPONENT_SCENES,
-    SECTION_UNIFIED_GRAPH, SECTION_CLASSIC_CLIENT_GRAPH, SECTION_Q2_CLIENT_GRAPH, SECTION_RENDERER_REGISTRIES, SECTION_COUNT
+    SECTION_UNIFIED_GRAPH, SECTION_CLASSIC_CLIENT_GRAPH, SECTION_Q2_CLIENT_GRAPH, SECTION_RENDERER_REGISTRIES,
+    SECTION_RESOURCE_POLICY, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -259,7 +261,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?23:
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?24:
         expected==QA_SAVE_AUDIO?10:expected==QA_SAVE_INPUT?5:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
@@ -277,7 +279,7 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
     SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY,SECTION_REMOTE_GRAPH,SECTION_VIEW_SETTINGS,
-    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS,SECTION_COMPONENT_SCENES,SECTION_UNIFIED_GRAPH,SECTION_CLASSIC_CLIENT_GRAPH,SECTION_Q2_CLIENT_GRAPH,SECTION_RENDERER_REGISTRIES};
+    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS,SECTION_COMPONENT_SCENES,SECTION_UNIFIED_GRAPH,SECTION_CLASSIC_CLIENT_GRAPH,SECTION_Q2_CLIENT_GRAPH,SECTION_RENDERER_REGISTRIES,SECTION_RESOURCE_POLICY};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES,
     SECTION_MUSIC_SOURCES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
@@ -955,7 +957,8 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
     frontend_keys_cvar_refs keys=key_registry_refs(f);
     frontend_q3_refs q3={qa_application_content_graph_read(f->application),operation->space,operation->models,operation->roots,operation->audio};
     frontend_remote_q3_modules_save_refs modules=module_save_refs(operation);
-    ok=ok && frontend_q3_inventory_capture(f,&q3,&operation->q3,error) &&
+    ok=ok && frontend_shared_resource_policy_live_checkpoint(f,set->owned+SECTION_RESOURCE_POLICY,error) &&
+        frontend_q3_inventory_capture(f,&q3,&operation->q3,error) &&
         frontend_component_scenes_checkpoint(f,&(frontend_component_scene_save_refs){
             .content=q3.content,.scene=operation->space,.frame=&frame,.q3=operation->q3},
             set->owned+SECTION_COMPONENT_SCENES,error) &&
@@ -1295,7 +1298,8 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_world_inventory_ready(operation->roots,error) && frontend_scene_namespace_seal(operation->space,error) &&
         frontend_models_install(operation->models,error) &&
         frontend_ui_features_restore(f,operation->audio,section(set,SECTION_UI_FEATURES),error) &&
-        qa_audio_asset_inventory_ready(operation->audio,error);
+        qa_audio_asset_inventory_ready(operation->audio,error) &&
+        frontend_shared_resource_policy_live_restore(f,section(set,SECTION_RESOURCE_POLICY),error);
     if (ok) {
         /* The real banks, registry, engine and event rows now own every saved
          * holder. Temporary construction refs must precede final recapture. */
@@ -1517,6 +1521,7 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     if (!frontend_equipment_events_idle(f->gear_events) || !frontend_equipment_gear_idle(f) ||
         !frontend_selected_effects_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains gear delivery or selected effect callbacks");
+    if (!frontend_shared_resource_policy_live_destroy(f,error)) return false;
     if (!frontend_network_close_client(f,error) || !frontend_cinematic_destroy(f,error) ||
         !frontend_selected_effects_retire(f,error) || !frontend_remote_q3_destroy(f,error) ||
         !frontend_remote_q3_initial_destroy_all(f,error) ||
@@ -1664,7 +1669,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?23:
+                kinds[i]==QA_SAVE_PRESENTATION?24:
                 kinds[i]==QA_SAVE_AUDIO?10:kinds[i]==QA_SAVE_INPUT?5:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }

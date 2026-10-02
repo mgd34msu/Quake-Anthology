@@ -30,6 +30,7 @@
 #include "round.h"
 #include "rankings.h"
 #include "capture.h"
+#include "shared_resource_policy.h"
 #include "save_commands.h"
 #include "input_profile.h"
 #include "input_settings.h"
@@ -616,6 +617,7 @@ bool frontend_save_image_release(qa_frontend *frontend,qa_save_image **image,qa_
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
+    if (!frontend_shared_resource_policy_live_retire(frontend,error)) return false;
     if (frontend->shutdown) {
         frontend->shutdown->waiting=false;
         frontend->shutdown->retry_cleanup=false;
@@ -677,6 +679,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         !qa_application_engine_shutdown_finish(frontend->application,&frontend->engine_shutdown,error)) return false;
     if (!frontend_native_q2_discard_unbound(frontend, error) ||
         !frontend_source_discard_unbound(frontend, error)) return false;
+    if (!frontend_shared_resource_policy_live_destroy(frontend,error)) return false;
     qa_scene_frame_destroy(&frontend->frame);
     if (!frontend_root_resources_destroy(frontend,error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
