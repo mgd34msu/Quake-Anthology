@@ -6435,8 +6435,15 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     if (!frontend_network_unified_client_destroy(&n->unified_client_service,error)) return false;
     if (n->admin && !n->detached_transport && !qa_server_admin_shutdown(n->admin, error)) return false;
     if (!qa_application_network_q3_client_unproject(f->application, &n->q3_projection, error)) return false;
-    if (n->registered && !qa_console_remove_owner(qa_application_console(f->application), NETWORK_OWNER, error)) return false;
-    qa_cvars_remove_owner(qa_application_cvars(f->application), NETWORK_OWNER);
+    qa_console *console=qa_application_console(f->application);
+    qa_cvars *cvars=qa_application_cvars(f->application);
+    if(f->engine_shutdown) {
+        if(qa_application_engine_shutdown_owner(f->engine_shutdown)!=f->application)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Network shutdown lost its retained ENGINE console and registry");
+        if(!qa_application_engine_shutdown_read(f->engine_shutdown,&console,&cvars,error)) return false;
+    }
+    if (n->registered && !qa_console_remove_owner(console, NETWORK_OWNER, error)) return false;
+    qa_cvars_remove_owner(cvars, NETWORK_OWNER);
     qa_downloads_destroy(n->downloads); frontend_q3_browser_destroy(n->q3_browser);
     frontend_kex_browser_destroy(n->kex_browser);
     qa_server_browser_destroy(n->browser); qa_server_admin_destroy(n->admin);
