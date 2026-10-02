@@ -19,6 +19,7 @@
 #include "qa/q3_assets_save.h"
 #include "qa/render_controls.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/application_engine_shutdown.h"
 #include "qa/source_save.h"
 #include "qa/q3_cinematic_handles.h"
 
@@ -809,7 +810,15 @@ bool frontend_shared_resource_policy_live_retire(qa_frontend *f, qa_error *error
 {
     if (!f || !f->live_resource_policy) return true;
     struct frontend_live_resource_policy *owner = f->live_resource_policy;
-    if (!live_owner(f, error) || owner->busy)
+    qa_cvars *registry = qa_application_cvars(f->application);
+    if (!registry && f->engine_shutdown) {
+        qa_console *console = NULL;
+        if (qa_application_engine_shutdown_owner(f->engine_shutdown) != f->application ||
+            !qa_application_engine_shutdown_read(f->engine_shutdown, &console, &registry, error))
+            return policy_fail(error, "Live resource retirement lost its actual ENGINE shutdown loan");
+    }
+    if (owner->frontend != f || owner->application != f->application || !registry ||
+        owner->registry != registry || owner->busy)
         return policy_fail(error, "Live resource retirement requires its returned actual owner");
     return !owner->pending || policy_cleanup(&owner->pending, owner->pending->published, error);
 }

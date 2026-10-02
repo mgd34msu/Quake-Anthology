@@ -675,11 +675,11 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (frontend->view_settings && !(frontend->engine_shutdown?
         frontend_view_settings_shutdown(&frontend->view_settings,frontend->engine_shutdown,error):
         frontend_view_settings_destroy(&frontend->view_settings,error))) return false;
-    if (frontend->engine_shutdown &&
-        !qa_application_engine_shutdown_finish(frontend->application,&frontend->engine_shutdown,error)) return false;
     if (!frontend_native_q2_discard_unbound(frontend, error) ||
         !frontend_source_discard_unbound(frontend, error)) return false;
     if (!frontend_shared_resource_policy_live_destroy(frontend,error)) return false;
+    if (frontend->engine_shutdown &&
+        !qa_application_engine_shutdown_finish(frontend->application,&frontend->engine_shutdown,error)) return false;
     qa_scene_frame_destroy(&frontend->frame);
     if (!frontend_root_resources_destroy(frontend,error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
