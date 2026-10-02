@@ -3735,9 +3735,9 @@ bool qa_application_remote_player_detach(qa_application *application,
     application_provider *character = record->character;
     application_provider *source = application->players->map_provider;
     if (source && source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator &&
-        !record->source_begin_pending)
-        ok = application_native_q1_spectator_disconnect(source, actor, error);
+        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && !record->source_begin_pending)
+        ok = record->spectator ? application_native_q1_spectator_disconnect(source, actor, error) :
+            application_native_q1_client_disconnect(source, actor, error);
     if (ok && source && source->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_disconnect(source, actor, error);
     else if (ok) ok = application_rankings_disconnect(application, actor, error);
@@ -3789,7 +3789,12 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
     if(!application_bots_client_shutdown(application,actor,false,error)) return false;
     application_operation previous=application->operation;
     application->operation=APPLICATION_CONFIGURING;
-    bool okay=application_rankings_disconnect(application,actor,error);
+    bool okay=true;
+    if(source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_CLOCK_QUAKEWORLD &&
+       !record->source_begin_pending)
+        okay=record->spectator ? application_native_q1_spectator_disconnect(source,actor,error) :
+            application_native_q1_client_disconnect(source,actor,error);
+    if(okay) okay=application_rankings_disconnect(application,actor,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q2)
         okay=qa_q2_player_disconnect(source->state.q2,actor,error);
     if(okay && character->kind==APPLICATION_PROVIDER_Q2 && character!=source)

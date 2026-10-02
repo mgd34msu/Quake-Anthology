@@ -3916,6 +3916,26 @@ bool application_control_physics_read(const qa_application *application,
     out->water_level = record->water_level;
     out->water_type = record->water_type;
     out->gravity_scale = record->gravity_multiplier;
+    if (record->application == application && !record->retired &&
+        qa_actors_get(qa_session_actors(application->session), actor)) {
+        application_provider *source = application_world_provider(record->application, QA_ROLE_ENTITIES, "");
+        application_provider *character = application_provider_for(record->application, actor, QA_ROLE_CHARACTER, "");
+        qa_q1_source_client_view client;
+        qa_q1_character_view pose;
+        if (source && source->kind == APPLICATION_PROVIDER_Q1 && source->constructed &&
+            source->attached && !source->close_pending && source->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
+            character && character->kind == APPLICATION_PROVIDER_Q1 && character->constructed &&
+            character->attached && !character->close_pending &&
+            qa_q1_source_client_read(source->state.q1, actor, &client) && !client.observer &&
+            qa_q1_character_read(character->state.q1, actor, &pose) &&
+            pose.life == QA_Q1_DEAD && pose.frame == 60 && pose.next_frame_seconds == -1) {
+            const char *model = qa_strings_cstr(qa_session_strings(application->session), pose.model);
+            if (model && !strcmp(model, "progs/player.mdl")) {
+                out->motion = pose.motion;
+                out->solid = pose.solid;
+            }
+        }
+    }
     return true;
 }
 

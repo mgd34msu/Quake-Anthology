@@ -209,6 +209,18 @@ static q1_player *spectator(qa_q1_game *game,qa_actor_id actor,qa_error *error) 
     qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Spectator goal needs its actual QW source client");
     return NULL;
 }
+bool qa_q1_source_client_disconnect_sound(qa_q1_game *game,qa_actor_id actor,qa_error *error) {
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    bool okay=client_const(game,actor) && game->options.quakeworld;
+    if(!okay) qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"QW disconnect lost its actual source client");
+    if(okay) okay=q1_sound(game,actor,"player/tornoff2.wav",4,0,error);
+    if(okay && (!qa_q1_game_operation_live(&operation) || !client_const(game,actor))) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"QW disconnect sound changed its actual source owner");
+        okay=false;
+    }
+    qa_q1_game_operation_end(&operation);return okay;
+}
 bool qa_q1_source_spectator_goal_reset(qa_q1_game *game,qa_actor_id actor,qa_error *error) {
     qa_q1_game_operation operation={0};
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;

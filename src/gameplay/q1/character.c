@@ -113,6 +113,8 @@ bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_charact
     c->input = *input;
     if (!refresh_pose(g, player, error))
         return false;
+    if (c->life == QA_Q1_DEAD && c->next_animation == -1)
+        return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
@@ -415,6 +417,32 @@ bool qa_q1_character_suicide_pose(qa_q1_game *g, qa_actor_id actor, qa_error *er
     c->attack_animation = false;
     c->next_animation = INFINITY;
     return true;
+}
+bool qa_q1_character_disconnect_pose(qa_q1_game *g, qa_actor_id actor, bool *applied,
+    qa_error *error) {
+    if (!applied) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 disconnect pose needs its actual result");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = character(g, actor, error);
+    qa_q1_character_view view;
+    bool okay = player && qa_q1_character_read(g, actor, &view);
+    bool changed = false;
+    if (okay) {
+        const char *model = qa_strings_cstr(qa_session_strings(g->services.session), view.model);
+        if (model && !strcmp(model, "progs/player.mdl")) {
+            okay = qa_q1_character_suicide_pose(g, actor, error);
+            if (okay) {
+                player->character_state.next_animation = -1;
+                changed = true;
+            }
+        }
+    }
+    if (okay) *applied = changed;
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 bool qa_q1_character_post_move(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = character(g, actor, error);

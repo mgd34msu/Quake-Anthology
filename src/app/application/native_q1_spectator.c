@@ -5,6 +5,8 @@
 #include "native_q1_wire_qw.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_source_entities.h"
+#include <limits.h>
+#include <stdio.h>
 
 typedef struct spectator_call {
     application_provider *source;
@@ -12,6 +14,7 @@ typedef struct spectator_call {
     qa_actor_id actor;
     uint32_t slot;
     bool postthink;
+    bool ordinary;
 } spectator_call;
 
 static bool current(spectator_call *call, qa_error *error)
@@ -41,7 +44,7 @@ static bool current(spectator_call *call, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator changed physical client slots");
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *row = app->players->records + i;
-        if (!row->retiring && row->spectator && row->client_slot == slot &&
+        if (!row->retiring && row->spectator != call->ordinary && row->client_slot == slot &&
             qa_actor_id_equal(row->actor, call->actor)) return true;
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator has no trusted reserved roster row");
@@ -183,6 +186,51 @@ bool application_native_q1_spectator_disconnect(application_provider *source, qa
     if (okay && !qa_q1_source_client_read(source->state.q1, actor, &client))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "QW spectator disconnect lost its source name");
     if (okay) okay = print(&call, client.name, error) && print(&call, " left the game\n", error);
+    qa_q1_game_operation_end(&call.operation);
+    return okay;
+}
+
+bool application_native_q1_client_disconnect(application_provider *source, qa_actor_id actor,
+    qa_error *error)
+{
+    if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->application ||
+        !source->state.q1 || !source->constructed || !source->attached || source->close_pending ||
+        source->component.clock.kind != QA_CLOCK_QUAKEWORLD)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QW ClientDisconnect needs its actual source owner");
+    spectator_call call = {.source = source, .actor = actor, .postthink = true, .ordinary = true};
+    bool okay = qa_q1_game_operation_begin(source->state.q1, &call.operation, error);
+    if (okay) okay = qa_q1_native_client_slot(source->state.q1, actor, &call.slot, error) &&
+        current(&call, error);
+    qa_q1_source_client_view client;
+    if (okay && !qa_q1_source_client_read(source->state.q1, actor, &client))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "QW ClientDisconnect lost its actual source name");
+    if (okay) okay = print_to(&call, (qa_actor_id){0}, client.name, 2, error) &&
+        print_to(&call, (qa_actor_id){0}, " left the game with ", 2, error);
+    if (okay && !qa_q1_source_client_read(source->state.q1, actor, &client))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "QW ClientDisconnect lost its actual source frags");
+    if (okay) {
+        char frags[64];
+        double value = client.frags;
+        if (value >= INT_MIN && value <= INT_MAX && value == trunc(value))
+            snprintf(frags, sizeof(frags), "%d", (int)value);
+        else snprintf(frags, sizeof(frags), "%5.1f", value);
+        okay = print_to(&call, (qa_actor_id){0}, frags, 2, error) &&
+            print_to(&call, (qa_actor_id){0}, " frags\n", 2, error) &&
+            qa_q1_source_client_disconnect_sound(source->state.q1, actor, error) && current(&call, error);
+    }
+    qa_application *app = source->application;
+    application_provider *character = okay ? application_provider_for(app, actor, QA_ROLE_CHARACTER, "") : NULL;
+    bool applied = false;
+    if (okay && character && character->kind == APPLICATION_PROVIDER_Q1) {
+        if (!character->constructed || !character->attached || character->close_pending)
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "QW disconnect lost its selected Q1 character owner");
+        else okay = qa_q1_character_disconnect_pose(character->state.q1, actor, &applied, error) &&
+            current(&call, error);
+        if (okay && application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character)
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "QW disconnect changed its selected character owner");
+    }
+    if (okay && applied)
+        okay = qa_world_set_collision(app->world, actor, NULL, error) && current(&call, error);
     qa_q1_game_operation_end(&call.operation);
     return okay;
 }

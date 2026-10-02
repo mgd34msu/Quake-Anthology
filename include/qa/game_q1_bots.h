@@ -61,6 +61,8 @@ bool qa_q1_source_client_info(const qa_q1_game *,qa_actor_id,const char *,const 
 bool qa_q1_source_client_add_score(qa_q1_game *,qa_actor_id,double delta,qa_error *);
 bool qa_q1_source_client_set_score(qa_q1_game *,qa_actor_id,float score,qa_error *);
 bool qa_q1_source_client_observer(qa_q1_game *,qa_actor_id,bool,qa_error *);
+bool qa_q1_source_client_disconnect_sound(qa_q1_game *,qa_actor_id,qa_error *);
+bool qa_q1_character_disconnect_pose(qa_q1_game *,qa_actor_id,bool *applied,qa_error *);
 /* NONE is the genuine Source world find cursor, rather than a player alias. */
 bool qa_q1_source_spectator_goal_reset(qa_q1_game *,qa_actor_id,qa_error *);
 bool qa_q1_source_spectator_goal_next(qa_q1_game *,qa_actor_id,qa_actor_id *,bool *,qa_error *);
