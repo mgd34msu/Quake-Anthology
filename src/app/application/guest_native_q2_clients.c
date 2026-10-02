@@ -733,6 +733,43 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
     return ok;
 }
 
+static bool command_arguments_copy(const qa_command_invocation *command,
+    qa_command_tokens *out, qa_error *error)
+{
+    if (!command || !command->argc || command->argc > INT32_MAX ||
+        !command->argv || !command->args_text)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 command requires its actual entered arguments");
+    size_t extent = 0;
+    for (size_t i = 0; i < command->argc; ++i) {
+        if (!command->argv[i])
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 GAME command has an absent argument");
+        size_t length = strlen(command->argv[i]);
+        if (length == SIZE_MAX || length + 1 > SIZE_MAX - extent)
+            return application_fail(error, QA_ERROR_MEMORY, "Native Q2 GAME command argument extent overflows");
+        extent += length + 1;
+    }
+    if (command->argc > SIZE_MAX / sizeof(char *))
+        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 GAME command argument table overflows");
+    qa_command_tokens tokens = {.count = command->argc};
+    tokens.values = calloc(command->argc, sizeof(*tokens.values));
+    tokens.storage = malloc(extent);
+    size_t args_size = strlen(command->args_text);
+    if (args_size != SIZE_MAX) tokens.args_text = malloc(args_size + 1);
+    if (!tokens.values || !tokens.storage || !tokens.args_text) {
+        qa_command_tokens_free(&tokens);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact native Q2 GAME command arguments");
+    }
+    size_t offset = 0;
+    for (size_t i = 0; i < command->argc; ++i) {
+        size_t size = strlen(command->argv[i]) + 1;
+        tokens.values[i] = tokens.storage + offset;
+        memcpy(tokens.values[i], command->argv[i], size); offset += size;
+    }
+    memcpy(tokens.args_text, command->args_text, args_size + 1);
+    *out = tokens;
+    return true;
+}
+
 bool application_native_q2_client_command(application_provider *provider, qa_actor_id actor,
     const qa_command_invocation *command, bool *handled, qa_error *error)
 {
@@ -754,33 +791,8 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
             slot = i;
         }
     if (!slot) return true;
-    size_t extent = 0;
-    for (size_t i = 0; i < command->argc; ++i) {
-        if (!command->argv[i])
-            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ClientCommand has an absent argument");
-        size_t length = strlen(command->argv[i]);
-        if (length == SIZE_MAX || length + 1 > SIZE_MAX - extent)
-            return application_fail(error, QA_ERROR_MEMORY, "Native Q2 ClientCommand argument extent overflows");
-        extent += length + 1;
-    }
-    if (command->argc > SIZE_MAX / sizeof(char *))
-        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 ClientCommand argument table overflows");
-    qa_command_tokens tokens = {.count = command->argc};
-    tokens.values = calloc(command->argc, sizeof(*tokens.values));
-    tokens.storage = malloc(extent);
-    size_t args_size = strlen(command->args_text);
-    if (args_size != SIZE_MAX) tokens.args_text = malloc(args_size + 1);
-    if (!tokens.values || !tokens.storage || !tokens.args_text) {
-        qa_command_tokens_free(&tokens);
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact native Q2 ClientCommand arguments");
-    }
-    size_t offset = 0;
-    for (size_t i = 0; i < command->argc; ++i) {
-        size_t size = strlen(command->argv[i]) + 1;
-        tokens.values[i] = tokens.storage + offset;
-        memcpy(tokens.values[i], command->argv[i], size); offset += size;
-    }
-    memcpy(tokens.args_text, command->args_text, args_size + 1);
+    qa_command_tokens tokens = {0};
+    if (!command_arguments_copy(command, &tokens, error)) return false;
     qa_command_tokens prior = engine->arguments;
     uint32_t prior_client = engine->current_client;
     engine->arguments = tokens; engine->current_client = slot;
@@ -805,6 +817,34 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
     return ok;
 }
 
+bool application_native_q2_game_command(application_provider *provider,
+    const qa_command_invocation *command, bool *handled, qa_error *error)
+{
+    if (!provider || !command || !handled ||
+        !qa_application_command_context_active(provider->application, &command->context))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 GAME command requires its actual invocation");
+    if (command->context.actor.registry)
+        return application_native_q2_client_command(provider, command->context.actor, command, handled, error);
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->initialized || engine->calls ||
+        engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !qa_world_idle(engine->world) ||
+        !qa_native_host_destroy_ready(provider->state.native.host))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ServerCommand requires its returned initialized game");
+    *handled = false;
+    qa_command_tokens tokens = {0};
+    if (!command_arguments_copy(command, &tokens, error)) return false;
+    qa_command_tokens prior = engine->arguments;
+    engine->arguments = tokens;
+    ++engine->calls;
+    application_native_q2_visibility_invalidate(engine);
+    bool ok = qa_native_host_server_command(provider->state.native.host, error);
+    --engine->calls;
+    qa_command_tokens_free(&engine->arguments);
+    engine->arguments = prior;
+    if (ok) *handled = true;
+    return ok;
+}
+
 bool application_native_q2_console_command(application_provider *provider, qa_actor_id actor,
     const char *text, bool *handled, qa_error *error)
 {
@@ -813,34 +853,18 @@ bool application_native_q2_console_command(application_provider *provider, qa_ac
         engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 console export requires an idle initialized game");
     *handled = false;
-    uint32_t slot = 0;
-    if (actor.registry) {
-        if (!qa_actors_get(qa_session_actors(provider->application->session), actor))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 command actor generation retired");
-        for (uint32_t i = 1; i < 257; ++i)
-            if (engine->clients[i].connected && engine->clients[i].begun &&
-                qa_actor_id_equal(engine->clients[i].actor, actor)) { slot = i; break; }
-        if (!slot) return true;
-    }
     qa_command_tokens tokens = {0};
     if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens, error)) return false;
-    qa_command_tokens prior = engine->arguments; engine->arguments = tokens;
-    ++engine->calls;
-    bool ok;
-    bool declared_handled=true;
-    if(slot&&engine->callbacks) {
-        const qa_json_document *d=application_native_q2_callbacks_document(engine->callbacks);
-        qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients");
-        declared_handled=qa_json_size(d,qa_json_get(d,clients,"command"))!=0;
-        bool accepted;
-        ok=declared_client(engine,slot,"clients.command",(qa_bytes){0},&accepted,error);
-    } else {
-        application_native_q2_visibility_invalidate(engine);
-        ok = slot ? qa_native_host_client_command(provider->state.native.host, slot, error) :
-            qa_native_host_server_command(provider->state.native.host, error);
+    qa_command_context context = engine->command_context;
+    context.actor = actor;
+    if (!qa_application_capture_command_context(provider->application, &context, &context, error)) {
+        qa_command_tokens_free(&tokens);
+        return false;
     }
-    --engine->calls;
-    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
-    if (ok) *handled = declared_handled;
+    qa_command_invocation command = {.console = engine->console, .context = context,
+        .argc = tokens.count, .argv = (const char *const *)tokens.values,
+        .args_text = tokens.args_text, .raw = text};
+    bool ok = !tokens.count || application_native_q2_game_command(provider, &command, handled, error);
+    qa_command_tokens_free(&tokens);
     return ok;
 }

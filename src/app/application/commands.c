@@ -313,8 +313,7 @@ static bool provider_command(application_provider *provider, const qa_command_in
     case APPLICATION_PROVIDER_NATIVE: {
         if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
             provider->state.native.q2_engine != NULL)
-            return application_native_q2_console_command(provider, actor,
-                                                           command->raw, handled, error);
+            return application_native_q2_game_command(provider, command, handled, error);
         uint32_t slot;
         if (actor.registry != 0 && application_q3_guest_actor_client(provider, actor, &slot)) {
             bool ok = application_q3_guest_client_command(provider, slot, command->raw, error);

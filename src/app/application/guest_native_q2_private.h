@@ -113,6 +113,8 @@ bool application_native_q2_client_userinfo(application_provider *, uint32_t, con
 bool application_native_q2_client_disconnect(application_provider *, uint32_t, qa_error *);
 bool application_native_q2_actor_disconnect(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q2_client_think(application_provider *, uint32_t, qa_bytes, qa_error *);
+bool application_native_q2_game_command(application_provider *, const qa_command_invocation *,
+    bool *, qa_error *);
 bool application_native_q2_console_command(application_provider *, qa_actor_id, const char *,
                                             bool *, qa_error *);
 bool application_native_q2_client_command(application_provider *, qa_actor_id,

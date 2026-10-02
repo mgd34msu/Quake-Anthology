@@ -233,11 +233,7 @@ static qa_command_result console_command(void *opaque, const qa_command_invocati
     if (application_startup_source_active(engine->provider))
         return application_command_fallback(engine->provider->application, command, error);
     if (!engine->initialized) return QA_COMMAND_UNHANDLED;
-    bool ok = command->context.actor.registry
-        ? application_native_q2_client_command(engine->provider, command->context.actor,
-            command, &handled, error)
-        : application_native_q2_console_command(engine->provider, command->context.actor,
-            command->raw, &handled, error);
+    bool ok = application_native_q2_game_command(engine->provider, command, &handled, error);
     if (!ok) return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
