@@ -21,7 +21,8 @@ enum kernel_operation {
     K_SYSTEM_TIME, K_LOCAL_TIME, K_TIMEZONE, K_EXCEPTION, K_UNWIND,
     K_STD_GET, K_STD_SET, K_HANDLE_COUNT, K_FILE_TYPE, K_STARTUP, K_FILE_CREATE,
     K_FILE_READ, K_FILE_WRITE, K_FILE_CLOSE, K_FILE_FLUSH, K_FILE_SEEK, K_FILE_END,
-    K_MULTI_WIDE, K_WIDE_MULTI, K_STRING_TYPE_A, K_STRING_TYPE_W, K_MAP_A, K_MAP_W
+    K_MULTI_WIDE, K_WIDE_MULTI, K_STRING_TYPE_A, K_STRING_TYPE_W, K_MAP_A, K_MAP_W,
+    K_LOCALE_INFO_A, K_LOCALE_INFO_W
 };
 typedef struct kernel_descriptor {
     const char *name; uint32_t operation; qa_native_value_type result;
@@ -68,7 +69,8 @@ static const kernel_descriptor descriptors[] = {
     D("SetFilePointer",K_FILE_SEEK,U,4,P,I,P,U), D("SetEndOfFile",K_FILE_END,I,1,P),
     D("MultiByteToWideChar",K_MULTI_WIDE,I,6,U,U,P,I,P,I), D("WideCharToMultiByte",K_WIDE_MULTI,I,8,U,U,P,I,P,I,P,P),
     D("GetStringTypeA",K_STRING_TYPE_A,I,5,U,U,P,I,P), D("GetStringTypeW",K_STRING_TYPE_W,I,4,U,P,I,P),
-    D("LCMapStringA",K_MAP_A,I,6,U,U,P,I,P,I), D("LCMapStringW",K_MAP_W,I,6,U,U,P,I,P,I)
+    D("LCMapStringA",K_MAP_A,I,6,U,U,P,I,P,I), D("LCMapStringW",K_MAP_W,I,6,U,U,P,I,P,I),
+    D("GetLocaleInfoA",K_LOCALE_INFO_A,I,4,U,U,P,I), D("GetLocaleInfoW",K_LOCALE_INFO_W,I,4,U,U,P,I)
 };
 #undef D
 #undef P
@@ -550,6 +552,48 @@ static const uint16_t cp1252[32] = {
     0x90,0x2018,0x2019,0x201c,0x201d,0x2022,0x2013,0x2014,0x2dc,0x2122,0x161,0x203a,0x153,0x9d,0x17e,0x178
 };
 
+static bool locale_information(windows_service *service, const qa_native_value *args,
+    qa_native_value *out, qa_error *error)
+{
+    guest_windows *owner = service->owner;
+    uint32_t locale = (uint32_t)integer(args), request = (uint32_t)integer(args + 1);
+    uint64_t output = integer(args + 2); int32_t capacity = args[3].as.i32;
+    bool wide = service->operation == K_LOCALE_INFO_W;
+    if ((locale & UINT32_C(0xfff00000)) || capacity < 0 || !(request & 0xffffu))
+        return invalid_result(owner, out, QA_NATIVE_I32, 87, 0, error);
+    if (request & UINT32_C(0x1fff0000))
+        return invalid_result(owner, out, QA_NATIVE_I32, 1004, 0, error);
+    /* Only these explicit locales have the implemented 1252 text profile.
+     * The C CRT locale is not a Win32 user/system default locale capability. */
+    if (locale != 0x007f && locale != 0x0409)
+        return guest_fail(error, QA_ERROR_UNSUPPORTED, locale, "Windows locale information requires an implemented explicit locale");
+    bool number = (request & UINT32_C(0x20000000)) != 0;
+    uint32_t kind = request & 0xffffu, value = 0; const char *text;
+    switch (kind) {
+    case 0x0001: value = locale; text = locale == 0x007f ? "007f" : "0409"; break; /* ILANGUAGE */
+    case 0x000b: value = 437; text = "437"; break; /* IDEFAULTCODEPAGE */
+    case 0x1004: value = 1252; text = "1252"; break; /* IDEFAULTANSICODEPAGE */
+    case 0x000e: text = "."; break; /* SDECIMAL */
+    case 0x000f: text = ","; break; /* STHOUSAND */
+    case 0x0010: text = "3;0"; break; /* SGROUPING */
+    default: return guest_fail(error, QA_ERROR_UNSUPPORTED, kind, "Windows locale information field is not implemented");
+    }
+    if (number && kind != 0x0001 && kind != 0x000b && kind != 0x1004)
+        return invalid_result(owner, out, QA_NATIVE_I32, 1004, 0, error);
+    size_t needed = number ? (wide ? 2u : 4u) : strlen(text) + 1;
+    if (!capacity) { result(out, QA_NATIVE_I32, needed); return true; }
+    if (!output || (size_t)capacity < needed)
+        return invalid_result(owner, out, QA_NATIVE_I32, 122, 0, error);
+    if (number) {
+        if (!windows_write(owner, output, 4, value, error)) return false;
+    } else if (wide) {
+        for (size_t i = 0; i < needed; ++i)
+            if (!windows_write(owner, output + i * 2, 2, (uint8_t)text[i], error)) return false;
+    } else if (!qa_native_guest_write(owner->guest, output,
+        (qa_bytes){(const uint8_t *)text, needed}, error)) return false;
+    result(out, QA_NATIVE_I32, needed); return true;
+}
+
 static bool locale_operation(windows_service *service, const qa_native_value *args,
     qa_native_value *out, qa_error *error)
 {
@@ -658,6 +702,7 @@ bool windows_kernel_invoke(windows_service *service, const qa_native_value *args
     qa_native_value_type type = service->function.signature.result.kind;
     result(out, type, 0);
     if (operation >= K_STD_GET && operation <= K_FILE_END) return file_operation(service, args, out, error);
+    if (operation == K_LOCALE_INFO_A || operation == K_LOCALE_INFO_W) return locale_information(service, args, out, error);
     if (operation >= K_MULTI_WIDE) return locale_operation(service, args, out, error);
     switch (operation) {
     case K_ENCODE: result(out, type, a ^ kernel->pointer_secret); return true;
