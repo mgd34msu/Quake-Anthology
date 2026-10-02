@@ -275,7 +275,10 @@ bool bot_fuzzy_store_shutdown(bot_fuzzy_store *store,qa_error *error) {
 void bot_fuzzy_store_dispose(bot_fuzzy_store *store) {
     if(!store || store->active || store->closed) return;
     store->closed=true;store->library=NULL;
-    while(store->readers) close_reader(store,store->readers);
+    while(store->readers) {
+        bot_fuzzy_reader *reader=store->readers;store->readers=reader->next;
+        qa_script_dispose(reader->source);diagnostics_free(reader->reported,reader->reported_count);free(reader);
+    }
     for(size_t index=0;index<128;++index) {
         bot_fuzzy_owned *config=store->cached[index];store->cached[index]=NULL;bot_fuzzy_owned_release(config);
     }

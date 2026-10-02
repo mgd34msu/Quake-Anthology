@@ -57,11 +57,11 @@ static bool fail(qa_error *error, const char *text) {
 static void clear(bot_source_assets_history *image) {
     while (image->characters) {
         character_image *row = image->characters; image->characters = row->next;
-        qa_script_close(row->reader); free(row->host); qa_bot_character_release(row->owner); free(row);
+        qa_script_dispose(row->reader); free(row->host); qa_bot_character_release(row->owner); free(row);
     }
     while (image->items) {
         item_image *row = image->items; image->items = row->next;
-        qa_script_close(row->reader); free(row->host); free(row->members);
+        qa_script_dispose(row->reader); free(row->host); free(row->members);
         qa_bot_memory_checkpoint_finish(row->prepared, false);
         qa_bot_memory_checkpoint_destroy(row->external); qa_bot_items_release(row->owner); free(row);
     }
@@ -246,8 +246,9 @@ void bot_source_assets_finish(bot_source_assets_restore *plan, bool commit) {
         runtime->library->last_character = NULL;
         for (character_image *row = state->characters; row; row = row->next) {
             qa_bot_character *c = row->owner;
-            qa_script_close(c->reader); free(c->script_host);
-            c->reader = row->reader; row->reader = NULL; c->script_host = row->host; row->host = NULL;
+            qa_script_dispose(c->reader); free(c->script_host);
+            c->reader = row->reader; row->reader = NULL;
+            (void)qa_script_adopt_memory(c->reader,NULL); c->script_host = row->host; row->host = NULL;
             c->allocation = row->allocation; c->ready = row->ready; c->retired = row->retired;
             c->view = (qa_bot_character_view){0};
             if (row->registered) { qa_bot_character_retain(c); *tail = c; tail = &c->next; runtime->library->last_character = c; }
@@ -262,8 +263,9 @@ void bot_source_assets_finish(bot_source_assets_restore *plan, bool commit) {
         for (item_image *row = state->items; row; row = row->next) {
             qa_bot_items *c = row->owner;
             qa_bot_memory_checkpoint_finish(row->prepared, true); row->prepared = NULL;
-            qa_script_close(c->reader); free(c->script_host);
-            c->reader = row->reader; row->reader = NULL; c->script_host = row->host; row->host = NULL;
+            qa_script_dispose(c->reader); free(c->script_host);
+            c->reader = row->reader; row->reader = NULL;
+            (void)qa_script_adopt_memory(c->reader,NULL); c->script_host = row->host; row->host = NULL;
             c->allocation = row->allocation; c->ready = row->ready; c->reader_retired = row->reader_retired;
             free(c->members); c->members = row->members; row->members = NULL;
             c->member_count = c->member_capacity = row->count; c->view.count = row->count;

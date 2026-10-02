@@ -125,11 +125,12 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
             return true;
         }
         s->last_location = qa_script_lexer_position(frame->lexer);
-        while (script_peek(frame->lexer, 0) == 0 && s->condition_count != 0 &&
-               s->conditions[s->condition_count - 1].frame == s->stack[s->stack_count - 1]) {
+        while (script_peek(frame->lexer, 0) == 0 && s->condition_count != 0) {
+            script_condition condition;
+            if (!script_condition_top(s,&condition,e)) return false;
+            if (condition.frame != s->stack[s->stack_count-1]) break;
             script_warn(s, s->last_location, "Missing #endif at end of script");
-            if (s->conditions[--s->condition_count].skip)
-                --s->skipping;
+            if (!script_condition_pop(s,e)) return false;
         }
         if (s->stack_count == 1) {
             *found = false;
@@ -227,6 +228,7 @@ bool qa_script_open(const char *path, const qa_script_services *services,
         return false;
     }
     s->services = *services;
+    if (!script_memory_bind(s,e)) goto fail;
     if (options != NULL)
         s->options = *options;
     if (s->options.token_limit == 0)
@@ -281,9 +283,10 @@ fail:
     qa_script_close(s);
     return false;
 }
-void qa_script_close(qa_script *s) {
+static void close_source(qa_script *s,bool source) {
     if (s == NULL)
         return;
+    if (source && s->memory_deferred) (void)script_memory_enter(s,NULL);
     for (size_t i = 0; i < s->frame_count; ++i) {
         qa_script_lexer_close(s->frames[i].lexer);
         if (!s->frames[i].owned)
@@ -292,13 +295,15 @@ void qa_script_close(qa_script *s) {
     free(s->frames);
     free(s->stack);
     free(s->queue);
-    free(s->conditions);
+    script_conditions_close(s,source);
     free(s->reads);
     qa_arena_destroy(&s->macros.arena);
     qa_arena_destroy(&s->arena);
     qa_script_defines_release(s->globals);
     free(s);
 }
+void qa_script_close(qa_script *s) { close_source(s,true); }
+void qa_script_dispose(qa_script *s) { close_source(s,false); }
 bool qa_script_define(qa_script *s, const char *text, qa_error *e) {
     if (s == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing script source");

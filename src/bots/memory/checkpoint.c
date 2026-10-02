@@ -213,6 +213,8 @@ void qa_bot_memory_checkpoint_finish(qa_bot_memory_prepared *plan,bool commit)
         memory->slots=plan->slots;memory->capacity=plan->capacity;memory->free_head=plan->free_head;
         memory->first=plan->first;memory->last=plan->last;memory->next_generation=plan->next_generation;
         memory->live_count=plan->image->count;memory->allocated_bytes=plan->allocated_bytes;
+        free(memory->script_restored);memory->script_restored=plan->aliases;plan->aliases=NULL;
+        memory->script_restored_count=plan->image->count;
     } else if(plan->records) {
         for(uint32_t slot=0;slot<plan->capacity;++slot)
             if(!plan->borrowed || !plan->borrowed[slot]) {

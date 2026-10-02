@@ -102,7 +102,7 @@ failed:
 }
 void bot_chat_packed_destroy(bot_chat_packed *packed) {
     if(!packed) return;
-    qa_script_close(packed->reader);
+    qa_script_dispose(packed->reader);
     bot_chat_graph_dispose(&packed->graph);
     while(packed->pending) {
         bot_chat_initial_acquired *row=packed->pending;packed->pending=row->next;
@@ -1017,7 +1017,7 @@ bool bot_chat_packed_copy(const bot_chat_packed *source,const qa_bot_memory_prep
     if(ok) ok=bot_chat_graph_copy(&source->graph,memory,&target->graph,error);
     if(ok && source->reader) {
         qa_script_checkpoint checkpoint={0};qa_script_services wrapped=services(target);
-        ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore(&wrapped,&checkpoint,&target->reader,error);
+        ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore_detached(&wrapped,&checkpoint,&target->reader,error);
         qa_script_checkpoint_free(&checkpoint);
     }
     bot_chat_initial_acquired **tail=&target->pending;

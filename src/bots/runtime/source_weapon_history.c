@@ -217,6 +217,7 @@ void bot_weapon_pointer_finish(bot_weapon_pointer_restore *plan,bool commit) {
         qa_bot_weapons **registered=&plan->library->weapon_configs;
         for(weapon_resource_restore *row=plan->resources;row;row=row->next) {
             qa_bot_memory_checkpoint_finish(row->external,true);row->external=NULL;
+            (void)qa_script_adopt_memory(row->resource->reader,NULL);
             bot_weapon_resource *old=row->object->source;row->object->source=row->resource;
             row->resource=NULL;bot_weapon_resource_destroy(old);
             free(row->object->weapons);free(row->object->projectiles);

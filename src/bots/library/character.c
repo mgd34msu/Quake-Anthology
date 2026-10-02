@@ -10,7 +10,7 @@ void qa_bot_character_retain(qa_bot_character *c) {
 }
 void qa_bot_character_release(qa_bot_character *c) {
     if (c != NULL && atomic_fetch_sub_explicit(&c->references, 1, memory_order_acq_rel) == 1) {
-        qa_script_close(c->reader);
+        qa_script_dispose(c->reader);
         free(c->script_host);
         bot_character_store_release(c->source);
         qa_arena_destroy(&c->arena);

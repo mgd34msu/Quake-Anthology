@@ -30,6 +30,7 @@ typedef struct qa_bot_memory_options {
  * capacity. A host supplies all three operations and returns size+4 bytes. */
 bool qa_bot_memory_create(const qa_bot_memory_options *,qa_bot_memory **,qa_error *);
 bool qa_bot_memory_retain(qa_bot_memory *,qa_error *);
+const qa_script_memory *qa_bot_memory_script_services(qa_bot_memory *);
 bool qa_bot_memory_release(qa_bot_memory *,qa_error *);
 bool qa_bot_memory_destroy(qa_bot_memory *,qa_error *);
 bool qa_bot_memory_dispose(qa_bot_memory *,qa_error *);

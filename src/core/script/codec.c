@@ -225,7 +225,7 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
     }
     if (!codec_options(c, &value->options) || !codec_string(c, &value->date) ||
         !codec_string(c, &value->time) || !codec_size(c, &value->expansions) ||
-        !codec_size(c, &value->outputs) || !codec_bool(c, &value->empty_expansion) ||
+        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
         !codec_bool(c, &value->source_failure) || !codec_size(c, &value->macro_count))
         return false;
@@ -306,13 +306,14 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
         return false;
     qa_script_condition_state *conditions = NULL;
     if (!codec_array(c, value->condition_count, sizeof(*conditions),
-                     _Alignof(qa_script_condition_state), 10, (void **)&conditions))
+                     _Alignof(qa_script_condition_state), 38, (void **)&conditions))
         return false;
     for (size_t i = 0; i < value->condition_count; ++i) {
         qa_script_condition_state condition =
             c->decoding ? (qa_script_condition_state){0} : value->conditions[i];
         if (!codec_size(c, &condition.frame) || !codec_bool(c, &condition.skip) ||
-            !codec_bool(c, &condition.was_else))
+            !codec_bool(c, &condition.was_else) || !codec_u32(c, &condition.pointer) ||
+            !codec_index(c, &condition.memory_reference) || !codec_bytes(c, condition.bytes,16))
             return false;
         if (c->decoding)
             conditions[i] = condition;

@@ -110,6 +110,7 @@ bool bot_weapon_resource_create(qa_bot_memory *memory,const qa_script_services *
     if(!resource) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining weapon resource owner");return false;}
     if(!qa_bot_memory_retain(memory,error)) {free(resource);return false;}
     resource->memory=memory;resource->services=*services;resource->options=*options;
+    resource->services.memory=qa_bot_memory_script_services(memory);
     if(options->globals) qa_script_defines_retain((qa_script_defines *)options->globals);
     if(options->include_path) {
         resource->include_path=copy_text(options->include_path,error);
@@ -133,7 +134,7 @@ failed:
 }
 void bot_weapon_resource_destroy(bot_weapon_resource *resource) {
     if(!resource) return;
-    qa_script_close(resource->reader);
+    qa_script_dispose(resource->reader);
     while(resource->pending) {
         bot_weapon_acquired_source *row=resource->pending;resource->pending=row->next;
         if(row->owned) {free((void *)row->value.path);free((void *)row->value.bytes.data);}

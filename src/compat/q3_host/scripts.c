@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/bot_runtime.h"
+#include "qa/bots_allocator.h"
 
 #include <stdio.h>
 
@@ -226,7 +227,8 @@ static bool read_source(void *context, const qa_script_include *request,
 qa_script_services q3_script_services(qa_q3_host *host)
 {
     return (qa_script_services){host, read_source, release_source, diagnostic,
-                                  host->options.script_date, host->options.script_time};
+                                  host->options.script_date, host->options.script_time,
+        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots))};
 }
 
 static bool handle_read(void *context, const qa_script_include *request,
@@ -248,7 +250,8 @@ qa_script_services q3_script_handle_services(q3_script *script, qa_q3_host *host
 {
     script->member = host; script->entered = host;
     return (qa_script_services){script, handle_read, release_source, handle_diagnostic,
-        host->options.script_date, host->options.script_time};
+        host->options.script_date, host->options.script_time,
+        qa_bot_memory_script_services(qa_bot_runtime_memory(host->options.bots))};
 }
 
 void q3_script_close(q3_script *script)

@@ -107,6 +107,7 @@ bool qa_script_next(qa_script *s, qa_script_token *out, bool *found, qa_error *e
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid or reentrant script read output");
         return false;
     }
+    if (!script_memory_enter(s,e)) return false;
     s->raw_token = (qa_script_token){0};
     s->source_failure = false;
     *found = false;

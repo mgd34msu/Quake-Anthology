@@ -1,24 +1,18 @@
 #include "internal.h"
 
-static bool current_condition(qa_script *s, qa_script_location location, script_condition **out,
+static bool current_condition(qa_script *s, qa_script_location location, script_condition *out,
                               qa_error *e) {
-    if (s->condition_count == 0 || s->stack_count == 0 ||
-        s->conditions[s->condition_count - 1].frame != s->stack[s->stack_count - 1])
+    if (s->condition_count == 0 || s->stack_count == 0)
         return script_fail(s, location, "Misplaced script conditional", e);
-    *out = s->conditions + s->condition_count - 1;
+    if (!script_condition_top(s,out,e)) return false;
+    if (out->frame != s->stack[s->stack_count - 1])
+        return script_fail(s, location, "Misplaced script conditional", e);
     return true;
 }
-static bool push_condition(qa_script *s, bool skip, qa_error *e) {
+static bool push_condition(qa_script *s, uint32_t type, bool skip, qa_error *e) {
     if (s->stack_count == 0)
         return script_fail(s, qa_script_position(s), "Conditional after end of source", e);
-    if (!script_grow((void **)&s->conditions, &s->condition_capacity, s->condition_count + 1,
-                     sizeof(*s->conditions), e))
-        return false;
-    s->conditions[s->condition_count++] =
-        (script_condition){skip, false, s->stack[s->stack_count - 1]};
-    if (skip)
-        ++s->skipping;
-    return true;
+    return script_condition_push(s,type,skip,s->stack[s->stack_count-1],e);
 }
 bool script_evaluate_stream(qa_script *s, qa_script_location location, bool integer_mode,
                             bool dollar, script_eval_value *out, qa_error *e) {
@@ -287,7 +281,7 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
     if (qa_script_token_is(name, "if")) {
         script_eval_value value;
         return script_evaluate_stream(s, location, true, false, &value, e) &&
-               push_condition(s, value.integer == 0, e);
+               push_condition(s, 1, value.integer == 0, e);
     }
     if (qa_script_token_is(name, "ifdef") || qa_script_token_is(name, "ifndef")) {
         bool invert = qa_script_token_is(name, "ifndef");
@@ -296,20 +290,18 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         if (!found || item.token.kind != QA_SCRIPT_NAME)
             return script_fail(s, location, "Conditional requires a macro name", e);
         bool exists = script_macro_find(&s->macros, item.token.text) != NULL;
-        return push_condition(s, invert ? exists : !exists, e);
+        return push_condition(s, invert ? 16 : 8, invert ? exists : !exists, e);
     }
     if (qa_script_token_is(name, "elif") || qa_script_token_is(name, "else") ||
         qa_script_token_is(name, "endif")) {
         bool end = qa_script_token_is(name, "endif"), otherwise = qa_script_token_is(name, "else");
-        script_condition *condition;
+        script_condition condition;
         if (!current_condition(s, location, &condition, e))
             return false;
-        if (!end && condition->was_else)
+        if (!end && condition.was_else)
             return script_fail(s, location, "Conditional branch after #else", e);
-        bool previous_skip = condition->skip;
-        if (previous_skip)
-            --s->skipping;
-        --s->condition_count;
+        bool previous_skip = condition.skip;
+        if (!script_condition_pop(s,e)) return false;
         if (end)
             return true;
         bool skip;
@@ -321,10 +313,7 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
                 return false;
             skip = value.integer == 0;
         }
-        if (!push_condition(s, skip, e))
-            return false;
-        s->conditions[s->condition_count - 1].was_else = otherwise;
-        return true;
+        return push_condition(s,otherwise ? 2 : 4,skip,e);
     }
     if (qa_script_token_is(name, "include"))
         return s->skipping != 0 || include_directive(s, location, e);

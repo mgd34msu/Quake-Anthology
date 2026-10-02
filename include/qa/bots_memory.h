@@ -3,7 +3,8 @@
 #include "qa/bots.h"
 #include "qa/source_save.h"
 
-enum { QA_BOT_STATE_SOURCE_BYTES=9088, QA_BOT_GAME_MEMORY_BYTES=262144 };
+enum { QA_BOT_STATE_SOURCE_BYTES=9088, QA_BOT_GAME_MEMORY_BYTES=262144,
+    QA_BOT_SOURCE_ACTIVATION_COUNT=8,QA_BOT_SOURCE_ACTIVATION_BYTES=244 };
 typedef struct qa_bot_source_record { uint32_t offset,length; } qa_bot_source_record;
 typedef struct qa_bot_source_span { uint8_t *data; uint32_t length; } qa_bot_source_span;
 typedef struct qa_bot_source_activation {
@@ -12,6 +13,7 @@ typedef struct qa_bot_source_activation {
     float time,start_time,just_used_time;
     int32_t weapon,areas[32],area_count;
     qa_vec3 target,origin;
+    uint32_t next;
 } qa_bot_source_activation;
 enum qa_bot_source_record_offset {
     QA_BOT_SOURCE_INUSE=0,QA_BOT_SOURCE_RESIDUAL=4,QA_BOT_SOURCE_CLIENT=8,QA_BOT_SOURCE_ENTITY=12,
@@ -26,7 +28,7 @@ enum qa_bot_source_record_offset {
     QA_BOT_SOURCE_TEAM_GOAL=6624,QA_BOT_SOURCE_ALT_GOAL=6680,QA_BOT_SOURCE_LAST_TEAM_GOAL=6768,
     QA_BOT_SOURCE_LEAD_GOAL=6828,QA_BOT_SOURCE_TEAM_LEADER=6900,QA_BOT_SOURCE_SUBTEAM=6980,
     QA_BOT_SOURCE_FORMATION_TEAMMATE=7016,QA_BOT_SOURCE_FORMATION_GOAL=7060,
-    QA_BOT_SOURCE_ACTIVATION_HEAP=7120,QA_BOT_SOURCE_PATROL_FLAGS=9084,
+    QA_BOT_SOURCE_ACTIVATION_STACK=7116,QA_BOT_SOURCE_ACTIVATION_HEAP=7120,QA_BOT_SOURCE_PATROL_FLAGS=9084,
     QA_BOT_SOURCE_FLAGS=5980,QA_BOT_SOURCE_RESPAWN_WAIT=5984,QA_BOT_SOURCE_LAST_HEALTH=5988,
     QA_BOT_SOURCE_LAST_KILLED_PLAYER=5992,QA_BOT_SOURCE_LAST_KILLED_BY=5996,
     QA_BOT_SOURCE_BOT_DEATH_TYPE=6000,QA_BOT_SOURCE_ENEMY_DEATH_TYPE=6004,

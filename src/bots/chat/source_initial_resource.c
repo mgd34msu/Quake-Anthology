@@ -104,6 +104,7 @@ bool bot_chat_initial_resource_create(qa_bot_memory *memory,const qa_script_serv
     if(!resource) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual initial chat resource owner");return false;}
     if(!qa_bot_memory_retain(memory,error)) {free(resource);return false;}
     resource->memory=memory;resource->services=*services;resource->options=*options;
+    resource->services.memory=qa_bot_memory_script_services(memory);
     resource->host=*host;
     if(options->globals) qa_script_defines_retain((qa_script_defines *)options->globals);
     if(options->include_path) {
@@ -127,7 +128,7 @@ failed:
 }
 void bot_chat_initial_resource_destroy(bot_chat_initial_resource *resource) {
     if(!resource) return;
-    qa_script_close(resource->reader);
+    qa_script_dispose(resource->reader);
     while(resource->pending) {
         bot_chat_initial_acquired *row=resource->pending;resource->pending=row->next;
         if(row->owned) {free((void *)row->resource.path);free((void *)row->resource.bytes.data);}

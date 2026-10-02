@@ -74,6 +74,13 @@ typedef struct script_frame {
     size_t condition_base, token_count;
     bool active, owned;
 } script_frame;
+typedef struct script_condition_record {
+    qa_script_memory_allocation allocation;
+    uint32_t pointer;
+    size_t memory_reference;
+    uint8_t *bytes;
+    bool detached;
+} script_condition_record;
 typedef struct script_condition {
     bool skip, was_else;
     size_t frame;
@@ -88,10 +95,12 @@ struct qa_script {
     size_t frame_count, frame_capacity, *stack, stack_count, stack_capacity;
     script_queued_token *queue;
     size_t queue_count, queue_capacity;
-    script_condition *conditions;
-    size_t condition_count, condition_capacity, skipping;
+    qa_script_memory memory;
+    script_condition_record *conditions;
+    size_t condition_records,condition_count,condition_capacity,skipping;
+    uint32_t condition_head,next_condition_pointer;
     size_t expansions, outputs;
-    bool empty_expansion;
+    bool empty_expansion, memory_deferred;
     qa_script_location last_location;
     qa_script_token raw_token;
     script_queued_token *reads;
@@ -101,7 +110,15 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 2 };
+enum { SCRIPT_CHECKPOINT_VERSION = 3 };
+bool script_memory_bind(qa_script *,qa_error *);
+bool script_memory_enter(qa_script *,qa_error *);
+bool script_condition_top(qa_script *,script_condition *,qa_error *);
+bool script_condition_push(qa_script *,uint32_t,bool,size_t,qa_error *);
+bool script_condition_pop(qa_script *,qa_error *);
+bool script_conditions_capture(const qa_script *,qa_script_condition_state *,qa_error *);
+bool script_conditions_restore(qa_script *,const qa_script_checkpoint *,qa_error *);
+void script_conditions_close(qa_script *,bool);
 bool script_checkpoint_valid(const qa_script_checkpoint *, qa_error *);
 typedef struct script_eval_value {
     int32_t integer;

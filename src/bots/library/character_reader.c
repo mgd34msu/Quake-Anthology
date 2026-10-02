@@ -53,7 +53,7 @@ bool bot_character_reader_copy(qa_script *source, const bot_character_reader *ho
         (*out_host)->callback_failed = host->callback_failed;
         (*out_host)->error_reported = host->error_reported;
         qa_script_services services = bot_character_reader_services(*out_host);
-        okay = qa_script_restore(&services, &image, out, error);
+        okay = qa_script_restore_detached(&services, &image, out, error);
     }
     qa_script_checkpoint_free(&image);
     if (!okay) { free(*out_host); *out_host = NULL; }

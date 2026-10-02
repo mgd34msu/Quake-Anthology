@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 
 static void *array(qa_arena *arena, size_t count, size_t stride, size_t alignment, qa_error *e) {
     if (count == 0)
@@ -78,6 +79,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                    .condition_count = s->condition_count,
                                    .expansions = s->expansions,
                                    .outputs = s->outputs,
+                                   .next_condition_pointer = s->next_condition_pointer,
                                    .empty_expansion = s->empty_expansion,
                                    .source_failure = s->source_failure};
     qa_arena *arena = &storage->arena;
@@ -184,9 +186,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
         if (!copy_token(arena, &s->queue[i].token, &qs[i].token, e))
             goto fail;
     }
-    for (size_t i = 0; i < s->condition_count; ++i)
-        cs[i] = (qa_script_condition_state){s->conditions[i].frame, s->conditions[i].skip,
-                                            s->conditions[i].was_else};
+    if (!script_conditions_capture(s,cs,e)) goto fail;
     if (!copy_options(arena, &s->options, &result.options, e) ||
         !copy_location(arena, s->last_location, &result.last_location, e) ||
         !copy_token(arena, &s->raw_token, &result.raw_token, e))
@@ -251,7 +251,7 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         c->stack_count > c->options.maximum_include_depth ||
         c->queue_count > c->options.maximum_queued_tokens ||
         c->expansions > c->options.maximum_expansions ||
-        c->outputs > c->options.maximum_output_tokens ||
+        c->outputs > c->options.maximum_output_tokens || !c->next_condition_pointer ||
         (c->macro_count != 0 && c->macros == NULL) || (c->frame_count != 0 && c->frames == NULL) ||
         (c->stack_count != 0 && c->stack == NULL) ||
         (c->expansion_count != 0 && c->expansion_states == NULL) ||
@@ -314,29 +314,43 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
     /* A recognized lexer failure can discard an included frame before EOF,
      * leaving its conditions in source order until later directive handling. */
     for (size_t i = 0; i < c->condition_count; ++i) {
-        size_t frame = c->conditions[i].frame;
-        if (frame >= c->frame_count || c->frames[frame].condition_base > i)
-            goto bad;
+        const qa_script_condition_state *condition=c->conditions+i;
+        size_t frame=condition->frame;
+        uint32_t type=qa_load_u32le(condition->bytes);
+        if (frame >= c->frame_count || frame>=UINT32_MAX || c->frames[frame].condition_base > i ||
+            !condition->pointer || condition->pointer>=c->next_condition_pointer ||
+            (type!=1 && type!=2 && type!=4 && type!=8 && type!=16) ||
+            qa_load_u32le(condition->bytes+4)!=(uint32_t)condition->skip ||
+            (type==2)!=condition->was_else || qa_load_u32le(condition->bytes+8)!=frame+1 ||
+            qa_load_u32le(condition->bytes+12)!=(i?c->conditions[i-1].pointer:0)) goto bad;
+        for(size_t j=0;j<i;++j) if(c->conditions[j].pointer==condition->pointer) goto bad;
     }
     return true;
 bad:
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid script checkpoint");
     return false;
 }
-bool qa_script_restore(const qa_script_services *services, const qa_script_checkpoint *c,
-                       qa_script **out, qa_error *e) {
+static bool restore_source(const qa_script_services *services, const qa_script_checkpoint *c,
+                           qa_script **out, bool detached, qa_error *e) {
     if (services == NULL || services->read == NULL || services->release == NULL || out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid restored script services/output");
         return false;
     }
     if (!script_checkpoint_valid(c, e))
         return false;
+    if (!services->memory) for(size_t i=0;i<c->condition_count;++i)
+        if(c->conditions[i].memory_reference!=SIZE_MAX) {
+            qa_error_set(e,QA_ERROR_ARGUMENT,i,"Restored indent requires its actual script MEMORY owner");
+            return false;
+        }
     qa_script *s = calloc(1, sizeof(*s));
     if (s == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating restored script");
         return false;
     }
     s->services = *services;
+    if (!script_memory_bind(s,e)) {qa_script_dispose(s);return false;}
+    s->memory_deferred=detached;
     s->expansions = c->expansions;
     s->outputs = c->outputs;
     s->empty_expansion = c->empty_expansion;
@@ -378,9 +392,7 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
         !script_grow((void **)&s->stack, &s->stack_capacity, c->stack_count, sizeof(*s->stack),
                      e) ||
         !script_grow((void **)&s->queue, &s->queue_capacity, c->queue_count, sizeof(*s->queue),
-                     e) ||
-        !script_grow((void **)&s->conditions, &s->condition_capacity, c->condition_count,
-                     sizeof(*s->conditions), e))
+                     e))
         goto fail;
     for (size_t i = 0; i < c->frame_count; ++i) {
         const qa_script_frame_state *saved = c->frames + i;
@@ -415,15 +427,19 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
             c->queue[i].expansion == SIZE_MAX ? NULL : expansions + c->queue[i].expansion;
         ++s->queue_count;
     }
-    for (size_t i = 0; i < c->condition_count; ++i) {
-        s->conditions[s->condition_count++] = (script_condition){
-            c->conditions[i].skip, c->conditions[i].was_else, c->conditions[i].frame};
-        if (c->conditions[i].skip)
-            ++s->skipping;
-    }
+    if (!script_conditions_restore(s,c,e)) goto fail;
     *out = s;
     return true;
 fail:
-    qa_script_close(s);
+    qa_script_dispose(s);
     return false;
+}
+
+bool qa_script_restore(const qa_script_services *services,const qa_script_checkpoint *c,
+                       qa_script **out,qa_error *error) {
+    return restore_source(services,c,out,false,error);
+}
+bool qa_script_restore_detached(const qa_script_services *services,const qa_script_checkpoint *c,
+                                qa_script **out,qa_error *error) {
+    return restore_source(services,c,out,true,error);
 }

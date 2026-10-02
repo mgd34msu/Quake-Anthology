@@ -65,7 +65,7 @@ static bool resource_copy(const bot_chat_initial_resource *source,const qa_bot_m
     target->initial.type_capacity=target->initial.type_count;target->initial.message_capacity=target->initial.message_count;
     if(ok && source->reader) {
         qa_script_checkpoint checkpoint={0};qa_script_services services=bot_chat_initial_resource_services(target);
-        ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore(&services,&checkpoint,&target->reader,error);
+        ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore_detached(&services,&checkpoint,&target->reader,error);
         qa_script_checkpoint_free(&checkpoint);
     }
     bot_chat_initial_acquired **tail=&target->pending;
@@ -248,10 +248,12 @@ void bot_chat_history_finish(bot_chat_history_restore *prepared,bool commit) {
         }
         for(chat_resource_image *row=image->resources;row;row=row->next) {
             if(row->resource) {
+                (void)qa_script_adopt_memory(row->resource->reader,NULL);
                 bot_chat_initial_resource_destroy(row->asset->initial_source);
                 row->asset->initial_source=row->resource;row->asset->source_loaded=row->resource->loaded;row->resource=NULL;
             }
             if(row->packed) {
+                (void)qa_script_adopt_memory(row->packed->reader,NULL);
                 bot_chat_packed_destroy(row->asset->packed_source);row->asset->packed_source=row->packed;
                 row->asset->source_loaded=row->packed->loaded;row->packed=NULL;
             }

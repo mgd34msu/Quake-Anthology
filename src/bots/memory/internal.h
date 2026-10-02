@@ -18,6 +18,9 @@ typedef struct bot_memory_record {
 } bot_memory_record;
 struct qa_bot_memory {
     qa_bot_memory_options options;
+    qa_script_memory scripts;
+    qa_bot_memory_allocation *script_restored;
+    size_t script_restored_count;
     bot_memory_record *records;
     uint32_t first,last,free_head,slots,capacity;
     uint64_t owner,next_generation;

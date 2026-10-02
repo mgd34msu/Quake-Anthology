@@ -20,7 +20,7 @@ void qa_bot_items_retain(qa_bot_items *c) {
 }
 void qa_bot_items_release(qa_bot_items *c) {
     if (c != NULL && atomic_fetch_sub_explicit(&c->references, 1, memory_order_acq_rel) == 1) {
-        qa_script_close(c->reader);
+        qa_script_dispose(c->reader);
         free(c->script_host);
         (void)qa_bot_memory_release(c->memory, NULL);
         free(c->items);

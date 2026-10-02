@@ -106,7 +106,7 @@ static void readers_clear(bot_fuzzy_reader *reader)
 {
     while(reader) {
         bot_fuzzy_reader *next=reader->next;
-        qa_script_close(reader->source);
+        qa_script_dispose(reader->source);
         diagnostics_clear(reader->reported,reader->reported_count);free(reader);reader=next;
     }
 }
@@ -281,7 +281,7 @@ bool bot_fuzzy_history_prepare(qa_bot_library *library,const bot_fuzzy_history *
         if(!diagnostics_copy(row->reported,row->reported_count,&reader->reported,error)) goto failed;
         reader->reported_count=reader->reported_capacity=row->reported_count;
         qa_script_services services=bot_fuzzy_reader_services(reader);
-        if(!qa_script_restore(&services,&row->source,&reader->source,error)) goto failed;
+        if(!qa_script_restore_detached(&services,&row->source,&reader->source,error)) goto failed;
         tail=&reader->next;
     }
     fuzzy_external_restore **external=&plan->external;
@@ -372,6 +372,8 @@ void bot_fuzzy_history_finish(bot_fuzzy_history_restore *plan,bool commit)
         memcpy(store->cached,image->cached,sizeof(store->cached));
         store->cached_count=image->cached_count;store->generation=image->generation;
         store->readers=plan->readers;plan->readers=NULL;
+        for(bot_fuzzy_reader *reader=store->readers;reader;reader=reader->next)
+            (void)qa_script_adopt_memory(reader->source,NULL);
         for(size_t i=0;i<plan->old_count;++i) bot_fuzzy_owned_release(plan->old_owned[i]);
         for(size_t i=0;i<128;++i) bot_fuzzy_owned_release(old_cache[i]);
         readers_clear(old_readers);(void)bot_fuzzy_heap_clear(&old_heap,NULL);

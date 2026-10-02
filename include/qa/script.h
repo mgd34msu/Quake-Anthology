@@ -160,6 +160,22 @@ typedef struct qa_script_resource {
     qa_bytes bytes;
     void *lease;
 } qa_script_resource;
+typedef struct qa_script_memory_allocation {
+    uint64_t owner,generation;
+    uint32_t slot;
+} qa_script_memory_allocation;
+typedef struct qa_script_memory_span { uint8_t *data; uint32_t size; } qa_script_memory_span;
+typedef struct qa_script_memory {
+    void *context;
+    bool (*retain)(void *,qa_error *);
+    void (*release)(void *);
+    bool (*allocate)(void *,uint32_t,qa_script_memory_allocation *,qa_error *);
+    bool (*bytes)(void *,qa_script_memory_allocation,qa_script_memory_span *,qa_error *);
+    bool (*free)(void *,qa_script_memory_allocation,qa_error *);
+    bool (*reference)(void *,qa_script_memory_allocation,size_t *,qa_error *);
+    bool (*resolve)(void *,size_t,qa_script_memory_allocation *,qa_error *);
+    bool (*resolve_history)(void *,size_t,qa_script_memory_allocation *,qa_error *);
+} qa_script_memory;
 typedef struct qa_script_services {
     void *context;
     /* Callbacks must not close or mutate the active source. Handle owners may
@@ -169,6 +185,7 @@ typedef struct qa_script_services {
     void (*diagnostic)(void *, const qa_script_diagnostic *);
     /* Captured source-format __DATE__/__TIME__, for deterministic processing. */
     const char *date, *time;
+    const qa_script_memory *memory;
 } qa_script_services;
 typedef struct qa_script_defines qa_script_defines;
 typedef struct qa_script qa_script;
@@ -189,6 +206,10 @@ void qa_script_defines_clear(qa_script_defines *);
 bool qa_script_open(const char *path, const qa_script_services *, const qa_script_options *,
                     qa_script **, qa_error *);
 void qa_script_close(qa_script *);
+/* Release native continuation metadata without replaying source MEMORY frees. */
+void qa_script_dispose(qa_script *);
+/* Publish a detached history reader after its MEMORY restore has committed. */
+bool qa_script_adopt_memory(qa_script *,qa_error *);
 bool qa_script_next(qa_script *, qa_script_token *, bool *found, qa_error *);
 /* Every qa_script_next publishes its current token, including partial failure and the
  * cleared EOF token. Text is borrowed through source close. Raw text may fill
@@ -236,6 +257,9 @@ typedef struct qa_script_queued_state {
 typedef struct qa_script_condition_state {
     size_t frame;
     bool skip, was_else;
+    uint32_t pointer;
+    size_t memory_reference;
+    uint8_t bytes[16];
 } qa_script_condition_state;
 typedef struct qa_script_checkpoint {
     uint32_t version;
@@ -249,6 +273,7 @@ typedef struct qa_script_checkpoint {
     const qa_script_condition_state *conditions;
     size_t macro_count, frame_count, stack_count, expansion_count, queue_count, condition_count;
     size_t expansions, outputs;
+    uint32_t next_condition_pointer;
     bool empty_expansion;
     qa_script_location last_location;
     qa_script_token raw_token;
@@ -258,6 +283,9 @@ typedef struct qa_script_checkpoint {
 bool qa_script_capture(const qa_script *, qa_script_checkpoint *, qa_error *);
 bool qa_script_restore(const qa_script_services *, const qa_script_checkpoint *, qa_script **,
                        qa_error *);
+/* History readers adopt committed MEMORY on their first source read. */
+bool qa_script_restore_detached(const qa_script_services *, const qa_script_checkpoint *,
+                                qa_script **, qa_error *);
 void qa_script_checkpoint_free(qa_script_checkpoint *);
 /* Canonical, versioned little-endian encoding. Both leave output unchanged on
  * failure. Release existing output before success replaces it. Decoded spans

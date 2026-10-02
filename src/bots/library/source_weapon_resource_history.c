@@ -78,7 +78,7 @@ bool bot_weapon_resource_clone(const bot_weapon_resource *source,bool rebind,
     if(ok) ok=diagnostics_copy(source,copy,error) && pending_copy(source,copy,error);
     if(ok && source->reader) {
         qa_script_checkpoint state={0};qa_script_services services=bot_weapon_resource_services(copy);
-        ok=qa_script_capture(source->reader,&state,error) && qa_script_restore(&services,&state,&copy->reader,error);
+        ok=qa_script_capture(source->reader,&state,error) && qa_script_restore_detached(&services,&state,&copy->reader,error);
         qa_script_checkpoint_free(&state);
     }
     if(ok) *out=copy;else bot_weapon_resource_destroy(copy);
