@@ -38,6 +38,19 @@ struct q2_monsters_runtime {
   bool began_frame;
 };
 
+static bool campaign_count(void *context, qa_actor_id id,
+                           qa_q2_monster_count kind, qa_error *error) {
+  qa_q2_game *game = context;
+  q2_actor *actor = game && id.slot < game->capacity ? game->actors[id.slot] : NULL;
+  if (!game || !game->entity_runtime || !actor || !actor->monster ||
+      !qa_actor_id_equal(actor->id, id) || !q2_actor_live(game, id)) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
+                 "Q2 monster count lost its actual Source campaign owner and actor");
+    return false;
+  }
+  return q2_campaign_monster_count(game, kind, error);
+}
+
 bool qa_q2_monsters_bind_services(qa_q2_game *game,
                                  const qa_q2_monster_services *services,
                                  qa_error *error) {
@@ -80,7 +93,9 @@ bool q2m_count(q2m_context *context, qa_q2_monster_count kind,
                  "Q2 monster campaign accounting is not bound");
     return false;
   }
-  return services->count(services->context, context->actor->id, kind, error) &&
+  if (!services->count(services->context, context->actor->id, kind, error))
+    return false;
+  return services->count == campaign_count ||
       q2_campaign_monster_count(context->game, kind, error);
 }
 
@@ -127,6 +142,8 @@ bool q2_monsters_init(qa_q2_game *game, qa_error *error) {
                  "Unable to allocate Q2 monster perception runtime");
     return false;
   }
+  game->monster_runtime->services = (qa_q2_monster_services){
+      .context = game, .count = campaign_count};
   return true;
 }
 

@@ -21,6 +21,8 @@ typedef enum qa_q2_monster_count {
 typedef struct qa_q2_monster_services {
   qa_monster_missions missions;
   void *context;
+  /* Custom callbacks run before the local Source counter commits. They must
+   * not also increment this GAME's local counter. */
   bool (*count)(void *, qa_actor_id, qa_q2_monster_count, qa_error *);
 } qa_q2_monster_services;
 
