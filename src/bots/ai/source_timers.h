@@ -202,4 +202,22 @@ static inline float bot_ai_lead_time(const bot_ai_state *s) {
 static inline void bot_ai_lead_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_TIME,value);
 }
+static inline float bot_ai_lead_visible_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LEAD_VISIBLE_TIME);
+}
+static inline void bot_ai_lead_visible_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_VISIBLE_TIME,value);
+}
+static inline float bot_ai_lead_message_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LEAD_MESSAGE_TIME);
+}
+static inline void bot_ai_lead_message_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_MESSAGE_TIME,value);
+}
+static inline float bot_ai_lead_backup_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LEAD_BACKUP_TIME);
+}
+static inline void bot_ai_lead_backup_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_BACKUP_TIME,value);
+}
 #endif

@@ -21,6 +21,12 @@ static inline int32_t bot_ai_teammate(const bot_ai_state *s) {
 static inline void bot_ai_teammate_set(bot_ai_state *s,int32_t value) {
     bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_TEAMMATE,value);
 }
+static inline int32_t bot_ai_lead_teammate(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_LEAD_TEAMMATE);
+}
+static inline void bot_ai_lead_teammate_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_TEAMMATE,value);
+}
 static inline bool bot_ai_ordered(const bot_ai_state *s) {
     return bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ORDERED)!=0;
 }

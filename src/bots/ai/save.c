@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=23;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=24;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==23?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==24?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -54,8 +54,6 @@ static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *or
     if(!qa_source_save_bytes(io,order->subteam,sizeof(order->subteam)) ||
        !memchr(order->subteam,0,sizeof(order->subteam))) return false;
     I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);I(order->patrol_flags);
-    I(order->lead_teammate);
-    F(order->lead_visible_time);F(order->lead_message_time);F(order->lead_backup_time);
     F(order->ask_team_leader_time);F(order->last_flag_capture_time);
     I(order->red_flag_status);I(order->blue_flag_status);I(order->neutral_flag_status);I(order->flag_carrier);
     B(order->flag_status_changed);B(order->force_orders);return true;

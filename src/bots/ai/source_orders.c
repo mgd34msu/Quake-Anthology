@@ -702,9 +702,9 @@ static bool lead(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
         return send_chat(b,s,other?"whereis":"whereareyou",other?teammate:name,NULL,self,QA_BOT_CHAT_TEAM,e);
     }
     if(!alive(b,s)) return true;
-    s->source_order.lead_teammate=client;bot_ai_lead_time_set(s,b->time+600.0f);s->source_order.lead_visible_time=0;
+    bot_ai_lead_teammate_set(s,client);bot_ai_lead_time_set(s,b->time+600.0f);bot_ai_lead_visible_time_set(s,0);
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    if(alive(b,s)) {volatile float delay=2.0f*random;s->source_order.lead_message_time=-(b->time+delay);}
+    if(alive(b,s)) {volatile float delay=2.0f*random;bot_ai_lead_message_time_set(s,-(b->time+delay));}
     return true;
 }
 static bool kill(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {

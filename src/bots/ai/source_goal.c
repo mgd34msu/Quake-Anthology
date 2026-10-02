@@ -650,37 +650,36 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
 static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                             qa_bot_goal *out,bool *found,qa_error *e) {
     *found=false;if(!alive(b,s)) return true;
-    bot_source_order_state *order=&s->source_order;
     if(bot_ai_lead_time(s)>0 && !retreat) {
         if(bot_ai_lead_time(s)<b->time) {
-            SOURCE_CALL(companion_chat(b,s,"lead_stop",order->lead_teammate,bot_ai_teammate(s),e));
+            SOURCE_CALL(companion_chat(b,s,"lead_stop",bot_ai_lead_teammate(s),bot_ai_teammate(s),e));
             bot_ai_lead_time_set(s,0);return get_long_term_goal(b,s,retreat,out,found,e);
         }
-        if(order->lead_message_time<0 && -order->lead_message_time<b->time) {
-            SOURCE_CALL(companion_chat(b,s,"followme",order->lead_teammate,bot_ai_teammate(s),e));
-            order->lead_message_time=b->time;
+        if(bot_ai_lead_message_time(s)<0 && -bot_ai_lead_message_time(s)<b->time) {
+            SOURCE_CALL(companion_chat(b,s,"followme",bot_ai_lead_teammate(s),bot_ai_teammate(s),e));
+            bot_ai_lead_message_time_set(s,b->time);
         }
         qa_bot_entity_info info;
-        SOURCE_CALL(observation(b,order->lead_teammate,&info,e));
-        if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_LEAD_GOAL,order->lead_teammate,info.state.origin,e));
+        SOURCE_CALL(observation(b,bot_ai_lead_teammate(s),&info,e));
+        if(info.valid) SOURCE_CALL(companion_goal(b,s,QA_BOT_SOURCE_LEAD_GOAL,bot_ai_lead_teammate(s),info.state.origin,e));
         float visibility;
-        SOURCE_CALL(bot_ai_source_entity_visible(b,s,order->lead_teammate,&visibility,e));
-        if(visibility!=0) order->lead_visible_time=b->time;
-        if(order->lead_visible_time<b->time-1.0f) order->lead_backup_time=b->time+2.0f;
+        SOURCE_CALL(bot_ai_source_entity_visible(b,s,bot_ai_lead_teammate(s),&visibility,e));
+        if(visibility!=0) bot_ai_lead_visible_time_set(s,b->time);
+        if(bot_ai_lead_visible_time(s)<b->time-1.0f) bot_ai_lead_backup_time_set(s,b->time+2.0f);
         qa_vec3 direction=qa_vec_sub(s->player.origin,bot_ai_lead_goal(s).origin);
         float distance=qa_vec_dot(direction,direction);
-        if(order->lead_backup_time>b->time) {
-            if(order->lead_message_time<b->time-20.0f) {
-                SOURCE_CALL(companion_chat(b,s,"followme",order->lead_teammate,bot_ai_teammate(s),e));
-                order->lead_message_time=b->time;
+        if(bot_ai_lead_backup_time(s)>b->time) {
+            if(bot_ai_lead_message_time(s)<b->time-20.0f) {
+                SOURCE_CALL(companion_chat(b,s,"followme",bot_ai_lead_teammate(s),bot_ai_teammate(s),e));
+                bot_ai_lead_message_time_set(s,b->time);
             }
-            if(distance<100.0f*100.0f) order->lead_backup_time=0;
+            if(distance<100.0f*100.0f) bot_ai_lead_backup_time_set(s,0);
             *out=bot_ai_lead_goal(s);*found=true;return true;
         }
         if(distance>500.0f*500.0f) {
-            if(order->lead_message_time<b->time-20.0f) {
-                SOURCE_CALL(companion_chat(b,s,"followme",order->lead_teammate,bot_ai_teammate(s),e));
-                order->lead_message_time=b->time;
+            if(bot_ai_lead_message_time(s)<b->time-20.0f) {
+                SOURCE_CALL(companion_chat(b,s,"followme",bot_ai_lead_teammate(s),bot_ai_teammate(s),e));
+                bot_ai_lead_message_time_set(s,b->time);
             }
             look_at(s,info.state.origin);return true;
         }
