@@ -2,6 +2,7 @@
 #include "../application/unified_output_json.h"
 #include "qa/network_unified_save.h"
 #include "remote_unified_save.h"
+#include "remote_unified_presentation.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -66,7 +67,7 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
         !options->identity_capacity || !options->current || !options->userinfo || !options->disconnected || !options->retirement || !options->transport_restart ||
         !c->prepare || !c->offer_publish || !c->offer_ready || !c->control || !c->frame || !c->publish || !c->input ||
         !c->begin_frame || !c->clock_read || !c->physical_ready || !c->physical_input ||
-        !c->sample || !c->draw || !c->idle || !c->close || !c->content_visit ||
+        !c->sample || !c->draw || !c->idle || !c->checkpoint_returned || !c->close || !c->content_visit ||
         !options->current(options->context, d, error))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified construction requires its actual CLIENT and presentation consumers");
     frontend_remote_unified *owner = calloc(1, sizeof(*owner));
@@ -370,6 +371,10 @@ static bool prepare(void *context, qa_net_client_id client, const qa_unified_doc
     bool *ready, qa_error *error)
 {
     frontend_remote_unified *owner = context;
+    if (owner && !owner->busy && ready && qa_net_client_id_equal(client,owner->options.domain.client) &&
+        frontend_remote_unified_presentation_video_held(owner) && frontend_remote_unified_current(owner,error)) {
+        *ready=false; return true;
+    }
     if (!owner || owner->busy || !ready || !qa_net_client_id_equal(client, owner->options.domain.client) ||
         !transport_continue(owner,document,error) ||
         !frontend_remote_unified_current(owner, error)) return false;
@@ -423,7 +428,8 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
     uint32_t epoch, const qa_unified_document *document, qa_unified_session_commit *commit, qa_error *error)
 {
     frontend_remote_unified *owner = context;
-    if (!owner || owner->busy || runtime != owner->options.domain.runtime ||
+    if (!owner || owner->busy || frontend_remote_unified_presentation_video_held(owner) ||
+        runtime != owner->options.domain.runtime ||
         !qa_net_client_id_equal(client, owner->options.domain.client) || !commit) return false;
     const qa_json_document *json = qa_unified_document_json(document);
     qa_json_id v = value(document), kind = qa_json_get(json, v, "kind");
@@ -670,6 +676,14 @@ bool frontend_remote_unified_idle(const qa_frontend *frontend)
     if (!frontend) return true;
     for (const frontend_remote_unified *owner = frontend->remote_unified; owner; owner = owner->next)
         if (owner->busy || !owner->options.consumers.idle(owner->options.consumers.context, owner)) return false;
+    return true;
+}
+bool frontend_remote_unified_checkpoint_returned(const qa_frontend *frontend)
+{
+    if(!frontend)return true;
+    for(const frontend_remote_unified *owner=frontend->remote_unified;owner;owner=owner->next)
+        if(owner->busy || !owner->options.consumers.checkpoint_returned ||
+            !owner->options.consumers.checkpoint_returned(owner->options.consumers.context,owner))return false;
     return true;
 }
 size_t frontend_remote_unified_count(const qa_frontend *frontend)

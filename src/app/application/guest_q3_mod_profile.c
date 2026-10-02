@@ -367,7 +367,7 @@ static bool pickups(const qa_json_document *d,qa_json_id root,application_q3_mod
                 uint32_t inuse; if(!word(d,qa_json_get(d,source,"inuse"),&inuse,e)||inuse==f->offset) return false;
                 qa_json_id callbacks=qa_json_get(d,source,"callbacks"); const char *names[]={"think","touch","use","pain","die"};
                 for(size_t k=0;k<5;++k) { qa_json_id field_id=qa_json_get(d,callbacks,names[k]); uint32_t offset;
-                    if(field_id!=QA_JSON_NONE&&(!word(d,field_id,&offset,e)||offset==f->offset)) return false;
+                    if(field_id!=QA_JSON_NONE&&qa_json_type(d,field_id)!=QA_JSON_NULL&&(!word(d,field_id,&offset,e)||offset==f->offset)) return false;
                 }
             }
         }

@@ -84,7 +84,7 @@ static bool signature(qa_source_save_io *io, uint32_t *schema_version)
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
         !qa_source_save_u32(io, &version)) return false;
     if (memcmp(magic, event_magic, sizeof(magic)) ||
-        (version != APPLICATION_EVENTS_SAVE_VERSION && version != 20))
+        (version != APPLICATION_EVENTS_SAVE_VERSION && version != 20 && version != 21))
         return event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema");
     *schema_version = version;
     return true;
@@ -569,6 +569,14 @@ static bool q3_map_field(qa_source_save_io *io, qa_application_q3_map_event *rec
     return true;
 }
 
+static bool resource_key_field(qa_source_save_io *io, uint32_t version,
+                               char key[QA_APPLICATION_RESOURCE_KEY_CAPACITY])
+{
+    size_t size = version < 22 ? 81 : QA_APPLICATION_RESOURCE_KEY_CAPACITY;
+    return qa_source_save_bytes(io, key, size) &&
+        (!key[size - 1] || event_fail(io, QA_ERROR_FORMAT, "Unterminated Source resource key"));
+}
+
 static bool armor_field(qa_source_save_io *io, uint32_t version, double *armor)
 {
     if (version != 20) return qa_source_save_f64(io, armor);
@@ -736,11 +744,11 @@ static bool protocol_field(qa_source_save_io *io, event_store *store,
         if (!qa_source_save_count(io, &resource.record_ordinal, SIZE_MAX) ||
             !enum_field(io, &kind, QA_NATIVE_HOST_IMAGE) || !qa_source_save_u32(io, &resource.source_index) ||
             !text_field(io, store, &resource.name) ||
-            !qa_source_save_bytes(io, resource.resource_key, sizeof(resource.resource_key)) ||
+            !resource_key_field(io, store->schema_version, resource.resource_key) ||
             !qa_source_save_u64(io, &resource.resource_custody)) return false;
         resource.kind = (qa_native_host_resource_kind)kind;
-        if (!resource.name || resource.record_ordinal >= size || resource.resource_key[80] ||
-            (resource.resource_key[0] && strncmp(resource.resource_key, "resource:unified:", 16)) ||
+        if (!resource.name || resource.record_ordinal >= size || resource.resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
+            (resource.resource_key[0] && strncmp(resource.resource_key, "resource:unified:", sizeof("resource:unified:") - 1)) ||
             (!resource.resource_key[0] && resource.resource_custody))
             return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipt differs from its immutable registration");
         if (resources) resources[i] = resource;
@@ -1114,8 +1122,8 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_source_save_string(io, &row->path) || !qa_source_save_u64(io, &pool) ||
             !qa_source_save_u64(io, &resource) || !qa_source_save_u64(io, &view) ||
             !pool || !resource || !view || !row->content || !row->path ||
-            !qa_source_save_bytes(io, row->id, sizeof(row->id)) || row->id[80] ||
-            strncmp(row->id, "resource:unified:", 16))
+            !resource_key_field(io, store->schema_version, row->id) || row->id[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
+            strncmp(row->id, "resource:unified:", sizeof("resource:unified:") - 1))
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
         const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
             qa_application_content_view(graph, view) : row->view;
@@ -1209,7 +1217,7 @@ static bool custody_valid(const application_unified_event_resource *row, qa_appl
         return application_fail(error, QA_ERROR_FORMAT, "Source dictionary cannot bind its decoded immutable CONTENT opening");
     qa_product product = {.identity = content};
     qa_unified_document *key = NULL;
-    char id[81];
+    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
     qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
     bool same = !strcmp(id, row->id) && bytes.size == row->key.size && !memcmp(bytes.data, row->key.data, bytes.size);

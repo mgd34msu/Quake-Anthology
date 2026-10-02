@@ -152,3 +152,20 @@ bool q3component_player_event_fields(qa_qvm_abi abi,qa_source_save_io *io,applic
         qa_source_save_i32(io,&event->event)&&qa_source_save_i32(io,&event->parameter)&&qa_source_save_i32(io,&event->time_ms)&&event->time_ms>=0&&
         qa_source_save_i32(io,&event->source_sequence)&&qa_source_save_bool(io,&event->external);
 }
+
+bool q3component_player_events_validate(application_q3_component *c,qa_error *e)
+{
+    if(c->player_watch) {
+        size_t admitted=0;
+        for(size_t i=0;i<c->records->actor_count;++i) if(application_q3_component_records_live_client(c->records,c->records->actors[i].actor)) ++admitted;
+        if(admitted!=c->player_cursor_count) return q3records_fail(e,QA_ERROR_FORMAT,"Original player event cursors omit an actual admitted Source client");
+    } else if(c->player_cursor_count) return q3records_fail(e,QA_ERROR_FORMAT,"Original player event cursors have no physical Source observer");
+    for(size_t i=0;i<c->player_cursor_count;++i) {
+        component_player_cursor *cursor=c->player_cursors+i; uint32_t actual; qa_q3_player state;
+        if(!application_q3_component_records_live_client(c->records,cursor->actor)||
+            !application_q3_component_records_pointer(c->records,cursor->actor,c->records->records[c->player_record].id,&actual,e)||actual!=cursor->address||
+            !read_state(c,cursor,&state,e)||state.eventSequence!=cursor->observed)
+            return q3records_fail(e,QA_ERROR_FORMAT,"Original player event cursor differs from its actual admitted Source RAM");
+    }
+    return true;
+}

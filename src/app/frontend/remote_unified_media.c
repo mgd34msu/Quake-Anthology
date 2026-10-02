@@ -57,13 +57,15 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         row->fonts = qa_font_library_create(row->files, row->images, error);
         okay = row->materials && row->fonts && qa_audio_bank_create(row->files, &row->sounds, error);
     }
+    if (okay && row->product->family == QA_GAME_Q3)
+        okay = frontend_source_identity_allocate(owner->frontend, &row->cinematic_audio_owner, error) &&
+            frontend_q3_material_profile_initialize(owner->frontend, row->materials, error);
     if (okay) okay = frontend_unified_material_movies_create(owner, 0, error);
     if (okay) {
         qa_scene_family family = row->product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
             row->product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
         qa_scene_image_options images = image_options(family, QA_IMAGE_USAGE_WALL);
-        okay = (family != QA_SCENE_Q3 || frontend_q3_material_profile_initialize(owner->frontend, row->materials, error)) &&
-            qa_material_library_load_scripts(row->materials, row->files, &images, error);
+        okay = qa_material_library_load_scripts(row->materials, row->files, &images, error);
     }
     if (!okay) {
         row->constructing = false; row->construction_failed = true;
@@ -113,15 +115,15 @@ bool frontend_unified_media_q3_assets_read(const frontend_unified_media *owner, 
         if (!strcmp(row->content,content)) { *out=row->q3_assets; return row->q3_assets!=NULL; }
     return false;
 }
-bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *recipe,
+bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *recipe, uint32_t physical_seat,
     frontend_unified_media **out, qa_error *error)
 {
-    if (!frontend || !recipe || !out || *out || frontend->resource_inventory || !frontend->order ||
+    if (!frontend || !recipe || physical_seat >= frontend->options.seats || !out || *out || frontend->resource_inventory || !frontend->order ||
         !qa_executable_recipe_current(recipe, qa_executable_recipe_catalog(recipe)))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified world preparation needs its actual admitted recipe");
     frontend_unified_media *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating unified immutable scene owners");
-    owner->frontend = frontend; owner->recipe = recipe;
+    owner->frontend = frontend; owner->recipe = recipe; owner->physical_seat = physical_seat;
     const qa_recipe_choices *choices = qa_executable_recipe_choices(recipe);
     const qa_product *product = qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.geometry);
     qa_resource *map = qa_executable_recipe_map(recipe); qa_bsp_view bsp;
@@ -241,7 +243,8 @@ bool frontend_unified_media_bank_read(const frontend_unified_media *owner,size_t
     const unified_media_bank *row=owner->banks;
     while (row && index--) row=row->next;
     if (!row) return false;
-    *out=(frontend_unified_bank_view){row->content,row->files,row->product,row->images,row->materials,row->fonts,row->sounds,row->q3_assets,row->media};
+    *out=(frontend_unified_bank_view){row->content,row->files,row->product,row->images,row->materials,row->fonts,row->sounds,row->q3_assets,row->media,
+        owner->physical_seat,row->cinematic_audio_owner};
     return true;
 }
 size_t frontend_unified_media_model_count(const frontend_unified_media *owner)

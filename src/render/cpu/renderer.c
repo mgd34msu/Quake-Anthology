@@ -341,6 +341,7 @@ static void clear_view(qa_cpu_renderer *renderer, const qa_scene_view *view) {
   int64_t y0 = view->viewport.y > 0 ? view->viewport.y : 0;
   int64_t x1 = right < buffer->width ? right : buffer->width;
   int64_t y1 = bottom < buffer->height ? bottom : buffer->height;
+  if (view->clear_color) renderer->clear_color=view->color;
   uint8_t color[4] = {cpu_byte(view->color.x), cpu_byte(view->color.y),
                       cpu_byte(view->color.z),
                       buffer->alpha ? cpu_byte(view->color.w) : 255};
@@ -534,6 +535,7 @@ bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
   bool skip=frame.source_backend && frame.source_skip_backend;
   qa_scene_frame_destroy(&frame);
+  if (ok && skip) qa_render_source_report(&renderer->controls,renderer->display.width,renderer->display.height);
   return ok && (skip || cpu_present_frame(renderer,error));
 }
 bool qa_cpu_read_depth(const qa_cpu_renderer *renderer, uint32_t x, uint32_t y,
@@ -605,6 +607,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     clear.clear_depth = renderer->pipeline.depth_write;
     clear.clear_stencil = false;
     clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
+    renderer->clear_color=clear.color;
     clear.depth = renderer->clear_depth;
     clear_view(renderer, &clear);
     if (renderer->controls.source.issuing && renderer->controls.source.frame == frame)
@@ -716,6 +719,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         clear.clear_depth = !frame->source_backend || renderer->pipeline.depth_write;
         clear.clear_stencil = false;
         clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
+    renderer->clear_color=clear.color;
         clear.depth = frame->source_backend ? renderer->clear_depth : 1;
         if (!frame->source_backend) {
           renderer->pipeline.color_write = renderer->pipeline.depth_write = true;
@@ -1335,6 +1339,12 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
     qa_scene_state_default(&renderer->pipeline);
     renderer->clear_depth=1;
   }
+  if (version>=21) {
+    if (!qa_source_save_f32(io,&renderer->clear_color.x) || !qa_source_save_f32(io,&renderer->clear_color.y) ||
+        !qa_source_save_f32(io,&renderer->clear_color.z) || !qa_source_save_f32(io,&renderer->clear_color.w) ||
+        !isfinite(renderer->clear_color.x) || !isfinite(renderer->clear_color.y) ||
+        !isfinite(renderer->clear_color.z) || !isfinite(renderer->clear_color.w)) return false;
+  }
   if (version>=11) {
     if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
   } else if (reading) renderer->preblend_gamma=false;
@@ -1588,13 +1598,17 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image grid requires its physical display target"); return false;
   }
   qa_scene_rect target={0,0,renderer->display.width,renderer->display.height};
+  if (!qa_output_domains_assign(&renderer->output_domains,target,QA_DRAW_BACK,true,target.width,target.height,error)) return false;
+  renderer->source_frame=true; renderer->preblend_gamma=false;
   if (!controls->source.projection_2d) {
     qa_render_source_state_bits(&renderer->pipeline,false,true);
     renderer->pipeline.depth_test=QA_DEPTH_DISABLED; renderer->pipeline.cull=QA_CULL_NONE;
-    renderer->view.viewport=target; controls->source.projection_2d=true;
+    renderer->view.viewport=target; renderer->view.clip_enabled=false; controls->source.projection_2d=true;
+    controls->source.picture_milliseconds=controls->frame_values.milliseconds;
   }
   qa_scene_view clear=renderer->view;
   clear.clear_color=renderer->pipeline.color_write; clear.clear_depth=clear.clear_stencil=false;
+  clear.color=renderer->clear_color;
   clear_view(renderer,&clear);
   uint64_t start=SDL_GetTicks64();
   qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
@@ -1611,6 +1625,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
     if (controls->frame_values.no_bind)
       for (uint32_t j=renderer->source_image_count;j>0;--j)
         if (renderer->source_images[j-1].image->source_dlight) { binding=renderer->source_images[j-1].image; break; }
+    cpu_source_bind(renderer,binding);
     size_t first=frame.command_count;
     ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
       (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
@@ -1620,6 +1635,9 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
       draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
       ok=cpu_draw(renderer,draw,error);
     }
+  }
+  if (ok && renderer->source_image_count) {
+    controls->attributes.coordinates[0]=(qa_scene_vec2){0,1}; controls->attributes.coordinates_known[0]=true;
   }
   qa_scene_frame_destroy(&frame);
   if (ok && controls->source_print) {

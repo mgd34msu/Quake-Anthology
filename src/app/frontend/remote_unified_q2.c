@@ -2205,15 +2205,17 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (okay) okay=frontend_unified_q2_rr_draw(o->rr_hud,ui,viewport,frame,e);
     return okay;
 }
-bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
+bool frontend_unified_q2_checkpoint_ready(const frontend_unified_q2 *o)
 {
     if (!o) return true;
-    if (o->busy || o->prepared_frame || o->music_retiring || (o->hud && !qa_hud_idle(o->hud)) ||
-        !frontend_unified_q2_rr_idle(o->rr_hud)) return false;
+    if (o->busy || o->music_retiring || (o->hud && !qa_hud_idle(o->hud)) ||
+        !frontend_unified_q2_rr_checkpoint_ready(o->rr_hud)) return false;
     for (q2_bank *b=o->banks;b;b=b->next)
         if (!frontend_remote_q2_effects_idle(b->effects) || !frontend_received_music_idle(b->music)) return false;
     return true;
 }
+bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
+{ return (!o || !o->prepared_frame) && frontend_unified_q2_checkpoint_ready(o); }
 bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
 {
     if (!slot || !*slot) return true;
@@ -2249,7 +2251,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
     if (!o) return true;
-    if (!visitor || !frontend_unified_q2_idle(o)) return false;
+    if (!visitor || !frontend_unified_q2_checkpoint_ready(o)) return false;
     for (q2_bank *b=o->banks;b;b=b->next)
         if (!frontend_q2_footsteps_visit(b->footsteps,visitor,e)) return false;
     return true;
@@ -2294,7 +2296,7 @@ bool frontend_unified_q2_music_at(const frontend_unified_q2 *o,size_t ordinal,ui
 }
 bool frontend_unified_q2_restore_finish(frontend_unified_q2 *o,qa_error *e)
 {
-    if (!o || !o->frontend->source_restoring || !frontend_unified_q2_idle(o) || !current(o,e)) return false;
+    if (!o || !o->frontend->source_restoring || !frontend_unified_q2_checkpoint_ready(o) || !current(o,e)) return false;
     for (q2_bank *b=o->banks;b;b=b->next) if (b->music) {
         frontend_music_origin origin;
         if (!music_origin(b,&origin,e) || !frontend_received_music_restore_finish(b->music,&origin,e)) return false;
@@ -2523,10 +2525,10 @@ static bool persistent_domains_valid(frontend_unified_q2 *o,qa_error *e)
 static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const frontend_unified_q2_refs *refs)
 {
     bool read=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[5]={'Q','U','Q','3','3'};
+    uint8_t magic[5]={'Q','U','Q','3','4'};
     uint32_t epoch=frontend_remote_unified_epoch(o->replica);
     uint32_t physical=frontend_remote_unified_domain_read(o->replica)->physical_seat;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ33",sizeof(magic)) ||
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ34",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=frontend_remote_unified_epoch(o->replica) ||
         !qa_source_save_u32(io,&physical) || physical!=frontend_remote_unified_domain_read(o->replica)->physical_seat ||
         !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) || !qa_source_save_u64(io,&o->frame_number) ||
@@ -2553,6 +2555,23 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
         else if (!qa_json_string_equal(j,get(j,t,"kind"),"seconds")) return false;
         if (seconds!=o->seconds) return false;
     } else if (o->seconds || o->frame_number) return false;
+    bool pending=o->prepared_frame!=NULL;
+    if(!qa_source_save_bool(io,&pending))return false;
+    if(pending){qa_buffer bytes={0};
+        if(!qa_source_save_u64(io,&o->prepared_number) || !qa_source_save_f64(io,&o->prepared_seconds) ||
+            !isfinite(o->prepared_seconds) || (frame && o->prepared_number<=o->frame_number))return false;
+        bool okay=read?capsule(io,&bytes):qa_unified_document_encode(o->prepared_frame,&bytes,io->error) && capsule(io,&bytes);
+        if(okay && read)okay=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->prepared_frame,io->error);
+        qa_buffer_free(&bytes);if(!okay)return false;
+        const qa_unified_document *d=o->prepared_frame;const qa_json_document *j=qa_unified_document_json(d);
+        qa_json_id root=qa_unified_document_root(d),f=get(j,get(j,get(j,root,"output"),"snapshot"),"frame"),t=get(j,f,"time");
+        uint64_t actual_epoch,n;double seconds;
+        if(!qa_json_u64(j,get(j,root,"epoch"),&actual_epoch,io->error) || actual_epoch!=epoch ||
+            !qa_json_u64(j,get(j,f,"frame"),&n,io->error) || n!=o->prepared_number || !number(d,get(j,t,"value"),&seconds,io->error))return false;
+        if(qa_json_string_equal(j,get(j,t,"kind"),"milliseconds"))seconds/=1000;
+        else if(!qa_json_string_equal(j,get(j,t,"kind"),"seconds"))return false;
+        if(seconds!=o->prepared_seconds)return false;
+    }
     if (!qa_source_save_bool(io,&o->marker_set) || !qa_source_save_u64(io,&o->marker_frame) ||
         !qa_source_save_u64(io,&o->marker_wall_ns) || !qa_source_save_u32(io,&o->marker_count) ||
         (!o->marker_set && (o->marker_frame || o->marker_wall_ns || o->marker_count)) ||
@@ -2717,7 +2736,7 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
 bool frontend_unified_q2_checkpoint(frontend_unified_q2 *o,const frontend_unified_q2_refs *refs,qa_buffer *out,qa_error *e)
 {
     if (!o || !refs || !refs->model_encode || !refs->effects.actor_encode || !out || out->data || out->size ||
-        !frontend_unified_q2_idle(o) || !current(o,e)) return false;
+        !frontend_unified_q2_checkpoint_ready(o) || !current(o,e)) return false;
     if (!frontend_remote_unified_checkpoint_current(o->replica,e)) return false;
     qa_source_save_io io={0};
     bool okay=qa_source_save_writer(&io,NULL,e) && q2_fields(&io,o,refs) && qa_source_save_finish(&io,out);
@@ -2734,8 +2753,19 @@ bool frontend_unified_q2_restore(qa_frontend *f,frontend_remote_unified *replica
     qa_source_save_io io={0};
     bool okay=qa_source_save_reader(&io,NULL,bytes,e) && q2_fields(&io,o,refs) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (!okay) { qa_error ignored={0}; frontend_unified_q2_destroy(out,&ignored);
+    if (!okay) { qa_error ignored={0}; frontend_unified_q2_frame_abort(o);frontend_unified_q2_destroy(out,&ignored);
         if (e && e->code==QA_OK) frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid Q2 private CLIENT state");
         return false; }
     return true;
+}
+
+bool frontend_unified_q2_frame_restore_bind(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
+{
+    if(!o || !o->frontend->source_restoring || !frontend_unified_q2_checkpoint_ready(o) || !current(o,e))return false;
+    if(!o->prepared_frame)return d==o->replica->prepared_frame && frontend_unified_q2_rr_idle(o->rr_hud);
+    if(!d || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
+    qa_buffer a={0},b={0};bool ok=qa_unified_document_encode(o->prepared_frame,&a,e) && qa_unified_document_encode(d,&b,e) &&
+        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size));
+    qa_buffer_free(&a);qa_buffer_free(&b);
+    return (ok && frontend_unified_q2_rr_frame_ready(o->rr_hud,d,e)) || frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 restored prepared frame differs from its actual parent");
 }

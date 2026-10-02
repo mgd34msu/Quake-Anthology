@@ -1479,6 +1479,17 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
     qa_buffer_free(&text);
     free(path); return ok;
 }
+bool frontend_config_store_write_source_text(frontend_config_store *manager,
+    const qa_command_invocation *command,const char *path,qa_bytes text,qa_error *error)
+{
+    if (!manager || !command || !command->console || !path || !*path ||
+        (text.size && !text.data) || !qa_console_invocation_current(command->console,command))
+        return fail(error,QA_ERROR_ARGUMENT,"Source file write requires its actual entered command invocation");
+    for (frontend_config_source *source=manager->sources;source;source=source->next)
+        if (source->console==command->console && source_context(source,&command->context))
+            return frontend_config_files_write_config_text(source->files,path,&command->context,text,error);
+    return fail(error,QA_ERROR_ARGUMENT,"Source file write has no genuine configured source owner");
+}
 static bool source_destroy(frontend_config_source *source,qa_error *error)
 {
     size_t contexts=0;

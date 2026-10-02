@@ -10,6 +10,7 @@
 #include "remote_unified_material_movies_bridge.h"
 #include "equipment_media.h"
 #include "source_cinematics.h"
+#include "cinematic_roles.h"
 #include "remote_q3_modules.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/media_library_save.h"
@@ -295,6 +296,33 @@ static frontend_remote_q3_modules *global_modules(global_movie_scope *scope,movi
     }
     return NULL;
 }
+static bool global_unified_role(global_movie_scope *scope,movie_row *owner,
+    const qa_q3_cinematic_source *source,uint64_t wanted,uint64_t *key,
+    frontend_unified_q3_runtime_factory **out,qa_error *error)
+{
+    if(owner->kind!=MOVIE_UNIFIED) return false;
+    size_t media_index=0,bank=0; frontend_unified_media *media=NULL;
+    if(!frontend_unified_media_bank_key_read(owner->ordinal,&media_index,&bank) ||
+        !frontend_unified_media_inventory_at(scope->frontend,media_index,&media,error) || !media) return false;
+    uint64_t ordinal=0;
+    for(size_t i=0;i<frontend_remote_unified_count(scope->frontend);++i) {
+        frontend_remote_unified *replica=frontend_remote_unified_at(scope->frontend,i);
+        for(size_t j=0;j<frontend_remote_unified_presentation_q3_client_count(replica);++j) {
+            ++ordinal;
+            if(wanted && wanted!=ordinal) continue;
+            frontend_unified_presentation_q3_row row;
+            if(!frontend_remote_unified_presentation_q3_row_read(replica,j,&row,error)) return false;
+            if(!row.factory || row.media!=media || row.bank!=bank) continue;
+            qa_q3_cinematic_source *actual=NULL;
+            if(!frontend_unified_q3_runtime_factory_cinematic_read(row.factory,&actual,error)) return false;
+            if(actual && (!source || actual==source)) {
+                if(key) *key=ordinal;
+                *out=row.factory; return true;
+            }
+        }
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Global cinematic role has no actual compiled Unified factory");
+}
 static bool global_role(global_movie_scope *scope,const qa_q3_cinematic_source *source,
     frontend_remote_q3_module_topology *out,qa_error *error)
 {
@@ -315,13 +343,31 @@ static bool global_role(global_movie_scope *scope,const qa_q3_cinematic_source *
 static bool global_source_encode(void *context,const qa_q3_cinematic_source *source,uint64_t *out,qa_error *error)
 {
     global_movie_scope *scope=context; size_t index=0;
-    if(!out || !global_source_row(scope,source,&index,error) || index>=UINT32_MAX) return false;
+    movie_row *owner=global_source_row(scope,source,&index,error);
+    if(!out || !owner || index>=UINT32_MAX) return false;
     const qa_q3_cinematic_source *parent=NULL; uint32_t seat=0; uint64_t bus=0;
     uint64_t role_key=0;
     if(qa_q3_cinematic_source_role_read(source,&parent,&seat,&bus)) {
-        frontend_remote_q3_module_topology role;
-        if(!global_role(scope,source,&role,error) || role.index>=UINT32_MAX) return false;
-        role_key=role.index+1;
+        for(size_t i=0;i<frontend_cinematic_roles_count(scope->frontend);++i) {
+            frontend_cinematic_role_view detached;
+            if(!frontend_cinematic_roles_read(scope->frontend,i,&detached,error)) return false;
+            if(detached.cinematics==source) {
+                if(i>=UINT32_C(0x7fffffff)) return false;
+                role_key=UINT32_C(0x80000000)|(uint64_t)(i+1); break;
+            }
+        }
+        if(!role_key) {
+            if(owner->kind==MOVIE_UNIFIED) {
+                frontend_unified_q3_runtime_factory *factory=NULL; uint64_t ordinal=0;
+                if(!global_unified_role(scope,owner,source,0,&ordinal,&factory,error) ||
+                    !ordinal || ordinal>UINT32_C(0x3fffffff)) return false;
+                role_key=UINT32_C(0x40000000)|ordinal;
+            } else {
+                frontend_remote_q3_module_topology role;
+                if(!global_role(scope,source,&role,error) || role.index>=UINT32_C(0x3fffffff)) return false;
+                role_key=role.index+1;
+            }
+        }
     }
     *out=(role_key<<32)|(uint64_t)(index+1); return true;
 }
@@ -333,6 +379,23 @@ static bool global_source_decode(void *context,uint64_t key,qa_q3_cinematic_sour
     if(!row->owner || !frontend_material_movies_cinematic_read(row->owner,&parent,error) || !parent ||
         qa_q3_cinematic_source_handles(parent)!=scope->frontend->source_cinematics) return false;
     if(!role_key) { *out=parent; return true; }
+    if(role_key&UINT32_C(0x80000000)) {
+        uint64_t detached_key=role_key&UINT32_C(0x7fffffff);
+        frontend_cinematic_role_view detached;
+        if(!detached_key || detached_key-1>SIZE_MAX ||
+            !frontend_cinematic_roles_read(scope->frontend,(size_t)detached_key-1,&detached,error) ||
+            detached.parent!=row->owner || !detached.cinematics ||
+            qa_q3_cinematic_source_parent(detached.cinematics)!=parent) return false;
+        *out=detached.cinematics; return true;
+    }
+    if(role_key&UINT32_C(0x40000000)) {
+        frontend_unified_q3_runtime_factory *factory=NULL;
+        uint64_t ordinal=role_key&UINT32_C(0x3fffffff);
+        if(!ordinal || !global_unified_role(scope,row,NULL,ordinal,NULL,&factory,error) ||
+            !frontend_unified_q3_runtime_factory_cinematic_read(factory,out,error) || !*out ||
+            qa_q3_cinematic_source_parent(*out)!=parent) return false;
+        return true;
+    }
     frontend_remote_q3_modules *modules=global_modules(scope,row,error);
     frontend_remote_q3_module_topology role; qa_q3_presentation_binding binding;
     if(role_key-1>SIZE_MAX || !frontend_remote_q3_modules_cinematics_role_read(modules,(size_t)role_key-1,&role,error) ||
@@ -384,10 +447,37 @@ static bool global_target_decode(void *context,qa_bytes bytes,uint64_t *out,qa_e
     const qa_audio_checkpoint_refs *audio=((global_movie_scope *)context)->audio;
     return audio && audio->decode && audio->decode(audio->context,QA_AUDIO_REFERENCE_BUS,bytes,out,error);
 }
+typedef struct global_system_scope {
+    global_movie_scope *global;
+    const qa_q3_cinematic_source *source;
+} global_system_scope;
+static bool system_asset_encode(void *context,const qa_cinematic_asset *asset,uint64_t *out,qa_error *error)
+{
+    global_system_scope *scope=context;
+    return global_asset_encode(scope->global,scope->source,asset,out,error);
+}
+static bool system_asset_decode(void *context,uint64_t key,const char *path,qa_cinematic_asset **out,qa_error *error)
+{
+    global_system_scope *scope=context;
+    return global_asset_decode(scope->global,scope->source,key,path,out,error);
+}
+static qa_q3_movie_checkpoint_refs system_movie_refs(global_system_scope *scope)
+{
+    return (qa_q3_movie_checkpoint_refs){.context=scope,.asset_encode=system_asset_encode,.asset_decode=system_asset_decode,
+        .playback={scope->global,global_target_encode,global_target_decode},
+        .publication={scope->global,global_image_encode,global_image_decode}};
+}
 static bool global_system_encode(void *context,const qa_q3_cinematic_source *source,
     const qa_q3_system_movie *movie,uint32_t flags,qa_buffer *out,qa_error *error)
 {
     global_movie_scope *scope=context; frontend_remote_q3_module_topology role;
+    movie_row *owner=global_source_row(scope,source,NULL,error);
+    if(owner && owner->kind==MOVIE_UNIFIED) {
+        frontend_unified_q3_runtime_factory *factory=NULL;
+        global_system_scope system={scope,source}; qa_q3_movie_checkpoint_refs refs=system_movie_refs(&system);
+        return global_unified_role(scope,owner,source,0,NULL,&factory,error) &&
+            frontend_unified_q3_runtime_factory_system_checkpoint(factory,&refs,movie,flags,out,error);
+    }
     qa_q3_movie_checkpoint_refs refs;
     return global_role(scope,source,&role,error) && frontend_q3_module_cinematic_refs(scope->q3,&role,&refs,error) &&
         refs.system_encode && refs.system_encode(refs.context,movie,flags,out,error);
@@ -396,6 +486,13 @@ static bool global_system_decode(void *context,const qa_q3_cinematic_source *sou
     qa_bytes bytes,uint32_t flags,qa_q3_system_movie *out,qa_error *error)
 {
     global_movie_scope *scope=context; frontend_remote_q3_module_topology role;
+    movie_row *owner=global_source_row(scope,source,NULL,error);
+    if(owner && owner->kind==MOVIE_UNIFIED) {
+        frontend_unified_q3_runtime_factory *factory=NULL;
+        global_system_scope system={scope,source}; qa_q3_movie_checkpoint_refs refs=system_movie_refs(&system);
+        return global_unified_role(scope,owner,source,0,NULL,&factory,error) &&
+            frontend_unified_q3_runtime_factory_system_restore(factory,&refs,bytes,flags,out,error);
+    }
     qa_q3_movie_checkpoint_refs refs;
     return global_role(scope,source,&role,error) && frontend_q3_module_cinematic_refs(scope->q3,&role,&refs,error) &&
         refs.system_decode && refs.system_decode(refs.context,bytes,flags,out,error);
@@ -411,11 +508,38 @@ static qa_q3_cinematic_handles_refs global_refs(global_movie_scope *scope)
         .movies={.playback={scope,global_target_encode,global_target_decode},
             .publication={scope,global_image_encode,global_image_decode}}};
 }
+static bool role_prefix(qa_source_save_io *io,qa_frontend *f,movie_row *rows,size_t count)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t roles=reading?0:frontend_cinematic_roles_count(f);
+    if(!qa_source_save_count(io,&roles,16) ||
+        (reading && frontend_cinematic_roles_count(f)>roles)) return false;
+    for(size_t i=0;i<roles;++i) {
+        uint64_t parent_key=0; uint32_t seat=0;
+        if(!reading) {
+            frontend_cinematic_role_view role;
+            if(!frontend_cinematic_roles_read(f,i,&role,io->error) || !role.parent || !role.cinematics) return false;
+            seat=role.seat;
+            for(size_t j=0;j<count;++j) {
+                const frontend_material_movie_source *source=&rows[j].source;
+                if(source->frontend==role.source.frontend && source->files==role.source.files &&
+                    source->images==role.source.images && source->materials==role.source.materials &&
+                    source->media==role.source.media && source->context==role.source.context &&
+                    source->current==role.source.current) {parent_key=j+1;break;}
+            }
+            if(!parent_key) return frontend_fail(io->error,QA_ERROR_FORMAT,"Detached cinematic role has no actual movie inventory parent");
+        }
+        if(!qa_source_save_u64(io,&parent_key) || !parent_key || parent_key>count ||
+            !qa_source_save_u32(io,&seat) || seat>=f->options.seats) return false;
+        if(reading && !frontend_cinematic_roles_restore_add(f,&rows[parent_key-1].source,seat,i,io->error)) return false;
+    }
+    return !reading || frontend_cinematic_roles_count(f)==roles;
+}
 static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace *space,
     const qa_scene_frame_checkpoint_refs *frames,const qa_audio_checkpoint_refs *audio,frontend_q3_inventory *q3,movie_row *rows,size_t count,
     uint64_t *pool_image,qa_bytes *pool_state)
 {
-    uint8_t magic[4]={'Q','F','V','M'}; uint32_t version=7; size_t saved=count;
+    uint8_t magic[4]={'Q','F','V','M'}; uint32_t version=8; size_t saved=count;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if(!reading && f->source_cinematics) {
         qa_q3_cinematic_handles_options options;
@@ -423,7 +547,8 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace
             !frontend_scene_image_encode(space,qa_scene_source_q3_scratch(options.images,0),pool_image,io->error) || !*pool_image) return false;
     }
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVM",4) ||
-        !qa_source_save_u32(io,&version) || version!=7 || !qa_source_save_u64(io,pool_image) || !qa_source_save_count(io,&saved,count) || saved!=count) return false;
+        !qa_source_save_u32(io,&version) || version!=8 || !qa_source_save_u64(io,pool_image) ||
+        !qa_source_save_count(io,&saved,count) || saved!=count || !role_prefix(io,f,rows,count)) return false;
     for(size_t i=0;i<count;++i) {
         movie_row *row=rows+i; uint32_t kind=row->kind; uint64_t ordinal=row->ordinal;
         uint64_t view=qa_application_content_view_id(qa_application_content_graph_read(f->application),row->source.files),saved_view=view;
@@ -504,6 +629,20 @@ static bool restore(qa_frontend *f,frontend_scene_namespace *space,
             qa_media_library_restore(row->source.media,row->cache,&library,error);
         if(okay) okay=restore_owner(f,row,&refs,error) &&
             frontend_material_movies_library_owner(row->source.materials,&row->owner,error);
+    }
+    for(size_t i=0;okay && i<frontend_cinematic_roles_count(f);++i) {
+        frontend_cinematic_role_view role;
+        okay=frontend_cinematic_roles_read(f,i,&role,error);
+        for(size_t j=0;okay && !role.cinematics && j<count;++j) {
+            const frontend_material_movie_source *source=&rows[j].source;
+            if(source->frontend!=role.source.frontend || source->files!=role.source.files ||
+                source->images!=role.source.images || source->materials!=role.source.materials ||
+                source->media!=role.source.media || source->context!=role.source.context ||
+                source->current!=role.source.current) continue;
+            if(rows[j].owner) okay=frontend_cinematic_roles_restore_bind(f,i,rows[j].owner,error);
+            break;
+        }
+        if(okay && !unified_prefix) okay=frontend_cinematic_roles_read(f,i,&role,error) && role.cinematics;
     }
     if(okay && !unified_prefix && pool_image) {
         global_movie_scope scope={f,space,audio,qa_application_content_graph_read(f->application),rows,count,q3};

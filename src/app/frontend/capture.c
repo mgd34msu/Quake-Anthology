@@ -13,6 +13,7 @@
 #include "remote_q2_client.h"
 #include "unified_media_inventory.h"
 #include "source_cinematics.h"
+#include "cinematic_roles.h"
 #include "qa/q3_assets_custody.h"
 #include "qa/material_source_scratch.h"
 #include "qa/render_controls.h"
@@ -41,6 +42,7 @@
 #include "renderer_registries.h"
 #include "renderer_worlds.h"
 #include "remote_unified.h"
+#include "remote_unified_presentation.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -207,13 +209,15 @@ bool frontend_seat_callbacks_checkpoint_ready(const qa_frontend *f,qa_error *err
     }
     return true;
 }
-static bool owners_returned(const qa_frontend *f,const frontend_video_guests *video)
+static bool owners_returned(const qa_frontend *f,const frontend_video_guests *video,bool checkpoint)
 {
     if(video && !frontend_video_guests_resources_returned(f,video,NULL)) return false;
     if (!f || f->capture || f->resource_inventory || f->root_resources_pending ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         (!video && (!frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f))) ||
-        !frontend_remote_q2_idle(f) || !frontend_remote_unified_idle(f) ||
+        !frontend_remote_q2_idle(f) || (video?
+            !frontend_remote_unified_presentation_video_returned(f,video,NULL):
+            checkpoint?!frontend_remote_unified_checkpoint_returned(f):!frontend_remote_unified_idle(f)) ||
         !frontend_client_sources_idle(f) ||
         (!video && !frontend_component_scenes_idle(f)) ||
         !frontend_remote_q3_initial_idle_all(f) || !frontend_ui_features_idle(f) ||
@@ -242,11 +246,13 @@ static bool owners_returned(const qa_frontend *f,const frontend_video_guests *vi
     return true;
 }
 bool frontend_owners_returned(const qa_frontend *f)
-{ return owners_returned(f,NULL); }
+{ return owners_returned(f,NULL,false); }
 bool frontend_owners_idle(const qa_frontend *f)
 {
     return frontend_owners_returned(f) && (!f->input || qa_input_platform_settings_idle(f->input));
 }
+bool frontend_owners_checkpoint_ready(const qa_frontend *f)
+{ return owners_returned(f,NULL,true)&&(!f->input||qa_input_platform_settings_idle(f->input)); }
 static bool add(frontend_capture *capture, capture_kind kind, const void *owner, qa_error *error)
 {
     if (!owner) return true;
@@ -1020,7 +1026,7 @@ static bool resource_inventory_collect(qa_frontend *f,qa_application *app,const 
     const qa_application_client_preparation *client,const frontend_video_guests *video,
     frontend_resource_inventory **out,qa_error *error)
 {
-    if(f && (!frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
+    if(f && (!frontend_cinematic_roles_prune(f,error) || !frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     bool engine_only=!candidate && !client && !video && app && qa_application_startup_resource_phase(app,NULL);
     if (!f || !app || f->application!=app || !out || *out || f->resource_inventory || (f->stepping && !video) ||
         f->round || f->shutdown || f->capture || f->source_restoring ||
@@ -1029,7 +1035,7 @@ static bool resource_inventory_collect(qa_frontend *f,qa_application *app,const 
         video ? !frontend_video_guests_resources_associated(f,video) :
         candidate ? (qa_application_startup_candidate(app)!=candidate ||
             !qa_application_startup_resource_phase(app,candidate)) : (!engine_only && f->preparing)) ||
-        !(video?owners_returned(f,video):frontend_owners_idle(f)) || !frontend_seat_callbacks_idle(f))
+        !(video?owners_returned(f,video,false):frontend_owners_idle(f)) || !frontend_seat_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Resource metadata requires the actual idle parent or resource-phase candidate");
     frontend_resource_inventory *inventory=calloc(1,sizeof(*inventory));
     if (!inventory) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the structural resource roster");
@@ -1189,10 +1195,10 @@ static bool retain_registry(void *context,capture_kind kind,const void *owner,qa
 }
 bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *error)
 {
-    if(f && (!frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
+    if(f && (!frontend_cinematic_roles_prune(f,error) || !frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
         !f->application || qa_application_client_prepare_active(f->application) ||
-        !frontend_owners_idle(f) || !frontend_seat_callbacks_checkpoint_ready(f,error) ||
+        !frontend_owners_checkpoint_ready(f) || !frontend_seat_callbacks_checkpoint_ready(f,error) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");
     if (!frontend_q3_source_color_publication_finish(f,error) ||

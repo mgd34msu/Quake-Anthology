@@ -710,7 +710,8 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
             result->type = QA_NATIVE_BYTES; result->as.bytes.size = layout->bytes;
         } else decode_value(layout, data, result);
     }
-    if(!okay&&recovery_owner&&guest_callback_cancelled(guest,error)&&layout->kind==QA_NATIVE_VOID) {
+    if(!okay&&recovery_owner&&recovery->cancelled&&!recovery->restored&&!recovery->resolved&&
+        guest_callback_cancelled(guest,error)&&layout->kind==QA_NATIVE_VOID) {
         okay=qa_native_guest_cpu_write(guest,&enclosing,error);
         if(okay) {
             recovery->restored=true; *result=(qa_native_value){.type=QA_NATIVE_VOID};

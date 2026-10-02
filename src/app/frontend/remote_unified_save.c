@@ -298,7 +298,8 @@ bool frontend_remote_unified_checkpoint(const frontend_remote_unified *owner,
     qa_unified_session *installed = NULL;
     if (!owner || !graph || !out || out->data || out->size || owner->restore_pending ||
         !owner->session || !qa_unified_session_idle(owner->session) ||
-        !owner->options.consumers.idle(owner->options.consumers.context, owner) ||
+        !owner->options.consumers.checkpoint_returned ||
+        !owner->options.consumers.checkpoint_returned(owner->options.consumers.context, owner) ||
         !qa_unified_session_find(owner->options.domain.runtime, owner->options.domain.client, &installed, e) ||
         installed != owner->session || !frontend_remote_unified_qualified(owner,
             owner->options.domain.runtime, peer, e)) return false;
@@ -324,7 +325,7 @@ bool frontend_remote_unified_restore_prefix(qa_frontend *frontend, const fronten
         !consumers->offer_ready || !consumers->control || !consumers->frame || !consumers->publish ||
         !consumers->input || !consumers->begin_frame || !consumers->clock_read ||
         !consumers->physical_ready || !consumers->physical_input ||
-        !consumers->sample || !consumers->draw || !consumers->idle || !consumers->close ||
+        !consumers->sample || !consumers->draw || !consumers->idle || !consumers->checkpoint_returned || !consumers->close ||
         !consumers->content_visit || domain->physical_seat >= frontend->options.seats ||
         !options->current(options->context, domain, e))
         return frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified replica import requires its actual restored CLIENT and presentation owners");
@@ -350,7 +351,8 @@ bool frontend_remote_unified_restore_bind(frontend_remote_unified *owner, qa_uni
         !qa_unified_session_find(owner->options.domain.runtime, owner->options.domain.client, &installed, e) ||
         installed != session || !retained_valid(owner, peer, e) ||
         !owner->options.current(owner->options.context, &owner->options.domain, e) ||
-        !owner->options.consumers.idle(owner->options.consumers.context, owner)) return false;
+        !owner->options.consumers.checkpoint_returned ||
+        !owner->options.consumers.checkpoint_returned(owner->options.consumers.context, owner)) return false;
     if (!qa_unified_session_client_receipt(session, owner->epoch, owner->admitted, owner->retired,
         owner->offer, owner->frame, owner->prepared_frame, e)) return false;
     owner->session = session; owner->restore_pending = false; return true;
@@ -388,7 +390,9 @@ bool frontend_remote_unified_qualified(const frontend_remote_unified *owner, qa_
     return owner && linked && !owner->restore_pending && owner->options.domain.runtime == runtime &&
         owner->frontend->application == owner->options.domain.application &&
         owner->options.current(owner->options.context, &owner->options.domain, e) &&
-        owner->options.consumers.idle(owner->options.consumers.context, owner) && retained_valid(owner, peer, e) &&
+        ((owner->frontend->capture || owner->frontend->source_restoring)?
+            (owner->options.consumers.checkpoint_returned && owner->options.consumers.checkpoint_returned(owner->options.consumers.context, owner)):
+            owner->options.consumers.idle(owner->options.consumers.context, owner)) && retained_valid(owner, peer, e) &&
         qa_unified_session_find(runtime, owner->options.domain.client, &installed, e) && installed == owner->session &&
         qa_unified_session_qualified(installed, peer, e) &&
         qa_unified_session_client_receipt(installed, owner->epoch, owner->admitted, owner->retired,

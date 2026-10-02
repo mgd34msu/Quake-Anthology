@@ -60,7 +60,12 @@ bool q3n_compiled_source_rebind(q3n_compiled_source *, const q3n_compiled_source
 bool q3n_compiled_source_rebind_prepare(q3n_compiled_source *, const q3n_compiled_source_view *,
     const q3n_compiled_source_basis *, q3n_compiled_source_rebind_ticket **, qa_error *);
 bool q3n_compiled_source_rebind_ready(const q3n_compiled_source_rebind_ticket *);
+bool q3n_compiled_source_rebind_checkpoint_current(const q3n_compiled_source_rebind_ticket *);
+bool q3n_compiled_source_rebind_restore(q3n_compiled_source *, const q3n_compiled_source_basis *,
+    q3n_compiled_source_rebind_ticket **, qa_error *);
 bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *,
+    const q3n_compiled_source *, const qa_command_context *, const qa_command_context *);
+bool q3n_compiled_source_rebind_checkpoint_context_is(const q3n_compiled_source_rebind_ticket *,
     const q3n_compiled_source *, const qa_command_context *, const qa_command_context *);
 void q3n_compiled_source_rebind_commit(q3n_compiled_source_rebind_ticket **);
 void q3n_compiled_source_rebind_abort(q3n_compiled_source_rebind_ticket **);

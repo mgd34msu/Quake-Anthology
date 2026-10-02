@@ -107,10 +107,10 @@ bool frontend_unified_components_create(qa_frontend *f,frontend_remote_unified *
     if(!o) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real remote component collection");
     o->frontend=f; o->replica=replica; o->media=media; o->recipe=frontend_remote_unified_recipe(replica); *out=o; return true;
 }
-bool frontend_unified_components_idle(const frontend_unified_components *o)
+bool frontend_unified_components_checkpoint_ready(const frontend_unified_components *o)
 {
     if(!o) return true;
-    if(o->busy||o->prepared) return false;
+    if(o->busy) return false;
     for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
         remote_component *r=q3remote_component_physical_at(o,i);
         if(r&&(r->acquired||(r->scene&&!application_q3_scene_idle(r->scene))||
@@ -118,6 +118,8 @@ bool frontend_unified_components_idle(const frontend_unified_components *o)
     }
     return true;
 }
+bool frontend_unified_components_idle(const frontend_unified_components *o)
+{ return (!o||!o->prepared)&&frontend_unified_components_checkpoint_ready(o); }
 static remote_component *find(frontend_unified_components *o,const char *provider)
 {
     for(size_t i=0;i<o->count;++i) if(o->rows[i]&&!strcmp(o->rows[i]->state.provider,provider)) return o->rows[i];
@@ -294,7 +296,7 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
 bool frontend_unified_components_visit(const frontend_unified_components *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
     if(!o) return true;
-    if(!visitor||!frontend_unified_components_idle(o)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component graph retains output continuations");
+    if(!visitor||!frontend_unified_components_checkpoint_ready(o)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component graph retains entered output continuations");
     /* The actual recipe owns every acquired program and opening; frontend
      * component registry owners independently enumerate private media heaps. */
     return qa_executable_recipe_content_visit(o->recipe,visitor,e);

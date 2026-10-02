@@ -14,6 +14,9 @@ typedef struct video_role {
     q3g_role *role;
     char *path;
     qa_qvm_role kind;
+    q3g_artifact *artifact;
+    const qa_launch_instance *descriptor;
+    bool native;
     uint32_t seat, client;
     application_provider *source;
     struct application_q3_guest *source_engine;
@@ -28,7 +31,9 @@ struct application_guest_q3_video {
     video_role *roles;
     size_t engine_count, role_count;
     uint64_t generation;
-    bool busy;
+    qa_native_runtime *native_runtime;
+    qa_buffer native_capabilities;
+    bool busy,has_native;
 };
 
 static bool live_provider(const qa_application *app, const application_provider *provider)
@@ -50,6 +55,10 @@ bool application_guest_q3_video_current(const application_guest_q3_video *ticket
         !qa_session_safe(ticket->app->session) ||
         qa_application_configuration_generation(ticket->app) != ticket->generation)
         return application_fail(error, QA_ERROR_ARGUMENT, "Hosted video restart lost its returned application topology");
+    if(ticket->has_native && ticket->app->native_runtime!=ticket->native_runtime)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Hosted video restart changed its retained native runtime owner");
+    if(ticket->native_runtime && !qa_native_runtime_validate(ticket->native_runtime,
+        (qa_bytes){ticket->native_capabilities.data,ticket->native_capabilities.size},error)) return false;
     for (size_t i = 0; i < ticket->engine_count; ++i) {
         const video_engine *p = &ticket->engines[i];
         if (!live_provider(ticket->app, p->provider) || p->provider->close_pending ||
@@ -71,9 +80,17 @@ bool application_guest_q3_video_current(const application_guest_q3_video *ticket
         if (!row->role) continue;
         if (!*position(row))
             return application_fail(error, QA_ERROR_ARGUMENT, "Hosted video restart lost its retained role");
-        if (row->role->kind != row->kind || row->role->seat != row->seat ||
-            strcmp(row->role->path, row->path))
+        if (row->role->kind != row->kind || row->role->seat != row->seat || row->role->primary!=row->primary ||
+            strcmp(row->role->path, row->path) || row->role->descriptor!=row->descriptor ||
+            (row->role->ready && (row->role->artifact!=row->artifact ||
+                (row->role->module!=NULL)!=row->native)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Hosted video restart changed its role recipe");
+        if(row->native && row->role->ready && !row->role->retired && (!row->role->process.resources ||
+            !qa_native_process_resources_current(row->role->process.resources,error))) return false;
+        if(row->reopened && row->initialized && row->role->init_succeeded &&
+            (!row->role->committed || (row->native && (!row->role->native ||
+                qa_native_get_lifecycle(qa_native_host_instance(row->role->native))!=QA_NATIVE_INITIALIZED))))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Hosted video native replacement has no completed real initialization");
         if (row->reopened && (!row->role->ready || row->role->retired || !row->role->host ||
             row->role->local_client != row->local || row->role->client_source != row->source ||
             row->role->client_engine != row->source_engine || row->role->client != row->client ||
@@ -94,6 +111,7 @@ static bool close_role(video_role *row, qa_error *error)
     if (!*at) return application_fail(error, QA_ERROR_ARGUMENT, "Hosted video cleanup lost its physical role");
     if (row->role->host && !qa_q3_host_destroy_ready(row->role->host))
         return application_fail(error, QA_ERROR_ARGUMENT, "Hosted video role retains an entered callback or collision scene");
+    row->reopened = false;
     if (!q3g_role_shutdown(row->role, false, error)) return false;
     q3g_role *next = row->role->next;
     if (!q3g_role_destroy(row->role, error)) return false;
@@ -114,6 +132,8 @@ static void release(application_guest_q3_video *ticket)
         --ticket->engines[i].engine->video_leases;
         --ticket->engines[i].provider->hosted_video_leases;
     }
+    qa_buffer_free(&ticket->native_capabilities);
+    qa_native_runtime_release(ticket->native_runtime);
     free(ticket->roles); free(ticket->engines); free(ticket);
 }
 bool application_guest_q3_video_prepare(qa_application *app, application_guest_q3_video **out, qa_error *error)
@@ -170,6 +190,7 @@ bool application_guest_q3_video_prepare(qa_application *app, application_guest_q
                 .seat = r->seat, .client = r->client, .source = r->client_source,
                 .source_engine = r->client_engine, .source_owner = r->source_owner,
                 .primary = r->primary, .local = r->local_client, .source_cleared = r->source_cleared,
+                .artifact=r->artifact,.descriptor=r->descriptor,.native=r->module!=NULL,
                 .initialized = r->initialized, .init_argument_count = r->init_argument_count};
             memcpy(row->init_arguments, r->init_arguments, sizeof(row->init_arguments));
             if (row->initialized && row->kind == QA_QVM_CGAME) {
@@ -200,6 +221,15 @@ bool application_guest_q3_video_prepare(qa_application *app, application_guest_q
             }
             row->path = q3g_copy_text(r->path, error);
             if (!row->path) { release(ticket); return false; }
+        }
+    }
+    bool native=false;
+    for(size_t i=0;i<ticket->role_count;++i) native|=ticket->roles[i].native;
+    ticket->has_native=native;
+    if(native && app->native_runtime) {
+        ticket->native_runtime=app->native_runtime; qa_native_runtime_retain(ticket->native_runtime);
+        if(!qa_native_runtime_checkpoint(ticket->native_runtime,&ticket->native_capabilities,error)) {
+            release(ticket); return false;
         }
     }
     *out = ticket;
@@ -253,6 +283,12 @@ bool application_guest_q3_video_reopen(application_guest_q3_video *ticket, qa_er
                 return application_guest_q3_video_reopen(ticket, error);
             }
             row->init_attempted = true;
+            if(!q3g_role_activate(row->role,error)) return false;
+            if(row->native && (!row->role->native || !row->role->committed ||
+                qa_native_host_profile(row->role->native)!=QA_NATIVE_Q3_VMMAIN ||
+                qa_native_get_lifecycle(qa_native_host_instance(row->role->native))!=QA_NATIVE_LOADED))
+                return application_fail(error,QA_ERROR_ARGUMENT,"Video Init requires the completed native role load");
+            if(!application_guest_q3_video_current(ticket,error)) return false;
             if (!application_q3_guest_role_initialize(row->parent->provider, row->kind, row->seat,
                 row->kind == QA_QVM_CGAME ? row->init_arguments[0] : 0,
                 row->kind == QA_QVM_CGAME ? row->init_arguments[1] : 0,

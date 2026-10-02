@@ -107,7 +107,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     vm.syscall=q3component_syscall; vm.checkpoint=q3component_host_checkpoint; vm.restore=q3component_host_restore;
     if(!qa_qvm_create(o->image,&vm,&c->vm,e)||!qa_q3_host_attach_qvm(c->host,c->vm,e)) return false;
     application_q3_component_records_options records={.profile=c->profile,.vm=c->vm,.image=o->image,.session=o->host.session,.world=o->host.world,.combat=o->combat,.inventory=o->inventory,
-        .strings=qa_session_strings(o->host.session),.context=c,.storage_current=q3component_storage,.match_read=match_read,.match_write=match_write,.bound=bound,.released=released,
+        .strings=qa_session_strings(o->host.session),.context=c,.storage_current=q3component_storage,.match_read=match_read,.match_write=match_write,.inventory_write=o->application?q3component_pickup_write:NULL,.bound=bound,.released=released,
         .lifecycle_begin=q3component_lifecycle_begin,.lifecycle=q3component_lifecycle};
     if(!application_q3_component_records_create(&records,&c->records,e)) return false;
     c->entity_record=c->records->entity_record; c->player_record=c->records->player_record; c->maximum=c->records->client_maximum;

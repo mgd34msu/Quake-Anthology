@@ -1,4 +1,5 @@
 #include "remote_q3_compiled_video.h"
+#include "source_renderer_runtime.h"
 #include "remote_q3_private.h"
 #include "remote_q3_services.h"
 #include "remote_q3_frame.h"
@@ -114,7 +115,8 @@ bool frontend_remote_q3_compiled_video_reopen(frontend_remote_q3_compiled_video 
         !frontend_remote_q3_runtime_callbacks_read(row->runtime,&callbacks,e) ||
         !frontend_remote_q3_frame_create_video(row,&callbacks,&row->frames,e) ||
         !frontend_remote_q3_runtime_bind_frames(row->runtime,row->frames,e) ||
-        !frontend_remote_q3_frame_initialize(row->frames,row->runtime,frontend_remote_q3_runtime_initialize,e))return false;
+        !frontend_remote_q3_frame_initialize(row->frames,row->runtime,frontend_remote_q3_runtime_initialize,e) ||
+        !frontend_source_renderer_end_registration(row->frontend,e))return false;
     ticket->reopened=true;
     return frontend_remote_q3_compiled_video_current(ticket,e);
 }

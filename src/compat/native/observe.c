@@ -313,7 +313,8 @@ bool qa_native_call_scope_resolve(qa_native_call_scope *scope,bool completed,
         return true;
     }
     qa_native_guest *guest=scope->instance->guest;
-    bool accepted=guest_callback_failure(guest,error)&&guest_callback_cancelled(guest,error);
+    bool accepted=guest_callback_failure(guest,error)&&scope->recovery.cancelled&&
+        guest_callback_cancelled(guest,error);
     scope->recovery.resolved=true;
     if(!accepted)return false;
     if(!qa_native_guest_cpu_write(guest,&scope->cpu,error))return false;

@@ -219,7 +219,7 @@ static bool diagnostics_fields(qa_source_save_io *io,qa_render_controls *control
     qa_render_source_frame_values *values=&controls->frame_values;
     qa_render_source_counters *pc=&controls->counters;
     if (!qa_source_save_i32(io,&values->finish) || !qa_source_save_i32(io,&values->show_images) ||
-        !qa_source_save_i32(io,&values->speeds) || !qa_source_save_bool(io,&values->measure_overdraw) ||
+        !qa_source_save_i32(io,&values->speeds) || !qa_source_save_i32(io,&values->milliseconds) || !qa_source_save_bool(io,&values->measure_overdraw) ||
         !qa_source_save_bool(io,&values->no_bind) || !qa_source_save_bool(io,&controls->finish_called)) return false;
     uint64_t *fields[]={&pc->shaders,&pc->surfaces,&pc->vertices,&pc->indexes,&pc->total_indexes,&pc->overdraw,
         &pc->leaves,&pc->dlight_surfaces,&pc->dlight_culled,&pc->dlight_vertices,&pc->dlight_indexes,

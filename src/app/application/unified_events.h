@@ -94,7 +94,7 @@ typedef struct application_unified_event_resource {
     qa_vfs_acquisition opening;
     qa_launch_instance_lease *descriptor;
     qa_buffer key;
-    char id[81];
+    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     uint64_t saved_pool, saved_resource, saved_view;
     application_unified_event_resource_custody *custodies;
     size_t custody_count, custody_capacity;
@@ -111,17 +111,17 @@ typedef struct application_unified_event_registration {
 /* Registration consumes no VFS read. It admits only an actual held opening in
  * the emitting Source's retained content view, and retains that acquisition. */
 bool application_unified_event_resource_register(qa_application *, qa_actor_owner,
-    const char *requested_path, const qa_resource *, char id[81], qa_error *);
+    const char *requested_path, const qa_resource *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
 bool application_unified_event_resource_register_acquired(qa_application *, qa_actor_owner,
     qa_native_host_resource_kind, const char *logical_name, const qa_vfs *, const qa_resource *,
-    const qa_vfs_acquisition *, char id[81], qa_error *);
+    const qa_vfs_acquisition *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
 const qa_resource *application_unified_event_resource_read(const qa_application *, const char *id);
 bool application_unified_event_resource_lookup(qa_application *, qa_actor_owner,
-    const char *requested_path, char id[81], bool *found, qa_error *);
+    const char *requested_path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
 bool application_unified_event_resource_lookup_kind(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, const char *, char id[81], bool *found, qa_error *);
+    qa_native_host_resource_kind, const char *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
 bool application_unified_event_resource_lookup_receipt(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, const char *, char id[81], uint64_t *custody, bool *found, qa_error *);
+    qa_native_host_resource_kind, const char *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody, bool *found, qa_error *);
 bool application_unified_event_resource_receipt_read(const qa_application *, const char *id,
     uint64_t custody, const qa_resource **, const qa_vfs **, const qa_vfs_acquisition **, qa_error *);
 bool application_unified_event_registration_clear(qa_application *, qa_actor_owner, qa_error *);

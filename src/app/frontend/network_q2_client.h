@@ -90,4 +90,6 @@ bool frontend_network_q2_client_physical_read(const frontend_network_q2_client *
     frontend_remote_q2_source_view *,qa_error *);
 bool frontend_network_q2_client_content_visit(const frontend_network_q2_client *,
     const qa_application_content_visitor *,qa_error *);
+bool frontend_network_q2_client_restore_abort_ready(const frontend_network_q2_client *,
+    const qa_application_client_source *,qa_error *);
 #endif

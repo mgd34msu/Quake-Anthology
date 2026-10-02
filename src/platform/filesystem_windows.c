@@ -1806,12 +1806,12 @@ void qa_fs_stream_close(qa_fs_stream *stream)
 }
 
 struct qa_fs_stage {
-    HANDLE handle;
+    HANDLE handle, publication_sync;
     writable_path locked;
     wchar_t *temporary, *target;
     char *display;
     bool sealed, published, readonly, closing, closing_keep, cleanup_done;
-    bool publication_exclusive, publication_synced;
+    bool publication_exclusive, publication_synced, publication_readonly;
     qa_fs_identity publication_identity;
 };
 static bool stage_argument(qa_error *error, const char *message) {
@@ -1844,7 +1844,7 @@ static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, boo
     qa_fs_stage *stage = calloc(1, sizeof(*stage));
     if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating file stage"); return false; }
     if (checked) *out = stage;
-    stage->handle = INVALID_HANDLE_VALUE; stage->display = copy_string(target);
+    stage->handle = stage->publication_sync = INVALID_HANDLE_VALUE; stage->display = copy_string(target);
     stage->readonly = readonly; stage->sealed = readonly;
     if (!stage->display || !writable_parent(root, target, !resume, &stage->locked, error)) {
         if (!stage->display) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining stage target");
@@ -1941,15 +1941,14 @@ bool qa_fs_stage_open_published_checked(qa_fs_root *root, const char *target,
         return stage_argument(error, "Invalid published target continuation");
     qa_fs_stage *stage = calloc(1, sizeof(*stage));
     if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target"); return false; }
-    *out = stage; stage->handle = INVALID_HANDLE_VALUE; stage->readonly = true;
+    *out = stage; stage->handle = stage->publication_sync = INVALID_HANDLE_VALUE; stage->readonly = true;
     stage->display = copy_string(target);
     if (!stage->display) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target name"); return false; }
     if (!writable_parent(root, target, false, &stage->locked, error)) return false;
     stage->target = wide_child(stage->locked.parent_path, stage->locked.leaf, error);
     if (!stage->target) return false;
-    /* FlushFileBuffers requires write access; this published owner exposes no writes. */
-    stage->handle = CreateFileW(stage->target, GENERIC_READ | GENERIC_WRITE | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    stage->handle = CreateFileW(stage->target, GENERIC_READ | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (stage->handle == INVALID_HANDLE_VALUE)
         return fail_windows(error, "cannot open published target", target, GetLastError());
     wchar_t *opened = handle_path(stage->handle, error);
@@ -1973,6 +1972,7 @@ bool qa_fs_stage_open_published_checked(qa_fs_root *root, const char *target,
     if (!qa_fs_identity_equal(&admitted, &current))
         return stage_argument(error, "Published target changed during prefix qualification");
     stage->sealed = stage->published = stage->publication_exclusive = true;
+    stage->publication_readonly = true;
     stage->readonly = false; stage->publication_identity = current; *identity = current;
     return true;
 }
@@ -2061,7 +2061,17 @@ bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *er
 }
 static bool stage_publication_finish(qa_fs_stage *stage, qa_error *error) {
     if (stage->publication_synced) return true;
-    if (!FlushFileBuffers(stage->handle))
+    HANDLE flush = stage->handle;
+    if (stage->publication_readonly) {
+        if (stage->publication_sync == INVALID_HANDLE_VALUE) {
+            stage->publication_sync = ReOpenFile(stage->handle, GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_FLAG_OPEN_REPARSE_POINT);
+            if (stage->publication_sync == INVALID_HANDLE_VALUE)
+                return fail_windows(error, "cannot reopen published target for sync", stage->display, GetLastError());
+        }
+        flush = stage->publication_sync;
+    }
+    if (!FlushFileBuffers(flush))
         return fail_windows(error, "cannot sync published stage", stage->display, GetLastError());
     stage->publication_synced = true;
     return true;
@@ -2111,6 +2121,7 @@ bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, boo
 void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
     if (!stage) return;
     if (stage->published) (void)stage_publication_finish(stage, NULL);
+    if (stage->publication_sync != INVALID_HANDLE_VALUE) CloseHandle(stage->publication_sync);
     if (stage->handle != INVALID_HANDLE_VALUE) {
         if (!keep && !stage->published && !stage->readonly) {
             FILE_DISPOSITION_INFO disposition = {TRUE};
@@ -2127,6 +2138,11 @@ bool qa_fs_stage_close_checked(qa_fs_stage **owned, bool keep, qa_error *error) 
         return stage_argument(error, "Stage cleanup cannot change its retained-file decision");
     stage->closing = true; stage->closing_keep = keep;
     if (stage->published && !stage_publication_finish(stage, error)) return false;
+    if (stage->publication_sync != INVALID_HANDLE_VALUE) {
+        if (!CloseHandle(stage->publication_sync))
+            return fail_windows(error, "cannot close published sync handle", stage->display, GetLastError());
+        stage->publication_sync = INVALID_HANDLE_VALUE;
+    }
     if (!stage->cleanup_done) {
         if (stage->handle != INVALID_HANDLE_VALUE && !stage->published && !stage->readonly) {
             if (keep) {

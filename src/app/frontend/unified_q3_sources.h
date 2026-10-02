@@ -74,6 +74,7 @@ bool frontend_unified_q3_sources_current(const frontend_unified_q3_sources *);
  * isolated restore admission and grant no ordinary frame/effect authority. */
 bool frontend_unified_q3_sources_checkpoint_current(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *);
+bool frontend_unified_q3_source_staged_checkpoint_current(const frontend_unified_q3_source_view *);
 /* Structural custody for checked cleanup and cold continuation. Removed rows
  * never gain ordinary Source/draw authority through this receipt. */
 bool frontend_unified_q3_source_retirement_prepare(const frontend_unified_q3_source_view *,
@@ -96,6 +97,15 @@ bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sourc
 bool frontend_unified_q3_sources_idle(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **, qa_error *);
 bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_sources_checkpoint_stage(const frontend_unified_q3_sources *,
+    const frontend_unified_q3_source_frame *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_source_frame_checkpoint(const frontend_unified_q3_source_frame *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_source_frame_checkpoint_ready(const frontend_unified_q3_source_frame *);
+bool frontend_unified_q3_sources_restore_prepared(frontend_unified_q3_sources *, qa_bytes,
+    const qa_unified_document *, frontend_unified_q3_source_frame **, qa_error *);
+bool frontend_unified_q3_sources_checkpoint_stage_read(const frontend_unified_q3_sources *,
+    const frontend_unified_q3_source_frame *, bool staged, size_t,
+    frontend_unified_q3_source_view *, qa_error *);
 bool frontend_unified_q3_sources_restore(frontend_remote_unified *, frontend_unified_media *,
     qa_bytes, frontend_unified_q3_sources **, qa_error *);
 

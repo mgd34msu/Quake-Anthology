@@ -173,11 +173,15 @@ bool qa_q3_cinematic_source_role_diagnostic_read(const qa_q3_cinematic_source *s
 bool qa_q3_cinematic_source_role_detach(qa_q3_cinematic_source *source,void *context,qa_error *error)
 {
     if (!source || !source->parent || !qa_q3_cinematic_handles_idle(source->handles) || source->users ||
-        !source->diagnostic_print || !source->diagnostic_current || source->diagnostic_context!=context)
+        (source->diagnostic_print || source->diagnostic_current || source->diagnostic_context ?
+            !source->diagnostic_print || !source->diagnostic_current || source->diagnostic_context!=context : context!=NULL))
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role requires its returned actual diagnostic owner");
-    for (size_t i=0;i<16;++i) if (source->handles->movies[i].source==source &&
-        (source->handles->movies[i].flags&1u))
-        return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role retains a real fullscreen lease on its retiring owner");
+    for (size_t i=0;i<16;++i) {
+        const q3cin_movie *movie=&source->handles->movies[i];
+        if (movie->source==source && (movie->system.context || movie->system.status || movie->system.end ||
+            movie->system.release || movie->system.playback))
+            return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role retains a real fullscreen lease on its retiring owner");
+    }
     source->diagnostic_context=NULL; source->diagnostic_print=NULL; source->diagnostic_current=NULL;
     source->options.print=source->parent->options.print?role_print:NULL;
     return true;

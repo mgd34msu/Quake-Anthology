@@ -13,6 +13,7 @@ typedef struct unified_media_bank {
     qa_material_library *materials;
     qa_media_library *media;
     struct frontend_material_movies *shader_movies;
+    uint64_t cinematic_audio_owner;
     qa_font_library *fonts;
     qa_audio_bank *sounds;
     qa_q3_presentation_assets *q3_assets;
@@ -43,6 +44,7 @@ struct frontend_unified_media {
     qa_scene_world *world;
     unified_media_bank *world_bank;
     uint64_t saved_world;
+    uint32_t physical_seat;
     bool busy, importing, roots_attached;
 };
 #endif

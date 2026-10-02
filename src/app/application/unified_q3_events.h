@@ -28,6 +28,9 @@ bool application_unified_q3_attack_providers(void *, qa_actor_id, qa_item_id,
     qa_actor_owner *, qa_actor_owner *, qa_error *);
 
 struct application_q3_component_publication;
+struct application_q3_scene_player_event;
+bool application_unified_q3_component_player(qa_application *,
+    const struct application_q3_component_publication *,const struct application_q3_scene_player_event *,uint64_t,qa_error *);
 bool application_unified_q3_component_command(qa_application *,
     const struct application_q3_component_publication *, qa_actor_id recipient,
     const char *text, int32_t source_time_ms, qa_error *);

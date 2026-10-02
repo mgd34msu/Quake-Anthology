@@ -542,13 +542,26 @@ bool application_native_mode_selected_map_command(void *opaque, qa_mode_id mode,
             okay = application_fail(error, QA_ERROR_UNSUPPORTED, "selected-map snapshot has no actual Q3 cvar scope");
         else {
             const qa_cvar_view *nextmap = qa_cvars_find(cvars, "nextmap");
-            char text[1024];
-            if (nextmap && nextmap->value[0])
-                snprintf(text, sizeof(text), "map %s; set nextmap \"%.1023s\"", name, nextmap->value);
-            else snprintf(text, sizeof(text), "map %s", name);
-            if (!qa_application_command_context_active(app, &parser.plan.context))
-                okay = application_fail(error, QA_ERROR_ARGUMENT, "selected-map source retired during snapshot");
-            else okay = qa_strings_intern_cstr(qa_session_strings(app->session), text, command, error);
+            size_t name_size = strlen(name);
+            size_t next_size = nextmap && nextmap->value[0] ? strlen(nextmap->value) : 0;
+            if (next_size > 1023) next_size = 1023;
+            if (name_size > SIZE_MAX - next_size - 21) {
+                okay = application_fail(error, QA_ERROR_MEMORY, "selected-map command extent overflow");
+            } else {
+                size_t size = name_size + next_size + 21;
+                char *text = malloc(size);
+                if (!text) okay = application_fail(error, QA_ERROR_MEMORY,
+                                                   "retaining selected-map command snapshot");
+                else {
+                    if (next_size)
+                        snprintf(text, size, "map %s; set nextmap \"%.*s\"", name, (int)next_size, nextmap->value);
+                    else snprintf(text, size, "map %s", name);
+                    if (!qa_application_command_context_active(app, &parser.plan.context))
+                        okay = application_fail(error, QA_ERROR_ARGUMENT, "selected-map source retired during snapshot");
+                    else okay = qa_strings_intern_cstr(qa_session_strings(app->session), text, command, error);
+                    free(text);
+                }
+            }
         }
     }
     parser_free(&parser);

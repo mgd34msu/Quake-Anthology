@@ -52,4 +52,6 @@ bool frontend_unified_q2_visit(const frontend_unified_q2 *, const qa_application
 bool frontend_unified_q2_checkpoint(frontend_unified_q2 *, const frontend_unified_q2_refs *, qa_buffer *, qa_error *);
 bool frontend_unified_q2_restore(qa_frontend *, frontend_remote_unified *, frontend_unified_media *,
     frontend_unified_events *, const frontend_unified_q2_refs *, qa_bytes, frontend_unified_q2 **, qa_error *);
+bool frontend_unified_q2_checkpoint_ready(const frontend_unified_q2 *);
+bool frontend_unified_q2_frame_restore_bind(frontend_unified_q2 *, const qa_unified_document *, qa_error *);
 #endif

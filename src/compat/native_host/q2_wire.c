@@ -27,19 +27,38 @@ typedef enum q2_observation {
     Q2_OBSERVE_IDLE, Q2_OBSERVE_IMPORT, Q2_OBSERVE_END_FRAME
 } q2_observation;
 
+static bool frame_equal(const qa_source_frame *a,const qa_source_frame *b)
+{
+    return a->provider==b->provider&&a->kind==b->kind&&a->phase==b->phase&&a->number==b->number&&
+        a->start_ns==b->start_ns&&a->elapsed_ns==b->elapsed_ns&&a->time_ns==b->time_ns;
+}
+
 static bool stage_ready(qa_native_host *host, qa_source_frame *out, qa_error *error)
 {
     qa_source_frame frame;
+    const qa_source_frame *completed=host?host->q2_observation_frame:NULL;
+    qa_actor_owner clock_owner=completed?completed->provider:host?host->world.owner:0;
     if (!host || host->kind != NATIVE_HOST_Q2_GAME || !host->instance || !host->edict ||
         host->destroying || host->restoring || host->reconstruction || host->callback_depth ||
         host->filter_depth || qa_native_terminal(host->instance) || !qa_native_can_destroy(host->instance) ||
         !host->world.session || !host->world.world ||
-        !qa_session_active_frame(host->world.session, host->world.owner, &frame) ||
-        frame.provider != host->world.owner || frame.phase != QA_CLIENT_END_FRAME)
+        !clock_owner || !qa_session_active_frame(host->world.session, clock_owner, &frame) ||
+        frame.provider != clock_owner || frame.phase != (completed?QA_FRAME_EXIT:QA_CLIENT_END_FRAME) ||
+        (completed&&!frame_equal(completed,&frame)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
             "Q2 Source observation requires its returned end-frame GAME stage");
     if (out) *out = frame;
     return true;
+}
+
+static bool completed_begin(qa_native_host *host,const qa_source_frame *frame,qa_error *error)
+{
+    if(!host||!frame||frame->phase!=QA_FRAME_EXIT||host->q2_observation_frame)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,
+            "Q2 completed observation requires its distinct actual primary exit scope");
+    host->q2_observation_frame=frame;
+    if(stage_ready(host,NULL,error))return true;
+    host->q2_observation_frame=NULL;return false;
 }
 
 static bool stage_current(qa_native_host *host, const qa_source_frame *before, qa_error *error)
@@ -242,6 +261,14 @@ bool qa_native_host_q2_wire_entity_stage(qa_native_host *host, uint32_t slot,
     *out = value; return true;
 }
 
+bool qa_native_host_q2_wire_entity_completed(qa_native_host *host,const qa_source_frame *frame,
+    uint32_t slot,qa_native_host_q2_entity *out,qa_error *error)
+{
+    if(!completed_begin(host,frame,error))return false;
+    bool ok=qa_native_host_q2_wire_entity_stage(host,slot,out,error);
+    host->q2_observation_frame=NULL;return ok;
+}
+
 static bool visible_binding(qa_native_host *host, uint32_t slot, qa_actor_id actor,
     bool viewer, qa_native_slot_binding *binding, qa_native_address *address, qa_error *error)
 {
@@ -298,6 +325,15 @@ bool qa_native_host_q2_entity_visible(qa_native_host *host, uint32_t entity_slot
         return native_host_fail(error, QA_ERROR_ARGUMENT, entity_slot,
             "Q2 visibility callback changed its actual Source frame or actors");
     *out = result.as.u8 != 0; return true;
+}
+
+bool qa_native_host_q2_entity_visible_completed(qa_native_host *host,const qa_source_frame *frame,
+    uint32_t entity_slot,qa_actor_id entity,uint32_t viewer_slot,qa_actor_id viewer,
+    bool *out,qa_error *error)
+{
+    if(!completed_begin(host,frame,error))return false;
+    bool ok=qa_native_host_q2_entity_visible(host,entity_slot,entity,viewer_slot,viewer,out,error);
+    host->q2_observation_frame=NULL;return ok;
 }
 
 static bool character_returned(qa_native_host *host, qa_error *error)

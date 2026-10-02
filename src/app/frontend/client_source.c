@@ -26,6 +26,7 @@ struct frontend_client_source {
     bool restore_finished;
     bool release_programmes;
     bool imported_release_discarded;
+    bool restored_constructor, restored_retiring, imported_queue;
     const frontend_client_source_state *constructor_state;
 };
 static bool linked(const frontend_client_source *s)
@@ -328,6 +329,9 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     s->constructor_state=NULL;
     if (!ok) goto done;
     s->app_attached = true;
+    s->restored_constructor=state!=NULL;
+    s->restored_retiring=state&&state->retiring;
+    if(state) s->release_programmes=state->release_programmes;
     if(state&&state->retiring&&!qa_application_client_retirement_current(f->application,&s->application)) {
         frontend_fail(error,QA_ERROR_ARGUMENT,"Restored CLIENT retirement lacks its actual disconnect custody"); goto done;
     }
@@ -355,6 +359,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         ok=s->release_programmes?qa_console_release_save_restore(s->console,qa_application_session(f->application),resolvers,bytes,error):
             qa_console_save_restore(s->console,qa_application_session(f->application),resolvers,bytes,error);
         if(!ok) goto done;
+        s->imported_queue=true;
         ok=s->release_programmes?qa_console_release_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error):
             qa_console_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error);
         if(!ok) goto done;
@@ -537,6 +542,18 @@ bool frontend_client_sources_restore_discarded(const qa_frontend *f,
             return frontend_client_source_retirement_current(s,source,source->context.console,
                 &source->context.command,error);
     return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT candidate has no reached unclaimed release discard");
+}
+bool frontend_client_sources_restore_abort_ready(const qa_frontend *f,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if(f&&f->source_restoring&&source) for(const frontend_client_source *s=f->client_sources;s;s=s->next)
+        if(s->receiver==source->context.receiver&&s->options.metadata.seat==source->context.seat&&
+            !s->restore_finished&&s->restored_constructor&&s->restored_retiring&&
+            (s->release_programmes&&s->imported_queue?s->imported_release_discarded:
+                !qa_console_release_save_present(s->console)))
+            return frontend_client_source_retirement_current(s,source,source->context.console,
+                &source->context.command,error);
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT candidate has no actual unclaimed import abort receipt");
 }
 bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *error)
 {

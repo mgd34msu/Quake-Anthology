@@ -1382,7 +1382,7 @@ static bool resources_capture(qa_application_network_q2 *owner, bool retained, q
 {
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, owner->app->session, error)) return false;
-    uint32_t version = 11; size_t count = owner->held_resource_count;
+    uint32_t version = 12; size_t count = owner->held_resource_count;
     bool ok = qa_source_save_u32(&io, &version) && qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i) ok = (retained ? retained_derivation(owner, &owner->held_resources[i], error) :
         derivation_current(owner, &owner->held_resources[i], error)) &&
@@ -1403,7 +1403,7 @@ bool application_network_q2_resources_restore(qa_application_network_q2 *owner, 
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, owner->app->session, bytes, error)) return false;
     uint32_t version = 0; size_t count = 0;
-    bool ok = qa_source_save_u32(&io, &version) && version == 11 && qa_source_save_count(&io, &count, UINT32_MAX);
+    bool ok = qa_source_save_u32(&io, &version) && version == 12 && qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i) {
         application_q2_held_resource held = {0};
         ok = holder_fields(owner, &io, &held) && (owner->archival ? retained_derivation(owner, &held, error) :

@@ -43,4 +43,11 @@ bool qa_q3_assets_map_hold(qa_q3_presentation_assets *, qa_scene_world *,
     qa_collision_geometry *, qa_error *);
 size_t qa_q3_assets_map_count(const qa_q3_presentation_assets *);
 bool qa_q3_assets_map_at(const qa_q3_presentation_assets *, size_t, qa_q3_asset_map_custody *);
+/* Empty cold candidate only. Retains the literal already imported map roster
+ * before replacing constructor custody, preserving saved ordinal order. The
+ * current pair must match the actual constructor/prebound pair and appear in
+ * the roster when present. Failure leaves that candidate unchanged. */
+bool qa_q3_assets_prepare_restored_custody_maps(qa_q3_presentation_assets *,
+    const qa_q3_asset_map_custody *, size_t, qa_scene_world *,
+    qa_collision_geometry *, qa_error *);
 #endif

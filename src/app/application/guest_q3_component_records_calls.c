@@ -101,6 +101,7 @@ static bool commit(application_q3_component_records *r,const component_observati
             return qa_combat_set_health(r->options.combat,row->actor,health,e);
         }
         if(f->kind==COMPONENT_INVENTORY) {
+            if(r->options.inventory_write&&!r->options.inventory_write(r->options.context,row->actor,f->item,true,false,e)) return false;
             qa_inventory_entry entry;
             if(!qa_inventory_entry_read(r->options.inventory,row->actor,f->item,&entry,e)||!projected(r,row->actor)) return false;
             entry.count=value; return qa_inventory_configure(r->options.inventory,row->actor,&entry,NULL,NULL,e);

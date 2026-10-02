@@ -334,3 +334,29 @@ application Q2 frame publication. All checked translation units passed the
 actual strict production flags. This validates their compilation boundaries;
 no game, remote transfer, cold load, campaign or multiplayer execution was run
 in this worker.
+
+## Returned prepared Unified frames
+
+The actual Unified family leaves now retain their pending FRAME without executing
+prepare again during import: Q1 fields version 4, Q2 `QUQ34`, normalized Q3
+`QUQ35`, events `QUEV6`, and RR HUD fields version 2. They save the actual pending
+document and its prepared clock/receipt. Q1 and Q3 rebind their borrowed input
+pointer to the parent's decoded FRAME after comparing the complete encoded
+pending document; Q2 and events qualify their owned pending documents against
+that same parent. RR HUD retains its separate prepared document and clock.
+
+Their checkpoint predicates require returned callbacks while admitting the
+actual pending token. Ordinary idle predicates continue to reject preparation.
+QURP checkpoint and restored-session binding require the actual presentation
+`checkpoint_returned` callback; physical sampling remains subject to ordinary
+idle. A failed lower import aborts its pending token before checked destruction.
+The five changed family translation units and the QURP/Network graph callers
+passed the strict production compiler commands. Runtime pending-frame cold
+capture/publication has not been exercised by this worker.
+
+The actual Network import-abort dispatcher now resolves Q2 through its physical
+application Source association, its Network Q2 owner, and the separate retained
+Q2 Source receipt. Generic native sources retain their existing typed producer.
+Neutral pre-QINS cleanup calls that dispatcher. The Source receipt owner retains
+actual unfinished import and successful unclaimed-release discard facts; it
+makes no completed recipient or command-authority claim.

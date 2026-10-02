@@ -13,6 +13,7 @@ typedef struct remote_component_state {
     uint64_t owner_generation,generation,game_state_revision;
     int32_t command_sequence;
     qa_qvm_abi abi;
+    bool player_events;
     const qa_recipe_provider *provider_row;
     const qa_catalog_mod *mod;
     qa_q3_gamestate game_state;
@@ -28,6 +29,11 @@ typedef struct remote_component_frame {
     remote_component_state source;
     bool has_scene;
 } remote_component_frame;
+typedef struct remote_component_event {
+    application_q3_scene_player_event value;
+    uint64_t sequence;
+    struct remote_component_event *next;
+} remote_component_event;
 typedef struct remote_component_polygon_admission {
     uint32_t ordinal;
     bool reached,admitted,emitted;
@@ -71,6 +77,8 @@ typedef struct remote_component {
     uint64_t picture_sequence;
     size_t pictures_submitted;
     bool pictures_present;
+    remote_component_event *events;
+    uint64_t event_sequence;
     qa_q3_source_scene_bank *submission_bank;
     uint64_t submission_cycle;
     remote_component_packet_admission *admissions;

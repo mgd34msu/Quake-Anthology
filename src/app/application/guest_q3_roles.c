@@ -26,7 +26,11 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     if (!role || !role->engine || !role->engine->provider || !role->descriptor ||
         !descriptor || receiver != role->engine->provider->owner || service_owner != role->service_owner ||
         !qa_sha256_equal(&descriptor->identity, &role->descriptor->identity) ||
-        !role->artifact || !role->artifact->resource || !role->module)
+        descriptor->storage!=role->descriptor->storage || descriptor->content!=role->descriptor->content ||
+        !role->artifact || !role->artifact->resource || !role->module ||
+        role->artifact->module!=role->module || role->artifact->kind!=role->kind ||
+        role->artifact->view!=descriptor->content || !role->path || !role->artifact->path ||
+        strcmp(role->path,role->artifact->path))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 process lost its prepared role identity");
     return true;
 }

@@ -55,4 +55,6 @@ bool frontend_unified_q1_static_at(const frontend_unified_q1 *,size_t,size_t,uin
 bool frontend_unified_q1_checkpoint(frontend_unified_q1 *,const frontend_unified_q1_refs *,qa_buffer *,qa_error *);
 bool frontend_unified_q1_restore(qa_frontend *,frontend_remote_unified *,frontend_unified_media *,const frontend_unified_q1_options *,const frontend_unified_q1_refs *,qa_bytes,frontend_unified_q1 **,qa_error *);
 bool frontend_unified_q1_restore_finish(frontend_unified_q1 *,qa_error *);
+bool frontend_unified_q1_checkpoint_ready(const frontend_unified_q1 *);
+bool frontend_unified_q1_frame_restore_bind(frontend_unified_q1 *, const qa_unified_document *, qa_error *);
 #endif

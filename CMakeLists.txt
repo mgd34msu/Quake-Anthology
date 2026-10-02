@@ -1867,6 +1867,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_runtime_factory.c
     src/app/frontend/native_components.c
     src/app/frontend/unified_q3_video.c
+    src/app/frontend/cinematic_roles.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"

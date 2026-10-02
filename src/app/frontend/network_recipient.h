@@ -16,4 +16,6 @@ bool frontend_network_client_recipient_current(const qa_frontend *,uint32_t phys
     const frontend_network_client_recipient *);
 bool frontend_network_client_retirement_current(const qa_frontend *,
     const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
+bool frontend_network_client_restore_abort_ready(const qa_frontend *,
+    const qa_application_client_source *,qa_error *);
 #endif

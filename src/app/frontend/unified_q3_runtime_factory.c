@@ -2,6 +2,8 @@
 #include "unified_q3_runtime_factory.h"
 #include "music_sources.h"
 #include "system_cinematic.h"
+#include "material_movies.h"
+#include "cinematic_roles.h"
 #include "remote_unified_save.h"
 #include "qa/bsp.h"
 #include "qa/audio_save.h"
@@ -20,6 +22,7 @@ struct frontend_unified_q3_runtime_factory {
     char *source_instance,*source_content;
     qa_audio_bank *sounds;
     qa_media_library *movies;
+    qa_q3_cinematic_source *cinematics;
     qa_audio_music *music;
     char *intro,*loop;
     qa_audio_listener listener;
@@ -238,11 +241,14 @@ static bool movie_parent(frontend_unified_q3_runtime_factory *o,q3n_compiled_sou
 static bool movie_current(void *context,const frontend_system_cinematic_source *view)
 {
     frontend_unified_q3_runtime_factory *o=context;q3n_compiled_source_view source;
-    if(!view || !o || !o->movie_references || !movie_parent(o,&source))return false;
+    qa_q3_cinematic_source *cinematics=NULL;
+    if(!view || !o || !o->movie_references || !movie_parent(o,&source) ||
+        !frontend_unified_q3_runtime_factory_cinematic_read(o,&cinematics,NULL) || !cinematics)return false;
     const frontend_system_cinematic_identity *id=&view->identity;
     qa_cvars *vars=o->restoring || o->options.frontend->capture?frontend_unified_q3_client_checkpoint_cvars(o->options.client):
         frontend_unified_q3_client_cvars(o->options.client);
     return view->context==o && view->files==o->options.source.files && view->movies==o->movies && view->cvars==vars &&
+        view->cinematics==o->cinematics && o->cinematics &&
         id->source_group==o->options.receiver && id->source_owner==o->options.receiver &&
         id->service_owner==o->options.audio_owner && id->audio_bus==o->options.audio_owner &&
         id->role==QA_QVM_CGAME && id->physical_seat==source.basis.physical_seat && id->launch_seat==source.basis.seat;
@@ -263,7 +269,7 @@ static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime
     const q3n_compiled_source_view *source)
 { return (frontend_system_cinematic_source){.identity={o->options.receiver,o->options.audio_owner,o->options.audio_owner,
         (qa_actor_owner)o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
-    .files=o->options.source.files,.movies=o->movies,
+    .files=o->options.source.files,.movies=o->movies,.cinematics=o->cinematics,
     .cvars=o->restoring?frontend_unified_q3_client_checkpoint_cvars(o->options.client):frontend_unified_q3_client_cvars(o->options.client),
     .context=o,.current=movie_current,.append=movie_append,.release=movie_release}; }
 static bool movie_source_decode(void *context,const frontend_system_cinematic_identity *id,
@@ -296,6 +302,22 @@ static bool system_decode(void *context,qa_bytes bytes,uint32_t flags,qa_q3_syst
     return frontend_system_cinematic_restore(o->options.frontend,&refs,flags,bytes,out,e); }
 static void system_discard(void *context,qa_q3_system_movie *movie)
 { (void)context;frontend_system_cinematic_discard(movie); }
+bool frontend_unified_q3_runtime_factory_system_checkpoint(frontend_unified_q3_runtime_factory *o,
+    const qa_q3_movie_checkpoint_refs *refs,const qa_q3_system_movie *movie,uint32_t flags,qa_buffer *out,qa_error *e)
+{
+    if(!o || !refs || o->movie_refs || !frontend_unified_q3_runtime_factory_idle(o) ||
+        !o->options.frontend->capture || !o->options.current(o->options.context,&o->options,true))
+        return fail(e,"Global system movie capture lost its actual compiled role owner");
+    o->movie_refs=refs; bool okay=system_encode(o,movie,flags,out,e); o->movie_refs=NULL; return okay;
+}
+bool frontend_unified_q3_runtime_factory_system_restore(frontend_unified_q3_runtime_factory *o,
+    const qa_q3_movie_checkpoint_refs *refs,qa_bytes bytes,uint32_t flags,qa_q3_system_movie *out,qa_error *e)
+{
+    if(!o || !refs || o->movie_refs || !o->restoring || !o->options.frontend->source_restoring ||
+        !frontend_unified_q3_runtime_factory_idle(o) || !o->options.current(o->options.context,&o->options,true))
+        return fail(e,"Global system movie import lost its actual reconstructed compiled role");
+    o->movie_refs=refs; bool okay=system_decode(o,bytes,flags,out,e); o->movie_refs=NULL; return okay;
+}
 static qa_q3_movie_checkpoint_refs backend_refs(frontend_unified_q3_runtime_factory *o)
 { qa_q3_movie_checkpoint_refs refs=*o->movie_refs;refs.context=o;
     refs.asset_encode=movie_asset_encode;refs.asset_decode=movie_asset_decode;
@@ -344,8 +366,18 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
     for(size_t i=0;i<frontend_unified_media_bank_count(options->media);++i){frontend_unified_bank_view bank;
         if(!frontend_unified_media_bank_read(options->media,i,&bank))return fail(e,"Compiled factory media inventory lost an actual bank");
         if(bank.content && !strcmp(bank.content,options->source.content) && bank.files==options->source.files &&
-           bank.q3_assets==options->source.assets){o->sounds=bank.sounds;o->movies=bank.movies;break;}}
-    if(!o->sounds || !o->movies)return fail(e,"Compiled factory requires its already imported Source sound/movie bank");
+           bank.q3_assets==options->source.assets){
+            frontend_material_movies *provider=NULL; qa_q3_cinematic_source *parent=NULL;
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(options->replica);
+            o->sounds=bank.sounds;o->movies=bank.movies;
+            if(!domain || bank.cinematic_seat!=domain->physical_seat || !bank.cinematic_audio_owner)
+                return fail(e,"Compiled cinematic role has no actual physical bank namespace");
+            if(!frontend_material_movies_library_owner(bank.materials,&provider,e) ||
+                !frontend_material_movies_cinematic_read(provider,&parent,e) || !parent ||
+                !qa_q3_cinematic_source_create_role(parent,bank.cinematic_seat,options->audio_owner,&o->cinematics,e)) return false;
+            break;
+        }}
+    if(!o->sounds || !o->movies || !o->cinematics)return fail(e,"Compiled factory requires its already imported Source sound/movie and numeric role bank");
     frontend_unified_q3_runtime_options operations={.frontend=options->frontend,.replica=options->replica,.client=options->client,
         .scene_only=!options->primary_view,
         .context=o,.current=operation_current,.trace_number=trace_number,.command_values=command_values,.timescale=timescale,
@@ -353,6 +385,7 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
     operations.weapons.context=options->context;operations.weapons.view_replacement=options->view_replacement;
     operations.presentation.context=o;operations.presentation.music=music;operations.presentation.listener=listener;
     operations.presentation.system_movie=system_movie;
+    operations.presentation.cinematics=o->cinematics;
     operations.presentation.near_clip=4;operations.presentation.far_clip=8192;operations.presentation.identity_light=1;
     operations.presentation.lod_scale=5;operations.presentation.rail_core_width=6;operations.presentation.rail_ring_width=16;
     operations.presentation.rail_segment_length=32;
@@ -388,7 +421,7 @@ static bool constructor_closed(const void *context)
 {
     const frontend_unified_q3_runtime_factory *o=context;
     return o && o->reset_constructor && o->retiring && !o->cleanup_entered &&
-        !o->runtime && !o->commands && !o->services && !o->movie_references && !o->calls &&
+        !o->runtime && !o->commands && !o->services && !o->cinematics && !o->movie_references && !o->calls &&
         !o->intro && !o->loop &&
         !qa_audio_engine_bus_music(o->options.frontend->audio,o->options.audio_owner);
 }
@@ -406,6 +439,9 @@ bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_fac
     o->cleanup_entered=false;
     if(!okay)return false;
     if(o->movie_references)return fail(e,"Compiled factory retirement still retains actual movie role leases");
+    if(!o->options.frontend->source_restoring &&
+        !frontend_cinematic_roles_adopt(o->options.frontend,&o->cinematics,NULL,e)) return false;
+    if(!qa_q3_cinematic_source_destroy(&o->cinematics,e)) return false;
     if(!frontend_unified_q3_runtime_services_destroy(&o->services,e))return false;
     if(o->reset_constructor && !frontend_unified_q3_client_constructor_reset(o->options.client,o,constructor_closed,e))return false;
     qa_audio_music_release(o->music);free(o->intro);free(o->loop);
@@ -424,6 +460,24 @@ bool frontend_unified_q3_runtime_factory_constructor_abort(frontend_unified_q3_r
 }
 frontend_unified_q3_runtime *frontend_unified_q3_runtime_factory_runtime(const frontend_unified_q3_runtime_factory *o)
 { return o?o->runtime:NULL; }
+bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q3_runtime_factory *o,
+    qa_q3_cinematic_source **out,qa_error *e)
+{
+    if(!o || !out || !o->options.frontend || !o->options.client || !o->options.media || !o->movies)
+        return fail(e,"Compiled cinematic read lost its actual retained factory");
+    if(o->cinematics) {
+        const qa_q3_cinematic_source *parent=NULL; uint32_t seat=0; uint64_t bus=0;
+        qa_q3_cinematic_source_options source;
+        const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->options.replica);
+        if(!domain || !qa_q3_cinematic_source_role_read(o->cinematics,&parent,&seat,&bus) || !parent ||
+            !qa_q3_cinematic_source_read(o->cinematics,&source) || source.files!=o->options.source.files ||
+            source.media!=o->movies || source.audio!=o->options.frontend->audio ||
+            seat!=domain->physical_seat || bus!=o->options.audio_owner ||
+            qa_q3_cinematic_source_handles(o->cinematics)!=o->options.frontend->source_cinematics)
+            return fail(e,"Compiled cinematic role leaves its true provider, seat or bus");
+    }
+    *out=o->cinematics; return true;
+}
 bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3_runtime_factory *o,
     frontend_unified_q3_runtime_factory_topology *out,qa_error *e)
 {
@@ -433,7 +487,7 @@ bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3
        !frontend_unified_q3_client_checkpoint_current(o->options.client))
         return fail(e,"Compiled topology requires its actual returned Source capture parent");
     frontend_unified_q3_runtime_factory_topology value={.services=o->services,.commands=o->commands,
-        .music=o->music,.receiver=o->options.receiver,.audio_owner=o->options.audio_owner};
+        .music=o->music,.cinematics=o->cinematics,.receiver=o->options.receiver,.audio_owner=o->options.audio_owner};
     if(o->runtime) {
         if(!frontend_unified_q3_runtime_owners_read(o->runtime,&value.children,e))return false;
     } else if(o->services && !frontend_unified_q3_runtime_services_caches(o->services,

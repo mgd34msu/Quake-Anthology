@@ -30,7 +30,7 @@ static bool posture(void *context,qa_actor_id actor,qa_bounds *bounds,double *he
     } else *ground=control.ground.hit!=QA_TRACE_HIT_NONE?1022:1023;
     return q3component_current(c,e);
 }
-static bool pickup_write(void *context,qa_actor_id actor,qa_item_id item,bool count,bool capacity,qa_error *e)
+bool q3component_pickup_write(void *context,qa_actor_id actor,qa_item_id item,bool count,bool capacity,qa_error *e)
 {
     application_q3_component *c=context;
     const qa_pickup_execution *execution=NULL; bool found=false;
@@ -115,7 +115,7 @@ bool q3component_items_create(application_q3_component *c,qa_error *e)
     if(!c->items_profile) return true;
     if(!c->options.application)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Declared component items require their actual application weapon controller");
-    application_q3_mod_items_services services={.context=c,.selected=selected,.posture=posture,.pickup_write=pickup_write,
+    application_q3_mod_items_services services={.context=c,.selected=selected,.posture=posture,.pickup_write=q3component_pickup_write,
         .weapon_bind=weapon_bind,.weapon_unbind=weapon_unbind,.weapon_current=weapon_bound};
     return application_q3_mod_items_create(c->items_profile,c->mod,c->options.inventory,&services,&c->items,e);
 }

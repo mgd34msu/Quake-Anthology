@@ -26,6 +26,8 @@ typedef struct frontend_unified_bank_view {
     qa_audio_bank *sounds;
     qa_q3_presentation_assets *q3_assets;
     qa_media_library *movies;
+    uint32_t cinematic_seat;
+    uint64_t cinematic_audio_owner;
 } frontend_unified_bank_view;
 typedef struct frontend_unified_model_view {
     size_t bank;
@@ -46,7 +48,7 @@ size_t frontend_unified_media_model_count(const frontend_unified_media *);
 bool frontend_unified_media_model_read(const frontend_unified_media *, size_t, frontend_unified_model_view *);
 qa_executable_recipe *frontend_unified_media_recipe(const frontend_unified_media *);
 bool frontend_unified_media_importing(const frontend_unified_media *);
-bool frontend_unified_media_create(qa_frontend *, qa_executable_recipe *,
+bool frontend_unified_media_create(qa_frontend *, qa_executable_recipe *, uint32_t physical_seat,
     frontend_unified_media **, qa_error *);
 /* Each content row borrows the admitted product lookup policy; children are
  * real private media owners, independent of the local Source scene. */

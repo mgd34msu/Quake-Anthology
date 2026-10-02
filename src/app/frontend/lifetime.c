@@ -2,6 +2,7 @@
 #include "component_scene.h"
 #include "visual_access.h"
 #include "source_cinematics.h"
+#include "cinematic_roles.h"
 #include "renderer_registries.h"
 #include "client_source.h"
 #include "root_resources.h"
@@ -711,7 +712,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_q3_source_color_retire(frontend,error)) return false;
     qa_cpu_destroy(frontend->cpu); frontend->cpu=NULL;
     qa_gl_destroy(frontend->gl); frontend->gl=NULL;
-    if (!frontend_renderer_registries_destroy(&frontend->renderer_registries,error) ||
+    if (!frontend_cinematic_roles_destroy(frontend,error) ||
+        !frontend_renderer_registries_destroy(&frontend->renderer_registries,error) ||
         !frontend_renderer_worlds_destroy(&frontend->renderer_worlds,error) ||
         !frontend_renderer_materials_destroy(&frontend->renderer_materials,error)) return false;
     if (!frontend_source_cinematics_destroy(frontend,error)) return false;

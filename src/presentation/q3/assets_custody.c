@@ -221,3 +221,40 @@ bool qa_q3_assets_map_at(const qa_q3_presentation_assets *assets, size_t index, 
         if (!index--) { *out = row->value; return true; }
     return false;
 }
+bool qa_q3_assets_prepare_restored_custody_maps(qa_q3_presentation_assets *assets,
+    const qa_q3_asset_map_custody *maps, size_t count, qa_scene_world *world,
+    qa_collision_geometry *geometry, qa_error *error)
+{
+    if (!assets || !assets->users || assets->busy || assets->capturing || assets->codec_busy ||
+        assets->name_count || assets->name_capacity || assets->model_count || assets->model_capacity ||
+        assets->skin_count || assets->skin_capacity || assets->shader_count || assets->shader_capacity ||
+        assets->sound_count || assets->sound_capacity || (count && !maps) ||
+        count > SIZE_MAX / sizeof(*maps) || (!world != !geometry) ||
+        assets->world != world || assets->geometry != geometry)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 map custody import requires its actual empty prebound registry");
+    for (const q3p_map_custody *row = assets->maps; row; row = row->next)
+        if (!qa_scene_world_idle(row->value.world))
+            return q3p_fail(error, QA_ERROR_ARGUMENT, "Constructor map custody remains entered during import");
+    bool current = world == NULL;
+    for (size_t i = 0; i < count; ++i) {
+        if (!maps[i].world || !maps[i].geometry || !qa_scene_world_observation_ready(maps[i].world) ||
+            maps[i].resource != qa_scene_world_source_resource_read(maps[i].world))
+            return q3p_fail(error, QA_ERROR_FORMAT, "Saved map custody lacks its actual imported world source");
+        for (size_t j = 0; j < i; ++j)
+            if (maps[i].world == maps[j].world && maps[i].geometry == maps[j].geometry)
+                return q3p_fail(error, QA_ERROR_FORMAT, "Saved map custody repeats a physical pair");
+        if (maps[i].world == world && maps[i].geometry == geometry) current = true;
+    }
+    if (!current)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Saved map custody omits its actual current pair");
+    qa_q3_presentation_assets prepared = {.options = assets->options};
+    for (size_t i = 0; i < count; ++i) {
+        if (!qa_q3_assets_map_hold(&prepared, maps[i].world, maps[i].geometry, error)) {
+            q3p_provider_custody_release(&prepared); return false;
+        }
+    }
+    q3p_map_custody *previous = assets->maps;
+    assets->maps = prepared.maps; prepared.maps = previous;
+    q3p_provider_custody_release(&prepared);
+    return true;
+}

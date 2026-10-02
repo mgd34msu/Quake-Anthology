@@ -376,6 +376,17 @@ bool q3n_mission_hud_rebind_prepare(q3n_mission_hud *o,const q3n_compiled_source
 bool q3n_mission_hud_rebind_ready(const q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
 { return o && !o->busy && o->rebind==t && t &&
     q3n_compiled_source_rebind_context_is(t,o->options.compiled_source,&o->options.compiled_context,&o->rebound_context); }
+bool q3n_mission_hud_rebind_checkpoint_current(const q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
+{ return o && !o->busy && t && o->rebind==t && q3n_compiled_source_rebind_checkpoint_context_is(
+    t,o->options.compiled_source,&o->options.compiled_context,&o->rebound_context); }
+bool q3n_mission_hud_rebind_restore(q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t,
+    const qa_command_context *context,qa_error *e)
+{
+    if(!q3n_mission_hud_idle(o) || !context || !q3n_compiled_source_rebind_checkpoint_context_is(
+        t,o->options.compiled_source,&o->options.compiled_context,context))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission imported round requires its actual CLIENT checkpoint context");
+    o->rebound_context=*context;o->rebind=t;return true;
+}
 void q3n_mission_hud_rebind_commit(q3n_mission_hud *o,const q3n_compiled_source_rebind_ticket *t)
 { if(o && t && o->rebind==t) { o->options.compiled_context=o->rebound_context;
     o->rebound_context=(qa_command_context){0}; o->rebind=NULL; } }

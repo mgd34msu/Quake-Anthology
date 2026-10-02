@@ -9,6 +9,7 @@
 #include "q3_color_policy.h"
 #include "music_sources.h"
 #include "material_movies.h"
+#include "cinematic_roles.h"
 #include "qa/audio_music_prepare.h"
 #include "qa/catalog.h"
 #include "qa/catalog_write.h"
@@ -712,6 +713,7 @@ static bool dispose_lease(remote_module_lease *lease, qa_error *error)
     lease->equipment = NULL;
     if (lease->presentation && !qa_q3_presentation_destroy(lease->presentation, error)) return false;
     lease->presentation = NULL;
+    if (!frontend_cinematic_roles_adopt(f, &lease->cinematics, lease, error)) return false;
     if (!qa_q3_cinematic_source_destroy(&lease->cinematics, error)) return false;
     if (lease->movie_references)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module retirement retains a system cinematic source lease");

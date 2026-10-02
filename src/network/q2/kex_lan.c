@@ -369,7 +369,8 @@ static bool join(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e) {
     if(r.failed||first>255||first+l->options.local_players>255)return qa_net_reader_fail(&r,"Invalid KEX local player index");
     size_t minimum=(size_t)first+l->options.local_players,count=0;
     uint64_t ids[255];
-    while(count<minimum) {
+    while(qa_net_reader_remaining(&r)) {
+        if(count==255)return qa_net_reader_fail(&r,"KEX received roster exceeds capacity");
         ids[count]=qa_kex_read_varint(&r);
         if(r.failed)return false;
         if(!ids[count])return qa_net_reader_fail(&r,"Invalid KEX player identity");

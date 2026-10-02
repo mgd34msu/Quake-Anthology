@@ -199,7 +199,7 @@ static bool call_list(application_q3_scene *s, const q3scene_calls *list, qa_err
             case Q3SCENE_LITERAL: args[j]=a->word; break;
             case Q3SCENE_CLIENT: args[j]=s->context.client_number; break;
             case Q3SCENE_TIME: args[j]=s->context.time_ms; break;
-            case Q3SCENE_SNAPSHOT: args[j]=s->snapshot_number?s->snapshot_number-1:0; break;
+            case Q3SCENE_SNAPSHOT: args[j]=s->options.profile->player_events?0:s->snapshot_number?s->snapshot_number-1:0; break;
             case Q3SCENE_COMMAND_SEQUENCE: args[j]=s->options.profile->player_events?0:s->context.snapshot->server_command_number; break;
             case Q3SCENE_PLAYER_STATE: args[j]=(int32_t)s->options.profile->player_state; break;
             case Q3SCENE_SNAPSHOT_ADDRESS: args[j]=(int32_t)s->options.profile->snapshot_address; break;
@@ -338,6 +338,7 @@ bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
     }
     bool changed;
     if (ok) { s->revision=s->context.game_state_revision; ok=p->player_events||store(s,p->command_sequence,s->context.snapshot->server_command_number,e); }
+    if (ok&&p->player_events) ok=accept(s,false,&changed,e);
     if (ok&&s->context.baseline&&!p->player_events) {
         ok=accept(s,true,&changed,e);
         if(ok) { s->restoring_scene=true; ok=call_list(s,&p->snapshots,e); s->restoring_scene=false; }
@@ -367,7 +368,7 @@ bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa
 }
 bool application_q3_scene_consume(application_q3_scene *s,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
 {
-    if(!s||!event||!s->options.profile->player_events||!s->initialized||!application_q3_scene_idle(s)||!sequence||s->restoring)
+    if(!s||!event||!s->options.profile->player_events||!s->initialized||s->failed||!application_q3_scene_idle(s)||!sequence||s->restoring)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event requires its initialized returned CG owner");
     if(sequence<=s->event_sequence) return true;
     const application_q3_scene_profile *p=s->options.profile; int32_t slot=event->player.clientNum;
@@ -375,7 +376,7 @@ bool application_q3_scene_consume(application_q3_scene *s,const application_q3_s
     if(!s->options.source.live(s->options.source.context,event->actor)) { s->event_sequence=sequence; return true; }
     qa_actor_id actor_id; bool owned,found;
     if(!s->options.source.actor(s->options.source.context,(uint32_t)slot,&actor_id,&owned,&found,e)) return false;
-    if(!found||!qa_actor_id_equal(actor_id,event->actor)) return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event changed its actual Source slot");
+    if(!found||!qa_actor_id_equal(actor_id,event->actor)) { s->event_sequence=sequence; return true; }
     s->event_sequence=sequence; s->busy=true; s->active_event=event;
     bool ok=acquire(s,false,e); uint32_t entity=p->entities+(uint32_t)slot*p->stride;
     if(ok&&!qa_actor_id_equal(s->players[slot],event->actor)) {

@@ -30,6 +30,7 @@ typedef struct application_native_q3_source_command_scope {
 bool application_native_q3_source_command_begin(application_provider *,qa_actor_id,
     const qa_command_invocation *,application_native_q3_source_command_scope *,qa_error *);
 bool application_native_q3_source_command_entered(const application_provider *);
+bool application_native_q3_source_command_actor_current(const application_provider *,qa_actor_id);
 bool application_native_q3_source_command_end(application_native_q3_source_command_scope *,qa_error *);
 
 #endif

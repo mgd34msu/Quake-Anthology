@@ -208,6 +208,7 @@ bool qa_server_browser_master_udp(qa_server_browser *browser, const qa_net_addre
     browser->callback = true;
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     browser->callback = false; if (!ok) return false;
+    qa_server_browser_cancel_master(browser);
     browser->master = *address; browser->master_protocol = protocol;
     browser->q3->master_source = -1; browser->q3->master_received = false;
     browser->master_sent = now; browser->master_timeout = timeout; browser->master_pending = true; return true;

@@ -232,13 +232,15 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
     const frontend_unified_media_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t version = 2;
+    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t version = 3;
+    uint32_t seat = owner->physical_seat;
     uint64_t physical = refs->owner, world = reading ? 0 : owner->saved_world;
     size_t banks = reading ? 0 : frontend_unified_media_bank_count(owner);
     size_t world_bank = reading ? 0 : bank_index(owner, owner->world_bank);
     if (!reading && !frontend_world_encode(refs->roots, owner->world, &world, io->error)) return false;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUMD", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 2 || !qa_source_save_u64(io, &physical) ||
+        !qa_source_save_u32(io, &version) || version != 3 || !qa_source_save_u32(io, &seat) ||
+        seat != owner->physical_seat || seat >= owner->frontend->options.seats || !qa_source_save_u64(io, &physical) ||
         physical != refs->owner || !physical || !qa_source_save_count(io, &banks, UINT32_MAX - 1) ||
         !banks || (reading && banks > (io->input.size - io->offset) / 22) ||
         !qa_source_save_count(io, &world_bank, banks - 1) || !qa_source_save_u64(io, &world) || !world) return false;
@@ -250,16 +252,21 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
         if (reading) { *tail = row; tail = &row->next; }
         uint64_t view = reading ? 0 : qa_application_content_view_id(refs->content, row->files);
         uint32_t product = reading ? 0 : row->product->id;
-        bool assets = row->q3_assets != NULL, map = false, movies = row->media != NULL;
+        bool assets = row->q3_assets != NULL, map = false, movies = row->media != NULL,
+            cinematic_audio = row->cinematic_audio_owner != 0;
         qa_buffer state = {0};
         if (!frontend_save_text(io, &row->content) || !row->content || !*row->content ||
             !qa_source_save_u64(io, &view) || !view || !qa_source_save_u32(io, &product) ||
-            !qa_source_save_bool(io, &assets) || !qa_source_save_bool(io, &movies)) return false;
+            !qa_source_save_bool(io, &assets) || !qa_source_save_bool(io, &movies) ||
+            !qa_source_save_bool(io, &cinematic_audio)) return false;
         qa_vfs *admitted = NULL; const qa_product *selected = NULL;
         if (!qa_executable_recipe_content_read(owner->recipe, row->content, &admitted, &selected) ||
-            selected->id != product || admitted != qa_application_content_view(refs->content, view)) return false;
+            selected->id != product || admitted != qa_application_content_view(refs->content, view) ||
+            cinematic_audio != (selected->family == QA_GAME_Q3)) return false;
         if (reading) {
             row->files = admitted; row->product = selected;
+            if (cinematic_audio && !frontend_source_identity_allocate(owner->frontend,
+                &row->cinematic_audio_owner, io->error)) return false;
             row->images = qa_scene_resources_create_detached(admitted, io->error);
             if (row->images) row->materials = qa_material_library_create_detached(row->images, io->error);
             if (row->materials) row->fonts = qa_font_library_create(admitted, row->images, io->error);
@@ -273,7 +280,13 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
             }
             for (unified_media_bank *prior = owner->banks; prior != row; prior = prior->next)
                 if (!strcmp(prior->content, row->content)) return false;
-        } else if (admitted != row->files || selected != row->product) return false;
+        } else {
+            uint32_t actual_seat = 0; uint64_t actual_bus = 0; bool actual_present = false;
+            if (admitted != row->files || selected != row->product ||
+                !frontend_unified_material_cinematic_namespace_read(owner, i, &actual_seat,
+                    &actual_bus, &actual_present, io->error) || actual_seat != seat ||
+                actual_present != cinematic_audio || actual_bus != row->cinematic_audio_owner) return false;
+        }
         if (assets && !reading) {
             qa_q3_presentation_asset_options services; qa_scene_world *bound_world = NULL;
             qa_collision_geometry *geometry = NULL; asset_scope scope = {owner, refs, row, i};
@@ -345,7 +358,8 @@ bool frontend_unified_media_checkpoint(frontend_unified_media *owner,
     for (unified_media_bank *row = owner->banks; row; row = row->next)
         if (row->constructing || row->construction_failed || !row->content || !row->product || !row->files ||
             !row->images || !row->materials || !row->fonts || !row->sounds ||
-            (row->media != NULL) != (row->shader_movies != NULL))
+            (row->media != NULL) != (row->shader_movies != NULL) ||
+            ((row->product->family == QA_GAME_Q3) != (row->cinematic_audio_owner != 0)))
             return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media capture retains an unfinished real content bank");
     qa_source_save_io io = {0}; owner->busy = true;
     bool okay = qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
@@ -354,15 +368,16 @@ bool frontend_unified_media_checkpoint(frontend_unified_media *owner,
     if (!okay && (!error || error->code == QA_OK)) fail(error, "Invalid Unified media ownership graph");
     return okay;
 }
-bool frontend_unified_media_restore_prepare(qa_frontend *frontend, qa_executable_recipe *recipe,
+bool frontend_unified_media_restore_prepare(qa_frontend *frontend, qa_executable_recipe *recipe, uint32_t physical_seat,
     const frontend_unified_media_refs *refs, qa_bytes bytes, frontend_unified_media **out, qa_error *error)
 {
-    if (!frontend || !frontend->source_restoring || !recipe || !refs || !refs->content || !refs->owner ||
+    if (!frontend || !frontend->source_restoring || physical_seat >= frontend->options.seats ||
+        !recipe || !refs || !refs->content || !refs->owner ||
         !out || *out || !qa_executable_recipe_current(recipe, qa_executable_recipe_catalog(recipe)))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media import needs its actual restored recipe prefix");
     frontend_unified_media *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Restoring Unified media ownership");
-    owner->frontend = frontend; owner->recipe = recipe; owner->importing = true;
+    owner->frontend = frontend; owner->recipe = recipe; owner->physical_seat = physical_seat; owner->importing = true;
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         fields(&io, owner, refs) && qa_source_save_finish(&io, NULL);

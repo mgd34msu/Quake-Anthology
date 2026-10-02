@@ -54,6 +54,9 @@ typedef struct frontend_remote_unified_consumers {
     bool (*sample)(void *, frontend_remote_unified *, uint64_t, qa_error *);
     bool (*draw)(void *, frontend_remote_unified *, float, qa_audio_listener *, qa_error *);
     bool (*idle)(void *, const frontend_remote_unified *);
+    /* Returned callback custody with exact retained receive-stage tokens.
+     * Ordinary input/draw admission continues to use idle. */
+    bool (*checkpoint_returned)(void *, const frontend_remote_unified *);
     bool (*close)(void *, frontend_remote_unified *, qa_error *);
     bool (*content_visit)(void *, const frontend_remote_unified *,
         const qa_application_content_visitor *, qa_error *);
@@ -130,6 +133,7 @@ bool frontend_remote_unified_clock_read(const frontend_remote_unified *,frontend
 bool frontend_remote_unified_draw(qa_frontend *, uint32_t physical_seat, float stereo,
     qa_audio_listener *, bool *rendered, qa_error *);
 bool frontend_remote_unified_idle(const qa_frontend *);
+bool frontend_remote_unified_checkpoint_returned(const qa_frontend *);
 /* Used only after the actual lower candidate/exchange retirement removed
  * callback custody. It does not disconnect a transferred Source player. */
 bool frontend_remote_unified_transport_retired(frontend_remote_unified *,

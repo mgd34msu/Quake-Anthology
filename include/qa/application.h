@@ -22,6 +22,8 @@
 #include "qa/session.h"
 #include "qa/scene.h"
 
+enum { QA_APPLICATION_RESOURCE_KEY_CAPACITY = sizeof("resource:unified:") + 64 };
+
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
@@ -142,7 +144,7 @@ typedef struct qa_application_protocol_resource_reference {
     const char *name;
     /* Prior real Source precache registration. Empty retains an unresolved
      * Source spelling, including sexed sounds and known missing resources. */
-    char resource_key[81];
+    char resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     uint64_t resource_custody; /* Exact retained opening within this immutable key. */
 } qa_application_protocol_resource_reference;
 typedef struct qa_application_protocol_event {

@@ -137,4 +137,6 @@ bool frontend_remote_q2_source_commands_capture(const frontend_remote_q2_source 
 bool frontend_remote_q2_source_commands_restore(frontend_remote_q2_source *, qa_application *,
     const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
 bool frontend_remote_q2_source_finish_restore(frontend_remote_q2_source *, qa_error *);
+bool frontend_remote_q2_source_restore_abort_ready(const frontend_remote_q2_source *,
+    const qa_application_client_source *,qa_error *);
 #endif

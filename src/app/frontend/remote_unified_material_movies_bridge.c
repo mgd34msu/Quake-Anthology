@@ -2,6 +2,7 @@
 #include "remote_unified_media_private.h"
 #include "remote_unified_private.h"
 #include "renderer_materials.h"
+#include "source_cinematics.h"
 #include "qa/media_library_prepare.h"
 #include "qa/media_library_save.h"
 #include "qa/material_library_save.h"
@@ -60,8 +61,28 @@ bool frontend_unified_material_movies_create(frontend_unified_media *owner, size
     row->media = qa_media_library_create(row->images, error);
     if (!row->media) return false;
     frontend_material_movie_source source;
-    return frontend_unified_material_movie_source_read(owner, ordinal, &source, error) &&
-        frontend_material_movies_create(&source, &row->shader_movies, error);
+    if (!frontend_unified_material_movie_source_read(owner, ordinal, &source, error) ||
+        !frontend_material_movies_create(&source, &row->shader_movies, error)) return false;
+    if (row->product->family == QA_GAME_Q3)
+        return row->cinematic_audio_owner && owner->physical_seat < owner->frontend->options.seats &&
+            frontend_source_cinematics_ensure(owner->frontend, row->images, error) &&
+            frontend_material_movies_cinematic_attach(row->shader_movies, owner->frontend->source_cinematics,
+                owner->physical_seat, row->cinematic_audio_owner, error);
+    return true;
+}
+bool frontend_unified_material_cinematic_namespace_read(const frontend_unified_media *owner, size_t ordinal,
+    uint32_t *seat, uint64_t *bus, bool *present, qa_error *error)
+{
+    const unified_media_bank *row = bank_at(owner, ordinal);
+    qa_vfs *files = NULL; const qa_product *product = NULL;
+    if (!owner || !owner->frontend || !row || !row->product || !seat || !bus || !present ||
+        owner->physical_seat >= owner->frontend->options.seats || !row->content ||
+        !qa_executable_recipe_content_read(owner->recipe, row->content, &files, &product) ||
+        files != row->files || product != row->product ||
+        ((row->product->family == QA_GAME_Q3) != (row->cinematic_audio_owner != 0)))
+        return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified cinematic namespace lost its real bank topology");
+    *present = row->cinematic_audio_owner != 0;
+    *seat = owner->physical_seat; *bus = row->cinematic_audio_owner; return true;
 }
 bool frontend_unified_material_movies_prepare_restored(frontend_unified_media *owner, size_t ordinal, qa_error *error)
 {
@@ -106,12 +127,18 @@ bool frontend_unified_material_movies_restore_ready(frontend_unified_media *owne
         }
         frontend_material_movie_source source, expected = source_view(owner, row);
         frontend_material_movies *installed = NULL;
+        uint32_t cinematic_seat = 0; uint64_t cinematic_bus = 0; bool numeric = false;
         if (!shader_movies_current(owner, &expected) ||
             !frontend_material_movies_library_owner(row->materials, &installed, error) || installed != row->shader_movies ||
             !frontend_material_movies_source_read(row->shader_movies, &source, error) ||
             source.frontend != owner->frontend || source.files != row->files || source.images != row->images ||
             source.materials != row->materials || source.media != row->media || source.context != owner ||
-            source.current != shader_movies_current || !frontend_material_movies_publish_ready(row->shader_movies, error))
+            source.current != shader_movies_current ||
+            !frontend_material_movies_cinematic_namespace_read(row->shader_movies,
+                &cinematic_seat, &cinematic_bus, &numeric, error) ||
+            numeric != (row->product->family == QA_GAME_Q3) ||
+            (numeric && (cinematic_seat != owner->physical_seat || cinematic_bus != row->cinematic_audio_owner)) ||
+            !frontend_material_movies_publish_ready(row->shader_movies, error))
             return (error && error->code != QA_OK) ? false :
                 frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified movie import leaves its retained cache, library or playback dictionary");
     }

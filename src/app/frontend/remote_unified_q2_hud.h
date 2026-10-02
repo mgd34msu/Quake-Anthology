@@ -32,4 +32,5 @@ bool frontend_unified_q2_rr_checkpoint(frontend_unified_q2_rr_hud *,
 bool frontend_unified_q2_rr_restore(qa_frontend *, frontend_remote_unified *,
     frontend_unified_media *, frontend_unified_events *, const frontend_unified_q2_refs *,
     qa_bytes, frontend_unified_q2_rr_hud **, qa_error *);
+bool frontend_unified_q2_rr_checkpoint_ready(const frontend_unified_q2_rr_hud *);
 #endif

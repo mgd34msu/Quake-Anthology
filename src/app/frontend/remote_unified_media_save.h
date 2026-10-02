@@ -22,7 +22,7 @@ bool frontend_unified_media_checkpoint(frontend_unified_media *,
 /* Actual recipe catalog/views/resource holders precede this prefix. It creates
  * empty detached bank owners only; no product open, resource lookup, parser,
  * script load, image policy producer or Source constructor is replayed. */
-bool frontend_unified_media_restore_prepare(qa_frontend *, qa_executable_recipe *,
+bool frontend_unified_media_restore_prepare(qa_frontend *, qa_executable_recipe *, uint32_t physical_seat,
     const frontend_unified_media_refs *, qa_bytes, frontend_unified_media **, qa_error *);
 /* Complete imported models and QWON/QMON roots precede attachment. All unique
  * destructor edges qualify before any no-fail ownership transfer. */

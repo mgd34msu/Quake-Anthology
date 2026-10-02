@@ -81,7 +81,8 @@ bool q3n_compiled_source_current(const q3n_compiled_source_view *v)
 }
 bool q3n_compiled_source_checkpoint_read(const q3n_compiled_source *s,q3n_compiled_source_view *out,qa_error *e)
 {
-    if(!s || !out || s->prepared)return fail(e,"Compiled checkpoint needs its returned retained source owner");
+    if(!s || !out || (s->prepared && !q3n_compiled_source_rebind_checkpoint_current(s->prepared)))
+        return fail(e,"Compiled checkpoint needs its actual retained source or exact prepared rebind");
     if(!s->options.checkpoint_read)return q3n_compiled_source_read(s,out,e);
     q3n_compiled_source_basis b={0};
     if(!s->options.checkpoint_read(s->options.context,&b,e)||!shape_fields(&b)||!identity(&s->constructor,&b)||
@@ -123,6 +124,40 @@ static bool round_candidate(const q3n_compiled_source_basis *before,const q3n_co
     expected.viewer=candidate->viewer; expected.snapshot_bit=candidate->snapshot_bit;
     return identity(&expected,candidate);
 }
+bool q3n_compiled_source_rebind_checkpoint_current(const q3n_compiled_source_rebind_ticket *t)
+{
+    const q3n_compiled_source *s = t ? t->source : NULL;
+    if (!s || s->prepared != t || !s->options.checkpoint_read || !s->options.checkpoint_current ||
+        t->before.owner != s || !identity(&s->constructor,&t->before.basis) ||
+        !shape_fields(&t->candidate) || !s->options.actor_known(s->options.context,t->candidate.viewer) ||
+        t->candidate.snapshot_bit == t->before.basis.snapshot_bit ||
+        t->candidate.reached_command < t->before.basis.reached_command ||
+        t->candidate.initialized != t->before.basis.initialized) return false;
+    q3n_compiled_source_basis actual = {0}, expected = t->before.basis;
+    expected.viewer = t->candidate.viewer; expected.snapshot_bit = t->candidate.snapshot_bit;
+    return identity(&expected,&t->candidate) &&
+        s->options.checkpoint_read(s->options.context,&actual,NULL) && identity(&actual,&t->before.basis) &&
+        actual.serial == t->before.basis.serial && actual.time == t->before.basis.time &&
+        actual.game_type == t->before.basis.game_type && actual.max_clients == t->before.basis.max_clients &&
+        actual.level_start_time == t->before.basis.level_start_time &&
+        actual.reached_command == t->before.basis.reached_command && actual.initialized == t->before.basis.initialized &&
+        s->options.checkpoint_current(s->options.context,&t->before.basis) &&
+        s->options.checkpoint_current(s->options.context,&t->candidate);
+}
+bool q3n_compiled_source_rebind_restore(q3n_compiled_source *s,const q3n_compiled_source_basis *candidate,
+    q3n_compiled_source_rebind_ticket **out,qa_error *e)
+{
+    if (!s || s->prepared || !candidate || !out || *out)
+        return fail(e,"Compiled rebind import requires an empty actual Source adapter");
+    q3n_compiled_source_view before;
+    if (!q3n_compiled_source_checkpoint_read(s,&before,e)) return false;
+    q3n_compiled_source_rebind_ticket *t = calloc(1,sizeof(*t));
+    if (!t) { qa_error_set(e,QA_ERROR_MEMORY,0,"Restoring compiled round rebind"); return false; }
+    t->source = s; t->before = before; t->candidate = *candidate; s->prepared = t;
+    if (!q3n_compiled_source_rebind_checkpoint_current(t)) { s->prepared = NULL; free(t);
+        return fail(e,"Compiled rebind import disagrees with its actual cold Source receipts"); }
+    *out = t; return true;
+}
 bool q3n_compiled_source_rebind_ready(const q3n_compiled_source_rebind_ticket *t)
 {
     const q3n_compiled_source *s=t?t->source:NULL;
@@ -144,10 +179,11 @@ bool q3n_compiled_source_rebind_prepare(q3n_compiled_source *s,const q3n_compile
         return fail(e,"Compiled round preparation changed its actual source receipts"); }
     *out=t; return true;
 }
-bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *t,
-    const q3n_compiled_source *s,const qa_command_context *before,const qa_command_context *after)
+static bool rebind_context_is(const q3n_compiled_source_rebind_ticket *t,
+    const q3n_compiled_source *s,const qa_command_context *before,const qa_command_context *after,bool cold)
 {
-    return t && t->source==s && before && after && q3n_compiled_source_rebind_ready(t) &&
+    return t && t->source==s && before && after &&
+        (cold ? q3n_compiled_source_rebind_checkpoint_current(t) : q3n_compiled_source_rebind_ready(t)) &&
         before->owner==t->before.basis.receiver && before->registry==t->before.basis.viewer.registry &&
         before->generation==t->before.basis.publication && qa_actor_id_equal(before->actor,t->before.basis.viewer) &&
         qa_actor_id_equal(after->actor,t->candidate.viewer) &&
@@ -157,6 +193,12 @@ bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_tick
         before->registry==after->registry && before->generation==after->generation &&
         ((!before->script&&!after->script)||(before->script&&after->script&&!strcmp(before->script,after->script)));
 }
+bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *t,
+    const q3n_compiled_source *s,const qa_command_context *before,const qa_command_context *after)
+{ return rebind_context_is(t,s,before,after,false); }
+bool q3n_compiled_source_rebind_checkpoint_context_is(const q3n_compiled_source_rebind_ticket *t,
+    const q3n_compiled_source *s,const qa_command_context *before,const qa_command_context *after)
+{ return rebind_context_is(t,s,before,after,true); }
 void q3n_compiled_source_rebind_commit(q3n_compiled_source_rebind_ticket **out)
 {
     if(!out||!*out)return;
@@ -185,7 +227,7 @@ bool q3n_compiled_source_configstring(const q3n_compiled_source *s, uint32_t ind
 bool q3n_compiled_source_fields(qa_source_save_io *io,const q3n_compiled_source *s)
 {
     q3n_compiled_source_view view;
-    if (!io || !s || s->prepared || !q3n_compiled_source_checkpoint_read(s,&view,io->error)) return false;
+    if (!io || !s || !q3n_compiled_source_checkpoint_read(s,&view,io->error)) return false;
     const q3n_compiled_source_basis *b=&view.basis;
     uint64_t provider=b->provider,receiver=b->receiver,publication=b->publication,map=b->map_revision,serial=b->serial;
     uint32_t seat=b->seat,physical=b->physical_seat,product=(uint32_t)b->product,snapshot_bit=b->snapshot_bit;

@@ -569,8 +569,10 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     }
     *out=o; return true;
 }
+bool frontend_unified_q2_rr_checkpoint_ready(const frontend_unified_q2_rr_hud *o)
+{ return !o || (!o->busy && (!o->prints || qa_hud_idle(o->prints))); }
 bool frontend_unified_q2_rr_idle(const frontend_unified_q2_rr_hud *o)
-{ return !o || (!o->busy && !o->prepared && (!o->prints || qa_hud_idle(o->prints))); }
+{ return (!o || !o->prepared) && frontend_unified_q2_rr_checkpoint_ready(o); }
 bool frontend_unified_q2_rr_destroy(frontend_unified_q2_rr_hud **slot, qa_error *e)
 {
     if (!slot || !*slot) return true;
@@ -939,13 +941,17 @@ static bool record_fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o,
 }
 static bool fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o, const frontend_unified_q2_refs *refs)
 {
-    bool read=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','U','R','H'}; uint32_t version=1;
+    bool read=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','U','R','H'}; uint32_t version=2;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QURH",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_f64(io,&o->seconds) ||
+        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_f64(io,&o->seconds) ||
         !isfinite(o->seconds) || o->seconds<0 || !document_fields(io,&o->frame,QA_UNIFIED_FRAME_DOCUMENT)) return false;
     if (o->frame) { double actual_seconds;
         if (!frame_clock(o->frame,&actual_seconds,io->error) || actual_seconds!=o->seconds) return false;
     } else if (o->seconds!=0) return false;
+    if(!document_fields(io,&o->prepared,QA_UNIFIED_FRAME_DOCUMENT))return false;
+    if(o->prepared){double actual_seconds;
+        if(!qa_source_save_f64(io,&o->prepared_seconds) || !isfinite(o->prepared_seconds) ||
+            !frame_clock(o->prepared,&actual_seconds,io->error) || actual_seconds!=o->prepared_seconds)return false;}
     size_t count=0; rr_retired **tail=&o->retired;
     if (!read) for (rr_retired *item=o->retired; item; item=item->next) ++count;
     if (!qa_source_save_count(io,&count,65536)) return false;
@@ -1021,7 +1027,7 @@ bool frontend_unified_q2_rr_checkpoint(frontend_unified_q2_rr_hud *o, const fron
     qa_buffer *out, qa_error *e)
 {
     if (!o || !refs || !refs->content || !out || out->data || out->size ||
-        !frontend_unified_q2_rr_idle(o) || !current(o,e))
+        !frontend_unified_q2_rr_checkpoint_ready(o) || !current(o,e))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD checkpoint requires its genuine idle dictionary prefix");
     qa_source_save_io io={0}; o->busy=true;
     bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,o,refs) && qa_source_save_finish(&io,out);

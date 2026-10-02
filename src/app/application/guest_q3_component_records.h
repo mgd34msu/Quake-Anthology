@@ -19,6 +19,7 @@ typedef struct application_q3_component_records_options {
     /* The actual selected MATCH player owner implements these operations. */
     bool (*match_read)(void *,qa_actor_id,qa_string_id *team,double *score,qa_error *);
     bool (*match_write)(void *,qa_actor_id,bool team,qa_string_id,double,qa_error *);
+    bool (*inventory_write)(void *,qa_actor_id,qa_item_id,bool,bool,qa_error *);
     bool (*bound)(void *,qa_actor_id,uint32_t,bool owned,bool client,qa_error *);
     bool (*released)(void *,qa_actor_id,qa_error *);
     bool (*lifecycle_begin)(void *,uint32_t,const int32_t *,size_t,qa_error *);

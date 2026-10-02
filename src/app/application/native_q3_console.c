@@ -156,6 +156,12 @@ bool application_native_q3_source_command_entered(const application_provider *pr
     const struct application_native_q3_console *owner=provider?provider->native_q3_console:NULL;
     return owner&&owner->calls&&owner->source_command&&source_command_current(owner->source_command);
 }
+bool application_native_q3_source_command_actor_current(const application_provider *provider,qa_actor_id actor)
+{
+    const struct application_native_q3_console *owner=provider?provider->native_q3_console:NULL;
+    return owner&&owner->calls&&owner->source_command&&
+        qa_actor_id_equal(owner->source_command->actor,actor)&&source_command_current(owner->source_command);
+}
 bool application_native_q3_source_command_begin(application_provider *provider,qa_actor_id actor,
     const qa_command_invocation *command,application_native_q3_source_command_scope *scope,qa_error *error)
 {

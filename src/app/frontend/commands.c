@@ -137,13 +137,16 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         char text[1200]; snprintf(text,sizeof(text),"\"sky\" is \"%s\"\n",selected); frontend_print(frontend,text); return true;
     }
     if (!strcmp(name,"actualimagegrid")) {
-        if (invocation->argc>2) { frontend_print(frontend,"usage: actualimagegrid [1|2]\n"); return true; }
+        if (invocation->argc>2) { frontend_print(frontend,"usage: actualimagegrid [0|1|2]\n"); return true; }
         int32_t mode=1;
         if (invocation->argc==2) {
             if (!strcmp(invocation->argv[1],"2")) mode=2;
-            else if (strcmp(invocation->argv[1],"1")) { frontend_print(frontend,"usage: actualimagegrid [1|2]\n"); return true; }
+            else if (!strcmp(invocation->argv[1],"0")) mode=0;
+            else if (strcmp(invocation->argv[1],"1")) { frontend_print(frontend,"usage: actualimagegrid [0|1|2]\n"); return true; }
         }
-        return frontend_source_renderer_image_grid(frontend,mode,error);
+        const char *value=mode==2?"2":mode==1?"1":"0";
+        return qa_cvars_set(qa_application_cvars(frontend->application),"r_showImages",value,true,error) &&
+            (mode==0 || frontend_source_renderer_image_grid(frontend,mode,error));
     }
     if (!strcmp(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
     uint32_t slot;

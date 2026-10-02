@@ -77,11 +77,13 @@ bool q3component_frame_proceed(application_q3_component *,const qa_qvm_call *,in
 bool q3component_call(application_q3_component *,uint32_t,const int32_t *,size_t,int32_t *,qa_error *);
 bool q3component_actors_create(application_q3_component *,qa_error *);
 bool q3component_items_create(application_q3_component *,qa_error *);
+bool q3component_pickup_write(void *,qa_actor_id,qa_item_id,bool,bool,qa_error *);
 bool q3component_player_events_create(application_q3_component *,qa_error *);
 bool q3component_player_events_track(application_q3_component *,qa_actor_id,qa_error *);
 bool q3component_player_events_publish(application_q3_component *,bool,qa_error *);
 void q3component_player_events_release(application_q3_component *,qa_actor_id);
 bool q3component_player_events_destroy(application_q3_component *,qa_error *);
+bool q3component_player_events_validate(application_q3_component *,qa_error *);
 bool q3component_player_events_fields(application_q3_component *,qa_source_save_io *);
 bool q3component_player_event_fields(qa_qvm_abi,qa_source_save_io *,application_q3_scene_player_event *);
 qa_qvm_function_hook q3component_actor_resolve(void *,const qa_qvm_call *,void **);

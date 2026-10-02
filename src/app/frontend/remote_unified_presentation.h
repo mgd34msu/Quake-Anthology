@@ -21,6 +21,7 @@ bool frontend_remote_unified_presentation_video_release(frontend_remote_unified 
     const frontend_unified_q3_video *,qa_error *);
 bool frontend_remote_unified_presentation_video_returned(const qa_frontend *,
     const frontend_video_guests *,qa_error *);
+bool frontend_remote_unified_presentation_video_held(const frontend_remote_unified *);
 
 typedef struct frontend_unified_presentation_children {
     frontend_unified_media *media,*pending_media;

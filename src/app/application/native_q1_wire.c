@@ -143,7 +143,7 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
         memcpy(full, "sound/", 6); memcpy(full + 6, path, length + 1);
         okay = qa_vfs_acquire(source->content, full, &sounds[i], NULL, error); free(full);
         if (okay) {
-            char id[81];
+            char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
             okay = application_unified_event_resource_register(p->application, p->owner,
                 path, sounds[i], id, error);
         }

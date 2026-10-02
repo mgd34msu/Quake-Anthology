@@ -6,6 +6,7 @@
 #include "qa/tokenizer.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct ip_filter { uint8_t mask[4], compare[4]; } ip_filter;
 typedef struct rate_entry { qa_net_address address; double tokens; uint64_t time; bool active; } rate_entry;
@@ -20,7 +21,7 @@ struct qa_server_admin {
     size_t master_count;
     uint64_t heartbeat_time, rcon_time;
     uint32_t heartbeat_sequence;
-    bool heartbeat_sent, rcon_sent, shuffle, callback;
+    bool heartbeat_sent, rcon_sent, shuffle, callback, executing;
 };
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text); return false;
@@ -63,7 +64,7 @@ static bool filter_parse(const char *text, ip_filter *out) {
     return !*text;
 }
 bool qa_server_admin_filter(qa_server_admin *admin, const char *text, bool remove, qa_error *error) {
-    if (!admin || admin->callback) return fail(error, "Invalid server filter operation");
+    if (!admin || (admin->callback && !admin->executing)) return fail(error, "Invalid server filter operation");
     ip_filter value; if (!filter_parse(text, &value)) return fail(error, "Invalid source IPv4 filter");
     for (size_t i = 0; i < admin->filter_count; ++i) if (!memcmp(&admin->filters[i], &value, sizeof(value))) {
         if (remove) {
@@ -99,9 +100,75 @@ static bool strings_copy(const char *const *strings, size_t count, size_t maximu
     *out = owned; return true;
 }
 bool qa_server_admin_limited_prefixes(qa_server_admin *admin, const char *const *prefixes, size_t count, qa_error *error) {
-    if (!admin || admin->callback) return fail(error, "Invalid limited command update");
+    if (!admin || (admin->callback && !admin->executing)) return fail(error, "Invalid limited command update");
     char **owned; if (!strings_copy(prefixes, count, 1023, &owned, error)) return false;
     strings_free(admin->prefixes, admin->prefix_count); admin->prefixes = owned; admin->prefix_count = count; return true;
+}
+bool qa_server_admin_limited_command(qa_server_admin *admin,const char *name,const char *raw,
+    qa_admin_write_fn write,void *context,qa_error *error) {
+    if (!admin || (admin->callback && !admin->executing) || !name || !raw || !write)
+        return fail(error,"Limited administration command lost its actual operator");
+    if (!strcmp(name,"listlrconcmds")) {
+        if (!write(context,admin->prefix_count ? "id command\n-- -------\n" : "No lrconcmds registered.\n",error)) return false;
+        for (size_t i=0;i<admin->prefix_count;++i) {
+            char row[1100]; (void)snprintf(row,sizeof(row),"%2zu %s\n",i+1,admin->prefixes[i]);
+            if (!write(context,row,error)) return false;
+        }
+        return true;
+    }
+    bool add=!strcmp(name,"addlrconcmd");
+    if (!add && strcmp(name,"dellrconcmd")) return fail(error,"Unknown limited administration operation");
+    if (!*raw) return write(context,add ? "Usage: addlrconcmd <command>\n" : "Usage: dellrconcmd <id|cmd|all>\n",error);
+    size_t size=strlen(raw);
+    if (size>=2 && raw[0]=='"' && raw[size-1]=='"') { ++raw; size-=2; }
+    if (!size || size>1023) return fail(error,"Limited administration prefix exceeds its retained extent");
+    char value[1024]; memcpy(value,raw,size); value[size]=0;
+    size_t at=0; while (at<admin->prefix_count && strcmp(value,admin->prefixes[at])) ++at;
+    if (add) {
+        if (at<admin->prefix_count) {
+            char row[1100]; (void)snprintf(row,sizeof(row),"Lrconcmd already exists: %s\n",value); return write(context,row,error);
+        }
+        if (admin->prefix_count==256) return fail(error,"Limited administration prefix capacity exhausted");
+        char *owned=copy(value);
+        if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining limited administration prefix"); return false; }
+        char **next=realloc(admin->prefixes,(admin->prefix_count+1)*sizeof(*next));
+        if (!next) { free(owned); qa_error_set(error,QA_ERROR_MEMORY,0,"Growing limited administration prefixes"); return false; }
+        admin->prefixes=next; next[admin->prefix_count++]=owned; return true;
+    }
+    if (!admin->prefix_count) return write(context,"No lrconcmds registered.\n",error);
+    if (!strcmp(value,"all")) { strings_free(admin->prefixes,admin->prefix_count); admin->prefixes=NULL; admin->prefix_count=0; return true; }
+    bool numbered=true; size_t index=0;
+    for (size_t i=0;i<size;++i) {
+        if (value[i]<'0' || value[i]>'9') { numbered=false; break; }
+        unsigned digit=(unsigned)(value[i]-'0');
+        if (index>(SIZE_MAX-digit)/10) index=SIZE_MAX; else index=index*10+digit;
+    }
+    if (numbered) at=index && index<=admin->prefix_count ? index-1 : admin->prefix_count;
+    if (at==admin->prefix_count) {
+        char row[1100]; (void)snprintf(row,sizeof(row),numbered ? "No such lrconcmd index: %s\n" : "No such lrconcmd string: %s\n",value);
+        return write(context,row,error);
+    }
+    free(admin->prefixes[at]); memmove(admin->prefixes+at,admin->prefixes+at+1,(admin->prefix_count-at-1)*sizeof(*admin->prefixes));
+    --admin->prefix_count; return true;
+}
+bool qa_server_admin_filters_text(const qa_server_admin *admin,bool commands,
+    qa_console_dialect dialect,bool deny,qa_buffer *out,qa_error *error) {
+    if (!admin || (admin->callback && !admin->executing) || !out || out->data || out->size)
+        return fail(error,"Filter text requires its retained operator and empty output");
+    size_t capacity=64+admin->filter_count*32;
+    char *text=malloc(capacity);
+    if (!text) { qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding actual server filter commands"); return false; }
+    int initial=commands ? snprintf(text,capacity,"set filterban %u\n",deny?1u:0u) : snprintf(text,capacity,"Filter list:\n");
+    size_t used=(size_t)initial;
+    const char *prefix=commands ? (dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE ? "sv addip " : "addip ") : "";
+    for (size_t i=0;i<admin->filter_count;++i) {
+        const uint8_t *v=admin->filters[i].compare;
+        int n=snprintf(text+used,capacity-used,"%s%u.%u.%u.%u\n",prefix,(unsigned)v[0],(unsigned)v[1],(unsigned)v[2],(unsigned)v[3]);
+        if (n<0 || (size_t)n>=capacity-used) { free(text); return fail(error,"Filter text exceeds its actual extent"); }
+        used+=(size_t)n;
+    }
+    if (!commands) { text[used++]='\n'; text[used]=0; }
+    *out=(qa_buffer){(uint8_t *)text,used}; return true;
 }
 static bool limited(qa_server_admin *admin, const char *command) {
     /* Limited commands cannot smuggle a second command through separators. */
@@ -201,15 +268,19 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
         ok = write_output(&output, disabled ? "No rconpassword set on the server.\n" : "Bad rconpassword or command not permitted.\n", error);
     } else {
         *out = QA_ADMIN_EXECUTED;
+        admin->executing=true;
         ok = admin->options.hooks.execute(admin->options.hooks.context, &packet->from, command,
             is_limited, write_output, &output, error);
+        admin->executing=false;
     }
     if (ok) ok = flush(&output, error);
     if (admin->options.hooks.record) admin->options.hooks.record(admin->options.hooks.context, &packet->from, *out);
     admin->callback = false; return ok;
 }
 bool qa_server_admin_masters(qa_server_admin *admin, const qa_net_address *addresses, size_t count, qa_error *error) {
-    if (!admin || admin->callback || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
+    if (!admin || (admin->callback && !admin->executing) || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
+    for (size_t i = 0; i < count; ++i)
+        if (!service_address_valid(addresses + i)) return fail(error, "Invalid server master address");
     qa_net_address *owned = count ? malloc(count * sizeof(*owned)) : NULL;
     if (count && !owned) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining server masters"); return false; }
     if (count) memcpy(owned, addresses, count * sizeof(*owned));
@@ -231,10 +302,13 @@ static bool heartbeat(qa_server_admin *admin, bool shutdown, qa_error *error) {
     return true;
 }
 bool qa_server_admin_tick(qa_server_admin *admin, uint64_t now, bool force, qa_error *error) {
-    if (!admin || admin->callback) return fail(error, "Invalid administration heartbeat");
+    if (!admin || (admin->callback && !admin->executing)) return fail(error, "Invalid administration heartbeat");
     if (!admin->options.public_server || !admin->master_count) return true;
     if (!force && admin->heartbeat_sent && (now < admin->heartbeat_time || now - admin->heartbeat_time < admin->options.heartbeat_interval_ns)) return true;
-    admin->callback = true; bool ok = heartbeat(admin, false, error); admin->callback = false;
+    bool outer_callback = admin->callback, outer_execution = admin->executing;
+    admin->callback = true; admin->executing = false;
+    bool ok = heartbeat(admin, false, error);
+    admin->callback = outer_callback; admin->executing = outer_execution;
     if (ok) { admin->heartbeat_sent = true; admin->heartbeat_time = now; } return ok;
 }
 bool qa_server_admin_shutdown(qa_server_admin *admin, qa_error *error) {
@@ -254,19 +328,20 @@ static bool map_name(const char *text) {
     return segment;
 }
 bool qa_server_admin_rotation(qa_server_admin *admin, const char *const *maps, size_t count, bool shuffle, qa_error *error) {
-    if (!admin || admin->callback || (count && !maps)) return fail(error, "Invalid map rotation");
+    if (!admin || (admin->callback && !admin->executing) || count > 256 || (count && !maps)) return fail(error, "Invalid map rotation");
     for (size_t i = 0; i < count; ++i) if (!map_name(maps[i])) return fail(error, "Invalid rotation map name");
     char **owned; if (!strings_copy(maps, count, 127, &owned, error)) return false;
     strings_free(admin->rotation, admin->rotation_count); admin->rotation = owned;
     admin->rotation_count = count; admin->rotation_index = 0; admin->shuffle = shuffle; return true;
 }
 bool qa_server_admin_next_map(qa_server_admin *admin, const char *current, bool *rotated, qa_error *error) {
-    if (!admin || admin->callback || !rotated) return fail(error, "Invalid rotation transition");
+    if (!admin || (admin->callback && !admin->executing) || !rotated) return fail(error, "Invalid rotation transition");
     *rotated = false; if (!admin->rotation_count) return true;
     size_t next = admin->rotation_index;
     if (current) for (size_t i = 0; i < admin->rotation_count; ++i)
         if (!strcmp(admin->rotation[i], current)) { next = (i + 1) % admin->rotation_count; break; }
-    admin->callback = true;
+    bool outer_callback = admin->callback, outer_execution = admin->executing;
+    admin->callback = true; admin->executing = false;
     bool ok = admin->options.hooks.travel(admin->options.hooks.context, admin->rotation[next], error);
     if (ok) {
         admin->rotation_index = (next + 1) % admin->rotation_count; *rotated = true;
@@ -277,7 +352,7 @@ bool qa_server_admin_next_map(qa_server_admin *admin, const char *current, bool 
             }
         }
     }
-    admin->callback = false; return ok;
+    admin->callback = outer_callback; admin->executing = outer_execution; return ok;
 }
 bool qa_server_admin_save_filters(const qa_server_admin *admin, qa_buffer *out, qa_error *error) {
     if (!admin || !out) return fail(error, "Missing server filter output");

@@ -403,6 +403,14 @@ bool frontend_unified_q3_source_current(const frontend_unified_q3_source_view *v
 { return row_current(v,false); }
 bool frontend_unified_q3_source_checkpoint_current(const frontend_unified_q3_source_view *v)
 { return row_current(v,true); }
+bool frontend_unified_q3_source_staged_checkpoint_current(const frontend_unified_q3_source_view *v)
+{
+    if (!frontend_unified_q3_source_checkpoint_current(v)) return false;
+    const frontend_unified_q3_source_frame *t = v->owner->prepared;
+    if (!t) return false;
+    for (size_t i = 0; i < t->count; ++i) if (t->rows[i] == v->source) return true;
+    return false;
+}
 bool frontend_unified_q3_source_retirement_current(const frontend_unified_q3_source_retirement *t)
 {
     const frontend_unified_q3_sources *o = t ? t->owner : NULL;
@@ -518,7 +526,7 @@ bool frontend_unified_q3_source_retirement_restore(frontend_unified_q3_sources *
 bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *o,size_t index,
     frontend_unified_q3_source_view *out,qa_error *e)
 {
-    if (!out || !frontend_unified_q3_sources_checkpoint_current(o) || o->prepared || index >= o->count)
+    if (!out || !frontend_unified_q3_sources_checkpoint_current(o) || index >= o->count)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 cold observation lost its actual returned Source owner");
     *out = o->rows[index]->view;
     return frontend_unified_q3_source_checkpoint_current(out);
@@ -553,9 +561,10 @@ bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **out, qa_e
     rows_free(o->rows,o->count); qa_unified_document_destroy(o->packet); free(o); *out = NULL; return true;
 }
 
-bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *o, qa_buffer *out, qa_error *e)
+static bool checkpoint(const frontend_unified_q3_sources *o,
+    const frontend_unified_q3_source_frame *stage, qa_buffer *out, qa_error *e)
 {
-    if (!out || out->data || !frontend_unified_q3_sources_checkpoint_current(o) || !frontend_unified_q3_sources_idle(o))
+    if (!out || out->data || !frontend_unified_q3_sources_checkpoint_current(o) || o->prepared != stage)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 cold capture requires the returned actual Source owner");
     qa_source_save_io io = {0}; qa_buffer packet = {0}; uint32_t version = 1, epoch = o->epoch;
     uint64_t revision = o->revision; bool present = o->packet != NULL;
@@ -567,6 +576,99 @@ bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *o
     if (ok) ok = qa_source_save_count(&io,&size,32u*1024u*1024u) && qa_source_save_bytes(&io,packet.data,size) &&
         qa_source_save_finish(&io,out);
     qa_buffer_free(&packet); qa_source_save_dispose(&io); return ok;
+}
+bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *o, qa_buffer *out, qa_error *e)
+{ return checkpoint(o,NULL,out,e); }
+bool frontend_unified_q3_sources_checkpoint_stage(const frontend_unified_q3_sources *o,
+    const frontend_unified_q3_source_frame *t, qa_buffer *out, qa_error *e)
+{
+    if (t && (t->owner != o || !frontend_unified_q3_source_frame_checkpoint_ready(t)))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Source capture requires its exact prepared frame");
+    return checkpoint(o,t,out,e);
+}
+bool frontend_unified_q3_sources_checkpoint_stage_read(const frontend_unified_q3_sources *o,
+    const frontend_unified_q3_source_frame *t,bool staged,size_t index,
+    frontend_unified_q3_source_view *out,qa_error *e)
+{
+    if (!out || !o || (t && t->owner != o) || o->prepared != t || (staged && !t) ||
+        !frontend_unified_q3_sources_checkpoint_current(o) || index >= (staged ? t->count : o->count))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Source cold row requires its exact published or staged owner");
+    *out = (staged ? t->rows[index] : o->rows[index])->view;
+    return frontend_unified_q3_source_checkpoint_current(out);
+}
+bool frontend_unified_q3_source_frame_checkpoint_ready(const frontend_unified_q3_source_frame *t)
+{
+    if (!t || !t->owner || t->owner->prepared != t || t->owner->revision == UINT64_MAX ||
+        t->revision != t->owner->revision+1 || !frontend_unified_q3_sources_checkpoint_current(t->owner)) return false;
+    for (size_t i = 0; i < t->count; ++i)
+        if (!t->rows[i] || !frontend_unified_q3_source_checkpoint_current(&t->rows[i]->view)) return false;
+    return true;
+}
+bool frontend_unified_q3_source_frame_checkpoint(const frontend_unified_q3_source_frame *t,
+    qa_buffer *out,qa_error *e)
+{
+    if (!out || out->data || !frontend_unified_q3_source_frame_checkpoint_ready(t))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Source frame capture requires the genuine prepared token");
+    qa_source_save_io io = {0}; qa_buffer packet = {0}; uint32_t version = 1, epoch = t->owner->epoch;
+    uint64_t revision = t->revision;
+    bool ok = qa_unified_document_encode(t->packet,&packet,e) && qa_source_save_writer(&io,NULL,e) &&
+        qa_source_save_bytes(&io,(void *)"Q3UF",4) && qa_source_save_u32(&io,&version) &&
+        qa_source_save_u32(&io,&epoch) && qa_source_save_u64(&io,&revision);
+    size_t size = packet.size;
+    if (ok) ok = qa_source_save_count(&io,&size,32u*1024u*1024u) && qa_source_save_bytes(&io,packet.data,size) &&
+        frontend_unified_q3_source_frame_checkpoint_ready(t) && qa_source_save_finish(&io,out);
+    qa_buffer_free(&packet); qa_source_save_dispose(&io); return ok;
+}
+bool frontend_unified_q3_sources_restore_prepared(frontend_unified_q3_sources *o,qa_bytes bytes,
+    const qa_unified_document *parent,frontend_unified_q3_source_frame **out,qa_error *e)
+{
+    if (!o || o->prepared || !out || *out || o->revision == UINT64_MAX ||
+        !frontend_unified_q3_sources_checkpoint_current(o) || !parent ||
+        qa_unified_document_type(parent) != QA_UNIFIED_FRAME_DOCUMENT)
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled Source pending import requires the exact restored FRAME parent");
+    qa_source_save_io io = {0}; char magic[4]; uint32_t version = 0,epoch = 0; uint64_t revision = 0; size_t size = 0;
+    frontend_unified_q3_source_frame *t = calloc(1,sizeof(*t));
+    if (!t) return fail(e,QA_ERROR_MEMORY,"Restoring compiled Source frame token");
+    bool ok = qa_source_save_reader(&io,NULL,bytes,e) && qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"Q3UF",4) &&
+        qa_source_save_u32(&io,&version) && version == 1 && qa_source_save_u32(&io,&epoch) && epoch == o->epoch &&
+        qa_source_save_u64(&io,&revision) && revision == o->revision+1 &&
+        qa_source_save_count(&io,&size,32u*1024u*1024u) && size && size == io.input.size-io.offset &&
+        qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){io.input.data+io.offset,size},&t->packet,e);
+    const qa_json_document *j = ok ? qa_unified_document_json(t->packet) : NULL;
+    qa_json_id array = ok ? qa_unified_document_root(t->packet) : QA_JSON_NONE;
+    if (ok) {
+        qa_bytes saved = qa_json_source(j,array), actual = qa_json_source(qa_unified_document_json(parent),
+            field(parent,qa_unified_document_root(parent),"compiledQ3Sources"));
+        ok = saved.size == actual.size && (!saved.size || !memcmp(saved.data,actual.data,saved.size));
+    }
+    if (ok) {
+        t->owner = o; t->revision = revision; t->count = qa_json_size(j,array);
+        ok = qa_json_type(j,array) == QA_JSON_ARRAY && t->count <= qa_executable_recipe_provider_count(o->recipe);
+        if (ok && t->count) { t->rows = calloc(t->count,sizeof(*t->rows)); ok = t->rows != NULL; }
+    }
+    for (size_t i = 0; ok && i < t->count; ++i) {
+        ok = source_read(o,t->packet,qa_json_at(j,array,i),revision,true,false,t->rows+i,e);
+        for (size_t k = 0; ok && k < i; ++k) ok = strcmp(t->rows[k]->instance,t->rows[i]->instance) != 0;
+        for (size_t k = 0; ok && k < o->count; ++k) {
+            const received_source *old = o->rows[k], *next = t->rows[i];
+            if (strcmp(old->instance,next->instance)) continue;
+            if (old->view.publication == next->view.publication && old->view.map_revision == next->view.map_revision &&
+                (old->view.product != next->view.product || old->view.max_clients != next->view.max_clients ||
+                 old->view.has_client != next->view.has_client || old->view.client_number != next->view.client_number ||
+                 (!qa_actor_id_equal(old->view.viewer,next->view.viewer) && old->view.snapshot_bit == next->view.snapshot_bit) ||
+                 strcmp(old->content,next->content))) ok = false;
+        }
+    }
+    if (ok) {
+        o->prepared = t;
+        for (size_t i = 0; ok && i < t->count; ++i) ok = frontend_unified_q3_source_checkpoint_current(&t->rows[i]->view);
+    }
+    if (ok) *out = t;
+    else { rows_free(t->rows,t->count); qa_unified_document_destroy(t->packet);
+        if (o->prepared == t) o->prepared = NULL;
+        free(t); }
+    qa_source_save_dispose(&io);
+    return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Source staged bytes disagree with the pending FRAME"));
 }
 bool frontend_unified_q3_sources_restore(frontend_remote_unified *replica, frontend_unified_media *media,
     qa_bytes bytes, frontend_unified_q3_sources **out, qa_error *e)
@@ -581,13 +683,23 @@ bool frontend_unified_q3_sources_restore(frontend_remote_unified *replica, front
     qa_unified_document *packet = NULL; frontend_unified_q3_sources *o = NULL;
     if (ok && present) ok = qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){io.input.data+io.offset,size},&packet,e);
     if (ok) { io.offset += size; ok = io.offset == io.input.size && create(replica,media,true,&o,e); }
-    frontend_unified_q3_source_frame *t = NULL;
-    if (ok && present) ok = prepare(o,packet,qa_unified_document_root(packet),true,&t,e);
-    if (ok && t) frontend_unified_q3_sources_commit(&t);
-    if (ok) { o->revision = revision;
-        for (size_t i = 0; i < o->count; ++i) o->rows[i]->view.revision = revision;
-        *out = o;
-    } else { frontend_unified_q3_sources_abort(&t); frontend_unified_q3_sources_destroy(&o,NULL); }
+    if (ok) o->revision = revision;
+    if (ok && present) {
+        const qa_json_document *j = qa_unified_document_json(packet);
+        qa_json_id array = qa_unified_document_root(packet);
+        o->count = qa_json_size(j,array);
+        ok = qa_json_type(j,array) == QA_JSON_ARRAY && o->count <= qa_executable_recipe_provider_count(o->recipe);
+        if (ok && o->count) { o->rows = calloc(o->count,sizeof(*o->rows)); ok = o->rows != NULL; }
+        for (size_t i = 0; ok && i < o->count; ++i) {
+            ok = source_read(o,packet,qa_json_at(j,array,i),revision,true,false,o->rows+i,e);
+            for (size_t k = 0; ok && k < i; ++k) ok = strcmp(o->rows[k]->instance,o->rows[i]->instance) != 0;
+        }
+        if (ok) { o->packet = packet; packet = NULL;
+            for (size_t i = 0; ok && i < o->count; ++i)
+                ok = frontend_unified_q3_source_checkpoint_current(&o->rows[i]->view); }
+    }
+    if (ok) *out = o;
+    else frontend_unified_q3_sources_destroy(&o,NULL);
     qa_unified_document_destroy(packet); qa_source_save_dispose(&io);
     return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Q3 cold Source bytes are malformed"));
 }

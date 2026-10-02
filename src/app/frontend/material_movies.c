@@ -1,4 +1,5 @@
 #include "material_movies_private.h"
+#include "cinematic_roles.h"
 #include <ctype.h>
 #include <math.h>
 
@@ -250,6 +251,7 @@ bool frontend_material_movies_transfer(frontend_material_movies **source_slot,
         !qa_material_library_video_start_is(old->materials, frontend_material_movies_start, owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie transfer changed its retained provider resources");
     owner->source = *destination;
+    frontend_cinematic_roles_parent_rebind(owner->source.frontend, owner);
     *source_slot = NULL;
     return true;
 }
@@ -451,7 +453,8 @@ bool frontend_material_movies_destroy(frontend_material_movies **out, qa_error *
     if (!qa_material_library_idle(owner->source.materials) || !qa_material_movies_idle(owner->registry) ||
         !qa_media_library_idle(owner->source.media))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie teardown retains a held resource owner");
-    if (owner->cinematic_source && !qa_q3_cinematic_source_destroy(&owner->cinematic_source,error)) return false;
+    if (!frontend_cinematic_roles_parent_destroy(owner->source.frontend, owner, error) ||
+        (owner->cinematic_source && !qa_q3_cinematic_source_destroy(&owner->cinematic_source,error))) return false;
     if (!frontend_material_movie_unlink(owner, error)) return false;
     if (qa_material_library_video_start_is(owner->source.materials, frontend_material_movies_start, owner))
         qa_material_library_set_video_start(owner->source.materials, NULL, NULL);

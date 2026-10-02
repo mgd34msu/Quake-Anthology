@@ -146,7 +146,6 @@ bool qa_kex_mdns_owner_query(qa_kex_mdns_owner *o, qa_error *e)
 static void retain_records(qa_kex_mdns_owner *o, qa_kex_mdns_result *r)
 {
     for (size_t i = 0; i < r->endpoint_count; ++i) {
-        if (o->endpoint_count == 256) continue;
         size_t at = 0;
         while (at < o->endpoint_count && !qa_kex_mdns_text_equal(o->endpoints[at].instance, r->endpoints[i].instance)) ++at;
         if (at == o->endpoint_count) {
@@ -159,7 +158,6 @@ static void retain_records(qa_kex_mdns_owner *o, qa_kex_mdns_result *r)
         r->endpoints[i] = (qa_kex_mdns_endpoint){0};
     }
     for (size_t i = 0; i < r->address_count; ++i) {
-        if (o->address_count == 256) continue;
         size_t at = 0;
         while (at < o->address_count && !qa_kex_mdns_text_equal(o->addresses[at].target, r->addresses[i].target)) ++at;
         if (at == o->address_count) {

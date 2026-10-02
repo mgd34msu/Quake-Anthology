@@ -471,8 +471,17 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
         return q3g_round_fail(engine, error, error);
     if (game->vm && !qa_qvm_restart_original(game->vm, error))
         return q3g_round_fail(engine, error, error);
-    if (game->native && !qa_native_restart_original(qa_native_host_instance(game->native), error))
-        return q3g_round_fail(engine, error, error);
+    if (game->native) {
+        qa_native_instance *instance=qa_native_host_instance(game->native);
+        if(!game->committed || !game->process.resources ||
+            !qa_native_process_resources_current(game->process.resources,error) ||
+            !qa_native_restart_original(instance,error)) return q3g_round_fail(engine,error,error);
+        if(qa_native_host_instance(game->native)!=instance ||
+            qa_native_get_lifecycle(instance)!=QA_NATIVE_RESTART_READY ||
+            !qa_native_restart_ready(instance,error) ||
+            !qa_native_process_resources_current(game->process.resources,error))
+            return q3g_round_fail(engine,error,error);
+    }
     qa_bytes primary = game->artifact->image ?
         (qa_bytes){game->artifact->primary.data, game->artifact->primary.size} :
         qa_native_declaration_primary(game->artifact->declaration);

@@ -27,11 +27,11 @@ static bool span(qa_source_save_io *io,qa_bytes *bytes)
 static bool row_fields(qa_source_save_io *io,registry_prefix *row)
 {
     if(!qa_source_save_u64(io,&row->alias)) return false;
-    if(row->alias) return true;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if(!qa_source_save_u64(io,&row->provider) || !row->provider ||
+    if(!row->alias && (!qa_source_save_u64(io,&row->provider) || !row->provider ||
         !qa_source_save_u64(io,&row->services) || !qa_source_save_u64(io,&row->map) ||
-        !qa_source_save_count(io,&row->provider_count,SIZE_MAX/sizeof(*row->providers))) return false;
+        !qa_source_save_count(io,&row->provider_count,SIZE_MAX/sizeof(*row->providers)))) return false;
+    if(row->alias && !qa_source_save_u64(io,&row->map)) return false;
     if(reading && row->provider_count) {
         if(io->offset>io->input.size || row->provider_count>(io->input.size-io->offset)/8) return false;
         row->providers=calloc(row->provider_count,sizeof(*row->providers));
@@ -48,9 +48,9 @@ static bool row_fields(qa_source_save_io *io,registry_prefix *row)
     for(size_t i=0;i<row->map_count;++i) {
         registry_map *map=row->maps+i;
         if(!qa_source_save_u64(io,&map->alias)) return false;
-        if(map->alias) continue;
         if(!qa_source_save_u64(io,&map->world) || !map->world || !qa_source_save_u64(io,&map->pool) || !map->pool ||
-            !qa_source_save_u64(io,&map->resource) || !map->resource || !span(io,&map->portals) || !map->portals.size) return false;
+            !qa_source_save_u64(io,&map->resource) || !map->resource) return false;
+        if(!map->alias && (!span(io,&map->portals) || !map->portals.size)) return false;
     }
     return true;
 }
@@ -85,7 +85,7 @@ bool frontend_renderer_registries_checkpoint(qa_frontend *f,frontend_q3_inventor
 {
     if(!f || !f->capture || !q3 || !roots || !out || out->data || out->size) return false;
     size_t count=frontend_renderer_registries_count(f);
-    if(count>SIZE_MAX/sizeof(registry_prefix)) return false;
+    if(count>UINT32_MAX || count>SIZE_MAX/sizeof(registry_prefix)) return false;
     registry_prefix *rows=count?calloc(count,sizeof(*rows)):NULL;
     if(count && !rows) return frontend_fail(error,QA_ERROR_MEMORY,"Capturing retained registry prefixes");
     bool okay=true; qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
@@ -95,11 +95,12 @@ bool frontend_renderer_registries_checkpoint(qa_frontend *f,frontend_q3_inventor
         qa_scene_world *world=NULL; qa_collision_geometry *geometry=NULL;
         okay=frontend_renderer_registries_at(f,i,&assets,error) &&
             frontend_q3_registry_alias(q3,assets,&row->alias,&alias,error);
-        if(!okay || alias) continue;
-        okay=qa_q3_assets_services(assets,&services,&world,&geometry,error) &&
+        if(!okay) continue;
+        okay=qa_q3_assets_services(assets,&services,&world,&geometry,error);
+        if(okay && !alias) okay=
             frontend_material_provider_encode(f,&services.provider,&row->provider,error) &&
             frontend_q3_registry_services_key(q3,&services,&row->services,error);
-        row->provider_count=qa_q3_assets_provider_count(assets); row->map_count=qa_q3_assets_map_count(assets);
+        row->provider_count=alias?0:qa_q3_assets_provider_count(assets); row->map_count=qa_q3_assets_map_count(assets);
         if(row->provider_count>SIZE_MAX/sizeof(*row->providers) || row->map_count>SIZE_MAX/sizeof(*row->maps)) okay=false;
         if(okay && row->provider_count) { row->providers=calloc(row->provider_count,sizeof(*row->providers)); okay=row->providers!=NULL; }
         if(okay && row->map_count) { row->maps=calloc(row->map_count,sizeof(*row->maps)); okay=row->maps!=NULL; }
@@ -110,19 +111,19 @@ bool frontend_renderer_registries_checkpoint(qa_frontend *f,frontend_q3_inventor
         for(size_t j=0;okay && j<row->map_count;++j) {
             registry_map *saved=row->maps+j; qa_q3_asset_map_custody map;
             okay=qa_q3_assets_map_at(assets,j,&map) && map.world && map.geometry && map.resource &&
-                previous_geometry(f,i,j,map.geometry,&saved->alias,error);
+                previous_geometry(f,i,j,map.geometry,&saved->alias,error) &&
+                frontend_world_encode(roots,map.world,&saved->world,error) &&
+                qa_application_content_resource_id(graph,map.resource,&saved->pool,&saved->resource);
             if(okay && world==map.world && geometry==map.geometry) row->map=j+1;
             if(!okay || saved->alias) continue;
             qa_buffer portals={0};
             okay=qa_collision_geometry_family(map.geometry)==QA_COLLISION_Q3 &&
-                frontend_world_encode(roots,map.world,&saved->world,error) &&
-                qa_application_content_resource_id(graph,map.resource,&saved->pool,&saved->resource) &&
                 frontend_remote_q3_graph_geometry_checkpoint(map.geometry,&portals,error);
             saved->portals=(qa_bytes){portals.data,portals.size};
         }
         if(okay && ((world==NULL)!=(geometry==NULL) || (world && !row->map))) okay=false;
     }
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','R','G'}; uint32_t version=1;
+    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','R','G'}; uint32_t version=2;
     okay=okay && qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
         qa_source_save_u32(&io,&version) && qa_source_save_count(&io,&count,SIZE_MAX);
     for(size_t i=0;okay && i<count;++i) okay=row_fields(&io,rows+i);
@@ -130,27 +131,87 @@ bool frontend_renderer_registries_checkpoint(qa_frontend *f,frontend_q3_inventor
     if(!okay && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Retained registry prefix lost its actual provider or Q3 map custody");
     return okay;
 }
-static bool map_resolve(qa_frontend *f,frontend_world_inventory *roots,const registry_map *saved,
-    size_t row,size_t index,qa_q3_asset_map_custody *out,qa_collision_geometry **created,qa_error *error)
+static bool existing_geometry(frontend_q3_inventory *base,const registry_prefix *rows,size_t count,
+    uint64_t key,const qa_resource *resource,qa_collision_geometry **out,qa_error *error)
 {
+    *out=NULL;
+    for(size_t i=0;i<count;++i) {
+        const registry_prefix *row=rows+i;
+        if(!row->alias || !row->map) continue;
+        const registry_map *map=row->maps+row->map-1;
+        uint64_t first=map->alias?map->alias:((uint64_t)(i+1)<<32)|row->map;
+        if(first!=key) continue;
+        qa_q3_presentation_assets *assets=NULL; qa_q3_presentation_asset_options options;
+        qa_scene_world *world=NULL; qa_collision_geometry *geometry=NULL;
+        if(!frontend_q3_assets_decode(base,row->alias,&assets,error) || !assets ||
+            !qa_q3_assets_services(assets,&options,&world,&geometry,error) || !world || !geometry ||
+            qa_collision_resource(geometry)!=resource || qa_scene_world_source_resource_read(world)!=resource ||
+            (*out && *out!=geometry))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved collision alias changes its actual constructor identity");
+        *out=geometry;
+    }
+    return true;
+}
+static bool map_resolve(qa_frontend *f,frontend_q3_inventory *base,const registry_prefix *rows,size_t count,
+    frontend_world_inventory *roots,const registry_map *saved,
+    size_t row,size_t index,const qa_q3_asset_map_custody *current,
+    qa_q3_asset_map_custody *out,qa_collision_geometry **created,qa_error *error)
+{
+    qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
+    const qa_resource *resource=qa_application_content_resource(graph,saved->pool,saved->resource);
+    if(!resource || !frontend_world_decode(roots,saved->world,&out->world,error) ||
+        qa_scene_world_source_resource_read(out->world)!=resource) return false;
+    out->resource=resource;
     if(saved->alias) {
         uint64_t owner=saved->alias>>32,ordinal=saved->alias&UINT32_MAX;
         qa_q3_presentation_assets *assets=NULL;
-        if(!owner || !ordinal || owner-1>row || (owner-1==row && ordinal-1>=index) ||
-            !frontend_renderer_registries_at(f,(size_t)owner-1,&assets,error) || !assets ||
-            !qa_q3_assets_map_at(assets,(size_t)ordinal-1,out)) return false;
+        qa_q3_asset_map_custody prior={0};
+        if(!owner || !ordinal || owner-1>row || (owner-1==row && ordinal-1>=index)) return false;
+        if(owner-1==row) prior=current[ordinal-1];
+        else if(!frontend_renderer_registries_at(f,(size_t)owner-1,&assets,error) || !assets ||
+            !qa_q3_assets_map_at(assets,(size_t)ordinal-1,&prior)) return false;
+        if(prior.resource!=resource || qa_collision_resource(prior.geometry)!=resource) return false;
+        out->geometry=prior.geometry;
         return true;
     }
-    qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-    const qa_resource *resource=qa_application_content_resource(graph,saved->pool,saved->resource);
     qa_bsp_view bsp;
-    if(!resource || !frontend_world_decode(roots,saved->world,&out->world,error) ||
-        qa_scene_world_source_resource_read(out->world)!=resource || !qa_bsp_open(qa_resource_bytes(resource),&bsp,error) ||
+    uint64_t key=((uint64_t)(row+1)<<32)|(uint64_t)(index+1);
+    if(!existing_geometry(base,rows,count,key,resource,created,error)) return false;
+    if(*created) {
+        if(!qa_collision_retain(*created,error)) { *created=NULL; return false; }
+    } else if(!qa_bsp_open(qa_resource_bytes(resource),&bsp,error) ||
         !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,created,error)) return false;
     out->geometry=*created; out->resource=resource;
     return qa_collision_geometry_family(*created)==QA_COLLISION_Q3 &&
         qa_collision_bind_resource(*created,(qa_resource *)resource,error) &&
         frontend_remote_q3_graph_geometry_restore(*created,saved->portals,error);
+}
+static bool prefix_qualify(frontend_q3_inventory *base,const registry_prefix *rows,size_t count,qa_error *error)
+{
+    for(size_t i=0;i<count;++i) {
+        const registry_prefix *row=rows+i;
+        if(row->alias) {
+            qa_q3_presentation_assets *assets=NULL;
+            if(!frontend_q3_assets_decode(base,row->alias,&assets,error) || !assets) return false;
+        }
+        if(!row->alias && (!row->provider_count || row->providers[0]!=row->provider))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Registry prefix lost its actual first provider");
+        for(size_t j=0;j<row->provider_count;++j)
+            for(size_t k=0;k<j;++k) if(row->providers[k]==row->providers[j])
+                return frontend_fail(error,QA_ERROR_FORMAT,"Registry prefix repeats a retained provider");
+        for(size_t j=0;j<row->map_count;++j) {
+            const registry_map *map=row->maps+j;
+            if(!map->alias) continue;
+            uint64_t owner=map->alias>>32,ordinal=map->alias&UINT32_MAX;
+            if(!owner || !ordinal || owner-1>i || (owner-1==i && ordinal-1>=j))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Registry collision alias is not a reached prior row");
+            const registry_prefix *prior=rows+(size_t)owner-1;
+            if(ordinal>prior->map_count || prior->maps[ordinal-1].pool!=map->pool ||
+                prior->maps[ordinal-1].resource!=map->resource)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Registry collision alias changes its immutable BSP source");
+        }
+    }
+    return true;
 }
 bool frontend_renderer_registries_prepare_restored(qa_frontend *f,frontend_q3_inventory *base,
     frontend_world_inventory *roots,qa_bytes bytes,qa_error *error)
@@ -158,40 +219,46 @@ bool frontend_renderer_registries_prepare_restored(qa_frontend *f,frontend_q3_in
     if(!f || !f->source_restoring || f->capture || f->resource_inventory || !base || !roots || f->renderer_registries) return false;
     qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; size_t count=0;
     bool okay=qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
-        !memcmp(magic,"QFRG",4) && qa_source_save_u32(&io,&version) && version==1 &&
+        !memcmp(magic,"QFRG",4) && qa_source_save_u32(&io,&version) && version==2 &&
         qa_source_save_count(&io,&count,SIZE_MAX/sizeof(registry_prefix)) &&
-        io.offset<=io.input.size && count<=(io.input.size-io.offset)/8;
+        count<=UINT32_MAX && io.offset<=io.input.size && count<=(io.input.size-io.offset)/8;
     registry_prefix *rows=okay && count?calloc(count,sizeof(*rows)):NULL;
     okay=okay && (!count || rows);
     for(size_t i=0;okay && i<count;++i) okay=row_fields(&io,rows+i);
     okay=okay && qa_source_save_finish(&io,NULL); qa_source_save_dispose(&io);
+    okay=okay && prefix_qualify(base,rows,count,error);
     if(okay) okay=frontend_renderer_registries_restore_prefix(f,count,error);
     for(size_t i=0;okay && i<count;++i) {
         registry_prefix *row=rows+i; qa_q3_presentation_assets *assets=NULL;
         if(row->alias) {
             okay=frontend_q3_assets_decode(base,row->alias,&assets,error) && assets && qa_q3_assets_retain(assets,error);
             if(okay && !frontend_renderer_registries_restore_adopt(f,i,&assets,error)) { qa_q3_assets_release(assets); okay=false; }
-            continue;
+        } else {
+            qa_q3_presentation_asset_options options;
+            okay=frontend_q3_registry_services_read(base,row->services,&options,error) &&
+                frontend_material_provider_decode(f,row->provider,&options.provider,error) &&
+                qa_q3_presentation_assets_create(&options,&assets,error);
+            if(!okay) continue;
+            if(!frontend_renderer_registries_restore_adopt(f,i,&assets,error)) { qa_q3_assets_release(assets); okay=false; continue; }
         }
-        qa_q3_presentation_asset_options options;
-        okay=frontend_q3_registry_services_read(base,row->services,&options,error) &&
-            frontend_material_provider_decode(f,row->provider,&options.provider,error) &&
-            qa_q3_presentation_assets_create(&options,&assets,error);
         if(!okay) continue;
-        if(!frontend_renderer_registries_restore_adopt(f,i,&assets,error)) { qa_q3_assets_release(assets); okay=false; continue; }
         okay=frontend_renderer_registries_at(f,i,&assets,error);
         for(size_t j=0;okay && j<row->provider_count;++j) {
             qa_q3_presentation_provider provider;
             okay=frontend_material_provider_decode(f,row->providers[j],&provider,error) &&
                 qa_q3_assets_provider_hold(assets,&provider,error);
         }
-        for(size_t j=0;okay && j<row->map_count;++j) {
-            qa_q3_asset_map_custody map={0}; qa_collision_geometry *created=NULL;
-            okay=map_resolve(f,roots,row->maps+j,i,j,&map,&created,error) &&
-                qa_q3_assets_map_hold(assets,map.world,map.geometry,error);
-            if(okay && row->map==j+1) okay=qa_q3_assets_prepare_restored_map(assets,map.world,map.geometry,error);
-            qa_collision_destroy(created);
-        }
+        qa_q3_asset_map_custody *maps=row->map_count?calloc(row->map_count,sizeof(*maps)):NULL;
+        qa_collision_geometry **created=row->map_count?calloc(row->map_count,sizeof(*created)):NULL;
+        if(row->map_count && (!maps || !created)) okay=frontend_fail(error,QA_ERROR_MEMORY,"Retaining exact registry map chronology");
+        for(size_t j=0;okay && j<row->map_count;++j)
+            okay=map_resolve(f,base,rows,count,roots,row->maps+j,i,j,maps,maps+j,created+j,error);
+        if(okay && !row->alias && row->map)
+            okay=qa_q3_assets_prepare_restored_map(assets,maps[row->map-1].world,maps[row->map-1].geometry,error);
+        if(okay) okay=qa_q3_assets_prepare_restored_custody_maps(assets,maps,row->map_count,
+            row->map?maps[row->map-1].world:NULL,row->map?maps[row->map-1].geometry:NULL,error);
+        for(size_t j=0;created && j<row->map_count;++j) qa_collision_destroy(created[j]);
+        free(created); free(maps);
     }
     dispose(rows,count,false);
     if(!okay && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Saved registry prefix lacks genuine nominal allocations or retained map roots");

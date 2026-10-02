@@ -39,6 +39,7 @@ struct qa_cpu_renderer {
   qa_scene_view view;
   qa_scene_state pipeline;
   float clear_depth;
+  qa_scene_vec4 clear_color;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
   bool preblend_gamma, source_frame;

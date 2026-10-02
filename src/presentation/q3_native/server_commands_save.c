@@ -171,7 +171,8 @@ static bool fields(qa_source_save_io *io, q3n_server_commands *o)
 static bool captured(const q3n_server_commands *o, qa_error *e)
 {
     const qa_q3_presentation_assets *assets = o ? o->options.assets : NULL;
-    return q3n_server_commands_idle(o) && assets && assets->capturing && assets->busy == 1 && !assets->codec_busy &&
+    return (q3n_server_commands_idle(o) || (o && q3n_server_commands_rebind_checkpoint_current(o,o->rebind))) &&
+        assets && assets->capturing && assets->busy == 1 && !assets->codec_busy &&
         reader_bound(&o->options, e) ? true :
         q3nc_fail(e, QA_ERROR_ARGUMENT, "Command codec needs the actual idle owner and backend registry capture lease");
 }

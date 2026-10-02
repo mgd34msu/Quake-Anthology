@@ -4,6 +4,7 @@
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_rank.h"
+#include "native_q3_match.h"
 #include "native_q3_log.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_map.h"
@@ -23,6 +24,7 @@ typedef struct objective_call {
     qa_mode_id mode;
     qa_actor_owner owner;
     uint64_t publication_generation, command_generation, map_revision;
+    bool source_command;
 } objective_call;
 
 static bool source_live(void *opaque, qa_error *error)
@@ -39,7 +41,9 @@ static bool source_live(void *opaque, qa_error *error)
         call->application->command_generation != call->command_generation ||
         call->application->map_revision != call->map_revision)
         return application_fail(error, QA_ERROR_NOT_FOUND, "TEAM source retired during its callback");
-    return qa_modes_read(call->modes, call->mode, &mode, error);
+    return (!call->source_command ||
+        application_native_q3_source_mode_current(provider, call->mode, error)) &&
+        qa_modes_read(call->modes, call->mode, &mode, error);
 }
 
 static bool begin(application_provider *provider, qa_modes *modes, qa_mode_id mode,
@@ -57,17 +61,33 @@ static bool begin(application_provider *provider, qa_modes *modes, qa_mode_id mo
         .game = provider->state.q3, .modes = modes, .mode = mode, .owner = provider->owner,
         .publication_generation = application->publication_generation,
         .command_generation = application->command_generation,
-        .map_revision = application->map_revision};
+        .map_revision = application->map_revision,
+        .source_command = application_native_q3_source_command_entered(provider)};
     return source_live(call, error) && application_native_q3_console_borrow(provider, error);
 }
 
 static bool primary(application_provider *provider, objective_call *call, qa_error *error)
 {
     qa_application *application = provider ? provider->application : NULL;
-    if (!application || !application->primary_mode_ready ||
-        application_world_provider(application, QA_ROLE_ENTITIES, "") != provider)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "TEAM has no actual primary match owner");
-    return begin(provider, application->modes, application->primary_mode, call, error);
+    qa_mode_id mode;
+    bool found;
+    if (!application)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "TEAM has no actual associated match owner");
+    if (!application_native_q3_source_mode(provider, &mode, &found, error)) return false;
+    if (!found)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "TEAM has no actual associated match owner");
+    return begin(provider, application->modes, mode, call, error);
+}
+
+static bool view_provider(qa_application *application, qa_mode_id mode,
+    application_provider **out, qa_error *error)
+{
+    application_provider *chosen = application_mode_provider(application, mode);
+    if (chosen && application_native_q3_source_command_entered(chosen)) {
+        if (!application_native_q3_source_mode_current(chosen, mode, error)) return false;
+        *out = chosen;
+    } else *out = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    return true;
 }
 
 static bool finish(objective_call *call, bool okay, qa_error *error)
@@ -756,11 +776,11 @@ bool application_native_q3_objective_bound(void *opaque, qa_mode_id mode,
     qa_actor_id actor, bool *native_source, qa_error *error)
 {
     qa_application *application = opaque;
-    (void)mode; /* The calling mode owner qualifies its candidate generation. */
     if (!application || !native_source)
         return application_fail(error, QA_ERROR_ARGUMENT, "TEAM source qualification needs its actual application");
     *native_source = false;
-    application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    application_provider *provider;
+    if (!view_provider(application, mode, &provider, error)) return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(application->session), actor);
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
@@ -801,12 +821,15 @@ bool application_native_q3_objective_view(void *opaque, qa_mode_id mode,
 {
     qa_application *application = opaque;
     bool native_source;
-    if (!out || out->mode.slot != mode.slot || out->mode.generation != mode.generation ||
-        !application_native_q3_objective_bound(application, mode, actor, &native_source, error) ||
-        !native_source)
+    if (!out || out->mode.slot != mode.slot || out->mode.generation != mode.generation)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "TEAM object view lost its actual physical source owner");
-    application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!application_native_q3_objective_bound(application, mode, actor, &native_source, error)) return false;
+    if (!native_source)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "TEAM object view lost its actual physical source owner");
+    application_provider *provider;
+    if (!view_provider(application, mode, &provider, error)) return false;
     if (out->kind != QA_MODE_OBJECT_OBELISK) {
         qa_q3_item_spawn spawn;
         qa_q3_item_state item;

@@ -41,6 +41,7 @@
 #include "network_q1_client.h"
 #include "network_q1_restore.h"
 #include "neutral_config.h"
+#include "config_store.h"
 #include "network_q2_restore.h"
 #include "network_client_commands.h"
 #include "network_q2_host.h"
@@ -790,7 +791,8 @@ bool frontend_network_q2_finish_import(qa_frontend *f,const frontend_remote_q2_r
         (!view.receiver || frontend_remote_q2_restore_finish(view.receiver,refs,error));
 }
 static const char *const names[] = {"serverlist", "serverquery", "serverfavorite", "servermaster", "setmaster",
-    "addip", "removeip", "heartbeat", "maprotation", "nextmap", "download", "downloadstatus", "downloadcancel", "downloadsuspend",
+    "addip", "removeip", "listip", "writeip", "addlrconcmd", "dellrconcmd", "listlrconcmds",
+    "heartbeat", "maprotation", "nextmap", "download", "downloadstatus", "downloadcancel", "downloadsuspend",
     "connect", "reconnect", "disconnect", "localservers", "globalservers", "ping", "serverstatus"};
 static bool send_address(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
@@ -3224,6 +3226,15 @@ static bool save_favorites(qa_frontend_network *n, qa_error *error)
         ++n->nonce, false, true, &created, error);
     qa_buffer_free(&bytes); return ok;
 }
+static bool save_filters(qa_frontend_network *n, qa_error *error)
+{
+    qa_buffer bytes={0}; bool created;
+    if (n->nonce==UINT64_MAX) return frontend_fail(error,QA_ERROR_ARGUMENT,"Filter publication namespace exhausted");
+    if (!qa_server_admin_save_filters(n->admin,&bytes,error)) return false;
+    bool ok=qa_fs_root_publish(n->preferences,"network/filters.bin",(qa_bytes){bytes.data,bytes.size},
+        ++n->nonce,false,true,&created,error);
+    qa_buffer_free(&bytes); return ok;
+}
 static int menu_family(qa_net_protocol_id protocol)
 {
     if(protocol.kind<=QA_NET_RMQ999) return 0;
@@ -3551,6 +3562,10 @@ static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocati
     if (!server) { emit(call, "Not connected to a server.\nUsage: serverstatus [server]\n"); return true; }
     return frontend_q3_browser_status_command(&access, server, error);
 }
+static bool operator_print(void *context,const char *text,qa_error *error)
+{
+    (void)error; emit(context,text); return true;
+}
 static bool command(void *context, const qa_command_invocation *call, qa_error *error)
 {
     qa_frontend_network *n = context; const char *name = call->argv[0];
@@ -3584,8 +3599,25 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         return qa_server_browser_query(n->browser, &address, protocol, false, n->frontend->wall_time_ns, UINT64_C(5000000000), error);
     }
     if (!strcmp(name, "addip") || !strcmp(name, "removeip"))
-        return call->argc == 2 ? qa_server_admin_filter(n->admin, call->argv[1], !strcmp(name, "removeip"), error) :
+        return call->argc == 2 ? qa_server_admin_filter(n->admin, call->argv[1], !strcmp(name, "removeip"), error) && save_filters(n,error) :
             frontend_fail(error, QA_ERROR_ARGUMENT, "usage: addip/removeip address-mask");
+    if (!strcmp(name,"listip")) {
+        qa_buffer filters={0};
+        if(!qa_server_admin_filters_text(n->admin,false,call->context.dialect,true,&filters,error)) return false;
+        emit(call,(const char *)filters.data); qa_buffer_free(&filters); return true;
+    }
+    if (!strcmp(name,"writeip")) {
+        const qa_cvar_view *filterban=qa_cvars_find(qa_console_cvars(call->console),"filterban");
+        if (!filterban) return frontend_fail(error,QA_ERROR_ARGUMENT,"Filter write requires the actual Source filterban declaration");
+        qa_buffer filters={0};
+        if (!qa_server_admin_filters_text(n->admin,true,call->context.dialect,filterban->integer!=0,&filters,error)) return false;
+        bool ok=frontend_config_store_write_source_text(n->frontend->config_store,call,"listip.cfg",
+            (qa_bytes){filters.data,filters.size},error);
+        qa_buffer_free(&filters); if (ok) emit(call,"Wrote listip.cfg\n"); return ok;
+    }
+    if (!strcmp(name,"addlrconcmd") || !strcmp(name,"dellrconcmd") || !strcmp(name,"listlrconcmds"))
+        return qa_server_admin_limited_command(n->admin,name,call->args_text?call->args_text:"",
+            operator_print,(void *)call,error);
     if (!strcmp(name, "setmaster")) {
         if (call->argc > 33) return frontend_fail(error, QA_ERROR_ARGUMENT, "setmaster accepts at most 32 admitted master addresses");
         qa_net_address masters[32];
@@ -3774,6 +3806,12 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
             qa_server_browser_restore(n->browser, (qa_bytes){bytes.data, bytes.size}, error);
         qa_fs_file_close(favorites); qa_buffer_free(&bytes); if (!ok) goto failed;
     } else if (local.code != QA_ERROR_NOT_FOUND) { if (error) *error = local; goto failed; }
+    favorites=NULL; local=(qa_error){0};
+    if (qa_fs_root_file_open(n->preferences,"network/filters.bin",&favorites,&identity,&local)) {
+        bool ok=qa_fs_file_read_snapshot(favorites,&identity,&bytes,error) &&
+            qa_server_admin_restore_filters(n->admin,(qa_bytes){bytes.data,bytes.size},error);
+        qa_fs_file_close(favorites); qa_buffer_free(&bytes); if (!ok) goto failed;
+    } else if (local.code!=QA_ERROR_NOT_FOUND) { if (error) *error=local; goto failed; }
     if(!menu_preferences_load(n,error)) goto failed;
     frontend_q3_browser_options ui_browser = browser_options(n);
     if (!frontend_q3_browser_create(&ui_browser, &n->q3_browser, error) ||
@@ -7896,4 +7934,14 @@ bool frontend_network_menu_direct_read(const qa_frontend *f,const frontend_netwo
             memcpy(remote,preferences.direct[i].remote,256); *present=true; break;
         }
     return menu_admitted(f,view,error);
+}
+
+bool frontend_network_client_restore_abort_ready(const qa_frontend *f,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if(!f || !source)return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT import abort requires its actual Source");
+    if(f->network && f->network->q2_client_owner &&
+        frontend_network_q2_client_configuration_primary(f->network->q2_client_owner,source))
+        return frontend_network_q2_client_restore_abort_ready(f->network->q2_client_owner,source,error);
+    return frontend_client_sources_restore_abort_ready(f,source,error);
 }

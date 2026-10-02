@@ -1004,17 +1004,51 @@ bool frontend_q3_prepare(qa_frontend *f,const frontend_q3_refs *refs,qa_bytes by
     }
     inventory->prepared=true; *out=inventory; return true;
 }
+static bool registry_restore_order(frontend_q3_inventory *inventory,size_t **out,qa_error *error)
+{
+    size_t count=inventory->registry_count;
+    if(count>SIZE_MAX/sizeof(size_t)) return frontend_fail(error,QA_ERROR_MEMORY,"Registry parent order exceeds its real roster");
+    size_t *order=count?malloc(count*sizeof(*order)):NULL;
+    size_t *parents=count?malloc(count*sizeof(*parents)):NULL;
+    bool *completed=count?calloc(count,sizeof(*completed)):NULL;
+    bool ok=!count || (order && parents && completed);
+    if(!ok) frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual registry parent dependencies");
+    for(size_t i=0;ok && i<count;++i) {
+        uint64_t key=0; qa_q3_presentation_assets *parent=NULL;
+        parents[i]=SIZE_MAX;
+        ok=qa_q3_assets_owner_parent_key(inventory->registries[i].state,&key,error);
+        if(ok && key) ok=frontend_q3_assets_decode(inventory,key,&parent,error) && parent;
+        if(!ok || !key) continue;
+        for(size_t j=0;j<count;++j)
+            if(inventory->groups[inventory->registries[j].group].source.assets==parent) {
+                parents[i]=j; break;
+            }
+        if(parents[i]==i) ok=frontend_fail(error,QA_ERROR_FORMAT,"Saved registry names itself as its retained parent");
+    }
+    for(size_t i=0;ok && i<count;++i) {
+        size_t next=0;
+        while(next<count && (completed[next] || (parents[next]!=SIZE_MAX && !completed[parents[next]]))) ++next;
+        if(next==count) { ok=frontend_fail(error,QA_ERROR_FORMAT,"Saved registry parent graph contains a cycle"); break; }
+        completed[next]=true; order[i]=next;
+    }
+    free(parents); free(completed);
+    if(!ok) { free(order); return false; }
+    *out=order; return true;
+}
 bool frontend_q3_restore(frontend_q3_inventory *inventory,double wall_milliseconds,qa_error *error)
 {
     if (!inventory || !inventory->prepared || inventory->importing || inventory->restored || !isfinite(wall_milliseconds) ||
         !phase(inventory->frontend,&inventory->refs,true,error))
         return error && error->code!=QA_OK?false:frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 late import requires its untouched prepared candidate");
+    size_t *registry_order=NULL;
+    if(!registry_restore_order(inventory,&registry_order,error)) return false;
     inventory->importing=true; bool ok=true; qa_frontend *f=inventory->frontend;
     for (size_t i=0;ok && i<inventory->presentation_count;++i) ok=attach_binding(inventory,inventory->presentations+i,error);
     for (size_t i=0;ok && i<inventory->registry_count;++i) {
-        q3_registry *registry=inventory->registries+i; q3_scope scope={.inventory=inventory,.group=registry->group}; qa_q3_asset_owner_refs assets=asset_refs(&scope);
+        q3_registry *registry=inventory->registries+registry_order[i]; q3_scope scope={.inventory=inventory,.group=registry->group}; qa_q3_asset_owner_refs assets=asset_refs(&scope);
         ok=qa_q3_assets_owner_restore(inventory->groups[registry->group].source.assets,qa_application_session(f->application),&assets,registry->state,error);
     }
+    free(registry_order);
     for (size_t i=0;ok && i<inventory->group_count;++i) if (assets_only(inventory->groups[i].kind)) {
         q3_group *group=inventory->groups+i;
         ok=qa_q3_assets_capture_begin(group->source.assets,error);

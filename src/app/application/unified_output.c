@@ -409,7 +409,7 @@ void application_unified_output_dispose(application_unified_output *out)
 }
 
 bool application_unified_resource_key(const qa_product *product, const char *path,
-    const qa_resource *r, qa_unified_document **out, char id[81], qa_error *error)
+    const qa_resource *r, qa_unified_document **out, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *error)
 {
     if (!out || !id || !product || !product->identity || !path || !r || !qa_resource_digest(r))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified resource needs its actual retained acquisition");
@@ -427,7 +427,7 @@ bool application_unified_resource_key(const qa_product *product, const char *pat
         (qa_bytes){key.bytes.data, key.bytes.size}, &candidate, error);
     if (ok) {
         qa_sha256_digest hash;
-        char actual_id[81] = "resource:unified:";
+        char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY] = "resource:unified:";
         qa_sha256((qa_bytes){canonical.data, canonical.size}, &hash);
         qa_sha256_hex(&hash, actual_id + sizeof("resource:unified:") - 1);
         memcpy(id, actual_id, sizeof(actual_id));

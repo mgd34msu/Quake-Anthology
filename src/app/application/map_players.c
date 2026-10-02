@@ -91,12 +91,14 @@ bool application_players_source_spawned(void *context, qa_actor_id actor, qa_err
 {
     application_provider *source = context;
     qa_application *app = source ? source->application : NULL;
+    bool scoped = application_native_q3_source_command_actor_current(source, actor);
     if (!app || !app->players || !source->constructed || !source->attached ||
-        source->close_pending || app->destroy_requested || app->players->map_provider != source ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        source->close_pending || app->destroy_requested ||
+        ((app->players->map_provider != source ||
+          application_world_provider(app, QA_ROLE_ENTITIES, "") != source) && !scoped) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn lost its actual Source player");
-    if (app->operation == APPLICATION_CONFIGURING) return true;
+    if (app->operation == APPLICATION_CONFIGURING && !scoped) return true;
     application_player_record *record = NULL;
     for (size_t i = 0; i < app->players->count; ++i) {
         application_player_record *row = app->players->records + i;
@@ -108,7 +110,9 @@ bool application_players_source_spawned(void *context, qa_actor_id actor, qa_err
     if (!record || record->retiring)
         return application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn lost its published player");
     if (record->source_begin_pending || record->deferred) return true;
-    return admit_components(app, actor, error);
+    return admit_components(app, actor, error) &&
+        (!scoped || application_native_q3_source_command_actor_current(source, actor) ||
+         application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn retired its captured Source client"));
 }
 
 static qa_mode_kind selected_mode(const qa_launch_choices *choices)

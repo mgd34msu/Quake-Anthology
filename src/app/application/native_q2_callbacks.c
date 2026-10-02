@@ -63,11 +63,13 @@ typedef struct native_region {
     application_native_q2_callback_region *scope;
     application_native_q2_source_authority authority;
     bool retained;
+    qa_error retirement;
 } native_region;
 typedef struct native_call {
     struct native_call *next;
     qa_native_call_scope *scope;
     application_native_q2_item_receipt *items;
+    struct application_native_q2_source_invocation *source;
 } native_call;
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
@@ -757,7 +759,9 @@ static bool projection_end(application_native_q2_callbacks *o,qa_error *e)
 static bool region_current(void *context,qa_error *e)
 {
     native_region *r=context;
-    return current(r->owner,e)&&r->retained&&r->authority.current(r->authority.context,e);
+    return r->retained&&
+        application_native_q2_source_invocation_guard(r->owner->engine,&r->authority,&r->retirement,e)&&
+        current(r->owner,e);
 }
 static bool region_close(native_region **owned,qa_error *e)
 {
@@ -780,13 +784,15 @@ static bool regions_close(application_native_q2_callbacks *o,qa_error *e)
 static bool call_cancel(void *context,const qa_error *e)
 {
     native_call *call=context;
-    return application_native_q2_items_receipt_accepts_error(call->items,e);
+    return application_native_q2_source_invocation_accepts(call->source,e)||
+        application_native_q2_items_receipt_accepts_error(call->items,e);
 }
 static bool call_close(native_call **owned,qa_error *e)
 {
     native_call *call=*owned;
     if(!call) return true;
-    if(!qa_native_call_scope_close(&call->scope,e)) return false;
+    if(!qa_native_call_scope_close(&call->scope,e)||
+        !application_native_q2_source_invocation_close(&call->source,e)) return false;
     application_native_q2_items_receipt_end(&call->items);
     free(call); *owned=NULL; return true;
 }
@@ -825,15 +831,43 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     else scalar_type(d,qa_json_get(d,call,"returns"),&returns);
     if(returns==QA_NATIVE_BYTES) return fail(e,"Native callback return has no scalar ABI");
     ++o->calls; ++o->engine->calls;
-    bool ok=!transfer||(records_prepare(o,e)&&application_native_q2_records_commit(o->records,e));
+    bool ok=true;
     const application_native_callback_value *self=input(in,"self");
-    if(ok&&self&&self->kind==APPLICATION_NATIVE_VALUE_ACTOR&&
-        application_native_q2_items_actor_admitted(o->items,self->value.actor)) {
+    bool item_cancellation=self&&self->kind==APPLICATION_NATIVE_VALUE_ACTOR&&
+        application_native_q2_items_actor_admitted(o->items,self->value.actor);
+    struct application_native_q2_source_invocation *source=NULL;
+    if(ok)ok=application_native_q2_source_invocation_begin(o->engine,
+        self&&self->kind==APPLICATION_NATIVE_VALUE_ACTOR?self->value.actor:(qa_actor_id){0},&source,e);
+    if(ok&&(source||item_cancellation)) {
         processor=calloc(1,sizeof(*processor));
-        if(!processor) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining native call cancellation");
-        if(ok) ok=application_native_q2_items_receipt_begin(o->items,self->value.actor,&processor->items,e)&&
-            qa_native_call_scope_open(instance(o),call_cancel,processor,&processor->scope,e);
+        if(!processor)ok=application_fail(e,QA_ERROR_MEMORY,"Retaining native call cancellation");
+        if(processor) {processor->source=source;source=NULL;}
+        if(ok&&item_cancellation)ok=application_native_q2_items_receipt_begin(o->items,self->value.actor,&processor->items,e);
+        if(ok)ok=qa_native_call_scope_open(instance(o),call_cancel,processor,&processor->scope,e);
     }
+    if(source) {
+        qa_error cleanup={0};
+        if(!application_native_q2_source_invocation_close(&source,&cleanup)&&ok) {ok=false;if(e)*e=cleanup;}
+    }
+    if(ok&&region!=QA_JSON_NONE) {
+        if(!authority||!authority->current||!authority->retain||!authority->release)
+            ok=application_fail(e,QA_ERROR_ARGUMENT,"Native region has no retained protection authority");
+        if(ok) {
+            region_scope=calloc(1,sizeof(*region_scope));
+            if(!region_scope)ok=application_fail(e,QA_ERROR_MEMORY,"Retaining actual native region protection scope");
+        }
+        if(ok) {
+            region_scope->owner=o;region_scope->authority=*authority;
+            if(o->engine->source_retirement_sequence==SIZE_MAX)
+                ok=application_fail(e,QA_ERROR_ARGUMENT,"Native Source region exhausted its exact authority errors");
+            if(ok)qa_error_set(&region_scope->retirement,QA_ERROR_NOT_FOUND,++o->engine->source_retirement_sequence,
+                "Native Source region retired its retained protection authority");
+            if(ok)ok=authority->retain(authority->context,e);
+            region_scope->retained=ok;
+            if(ok)ok=region_current(region_scope,e);
+        }
+    }
+    if(ok&&transfer)ok=records_prepare(o,e)&&application_native_q2_records_commit(o->records,e);
     if(ok) ok=target(o,call,&entry,e);
     if(ok&&armor_check) ok=protection_arguments(o,call,in,values,count,&allocations,e);
     for(size_t i=0;ok&&i<count;++i) {
@@ -843,9 +877,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     }
     size_t region_count=region==QA_JSON_NONE?0:qa_json_size(d,qa_json_get(d,region,"inputs"));
     if(ok&&region!=QA_JSON_NONE) {
-        if(!authority||!authority->current||!authority->retain||!authority->release)
-            ok=application_fail(e,QA_ERROR_ARGUMENT,"Native region has no retained protection authority");
-        else ok=authority->current(authority->context,e)&&
+        ok=region_current(region_scope,e)&&
             application_native_q2_callback_region_validate(instance(o),o->declaration,d,region,e);
         if(ok&&region_count) {
             region_values=calloc(region_count,sizeof(*region_values));
@@ -856,15 +888,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
             ok=lower(o,qa_json_get(d,qa_json_at(d,qa_json_get(d,region,"inputs"),i),"value"),
                 in,region_values+i,&storage,&allocations,&corrections,e);
         }
-        if(ok) {
-            region_scope=calloc(1,sizeof(*region_scope));
-            if(!region_scope) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining actual native region protection scope");
-        }
-        if(ok) {
-            region_scope->owner=o; region_scope->authority=*authority;
-            ok=authority->retain(authority->context,e);
-            region_scope->retained=ok;
-        }
+
     }
     qa_native_signature signature={.abi=o->target.abi,.parameters=types,.parameter_count=count,
         .result={.kind=returns,.count=1}};
@@ -909,13 +933,16 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         o->active_call=call;
         if(region_scope) o->active_region=region_scope;
         application_native_q2_visibility_invalidate(o->engine);
-        ok=(region!=QA_JSON_NONE?
+        if(region_scope)ok=region_current(region_scope,e);
+        if(ok)ok=(region!=QA_JSON_NONE?
             application_native_q2_callback_region_execute(instance(o),o->declaration,d,region,entry,
                 &signature,values,count,region_values,region_count,region_current,region_scope,
                 &region_scope->scope,&result,&dispatched,e):
             qa_native_invoke_receipt(instance(o),entry,&signature,values,count,
                 returns==QA_NATIVE_VOID?NULL:&result,&dispatched,e))&&current(o,e);
     }
+    if(region_scope)application_native_q2_source_invocation_unguard(o->engine,
+        &region_scope->retirement,ok?NULL:e);
     o->active_call=previous_call;
     o->active_region=previous_region;
     bool cancelled=false;
@@ -1062,9 +1089,7 @@ bool application_native_q2_callbacks_protection_absorb(application_native_q2_cal
         {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=time}};
     application_native_callback_inputs inputs={values,sizeof(values)/sizeof(*values),{0}};
     double result;
-    if(!call_native_common(o,call,&inputs,&result,false,NULL,check,region?absorb:QA_JSON_NONE,authority,e)||
-        !application_native_q2_callbacks_client_current(o,request->target,e)||
-        !authority->current(authority->context,e)) return false;
+    if(!call_native_common(o,call,&inputs,&result,false,NULL,check,region?absorb:QA_JSON_NONE,authority,e)) return false;
     float narrowed=(float)result;
     if(!isfinite(narrowed)) return fail(e,"Native protection result exceeds its canonical stage amount");
     *saved=narrowed; return true;
@@ -1515,9 +1540,11 @@ bool application_native_q2_callbacks_drain(struct application_native_q2 *n,qa_er
     if(!o) return true;
     if(n->calls||o->calls||qa_native_active(instance(o)))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native callback cleanup retains entered Source execution");
-    return regions_close(o,e)&&application_native_q2_pickups_drain(o->pickups,e)&&
+    return regions_close(o,e)&&application_native_q2_source_invocation_drain(n,e)&&
+        application_native_q2_pickups_drain(o->pickups,e)&&
         application_native_q2_protection_drain(o->protection,e)&&projection_end(o,e)&&
-        cleanup(o,&o->pending_globals,&o->pending,e)&&calls_close(o,e);
+        cleanup(o,&o->pending_globals,&o->pending,e)&&calls_close(o,e)&&
+        application_native_q2_source_invocation_drain(n,e);
 }
 bool application_native_q2_callbacks_drain_application(qa_application *app,qa_error *e)
 {
@@ -1650,21 +1677,20 @@ bool application_native_q2_callbacks_observation_required(const application_nati
 bool application_native_q2_callbacks_source_before(void *context,qa_error *e)
 {
     struct application_native_q2 *n=context;
-    if(!application_native_q2_source_invocation_guard(n,e))return false;
     if(n&&n->callbacks&&n->callbacks->active_region&&
         !region_current(n->callbacks->active_region,e)) return false;
     bool committed=!n||!n->callbacks||!n->callbacks->records||application_native_q2_records_lifecycle(n->callbacks->records)||
         application_native_q2_records_commit(n->callbacks->records,e);
-    return committed&&application_native_q2_source_invocation_guard(n,e);
+    return committed&&(!n||!n->callbacks||!n->callbacks->active_region||
+        region_current(n->callbacks->active_region,e));
 }
 bool application_native_q2_callbacks_source_after(void *context,qa_error *e)
 {
     struct application_native_q2 *n=context;
-    if(!application_native_q2_source_invocation_guard(n,e))return false;
     bool refreshed=!n||!n->callbacks||!n->callbacks->records||application_native_q2_records_lifecycle(n->callbacks->records)||
         application_native_q2_records_refresh(n->callbacks->records,e);
     return refreshed&&(!n||!n->callbacks||!n->callbacks->active_region||
-        region_current(n->callbacks->active_region,e))&&application_native_q2_source_invocation_guard(n,e);
+        region_current(n->callbacks->active_region,e));
 }
 bool application_native_q2_callbacks_import(void *context,const qa_native_import_call *call,
     qa_native_value *result,bool *handled,qa_error *e)

@@ -18,7 +18,7 @@ typedef struct qa_render_source_restart_values {
 } qa_render_source_restart_values;
 
 typedef struct qa_render_source_frame_values {
-    int32_t finish, show_images, speeds;
+    int32_t finish, show_images, speeds, milliseconds;
     bool measure_overdraw, no_bind;
 } qa_render_source_frame_values;
 typedef struct qa_render_source_counters {

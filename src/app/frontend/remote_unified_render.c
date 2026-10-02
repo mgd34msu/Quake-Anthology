@@ -287,6 +287,14 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             if (!unified_scene_current(c)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified model lost its completed Source receipt");
             if (owned) continue;
         }
+        if (m->input.view_model && m->equipment && m->equipment_instance && children && children->equipment_model) {
+            bool owned=false;
+            if (!children->equipment_model(children->context,m->actor,m->equipment_provider,
+                m->equipment_instance,m->equipment_slot,&owned,e)) return false;
+            if (!unified_scene_current(c))
+                return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified view model lost its completed EQUIPMENT receipt");
+            if (owned) continue;
+        }
         qa_scene_model_input input=m->input; input.view=world->view;
         qa_vec3 position=m->origin,previous=m->has_previous_origin?m->previous_origin:position;
         if (predicting && qa_actor_id_equal(m->actor,player)) {
@@ -609,24 +617,30 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
             unified_render_model *m=r->models+i; qa_saved_actor_id wire;
             qa_json_id row=qa_json_at(j,rows,i),actor_id=qa_json_get(j,row,"actor");
             uint64_t slot,generation;
+            bool view_model=false;
             okay=frontend_remote_unified_wire_actor(r->replica,m->actor,&wire) &&
                 qa_json_u64(j,qa_json_get(j,actor_id,"slot"),&slot,io->error) && slot==wire.slot &&
                 qa_json_u64(j,qa_json_get(j,actor_id,"generation"),&generation,io->error) && generation==wire.generation &&
                 qa_json_string_equal(j,qa_json_get(j,row,"content"),m->product->identity) &&
                 qa_json_string_equal(j,qa_json_get(j,row,"path"),m->path) &&
-                model_source_read(r,row,m,io->error) && model_equipment_read(r,row,m,io->error);
+                model_source_read(r,row,m,io->error) && model_equipment_read(r,row,m,io->error) &&
+                qa_json_bool(j,qa_json_get(j,row,"viewWeapon"),&view_model,io->error) && view_model==m->input.view_model;
         }
     }
     return okay && render_blob(io,hud);
 }
-static bool render_frame_current(const frontend_unified_render *r)
+static bool render_document_current(const frontend_unified_render *r,const qa_unified_document *published)
 {
-    const qa_unified_document *published=frontend_remote_unified_frame(r->replica);
-    if (!published || !r->frame) return false;
+    if (!r || !published || !r->frame) return false;
     qa_bytes actual=qa_json_source(qa_unified_document_json(published),qa_unified_document_root(published));
     qa_bytes saved=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
     return actual.size==saved.size && (!actual.size || !memcmp(actual.data,saved.data,actual.size));
 }
+static bool render_frame_current(const frontend_unified_render *r)
+{ return r && render_document_current(r,frontend_remote_unified_frame(r->replica)); }
+bool frontend_unified_render_pending_current(const frontend_unified_render *r)
+{ return r && frontend_unified_render_idle(r) &&
+    render_document_current(r,frontend_remote_unified_frame_prepared(r->replica)); }
 bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_actor_id actor,
     frontend_unified_render_equipment *out,bool *present,qa_error *error)
 {
@@ -669,11 +683,12 @@ bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_
         .scene_sequence=r->frontend->frame.sequence};
     *present=true; return true;
 }
-bool frontend_unified_render_checkpoint(frontend_unified_render *r,
-    const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)
+static bool render_checkpoint(frontend_unified_render *r,
+    const frontend_unified_render_refs *refs,qa_buffer *out,bool pending,qa_error *error)
 {
     if (!r || !refs || !refs->scene || !out || out->data || out->size || !frontend_unified_render_idle(r) ||
-        !frontend_remote_unified_checkpoint_current(r->replica,error) || !render_frame_current(r))
+        !frontend_remote_unified_checkpoint_current(r->replica,error) ||
+        !(pending?frontend_unified_render_pending_current(r):render_frame_current(r)))
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Received render capture requires its returned owner and shared dictionaries");
     qa_buffer hud={0}; qa_source_save_io io={0};
     bool okay=qa_hud_checkpoint(r->hud,&refs->hud,&hud,error) && qa_source_save_writer(&io,NULL,error) &&
@@ -683,9 +698,9 @@ bool frontend_unified_render_checkpoint(frontend_unified_render *r,
         frontend_unified_fail(error,QA_ERROR_FORMAT,"Received render continuation lost its actual dictionary binding");
     return okay;
 }
-bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *replica,
+static bool render_restore(qa_frontend *f,frontend_remote_unified *replica,
     frontend_unified_media *media,const frontend_unified_render_refs *refs,qa_bytes bytes,
-    frontend_unified_render **out,qa_error *error)
+    frontend_unified_render **out,bool pending,qa_error *error)
 {
     if (!f || !replica || !media || !refs || !refs->scene || !out || *out ||
         frontend_unified_media_importing(media) || !frontend_unified_media_current(media) ||
@@ -695,7 +710,8 @@ bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *rep
     r->frontend=f; r->replica=replica; r->media=media;
     qa_source_save_io io={0}; qa_buffer hud={0};
     bool okay=qa_source_save_reader(&io,NULL,bytes,error) && render_fields(r,refs,&io,&hud) &&
-        qa_source_save_finish(&io,NULL) && render_frame_current(r);
+        qa_source_save_finish(&io,NULL) &&
+        render_document_current(r,pending?frontend_remote_unified_frame_prepared(replica):frontend_remote_unified_frame(replica));
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
     if (okay) okay=d && d->physical_seat<f->options.seats &&
         qa_hud_restore((qa_bytes){hud.data,hud.size},&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,
@@ -710,3 +726,18 @@ bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *rep
     }
     *out=r; return true;
 }
+
+bool frontend_unified_render_checkpoint(frontend_unified_render *r,
+    const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)
+{ return render_checkpoint(r,refs,out,false,error); }
+bool frontend_unified_render_pending_checkpoint(frontend_unified_render *r,
+    const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)
+{ return render_checkpoint(r,refs,out,true,error); }
+bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_unified_media *media,const frontend_unified_render_refs *refs,qa_bytes bytes,
+    frontend_unified_render **out,qa_error *error)
+{ return render_restore(f,replica,media,refs,bytes,out,false,error); }
+bool frontend_unified_render_pending_restore(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_unified_media *media,const frontend_unified_render_refs *refs,qa_bytes bytes,
+    frontend_unified_render **out,qa_error *error)
+{ return render_restore(f,replica,media,refs,bytes,out,true,error); }

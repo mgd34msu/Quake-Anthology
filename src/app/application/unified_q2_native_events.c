@@ -322,7 +322,7 @@ static bool sound_simulation(json *j, qa_application *app, const qa_builtin_even
     qa_error *e) {
     const char *path = qa_strings_cstr(qa_session_strings(app->session), v->resource);
     if (!path) return application_fail(e, QA_ERROR_FORMAT, "Q2 sound lost its declared Source path");
-    char key[81];
+    char key[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     bool found;
     if (!application_unified_event_resource_lookup(app, v->provider, path, key, &found, e)) return false;
     if (!found) return true;

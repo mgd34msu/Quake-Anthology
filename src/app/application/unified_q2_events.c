@@ -144,7 +144,7 @@ static const char *print_level(uint8_t level)
 static bool simulation_sound(q2_projection *p, application_unified_json *j,
     const qa_q2_kex_sound *sound, qa_actor_id source, qa_vec3 origin, const char *path, qa_error *e)
 {
-    char id[81]; bool found;
+    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool found;
     const qa_application_protocol_resource_reference *receipt = resource_receipt(p, QA_NATIVE_HOST_SOUND, sound->index);
     if (receipt) {
         found = receipt->resource_key[0] != 0;

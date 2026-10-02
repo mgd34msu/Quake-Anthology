@@ -22,16 +22,29 @@ typedef struct native_visibility_call {
     uint32_t entity_slot, viewer_slot;
     qa_actor_id entity, viewer;
     bool visible;
+    qa_source_frame frame;
 } native_visibility_call;
 
 static bool invoke_visibility(void *context, qa_error *error)
 {
     native_visibility_call *call = context;
     ++call->engine->calls;
-    bool ok = qa_native_host_q2_entity_visible(call->engine->provider->state.native.host,
-        call->entity_slot, call->entity, call->viewer_slot, call->viewer, &call->visible, error);
+    qa_native_host *host=call->engine->provider->state.native.host;
+    bool ok = call->engine->callbacks ?
+        qa_native_host_q2_entity_visible_completed(host,&call->frame,call->entity_slot,call->entity,
+            call->viewer_slot,call->viewer,&call->visible,error) :
+        qa_native_host_q2_entity_visible(host,call->entity_slot,call->entity,
+            call->viewer_slot,call->viewer,&call->visible,error);
     --call->engine->calls;
     return ok;
+}
+
+static bool entity_stage(struct application_native_q2 *engine,const qa_source_frame *frame,
+    uint32_t slot,qa_native_host_q2_entity *out,qa_error *error)
+{
+    qa_native_host *host=engine->provider->state.native.host;
+    return engine->callbacks?qa_native_host_q2_wire_entity_completed(host,frame,slot,out,error):
+        qa_native_host_q2_wire_entity_stage(host,slot,out,error);
 }
 
 void application_native_q2_visibility_destroy(application_native_q2_visibility **owner)
@@ -88,20 +101,21 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
         const application_native_q2_client *client = &engine->clients[slot];
         if (!client->connected || !client->begun || client->disconnect_started) continue;
         qa_native_host_q2_entity entity;
-        ok = qa_native_host_q2_wire_entity_stage(host, slot, &entity, error);
+        ok = entity_stage(engine,&frame,slot,&entity,error);
         if (ok && (!entity.in_use || !qa_actor_id_equal(entity.binding.actor, client->actor)))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility viewer lost its admitted physical Source client");
         if (ok) candidate->viewers[slot] = client->actor;
     }
     for (uint32_t slot = 1; ok && slot < table.count; ++slot) {
         qa_native_host_q2_entity entity;
-        ok = qa_native_host_q2_wire_entity_stage(host, slot, &entity, error);
+        ok = entity_stage(engine,&frame,slot,&entity,error);
         if (!ok || !entity.in_use || !(entity.server_flags & 256)) continue;
         ok = remember(candidate, &entity, error);
         native_visibility_row *row = ok ? &candidate->rows[candidate->count - 1] : NULL;
         for (uint32_t viewer = 1; ok && viewer <= candidate->clients; ++viewer) {
             if (!candidate->viewers[viewer].registry) continue;
-            native_visibility_call call = {engine, slot, viewer, entity.binding.actor, candidate->viewers[viewer], false};
+            native_visibility_call call = {.engine=engine,.entity_slot=slot,.viewer_slot=viewer,
+                .entity=entity.binding.actor,.viewer=candidate->viewers[viewer],.frame=frame};
             ok = engine->callbacks ? application_native_q2_callbacks_transfer(engine->callbacks, invoke_visibility, &call, error) :
                 invoke_visibility(&call, error);
             if (ok && call.visible) row->visible[(viewer - 1) / 64] |= UINT64_C(1) << ((viewer - 1) % 64);
@@ -118,14 +132,14 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility callbacks changed the completed Source table or frame");
     for (size_t i = 0; ok && i < candidate->count; ++i) {
         qa_native_host_q2_entity entity;
-        ok = qa_native_host_q2_wire_entity_stage(host, candidate->rows[i].source_slot, &entity, error);
+        ok = entity_stage(engine,&frame,candidate->rows[i].source_slot,&entity,error);
         if (ok && (!entity.in_use || !(entity.server_flags & 256) ||
             !qa_actor_id_equal(entity.binding.actor, candidate->rows[i].actor)))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility callback retired another retained Source entity");
     }
     for (uint32_t slot = 1; ok && slot <= candidate->clients; ++slot) if (candidate->viewers[slot].registry) {
         qa_native_host_q2_entity entity;
-        ok = qa_native_host_q2_wire_entity_stage(host, slot, &entity, error);
+        ok = entity_stage(engine,&frame,slot,&entity,error);
         if (ok && (!entity.in_use || !qa_actor_id_equal(entity.binding.actor, candidate->viewers[slot])))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility callback retired another retained Source viewer");
     }

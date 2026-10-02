@@ -112,7 +112,7 @@ static bool state(qa_source_save_io *io,frontend_unified_components *owner,remot
     if(!frontend_save_text(io,&value->provider)||!value->provider||
         !qa_source_save_u64(io,&value->owner_generation)||!value->owner_generation||value->owner_generation>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_u64(io,&value->generation)||value->generation>QA_UNIFIED_SAFE_INTEGER||
-        !qa_source_save_u32(io,&abi)||(abi!=QA_QVM_Q3_MODERN&&abi!=QA_QVM_Q3_116N)||
+        !qa_source_save_u32(io,&abi)||(abi!=QA_QVM_Q3_MODERN&&abi!=QA_QVM_Q3_116N)||!qa_source_save_bool(io,&value->player_events)||
         !document(io,&value->identity,QA_UNIFIED_CHECKPOINT)||!document(io,&value->presentation_owner,QA_UNIFIED_CHECKPOINT)) return false;
     value->abi=(qa_qvm_abi)abi;
     if(!source(io,value)) return false;
@@ -161,7 +161,7 @@ static bool frame(qa_source_save_io *io,remote_component *row,remote_component_f
         !qa_source_save_vec3(io,&c->origin)||!qa_vec_finite(c->origin)) return false;
     for(size_t i=0;i<3;++i) if(!qa_source_save_vec3(io,c->axis+i)||!qa_vec_finite(c->axis[i])) return false;
     if(!qa_source_save_bool(io,&c->has_weapon_presented)||!qa_source_save_bool(io,&c->weapon_presented)||
-        !qa_source_save_bool(io,&value->has_scene)||!value->has_scene||
+        !qa_source_save_bool(io,&value->has_scene)||value->has_scene==row->state.player_events||
         !qa_source_save_count(io,&c->actor_count,1024)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         value->actors=c->actor_count?calloc(c->actor_count,sizeof(*value->actors)):NULL;
@@ -207,7 +207,7 @@ static bool profile(remote_component *row,qa_error *e)
 {
     qa_json_document *d=NULL; if(!qa_json_parse(row->state.mod->declaration,&d,e)) return false;
     qa_json_id declaration=qa_json_get(d,qa_json_root(d),"presentation"),cgame=qa_json_get(d,declaration,"cgame");
-    bool ok=qa_json_string_equal(d,qa_json_get(d,declaration,"runtime"),"qvm-scene")&&
+    bool ok=qa_json_string_equal(d,qa_json_get(d,declaration,"runtime"),row->state.player_events?"qvm-player-events":"qvm-scene")&&
         qa_json_string_equal(d,qa_json_get(d,cgame,"path"),row->acquisition.path)&&
         !strcmp(row->gameplay_acquisition.path,row->state.mod->program_path)&&
         qa_sha256_equal(qa_resource_digest(row->gameplay),&row->state.mod->program_digest)&&
@@ -266,6 +266,30 @@ static bool admissions(qa_source_save_io *io,remote_component *row)
 static bool row_fields(qa_source_save_io *io,remote_component *row,const frontend_unified_components_refs *refs)
 {
     if(!state(io,row->parent,&row->state)) return false;
+    if(!qa_source_save_u64(io,&row->event_sequence)||row->event_sequence>QA_UNIFIED_SAFE_INTEGER) return false;
+    size_t event_count=0;
+    if(io->direction==QA_SOURCE_SAVE_WRITE) for(remote_component_event *event=row->events;event;event=event->next) ++event_count;
+    if(!qa_source_save_count(io,&event_count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)||
+        (!row->state.player_events&&(row->event_sequence||event_count))) return fail(io,"Scene component retains an unrelated player-event cursor");
+    remote_component_event **event_slot=&row->events; uint64_t prior=0;
+    for(size_t i=0;i<event_count;++i) {
+        if(io->direction==QA_SOURCE_SAVE_READ) {
+            *event_slot=calloc(1,sizeof(**event_slot));
+            if(!*event_slot) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining queued original player event");
+        }
+        remote_component_event *event=*event_slot; application_q3_scene_player_event *v=&event->value;
+        uint8_t ps[468]={0}; size_t size=qa_qvm_player_bytes(row->state.abi);
+        qa_q3_abi_record record={.abi=row->state.abi,.bytes={ps,size},.context=ps,.write=write_record};
+        if(!qa_source_save_u64(io,&event->sequence)||!event->sequence||event->sequence<=prior||event->sequence>row->event_sequence||
+            !actor(io,row->parent,&v->actor)||!v->actor.registry||
+            !qa_source_save_i32(io,&v->event)||!qa_source_save_i32(io,&v->parameter)||
+            !qa_source_save_i32(io,&v->time_ms)||v->time_ms<0||!qa_source_save_i32(io,&v->source_sequence)||
+            !qa_source_save_bool(io,&v->external)||!qa_source_save_vec3(io,&v->origin)||!qa_vec_finite(v->origin)||
+            (io->direction==QA_SOURCE_SAVE_WRITE&&!qa_q3_abi_write_player(&record,0,true,false,&v->player,io->error))||
+            !qa_source_save_bytes(io,ps,size)||
+            (io->direction==QA_SOURCE_SAVE_READ&&!qa_q3_abi_read_player(&record,0,true,&v->player,io->error))) return false;
+        prior=event->sequence; event_slot=&event->next;
+    }
     bool same=io->direction==QA_SOURCE_SAVE_WRITE&&row->frame&&row->frame==row->baseline;
     if(!frame(io,row,&row->baseline)||!qa_source_save_bool(io,&same)) return false;
     if(same) {
@@ -293,7 +317,7 @@ static bool row_fields(qa_source_save_io *io,remote_component *row,const fronten
         (!row->scene_time_present&&row->scene_time_offset!=0)||
         !qa_source_save_bool(io,&row->previous_frame_present)||!qa_source_save_i32(io,&row->previous_frame_time)||row->previous_frame_time<0||
         (!row->previous_frame_present&&row->previous_frame_time!=0)||
-        (row->previous_frame_present&&!row->scene_time_present)||
+        (row->previous_frame_present&&!row->scene_time_present&&!row->state.player_events)||
         !qa_source_save_u64(io,&row->draw_sequence)||!qa_source_save_bool(io,&row->advanced)||!qa_source_save_bool(io,&row->submitted)||
         !qa_source_save_bool(io,&row->pictures_present)||!qa_source_save_u64(io,&row->picture_sequence)||
         !qa_source_save_count(io,&row->pictures_submitted,SIZE_MAX)||!admissions(io,row)) return false;
@@ -315,8 +339,8 @@ static bool row_fields(qa_source_save_io *io,remote_component *row,const fronten
 }
 static bool fields(qa_source_save_io *io,frontend_unified_components *owner,const frontend_unified_components_refs *refs)
 {
-    uint8_t magic[4]={'Q','U','C','P'}; uint32_t version=6,epoch=frontend_remote_unified_epoch(owner->replica);
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&version)||version!=6||
+    uint8_t magic[4]={'Q','U','C','P'}; uint32_t version=7,epoch=frontend_remote_unified_epoch(owner->replica);
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&version)||version!=7||
         !qa_source_save_u32(io,&epoch)||epoch!=frontend_remote_unified_epoch(owner->replica)||
         !qa_source_save_u64(io,&owner->revision)||owner->revision>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_count(io,&owner->count,256)) return false;

@@ -432,6 +432,23 @@ static bool refresh(frontend_remote_q2 *row, qa_error *error)
         qa_catalog_product_write_root(fresh, selected), qa_catalog_product_write_root(fresh, new_base->id)};
     ++row->content_generation; row->content_admitted = false; return true;
 }
+static bool publication_continue(frontend_remote_q2 *row, qa_error *error)
+{
+    if (!row->download_stage_sealed) {
+        if (!qa_fs_stage_seal(row->download_stage, &row->download_identity, error)) return false;
+        row->download_stage_sealed = row->download_sealed = true;
+    }
+    if (!row->download_stage_published) {
+        bool created = false;
+        bool published = qa_fs_stage_publish(row->download_stage, &row->download_identity, true, &created, error);
+        if (created) row->download_published = true;
+        if (!published) return false;
+        if (!created) return remote_q2_fail(error, QA_ERROR_IO,
+            "Q2 download target appeared before exclusive publication");
+        row->download_stage_published = row->download_published = true;
+    }
+    return true;
+}
 bool remote_q2_download_receive(frontend_remote_q2 *row, const qa_q2_server_event *event,
     bool *complete, qa_error *error)
 {
@@ -447,6 +464,7 @@ bool remote_q2_download_receive(frontend_remote_q2 *row, const qa_q2_server_even
             return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 retry changed its retained native download block");
     }
     if (row->download_refresh_pending) {
+        if (!publication_continue(row, error)) return false;
         if (!row->download_refreshed) {
             if (!refresh(row, error)) return false;
             row->download_refreshed = true;
@@ -487,17 +505,7 @@ bool remote_q2_download_receive(frontend_remote_q2 *row, const qa_q2_server_even
             if (!remember(row, row->download_path, error)) return false;
             row->download_remembered = true;
         }
-        if (!row->download_stage_sealed) {
-            if (!qa_fs_stage_seal(row->download_stage, &row->download_identity, error)) return false;
-            row->download_stage_sealed = row->download_sealed = true;
-        }
-        if (!row->download_stage_published) {
-            bool created = false;
-            bool published = qa_fs_stage_publish(row->download_stage, &row->download_identity, true, &created, error);
-            if (created) row->download_published = true;
-            if (!published) return false;
-            row->download_stage_published = row->download_published = true;
-        }
+        if (!publication_continue(row, error)) return false;
         row->download_refresh_pending = true;
         if (!refresh(row, error)) return false;
         row->download_refreshed = true;

@@ -72,6 +72,8 @@ bool frontend_client_sources_retirement_current(const qa_frontend *,
     const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
 bool frontend_client_sources_restore_discarded(const qa_frontend *,
     const qa_application_client_source *,qa_error *);
+bool frontend_client_sources_restore_abort_ready(const qa_frontend *,
+    const qa_application_client_source *,qa_error *);
 bool frontend_client_source_idle(const frontend_client_source *);
 bool frontend_client_source_retain(frontend_client_source *, qa_error *);
 bool frontend_client_source_checkpoint_retain(frontend_client_source *,

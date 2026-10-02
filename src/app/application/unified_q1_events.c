@@ -27,7 +27,7 @@ bool application_unified_q1_sound_precache(void *context, const char *path, qa_e
 {
     application_provider *source = context;
     if (!path || !*path || !precache_source(source, error)) return false;
-    char id[81];
+    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     bool found;
     if (!application_unified_event_resource_lookup(source->application, source->owner,
         path, id, &found, error)) return false;
@@ -126,7 +126,7 @@ static bool sound_simulation(application_unified_json *json, qa_application *app
     }
     if (path.size) memcpy(requested, path.data, path.size);
     requested[path.size] = 0;
-    char identity[81];
+    char identity[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     bool found;
     bool okay = application_unified_event_resource_lookup(app, event->provider,
         requested, identity, &found, error);

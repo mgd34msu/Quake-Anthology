@@ -50,6 +50,7 @@ const qa_scene_model *frontend_resource_inventory_model_at(const frontend_resour
 /* Pure admission for the source, scene and immutable-content child owners.
  * The persistent local UI can remain in its map-selection action during travel. */
 bool frontend_owners_idle(const qa_frontend *);
+bool frontend_owners_checkpoint_ready(const qa_frontend *);
 /* ENGINE shutdown separately qualifies its installed native settings ticket
  * and every physical release scope. This checks every other actual owner;
  * it supplies no ticket, release-history or detach authority by itself. */

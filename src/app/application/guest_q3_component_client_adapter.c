@@ -377,7 +377,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
                 return application_fail(e,QA_ERROR_ARGUMENT,"Component QW team has invalid Source info bytes");
             info=info_replace(p->userinfo?p->userinfo:"","team",text,e);
         } else {
-            int32_t color,reference;char value[4];
+            int32_t color,reference;char value[12];
             if(!color_team(text,&color,e)||!application_qc_reference(qc,actor,&reference,e)) return false;
             snprintf(value,sizeof(value),"%d",color-1);
             info=info_replace(p->userinfo?p->userinfo:"","bottomcolor",value,e);

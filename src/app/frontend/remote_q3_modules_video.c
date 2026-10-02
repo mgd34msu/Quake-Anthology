@@ -1,4 +1,5 @@
 #include "remote_q3_modules_private.h"
+#include "source_renderer_runtime.h"
 #include "remote_q3_modules_video.h"
 #include "remote_q3_video_media.h"
 #include "qa/application_native_q3_client_modules_video.h"
@@ -118,6 +119,8 @@ bool frontend_remote_q3_modules_video_reopen(frontend_remote_q3_modules_video *t
     owner->constructing = false;
     if (okay) okay = frontend_remote_modules_released_drain(owner, error) &&
         frontend_remote_q3_modules_video_current(ticket, error);
+    if (okay && owner->kind == REMOTE_MODULE_DECODED)
+        okay = frontend_source_renderer_end_registration(owner->frontend, error);
     if (okay) { ticket->reopened_generation = generation; ticket->reopened = true;
         okay = frontend_remote_q3_modules_video_current(ticket, error); }
     return okay;

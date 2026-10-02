@@ -88,6 +88,17 @@ bool frontend_unified_q3_client_seal(frontend_unified_q3_client *, qa_error *);
 bool frontend_unified_q3_client_actor_fields(frontend_unified_q3_client *,
     qa_source_save_io *, qa_actor_id *);
 bool frontend_unified_q3_client_checkpoint(const frontend_unified_q3_client *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_client_checkpoint_stage_current(const frontend_unified_q3_client *,
+    const frontend_unified_q3_client_frame *);
+const qa_command_context *frontend_unified_q3_client_checkpoint_stage_context(
+    const frontend_unified_q3_client *, const frontend_unified_q3_client_frame *);
+qa_cvars *frontend_unified_q3_client_checkpoint_stage_cvars(
+    const frontend_unified_q3_client *, const frontend_unified_q3_client_frame *);
+bool frontend_unified_q3_client_checkpoint_stage(const frontend_unified_q3_client *,
+    const frontend_unified_q3_client_frame *, const frontend_unified_q3_source_frame *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_client_frame_checkpoint(const frontend_unified_q3_client_frame *, qa_buffer *, qa_error *);
+bool frontend_unified_q3_client_frame_restore(frontend_unified_q3_client *,
+    const frontend_unified_q3_source_view *, qa_bytes, frontend_unified_q3_client_frame **, qa_error *);
 bool frontend_unified_q3_client_restore(frontend_remote_unified *, frontend_unified_q3_sources *,
     const frontend_unified_q3_source_view *, uint64_t receiver, qa_bytes,
     frontend_unified_q3_client **, qa_error *);

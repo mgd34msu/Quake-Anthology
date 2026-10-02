@@ -1292,6 +1292,11 @@ bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error)
     bool skip=frame.source_backend && frame.source_skip_backend;
     bool front=frame.source_backend && frame.source_front_buffer;
     qa_scene_frame_destroy(&frame);
+    if (ok && skip) {
+        uint32_t width=0,height=0;
+        if (!gl_dimensions(renderer,&width,&height,error)) return false;
+        qa_render_source_report(&renderer->controls,width,height);
+    }
     return ok && (skip || gl_swap(renderer,front,error));
 }
 
@@ -1877,6 +1882,8 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
     if (renderer->target || renderer->opacity.active || !qa_display_make_current(renderer->options.display,error) ||
         !gl_dimensions(renderer,&width,&height,error) || !gl_bind_destination(renderer,error)) return false;
     qa_scene_rect target={0,0,width,height};
+    if (!qa_output_domains_assign(&renderer->output_domains,target,renderer->draw_buffer,true,width,height,error)) return false;
+    renderer->source_frame=true; renderer->preblend_gamma=false;
     if (!controls->source.projection_2d) {
         qa_scene_state state=renderer->pipeline;
         qa_render_source_state_bits(&state,false,true);
@@ -1887,6 +1894,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         renderer->gl.Scissor(0,0,(GLsizei)width,(GLsizei)height);
         renderer->gl.Enable(GL_SCISSOR_TEST);
         controls->source.projection_2d=true;
+        controls->source.picture_milliseconds=controls->frame_values.milliseconds;
     }
     renderer->gl.Clear(GL_COLOR_BUFFER_BIT);
     renderer->gl.Finish();
@@ -1909,6 +1917,8 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
                 if (renderer->source_images[j-1]->image->source_dlight) { dlight=renderer->source_images[j-1]->image; break; }
             if (dlight) binding=dlight;
         }
+        ok=gl_source_texture_bind(renderer,binding,error);
+        if (!ok) break;
         size_t first=frame.command_count;
         ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
             (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
@@ -1918,6 +1928,10 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
             draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
             ok=draw_scene(renderer,draw,error);
         }
+    }
+    if (ok && renderer->source_image_count) {
+        controls->attributes.coordinates[0]=(qa_scene_vec2){0,1};
+        controls->attributes.coordinates_known[0]=true; renderer->gl.TexCoord2f(0,1);
     }
     qa_scene_frame_destroy(&frame);
     renderer->gl.Finish();

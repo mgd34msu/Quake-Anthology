@@ -113,6 +113,13 @@ static bool calls(const qa_json_document *d, qa_json_id id, application_q3_scene
 }
 static void calls_free(q3scene_calls *rows)
 { for (size_t i = 0; rows->rows && i < rows->count; ++i) free(rows->rows[i].arguments); free(rows->rows); }
+static bool independent(const q3scene_calls *rows,qa_error *e)
+{
+    for(size_t i=0;i<rows->count;++i) for(size_t j=0;j<rows->rows[i].count;++j)
+        if(rows->rows[i].arguments[j].kind>=Q3SCENE_ENTITY_STATE)
+            return fail(e,QA_ERROR_FORMAT,"Original initialization and frame callers require event-independent source arguments");
+    return true;
+}
 void application_q3_scene_profile_destroy(application_q3_scene_profile *p)
 {
     if (!p) return;
@@ -238,6 +245,7 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
         qa_json_id mode = qa_json_get(d, hud, "mode"); p->replace_status = qa_json_string_equal(d, mode, "replace-status");
         ok = (p->replace_status || qa_json_string_equal(d, mode, "overlay")) && calls(d, qa_json_get(d, hud, "frame"), p, &p->hud, e);
     }
+    if(ok) ok=independent(&p->initialize,e)&&independent(&p->refresh,e)&&independent(&p->frame,e)&&independent(&p->hud,e);
     qa_json_destroy(d);
     if (!ok) { if (!e || e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Invalid original component scene declaration"); application_q3_scene_profile_destroy(p); return false; }
     *out = p; return true;

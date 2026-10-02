@@ -29,6 +29,10 @@ void qa_server_admin_destroy(qa_server_admin *);
 bool qa_server_admin_filter(qa_server_admin *, const char *source_mask, bool remove, qa_error *);
 bool qa_server_admin_rejects(const qa_server_admin *, const qa_net_address *);
 bool qa_server_admin_limited_prefixes(qa_server_admin *, const char *const *, size_t, qa_error *);
+bool qa_server_admin_limited_command(qa_server_admin *, const char *name,
+    const char *raw_arguments, qa_admin_write_fn, void *, qa_error *);
+bool qa_server_admin_filters_text(const qa_server_admin *, bool commands,
+    qa_console_dialect, bool deny_matches, qa_buffer *, qa_error *);
 bool qa_server_admin_receive(qa_server_admin *, const qa_net_datagram *, qa_admin_result *, qa_error *);
 bool qa_server_admin_masters(qa_server_admin *, const qa_net_address *, size_t, qa_error *);
 bool qa_server_admin_tick(qa_server_admin *, uint64_t now_ns, bool force, qa_error *);

@@ -12,4 +12,12 @@ bool frontend_unified_render_checkpoint(frontend_unified_render *,
 bool frontend_unified_render_restore(qa_frontend *, frontend_remote_unified *,
     frontend_unified_media *, const frontend_unified_render_refs *, qa_bytes,
     frontend_unified_render **, qa_error *);
+/* A pending renderer belongs to the literal received FRAME that its parent
+ * retains until publication. It never borrows the published frame's receipt. */
+bool frontend_unified_render_pending_checkpoint(frontend_unified_render *,
+    const frontend_unified_render_refs *, qa_buffer *, qa_error *);
+bool frontend_unified_render_pending_restore(qa_frontend *, frontend_remote_unified *,
+    frontend_unified_media *, const frontend_unified_render_refs *, qa_bytes,
+    frontend_unified_render **, qa_error *);
+bool frontend_unified_render_pending_current(const frontend_unified_render *);
 #endif

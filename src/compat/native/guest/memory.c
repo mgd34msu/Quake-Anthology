@@ -313,10 +313,11 @@ bool qa_native_guest_read(const qa_native_guest *guest, uint64_t address, void *
 
 bool guest_callback_cancelled(const qa_native_guest *guest,const qa_error *error)
 {
-    const guest_callback_recovery *r=guest?guest->recovery:NULL;
-    return r&&r->cancelled&&!r->restored&&!r->resolved&&!guest->failed&&error&&
-        error->code==r->failure.code&&error->offset==r->failure.offset&&
-        strcmp(error->message,r->failure.message)==0;
+    if(!guest||guest->failed||!error)return false;
+    for(const guest_callback_recovery *r=guest->recovery;r;r=r->previous)
+        if(r->cancelled&&!r->restored&&!r->resolved&&error->code==r->failure.code&&
+            error->offset==r->failure.offset&&!strcmp(error->message,r->failure.message))return true;
+    return false;
 }
 bool guest_call_prepared(const qa_native_guest *guest)
 {
@@ -327,12 +328,15 @@ bool guest_call_prepared(const qa_native_guest *guest)
 }
 bool guest_callback_failure(qa_native_guest *guest,const qa_error *error)
 {
-    guest_callback_recovery *r=guest?guest->recovery:NULL;
-    if(!r||!r->invocation||!error||guest->failed||guest->faulting||guest->stepping||
-        r->restored||r->resolved) return false;
-    if(r->cancelled) return guest_callback_cancelled(guest,error);
-    if(!r->accepts(r->context,error)||guest->failed||guest->faulting||guest->stepping) return false;
-    r->failure=*error; r->cancelled=true; return true;
+    if(!guest||!error||guest->failed||guest->faulting||guest->stepping)return false;
+    if(guest_callback_cancelled(guest,error))return true;
+    for(guest_callback_recovery *r=guest->recovery;r;r=r->previous) {
+        if(!r->invocation||r->restored||r->resolved||r->cancelled)continue;
+        if(!r->accepts(r->context,error))continue;
+        if(guest->failed||guest->faulting||guest->stepping)return false;
+        r->failure=*error;r->cancelled=true;return true;
+    }
+    return false;
 }
 bool guest_publish(qa_native_guest *guest, const qa_native_guest_commit *commit, qa_error *error)
 {

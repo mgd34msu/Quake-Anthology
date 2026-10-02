@@ -120,6 +120,7 @@ struct frontend_unified_q1 {
     bool music_retiring;
     double monsters,total_monsters,secrets,total_secrets;
     const qa_unified_document *preparing_document;
+    qa_unified_document *restored_preparing;
     qa_hud_timer timers[Q1_POWERS];
     double powers[Q1_POWERS];
     qa_hud_value ctf[4];
@@ -795,10 +796,10 @@ void frontend_unified_q1_frame_commit(frontend_unified_q1 *o)
             qa_scene_q1_particle_advance(&p,elapsed,800);g->particles.values.q1[kept++]=p;}
         g->particles.count=kept;g->sampled=o->prepared_seconds;g->has_sample=true;
     }
-    o->frame=o->prepared_frame;o->seconds=o->prepared_seconds;o->has_frame=true;o->prepared=false;o->preparing_document=NULL;
+    o->frame=o->prepared_frame;o->seconds=o->prepared_seconds;o->has_frame=true;o->prepared=false;o->preparing_document=NULL;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;
 }
 void frontend_unified_q1_frame_abort(frontend_unified_q1 *o)
-{if(o && !o->busy){o->prepared=false;o->preparing_document=NULL;}}
+{if(o && !o->busy){o->prepared=false;o->preparing_document=NULL;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;}}
 bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input *input,qa_error *e)
 {
     if(!o || !input || o->busy || o->prepared || !o->has_frame || !mutable(o,e))return false;
@@ -992,13 +993,15 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
     if(ok)ok=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
         .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=o->frontend->seats[d->physical_seat].scores},frame,e);o->busy=false;return ok && mutable(o,e);
 }
-bool frontend_unified_q1_idle(const frontend_unified_q1 *o)
+bool frontend_unified_q1_checkpoint_ready(const frontend_unified_q1 *o)
 {
     if(!o)return true;
-    if(o->busy || o->prepared || o->music_retiring || !qa_hud_idle(o->hud))return false;
+    if(o->busy || o->music_retiring || !qa_hud_idle(o->hud))return false;
     for(q1_group *g=o->groups;g;g=g->next)if(!frontend_received_music_idle(g->music))return false;
     return true;
 }
+bool frontend_unified_q1_idle(const frontend_unified_q1 *o)
+{ return (!o || !o->prepared) && frontend_unified_q1_checkpoint_ready(o); }
 bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
 {
     if(!slot || !*slot)return true;
@@ -1090,11 +1093,29 @@ static bool saved_activation(frontend_unified_q1 *o,qa_source_save_io *io,q1_act
 }
 static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_unified_q1_refs *refs,qa_error *e)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint32_t magic=UINT32_C(0x31554651),version=3,epoch=o->epoch;
-    if(!qa_source_save_u32(io,&magic) || magic!=UINT32_C(0x31554651) || !qa_source_save_u32(io,&version) || version!=3 ||
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint32_t magic=UINT32_C(0x31554651),version=4,epoch=o->epoch;
+    if(!qa_source_save_u32(io,&magic) || magic!=UINT32_C(0x31554651) || !qa_source_save_u32(io,&version) || version!=4 ||
         !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u64(io,&o->frame) || !finite_field(io,&o->seconds) ||
         !qa_source_save_bool(io,&o->has_frame) || !finite_field(io,&o->bonus_until) || !finite_field(io,&o->capture_until) ||
         !qa_source_save_bool(io,&o->ctf_present))return false;
+    if(!qa_source_save_bool(io,&o->prepared))return false;
+    if(o->prepared){qa_buffer bytes={0};
+        if(!qa_source_save_u64(io,&o->prepared_frame) || !finite_field(io,&o->prepared_seconds) ||
+            (o->has_frame && o->prepared_frame<=o->frame))return false;
+        bool ok=reading || (o->preparing_document && qa_unified_document_encode(o->preparing_document,&bytes,e));
+        if(ok)ok=saved_bytes(io,&bytes);
+        if(ok && reading)ok=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->restored_preparing,e);
+        qa_buffer_free(&bytes);if(!ok)return false;
+        if(reading)o->preparing_document=o->restored_preparing;
+        const qa_unified_document *d=o->preparing_document;const qa_json_document *j=qa_unified_document_json(d);
+        qa_json_id root=qa_unified_document_root(d),f=field(j,field(j,field(j,root,"output"),"snapshot"),"frame"),t=field(j,f,"time");
+        uint64_t actual_epoch,n;double seconds;
+        if(!qa_json_u64(j,field(j,root,"epoch"),&actual_epoch,e) || actual_epoch!=epoch ||
+            !qa_json_u64(j,field(j,f,"frame"),&n,e) || n!=o->prepared_frame || !number(d,field(j,t,"value"),&seconds,e))return false;
+        if(qa_json_string_equal(j,field(j,t,"kind"),"milliseconds"))seconds/=1000;
+        else if(!qa_json_string_equal(j,field(j,t,"kind"),"seconds"))return false;
+        if(seconds!=o->prepared_seconds)return false;
+    }
     if(!qa_source_save_bytes(io,o->random.words,sizeof(o->random.words)) || !qa_source_save_u8(io,&o->random.front) || !qa_source_save_u8(io,&o->random.rear) ||
         o->random.front>=31 || o->random.rear>=31 || !qa_source_save_u64(io,&o->random.draws))return false;
     size_t owners=0;for(q1_activation *owner=o->activations;owner;owner=owner->next)++owners;
@@ -1209,7 +1230,7 @@ static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_u
 }
 bool frontend_unified_q1_checkpoint(frontend_unified_q1 *o,const frontend_unified_q1_refs *refs,qa_buffer *out,qa_error *e)
 {
-    if(!o || o->restoring || !out || out->data || !frontend_unified_q1_idle(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
+    if(!o || o->restoring || !out || out->data || !frontend_unified_q1_checkpoint_ready(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
     qa_source_save_io io;if(!qa_source_save_writer(&io,NULL,e))return false;
     bool ok=fields(o,&io,refs,e) && qa_source_save_finish(&io,out);qa_source_save_dispose(&io);return ok;
 }
@@ -1225,7 +1246,7 @@ bool frontend_unified_q1_restore(qa_frontend *f,frontend_remote_unified *r,front
     bool opened=qa_source_save_reader(&io,NULL,input,e),ok=opened && fields(o,&io,refs,e) && qa_source_save_finish(&io,NULL);
     if(opened)qa_source_save_dispose(&io);
     if(!ok){/* Preserve a checked cleanup owner even when imported native audio prevents disposal. */
-        (void)frontend_unified_q1_destroy(out,NULL);
+        frontend_unified_q1_frame_abort(o);(void)frontend_unified_q1_destroy(out,NULL);
         return false;}
     return true;
 }
@@ -1247,4 +1268,16 @@ bool frontend_unified_q1_restore_finish(frontend_unified_q1 *o,qa_error *e)
     }
     o->restoring=false;
     return true;
+}
+
+bool frontend_unified_q1_frame_restore_bind(frontend_unified_q1 *o,const qa_unified_document *d,qa_error *e)
+{
+    if(!o || !o->frontend->source_restoring || !frontend_unified_q1_checkpoint_ready(o) || !checkpoint_current(o,e))return false;
+    if(!o->prepared)return d==o->replica->prepared_frame;
+    if(!d || d!=o->replica->prepared_frame || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
+    if(!o->restored_preparing)return o->preparing_document==d;
+    qa_buffer a={0},b={0};bool ok=qa_unified_document_encode(o->restored_preparing,&a,e) && qa_unified_document_encode(d,&b,e) &&
+        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size));
+    qa_buffer_free(&a);qa_buffer_free(&b);if(!ok)return fail(e,"Q1 restored prepared frame differs from its actual parent");
+    o->preparing_document=d;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;return true;
 }

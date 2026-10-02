@@ -783,3 +783,12 @@ bool frontend_network_q2_client_content_visit(const frontend_network_q2_client *
     return !owner || (parent(owner) && !owner->calls &&
         frontend_remote_q2_source_content_visit(owner->source,visitor,error));
 }
+
+bool frontend_network_q2_client_restore_abort_ready(const frontend_network_q2_client *owner,
+    const qa_application_client_source *source,qa_error *error)
+{
+    if(!owner || !parent(owner) || !owner->importing || owner->restore_finished ||
+        !frontend_network_q2_client_configuration_primary(owner,source))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 import abort lost its actual physical Source association");
+    return frontend_remote_q2_source_restore_abort_ready(owner->source,source,error);
+}

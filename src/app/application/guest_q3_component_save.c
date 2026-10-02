@@ -114,7 +114,7 @@ bool application_q3_component_finish_restore(application_q3_component *c,qa_erro
     if(!c->restoring&&!c->restored_storage)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component activation has no imported continuation");
     if(!c->restored_storage) {
-        if(!qa_q3_host_finish_restore(c->host,e)||!application_q3_component_records_validate(c->records,e)) return false;
+        if(!qa_q3_host_finish_restore(c->host,e)||!application_q3_component_records_validate(c->records,e)||!q3component_player_events_validate(c,e)) return false;
         c->restoring=false;
         if(!application_q3_component_source_attach(c->source,c->vm,c->host,e)||!application_q3_component_source_validate(c->source,e)) { c->restoring=true; return false; }
         c->restored_storage=true;

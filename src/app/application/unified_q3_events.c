@@ -6,6 +6,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/source_save.h"
+#include "qa/q3_abi.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +74,41 @@ static bool component_emit(qa_application *app, const application_q3_component_p
             (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
     application_unified_json_dispose(&payload);
     return ok;
+}
+
+static bool player_record_write(void *context,size_t offset,qa_bytes value,qa_error *e)
+{
+    qa_buffer *bytes=context;
+    if(offset>bytes->size||value.size>bytes->size-offset) return application_fail(e,QA_ERROR_ARGUMENT,"Original player event leaves its Source ABI record");
+    if(value.size) memcpy(bytes->data+offset,value.data,value.size);
+    return true;
+}
+bool application_unified_q3_component_player(qa_application *app,const application_q3_component_publication *p,
+    const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
+{
+    if(!app||!p||!event||!sequence||event->time_ms<0||!event->actor.registry)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Original player event lost its actual component delivery");
+    uint8_t player[468]={0}; qa_buffer bytes={player,qa_qvm_player_bytes(p->abi)},encoded={0};
+    qa_q3_abi_record record={.abi=p->abi,.bytes={player,bytes.size},.context=&bytes,.write=player_record_write};
+    application_unified_json j={0};
+    const qa_json_document *identity=qa_unified_document_json(p->identity);
+    qa_json_id module=qa_json_at(identity,qa_json_get(identity,qa_unified_document_root(p->identity),"modules"),0);
+    qa_bytes raw=qa_json_source(identity,module);
+    bool ok=module!=QA_JSON_NONE&&qa_q3_abi_write_player(&record,0,true,false,&event->player,e)&&
+        qa_unified_checkpoint_bytes((qa_bytes){player,bytes.size},&encoded,e)&&
+        application_unified_json_text(&j,"{\"kind\":\"player-event\",\"actor\":",e)&&application_unified_json_actor(&j,event->actor,e)&&
+        application_unified_json_text(&j,",\"source\":{\"module\":",e)&&application_unified_json_append(&j,raw,e)&&
+        application_unified_json_text(&j,",\"abiProfile\":",e)&&application_unified_json_string(&j,p->abi==QA_QVM_Q3_MODERN?"q3-modern":"q3-1.16n-base",e)&&
+        application_unified_json_text(&j,"},\"playerState\":",e)&&application_unified_json_append(&j,(qa_bytes){encoded.data,encoded.size},e)&&
+        application_unified_json_text(&j,",\"event\":",e)&&application_unified_json_number(&j,event->event,e)&&
+        application_unified_json_text(&j,",\"parameter\":",e)&&application_unified_json_number(&j,event->parameter,e)&&
+        application_unified_json_text(&j,",\"deliverySequence\":",e)&&application_unified_json_natural(&j,sequence,e)&&
+        application_unified_json_text(&j,event->external?",\"sequence\":{\"kind\":\"external\",\"time\":" : ",\"sequence\":{\"kind\":\"predictable\",\"sequence\":",e)&&
+        application_unified_json_number(&j,event->source_sequence,e)&&application_unified_json_text(&j,"},\"origin\":",e)&&
+        application_unified_json_vector(&j,event->origin,e)&&application_unified_json_text(&j,",\"time\":",e)&&
+        application_unified_json_number(&j,event->time_ms,e)&&application_unified_json_text(&j,"}",e)&&
+        component_emit(app,p,&j,(qa_actor_id){0},event->time_ms,e);
+    application_unified_json_dispose(&j); qa_buffer_free(&encoded); return ok;
 }
 
 bool application_unified_q3_component_command(qa_application *app,

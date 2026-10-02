@@ -1271,15 +1271,19 @@ bool frontend_unified_q3_presentation(frontend_unified_q3 *o, const qa_unified_d
 }
 bool frontend_unified_q3_simulation(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_id row, qa_error *e)
 { return frontend_unified_q3_validate(o,true,d,row,e); }
-bool frontend_unified_q3_idle(const frontend_unified_q3 *o)
+static bool q3_returned(const frontend_unified_q3 *o)
 {
-    if (!o || o->busy || o->prepared) return false;
+    if (!o || o->busy) return false;
     for (unified_q3_bank *b=o->banks; b; b=b->next)
         if ((b->effects && !q3n_events_idle(b->effects)) || (b->media && !q3n_media_idle(b->media)) ||
             (b->weapons && !q3n_weapons_idle(b->weapons)) || (b->particles && !q3n_particles_idle(b->particles)) ||
             (b->backend && !qa_q3_presentation_idle(b->backend))) return false;
     return true;
 }
+bool frontend_unified_q3_checkpoint_ready(const frontend_unified_q3 *o)
+{ return o && !o->sampled && q3_returned(o); }
+bool frontend_unified_q3_idle(const frontend_unified_q3 *o)
+{ return o && !o->prepared && q3_returned(o); }
 bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
 {
     if (!address || !*address) return true;
@@ -1303,7 +1307,7 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
 }
 bool frontend_unified_q3_visit(const frontend_unified_q3 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
-    if(!o || !visitor || !visitor->pool || !visitor->view || !frontend_unified_q3_idle(o))
+    if(!o || !visitor || !visitor->pool || !visitor->view || !q3_returned(o))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 CLIENT resource inventory requires its returned retained graph");
     for(const unified_q3_bank *b=o->banks;b;b=b->next){
         if(!b->files)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 CLIENT bank construction has not retained its real VFS");
@@ -1499,10 +1503,10 @@ static bool saved_scene_bank(qa_source_save_io *io,frontend_unified_q3 *o,size_t
 }
 static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa_application_content_graph *content)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','4'};
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint8_t magic[5]={'Q','U','Q','3','5'};
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     uint32_t epoch=o->epoch,seat=domain->physical_seat;
-    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ34",sizeof(magic)) ||
+    if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUQ35",sizeof(magic)) ||
         !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u32(io,&seat) || seat!=domain->physical_seat ||
         !qa_source_save_u64(io,&o->audio_owner) || !qa_source_save_bool(io,&o->has_frame) ||
         !qa_source_save_i32(io,&o->time) || !qa_source_save_i32(io,&o->previous_time))return false;
@@ -1511,6 +1515,15 @@ static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa
         if(okay && reading)okay=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->frame,io->error);
         qa_buffer_free(&bytes);int32_t time;if(!okay || !frame_read(o,o->frame,&time,io->error) || time!=o->time)return false;}
     else if(o->time || o->previous_time)return false;
+    if(!qa_source_save_bool(io,&o->prepared))return false;
+    if(o->prepared){qa_buffer bytes={0};
+        if(!qa_source_save_i32(io,&o->candidate_time))return false;
+        bool okay=reading || (o->candidate && qa_unified_document_encode(o->candidate,&bytes,io->error));
+        if(okay)okay=saved_blob(io,&bytes);
+        if(okay && reading)okay=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->candidate,io->error);
+        qa_buffer_free(&bytes);int32_t time;
+        if(!okay || !frame_read(o,o->candidate,&time,io->error) || time!=o->candidate_time)return false;
+    }
     size_t banks=0;for(unified_q3_bank *b=o->banks;b;b=b->next)++banks;
     if(!qa_source_save_count(io,&banks,SIZE_MAX/sizeof(unified_q3_bank)))return false;
     unified_q3_bank **tail=&o->banks,*b=o->banks;
@@ -1566,7 +1579,7 @@ static bool capsule_fields(qa_source_save_io *io,frontend_unified_q3 *o,const qa
 }
 bool frontend_unified_q3_checkpoint(frontend_unified_q3 *o,const qa_application_content_graph *content,qa_buffer *out,qa_error *e)
 {
-    if(!o || !content || !out || out->data || out->size || o->busy || o->prepared || o->sampled || !retained_current(o,e))return false;
+    if(!o || !content || !out || out->data || out->size || !frontend_unified_q3_checkpoint_ready(o) || !retained_current(o,e))return false;
     o->busy=true;qa_source_save_io io={0};bool okay=qa_source_save_writer(&io,NULL,e) && capsule_fields(&io,o,content) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);o->busy=false;
     if(!okay && e && e->code==QA_OK)frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 CLIENT cold continuation is inconsistent");
@@ -1584,7 +1597,19 @@ bool frontend_unified_q3_restore(qa_frontend *f,frontend_remote_unified *replica
     qa_source_save_dispose(&io);
     if(okay)okay=retained_current(o,e);
     if(!okay){if(e && e->code==QA_OK)frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid saved Q3 CLIENT continuation");
-        qa_error cleanup={0};if(!frontend_unified_q3_destroy(&o,&cleanup))*out=o;
+        qa_error cleanup={0};frontend_unified_q3_frame_abort(o);if(!frontend_unified_q3_destroy(&o,&cleanup))*out=o;
         return false;}
     *out=o;return true;
+}
+
+bool frontend_unified_q3_frame_restore_bind(frontend_unified_q3 *o,const qa_unified_document *d,qa_error *e)
+{
+    if(!o || !o->frontend->source_restoring || !frontend_unified_q3_checkpoint_ready(o) || !retained_current(o,e))return false;
+    if(!o->prepared)return d==o->replica->prepared_frame;
+    if(!d || !o->candidate || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
+    qa_buffer a={0},b={0};int32_t time;
+    bool ok=qa_unified_document_encode(o->candidate,&a,e) && qa_unified_document_encode(d,&b,e) &&
+        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size)) && frame_read(o,d,&time,e) && time==o->candidate_time;
+    qa_buffer_free(&a);qa_buffer_free(&b);if(!ok)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 restored prepared frame differs from its actual parent");
+    o->candidate_input=d;return true;
 }

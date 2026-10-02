@@ -109,7 +109,7 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     const char *name, qa_error *error)
 {
     if (!*name || *name == '*') return true;
-    char id[81]; bool found;
+    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool found;
     if (!application_unified_event_resource_lookup_kind(engine->provider->application,
         engine->provider->owner, kind, name, id, &found, error)) return false;
     if (found) return true;

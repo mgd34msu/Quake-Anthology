@@ -403,7 +403,7 @@ static bool absorb_execute(void *context,qa_error *e)
     application_native_q2_source_authority authority={.context=a,.current=authority_current,
         .retain=authority_retain,.release=authority_release};
     return current(a,e)&&application_native_q2_callbacks_protection_absorb(a->owner->options.callbacks,
-        a->owner->definitions[a->definition].source,call->request,call->geometry,call->amount,call->flags,&authority,call->saved,e)&&current(a,e);
+        a->owner->definitions[a->definition].source,call->request,call->geometry,call->amount,call->flags,&authority,call->saved,e);
 }
 static bool absorb_binding(void *context,const qa_damage_request *request,const qa_damage_geometry *geometry,
     float amount,qa_damage_flags flags,qa_protection_observer *observer,float *saved,qa_error *e)

@@ -1,6 +1,7 @@
 #include "native_q3_team_combat.h"
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
+#include "native_q3_match.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_clients.h"
@@ -33,16 +34,14 @@ static bool live(const team_combat_scope *scope, qa_error *error)
         provider->state.q3 != scope->game || !provider->constructed ||
         !provider->attached || provider->close_pending || app->destroy_requested ||
         app->modes != scope->modes || app->world != scope->world ||
-        !app->primary_mode_ready || app->primary_mode.slot != scope->mode.slot ||
-        app->primary_mode.generation != scope->mode.generation ||
         app->publication_generation != scope->publication_generation ||
         app->command_generation != scope->command_generation ||
-        app->map_revision != scope->map_revision ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider)
+        app->map_revision != scope->map_revision)
         return application_fail(error, QA_ERROR_NOT_FOUND,
             "native TEAM combat lost its actual source owner");
     int32_t time;
-    return qa_q3_source_clock(scope->game, &time, error) &&
+    return application_native_q3_source_mode_current(provider, scope->mode, error) &&
+        qa_q3_source_clock(scope->game, &time, error) &&
         (time == scope->time || application_fail(error, QA_ERROR_ARGUMENT,
             "native TEAM combat callback advanced its source clock"));
 }
@@ -51,17 +50,22 @@ static bool begin(application_provider *provider, team_combat_scope *scope,
     qa_error *error)
 {
     qa_application *app = provider ? provider->application : NULL;
-    if (!app || !app->modes || !app->primary_mode_ready || !app->world ||
+    if (!app || !app->modes || !app->world ||
         provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "native TEAM combat requires its admitted GAME and score owner");
     *scope = (team_combat_scope){.provider = provider, .application = app,
-        .game = provider->state.q3, .modes = app->modes, .mode = app->primary_mode,
+        .game = provider->state.q3, .modes = app->modes,
         .world = app->world, .geometry = qa_world_geometry(app->world),
         .publication_generation = app->publication_generation,
         .command_generation = app->command_generation, .map_revision = app->map_revision};
     qa_q3_product product;
     int32_t start;
+    bool found;
+    if (!application_native_q3_source_mode(provider, &scope->mode, &found, error)) return false;
+    if (!found)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "native TEAM combat has no actual associated score owner");
     if (!scope->geometry || !qa_q3_source_clock(scope->game, &scope->time, error) ||
         !live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
@@ -241,7 +245,8 @@ bool application_native_q3_team_check_hurt_carrier(void *opaque, qa_actor_id tar
 {
     application_provider *provider = opaque;
     if (provider && provider->application &&
-        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
+        !application_native_q3_source_command_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(opaque, &scope, error)) return false;
@@ -268,7 +273,8 @@ bool application_native_q3_source_death_score(void *opaque, qa_actor_id target,
 {
     application_provider *provider = opaque;
     if (provider && provider->application &&
-        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
+        !application_native_q3_source_command_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(provider, &scope, error)) return false;
@@ -414,7 +420,8 @@ bool application_native_q3_team_frag_bonuses(void *opaque, qa_actor_id target,
 {
     application_provider *provider = opaque;
     if (provider && provider->application &&
-        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider &&
+        !application_native_q3_source_command_entered(provider))
         return true;
     team_combat_scope scope;
     if (!begin(opaque, &scope, error)) return false;

@@ -70,8 +70,10 @@ bool frontend_source_renderer_policy(qa_frontend *f,qa_error *error)
     }
     qa_cvars_clear_modified(registry,"r_measureOverdraw");
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
+    uint32_t clock_word=(uint32_t)(f->wall_time_ns/UINT64_C(1000000));
+    int32_t clock_value; memcpy(&clock_value,&clock_word,sizeof(clock_value));
     qa_render_source_frame_values values={.finish=rows[0]->integer,.show_images=rows[1]->integer,
-        .speeds=rows[2]->integer,.measure_overdraw=overdraw,.no_bind=rows[5]->integer!=0};
+        .speeds=rows[2]->integer,.milliseconds=clock_value,.measure_overdraw=overdraw,.no_bind=rows[5]->integer!=0};
     return !controls || qa_render_controls_source_frame_policy(controls,&values,error);
 }
 bool frontend_source_renderer_image_grid(qa_frontend *f,int32_t mode,qa_error *error)

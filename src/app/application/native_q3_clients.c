@@ -124,6 +124,8 @@ static bool native_rules(application_provider *provider,qa_mode_id mode,qa_mode_
 application_provider *application_native_q3_mode_source_provider(qa_application *app, qa_mode_id mode)
 {
     application_provider *chosen = app ? application_mode_provider(app, mode) : NULL;
+    if (chosen && application_native_q3_source_command_entered(chosen))
+        return application_native_q3_source_mode_current(chosen, mode, NULL) ? chosen : NULL;
     if (!chosen || chosen->kind != APPLICATION_PROVIDER_Q3 || !app->primary_mode_ready ||
         mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation)
         return chosen;

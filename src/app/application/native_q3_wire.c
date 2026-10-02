@@ -2,6 +2,7 @@
 #include "guest_q3_private.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
+#include "native_q3_match.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "control_frame.h"
@@ -50,10 +51,27 @@ static bool native_mode(void *context, qa_actor_id actor, qa_q3_wire_mode *out,
     qa_application *app = provider ? provider->application : NULL;
     uint32_t slot, actual_slot;
     qa_q3_wire_mode value = {0};
-    if (!out || !native_source_actor(provider, actor, &slot, error) ||
-        !app->primary_mode_ready ||
-        !qa_modes_score(app->modes, app->primary_mode, actor, &value.score, error) ||
-        !native_source_actor(provider, actor, &actual_slot, error) || actual_slot != slot)
+    if (!out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire requires its match score output");
+    if (!native_source_actor(provider, actor, &slot, error)) return false;
+    bool scoped = application_native_q3_source_command_entered(provider);
+    qa_mode_id mode;
+    if (scoped) {
+        bool found;
+        if (!application_native_q3_source_mode(provider, &mode, &found, error)) return false;
+        if (!found)
+            return application_fail(error, QA_ERROR_NOT_FOUND,
+                "Native Q3 wire has no actual associated match score owner");
+    } else {
+        if (!app->primary_mode_ready)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Native Q3 wire has no current selected match score owner");
+        mode = app->primary_mode;
+    }
+    if (!qa_modes_score(app->modes, mode, actor, &value.score, error) ||
+        (scoped && !application_native_q3_source_mode_current(provider, mode, error)) ||
+        !native_source_actor(provider, actor, &actual_slot, error)) return false;
+    if (actual_slot != slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire has no current selected match score owner");
     *out = value;
     return true;

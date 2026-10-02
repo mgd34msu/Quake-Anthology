@@ -26,6 +26,7 @@ struct frontend_remote_q2_source {
     unsigned calls;
     bool closing, configured, configuration_complete, ready, commands_verified, template_retired;
     bool retiring, retirement_entered, release_programmes, retirement_receipt_present;
+    bool imported_release_discarded, restored_constructor, imported_queue, restore_finished;
 };
 static bool profile_protocol(const qa_product *profile, qa_net_protocol_id protocol, qa_error *error)
 {
@@ -544,10 +545,17 @@ bool frontend_remote_q2_source_configuration_completed(const frontend_remote_q2_
 { return source && source->configuration_complete; }
 bool frontend_remote_q2_source_retire(frontend_remote_q2_source *source, qa_error *error)
 {
-    if (!source || source->template_retired) return true;
+    if (!source) return true;
     bool returned = source->frontend->source_restoring ? frontend_remote_q2_source_owner_retirement_idle(source) :
         frontend_remote_q2_source_owner_idle(source);
     if (!returned || source->frontend->capture || source->frontend->resource_inventory || source->closing) return false;
+    if (source->frontend->source_restoring && source->restored_constructor && !source->restore_finished &&
+        source->release_programmes && source->imported_queue &&
+        qa_console_release_restore_unclaimed(source->console)) {
+        if (!qa_console_release_restore_abort(source->console, error)) return false;
+        source->imported_release_discarded = true;
+    }
+    if (source->template_retired) return true;
     source->retiring = true;
     if (source->receiver) source->receiver->retiring = true;
     if (source->configured && source->domain.client.owner && !source->retirement_receipt_present &&
@@ -731,10 +739,6 @@ bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **owned, qa_err
 {
     frontend_remote_q2_source *source = owned ? *owned : NULL;
     if (!source) return true;
-    if (source->frontend->source_restoring && source->release_programmes &&
-        qa_console_release_restore_unclaimed(source->console) &&
-        (!frontend_remote_q2_source_owner_retirement_idle(source) ||
-            !qa_console_release_restore_abort(source->console, error))) return false;
     if (!frontend_remote_q2_source_retire(source, error)) return false;
     if (source->frontend->capture || source->frontend->resource_inventory || source->calls || source->references != (source->registry ? 2u : 1u) || !qa_console_destroy_ready(source->console) ||
         !frontend_client_registry_release_ready(source->registry, error)) return false;
@@ -851,6 +855,8 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
     frontend_remote_q2_source *source = calloc(1, sizeof(*source));
     if (!source) return remote_q2_fail(error, QA_ERROR_MEMORY, "Restoring Q2 physical Source");
     *out = source; source->frontend = f; source->options = *options;
+    source->restored_constructor = true;
+    source->release_programmes = saved->release_programmes;
     source->options.metadata = saved->constructor_request; source->domain = *domain; source->references = 1;
     source->pending_selected = saved->selected && !saved->descriptor_transfer ? saved->selected->content : NULL;
     if (saved->descriptor_transfer) saved->descriptor_transfer(saved->descriptor_context, false);
@@ -910,6 +916,7 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         qa_application_session(domain->application), saved->console_resolvers, saved->console, error) :
         qa_console_save_restore(source->console, qa_application_session(domain->application),
             saved->console_resolvers, saved->console, error);
+    source->imported_queue = console_restored;
     if (!console_restored || !(source->release_programmes ? qa_console_release_save_capture(source->console,
         qa_application_session(domain->application), &source->imported_current, error) :
         qa_console_save_capture(source->console, qa_application_session(domain->application),
@@ -992,5 +999,17 @@ bool frontend_remote_q2_source_finish_restore(frontend_remote_q2_source *source,
     if (!ok) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 imported console changed before physical finish");
     if (source->release_programmes && !qa_console_release_restore_finish(source->console, error)) return false;
     qa_buffer_free(&source->imported_commands); qa_buffer_free(&source->imported_current);
+    source->restore_finished = true;
     return true;
+}
+
+bool frontend_remote_q2_source_restore_abort_ready(const frontend_remote_q2_source *source,
+    const qa_application_client_source *actual,qa_error *error)
+{
+    if(!source || !source->frontend->source_restoring || source->restore_finished || !source->restored_constructor ||
+        (source->release_programmes && source->imported_queue ? !source->imported_release_discarded :
+            qa_console_release_save_present(source->console)))
+        return remote_q2_fail(error,QA_ERROR_ARGUMENT,"Q2 candidate has no actual unclaimed import abort receipt");
+    return frontend_remote_q2_source_retirement_current(source,actual,actual?actual->context.console:NULL,
+        actual?&actual->context.command:NULL,error);
 }

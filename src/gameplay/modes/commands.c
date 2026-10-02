@@ -170,7 +170,7 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
     } else return q3_message(m, v, actor,
         "Vote commands are: map_restart, nextmap, map <mapname>, g_gametype <n>, kick <player>, clientkick <clientnum>, g_doWarmup, timelimit <time>, fraglimit <frags>.\n", e);
     if (raw_command) {
-        char script[1024];
+        char script[sizeof(key) + sizeof(parameter) + 2];
         if (intent.kind == QA_MATCH_GAME_TYPE)
             snprintf(script, sizeof(script), "%s %" PRId32, key, game_type);
         else

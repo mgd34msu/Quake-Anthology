@@ -40,6 +40,7 @@ struct application_native_q2 {
     struct application_native_q2_stages *stages;
     struct application_native_q2_source_actors *source_actors;
     struct application_native_q2_source_invocation *source_invocation;
+    size_t source_retirement_sequence;
     struct application_native_q2_publication *publication;
     struct application_native_q2_wire_engine *wire_engine;
     struct application_native_q2_visibility *visibility;

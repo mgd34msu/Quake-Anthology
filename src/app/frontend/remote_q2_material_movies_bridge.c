@@ -1,6 +1,7 @@
 #include "remote_q2_material_movies_bridge.h"
 #include "remote_q2_private.h"
 #include "remote_q2_restore.h"
+#include "remote_q2_source.h"
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
 #include "qa/scene_resource_save.h"
@@ -32,7 +33,8 @@ static bool shader_movies_current(void *context, const frontend_material_movie_s
             !frontend_material_movies_idle(row->shader_movies) || !qa_media_library_idle(row->media) ||
             !qa_material_library_idle(row->materials)) return false;
         if (row->frontend->capture) return remote_q2_capture_owned(row);
-        if (row->frontend->resource_inventory) return false;
+        if (row->frontend->resource_inventory)
+            return frontend_remote_q2_source_retirement_metadata_current(row, &error);
         return true;
     }
     if (!row->bound || row->retired) return row->retired;

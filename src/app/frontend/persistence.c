@@ -67,6 +67,9 @@
 #include "view_settings.h"
 #include "qa/audio_music_engine.h"
 #include "material_movie_inventory.h"
+#include "cinematic_roles.h"
+#include "unified_media_inventory.h"
+#include "remote_unified_material_movies_bridge.h"
 #include "material_movie_bindings.h"
 #include "root_resources.h"
 #include "client_source.h"
@@ -378,6 +381,25 @@ static bool module_audio_scope(const frontend_remote_q3_modules *modules,uint64_
 }
 static bool audio_scope(qa_frontend *f, uint64_t id, uint32_t *domain, uint64_t *ordinal,uint64_t *role)
 {
+    for(size_t i=0;i<frontend_cinematic_roles_count(f);++i) {
+        frontend_cinematic_role_view detached;
+        if(!frontend_cinematic_roles_read(f,i,&detached,NULL)) return false;
+        if(detached.bus==id) { *domain=20; *ordinal=i+1; *role=0; return true; }
+    }
+    size_t media_count=0;
+    if(!frontend_unified_media_inventory_count(f,&media_count,NULL)) return false;
+    for(size_t i=0;i<media_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(f,i,&media,NULL)) return false;
+        for(size_t j=0;j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank;
+            uint32_t seat=0; uint64_t bus=0; bool present=false;
+            if(!frontend_unified_media_bank_read(media,j,&bank)) return false;
+            if(!bank.movies) continue;
+            if(!frontend_unified_material_cinematic_namespace_read(media,j,&seat,&bus,&present,NULL)) return false;
+            if(present && bus==id) { *domain=21; *ordinal=i+1; *role=j+1; return true; }
+        }
+    }
     if(frontend_unified_graph_audio_scope(f,id,domain,ordinal,role)) return true;
     for(size_t i=0;i<frontend_remote_q1_count(f);++i) {
         uint64_t bus=0; qa_audio_music *player=NULL;
@@ -442,6 +464,18 @@ static bool audio_scope(qa_frontend *f, uint64_t id, uint32_t *domain, uint64_t 
 }
 static bool audio_scope_decode(qa_frontend *f, uint32_t domain, uint64_t ordinal,uint64_t role,uint64_t *id)
 {
+    if(domain==20) {
+        frontend_cinematic_role_view detached;
+        if(!ordinal || ordinal-1>SIZE_MAX || role ||
+            !frontend_cinematic_roles_read(f,(size_t)ordinal-1,&detached,NULL)) return false;
+        *id=detached.bus; return true;
+    }
+    if(domain==21) {
+        frontend_unified_media *media=NULL; uint32_t seat=0; bool present=false;
+        return ordinal && ordinal-1<=SIZE_MAX && role && role-1<=SIZE_MAX &&
+            frontend_unified_media_inventory_at(f,(size_t)ordinal-1,&media,NULL) && media &&
+            frontend_unified_material_cinematic_namespace_read(media,(size_t)role-1,&seat,id,&present,NULL) && present;
+    }
     if((domain>=12 && domain<=15) || domain==17) return frontend_unified_graph_audio_resolve(f,domain,ordinal,role,id);
     if(domain==18) {
         frontend_renderer_materials_view row;
@@ -554,7 +588,7 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
     }
     bool ok=valid && qa_source_save_writer(&io,NULL,error) && qa_source_save_u32(&io,&tag) &&
         (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
-        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17) || qa_source_save_u64(&io,&role)) &&
+        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17 && tag!=21) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     return ok || frontend_fail(error,QA_ERROR_FORMAT,"Audio reference leaves its actual frontend owner graph");
@@ -574,11 +608,11 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
     qa_source_save_io io={0}; uint32_t tag=0; uint64_t key=0,id=0,role=0; char *owner=NULL;
     bool ok=f && out && qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_u32(&io,&tag) &&
         (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
-        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17) || qa_source_save_u64(&io,&role)) &&
+        ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17 && tag!=21) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,NULL);
     if (ok) switch (kind) {
     case QA_AUDIO_REFERENCE_OWNER:
-        if ((tag>=1 && tag<=3) || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18) ok=audio_scope_decode(f,tag,key,role,&id);
+        if ((tag>=1 && tag<=3) || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18 || tag==20 || tag==21) ok=audio_scope_decode(f,tag,key,role,&id);
         else if (!tag && owner) {
             id=qa_strings_find(qa_session_strings(qa_application_session(f->application)),(qa_bytes){(const uint8_t *)owner,strlen(owner)});
             ok=id && id<=UINT32_MAX && qa_application_provider_instance(f->application,(qa_actor_owner)id);
@@ -589,7 +623,7 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
                 (qa_actor_owner)id,&gear,error) && qa_application_equipment_content_current(f->application,&gear);
         } else ok=false;
         break;
-    case QA_AUDIO_REFERENCE_BUS: ok=(tag==0 || tag==2 || tag==3 || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18) &&
+    case QA_AUDIO_REFERENCE_BUS: ok=(tag==0 || tag==2 || tag==3 || (tag>=5 && tag<=14) || tag==16 || tag==17 || tag==18 || tag==20 || tag==21) &&
         audio_scope_decode(f,tag?tag:1,key,role,&id); break;
     case QA_AUDIO_REFERENCE_RESOURCE: ok=!tag && audio_resource_present(operation,key); id=key; break;
     case QA_AUDIO_REFERENCE_KEY:

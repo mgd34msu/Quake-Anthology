@@ -4,6 +4,13 @@
 #include "native_q2_visibility.h"
 #include "map_players_private.h"
 
+typedef struct source_retirement {
+    struct source_retirement *next;
+    application_native_q2_source_authority authority;
+    struct application_native_q2_source_invocation *scope;
+    qa_error error;
+    bool retained,consumed;
+} source_retirement;
 struct application_native_q2_source_invocation {
     struct application_native_q2_source_invocation *outer;
     struct application_native_q2 *engine;
@@ -14,8 +21,9 @@ struct application_native_q2_source_invocation {
     uint32_t seat,client_slot,source_slot,native_client,native_seat;
     qa_net_client_id remote_client;
     qa_net_seat_id remote_seat;
-    bool client,remote,issued;
-    qa_error retirement;
+    bool client,remote,returned;
+    struct application_native_q2_source_invocation *root,*all_next;
+    source_retirement *retirements;
 };
 static bool declared(const struct application_native_q2 *n)
 {
@@ -47,7 +55,7 @@ static bool current(const struct application_native_q2_source_invocation *s)
 {
     struct application_native_q2 *n=s->engine;application_provider *p=s->provider;
     qa_application *app=p->application;
-    if(n->source_invocation!=s||p->state.native.q2_engine!=n||n->provider!=p||n->shutting_down)
+    if(p->state.native.q2_engine!=n||n->provider!=p||n->shutting_down)
         return false;
     if(!s->actor.registry)return true;
     if(!qa_actors_get(qa_session_actors(app->session),s->actor))return false;
@@ -70,21 +78,114 @@ static bool current(const struct application_native_q2_source_invocation *s)
     }
     return found==1;
 }
-bool application_native_q2_source_invocation_guard(struct application_native_q2 *n,qa_error *e)
+bool application_native_q2_source_invocation_begin(struct application_native_q2 *n,qa_actor_id actor,
+    struct application_native_q2_source_invocation **out,qa_error *e)
+{
+    if(!n||!out||*out)return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation requires its actual empty owner");
+    if(!n->callbacks||!declared(n))return true;
+    struct application_native_q2_source_invocation *s=calloc(1,sizeof(*s));
+    if(!s)return application_fail(e,QA_ERROR_MEMORY,"Retaining actual Source invocation scope");
+    s->outer=n->source_invocation;s->engine=n;s->provider=n->provider;s->actor=actor;
+    if(!capture(s,e)) {free(s);return false;}
+    s->root=s->outer?s->outer->root:s;
+    if(s->outer) {s->all_next=s->root->all_next;s->root->all_next=s;}
+    n->source_invocation=s;*out=s;return true;
+}
+bool application_native_q2_source_invocation_guard(struct application_native_q2 *n,
+    const application_native_q2_source_authority *authority,const qa_error *retirement,qa_error *e)
 {
     struct application_native_q2_source_invocation *s=n?n->source_invocation:NULL;
-    if(!s||current(s))return true;
-    s->issued=true;
-    qa_error_set(&s->retirement,QA_ERROR_NOT_FOUND,(size_t)(uintptr_t)s,
-        "Source invocation retired its captured actor or client");
-    if(e)*e=s->retirement;
+    if(!s||!authority||!authority->current||!authority->retain||!authority->release||
+        !retirement||retirement->code==QA_OK)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Source region has no owning invocation and exact authority error");
+    source_retirement *r=s->root->retirements;
+    while(r&&(r->error.code!=retirement->code||r->error.offset!=retirement->offset||
+        strcmp(r->error.message,retirement->message)))r=r->next;
+    if(!r) {
+        r=calloc(1,sizeof(*r));
+        if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining reached Source region authority");
+        if(!authority->retain(authority->context,e)) {free(r);return false;}
+        r->authority=*authority;r->scope=s;r->error=*retirement;r->retained=true;
+        r->next=s->root->retirements;s->root->retirements=r;
+    }
+    if(authority->current(authority->context,e))return true;
+    if(e)*e=r->error;
     return false;
 }
-static bool accepts(void *context,const qa_error *e)
+void application_native_q2_source_invocation_unguard(struct application_native_q2 *n,
+    const qa_error *retirement,const qa_error *failure)
 {
-    const struct application_native_q2_source_invocation *s=context;
-    return s->engine->source_invocation==s&&s->issued&&e&&e->code==s->retirement.code&&
-        e->offset==s->retirement.offset&&!strcmp(e->message,s->retirement.message);
+    struct application_native_q2_source_invocation *s=n?n->source_invocation:NULL;
+    if(!s||!retirement)return;
+    source_retirement **link=&s->root->retirements;
+    while(*link) {
+        source_retirement *r=*link;
+        if(r->error.code!=retirement->code||r->error.offset!=retirement->offset||
+            strcmp(r->error.message,retirement->message)) {link=&r->next;continue;}
+        qa_error ignored={0};
+        if(!r->consumed&&failure&&failure->code==r->error.code&&failure->offset==r->error.offset&&
+            !strcmp(failure->message,r->error.message)&&!r->authority.current(r->authority.context,&ignored))return;
+        *link=r->next;
+        if(r->retained)r->authority.release(r->authority.context);
+        free(r);return;
+    }
+}
+bool application_native_q2_source_invocation_accepts(void *context,const qa_error *e)
+{
+    struct application_native_q2_source_invocation *s=context;
+    if(!s||!e)return false;
+    struct application_native_q2_source_invocation *active=s->engine->source_invocation;
+    bool present=false;
+    for(struct application_native_q2_source_invocation *p=active;p;p=p->outer)if(p==s)present=true;
+    if(!present)return false;
+    for(source_retirement **link=&s->root->retirements;*link;link=&(*link)->next) {
+        source_retirement *r=*link;
+        if(r->consumed||e->code!=r->error.code||e->offset!=r->error.offset||strcmp(e->message,r->error.message))continue;
+        qa_error ignored={0};
+        if(r->authority.current(r->authority.context,&ignored))return false;
+        struct application_native_q2_source_invocation *selected=NULL;
+        for(struct application_native_q2_source_invocation *p=active;p;p=p->outer)
+            if(!current(p))selected=p;
+        if((selected?selected:r->scope)!=s)return false;
+        r->authority.release(r->authority.context);r->retained=false;r->consumed=true;return true;
+    }
+    return false;
+}
+bool application_native_q2_source_invocation_close(struct application_native_q2_source_invocation **owned,qa_error *e)
+{
+    struct application_native_q2_source_invocation *s=owned?*owned:NULL;
+    if(!s)return true;
+    s->returned=true;
+    if(s->engine->source_invocation!=s)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation retains an unfinished inner owner");
+    s->engine->source_invocation=s->outer;*owned=NULL;
+    if(s->outer)return true;
+    while(s->retirements) {
+        source_retirement *r=s->retirements;s->retirements=r->next;
+        if(r->retained)r->authority.release(r->authority.context);
+        free(r);
+    }
+    while(s->all_next) {
+        struct application_native_q2_source_invocation *p=s->all_next;s->all_next=p->all_next;free(p);
+    }
+    free(s);return true;
+}
+bool application_native_q2_source_invocation_drain(struct application_native_q2 *n,qa_error *e)
+{
+    if(!n||!n->source_invocation)return true;
+    if(n->calls||qa_native_active(application_native_q2_callbacks_instance(n->callbacks)))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation drain requires all actual calls returned");
+    struct application_native_q2_source_invocation *root=n->source_invocation->root;
+    while(root->retirements) {
+        source_retirement *r=root->retirements;root->retirements=r->next;
+        if(r->retained)r->authority.release(r->authority.context);
+        free(r);
+    }
+    while(n->source_invocation&&n->source_invocation->returned) {
+        struct application_native_q2_source_invocation *s=n->source_invocation;
+        if(!application_native_q2_source_invocation_close(&s,e))return false;
+    }
+    return true;
 }
 bool application_native_q2_source_original(struct application_native_q2 *n,
     qa_native_entry_observer *binding,const qa_native_value *arguments,size_t count,
@@ -100,18 +201,14 @@ bool application_native_q2_source_invoke_original(struct application_native_q2 *
 {
     if(!n||!binding||!cancelled)return application_fail(e,QA_ERROR_ARGUMENT,"Source execution requires its actual invocation receipt");
     *cancelled=false;
-    if(!n->callbacks||!declared(n))return application_native_q2_source_original(n,binding,arguments,count,result,e);
-    struct application_native_q2_source_invocation scope={.outer=n->source_invocation,
-        .engine=n,.provider=n->provider,.actor=actor};
-    if(!capture(&scope,e))return false;
-    n->source_invocation=&scope;
-    if(!current(&scope)) {
-        n->source_invocation=scope.outer;*cancelled=true;
-        if(result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
-        return true;
-    }
+    struct application_native_q2_source_invocation *scope=NULL;
+    if(!application_native_q2_source_invocation_begin(n,actor,&scope,e))return false;
+    if(!scope)return application_native_q2_source_original(n,binding,arguments,count,result,e);
     application_native_q2_visibility_invalidate(n);
-    bool ok=qa_native_invoke_original_cancellable(binding,arguments,count,result,accepts,&scope,cancelled,e);
-    n->source_invocation=scope.outer;
-    return ok;
+    bool ok=qa_native_invoke_original_cancellable(binding,arguments,count,result,
+        application_native_q2_source_invocation_accepts,scope,cancelled,e);
+    qa_error cleanup={0};
+    bool closed=application_native_q2_source_invocation_close(&scope,&cleanup);
+    if(!closed&&ok&&e)*e=cleanup;
+    return ok&&closed;
 }

@@ -45,4 +45,6 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **, qa_error *);
 bool frontend_unified_q3_visit(const frontend_unified_q3 *,const qa_application_content_visitor *,qa_error *);
 bool frontend_unified_q3_checkpoint(frontend_unified_q3 *, const qa_application_content_graph *,qa_buffer *, qa_error *);
 bool frontend_unified_q3_restore(qa_frontend *, frontend_remote_unified *, frontend_unified_media *,struct frontend_unified_components *,const qa_application_content_graph *,qa_bytes, frontend_unified_q3 **, qa_error *);
+bool frontend_unified_q3_checkpoint_ready(const frontend_unified_q3 *);
+bool frontend_unified_q3_frame_restore_bind(frontend_unified_q3 *, const qa_unified_document *, qa_error *);
 #endif

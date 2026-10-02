@@ -5,6 +5,7 @@
 #include "remote_unified_input.h"
 #include "qa/q3_presentation_media_save.h"
 #include "qa/audio_save.h"
+#include "qa/q3_cinematic_handles.h"
 
 typedef struct frontend_unified_q3_runtime_factory frontend_unified_q3_runtime_factory;
 typedef struct frontend_unified_q3_runtime_factory_options {
@@ -68,12 +69,19 @@ typedef struct frontend_unified_q3_runtime_factory_topology {
     frontend_unified_q3_runtime_owners children;
     frontend_unified_q3_commands *commands;
     qa_audio_music *music;
+    qa_q3_cinematic_source *cinematics;
     uint64_t receiver,audio_owner;
 } frontend_unified_q3_runtime_factory_topology;
 /* Literal owned children for the genuine capture resource graph. No resource
  * registration, Source replay or callback entry occurs. */
 bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3_runtime_factory *,
     frontend_unified_q3_runtime_factory_topology *,qa_error *);
+bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q3_runtime_factory *,
+    qa_q3_cinematic_source **,qa_error *);
+bool frontend_unified_q3_runtime_factory_system_checkpoint(frontend_unified_q3_runtime_factory *,
+    const qa_q3_movie_checkpoint_refs *,const qa_q3_system_movie *,uint32_t,qa_buffer *,qa_error *);
+bool frontend_unified_q3_runtime_factory_system_restore(frontend_unified_q3_runtime_factory *,
+    const qa_q3_movie_checkpoint_refs *,qa_bytes,uint32_t,qa_q3_system_movie *,qa_error *);
 bool frontend_unified_q3_runtime_factory_initialize(frontend_unified_q3_runtime_factory *,qa_error *);
 bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *,qa_error *);

@@ -647,7 +647,7 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
         qa_input_seat_release_read(owner_frontend->seats[row->physical_seat].input):NULL;
     if (row->owner->frontend->source_restoring && row->owner->restoring &&
         !row->retirement_release && !decoded && (row->retirement_release_saved || row->restore_discarded)) {
-        if (!frontend_client_sources_restore_discarded(row->owner->frontend,source,e)) return false;
+        if (!frontend_network_client_restore_abort_ready(row->owner->frontend,source,e)) return false;
         row->retirement_release_saved=false; row->restore_discarded=true; discarded=true;
     } else if (!attach_retirement_release(row,source,e)) return false;
     if (row->preparation) {

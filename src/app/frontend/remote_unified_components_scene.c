@@ -60,6 +60,12 @@ static bool presentation_time(remote_component *r,int32_t *time,int32_t *elapsed
     frontend_unified_recipient_clock clock;
     if(!r->frame||!frontend_remote_unified_clock_read(r->parent->replica,&clock,e)||!isfinite(clock.milliseconds)) return false;
     int32_t server_time=r->frame->snapshot.server_time;
+    if(r->state.player_events) {
+        if(r->previous_frame_present&&server_time<r->previous_frame_time)
+            return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component player-event source time moved backward");
+        *time=server_time; *elapsed=r->previous_frame_present?server_time-r->previous_frame_time:0;
+        return true;
+    }
     if(!r->scene_time_present) {
         r->scene_time_offset=(double)server_time-clock.milliseconds;
         r->scene_time_present=true;
@@ -96,9 +102,11 @@ static void release(void *context,const application_q3_scene_context *view)
 static bool source_actor(void *context,uint32_t slot,qa_actor_id *out,bool *owned,bool *found,qa_error *e)
 {
     remote_component *r=context; *out=(qa_actor_id){0}; *owned=*found=false;
-    if(!r->acquired||!source_current(r,&r->entered)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote actor mapping lacks its entered component frame");
-    for(size_t i=0;i<r->entered.actor_count;++i) if(r->entered.actors[i].slot==slot) {
-        *out=r->entered.actors[i].actor; *owned=r->entered.actors[i].owned;
+    if(!published(r)||!r->frame||(r->acquired&&!source_current(r,&r->entered)))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote actor mapping lacks its actual component frame");
+    const application_q3_scene_context *source=r->acquired?&r->entered:&r->frame->context;
+    for(size_t i=0;i<source->actor_count;++i) if(source->actors[i].slot==slot) {
+        *out=source->actors[i].actor; *owned=source->actors[i].owned;
         *found=qa_actors_get(frontend_remote_unified_registry(r->parent->replica),*out)!=NULL; break;
     }
     return true;
@@ -177,7 +185,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
     if(!r->profile) {
     qa_json_document *d=NULL; if(!qa_json_parse(r->state.mod->declaration,&d,e)) return false;
     qa_json_id presentation=qa_json_get(d,qa_json_root(d),"presentation"); qa_buffer path={0};
-    ok=qa_json_string_equal(d,qa_json_get(d,presentation,"runtime"),"qvm-scene")&&
+    ok=qa_json_string_equal(d,qa_json_get(d,presentation,"runtime"),r->state.player_events?"qvm-player-events":"qvm-scene")&&
         qa_json_string(d,qa_json_get(d,qa_json_get(d,presentation,"cgame"),"path"),&path,e)&&!memchr(path.data,0,path.size)&&
         qa_vfs_acquire_receipt(files,(const char *)path.data,&r->artifact,&r->acquisition,e)&&
         qa_vfs_acquire_receipt(files,r->state.mod->program_path,&r->gameplay,&r->gameplay_acquisition,e)&&
@@ -241,6 +249,7 @@ bool q3remote_component_retire(remote_component *row,qa_error *error)
     row->retired=true; row->initialized=false; row->host_entered=false;
     if(row->frontend.owner&&(!row->frontend.retire||!row->frontend.retire(row->frontend.owner,error)))
         return error&&error->code!=QA_OK?false:q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component registry lacks its real service retirement owner");
+    while(row->events) { remote_component_event *next=row->events->next; free(row->events); row->events=next; }
     q3remote_component_admissions_clear(row); return true;
 }
 bool q3remote_component_close(remote_component **slot,qa_error *e)
@@ -260,6 +269,7 @@ bool q3remote_component_close(remote_component **slot,qa_error *e)
     q3remote_component_frame_free(r->baseline); q3remote_component_state_free(&r->state);
     qa_buffer_free(&r->saved_scene); qa_buffer_free(&r->saved_cvars); qa_buffer_free(&r->saved_console);
     q3remote_component_admissions_clear(r);
+    while(r->events) { remote_component_event *next=r->events->next; free(r->events); r->events=next; }
     free(r); *slot=NULL; return true;
 }
 bool frontend_unified_components_prepare_draw(frontend_unified_components *o,const qa_scene_view *view,uint64_t sequence,
@@ -279,7 +289,13 @@ bool frontend_unified_components_prepare_draw(frontend_unified_components *o,con
         if(r->baseline) { r->baseline->context.origin=view->origin; memcpy(r->baseline->context.axis,view->axis,sizeof(view->axis)); }
         ok=q3remote_component_open(r,e);
         if(ok&&(!r->advanced||r->draw_sequence!=sequence)) {
-            ok=r->frontend.begin(r->frontend.owner,sequence,e)&&application_q3_scene_advance(r->scene,sequence,e);
+            ok=r->frontend.begin(r->frontend.owner,sequence,e);
+            while(ok&&r->events) {
+                remote_component_event *event=r->events;
+                ok=application_q3_scene_consume(r->scene,&event->value,event->sequence,e);
+                if(ok) { r->events=event->next; free(event); }
+            }
+            if(ok) ok=application_q3_scene_advance(r->scene,sequence,e);
             if(ok) {
                 q3remote_component_admissions_clear(r); r->draw_sequence=sequence; r->advanced=true; r->submitted=false;
                 if(!r->profile->has_hud) { r->previous_frame_time=r->renderer_time; r->previous_frame_present=true; }

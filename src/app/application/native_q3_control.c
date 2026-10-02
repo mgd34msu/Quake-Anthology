@@ -444,7 +444,8 @@ bool application_control_q3_client_think(application_provider *provider, qa_acto
     uint32_t slot;
     if (!app || !received || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->constructed ||
         !provider->attached || provider->close_pending || !provider->state.q3 || app->destroy_requested ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
+        (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider &&
+         !application_native_q3_source_command_actor_current(provider,actor)) ||
         (app->state != QA_APPLICATION_RUNNING &&
          !(app->state == QA_APPLICATION_READY && app->operation == APPLICATION_CONFIGURING)) ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
