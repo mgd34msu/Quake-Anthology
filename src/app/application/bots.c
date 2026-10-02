@@ -1007,9 +1007,11 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
         .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
+            .source_action_client=bot_source_action_client,
             .entity_number=entity_number,.model=application_bot_travel_model,
             .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
     if(options.observations==QA_BOT_OBSERVATION_MODULE) {
+        services.movement.source_action_client=NULL;
         services.movement.travel_weapon=NULL;
         services.movement.grapple_state=NULL;
         services.goals.pickups=NULL;

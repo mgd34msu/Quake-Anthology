@@ -295,13 +295,35 @@ qa_vec3 bot_vector_angles(qa_vec3 v) {
     }
     return qa_v3(-pitch, yaw, 0);
 }
+static bool action_client(bot_travel *t, uint32_t *out, qa_error *e) {
+    int32_t client=bot_move_integer(t->state,BM_CLIENT);
+    if(t->moves->services.source_action_client)
+        return t->moves->services.source_action_client(t->moves->services.context,client,out,e);
+    *out=(uint32_t)client;return true;
+}
 bool bot_move_action(bot_travel *t, qa_vec3 direction, float speed, qa_error *e) {
-    return qa_bot_actions_move(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), direction,
-                               speed, e);
+    uint32_t client;
+    return action_client(t,&client,e) &&
+        qa_bot_actions_move(t->moves->actions,client,direction,speed,e);
 }
 bool bot_flag_action(bot_travel *t, uint32_t flags, qa_error *e) {
-    return qa_bot_actions_add(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), flags, e);
+    uint32_t client;
+    return action_client(t,&client,e) && qa_bot_actions_add(t->moves->actions,client,flags,e);
 }
 bool bot_jump_action(bot_travel *t, bool delayed, qa_error *e) {
-    return qa_bot_actions_jump(t->moves->actions, (uint32_t)bot_move_integer(t->state,BM_CLIENT), delayed, e);
+    uint32_t client;
+    return action_client(t,&client,e) && qa_bot_actions_jump(t->moves->actions,client,delayed,e);
+}
+bool bot_view_action(bot_travel *t, qa_vec3 angles, qa_error *e) {
+    uint32_t client;
+    return action_client(t,&client,e) && qa_bot_actions_view(t->moves->actions,client,angles,e);
+}
+bool bot_weapon_action(bot_travel *t, int32_t weapon, qa_error *e) {
+    uint32_t client;
+    return action_client(t,&client,e) && qa_bot_actions_weapon(t->moves->actions,client,weapon,e);
+}
+bool bot_text_action(bot_travel *t, const char *command, qa_error *e) {
+    uint32_t client;
+    return action_client(t,&client,e) &&
+        qa_bot_actions_text(t->moves->actions,(int32_t)client,QA_BOT_COMMAND,0,command,e);
 }

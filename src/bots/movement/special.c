@@ -265,12 +265,12 @@ static bool weapon_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot
             return false;
         out->ideal_view_angles = bot_vector_angles(direction);
         out->ideal_view_angles.x = 90;
-        if (!qa_bot_actions_view(t->moves->actions, (uint32_t)bot_move_integer(s,BM_CLIENT), out->ideal_view_angles, e))
+        if (!bot_view_action(t,out->ideal_view_angles,e))
             return false;
         out->flags |= QA_BOT_MOVE_VIEW_SET;
         int32_t selected;
         if (!weapon(t, r->graph_edge->mode, &selected, e) ||
-            !qa_bot_actions_weapon(t->moves->actions, (uint32_t)bot_move_integer(s,BM_CLIENT), selected, e) ||
+            !bot_weapon_action(t,selected,e) ||
             !weapon(t, r->graph_edge->mode, &out->weapon, e))
             return false;
         out->flags |= QA_BOT_MOVE_WEAPON;
@@ -282,8 +282,7 @@ static bool grapple_command(bot_travel *t, bool activate, qa_error *e) {
     if (bot_variable(t, BOT_OFFHAND_GRAPPLE) == 0)
         return true;
     const char *command = t->moves->variables[activate ? BOT_GRAPPLE_ON : BOT_GRAPPLE_OFF]->string;
-    return qa_bot_actions_text(t->moves->actions, bot_move_integer(t->state,BM_CLIENT), QA_BOT_COMMAND, 0,
-                               command, e);
+    return bot_text_action(t,command,e);
 }
 bool bot_reset_grapple(bot_travel *t, qa_error *e) {
     bot_reach reach;

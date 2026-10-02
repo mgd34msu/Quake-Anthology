@@ -5,6 +5,7 @@
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_events.h"
+#include "source_command.h"
 #include "source_orders.h"
 #include "source_player.h"
 #include <stdio.h>
@@ -125,7 +126,7 @@ bool bot_ai_source_check_event(qa_bots *b,bot_ai_state *s,const qa_q3_entity *en
         char sound[128];bool valid;
         if(!sound_name(b,"EV_GENERAL_SOUND",entity->eventParm,sound,&valid,e)) return false;
         if(valid && live(b,s) && !strcmp(sound,"*falling1.wav") && bot_ai_inventory_value(s,QA_BOT_INV_TELEPORTER)>0)
-            return qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_USE,e);
+            return bot_ai_source_action(b,s,QA_BOT_USE,e);
         return true;
     }
     default:return true;

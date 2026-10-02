@@ -167,8 +167,15 @@ static bool grapple_observation(void *context, int32_t client,
         }
     return true;
 }
+static bool movement_action_client(void *context,int32_t client,uint32_t *out,qa_error *e) {
+    qa_bot_runtime *r=context;
+    bool previous=r->busy;r->busy=true;
+    bool ok=r->services.movement.source_action_client(r->services.movement.context,client,out,e);
+    r->busy=previous;return ok;
+}
 static qa_bot_move_services movement_services(qa_bot_runtime *r) {
     return (qa_bot_move_services){.context = r, .navigation = navigation,
+        .source_action_client=r->services.movement.source_action_client?movement_action_client:NULL,
         .actor = actor, .entity_number = entity_number, .model = model, .entity_model = entity_model,
         .next_entity = next_entity, .entity_type = entity_type, .entity_weapon = entity_weapon,
         .travel_weapon = travel_weapon,

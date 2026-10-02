@@ -83,15 +83,20 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     bot_ai_view_delta(s,delta,true);
     bot_ai_view_prepare(s);
     float factor = .05f, maximum = 360;
-    if (bot_ai_enemy_number(s)>=0 &&
-        (!bot_ai_character_float(b, s, BOT_C_VIEW_FACTOR, .01f, 1, &factor, e) ||
-         !bot_ai_character_float(b, s, BOT_C_VIEW_MAX, 1, 1800, &maximum, e))) return false;
+    if (bot_ai_enemy_number(s)>=0) {
+        if(!bot_ai_character_float(b,s,BOT_C_VIEW_FACTOR,.01f,1,&factor,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+        if(!bot_ai_character_float(b,s,BOT_C_VIEW_MAX,1,1800,&maximum,e)) return false;
+    }
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
-    qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     qa_bot_input input;
     qa_movement_command command;
-    bool ok = qa_bot_actions_view(actions, s->view.client, bot_ai_view_angles(s), e) &&
-        qa_bot_actions_input(actions, s->view.client, (float)time / 1000, &input, e);
+    if(!bot_ai_source_action_view(b,s,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    if(!bot_ai_source_action_input(b,s,(float)time/1000,&input,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    bool ok=true;
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
         input.action_flags &= ~(uint32_t)(QA_BOT_RESPAWN | QA_BOT_ATTACK);
@@ -204,8 +209,9 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     }
 finished:
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
-        ok = qa_bot_actions_weapon(actions, s->view.client, bot_ai_weapon_number(s), e);
+        ok = bot_ai_source_action_weapon(b,s,e);
     if(!ok) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!delta_angles(b,s,delta,e)) return false;
     bot_ai_view_delta(s,delta,false);
     return true;

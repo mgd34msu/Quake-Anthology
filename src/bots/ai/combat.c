@@ -11,6 +11,7 @@
 #include "source_team_state.h"
 #include "source_goal.h"
 #include "source_orders.h"
+#include "source_command.h"
 #include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
@@ -172,7 +173,8 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
      * selected weapon phase instead of exposing another arsenal's numbering. */
     int32_t weapon_state;
     if (!bot_ai_source_player_word(b,s,BOT_PS_WEAPON_STATE,&weapon_state,e)) return false;
-    if (weapon_state == 1 || weapon_state == 2) return true;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    if (weapon_state == 1 || weapon_state == 2) return bot_ai_source_action_weapon(b,s,e);
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
     int32_t choice = bot_ai_weapon_number(s);
@@ -183,6 +185,7 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (ok && !s->retired && bot_ai_live(b, s->view.actor)) {
         if (bot_ai_weapon_number(s) != choice) bot_ai_weapon_change_time_set(s,b->time);
         bot_ai_weapon_number_set(s,choice);
+        return bot_ai_source_action_weapon(b,s,e);
     }
     return ok;
 }
@@ -709,15 +712,6 @@ static bool source_attack_live(qa_bots *b,bot_ai_state *s) {
     return !s->retired && bot_ai_live(b,s->view.actor);
 }
 #define SOURCE_ATTACK_CALL(call) do {if(!(call)) return false;if(!source_attack_live(b,s)) return true;} while(0)
-static bool source_use(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    if(!b->services.source_action_client)
-        return bot_ai_fail(e,"Source holdable use requires its actual action-client namespace");
-    int32_t source=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT);
-    uint32_t client;
-    if(!b->services.source_action_client(b->services.context,source,&client,e)) return false;
-    if(!source_attack_live(b,s)) return true;
-    return qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),client,QA_BOT_USE,e);
-}
 static bool source_carrier_near(qa_bots *b,bot_ai_state *s,int32_t carrier,bool *near,qa_error *e) {
     *near=false;if(carrier<0) return true;
     qa_bot_entity_info info;bool observed;
@@ -769,18 +763,18 @@ static bool source_kamikaze(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(near) return true;
         SOURCE_ATTACK_CALL(bot_ai_source_flag_carrier(b,s,false,true,cubes,&carrier,e));
         SOURCE_ATTACK_CALL(source_carrier_near(b,s,carrier,&near,e));
-        if(near) return source_use(b,s,e);
+        if(near) return bot_ai_source_action(b,s,QA_BOT_USE,e);
     } else if(type==6) {
         int32_t client=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
         SOURCE_ATTACK_CALL(bot_ai_source_team(b,client,&team,e));
         const qa_bot_goal *goal=team==1?&b->source_goals.blue_obelisk:&b->source_goals.red_obelisk;
         bool visible;
         SOURCE_ATTACK_CALL(source_goal_visible_near(b,s,goal,1024*.9f,&visible,e));
-        if(visible) return source_use(b,s,e);
+        if(visible) return bot_ai_source_action(b,s,QA_BOT_USE,e);
     }
     int32_t team,enemy;
     SOURCE_ATTACK_CALL(source_visible_carriers(b,s,&team,&enemy,e));
-    return !(enemy>2 && enemy>team+1) || source_use(b,s,e);
+    return !(enemy>2 && enemy>team+1) || bot_ai_source_action(b,s,QA_BOT_USE,e);
 }
 static bool source_invulnerability(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(bot_ai_inventory_value(s,QA_BOT_INV_INVULNERABILITY)<=0 || bot_ai_invulnerability_time(s)>b->time) return true;
@@ -800,14 +794,14 @@ static bool source_invulnerability(qa_bots *b,bot_ai_state *s,qa_error *e) {
     else goal=team==1?&b->source_goals.blue_obelisk:&b->source_goals.red_obelisk;
     bool visible;
     SOURCE_ATTACK_CALL(source_goal_visible_near(b,s,goal,type==6?300:200,&visible,e));
-    return !visible || source_use(b,s,e);
+    return !visible || bot_ai_source_action(b,s,QA_BOT_USE,e);
 }
 bool bot_ai_source_battle_items(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<40 &&
        bot_ai_inventory_value(s,QA_BOT_INV_TELEPORTER)>0 && !carrying_source_objective(b,s))
-        SOURCE_ATTACK_CALL(source_use(b,s,e));
+        SOURCE_ATTACK_CALL(bot_ai_source_action(b,s,QA_BOT_USE,e));
     if(bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)<60 && bot_ai_inventory_value(s,QA_BOT_INV_MEDKIT)>0)
-        SOURCE_ATTACK_CALL(source_use(b,s,e));
+        SOURCE_ATTACK_CALL(bot_ai_source_action(b,s,QA_BOT_USE,e));
     if(s->team_arena) {
         SOURCE_ATTACK_CALL(source_kamikaze(b,s,e));
         SOURCE_ATTACK_CALL(source_invulnerability(b,s,e));
@@ -973,7 +967,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(b->source_match.cvars[BOT_SOURCE_CHALLENGE].integer_value && accuracy>.9f &&
        bot_ai_enemy_sight_time(s)<b->time-1) {
         bot_ai_view_prepare(s);bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
-        SOURCE_ATTACK_CALL(qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e));
+        SOURCE_ATTACK_CALL(bot_ai_source_action_view(b,s,e));
     }
     return true;
 }
@@ -1034,7 +1028,7 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
        hit.fraction*1000<selected.projectile.radius &&
        (selected.selected_projectile_damage-((.5f*hit.fraction)*1000))*.5f>0) return true;
     if(!(selected.weapon.flags&BOT_FIRE_RELEASED) || bot_ai_flag(s,BOT_AI_ATTACKED))
-        SOURCE_ATTACK_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e));
+        SOURCE_ATTACK_CALL(bot_ai_source_action(b,s,QA_BOT_ATTACK,e));
     bot_ai_flag_toggle(s,BOT_AI_ATTACKED);return true;
 }
 bool bot_ai_source_enemy(qa_bots *b,const bot_ai_state *s) {

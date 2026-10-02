@@ -16,6 +16,7 @@
 #include "source_storage.h"
 #include "source_view.h"
 #include "source_player.h"
+#include "source_command.h"
 
 enum { SOURCE_DEFAULT_TRAVEL=0x011c0fbe, SOURCE_LIQUID=8|16|32, SOURCE_FOG=64 };
 
@@ -30,7 +31,7 @@ static qa_bot_navigation *navigation(qa_bots *b,bot_ai_state *s) {
 }
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
 static bool action(qa_bots *b,bot_ai_state *s,uint32_t flag,qa_error *e) {
-    return !alive(b,s) || qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,flag,e);
+    return bot_ai_source_action(b,s,flag,e);
 }
 static bool reset_avoid(qa_bots *b,bot_ai_state *s,qa_error *e) {
     return !alive(b,s) || qa_bot_moves_reset_avoid(qa_bot_runtime_moves(b->runtime),s->movement,false,e);

@@ -90,6 +90,9 @@ typedef enum qa_bot_grapple_observation {
 } qa_bot_grapple_observation;
 typedef struct qa_bot_move_services {
     void *context;
+    /* Optional bridge from the retained movement client to this EA input bank.
+     * Without it, the installed movement client already names this bank. */
+    bool (*source_action_client)(void *, int32_t, uint32_t *, qa_error *);
     qa_bot_navigation *(*navigation)(void *, int32_t client);
     qa_actor_id (*actor)(void *, int32_t entity);
     int32_t (*entity_number)(void *, qa_actor_id);

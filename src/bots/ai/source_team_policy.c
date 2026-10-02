@@ -7,6 +7,7 @@
 #include "source_inventory.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
+#include "source_command.h"
 #include "source_goal.h"
 #include "source_storage.h"
 #include "source_view.h"
@@ -526,7 +527,7 @@ static bool source_team(qa_bots *b, bot_ai_state *s, int32_t *team, qa_error *e)
 static int32_t opposite(int32_t team) { return team==1?2:team==2?1:0; }
 static bool refuse_order(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!bot_ai_ordered(s) || !bot_ai_order_time(s) || !(bot_ai_order_time(s)>b->time-10.0f) || !alive(b,s)) return true;
-    if(!qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_NEGATIVE,e)) return false;
+    if(!bot_ai_source_action(b,s,QA_BOT_NEGATIVE,e)) return false;
     if(!alive(b,s)) return true;
     if(!bot_ai_source_voice(b,s,bot_ai_decisionmaker(s),"no",false,e)) return false;
     if(alive(b,s)) bot_ai_order_time_set(s,0);

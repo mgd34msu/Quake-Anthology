@@ -3,6 +3,7 @@
 #include "source_team_state.h"
 #include "source_inventory.h"
 #include "source_chat.h"
+#include "source_command.h"
 #include "source_goal.h"
 #include "source_orders.h"
 #include "source_player.h"
@@ -228,8 +229,7 @@ static void all_chat(qa_bots *b,bot_ai_state *s,bool *out) {
     bot_ai_last_chat_time_set(s,b->time);bot_ai_chat_to_set(s,QA_BOT_CHAT_ALL);*out=true;
 }
 static bool taunt(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    return qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,
-        QA_BOT_COMMAND,0,"vtaunt",e);
+    return bot_ai_source_action_text(b,s,QA_BOT_COMMAND,0,"vtaunt",e);
 }
 static bool random_type(qa_bots *b,bot_ai_state *s,uint32_t index,const char *yes,const char *no,
                          const char **out,qa_error *e) {

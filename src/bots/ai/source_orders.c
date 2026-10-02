@@ -5,6 +5,7 @@
 #include "source_team_state.h"
 #include "source_timers.h"
 #include "source_orders.h"
+#include "source_command.h"
 #include "source_storage.h"
 #include "source_player.h"
 #include "qa/network_q3.h"
@@ -248,13 +249,13 @@ bool bot_ai_source_voice(qa_bots *b,bot_ai_state *s,int32_t recipient,const char
     char command[256];
     if(recipient==-1) snprintf(command,sizeof(command),"%s %s",only?"vosay_team":"vsay_team",voice);
     else snprintf(command,sizeof(command),"%s %d %s",only?"votell":"vtell",recipient,voice);
-    return !alive(b,s) || qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,QA_BOT_COMMAND,0,command,e);
+    return bot_ai_source_action_text(b,s,QA_BOT_COMMAND,0,command,e);
 }
 static bool say(qa_bots *b,bot_ai_state *s,const char *text,qa_error *e) {
-    return !alive(b,s) || qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,QA_BOT_SAY_TEAM,0,text,e);
+    return bot_ai_source_action_text(b,s,QA_BOT_SAY_TEAM,0,text,e);
 }
 static bool action(qa_bots *b,bot_ai_state *s,uint32_t flag,qa_error *e) {
-    return !alive(b,s) || qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,flag,e);
+    return bot_ai_source_action(b,s,flag,e);
 }
 bool bot_ai_source_locate(qa_bots *b,bot_ai_state *s,int32_t client,uint32_t offset,qa_error *e) {
     bot_ai_goal_entity_set(s,offset,-1);qa_bot_entity_info entity;bool found;
@@ -678,7 +679,7 @@ static bool dismiss(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_err
 static bool suicide(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
     bool allowed;if(!order_allowed(b,s,m,&allowed,e)) return false;
     if(!allowed) return true;
-    if(alive(b,s) && !qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,QA_BOT_COMMAND,0,"kill",e)) return false;
+    if(!bot_ai_source_action_text(b,s,QA_BOT_COMMAND,0,"kill",e)) return false;
     if(!alive(b,s)) return true;
     int32_t client;if(!requester(b,m,false,&client,e) ||
         !bot_ai_source_voice(b,s,client,"taunt",false,e)) return false;

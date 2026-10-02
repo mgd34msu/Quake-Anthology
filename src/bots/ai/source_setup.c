@@ -3,6 +3,7 @@
 #include "source_inventory.h"
 #include "source_behavior_state.h"
 #include "source_setup.h"
+#include "source_command.h"
 #include "source_storage.h"
 #include "source_player.h"
 
@@ -138,8 +139,7 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
             memcpy(command,"team ",5);
             memcpy(command+5,s->source_setup.team,length);
             command[5+length]=0;
-            if(!qa_bot_actions_text(qa_bot_runtime_actions(b->runtime),(int32_t)s->view.client,
-                                    QA_BOT_COMMAND,0,command,e)) return false;
+            if(!bot_ai_source_action_text(b,s,QA_BOT_COMMAND,0,command,e)) return false;
         }
     }
     qa_bot_chat *chat=qa_bot_runtime_chat(b->runtime,s->chat);
