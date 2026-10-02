@@ -6,6 +6,18 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B26 playerState movement and weapon projections, 2026-10-02
+
+The private player owner now omits velocity, player view angles, delta angles, presence, current weapon, weapon state and weapon time. Existing player/inventory callbacks receive detached samples reconstructed from the actual retained 468-byte playerState at GAME 16. The vectors and signed words retain their literal source values; presence uses the actual PMF_DUCKED bit and original normal/crouch values 2/4. Public sample construction does not eagerly qualify unconsumed enum fields. Reached movement and weapon getters keep their existing Source enum/error boundaries.
+
+The observation receiver copies only the remaining independent metadata. It does not publish a second playerState from the detached sample. The genuine player-copy stage still writes the real source player record, and movement setup, delta-angle handling, weapon selection and activation use that same allocation. Reset no longer clears a duplicate velocity while the actual playerState is preserved by the existing Source reset range. Canonical actor identities, spawn/teleport generations, target-player observations and remaining metadata retain their current owners.
+
+Population schema 32 drops the seven mirrors and rejects schema 31. The complete 9088-byte record, actual span aliases and typed MEMORY/checkpoint/history capture remain unchanged. Original BotChooseWeapon/SetupForMovement and family sourcePlayerState bindings and movement setup were read against the actual native consumers. Original BotIntermission explicitly uses PM_FREEZE/PM_INTERMISSION, confirming the existing native 4/5 condition.
+
+All 27 registered AI production units passed their actual strict optimized commands with -O2 and -Werror into /home/buzzkill/.cache/quake-anthology-recovery/ai-objects/player-projections-20261002. Durable compile.log and commands.jsonl retain the actual results and commands. Deleted private player field/codec references are absent; whitespace checks are clean. Four existing AI source paths and this existing report changed. Public APIs, parser/shared headers, test infrastructure, shared build outputs, CMake and Git were not changed by this agent.
+
+Remaining observed flags/counters and complete enemy, activation, obstacle and clear-path decision behavior are separate implementation units. No aggregate runtime or full B26 completion is claimed; Root owns executable integration, product checks, commits and pushes.
+
 ## Authorized B26 raw BotAI origin and eye geometry, 2026-10-02
 
 BotAI now copies the actual retained playerState origin into GAME BotState origin 4908 and eye 4936 at the original stage after console/delta/local-time/think-time work. It then adds the actual playerState signed view height to the eye Z as binary32 before the genuine area query. These fields previously existed in the complete raw allocation but the native frame updated only duplicated player vectors. Original `BotAI` and the family's raw-bound vector copy stages both establish this producer order.

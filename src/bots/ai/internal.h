@@ -49,10 +49,6 @@ typedef struct bot_ai_view {
 typedef struct bot_ai_player {
     bool connected, observer, intermission, dead, grounded, crouched, teleported;
     bool water_jump, grapple_pull, firing, invisible, chatting, carrying_objective;
-    qa_vec3 velocity, view_angles;
-    int32_t delta_angles[3];
-    uint32_t presence;
-    int32_t current_weapon, weapon_state, weapon_time_ms;
     qa_actor_id last_attacker, last_victim;
     int32_t deaths, kills, last_damage_cause;
     float air_time, teleport_time;

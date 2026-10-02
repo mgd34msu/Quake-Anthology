@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=31;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=32;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==31?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==32?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -43,9 +43,6 @@ static bool player_fields(qa_source_save_io *io, bot_ai_player *player)
     B(player->connected); B(player->observer); B(player->intermission); B(player->dead);
     B(player->grounded); B(player->crouched); B(player->teleported); B(player->water_jump);
     B(player->grapple_pull); B(player->firing); B(player->invisible); B(player->chatting); B(player->carrying_objective);
-    V(player->velocity); V(player->view_angles);
-    for (size_t i = 0; i < 3; ++i) I(player->delta_angles[i]);
-    U(player->presence); I(player->current_weapon); I(player->weapon_state); I(player->weapon_time_ms);
     A(player->last_attacker); A(player->last_victim); I(player->deaths); I(player->kills); I(player->last_damage_cause);
     F(player->air_time); F(player->teleport_time); L(player->spawn_sequence); L(player->teleport_sequence);
     return true;

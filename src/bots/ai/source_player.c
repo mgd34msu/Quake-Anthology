@@ -5,13 +5,20 @@
 qa_bot_player bot_ai_player_sample(const bot_ai_state *state)
 {
     const bot_ai_player *p=&state->player;
+    const uint8_t *source=state->source_span.data+QA_BOT_SOURCE_PLAYER;
     return (qa_bot_player){.connected=p->connected,.observer=p->observer,.intermission=p->intermission,
         .dead=p->dead,.grounded=p->grounded,.crouched=p->crouched,.teleported=p->teleported,
         .water_jump=p->water_jump,.grapple_pull=p->grapple_pull,.firing=p->firing,.invisible=p->invisible,
         .chatting=p->chatting,.carrying_objective=p->carrying_objective,
-        .origin=bot_ai_origin(state),.velocity=p->velocity,.eye=bot_ai_eye(state),.view_angles=p->view_angles,
-        .delta_angles={p->delta_angles[0],p->delta_angles[1],p->delta_angles[2]},.presence=p->presence,
-        .current_weapon=p->current_weapon,.weapon_state=p->weapon_state,.weapon_time_ms=p->weapon_time_ms,
+        .origin=bot_ai_origin(state),.velocity=bot_source_vec3_read(source+BOT_PS_VELOCITY),
+        .eye=bot_ai_eye(state),.view_angles=bot_source_vec3_read(source+BOT_PS_VIEW_ANGLES),
+        .delta_angles={bot_source_i32_read(source+BOT_PS_DELTA_ANGLES),
+            bot_source_i32_read(source+BOT_PS_DELTA_ANGLES+4),
+            bot_source_i32_read(source+BOT_PS_DELTA_ANGLES+8)},
+        .presence=(bot_source_word_read(source+BOT_PS_MOVE_FLAGS)&1u)?4u:2u,
+        .current_weapon=bot_source_i32_read(source+BOT_PS_WEAPON),
+        .weapon_state=bot_source_i32_read(source+BOT_PS_WEAPON_STATE),
+        .weapon_time_ms=bot_source_i32_read(source+BOT_PS_WEAPON_TIME),
         .last_attacker=p->last_attacker,.last_victim=p->last_victim,.deaths=p->deaths,.kills=p->kills,
         .last_damage_cause=p->last_damage_cause,.air_time=p->air_time,.teleport_time=p->teleport_time,
         .spawn_sequence=p->spawn_sequence,.teleport_sequence=p->teleport_sequence};
@@ -21,9 +28,7 @@ void bot_ai_player_observe(bot_ai_state *state,const qa_bot_player *p)
     state->player=(bot_ai_player){.connected=p->connected,.observer=p->observer,.intermission=p->intermission,
         .dead=p->dead,.grounded=p->grounded,.crouched=p->crouched,.teleported=p->teleported,
         .water_jump=p->water_jump,.grapple_pull=p->grapple_pull,.firing=p->firing,.invisible=p->invisible,
-        .chatting=p->chatting,.carrying_objective=p->carrying_objective,.velocity=p->velocity,.view_angles=p->view_angles,
-        .delta_angles={p->delta_angles[0],p->delta_angles[1],p->delta_angles[2]},.presence=p->presence,
-        .current_weapon=p->current_weapon,.weapon_state=p->weapon_state,.weapon_time_ms=p->weapon_time_ms,
+        .chatting=p->chatting,.carrying_objective=p->carrying_objective,
         .last_attacker=p->last_attacker,.last_victim=p->last_victim,.deaths=p->deaths,.kills=p->kills,
         .last_damage_cause=p->last_damage_cause,.air_time=p->air_time,.teleport_time=p->teleport_time,
         .spawn_sequence=p->spawn_sequence,.teleport_sequence=p->teleport_sequence};
