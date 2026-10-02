@@ -17,6 +17,7 @@
 #include "config_store.h"
 #include "shared_settings.h"
 #include "music_sources.h"
+#include "source_acoustics.h"
 #include "view_bindings.h"
 #include "constructor.h"
 #include "remote_q2_client.h"
@@ -549,7 +550,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             if (ok) {
                 const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
                 qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
-                ok=frontend_music_sources_update(frontend->music_sources,error);
+                ok=frontend_acoustics_source_sync(frontend,error);
+                if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
                 if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
                 if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                      audio_output(frontend, elapsed_ns, error);

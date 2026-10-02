@@ -1115,10 +1115,12 @@ bool qa_audio_engine_acoustics_enabled(const qa_audio_engine *engine) {
 }
 bool qa_audio_engine_acoustics_bind(qa_audio_engine *engine, bool enabled,
     const qa_audio_acoustics_source *source, qa_error *error) {
-    if (!qa_audio_engine_round_ready(engine, error) || !acoustics_source_current(source))
+    if (!qa_audio_engine_round_ready(engine, error) ||
+        (source ? !acoustics_source_current(source) : enabled))
         return fail(error, QA_ERROR_ARGUMENT, "Acoustic binding requires its admitted idle scene owners");
     qa_audio_acoustics_source old = engine->acoustics;
-    engine->acoustics = *source; engine->acoustics_enabled = enabled;
+    engine->acoustics = source ? *source : (qa_audio_acoustics_source){0};
+    engine->acoustics_enabled = enabled;
     engine->geometry = NULL; engine->geometry_user = NULL;
     qa_audio_engine_acoustics_rebind(engine);
     if (old.context) old.release(old.context);

@@ -1,4 +1,7 @@
 #include "source_acoustics.h"
+#include "capture.h"
+#include "config_store.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/application_acoustics.h"
 #include "remote_q3_client.h"
 #include "remote_q1_client.h"
@@ -103,6 +106,25 @@ bool frontend_acoustics_source_hold(qa_frontend *f,qa_audio_acoustics_source *ou
 bool frontend_acoustics_source_bind(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->audio || !qa_audio_engine_acoustics_enabled(f->audio)) return f!=NULL;
+    qa_audio_acoustics_source source={0};
+    if (!frontend_acoustics_source_hold(f,&source,error)) return false;
+    if (qa_audio_engine_acoustics_bind(f->audio,true,&source,error)) return true;
+    source.release(source.context); return false;
+}
+bool frontend_acoustics_source_sync(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->application || f->capture || f->source_restoring ||
+        !frontend_seat_callbacks_returned(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Live acoustics requires its returned frontend ENGINE owner");
+    if (!f->audio || frontend_config_store_shared_pending(f->config_store)) return true;
+    const qa_cvars *registry=qa_application_cvars(f->application);
+    const qa_cvar_view *row=qa_cvars_find(registry,"s_geometryAcoustics");
+    if (!qa_cvars_observer_idle(registry) || !row || !row->value ||
+        (strcmp(row->value,"0") && strcmp(row->value,"1")))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Live acoustics requires its committed canonical 0 or 1 declaration");
+    bool enabled=!strcmp(row->value,"1");
+    if (enabled==qa_audio_engine_acoustics_enabled(f->audio)) return true;
+    if (!enabled) return qa_audio_engine_acoustics_bind(f->audio,false,NULL,error);
     qa_audio_acoustics_source source={0};
     if (!frontend_acoustics_source_hold(f,&source,error)) return false;
     if (qa_audio_engine_acoustics_bind(f->audio,true,&source,error)) return true;

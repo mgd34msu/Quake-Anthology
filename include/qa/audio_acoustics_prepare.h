@@ -34,7 +34,8 @@ bool qa_audio_engine_acoustics_abort(qa_audio_engine_acoustics *, qa_error *);
 bool qa_audio_engine_acoustics_release(qa_audio_engine *, qa_error *);
 bool qa_audio_engine_acoustics_enabled(const qa_audio_engine *);
 /* Real runtime source binding at an idle audio boundary, after scene admission.
- * Transfers one reference only on success; no trace or playback runs. */
+ * Transfers one reference only on success; no trace or playback runs. NULL
+ * requires disabled and releases the old scene after mixer rebinding. */
 bool qa_audio_engine_acoustics_bind(qa_audio_engine *, bool enabled,
     const qa_audio_acoustics_source *, qa_error *);
 
