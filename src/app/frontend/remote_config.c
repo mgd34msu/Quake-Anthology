@@ -663,10 +663,10 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     if (!old && !row->hosted && !selected_defaults(row,true,error)) return false;
     if (!f->input_config && !frontend_input_profile_bind_store(f,frontend_config_files_catalog(row->files),
         frontend_config_files_product(row->files),frontend_config_files_store(row->files,false),error)) return false;
-    if (!install_commands(row,error)) return false;
     qa_application_startup_source linked;
     if (!frontend_remote_config_tuple(row,&linked) ||
         !frontend_config_store_shared_begin(owner->manager,application,candidate,&linked,error)) return false;
+    if (!install_commands(row,error)) return false;
     if (row->hosted) {
         row->hosted_pending=!frontend_authored_bindings_completed(row->authored);
         row->configured=!row->hosted_pending; row->released=true; return true;
