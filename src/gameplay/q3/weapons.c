@@ -388,7 +388,10 @@ static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry at
 }
 static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attack,
                  qa_error *error) {
-    qa_actor_id removed[4];
+    struct {
+        qa_actor_id actor;
+        bool source;
+    } removed[4];
     size_t removed_count = 0;
     qa_vec3 end = qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 8192));
     qa_actor_id pass = shooter;
@@ -441,18 +444,28 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
         if (trace.contents & 1)
             break;
         if (qa_actors_get(qa_session_actors(game->options.services.session), trace.actor)) {
-            if (!qa_world_suspend_collision(game->options.services.world, trace.actor, error)) {
+            uint32_t source_slot;
+            bool source = qa_q3_source_actor_slot(game, trace.actor, &source_slot, NULL);
+            bool unlinked = source
+                ? qa_world_unlink(game->options.services.world, trace.actor, error)
+                : qa_world_suspend_collision(game->options.services.world, trace.actor, error);
+            if (!unlinked) {
                 ok = false;
                 break;
             }
-            removed[removed_count++] = trace.actor;
+            removed[removed_count].actor = trace.actor;
+            removed[removed_count++].source = source;
         }
     }
     for (size_t i = 0; i < removed_count; ++i) {
-        if (!qa_actors_get(qa_session_actors(game->options.services.session), removed[i]))
+        qa_actor_id actor = removed[i].actor;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
             continue;
         qa_error restore_error = {0};
-        if (!qa_world_link(game->options.services.world, removed[i], NULL, &restore_error) && ok) {
+        bool linked = removed[i].source
+            ? qa_q3_wire_link(game, actor, NULL, &restore_error)
+            : qa_world_link(game->options.services.world, actor, NULL, &restore_error);
+        if (!linked && ok) {
             ok = false;
             if (error)
                 *error = restore_error;
