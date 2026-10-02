@@ -76,6 +76,18 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, vector, g->forward);
     Q1_SAVE(io, vector, g->right);
     Q1_SAVE(io, vector, g->up);
+    if (g->options.quakeworld) {
+        Q1_SAVE(io, actor, g->qw_multi_entity);
+        Q1_SAVE(io, float, g->qw_multi_damage);
+        Q1_SAVE(io, float, g->qw_blood_count);
+        Q1_SAVE(io, float, g->qw_puff_count);
+        Q1_SAVE(io, vector, g->qw_blood_origin);
+        Q1_SAVE(io, vector, g->qw_puff_origin);
+        if (!isfinite(g->qw_multi_damage) || !isfinite(g->qw_blood_count) || !isfinite(g->qw_puff_count) ||
+            g->qw_blood_count<0 || g->qw_puff_count<0 ||
+            truncf(g->qw_blood_count)!=g->qw_blood_count || truncf(g->qw_puff_count)!=g->qw_puff_count)
+            return q1_save_fail(io,"Invalid QW multi-damage Source globals");
+    }
     Q1_SAVE(io, bool, g->run_straight);
     Q1_SAVE(io, u8, g->rune_knight_melee);
     Q1_SAVE(io, u8, g->enemy_range);

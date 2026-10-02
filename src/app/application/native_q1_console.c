@@ -243,9 +243,9 @@ bool application_native_q1_console_create(application_provider *provider,
             "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
             "sv_wateraccelerate", "sv_friction", "sv_waterfriction",
             "maxspectators", "pausable", "sv_spectalk", "sv_mapcheck",
-            "hostname", "spawn", "watervis"};
+            "hostname", "spawn", "watervis", "sv_phs"};
         static const char *const qw_values[] = {"2000", "100", "500", "10", "0.7",
-            "10", "4", "4", "8", "1", "1", "1", "unnamed", "0", "0"};
+            "10", "4", "4", "8", "1", "1", "1", "unnamed", "0", "0", "1"};
         for (size_t i = 0; okay && i < sizeof(qw_names) / sizeof(*qw_names); ++i) {
             if (!qa_cvars_find(cvars, qw_names[i]))
                 okay = qa_cvars_register(cvars, qw_names[i], qw_values[i], 0,

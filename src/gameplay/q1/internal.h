@@ -472,6 +472,9 @@ struct qa_q1_game {
     bool finale_polled, finale_acknowledged;
     uint64_t time_ns, attack_sequence;
     qa_vec3 forward, right, up;
+    qa_actor_id qw_multi_entity;
+    float qw_multi_damage, qw_blood_count, qw_puff_count;
+    qa_vec3 qw_blood_origin, qw_puff_origin;
     qa_item_id weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
     qa_string_id weapon_models[QA_Q1_WEAPON_COUNT];
     qa_string_id hammer_glow_model, blood_shotgun_model, blood_super_shotgun_model;

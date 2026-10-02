@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q1_weapons.h"
 #include <float.h>
 
 const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
@@ -804,6 +805,49 @@ bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_
     *out = qa_vec_normalize(result);
     return true;
 }
+static bool qw_apply_multi_damage(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,qa_error *error) {
+    return !g->qw_multi_entity.registry || !q1_alive(g,g->qw_multi_entity) ||
+        q1_damage(g,g->qw_multi_entity,actor,actor,g->qw_multi_damage,weapon,error);
+}
+static bool qw_multi_impact(qa_q1_game *g,qa_actor_id actor,qa_vec3 origin,float count,
+    int32_t code,qa_error *error) {
+    if (g->destroy_pending) return true;
+    qa_builtin_event event={.kind=QA_BUILTIN_IMPACT,.family=QA_GAME_Q1,.provider=g->options.provider,
+        .actor=actor,.origin=origin,.end=g->qw_puff_origin,.value=count,.code=code,
+        .flags=QA_Q1_IMPACT_GROUPED,.time_ns=g->time_ns};
+    return qa_builtin_emit(&g->services,&event,error);
+}
+static bool qw_bullets(qa_q1_game *g,qa_actor_id actor,qa_vec3 source,qa_vec3 direction,
+    unsigned count,float spread_x,float spread_y,qa_q1_weapon weapon,qa_error *error) {
+    g->qw_multi_entity=(qa_actor_id){0};g->qw_multi_damage=0;
+    g->qw_blood_count=0;g->qw_puff_count=0;
+    qa_trace_result center;
+    if (!q1_trace(g,source,qa_vec_add(source,qa_vec_scale(direction,2048)),actor,true,&center,error)) return false;
+    g->qw_puff_origin=qa_vec_sub(center.end,qa_vec_scale(direction,4));
+    for (unsigned i=0;i<count;++i) {
+        float x=(q1_random(g)*2-1)*spread_x,y=(q1_random(g)*2-1)*spread_y;
+        qa_vec3 ray=qa_vec_add(direction,qa_vec_add(qa_vec_scale(g->right,x),qa_vec_scale(g->up,y)));
+        qa_trace_result trace;
+        if (!q1_trace(g,source,qa_vec_add(source,qa_vec_scale(ray,2048)),actor,true,&trace,error)) return false;
+        if (trace.fraction==1) continue;
+        /* TraceAttack computes an unused velocity, but both crandom draws
+         * advance the genuine Source random stream before the next pellet. */
+        (void)q1_random(g);(void)q1_random(g);
+        if (q1_damageable(g,trace.actor)) {
+            g->qw_blood_count+=1;
+            g->qw_blood_origin=qa_vec_sub(trace.end,qa_vec_scale(ray,4));
+            if (!qa_actor_id_equal(trace.actor,g->qw_multi_entity)) {
+                if (!qw_apply_multi_damage(g,actor,weapon,error)) return false;
+                g->qw_multi_damage=4;g->qw_multi_entity=trace.actor;
+            } else g->qw_multi_damage+=4;
+        } else g->qw_puff_count+=1;
+    }
+    if (!qw_apply_multi_damage(g,actor,weapon,error)) return false;
+    if (g->qw_puff_count && !qw_multi_impact(g,actor,g->qw_puff_origin,g->qw_puff_count,2,error)) return false;
+    /* Multi_Finish deliberately routes blood through puff_org, even when
+     * blood_org is a different payload point. */
+    return !g->qw_blood_count || qw_multi_impact(g,actor,g->qw_blood_origin,g->qw_blood_count,1,error);
+}
 bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 angles, unsigned count,
                 float spread_x, float spread_y, qa_q1_weapon weapon, qa_error *error) {
     const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_SHOTGUN);
@@ -814,6 +858,8 @@ bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 ang
     qa_vec3 source = qa_vec_add(body.origin, qa_vec_scale(g->forward, 10));
     source.z =
         body.origin.z + body.bounds.mins.z + (body.bounds.maxs.z - body.bounds.mins.z) * 0.7f;
+    if (g->options.quakeworld)
+        return qw_bullets(g,actor,source,direction,count,spread_x,spread_y,weapon,error);
     qa_actor_id pending = {0};
     float amount = 0;
     for (unsigned i = 0; i < count; ++i) {

@@ -4,10 +4,12 @@
 #include "control_frame.h"
 #include "network_q1_signon.h"
 #include "qa/application_equipment.h"
+#include "qa/game_q1_weapons.h"
 #include "qa/network_q1_channel.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+static uint8_t byte(double);
 
 bool application_native_q1_qw_selected(qa_application *app) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
@@ -512,14 +514,15 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
         if (service.data.temporary.kind==QA_Q1_TEMP_BEAM && service.data.temporary.type==13)
             return application_fail(error,QA_ERROR_UNSUPPORTED,"Native QuakeWorld beam has no declared source protocol representation");
         if (service.data.temporary.type==2 && event->kind==QA_BUILTIN_IMPACT)
-            service.data.temporary.count=(uint8_t)event->value;
+            service.data.temporary.count=byte(event->value);
         else service.data.temporary.count=1;
         multicast=true;destination=event->kind==QA_BUILTIN_EXPLOSION || event->kind==QA_BUILTIN_TELEPORT ||
             service.data.temporary.type==0 || service.data.temporary.type==1?1:2;break;
     case QA_NQ_PARTICLE:
         if (event->kind!=QA_BUILTIN_IMPACT || event->code!=1) return true;
         service.kind=QA_QW_TEMPORARY_ENTITY;
-        service.data.temporary=(qa_q1_temp){.kind=QA_Q1_TEMP_POINT,.type=12,.count=1};
+        service.data.temporary=(qa_q1_temp){.kind=QA_Q1_TEMP_POINT,.type=12,
+            .count=event->flags&QA_Q1_IMPACT_GROUPED?byte(event->value):1};
         memcpy(service.data.temporary.origin,message->data.particle.origin,sizeof(service.data.temporary.origin));
         multicast=true;destination=2;break;
     case QA_NQ_KILLEDMONSTER:service.kind=QA_QW_KILLED_MONSTER;break;
@@ -547,7 +550,8 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     uint8_t bytes[8192];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
     if (!qa_qw_service_write(&writer,(qa_net_protocol_id){.kind=QA_NET_QW28},&service,NULL)) return false;
     qa_application_protocol_event output={.provider=p->owner,.dialect=QA_CLOCK_QUAKEWORLD,.time_ns=event->time_ns,
-        .recipient=recipient,.origin=event->origin,.payload={bytes,qa_net_writer_size(&writer)},
+        .recipient=recipient,.origin=event->kind==QA_BUILTIN_IMPACT && event->flags&QA_Q1_IMPACT_GROUPED?
+            event->end:event->origin,.payload={bytes,qa_net_writer_size(&writer)},
         .references=ref,.reference_count=ref?1:0,.destination=destination,.reliable=reliable,.signon=signon,.multicast=multicast};
     return application_emit_protocol(p,&output,error);
 }
