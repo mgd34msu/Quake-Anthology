@@ -18,6 +18,11 @@ typedef struct frontend_visual_model_view {
     const qa_model *model;
     qa_scene_model *scene;
 } frontend_visual_model_view;
+typedef struct frontend_visual_brush_view {
+    const char *path;
+    const qa_resource *resource;
+    qa_scene_world *world;
+} frontend_visual_brush_view;
 size_t frontend_visual_owner_count(const qa_frontend *);
 bool frontend_visual_owner_read(const qa_frontend *, size_t, frontend_visual_owner_view *);
 bool frontend_visual_movie_source_read(qa_frontend *, size_t, frontend_material_movie_source *, qa_error *);
@@ -27,6 +32,10 @@ bool frontend_visual_movies_restore(qa_frontend *, size_t, const frontend_materi
     qa_bytes, qa_error *);
 size_t frontend_visual_model_count(const qa_frontend *, size_t owner);
 bool frontend_visual_model_read(const qa_frontend *, size_t owner, size_t ordinal, frontend_visual_model_view *);
+size_t frontend_visual_brush_count(const qa_frontend *, size_t owner);
+bool frontend_visual_brush_read(const qa_frontend *, size_t owner, size_t ordinal, frontend_visual_brush_view *);
+bool frontend_visual_brush_attach_restored(qa_frontend *, size_t owner, size_t ordinal,
+    const qa_resource *, qa_scene_world *, qa_error *);
 bool frontend_visuals_idle(const qa_frontend *);
 /* Transfers scene ownership on success and retains the exact resource and a
  * stable parsed-holder token from the restored immutable inventory.

@@ -35,11 +35,36 @@ bool frontend_roots_attach_restored(qa_frontend *f,frontend_world_inventory *roo
      * cache acquires destructor authority. Root dictionary order need not be
      * the cache's physical linked order; the recorded row determines it. */
     size_t owners=frontend_visual_owner_count(f),count=frontend_world_inventory_model_count(roots);
+    size_t world_count=frontend_world_inventory_world_count(roots);
     for (size_t owner=0;owner<owners;++owner) {
         frontend_visual_owner_view actual;
-        if (!frontend_visual_owner_read(f,owner,&actual) || frontend_visual_model_count(f,owner)) {
+        if (!frontend_visual_owner_read(f,owner,&actual) || frontend_visual_model_count(f,owner) ||
+            frontend_visual_brush_count(f,owner)) {
             free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance cache is not its genuine empty prepared owner");
         }
+    }
+    for (size_t i=0;i<world_count;++i) {
+        frontend_world_source source; frontend_scene_owner row;
+        if (!frontend_world_inventory_world_at(roots,i,&source,&row)) { free(name); return false; }
+        if (row.kind!=FRONTEND_SCENE_OWNER_VISUAL) continue;
+        frontend_visual_owner_view owner;
+        if (!row.owner || row.owner>owners || !row.row || row.row>world_count ||
+            !frontend_visual_owner_read(f,(size_t)row.owner-1,&owner) || source.files!=owner.mounts ||
+            source.images!=owner.images || source.materials!=owner.materials ||
+            !frontend_world_owner_ready(roots,i+1,FRONTEND_SCENE_OWNER_VISUAL,row.owner,error)) {
+            free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance brush world leaves its actual saved owner");
+        }
+        bool previous=row.row==1;
+        for (size_t j=0;j<world_count;++j) {
+            frontend_world_source other_source; frontend_scene_owner other;
+            if (!frontend_world_inventory_world_at(roots,j,&other_source,&other)) { free(name); return false; }
+            if (other.kind!=FRONTEND_SCENE_OWNER_VISUAL || other.owner!=row.owner || j==i) continue;
+            if (other.row==row.row) {
+                free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance brushes repeat a physical cache row");
+            }
+            if (other.row==row.row-1) previous=true;
+        }
+        if (!previous) { free(name); return frontend_fail(error,QA_ERROR_FORMAT,"Appearance brushes omit a preceding cache row"); }
     }
     for (size_t i=0;i<count;++i) {
         frontend_scene_root_view root;
@@ -69,6 +94,18 @@ bool frontend_roots_attach_restored(qa_frontend *f,frontend_world_inventory *roo
         f->scene_world=(qa_scene_world *)map_source.world; frontend_world_adopt(roots,map_key);
     }
     for (size_t owner=0;owner<owners;++owner) {
+        for (size_t row=1;row<=world_count;++row) {
+            bool found=false;
+            for (size_t i=0;i<world_count;++i) {
+                frontend_world_source source; frontend_scene_owner actual;
+                if (!frontend_world_inventory_world_at(roots,i,&source,&actual)) return false;
+                if (actual.kind!=FRONTEND_SCENE_OWNER_VISUAL || actual.owner!=owner+1 || actual.row!=row) continue;
+                if (!frontend_visual_brush_attach_restored(f,owner,row-1,source.resource,
+                    (qa_scene_world *)source.world,error)) return false;
+                frontend_world_adopt(roots,i+1); found=true; break;
+            }
+            if (!found) break;
+        }
         for (size_t row=1;row<=count;++row) {
             bool found=false;
             for (size_t i=0;i<count;++i) {

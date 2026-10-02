@@ -147,6 +147,11 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
     for (size_t i=0;i<frontend_visual_owner_count(f);++i) {
         frontend_visual_owner_view owner;
         if (!frontend_visual_owner_read(f,i,&owner)) return false;
+        for (size_t j=0;j<frontend_visual_brush_count(f,i);++j) {
+            frontend_visual_brush_view brush;
+            if (!frontend_visual_brush_read(f,i,j,&brush) ||
+                !world_bind(inventory,brush.world,brush.resource,owner.mounts,error)) return false;
+        }
         for (size_t j=0;j<frontend_visual_model_count(f,i);++j) {
             frontend_visual_model_view model;
             if (!frontend_visual_model_read(f,i,j,&model) ||

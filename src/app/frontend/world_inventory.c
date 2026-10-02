@@ -240,6 +240,7 @@ static bool policy_capture(world_row *row,qa_error *error)
 static bool owner_shape(frontend_scene_owner owner,bool world)
 {
     if (owner.kind==FRONTEND_SCENE_OWNER_FRONTEND) return world && !owner.owner && !owner.row;
+    if (owner.kind==FRONTEND_SCENE_OWNER_VISUAL) return owner.owner && owner.row;
     if (owner.kind==FRONTEND_SCENE_OWNER_RENDERER) return world && owner.owner && owner.row==1;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MAP) return world && owner.owner && owner.row==1;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MODEL) return owner.owner && owner.row;
@@ -254,7 +255,7 @@ static bool owner_shape(frontend_scene_owner owner,bool world)
         owner.kind==FRONTEND_SCENE_OWNER_CHARACTER || owner.kind==FRONTEND_SCENE_OWNER_EFFECTS ||
         owner.kind==FRONTEND_SCENE_OWNER_GEAR || owner.kind==FRONTEND_SCENE_OWNER_REMOTE ||
         owner.kind==FRONTEND_SCENE_OWNER_INITIAL || (!world &&
-        (owner.kind==FRONTEND_SCENE_OWNER_VISUAL || owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2 ||
+        (owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2 ||
          owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q1 ||
          (owner.kind==FRONTEND_SCENE_OWNER_EQUIPMENT && owner.row==1))));
 }
@@ -339,12 +340,18 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
 {
     qa_frontend *f=inventory->frontend;
     if (f->scene_world && !world_claim(inventory,f->scene_world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_FRONTEND,0,0},error)) return false;
-    for (size_t i=0;i<frontend_visual_owner_count(f);++i)
+    for (size_t i=0;i<frontend_visual_owner_count(f);++i) {
+        for (size_t j=0;j<frontend_visual_brush_count(f,i);++j) {
+            frontend_visual_brush_view brush;
+            if (!frontend_visual_brush_read(f,i,j,&brush) ||
+                !world_claim(inventory,brush.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_VISUAL,i+1,j+1},error)) return false;
+        }
         for (size_t j=0;j<frontend_visual_model_count(f,i);++j) {
             frontend_visual_model_view model;
             if (!frontend_visual_model_read(f,i,j,&model) || !model.scene ||
                 !model_claim(inventory,model.scene,(frontend_scene_owner){FRONTEND_SCENE_OWNER_VISUAL,i+1,j+1},model.path,error)) return false;
         }
+    }
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
         if (!frontend_source_group_read(f,i,&group)) return false;

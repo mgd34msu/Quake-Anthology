@@ -550,6 +550,10 @@ static bool heaps(qa_frontend *f, bool video, owner_append append, void *context
             if (!frontend_visual_model_read(f,i,j,&model) || !append(context,CAPTURE_MODEL,model.scene,error))
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture appearance model is incomplete");
         }
+        for (size_t j=0;j<frontend_visual_brush_count(f,i);++j) {
+            frontend_visual_brush_view brush;
+            if (!frontend_visual_brush_read(f,i,j,&brush) || !append(context,CAPTURE_WORLD,brush.world,error)) return false;
+        }
     }
     for (size_t i=0;i<frontend_native_q2_owner_count(f);++i) {
         frontend_native_q2_owner_view owner;

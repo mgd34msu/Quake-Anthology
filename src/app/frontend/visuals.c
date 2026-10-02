@@ -102,6 +102,12 @@ typedef struct frontend_model {
     qa_scene_model *scene;
     char path[];
 } frontend_model;
+typedef struct frontend_brush {
+    struct frontend_brush *next;
+    qa_resource *resource;
+    qa_scene_world *world;
+    char path[];
+} frontend_brush;
 typedef struct visual_model_recipe {
     char *path;
     const qa_resource *resource;
@@ -132,8 +138,11 @@ struct frontend_visual_owner {
     qa_media_library *media;
     frontend_material_movies *shader_movies;
     frontend_model *models;
+    frontend_brush *brushes;
     visual_model_recipe *recipes;
+    visual_model_recipe *brush_recipes;
     size_t recipe_count, attached;
+    size_t brush_recipe_count, brushes_attached;
     bool recipes_present, construction_failed;
 };
 static bool visual_movie_current(void *context, const frontend_material_movie_source *source)
@@ -212,6 +221,46 @@ bool frontend_visual_model_read(const qa_frontend *frontend, size_t index, size_
     if (!model || !out || !model->resource || !model->path[0]) return false;
     *out=(frontend_visual_model_view){model->path,model->resource,model->model,model->scene}; return true;
 }
+size_t frontend_visual_brush_count(const qa_frontend *frontend, size_t index)
+{
+    const frontend_visual_owner *owner=owner_at(frontend,index); size_t count=0;
+    if (owner) for (const frontend_brush *brush=owner->brushes;brush;brush=brush->next) ++count;
+    return count;
+}
+bool frontend_visual_brush_read(const qa_frontend *frontend, size_t index, size_t ordinal, frontend_visual_brush_view *out)
+{
+    const frontend_visual_owner *owner=owner_at(frontend,index);
+    const frontend_brush *brush=owner?owner->brushes:NULL;
+    while (brush && ordinal) { brush=brush->next; --ordinal; }
+    if (!brush || !out) return false;
+    *out=(frontend_visual_brush_view){brush->path,brush->resource,brush->world}; return true;
+}
+bool frontend_visual_brush_attach_restored(qa_frontend *frontend, size_t index, size_t ordinal,
+    const qa_resource *resource, qa_scene_world *world, qa_error *error)
+{
+    frontend_visual_owner *owner=(frontend_visual_owner *)owner_at(frontend,index);
+    if (!owner || !owner->recipes_present || ordinal!=owner->brushes_attached ||
+        ordinal>=owner->brush_recipe_count || !resource || !world || !qa_scene_world_idle(world) ||
+        qa_scene_world_source_resource_read(world)!=resource ||
+        qa_scene_world_resource_owner(world)!=owner->images || qa_scene_world_material_owner(world)!=owner->materials ||
+        owner->brush_recipes[ordinal].resource!=resource)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Restored brush lacks its actual ordered resource and world owners");
+    for (const frontend_visual_owner *other=frontend->visuals;other;other=other->next)
+        for (const frontend_brush *brush=other->brushes;brush;brush=brush->next)
+            if (brush->world==world)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Restored brush repeats an actual world owner");
+    const char *path=owner->brush_recipes[ordinal].path;
+    size_t length=strlen(path);
+    if (length>SIZE_MAX-sizeof(frontend_brush)-1)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Restored brush path exceeds address space");
+    frontend_brush *brush=calloc(1,sizeof(*brush)+length+1);
+    if (!brush) return frontend_fail(error,QA_ERROR_MEMORY,"Attaching restored brush world");
+    memcpy(brush->path,path,length+1); brush->world=world;
+    brush->resource=(qa_resource *)resource; qa_resource_retain(brush->resource);
+    frontend_brush **tail=&owner->brushes;
+    while (*tail) tail=&(*tail)->next;
+    *tail=brush; ++owner->brushes_attached; return true;
+}
 bool frontend_visual_model_attach_restored(qa_frontend *frontend, size_t owner_index, const char *path,
     const qa_resource *resource, const qa_model *parsed, qa_scene_model *scene,
     frontend_model_inventory *inventory, qa_error *error)
@@ -254,13 +303,20 @@ bool frontend_visual_model_attach_restored(qa_frontend *frontend, size_t owner_i
 typedef struct visual_owner_plan {
     qa_actor_owner owner; qa_scene_family family; uint64_t view;
     visual_model_recipe *recipes; size_t count; bool present;
+    visual_model_recipe *brush_recipes; size_t brush_count;
 } visual_owner_plan;
 static void plans_free(visual_owner_plan *plans, size_t count)
-{ for (size_t i = 0; plans && i < count; ++i) recipes_free(plans[i].recipes, plans[i].count); free(plans); }
+{
+    for (size_t i = 0; plans && i < count; ++i) {
+        recipes_free(plans[i].recipes, plans[i].count);
+        recipes_free(plans[i].brush_recipes, plans[i].brush_count);
+    }
+    free(plans);
+}
 static bool topology_fields(qa_source_save_io *io, qa_application *application, visual_owner_plan **plans, size_t *count)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','F','V','T'}; uint32_t schema=2;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVT",4) || !qa_source_save_u32(io,&schema) || (schema!=1 && schema!=2) ||
+    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','F','V','T'}; uint32_t schema=3;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVT",4) || !qa_source_save_u32(io,&schema) || (schema<1 || schema>3) ||
         !qa_source_save_count(io,count,reading?io->input.size/22:SIZE_MAX/sizeof(**plans))) return false;
     if (reading && *count) {
         *plans=calloc(*count,sizeof(**plans));
@@ -284,23 +340,27 @@ static bool topology_fields(qa_source_save_io *io, qa_application *application, 
         for (size_t j=0;j<i;++j) if (plan->view==(*plans)[j].view) return false;
         if (schema < 2) continue;
         plan->present = true;
-        if (!qa_source_save_count(io, &plan->count, reading ? io->input.size / 26 : SIZE_MAX / sizeof(*plan->recipes))) return false;
-        if (reading && plan->count) {
-            plan->recipes = calloc(plan->count, sizeof(*plan->recipes));
-            if (!plan->recipes) return frontend_fail(io->error, QA_ERROR_MEMORY, "Importing actual visual opening receipts");
-        }
-        for (size_t row = 0; row < plan->count; ++row) {
-            visual_model_recipe *recipe = plan->recipes + row;
-            uint64_t pool = 0, resource = 0;
-            if (!reading && !qa_application_content_resource_id(graph, recipe->resource, &pool, &resource)) return false;
-            if (!frontend_save_text(io, &recipe->path) || !recipe->path || !recipe->path[0] ||
-                !qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &resource) || !resource ||
-                !qa_source_save_bool(io, &recipe->known) || !qa_source_save_i64(io, &recipe->rank) ||
-                recipe->rank < -1 || (!recipe->known && recipe->rank)) return false;
-            const qa_resource *actual = reading ? qa_application_content_resource(graph, pool, resource) : recipe->resource;
-            qa_vfs *files = qa_application_content_view(graph, plan->view);
-            if (!actual || !files || qa_application_content_pool(graph, pool) != qa_vfs_resources(files)) return false;
-            if (reading) { recipe->resource = actual; qa_resource_retain((qa_resource *)actual); }
+        for (unsigned kind=0;kind<(schema>=3?2u:1u);++kind) {
+            size_t *rows=kind?&plan->brush_count:&plan->count;
+            visual_model_recipe **recipes=kind?&plan->brush_recipes:&plan->recipes;
+            if (!qa_source_save_count(io, rows, reading ? io->input.size / 26 : SIZE_MAX / sizeof(**recipes))) return false;
+            if (reading && *rows) {
+                *recipes = calloc(*rows, sizeof(**recipes));
+                if (!*recipes) return frontend_fail(io->error, QA_ERROR_MEMORY, "Importing actual visual opening receipts");
+            }
+            for (size_t row = 0; row < *rows; ++row) {
+                visual_model_recipe *recipe = *recipes + row;
+                uint64_t pool = 0, resource = 0;
+                if (!reading && !qa_application_content_resource_id(graph, recipe->resource, &pool, &resource)) return false;
+                if (!frontend_save_text(io, &recipe->path) || !recipe->path || !recipe->path[0] ||
+                    !qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &resource) || !resource ||
+                    !qa_source_save_bool(io, &recipe->known) || !qa_source_save_i64(io, &recipe->rank) ||
+                    recipe->rank < -1 || (!recipe->known && recipe->rank) || (kind && recipe->known)) return false;
+                const qa_resource *actual = reading ? qa_application_content_resource(graph, pool, resource) : recipe->resource;
+                qa_vfs *files = qa_application_content_view(graph, plan->view);
+                if (!actual || !files || qa_application_content_pool(graph, pool) != qa_vfs_resources(files)) return false;
+                if (reading) { recipe->resource = actual; qa_resource_retain((qa_resource *)actual); }
+            }
         }
     }
     return true;
@@ -333,6 +393,19 @@ bool frontend_visual_topology_checkpoint(const qa_frontend *frontend, qa_buffer 
                 plans[i].recipes[row] = (visual_model_recipe){path, model->resource, model->source_rank, model->source_rank_known};
                 qa_resource_retain(model->resource);
             }
+            plans[i].brush_count=frontend_visual_brush_count(frontend,i);
+            plans[i].brush_recipes=plans[i].brush_count?calloc(plans[i].brush_count,sizeof(*plans[i].brush_recipes)):NULL;
+            if (plans[i].brush_count && !plans[i].brush_recipes)
+                ok=frontend_fail(error,QA_ERROR_MEMORY,"Capturing actual brush world receipts");
+            row=0;
+            for (const frontend_brush *brush=owner?owner->brushes:NULL;ok && brush;brush=brush->next,++row) {
+                size_t length=strlen(brush->path)+1;
+                char *path=malloc(length);
+                if (!path) { ok=frontend_fail(error,QA_ERROR_MEMORY,"Capturing actual brush request path"); break; }
+                memcpy(path,brush->path,length);
+                plans[i].brush_recipes[row]=(visual_model_recipe){.path=path,.resource=brush->resource};
+                qa_resource_retain(brush->resource);
+            }
         }
     }
     qa_source_save_io io={0};
@@ -359,7 +432,9 @@ bool frontend_visual_prepare_restored(qa_frontend *frontend, qa_bytes bytes, qa_
         owner->owner=plans[i].owner; owner->family=plans[i].family; *tail=owner; tail=&owner->next;
         owner->frontend = frontend;
         owner->recipes = plans[i].recipes; owner->recipe_count = plans[i].count; owner->recipes_present = plans[i].present;
+        owner->brush_recipes=plans[i].brush_recipes; owner->brush_recipe_count=plans[i].brush_count;
         plans[i].recipes = NULL; plans[i].count = 0;
+        plans[i].brush_recipes=NULL; plans[i].brush_count=0;
         ok=qa_application_content_claim_view(graph,plans[i].view,&owner->mounts,error);
         for (frontend_visual_owner *prior=frontend->visuals;ok && prior!=owner;prior=prior->next)
             if (prior->owner==owner->owner && prior->family==owner->family &&
@@ -400,6 +475,13 @@ bool frontend_visual_model_receipts_ready(const qa_frontend *frontend, qa_error 
         }
         if (row != owner->recipe_count || owner->attached != row)
             return frontend_fail(error, QA_ERROR_FORMAT, "Imported visual cache omits a genuine opening receipt consumer");
+        row=0;
+        for (const frontend_brush *brush=owner->brushes;brush;brush=brush->next,++row)
+            if (row>=owner->brush_recipe_count || brush->resource!=owner->brush_recipes[row].resource ||
+                strcmp(brush->path,owner->brush_recipes[row].path))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Imported brush cache differs from its actual ordered receipts");
+        if (row!=owner->brush_recipe_count || owner->brushes_attached!=row)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Imported brush cache omits a genuine world consumer");
     }
     return true;
 }
@@ -426,6 +508,8 @@ bool frontend_visuals_idle(const qa_frontend *frontend)
             (owner->shader_movies && !frontend_material_movies_idle(owner->shader_movies))) return false;
         for (const frontend_model *model=owner->models;model;model=model->next)
             if (!qa_scene_model_idle(model->scene)) return false;
+        for (const frontend_brush *brush=owner->brushes;brush;brush=brush->next)
+            if (!qa_scene_world_idle(brush->world)) return false;
     }
     return true;
 }
@@ -450,10 +534,15 @@ void frontend_visuals_destroy(qa_frontend *frontend)
             frontend_model_release(model->lease);
             qa_resource_release(model->resource); free(model);
         }
+        while (owner->brushes) {
+            frontend_brush *brush=owner->brushes; owner->brushes=brush->next;
+            qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush);
+        }
         qa_material_library_destroy(owner->materials);
         qa_media_library_destroy(owner->media);
         qa_scene_resources_destroy(owner->images); qa_vfs_destroy(owner->mounts);
-        recipes_free(owner->recipes, owner->recipe_count); free(owner);
+        recipes_free(owner->recipes, owner->recipe_count);
+        recipes_free(owner->brush_recipes,owner->brush_recipe_count); free(owner);
     }
 }
 static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view *view,
@@ -648,6 +737,44 @@ static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *o
     free(normalized);
     if (ok && found && receipt) return opening_rank(owner->mounts, receipt, out, error);
     return ok && (found || frontend_fail(error, QA_ERROR_ARGUMENT, "Held alias model lacks its genuine source opening receipt"));
+}
+static bool brush_path(const char *path)
+{
+    size_t length=strlen(path);
+    return length>=4 && path[length-4]=='.' &&
+        (path[length-3]=='b' || path[length-3]=='B') &&
+        (path[length-2]=='s' || path[length-2]=='S') &&
+        (path[length-1]=='p' || path[length-1]=='P');
+}
+static bool brush_read(frontend_visual_owner *owner, const char *path, const qa_resource *source,
+    frontend_brush **out, qa_error *error)
+{
+    for (frontend_brush *brush=owner->brushes;brush;brush=brush->next)
+        if (!strcmp(brush->path,path) && (!source || brush->resource==source)) { *out=brush; return true; }
+    size_t length=strlen(path);
+    if (length>SIZE_MAX-sizeof(frontend_brush)-1) {
+        frontend_fail(error,QA_ERROR_MEMORY,"Brush path exceeds native storage"); return false;
+    }
+    frontend_brush *brush=calloc(1,sizeof(*brush)+length+1);
+    if (!brush) { frontend_fail(error,QA_ERROR_MEMORY,"Allocating standalone brush world"); return false; }
+    memcpy(brush->path,path,length+1);
+    bool ok;
+    if (source) {
+        ok=qa_resource_pool_find(qa_vfs_resources(owner->mounts),qa_resource_id(source))==source;
+        if (ok) { brush->resource=(qa_resource *)source; qa_resource_retain(brush->resource); }
+        else frontend_fail(error,QA_ERROR_NOT_FOUND,"Brush resource lost its actual appearance content owner");
+    } else ok=qa_vfs_acquire(owner->mounts,path,&brush->resource,NULL,error);
+    qa_bsp_view bsp;
+    qa_scene_world_options options={.images={.family=owner->family,.wrap=QA_SCENE_REPEAT,
+        .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.usage=QA_IMAGE_USAGE_WALL,.transparent_index=-1},
+        .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
+    if (ok) ok=qa_bsp_open(qa_resource_bytes(brush->resource),&bsp,error) && qa_bsp_validate(&bsp,error) &&
+        qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&brush->world,error) &&
+        qa_scene_world_source_resource_bind(brush->world,brush->resource,error);
+    if (!ok) {
+        qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush); return false;
+    }
+    brush->next=owner->brushes; owner->brushes=brush; *out=brush; return true;
 }
 static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, const char *path, const qa_resource *source,
     const qa_vfs_acquisition *source_opening, bool colored, uint8_t colors, frontend_model **out, qa_error *error)
@@ -1227,6 +1354,12 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!path || !*path) continue;
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
+            if (brush_path(path)) {
+                frontend_brush *brush;
+                if (!brush_read(owner,path,view.model_resources[part],&brush,error) ||
+                    !qa_scene_world_submit_model(brush->world,0,&placement,world,actor.slot,color,frame,error)) return false;
+                continue;
+            }
             frontend_model *model;
             if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                 view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
