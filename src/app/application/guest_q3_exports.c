@@ -747,7 +747,11 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
         role->engine->initializing_role = role;
         bool initialized = q3g_call(role, 0, arguments, 3, &result, error);
         role->engine->initializing_role = previous;
-        if (!initialized || !qa_q3_host_end_registration(role->host,error)) return false;
+        if (!initialized) return false;
+        if (!qa_q3_host_end_registration(role->host,error)) {
+            role->init_succeeded = false;
+            return false;
+        }
     }
     role->initialized = true; return true;
 }
@@ -760,7 +764,8 @@ bool application_q3_guest_role_call(application_provider *provider, qa_qvm_role 
     if (!role) return false;
     int32_t first = kind == QA_QVM_UI ? 3 : kind == QA_QVM_CGAME ? 2 : 8;
     int32_t last = kind == QA_QVM_UI ? 10 : kind == QA_QVM_CGAME ? 8 : 10;
-    if (!role->initialized || role->engine->round.phase != Q3G_ROUND_NONE || command < first || command > last)
+    if (!role->initialized || (kind != QA_QVM_GAME && !role->init_succeeded) ||
+        role->engine->round.phase != Q3G_ROUND_NONE || command < first || command > last)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role export is unavailable in its current lifecycle/profile");
     return q3g_call(role, command, arguments, count, result, error);
 }
@@ -791,7 +796,7 @@ bool application_q3_guest_role_command(application_provider *provider, qa_qvm_ro
     if (kind == QA_QVM_GAME) return application_q3_guest_console_command(provider, text, handled, error);
     q3g_role *role = find_role(provider, kind, seat, error);
     if (!role) return false;
-    if (!text || !handled || !role->initialized)
+    if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
     qa_command_tokens next = {0};
     if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &next, error)) return false;

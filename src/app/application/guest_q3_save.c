@@ -835,6 +835,8 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source role identity or lifecycle");
         const saved_artifact *artifact = &saved->artifacts[role->artifact];
         if (!qa_source_save_u8(io, &role->init_argument_count) || role->init_argument_count > 3 ||
+            (artifact->kind != QA_QVM_GAME && (role->flags & ROLE_INITIALIZED) &&
+             !(role->flags & ROLE_INIT_SUCCEEDED)) ||
             (artifact->kind == QA_QVM_GAME && role->init_argument_count) ||
             (artifact->kind != QA_QVM_GAME && role->init_argument_count &&
              role->init_argument_count != (artifact->kind == QA_QVM_UI ? 1 : 3)) ||
@@ -1141,6 +1143,11 @@ static bool saved_collect(application_provider *provider,
     for (q3g_role *r = engine->roles; r; r = r->next, ++i) {
         saved_role *row = &saved->roles[i];
         if (!client_topology(r, error)) { saved_free(saved); return false; }
+        uint32_t flags = role_flags(r);
+        if (r->kind != QA_QVM_GAME && (flags & ROLE_INITIALIZED) && !(flags & ROLE_INIT_SUCCEEDED)) {
+            saved_free(saved); return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q3 CLIENT continuation requires its completed Init and registration");
+        }
         if ((r->artifact->qvm ? !r->vm || !r->image || r->native || r->module :
             !native_role_plain(r, error)) || r->activation_failed || r->arguments_scoped || r->shutdown_entry) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source role has an unqualified native executor or command scope");
@@ -1152,7 +1159,7 @@ static bool saved_collect(application_provider *provider,
         }
         *row = (saved_role){.artifact = a, .seat = r->seat, .client = r->client,
             .source_owner = r->source_owner,
-            .flags = role_flags(r), .sequence = r->service_sequence, .owner = r->service_owner,
+            .flags = flags, .sequence = r->service_sequence, .owner = r->service_owner,
             .arguments = r->arguments, .actual = r};
         row->init_argument_count = r->init_argument_count;
         memcpy(row->init_arguments, r->init_arguments, sizeof(row->init_arguments));
