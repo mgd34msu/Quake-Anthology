@@ -247,7 +247,8 @@ bool frontend_visual_brush_attach_restored(qa_frontend *frontend, size_t index, 
         return frontend_fail(error,QA_ERROR_FORMAT,"Restored brush lacks its actual ordered resource and world owners");
     for (const frontend_visual_owner *other=frontend->visuals;other;other=other->next)
         for (const frontend_brush *brush=other->brushes;brush;brush=brush->next)
-            if (brush->world==world)
+            if (brush->world==world || (other==owner && brush->resource==resource &&
+                !strcmp(brush->path,owner->brush_recipes[ordinal].path)))
                 return frontend_fail(error,QA_ERROR_FORMAT,"Restored brush repeats an actual world owner");
     const char *path=owner->brush_recipes[ordinal].path;
     size_t length=strlen(path);
