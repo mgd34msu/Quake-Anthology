@@ -353,20 +353,28 @@ static bool spawn_entry(void *opaque, qa_native_instance *native, qa_native_entr
     if (!qa_native_host_source_reconcile(p->engine->provider->state.native.host, error)) return false;
     ++p->engine->calls;
     bool ok = qa_native_invoke_original(binding, arguments, count, result, error);
+    if(ok&&(result->type!=QA_NATIVE_ADDRESS||!result->as.address))
+        ok=application_fail(error,QA_ERROR_FORMAT,"Original native G_Spawn returned no source entity");
+    qa_actor_id actor={0};
+    if(ok) {
+        forget_address(p,result->as.address);
+        ok=qa_native_host_source_birth(p->engine->provider->state.native.host,result->as.address,&actor,error);
+    }
+    if(ok&&!actor.registry)
+        ok=application_fail(error,QA_ERROR_NOT_FOUND,"Original allocation did not publish its actual Source actor");
+    if(ok&&frame) {
+        attack_projectile *lease=calloc(1,sizeof(*lease));
+        if(ok&&!lease)
+            ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original projectile attack provenance");
+        if(ok) {
+            *lease=(attack_projectile){.next=p->projectiles,.address=result->as.address,.actor=actor,
+                .attack=frame->attack};
+            lease->attack.inflictor=actor; lease->attack.projectile=actor;
+            p->projectiles=lease;
+        }
+    }
     --p->engine->calls;
-    if (!ok) return false;
-    if (result->type != QA_NATIVE_ADDRESS || !result->as.address)
-        return application_fail(error, QA_ERROR_FORMAT, "Original native G_Spawn returned no source entity");
-    forget_address(p, result->as.address);
-    if (!frame) return true;
-    qa_actor_id actor;
-    if (!source_actor(p, result->as.address, &actor, error)) return false;
-    attack_projectile *lease = calloc(1, sizeof(*lease));
-    if (!lease) return application_fail(error, QA_ERROR_MEMORY, "Retaining original projectile attack provenance");
-    *lease = (attack_projectile){.next = p->projectiles, .address = result->as.address, .actor = actor,
-        .attack = frame->attack};
-    lease->attack.inflictor = actor; lease->attack.projectile = actor;
-    p->projectiles = lease; (void)native; return true;
+    (void)native; return ok;
 }
 static bool free_entry(void *opaque, qa_native_instance *native, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
