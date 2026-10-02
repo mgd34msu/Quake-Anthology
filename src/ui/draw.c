@@ -21,35 +21,50 @@ bool ui_fill(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, qa_scene_re
     return qa_scene_frame_picture_f(frame, ui->options.white, target, pixels,
                                      (qa_scene_vec4){0, 0, 1, 1}, color, error);
 }
-static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
-                   const char *text, qa_scene_vec4 color, float scale,
-                   qa_font_alignment alignment, bool literal, bool localize, qa_error *error) {
-    if (!text || !*text || !target.width || !target.height)
+static bool text_layout(qa_ui *ui, qa_scene_frame *frame, const char *text,
+                         qa_scene_vec4 color, float scale, qa_font_alignment alignment,
+                         bool literal, bool localize, qa_font_layout *layout, qa_error *error) {
+    *layout = (qa_font_layout){.seat = ui->options.seat};
+    if (!text || !*text)
         return true;
     if (localize && ui->options.localize)
         text = ui->options.localize(ui->options.context, text);
     if (!text)
         return true;
-    qa_font_layout layout;
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)},
         .scale = scale * ui->scale * ui->text_scale, .color = color,
         .color_codes = literal ? QA_FONT_COLOR_LITERAL : QA_FONT_COLOR_Q3,
         .force_color = ui->color_mode != QA_UI_COLOR_STANDARD, .alignment = alignment};
-    if (!qa_font_layout_build(&ui->options.fonts, &options, &frame->storage, &layout, error))
+    if (!qa_font_layout_build(&ui->options.fonts, &options, &frame->storage, layout, error))
         return false;
     if (alignment!=QA_FONT_ALIGN_LEFT) {
-        qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)layout.glyphs;
-        for (size_t row=0;row<layout.line_count;++row) {
-            const qa_font_line *line=layout.lines+row;
+        qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)layout->glyphs;
+        for (size_t row=0;row<layout->line_count;++row) {
+            const qa_font_line *line=layout->lines+row;
             float offset=line->width*(alignment==QA_FONT_ALIGN_CENTER?.5f:1);
             for (size_t i=0;i<line->glyph_count;++i) glyphs[line->first_glyph+i].rect.x-=offset;
         }
     }
+    return true;
+}
+static bool draw_layout(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
+                         float x, float y, const qa_font_layout *layout, qa_error *error) {
+    if (!layout->glyph_count || !target.width || !target.height)
+        return true;
     qa_font_draw_options draw = {.seat = ui->options.seat, .target = target,
         .origin = {ui->bias_x + x * ui->scale - (float)target.x,
                    ui->bias_y + y * ui->scale - (float)target.y},
         .space = QA_FONT_PIXELS, .shadow_offset = ui->scale};
-    return qa_font_draw_layout(frame, &layout, &draw, error);
+    return qa_font_draw_layout(frame, layout, &draw, error);
+}
+static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
+                       const char *text, qa_scene_vec4 color, float scale,
+                       qa_font_alignment alignment, bool literal, bool localize, qa_error *error) {
+    if (!text || !*text || !target.width || !target.height)
+        return true;
+    qa_font_layout layout;
+    return text_layout(ui, frame, text, color, scale, alignment, literal, localize, &layout, error) &&
+        draw_layout(ui, frame, target, x, y, &layout, error);
 }
 bool ui_draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
                    const char *text, qa_scene_vec4 color, float scale,
@@ -128,10 +143,22 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                 (qa_scene_vec4){0, 0, 1, 1}, text_color, error)) return false;
             label_x += height;
         }
-        if (!ui_draw_text(ui, frame, clipped, label_x, y + 6,
-                           row->label, text_color, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_LEFT, error) ||
-            !ui_draw_text(ui, frame, clipped, control->rect.x + control->rect.width - 20,
-                           y + 6, row->detail, text_color, .75f * UI_MENU_FONT_SCALE, QA_FONT_ALIGN_RIGHT, error)) return false;
+        if (!clipped.width || !clipped.height) continue;
+        qa_font_layout label, detail;
+        if (!text_layout(ui, frame, row->label, text_color, UI_MENU_FONT_SCALE,
+                QA_FONT_ALIGN_LEFT, false, true, &label, error) ||
+            !text_layout(ui, frame, row->detail, text_color, .75f * UI_MENU_FONT_SCALE,
+                QA_FONT_ALIGN_RIGHT, false, true, &detail, error)) return false;
+        float right = control->rect.x + control->rect.width - 20;
+        float available = fmaxf(0, right - label_x);
+        float detail_width = fminf(detail.width / ui->scale, available * .5f);
+        float label_width = fmaxf(0, available - detail_width - (detail_width > 0 ? 12 : 0));
+        qa_scene_rect label_clip = clip_rect(ui, clipped,
+            (qa_scene_rect_f){label_x, y, label_width, height});
+        qa_scene_rect detail_clip = clip_rect(ui, clipped,
+            (qa_scene_rect_f){right - detail_width, y, detail_width, height});
+        if (!draw_layout(ui, frame, label_clip, label_x, y + 6, &label, error) ||
+            !draw_layout(ui, frame, detail_clip, right, y + 6, &detail, error)) return false;
     }
     if (!maximum) return true;
     float thumb = fmaxf(24, control->rect.height * (float)page / (float)count);
