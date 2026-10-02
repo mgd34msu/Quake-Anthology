@@ -157,6 +157,16 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, float, player->source_frags);
     Q1_SAVE(io, float, player->source_team);
     Q1_SAVE(io, bool, player->source_observer);
+    Q1_SAVE(io, actor, player->source_spectator_goal);
+    Q1_SAVE(io, actor, player->source_spectator_track);
+    Q1_SAVE(io, u32, player->source_spectator_goal_ordinal);
+    Q1_SAVE(io, u32, player->source_spectator_track_slot);
+    if(player->source_spectator_track_slot>io->game->options.max_clients)
+        return q1_save_fail(io,"Spectator tracker exceeds its actual physical client table");
+    if((player->source_spectator_goal.registry || player->source_spectator_track.registry ||
+        player->source_spectator_goal_ordinal || player->source_spectator_track_slot) &&
+       (!player->source_client || !io->game->options.quakeworld))
+        return q1_save_fail(io,"Spectator goal has no actual QW source client");
     Q1_SAVE(io, bool, player->source_no_target);
     Q1_SAVE(io, bool, player->source_god_mode);
     Q1_SAVE(io, i32, player->source_impulse);

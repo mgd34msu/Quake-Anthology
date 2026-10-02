@@ -53,13 +53,17 @@ bool qa_q1_wire_authored_slot(const qa_q1_game *, size_t ordinal, uint32_t *);
 bool qa_q1_wire_emission_index(const qa_q1_game *, bool models, qa_string_id, uint32_t *);
 bool qa_q1_wire_emission_slot(const qa_q1_game *, qa_actor_id, uint32_t *);
 bool qa_q1_wire_enabled(const qa_q1_game *);
-/* Pure state of the actual native NetQuake registration owner. */
+/* Pure state of the actual native Q1 registration owner. */
 bool qa_q1_wire_registration_state(const qa_q1_game *, uint64_t *generation, bool *loading);
 bool qa_q1_wire_lightstyle(qa_q1_game *, int32_t, qa_string_id, qa_error *);
 /* Observe the actual source pattern table independently of transport admission. */
 bool qa_q1_source_lightstyle_read(const qa_q1_game *, uint32_t, qa_string_id *, qa_error *);
 bool qa_q1_wire_world_read(const qa_q1_wire_receipt *, qa_q1_wire_world *);
 bool qa_q1_wire_player_read(const qa_q1_wire_receipt *, qa_actor_id, qa_q1_wire_player *, qa_error *);
+/* QW physical edicts retain source stats after their canonical actor retires.
+ * A genuine host.spawn resets that physical row; slots are one-based. */
+bool qa_q1_wire_qw_stats_read(const qa_q1_wire_receipt *, uint32_t slot, double [16], qa_error *);
+bool qa_q1_wire_qw_stats_store(const qa_q1_wire_receipt *, uint32_t slot, const double [16], qa_error *);
 bool qa_q1_wire_board_observe(const qa_q1_wire_receipt *, uint32_t client_slot,
                               qa_q1_wire_board_change *, qa_error *);
 bool qa_q1_wire_board_commit(const qa_q1_wire_receipt *, const qa_q1_wire_board_change *);

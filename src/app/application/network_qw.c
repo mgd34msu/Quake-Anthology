@@ -3,6 +3,8 @@
 #include "guest_qc_internal.h"
 #include "network_q1_signon.h"
 #include "control_frame.h"
+#include "native_q1_wire_qw.h"
+#include "native_q1_spectator.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
 
@@ -60,8 +62,30 @@ static struct application_qc_state *qw_source(qa_application *app,
 bool qa_application_network_qw_source_read(qa_application *app,
     qa_application_network_qw_source *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_source(app, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld physical source output");
     return qw_source(app, out, error) != NULL;
+}
+bool qa_application_network_qw_ptrack(qa_application *app,qa_actor_id actor,
+    bool target_supplied,int32_t client_slot,qa_error *error)
+{
+    if (!application_native_q1_qw_selected(app))
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"QuakeWorld ptrack has no retained engine tracking owner");
+    application_native_q1_wire_source source={0};
+    if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
+    uint32_t slot;qa_q1_source_client_view client;
+    bool okay=app->operation==APPLICATION_IDLE && qa_q1_native_client_slot(source.provider->state.q1,actor,&slot,error) &&
+        qa_q1_source_client_read(source.provider->state.q1,actor,&client);
+    const application_player_record *row=NULL;
+    if (okay) for (size_t i=0;app->players && i<app->players->count;++i) {
+        const application_player_record *candidate=&app->players->records[i];
+        if (!candidate->retiring && candidate->client_slot==slot && qa_actor_id_equal(candidate->actor,actor)) {row=candidate;break;}
+    }
+    if (okay && !row) okay=application_fail(error,QA_ERROR_ARGUMENT,"QuakeWorld ptrack lost its trusted physical client row");
+    if (okay && row->spectator)
+        okay=application_native_q1_spectator_track(source.provider,actor,target_supplied,client_slot,error);
+    application_native_q1_wire_end(&source);
+    return okay;
 }
 
 static bool qw_scalar(struct application_qc_state *engine, int32_t reference,
@@ -141,6 +165,7 @@ static bool qw_global(struct application_qc_state *engine, const char *name,
 bool qa_application_network_qw_world_read(qa_application *app,
     qa_application_network_qw_world *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_world(app, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source world output");
     qa_application_network_qw_world value = {0};
     struct application_qc_state *engine = qw_source(app, &value.source, error);
@@ -183,6 +208,11 @@ bool qa_application_network_qw_world_read(qa_application *app,
 
 bool qa_application_network_qw_signon_count(qa_application *app, size_t *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) {
+        qa_application_network_qw_source source;
+        if (!out || !application_native_q1_qw_source(app, &source, error)) return false;
+        *out = application_q1_signon_count(app, source.owner); return true;
+    }
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source signon count");
     struct application_qc_state *engine = qw_source(app, NULL, error);
     if (!engine) return false;
@@ -193,6 +223,11 @@ bool qa_application_network_qw_signon_count(qa_application *app, size_t *out, qa
 bool qa_application_network_qw_signon_at(qa_application *app, size_t index,
     qa_application_protocol_event *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) {
+        qa_application_network_qw_source source;
+        if (!out || !application_native_q1_qw_source(app, &source, error)) return false;
+        return application_q1_signon_at(app, source.owner, index, out, error);
+    }
     struct application_qc_state *engine = qw_source(app, NULL, error);
     return engine && application_q1_signon_at(app, engine->provider->owner, index, out, error);
 }
@@ -219,6 +254,7 @@ static bool qw_client_binding(struct application_qc_state *engine, qa_actor_id a
 
 bool qa_application_network_qw_prepare(qa_application *app, qa_actor_id actor, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_prepare(app, actor, error);
     struct application_qc_state *engine = qw_source(app, NULL, error);
     if (!engine) return false;
     uint32_t slot;
@@ -235,6 +271,7 @@ bool qa_application_network_qw_prepare(qa_application *app, qa_actor_id actor, q
 bool qa_application_network_qw_commands(qa_application *app,
     const qa_network_command_group *group, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_commands(app, group, error);
     if (!group || !group->commands || !group->count || group->count > 20)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing literal QuakeWorld source command group");
     if (!qa_application_network_controlled(app, group->client, group->seat,
@@ -254,6 +291,7 @@ bool qa_application_network_qw_commands(qa_application *app,
 bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id actor,
     qa_application_network_qw_client *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_client(app, actor, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source client output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
     if (!engine) return false;
@@ -311,6 +349,7 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
 bool qa_application_network_qw_client_next(qa_application *app, uint32_t *cursor,
     bool *present, qa_application_network_qw_client *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_client_next(app, cursor, present, out, error);
     if (!cursor || !present || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld physical client inventory output");
     *present = false;
@@ -331,6 +370,7 @@ bool qa_application_network_qw_client_next(qa_application *app, uint32_t *cursor
 bool qa_application_network_qw_visible(qa_application *app, qa_actor_id viewer,
     qa_actor_id target, bool *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_visible(app, viewer, target, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source visibility output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
     uint32_t slot;
@@ -359,6 +399,7 @@ bool qa_application_network_qw_visible(qa_application *app, qa_actor_id viewer,
 bool qa_application_network_qw_receives(qa_application *app, qa_actor_id actor,
     const qa_application_protocol_event *event, bool *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_receives(app, actor, event, out, error);
     if (!event || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source message routing output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
@@ -393,6 +434,7 @@ bool qa_application_network_qw_receives(qa_application *app, qa_actor_id actor,
 
 bool qa_application_network_qw_flush(qa_application *app, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_flush(app, error);
     struct application_qc_state *engine = qw_source(app, NULL, error);
     bool ok = engine && app->operation == APPLICATION_IDLE && application_qc_flush(engine, error);
     if (!ok && engine) application_fault(app, error);
@@ -401,6 +443,7 @@ bool qa_application_network_qw_flush(qa_application *app, qa_error *error)
 
 qa_vfs *qa_application_network_qw_content(qa_application *app, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_content(app, error);
     struct application_qc_state *engine = qw_source(app, NULL, error);
     if (!engine) return NULL;
     qa_vfs *content = engine->provider->launch ? engine->provider->launch->content : NULL;
@@ -411,6 +454,7 @@ qa_vfs *qa_application_network_qw_content(qa_application *app, qa_error *error)
 bool qa_application_network_qw_kill(qa_application *app, qa_actor_id actor,
     bool *killed, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_kill(app, actor, killed, error);
     if (!killed) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld ClientKill result");
     *killed = false;
     struct application_qc_state *engine = qw_source(app, NULL, error);
@@ -434,6 +478,7 @@ bool qa_application_network_qw_kill(qa_application *app, qa_actor_id actor,
 bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
     qa_buffer *out, bool *changed, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_pause(app, actor, out, changed, error);
     if (!out || out->data || out->size || !changed)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld pause requires empty announcement output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
@@ -463,6 +508,7 @@ bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
 bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,
     const char *text, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_userinfo(app, actor, text, error);
     struct application_qc_state *engine = qw_source(app, NULL, error);
     uint32_t slot;
     if (!engine || !text || app->operation != APPLICATION_IDLE ||
@@ -502,6 +548,7 @@ bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,
 bool qa_application_network_qw_entity_next(qa_application *app, uint32_t *cursor,
     bool *present, qa_actor_id *actor, qa_application_network_qw_entity *out, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_entity_next(app, cursor, present, actor, out, error);
     if (!cursor || !present || !actor || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld dynamic source inventory output");
     *present = false;
@@ -536,6 +583,7 @@ bool qa_application_network_qw_entity_next(qa_application *app, uint32_t *cursor
 bool qa_application_network_qw_precache(qa_application *app, bool models,
     const char *names[255], size_t *count, qa_error *error)
 {
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_precache(app, models, names, count, error);
     if (!names || !count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld indexed source precache output");
     struct application_qc_state *engine = qw_source(app, NULL, error);

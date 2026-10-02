@@ -1170,6 +1170,8 @@ add_library(qa_application STATIC
     src/app/application/native_q1_powers.c
     src/app/application/native_q1_respawn.c
     src/app/application/native_q1_wire.c
+    src/app/application/native_q1_wire_qw.c
+    src/app/application/native_q1_spectator.c
     src/app/application/native_q2_presentation.c
     src/app/application/native_q2_presentation_local.c
     src/app/application/native_q2_delivery.c

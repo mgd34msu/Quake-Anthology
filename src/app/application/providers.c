@@ -234,7 +234,8 @@ static bool native_profile(const qa_launch_instance *launch,
                                   ? 3
                                   : choices->world.skill;
         profile.teamplay = has_mode ? mode.teamplay : 0;
-        profile.maximum_clients = (uint32_t)choices->seat_count;
+        profile.maximum_clients = launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD
+            ? 32u : (uint32_t)choices->seat_count;
         for (size_t index = 0; index < choices->mode_count; ++index)
             if (choices->modes[index].rules.enabled &&
                 choices->modes[index].rules.source == QA_MODE_ROGUE &&
@@ -419,6 +420,12 @@ static bool q1_final_options(application_provider *provider, const qa_launch_cho
     options->gamecfg = (uint32_t)value[4]->integer;
     options->gravity = value[5]->number;
     options->aim_threshold = value[6]->number;
+    if (options->quakeworld) {
+        if (choices->seat_count > 32)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld has 32 physical client rows");
+        options->max_clients = 32;
+        return true;
+    }
     float capacity = truncf(value[7]->number);
     float minimum = (float)(choices->seat_count ? choices->seat_count : 1);
     if (capacity < minimum) capacity = minimum;

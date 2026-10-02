@@ -8,6 +8,7 @@
 #include "native_q3_settings.h"
 #include "native_q1_composition_rogue.h"
 #include "native_q1_composition_birth.h"
+#include "native_q1_spectator.h"
 #include "guest_q3_components.h"
 #include "guest_q3_component_input.h"
 #include "qa/game_q3_source.h"
@@ -1245,7 +1246,16 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
         }
     }
 
-    if (phase == QA_MOVE_INPUT_BEGIN && !move->q1_input &&
+    if (phase == QA_MOVE_INPUT_BEGIN && qw_spectator && move->world &&
+        move->world->kind == APPLICATION_PROVIDER_Q1 &&
+        move->world->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        qa_q1_input input = q1_input(call);
+        input.view_angles = call_view_angles(move, call);
+        move->committed = true;
+        if (!qa_q1_player_source_input(move->world->state.q1, actor, &input, error))
+            return QA_MOVEMENT_ERROR;
+    }
+    if (phase == QA_MOVE_INPUT_BEGIN && !qw_spectator && !move->q1_input &&
         move->arsenal != NULL &&
         move->arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view view;
@@ -2909,6 +2919,14 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
     if (!live(app, actor)) return true;
     qa_q1_input source_input = q1_input(&call);
     source_input.view_angles = call_view_angles(&move, &call);
+    if (record->state.kind == QA_MOVEMENT_QUAKEWORLD && record->state.data.qw.spectator &&
+        execution && execution->kind == APPLICATION_PROVIDER_Q1 &&
+        execution->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        if (context->source_qwcmd) source_input.impulse = context->source_command.impulse;
+        record->state = input.state;
+        record->bounds = input.shape.bounds;
+        return application_native_q1_spectator_postthink(execution, actor, &source_input, error);
+    }
     if (!q1_source_weapon_impulse(app, actor, &input.command, &source_input, error)) return false;
     if (!live(app, actor)) return true;
     if (move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {

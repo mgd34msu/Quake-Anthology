@@ -425,6 +425,8 @@ typedef struct q1_player {
     size_t source_info_count;
     float source_frags,source_team;
     bool source_observer,source_no_target,source_god_mode;
+    qa_actor_id source_spectator_goal,source_spectator_track;
+    uint32_t source_spectator_goal_ordinal,source_spectator_track_slot;
     int32_t source_impulse;
     bool source_use,source_death_recorded;
     bool finale_held_present, finale_held;

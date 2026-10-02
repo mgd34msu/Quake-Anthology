@@ -14,9 +14,6 @@ static bool id1(const qa_q1_game *g) {
     return g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC &&
            !g->options.quakeworld;
 }
-static bool netquake(const qa_q1_game *g) {
-    return g && !g->options.quakeworld;
-}
 void q1_wire_changed(q1_wire_state *wire) {
     if (wire && wire->revision != UINT64_MAX) ++wire->revision;
 }
@@ -182,8 +179,8 @@ bool qa_q1_wire_authored_slot(const qa_q1_game *g, size_t ordinal, uint32_t *out
     return true;
 }
 bool qa_q1_wire_read_begin(qa_q1_game *g, qa_q1_wire_receipt *out, qa_error *error) {
-    if (!out || !netquake(g) || !g->wire || g->wire->loading)
-        return fail(error, "Q1 ordered NetQuake source is not frozen");
+    if (!out || !g || !g->wire || g->wire->loading)
+        return fail(error, "Q1 ordered physical source is not frozen");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
     const q1_wire_state *wire = g->wire;
@@ -209,6 +206,27 @@ void qa_q1_wire_read_end(qa_q1_wire_receipt *receipt) {
     qa_q1_game_operation_end(&receipt->operation);
     *receipt = (qa_q1_wire_receipt){0};
 }
+bool qa_q1_wire_qw_stats_read(const qa_q1_wire_receipt *receipt,uint32_t slot,double out[16],qa_error *error) {
+    if (!out || !qa_q1_wire_receipt_current(receipt) || !receipt->operation.game->options.quakeworld ||
+        receipt->client_slots!=32 || !slot || slot>32)
+        return fail(error,"QW retained stats require their actual physical source row");
+    memcpy(out,receipt->operation.game->wire->qw_client_stats[slot-1],sizeof(double)*16);
+    return true;
+}
+bool qa_q1_wire_qw_stats_store(const qa_q1_wire_receipt *receipt,uint32_t slot,const double stats[16],qa_error *error) {
+    if (!stats || !qa_q1_wire_receipt_current(receipt) || !receipt->operation.game->options.quakeworld ||
+        receipt->client_slots!=32 || !slot || slot>32)
+        return fail(error,"QW retained stats lost their reached physical source store");
+    for (size_t i=0;i<16;++i)
+        if (!isfinite(stats[i]) || trunc(stats[i])!=stats[i])
+            return fail(error,"QW retained source stats contain a noninteger or nonfinite field");
+    if (stats[15]<INT32_MIN || stats[15]>INT32_MAX || stats[2]<0 || stats[2]>=(double)receipt->model_count)
+        return fail(error,"QW retained source items or weapon model leave their actual fields");
+    q1_wire_state *wire=receipt->operation.game->wire;
+    memcpy(wire->qw_client_stats[slot-1],stats,sizeof(double)*16);
+    q1_wire_changed(wire);
+    return true;
+}
 bool qa_q1_wire_index(const qa_q1_wire_receipt *receipt, bool models, qa_string_id resource,
                        uint32_t *out) {
     if (!out || !qa_q1_wire_receipt_current(receipt)) return false;
@@ -220,14 +238,14 @@ bool qa_q1_wire_index(const qa_q1_wire_receipt *receipt, bool models, qa_string_
 }
 bool qa_q1_wire_emission_index(const qa_q1_game *g, bool models, qa_string_id resource,
                                uint32_t *out) {
-    if (!netquake(g) || !g->wire || g->destroy_pending || !out) return false;
+    if (!g || !g->wire || g->destroy_pending || !out) return false;
     const q1_wire_table *table = models ? &g->wire->models : &g->wire->sounds;
     for (size_t i = 0; i < table->count && i <= UINT32_MAX; ++i)
         if (table->rows[i] == resource) { *out = (uint32_t)i; return true; }
     return false;
 }
 bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *out) {
-    if (!netquake(g) || !g->wire || g->destroy_pending || !out) return false;
+    if (!g || !g->wire || g->destroy_pending || !out) return false;
     uint32_t client;
     if (qa_q1_native_client_slot(g, actor, &client, NULL)) { *out = client + 1; return true; }
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), actor);
@@ -239,14 +257,14 @@ bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *
 }
 bool qa_q1_wire_registration_state(const qa_q1_game *g, uint64_t *generation, bool *loading) {
     if (!g || g->destroy_pending || g->continuation_pending || !g->wire ||
-        !netquake(g) || !generation || !loading) return false;
+        !g || !generation || !loading) return false;
     *generation = g->wire->generation;
     *loading = g->wire->loading;
     return true;
 }
 
 bool qa_q1_wire_enabled(const qa_q1_game *g) {
-    return netquake(g) && !g->destroy_pending && g->wire;
+    return g && !g->destroy_pending && g->wire;
 }
 bool qa_q1_wire_lightstyle(qa_q1_game *g, int32_t style, qa_string_id pattern, qa_error *error) {
     if (!g || g->destroy_pending || style < 0 || style >= 64 ||
@@ -346,6 +364,17 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
         if (powers[QA_Q1_EMPATHY] > seconds) value.extra_items |= 4u << 23;
     } else if (g->options.program == QA_Q1_ROGUE && powers[QA_Q1_SHIELD] > seconds)
         value.extra_items |= 64u << 23;
+    if (!g->wire->id1) {
+        static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+        for (unsigned i = 0; i < 2; ++i) {
+            qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
+                (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
+            double count;
+            if (!key) continue;
+            if (!qa_inventory_count_read(g->services.inventory, actor, key, &count, error)) return false;
+            if (count > 0) value.powers |= 131072u << i;
+        }
+    }
     if (!qa_q1_wire_receipt_current(receipt) ||
         !qa_q1_native_client_slot(g, actor, &slot, error)) return false;
     player = g->players[actor.slot];
@@ -424,7 +453,7 @@ bool qa_q1_wire_actor_at(const qa_q1_wire_receipt *receipt, uint32_t slot, qa_ac
 bool qa_q1_wire_feedback_add(qa_q1_game *g, qa_actor_id recipient, qa_actor_id inflictor,
                              float armor, float blood, const double origin[3], qa_error *error) {
     uint32_t slot;
-    if (!netquake(g) || !g->wire || g->wire->revision == UINT64_MAX || g->destroy_pending || !origin ||
+    if (!g || !g->wire || g->wire->revision == UINT64_MAX || g->destroy_pending || !origin ||
         !isfinite(armor) || !isfinite(blood) ||
         !isfinite(origin[0]) || !isfinite(origin[1]) || !isfinite(origin[2]) ||
         !qa_q1_native_client_slot(g, recipient, &slot, NULL))
@@ -595,6 +624,9 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
     int32_t sounds = spawn->map_fields ? spawn->map_fields->sounds : 0;
     uint32_t flags = spawn->spawnflags;
     if (!strcmp(name, "worldspawn")) {
+        if (g->options.quakeworld)
+            return declare_rows(g, false, qw_world_sounds, sizeof(qw_world_sounds)/sizeof(*qw_world_sounds), error) &&
+                declare_rows(g, true, qw_world_models, sizeof(qw_world_models)/sizeof(*qw_world_models), error);
         if (g->options.program == QA_Q1_HIPNOTIC)
             return declare_rows(g, false, hipnotic_world_sounds, sizeof(hipnotic_world_sounds)/sizeof(*hipnotic_world_sounds), error) &&
                 declare_rows(g, true, hipnotic_world_models, sizeof(hipnotic_world_models)/sizeof(*hipnotic_world_models), error);

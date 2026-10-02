@@ -33,6 +33,9 @@ typedef struct qa_q1_source_client_view {
     float frags,team;
     uint8_t shirt,pants;
     bool observer,no_target,god_mode;
+    qa_actor_id spectator_goal,spectator_track;
+    /* Physical edict cursor and 1-based engine spec_track survive actor reuse. */
+    uint32_t spectator_goal_ordinal,spectator_track_slot;
     int32_t impulse;
     bool use,death_recorded;
     double respawn_requested_at;
@@ -58,6 +61,10 @@ bool qa_q1_source_client_info(const qa_q1_game *,qa_actor_id,const char *,const 
 bool qa_q1_source_client_add_score(qa_q1_game *,qa_actor_id,double delta,qa_error *);
 bool qa_q1_source_client_set_score(qa_q1_game *,qa_actor_id,float score,qa_error *);
 bool qa_q1_source_client_observer(qa_q1_game *,qa_actor_id,bool,qa_error *);
+/* NONE is the genuine Source world find cursor, rather than a player alias. */
+bool qa_q1_source_spectator_goal_reset(qa_q1_game *,qa_actor_id,qa_error *);
+bool qa_q1_source_spectator_goal_next(qa_q1_game *,qa_actor_id,qa_actor_id *,bool *,qa_error *);
+bool qa_q1_source_spectator_track(qa_q1_game *,qa_actor_id,qa_actor_id,qa_error *);
 bool qa_q1_source_client_spawned(qa_q1_game *,qa_actor_id,qa_error *);
 /* Mark the genuine source client's death before obituary, score and drop
  * callbacks. Already recorded deaths return first=false without replay. */

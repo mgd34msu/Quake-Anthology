@@ -226,7 +226,7 @@ bool application_native_q1_console_create(application_provider *provider,
     snprintf(teamplay, sizeof(teamplay), "%d", rules->teamplay);
     snprintf(gravity, sizeof(gravity), "%.9g", (double)rules->gravity);
     snprintf(gamecfg, sizeof(gamecfg), "%u", rules->gamecfg);
-    snprintf(maximum, sizeof(maximum), "%u", rules->max_clients);
+    snprintf(maximum, sizeof(maximum), "%u", rules->quakeworld ? 8u : rules->max_clients);
     snprintf(aim, sizeof(aim), "%.9g", (double)rules->aim_threshold);
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
         "0", "1", maximum, "1", "0", aim};
@@ -238,10 +238,34 @@ bool application_native_q1_console_create(application_provider *provider,
             okay = qa_cvars_set(cvars, names[i], startup->latched_value ? startup->latched_value : startup->value,
                 true, error);
     }
+    if (rules->quakeworld) {
+        static const char *const qw_names[] = {"sv_maxvelocity", "sv_stopspeed",
+            "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
+            "sv_wateraccelerate", "sv_friction", "sv_waterfriction",
+            "maxspectators", "pausable", "sv_spectalk", "sv_mapcheck",
+            "hostname", "spawn", "watervis"};
+        static const char *const qw_values[] = {"2000", "100", "500", "10", "0.7",
+            "10", "4", "4", "8", "1", "1", "1", "unnamed", "0", "0"};
+        for (size_t i = 0; okay && i < sizeof(qw_names) / sizeof(*qw_names); ++i) {
+            if (!qa_cvars_find(cvars, qw_names[i]))
+                okay = qa_cvars_register(cvars, qw_names[i], qw_values[i], 0,
+                    provider->owner, NULL, error);
+            const qa_cvar_view *startup = !cloned
+                ? qa_cvars_find(provider->application->cvars, qw_names[i]) : NULL;
+            if (okay && startup && (!startup->owner || startup->owner == provider->owner))
+                okay = qa_cvars_set(cvars, qw_names[i],
+                    startup->latched_value ? startup->latched_value : startup->value, true, error);
+        }
+        static const char *const info_names[] = {"fraglimit", "timelimit", "teamplay",
+            "samelevel", "maxclients", "maxspectators", "deathmatch", "spawn",
+            "watervis", "hostname"};
+        for (size_t i = 0; okay && i < sizeof(info_names) / sizeof(*info_names); ++i)
+            okay = qa_cvars_add_flags(cvars, info_names[i], QA_CVAR_SERVERINFO, error);
+    }
     if (okay) okay = qa_cvars_set(cvars, "skill", skill, true, error) &&
         qa_cvars_set(cvars, "deathmatch", deathmatch, true, error) &&
         qa_cvars_set(cvars, "coop", coop, true, error) &&
-        qa_cvars_set(cvars, "maxclients", maximum, true, error);
+        (rules->quakeworld || qa_cvars_set(cvars, "maxclients", maximum, true, error));
     if (!okay) application_native_q1_console_destroy(provider, NULL);
     return okay;
 }

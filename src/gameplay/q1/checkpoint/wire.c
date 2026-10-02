@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../wire_internal.h"
 #include <stdio.h>
+#include <math.h>
 
 static bool table(q1_save_io *io, q1_wire_table *rows) {
     if (!io->reading && rows->count > UINT32_MAX)
@@ -141,6 +142,21 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
             (!row->present && (row->name || row->frags || row->colors)) ||
             (row->present && (!row->name || !qa_strings_cstr(qa_session_strings(g->services.session), row->name))))
             return q1_save_fail(io, "Invalid retained Q1 source client observation");
+    }
+    if (g->options.quakeworld) {
+        if (g->options.max_clients!=32)
+            return q1_save_fail(io,"QW retained stats leave their fixed physical client table");
+        for (size_t slot=0;slot<32;++slot)
+            for (size_t field=0;field<16;++field) {
+                double *value=&wire->qw_client_stats[slot][field];
+                Q1_SAVE(io,double,*value);
+                if (!isfinite(*value) || trunc(*value)!=*value)
+                    return q1_save_fail(io,"Invalid QW retained physical source stat");
+            }
+        for (size_t slot=0;slot<32;++slot)
+            if (wire->qw_client_stats[slot][15]<INT32_MIN || wire->qw_client_stats[slot][15]>INT32_MAX ||
+                wire->qw_client_stats[slot][2]<0 || wire->qw_client_stats[slot][2]>=(double)wire->models.count)
+                return q1_save_fail(io,"QW retained stat items or model leave their physical source fields");
     }
     return true;
 }

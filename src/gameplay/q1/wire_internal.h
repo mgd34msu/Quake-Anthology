@@ -28,6 +28,7 @@ typedef struct q1_wire_state {
     uint64_t generation, revision;
     qa_string_id map_path;
     qa_string_id lightstyles[64];
+    double qw_client_stats[32][16];
     uint32_t next_dynamic, authored_entities, inline_models;
     bool loading, id1;
 } q1_wire_state;

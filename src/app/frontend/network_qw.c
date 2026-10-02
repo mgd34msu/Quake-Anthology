@@ -279,6 +279,13 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         bool ok = changed ? broadcast(host, &message, error) : reliable(peer, &message, error);
         qa_buffer_free(&announcement); return ok;
     }
+    if (!strcmp(name, "ptrack")) {
+        bool target,extra;
+        if (!qa_q1_token(&cursor,true,first,sizeof(first),&target,error) ||
+            !qa_q1_token(&cursor,true,second,sizeof(second),&extra,error)) return false;
+        return qa_application_network_qw_ptrack(host->frontend->application,actor,
+            target && !extra,target?source_integer(first):0,error);
+    }
     if (!strcmp(name, "setinfo")) {
         bool key, value;
         if (!qa_q1_token(&cursor, true, first, sizeof(first), &key, error) ||
@@ -829,10 +836,14 @@ static qa_qw_source_player source_player(const qa_application_network_qw_client 
     if (player.skin != 0) player.flags |= QA_QW_PF_SKIN;
     if (client->health <= 0) player.flags |= QA_QW_PF_DEAD;
     if (client->minimum[2] != -24) player.flags |= QA_QW_PF_GIB;
-    if (qa_actor_id_equal(client->actor, viewer->actor)) {
+    if (client->spectator) {
+        player.flags &= QA_QW_PF_VELOCITY1 | QA_QW_PF_VELOCITY2 | QA_QW_PF_VELOCITY3;
+    } else if (qa_actor_id_equal(client->actor, viewer->actor)) {
         player.flags &= (uint16_t)~(QA_QW_PF_MSEC | QA_QW_PF_COMMAND);
         if (player.weapon_frame != 0) player.flags |= QA_QW_PF_WEAPONFRAME;
     }
+    if (qa_actor_id_equal(viewer->spectator_track,client->actor) && player.weapon_frame!=0)
+        player.flags |= QA_QW_PF_WEAPONFRAME;
     uint64_t age = client->command_present && source_time >= client->command_time_ns ?
         (source_time - client->command_time_ns) / UINT64_C(1000000) : 0;
     player.msec = age >= 255 ? 255 : (uint8_t)age;
@@ -864,7 +875,8 @@ static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physic
     }
     for (size_t i = 0; i < physical->client_count; ++i) {
         const qa_application_network_qw_client *client = physical->clients + i;
-        if (!client->begun || (client->spectator && !qa_actor_id_equal(client->actor, actor))) continue;
+        if (!client->begun || (client->spectator && !qa_actor_id_equal(client->actor, actor) &&
+            !qa_actor_id_equal(viewer->spectator_track,client->actor))) continue;
         bool visible;
         if (!qa_application_network_qw_visible(host->frontend->application, actor, client->actor, &visible, error)) return false;
         if (visible) {

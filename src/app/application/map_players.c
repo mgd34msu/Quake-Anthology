@@ -17,6 +17,8 @@
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
+#include "native_q1_wire_qw.h"
+#include "native_q1_spectator.h"
 #include "native_q1_respawn.h"
 #include "native_q1_composition.h"
 #include "native_q1_composition_birth.h"
@@ -1838,7 +1840,7 @@ static bool admit_equipment(qa_application *application, const qa_launch_choices
 }
 
 typedef enum player_admission_phase {
-    PLAYER_ADMISSION_COMPLETE, PLAYER_ADMISSION_BOT_RESERVE, PLAYER_ADMISSION_BOT_BEGIN
+    PLAYER_ADMISSION_COMPLETE, PLAYER_ADMISSION_RESERVE, PLAYER_ADMISSION_BEGIN
 } player_admission_phase;
 
 static bool bind_q3_player_roles(qa_application *application,
@@ -2295,8 +2297,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (character == NULL)
             return application_fail(error, QA_ERROR_NOT_FOUND, "selected player character disappeared");
         uint32_t source_slot = record->source_slot;
-        bool reserved_bot = phase == PLAYER_ADMISSION_BOT_BEGIN;
-        qa_actor_id source_actor = reserved_bot ? record->actor : (qa_actor_id){0};
+        bool reserved_player = phase == PLAYER_ADMISSION_BEGIN;
+        qa_actor_id source_actor = reserved_player ? record->actor : (qa_actor_id){0};
         if (character->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_player_source_actor(character, source_slot, &source_actor, error))
             return false;
@@ -2311,6 +2313,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         record->actor = source_actor;
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
+        bool qw_spectator = map_source->kind == APPLICATION_PROVIDER_Q1 &&
+            map_source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator;
         for (size_t i = 0; i < application->provider_count; ++i) {
             application_provider *provider = application->providers[i];
             if (provider->kind != APPLICATION_PROVIDER_QC ||
@@ -2364,7 +2368,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             ((choices->world.skill == 3 && character_product != NULL &&
               character_product->edition == QA_EDITION_RERELEASE) ||
              application_q1_program(character->launch->selection.implementation) == QA_Q1_MG3);
-        qa_combat_state combat = {.health = reduced_health ? 50 : 100, .mass = 200, .can_take_damage = !seat->spectator};
+        qa_combat_state combat = {.health = qw_spectator ? 0 : reduced_health ? 50 : 100,
+            .mass = 200, .can_take_damage = !seat->spectator};
         if (keep) { combat.health = carry->combat.health; combat.armor = carry->combat.armor; }
         bool q1_carry = character->kind == APPLICATION_PROVIDER_Q1;
         float maximum_health = keep && carry->character_owner == character->owner
@@ -2372,7 +2377,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (classic_mission) maximum_health = 100;
         if (keep && q1_carry)
             combat.health = fminf(maximum_health, fmaxf(maximum_health / 2, combat.health));
-        if (reserved_bot) {
+        if (reserved_player) {
             if (!qa_world_body_read(application->world, actor, &body, error) ||
                 !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
         } else if (!(reserved_qc_actor ? qa_world_body_write : qa_world_body_create)
@@ -2380,21 +2385,21 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             !qa_combat_create_actor(application->combat, actor, &combat, error) ||
             !qa_inventory_create_actor(application->inventory, actor, NULL, 0, error))
             return false;
-        if (!reserved_bot && map_source->kind == APPLICATION_PROVIDER_Q1 &&
+        if (!reserved_player && !qw_spectator && map_source->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_source_inventory_initialize(map_source->state.q1, actor, error)) return false;
-        if (!reserved_bot && map_source->kind == APPLICATION_PROVIDER_Q1 &&
+        if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q1 &&
             (!application_native_q1_wire_client_userinfo(map_source, actor, error) ||
              !q1_player_current(application, map_source, character, arsenal,
                  actor, false, &ordinal, error) ||
              !qa_combat_read_traits(application->combat, actor, &combat, error))) return false;
-        if (!reserved_bot && !bind_q3_player_roles(application, record, arsenal, error)) return false;
-        if (!reserved_bot && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
+        if (!reserved_player && !bind_q3_player_roles(application, record, arsenal, error)) return false;
+        if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
             char userinfo[2304];
             if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
                     false, userinfo, sizeof(userinfo), error)) return false;
             const char *info = "";
             qa_q2_connection_result connection;
-            if (phase != PLAYER_ADMISSION_BOT_RESERVE) {
+            if (phase != PLAYER_ADMISSION_RESERVE) {
                 if (!qa_q2_player_connect(map_source->state.q2,
                         record->userinfo ? record->userinfo : userinfo, seat->bot, &connection, error)) return false;
                 if (!connection.allowed) return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
@@ -2404,7 +2409,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     .slot = record->client_slot, .seat = seat->id, .userinfo = info,
                     .initialize_inventory = true, .use_q2_weapons = arsenal == map_source,
                     .use_q2_inventory = arsenal == map_source,
-                    .bot = phase == PLAYER_ADMISSION_BOT_RESERVE ? false : seat->bot}, error)) return false;
+                    .bot = phase == PLAYER_ADMISSION_RESERVE ? false : seat->bot}, error)) return false;
         }
         for (size_t j = 0; j < application->provider_count; ++j) {
             application_provider *provider = application->providers[j];
@@ -2417,11 +2422,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (selected && !application_q3_guest_client_reserve(provider,
                     record->client_slot, actor, error)) return false;
         }
-        if (!reserved_bot && application->modes != NULL) {
+        if (!reserved_player && application->modes != NULL) {
             qa_string_id name;
             if (!qa_strings_intern_cstr(qa_session_strings(application->session), record->name, &name, error) ||
                 !qa_modes_player(application->modes, &(qa_match_player){.actor = actor, .name = name,
-                                .connected = phase != PLAYER_ADMISSION_BOT_RESERVE, .bot = seat->bot}, error))
+                                .connected = phase != PLAYER_ADMISSION_RESERVE, .bot = seat->bot}, error))
                 return false;
             if (!q1_composition_admit(application, map_source, actor, error)) return false;
             for (size_t j = 0; j < application->mode_count; ++j) {
@@ -2444,36 +2449,41 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 return false;
             if (!qa_combat_set_traits(application->combat, actor, &combat, error)) return false;
         }
-        if (phase == PLAYER_ADMISSION_BOT_RESERVE) {
-            if (character->kind == APPLICATION_PROVIDER_Q1 &&
+        if (phase == PLAYER_ADMISSION_RESERVE || qw_spectator) {
+            if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q1 &&
                 !qa_q1_character_attach(character->state.q1, actor, error)) return false;
-            if (arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+            if (!qw_spectator && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
                 !qa_q1_player_attach(arsenal->state.q1, actor,
                     map_source->product->family != QA_GAME_Q1,
                     error)) return false;
-            if (character->kind == APPLICATION_PROVIDER_Q2 &&
+            if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q2 &&
                 !qa_q2_player_admit(character->state.q2, actor, &(qa_q2_player_admission){
                     .slot = record->client_slot, .seat = seat->id, .userinfo = "",
                     .initialize_inventory = map_source->kind != APPLICATION_PROVIDER_Q1,
                     .use_q2_weapons = arsenal == character,
                     .use_q2_inventory = arsenal == character, .bot = character != map_source}, error)) return false;
-            if (arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
+            if (!qw_spectator && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
                 (!qa_q2_items_admit_player(arsenal->state.q2, actor, true, error) ||
                  !qa_q2_weapon_bind(arsenal->state.q2, actor, QA_Q2_BLASTER, error))) return false;
-            if (!application_supplies_admit(application->supplies, map_source, actor, error)) return false;
+            if (!qw_spectator && !application_supplies_admit(application->supplies, map_source, actor, error)) return false;
             if (!admit_control(application, actor, body.angles, error)) return false;
             combat.can_take_damage = false;
             record->source_begin_pending = true;
-            return qa_combat_set_traits(application->combat, actor, &combat, error) &&
-                qa_world_set_collision(application->world, actor, NULL, error) &&
-                application_control_player_mode(application, actor, QA_MOVEMENT_MODE_FREEZE,
-                    record->spectator, error) && qa_world_unlink(application->world, actor, error);
+            if (!qa_combat_set_traits(application->combat, actor, &combat, error) ||
+                !qa_world_set_collision(application->world, actor, NULL, error) ||
+                !application_control_player_mode(application, actor, QA_MOVEMENT_MODE_FREEZE,
+                    record->spectator, error) || !qa_world_unlink(application->world, actor, error))
+                return false;
+            if (phase == PLAYER_ADMISSION_RESERVE) return true;
+            if (!application_native_q1_spectator_begin(map_source, actor, error)) return false;
+            record->source_begin_pending = false;
+            return admit_components(application, actor, error);
         }
         bool found = true;
         qa_actor_id source_point = {0};
         if (character->kind <= APPLICATION_PROVIDER_Q3 &&
             (map_source->kind == APPLICATION_PROVIDER_Q1 || character->kind != APPLICATION_PROVIDER_Q2 ||
-             (reserved_bot && map_source->kind == APPLICATION_PROVIDER_Q3)) &&
+             (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)) &&
             !spawn_pose(application, ordinal, false, &body, &found, &source_point, error))
             return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q1 && !found)
@@ -2489,12 +2499,12 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
              (map_source->kind != APPLICATION_PROVIDER_Q1 &&
               !qa_q1_player_travel_reset(character->state.q1, actor, maximum_health, error))))
             return false;
-        if (!reserved_bot && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+        if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_player_attach(arsenal->state.q1, actor,
                 map_source->product->family != QA_GAME_Q1,
                 error))
             return false;
-        if (!reserved_bot && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
+        if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
             (!qa_q2_items_admit_player(arsenal->state.q2, actor, true, error) ||
              !qa_q2_weapon_bind(arsenal->state.q2, actor, QA_Q2_BLASTER, error)))
             return false;
@@ -2509,11 +2519,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     "native Q3 admission lost its actual GAME source or userinfo");
             bool accepted;
             const char *reason;
-            if (!reserved_bot && !application_native_q3_client_connect(map_source, actor,
+            if (!reserved_player && !application_native_q3_client_connect(map_source, actor,
                     record->remote || record->bot ? UINT32_MAX : record->seat, record->userinfo,
                     !round && !carry->q3_client, record->bot, &accepted, &reason, error))
                 return false;
-            if (!reserved_bot && !accepted) {
+            if (!reserved_player && !accepted) {
                 qa_actor_id dropped;
                 const char *drop_reason;
                 bool pending;
@@ -2551,7 +2561,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     false, userinfo, sizeof(userinfo), error)) return false;
             const char *source_info = record->userinfo != NULL ? record->userinfo : userinfo;
             char initial_info[2304];
-            if (!reserved_bot && seat->local && !record->remote && record->userinfo &&
+            if (!reserved_player && seat->local && !record->remote && record->userinfo &&
                 map_source->component.clock.kind == QA_CLOCK_Q3 && !carry->present &&
                 !carry->q3_client && !round) {
                 if (!application_character_q2_initial_skin(application->catalog, choices, seat,
@@ -2559,14 +2569,14 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 source_info = initial_info;
             }
             qa_q2_connection_result connection;
-            if (!reserved_bot && !qa_q2_player_connect(character->state.q2, source_info, seat->bot, &connection, error))
+            if (!reserved_player && !qa_q2_player_connect(character->state.q2, source_info, seat->bot, &connection, error))
                 return false;
-            if (!reserved_bot && !connection.allowed)
+            if (!reserved_player && !connection.allowed)
                 return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
             qa_q2_player_carry q2 = carry->q2;
             q2.inventory = carry->inventory;
             q2.count = carry->count;
-            if ((!reserved_bot && !qa_q2_player_admit(character->state.q2, actor, &(qa_q2_player_admission){
+            if ((!reserved_player && !qa_q2_player_admit(character->state.q2, actor, &(qa_q2_player_admission){
                 .slot = record->client_slot, .seat = seat->id, .userinfo = connection.userinfo,
                 .initialize_inventory = map_source->kind != APPLICATION_PROVIDER_Q1,
                 .use_q2_weapons = arsenal == character,
@@ -2777,12 +2787,12 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 seat->spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
                 seat->spectator, error) || !qa_world_link(application->world, actor, NULL, error))
             return false;
-        if (found && (phase == PLAYER_ADMISSION_BOT_BEGIN || !record->source_begin_pending) &&
+        if (found && (phase == PLAYER_ADMISSION_BEGIN || !record->source_begin_pending) &&
             map_source->kind == APPLICATION_PROVIDER_Q1) {
             if (!q1_finish_first_spawn(application, choices, map_source, character,
-                arsenal, actor, source_point, phase != PLAYER_ADMISSION_BOT_BEGIN, error)) return false;
+                arsenal, actor, source_point, phase != PLAYER_ADMISSION_BEGIN, error)) return false;
         }
-    return phase == PLAYER_ADMISSION_BOT_BEGIN || record->source_begin_pending || record->deferred ||
+    return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
         admit_components(application, actor, error);
 }
 
@@ -3523,7 +3533,7 @@ bool application_players_bot_allocate(qa_application *app,
     application_player_carry carry = {0};
     bool okay = publish_player(app, qa_launch_snapshot_choices(qa_application_launch(app)),
         &seat, &app->players->records[index], &carry, index, false, false, NULL,
-        true, PLAYER_ADMISSION_BOT_RESERVE, NULL, NULL, NULL, error);
+        true, PLAYER_ADMISSION_RESERVE, NULL, NULL, NULL, error);
     app->operation = previous;
     if (!okay) {
         app->players->records[index].retiring = true;
@@ -3573,7 +3583,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
     if (!source_spawn) app->operation = APPLICATION_CONFIGURING;
     bool okay = publish_player(app, qa_launch_snapshot_choices(qa_application_launch(app)),
         &seat, record, &carry, index, false, false, NULL, false,
-        PLAYER_ADMISSION_BOT_BEGIN, NULL, NULL, NULL, error);
+        PLAYER_ADMISSION_BEGIN, NULL, NULL, NULL, error);
     if (okay && app->bots->shared_world)
         okay = application_bot_world_begin(app->bots->shared_world, physical, error);
     if (okay && app->bots->shared_world) {
@@ -3620,6 +3630,14 @@ bool qa_application_remote_player_attach(qa_application *application,
     application_provider *source = application->players->map_provider;
     if (source == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "remote admission requires its actual game source");
+    if (source->kind == APPLICATION_PROVIDER_Q1 &&
+        source->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        bool allowed;
+        if (!application_native_q1_qw_admission(application, request->spectator, &allowed, error))
+            return false;
+        if (!allowed)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+    }
     uint32_t source_offset = source->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
     uint32_t character_offset = character->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
     application_unified_source source_receipt;
@@ -3678,7 +3696,9 @@ bool qa_application_remote_player_attach(qa_application *application,
     bool ok = publish_player(application, qa_launch_snapshot_choices(qa_application_launch(application)),
                               &seat, &application->players->records[index], &carry, index,
                               false, false, NULL, request->defer_source_begin,
-                              PLAYER_ADMISSION_COMPLETE,
+                              request->defer_source_begin && source->kind == APPLICATION_PROVIDER_Q1 &&
+                                  source->component.clock.kind == QA_CLOCK_QUAKEWORLD
+                                  ? PLAYER_ADMISSION_RESERVE : PLAYER_ADMISSION_COMPLETE,
                               NULL, &accepted, &denial, error);
     application->operation = APPLICATION_IDLE;
     if (!ok) {
@@ -3714,9 +3734,13 @@ bool qa_application_remote_player_detach(qa_application *application,
     qa_actor_id actor = record->actor;
     application_provider *character = record->character;
     application_provider *source = application->players->map_provider;
-    if (source && source->kind == APPLICATION_PROVIDER_Q3)
+    if (source && source->kind == APPLICATION_PROVIDER_Q1 &&
+        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator &&
+        !record->source_begin_pending)
+        ok = application_native_q1_spectator_disconnect(source, actor, error);
+    if (ok && source && source->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_disconnect(source, actor, error);
-    else ok = application_rankings_disconnect(application, actor, error);
+    else if (ok) ok = application_rankings_disconnect(application, actor, error);
     if (ok && source && source->kind == APPLICATION_PROVIDER_Q2)
         ok = qa_q2_player_disconnect(source->state.q2, actor, error);
     if (ok && source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine)
@@ -3725,6 +3749,9 @@ bool qa_application_remote_player_detach(qa_application *application,
         ok = qa_q2_player_disconnect(character->state.q2, actor, error);
     if (ok && character->kind == APPLICATION_PROVIDER_NATIVE && character->state.native.q2_engine && character != source)
         ok = application_native_q2_actor_disconnect(character, actor, error);
+    if (ok && source && source->kind==APPLICATION_PROVIDER_Q1 &&
+        source->component.clock.kind==QA_CLOCK_QUAKEWORLD)
+        ok=application_native_q1_qw_retire_capture(source,actor,error);
     if (ok) record->retiring = true;
     if (ok && qa_actors_get(qa_session_actors(application->session), actor))
         ok = qa_session_release(application->session, actor, error);
@@ -3767,6 +3794,9 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
         okay=qa_q2_player_disconnect(source->state.q2,actor,error);
     if(okay && character->kind==APPLICATION_PROVIDER_Q2 && character!=source)
         okay=qa_q2_player_disconnect(character->state.q2,actor,error);
+    if(okay && source->kind==APPLICATION_PROVIDER_Q1 &&
+       source->component.clock.kind==QA_CLOCK_QUAKEWORLD && !record->source_begin_pending)
+        okay=application_native_q1_qw_retire_capture(source,actor,error);
     if(okay) {
         for(size_t i=0;i<application->players->count;++i)
             if(qa_actor_id_equal(application->players->records[i].actor,actor)) application->players->records[i].retiring=true;
@@ -4346,7 +4376,24 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     qa_actor_id actor = record->actor;
     application->operation = APPLICATION_CONFIGURING;
     bool ok = true;
-    if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q3)
+    if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_launch_seat launch_seat = {.id = record->seat, .actor = record->configured_actor,
+            .name = record->name, .team = record->team, .bot = record->bot,
+            .spectator = record->spectator};
+        application_player_carry carry = {0};
+        size_t index = (size_t)(record - application->players->records);
+        ok = record->spectator && application->players->map_provider->component.clock.kind == QA_CLOCK_QUAKEWORLD
+            ? application_native_q1_spectator_begin(application->players->map_provider, actor, error)
+            : publish_player(application, qa_launch_snapshot_choices(qa_application_launch(application)),
+                &launch_seat, record, &carry, index, false, false, NULL, false,
+                PLAYER_ADMISSION_BEGIN, NULL, NULL, NULL, error);
+        if (ok && application->modes) {
+            qa_string_id name;
+            ok = qa_strings_intern_cstr(qa_session_strings(application->session), record->name, &name, error) &&
+                qa_modes_player(application->modes, &(qa_match_player){.actor = actor,
+                    .name = name, .connected = true, .bot = record->bot}, error);
+        }
+    } else if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_begin(application->players->map_provider,
                                                 actor, NULL, NULL, error);
     for (size_t i = 0; ok && i < application->provider_count; ++i) {

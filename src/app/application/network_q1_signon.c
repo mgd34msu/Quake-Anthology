@@ -24,7 +24,8 @@ static application_provider *source_owner(const qa_application *app, qa_actor_ow
 static bool native_source(application_provider *provider) {
     return provider && provider->kind == APPLICATION_PROVIDER_Q1 &&
         provider == application_world_provider(provider->application, QA_ROLE_ENTITIES, "") &&
-        provider->launch && provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE &&
+        provider->launch && (provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE ||
+        provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD) &&
         qa_q1_wire_enabled(provider->state.q1);
 }
 static bool event_valid(const qa_application_protocol_event *e, qa_error *error)
