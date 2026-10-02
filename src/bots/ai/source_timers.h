@@ -9,6 +9,9 @@ static inline bool bot_ai_respawn_wait(const bot_ai_state *s) {
 static inline float bot_ai_enter_time(const bot_ai_state *s) {
     return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ENTER_TIME);
 }
+static inline float bot_ai_think_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_THINK_TIME);
+}
 static inline void bot_ai_respawn_wait_set(bot_ai_state *s,bool value) {
     bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_RESPAWN_WAIT,value?1u:0u);
 }

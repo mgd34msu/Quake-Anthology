@@ -211,7 +211,7 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
                 }
             }
         }
-        s->blocked_time+=s->view.think_time;
+        s->blocked_time+=bot_ai_think_time(s);
         if(s->blocked_time>1) {
             float x,y;
             if(!bot_ai_random(b,&x,e) || !bot_ai_random(b,&y,e)) return false;
@@ -230,7 +230,7 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
         else if(qa_vec_length(result->direction)>0) bot_ai_view_ideal_set(s,bot_ai_angles(result->direction));
         qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
     }
-    if(result->flags&QA_BOT_MOVE_WEAPON) s->view.weapon=result->weapon;
+    if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
     return true;
 }
 static bool enemy_state(qa_bots *b, bot_ai_state *s, bool *alive, bool *visible, qa_error *e) {
@@ -447,7 +447,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                         if(!bot_ai_activation_top(s,&index,&have,e)) return false;
                         if(!have) return true;
                         if(weapon<0) weapon=0;
-                        bot_ai_activation_weapon_set(s,index,weapon);s->view.weapon=weapon;
+                        bot_ai_activation_weapon_set(s,index,weapon);bot_ai_weapon_number_set(s,weapon);
                     }
                 }
                 return true;

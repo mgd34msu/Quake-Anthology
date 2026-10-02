@@ -9,6 +9,7 @@
 #include "source_team_policy.h"
 #include "source_goal.h"
 #include "source_storage.h"
+#include "source_view.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -792,7 +793,7 @@ static bool aggression(qa_bots *b, bot_ai_state *s, float *out, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons=NULL;size_t count=0;void *lease=NULL;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
     bool valid=!count || weapons;
-    if(valid && alive(b,s)) *out=qa_bot_knowledge_aggression(weapons,count,s->view.weapon,bot_ai_inventory(s));
+    if(valid && alive(b,s)) *out=qa_bot_knowledge_aggression(weapons,count,bot_ai_weapon_number(s),bot_ai_inventory(s));
     b->services.arsenal_end(b->services.context,lease);
     return valid?true:bot_ai_fail(e,"Source aggression received a missing admitted arsenal");
 }

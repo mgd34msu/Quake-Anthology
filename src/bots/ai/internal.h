@@ -38,11 +38,19 @@ typedef struct bot_source_goals {
     qa_bot_goal red_flag, blue_flag, neutral_flag, red_obelisk, blue_obelisk, neutral_obelisk;
     int32_t game_type, max_clients, max_bsp_model_index;
 } bot_source_goals;
+typedef struct bot_ai_view {
+    qa_actor_id actor, enemy;
+    uint32_t client;
+    int32_t source_client, entity;
+    qa_mode_id mode;
+    qa_bot_decision decision;
+    qa_bot_order order;
+} bot_ai_view;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
     qa_bot_source_span source_span;
-    qa_bot_view view;
+    bot_ai_view view;
     qa_bot_player player;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;

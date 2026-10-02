@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=29;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=30;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==29?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==30?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -27,16 +27,16 @@ static bool goal_fields(qa_source_save_io *io, qa_bot_goal *goal)
     V(goal->origin); I(goal->area); V(goal->mins); V(goal->maxs);
     I(goal->entity); I(goal->number); I(goal->flags); I(goal->item_info); return true;
 }
-static bool view_fields(qa_source_save_io *io, qa_bot_view *view)
+static bool view_fields(qa_source_save_io *io, bot_ai_view *view)
 {
     uint32_t decision = view->decision, order = view->order.kind, status = view->order.status;
-    A(view->actor); A(view->enemy); U(view->client); I(view->source_client); I(view->entity); I(view->weapon);
+    A(view->actor); A(view->enemy); U(view->client); I(view->source_client); I(view->entity);
     U(view->mode.slot); L(view->mode.generation);
     U(decision); U(order); U(status);
     if (decision > QA_BOT_BATTLE_NEARBY || order > QA_BOT_ORDER_FOLLOW || status > QA_BOT_ORDER_ACTIVE) return false;
     view->decision = (qa_bot_decision)decision; view->order.kind = (qa_bot_order_kind)order;
     view->order.status = (qa_bot_order_status)status;
-    V(view->order.point); A(view->order.target); F(view->enter_time); F(view->think_time); return true;
+    V(view->order.point); A(view->order.target); return true;
 }
 static bool player_fields(qa_source_save_io *io, qa_bot_player *player)
 {

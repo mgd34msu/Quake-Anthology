@@ -9,7 +9,7 @@ bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t we
     if(!bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_VIEW_ANGLES,&angles,true,e) ||
        !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e) ||
        !bot_ai_storage_i32(b,state,QA_BOT_SOURCE_WEAPON_NUMBER,&weapon,true,e)) return false;
-    state->view.weapon=weapon;return true;
+    return true;
 }
 
 bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
@@ -20,8 +20,7 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
         .source_span=s->source_span,
         .view = {.actor = s->view.actor, .client = s->view.client,
         .source_client=s->view.source_client,
-        .entity = s->view.entity, .mode = s->view.mode, .decision = QA_BOT_SEEK_LONG_TERM,
-        .enter_time = s->view.enter_time}, .player = s->player,
+        .entity = s->view.entity, .mode = s->view.mode, .decision = QA_BOT_SEEK_LONG_TERM}, .player = s->player,
         .character = s->character, .goals = s->goals, .weapons = s->weapons,
         .chat = s->chat, .movement = s->movement, .team_arena = s->team_arena,
         .command_sequence = s->command_sequence, .admitted_skill=s->admitted_skill,

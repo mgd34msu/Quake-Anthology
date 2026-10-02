@@ -125,7 +125,6 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_LOCAL_TIME,&local_time,false,e)) return false;
     local_time+=elapsed;
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_LOCAL_TIME,&local_time,true,e)) return false;
-    s->view.think_time = elapsed;
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_THINK_TIME,&elapsed,true,e)) return false;
     int32_t height;
     bool ok=bot_ai_source_player_vector(b,s,BOT_PS_ORIGIN,&s->player.origin,e);
@@ -174,7 +173,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
         if(ok && !intermission && !observer) ok=bot_ai_source_team_policy(b,s,e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
-        if(ok && !bot_ai_enter_game_chat(s) && s->view.enter_time>b->time-8) {
+        if(ok && !bot_ai_enter_game_chat(s) && bot_ai_enter_time(s)>b->time-8) {
             bool chat;
             ok=bot_ai_source_chat_enter_game(b,s,&chat,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -198,7 +197,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     }
 finished:
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
-        ok = qa_bot_actions_weapon(actions, s->view.client, s->view.weapon, e);
+        ok = qa_bot_actions_weapon(actions, s->view.client, bot_ai_weapon_number(s), e);
     if(!ok) return false;
     if(!delta_angles(b,s,delta,e)) return false;
     bot_ai_view_delta(s,delta,false);

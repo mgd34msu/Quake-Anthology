@@ -91,7 +91,7 @@ static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
         float propensity,random;
         SOURCE_CALL(bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&propensity,e));
         SOURCE_CALL(bot_ai_random(b,&random,e));
-        if(random<s->view.think_time*propensity) {
+        if(random<bot_ai_think_time(s)*propensity) {
             float span=propensity*15.0f;
             bot_ai_attack_crouch_time_set(s,(b->time+5.0f)+span);
         }
@@ -236,7 +236,7 @@ bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error
     if(random>camper) {bot_ai_camp_time_set(s,b->time);return true;}
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
-    float aggression=alive(b,s)?qa_bot_knowledge_aggression(weapons,count,s->view.weapon,bot_ai_inventory(s)):0;
+    float aggression=alive(b,s)?qa_bot_knowledge_aggression(weapons,count,bot_ai_weapon_number(s),bot_ai_inventory(s)):0;
     b->services.arsenal_end(b->services.context,lease);
     if(!alive(b,s) || aggression<50) return true;
     /* Source ai_dmq3.c indexes inventory[INVENTORY_ROCKETS < 10]. */
@@ -337,14 +337,14 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
                 else {
                     float random;
                     SOURCE_CALL(bot_ai_random(b,&random,e));
-                    if(random<s->view.think_time*.05f) SOURCE_CALL(action(b,s,QA_BOT_GESTURE,e));
+                    if(random<bot_ai_think_time(s)*.05f) SOURCE_CALL(action(b,s,QA_BOT_GESTURE,e));
                 }
             }
             if(bot_ai_arrive_time(s)>b->time-2.0f) look_at(s,info.state.origin);
             else {
                 float random;
                 SOURCE_CALL(bot_ai_random(b,&random,e));
-                if(random<s->view.think_time*.8f) SOURCE_CALL(roam_view(b,s,e));
+                if(random<bot_ai_think_time(s)*.8f) SOURCE_CALL(roam_view(b,s,e));
             }
             bool air;
             qa_bot_goal team_goal=bot_ai_team_goal(s);
@@ -416,7 +416,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
     }
     float random;
     SOURCE_CALL(bot_ai_random(b,&random,e));
-    if(random<s->view.think_time*.8f) SOURCE_CALL(roam_view(b,s,e));
+    if(random<bot_ai_think_time(s)*.8f) SOURCE_CALL(roam_view(b,s,e));
     SOURCE_CALL(crouch(b,s,e));
     if(bot_ai_attack_crouch_time(s)>b->time) SOURCE_CALL(action(b,s,QA_BOT_CROUCH,e));
     bool in_water;
@@ -515,7 +515,7 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
             if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,e)) return false;
             if(!alive(b,s)) {b->services.arsenal_end(b->services.context,lease);return true;}
             qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(NULL);
-            for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==s->view.weapon) {
+            for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {
                 tactics=qa_bot_weapon_tactics_for(weapons+i);break;
             }
             b->services.arsenal_end(b->services.context,lease);

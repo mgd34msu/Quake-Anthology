@@ -443,7 +443,7 @@ bool bot_ai_source_chat_random(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e)
     if(b->source_goals.game_type==1 || bot_ai_long_term_goal(s)==BOT_LTG_TEAM_HELP ||
        bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY || bot_ai_long_term_goal(s)==BOT_LTG_RUSH_BASE) return true;
     float chance,random;CHAT_CALL(characteristic(b,s,SOURCE_CHAT_RANDOM,&chance,e));
-    CHAT_CALL(bot_ai_random(b,&random,e));volatile float limit=s->view.think_time*.1f;
+    CHAT_CALL(bot_ai_random(b,&random,e));volatile float limit=bot_ai_think_time(s)*.1f;
     if(random>limit) return true;
     if(!b->controls.fast_chat) {
         CHAT_CALL(bot_ai_random(b,&random,e));if(random>chance) return true;

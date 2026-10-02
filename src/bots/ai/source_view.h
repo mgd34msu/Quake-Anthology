@@ -4,6 +4,12 @@
 #include "source_alias.h"
 
 /* Setup, live-frame admission and restore qualify this same GAME allocation. */
+static inline int32_t bot_ai_weapon_number(const bot_ai_state *state) {
+    return bot_source_i32_read(state->source_span.data+QA_BOT_SOURCE_WEAPON_NUMBER);
+}
+static inline void bot_ai_weapon_number_set(bot_ai_state *state,int32_t value) {
+    bot_source_i32_write(state->source_span.data+QA_BOT_SOURCE_WEAPON_NUMBER,value);
+}
 static inline qa_vec3 bot_ai_view_angles(const bot_ai_state *state) {
     return bot_source_vec3_read(state->source_span.data+QA_BOT_SOURCE_VIEW_ANGLES);
 }

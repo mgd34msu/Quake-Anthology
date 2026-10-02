@@ -3,6 +3,8 @@
 #include "source_activation.h"
 #include "source_storage.h"
 #include "source_library.h"
+#include "source_view.h"
+#include "source_timers.h"
 #include <stdio.h>
 
 bool bot_ai_fail(qa_error *e, const char *message) {
@@ -399,7 +401,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         if(s->view.client<b->client_capacity && b->clients[s->view.client]==s) b->clients[s->view.client]=NULL;
     }
     s->acquired_source_client=(uint32_t)source_client;
-    s->view=(qa_bot_view){.actor=a->actor,.client=a->client,.entity=a->entity,
+    s->view=(bot_ai_view){.actor=a->actor,.client=a->client,.entity=a->entity,
         .source_client=source_client,.mode=a->mode,.decision=QA_BOT_SEEK_LONG_TERM};
     s->team_arena=a->team_arena;s->admitted_skill=a->skill;
     free(s->admitted_character);free(s->admitted_name);
@@ -419,7 +421,6 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     }
     if (ok) {
         s->inuse=true;
-        s->view.enter_time=b->time;
         b->source_clients[source_client]=a->client+1;
         bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_PUBLISHED);
         ok=bot_ai_source_setup_published(b,s,a->restart,b->source_match.interbreed,e);
@@ -467,7 +468,10 @@ bool qa_bots_actor_released(qa_bots *b, const qa_actor_record *released, qa_erro
 bool qa_bots_read(const qa_bots *b, qa_actor_id actor, qa_bot_view *out, qa_error *e) {
     bot_ai_state *s = bot_ai_actor(b, actor);
     if (!s || !s->inuse || !out || !bot_ai_live(b, actor)) return bot_ai_fail(e, "native bot actor is not live");
-    *out = s->view;
+    *out=(qa_bot_view){.actor=s->view.actor,.enemy=s->view.enemy,.client=s->view.client,
+        .source_client=s->view.source_client,.entity=s->view.entity,.weapon=bot_ai_weapon_number(s),
+        .mode=s->view.mode,.decision=s->view.decision,.order=s->view.order,
+        .enter_time=bot_ai_enter_time(s),.think_time=bot_ai_think_time(s)};
     out->enemy=bot_ai_enemy_actor(b,s);
     return true;
 }

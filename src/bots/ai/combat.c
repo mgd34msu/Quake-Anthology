@@ -172,21 +172,21 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (weapon_state == 1 || weapon_state == 2) return true;
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
-    int32_t choice = s->view.weapon;
+    int32_t choice = bot_ai_weapon_number(s);
     bool ok = s->retired || !bot_ai_live(b, s->view.actor) ||
         qa_bot_knowledge_choose(b->runtime, s->weapons, weapons, count,
             bot_ai_inventory(s), b->inventory_scratch, &choice, e);
     b->services.arsenal_end(b->services.context, lease);
     if (ok && !s->retired && bot_ai_live(b, s->view.actor)) {
-        if (s->view.weapon != choice) bot_ai_weapon_change_time_set(s,b->time);
-        s->view.weapon = choice;
+        if (bot_ai_weapon_number(s) != choice) bot_ai_weapon_change_time_set(s,b->time);
+        bot_ai_weapon_number_set(s,choice);
     }
     return ok;
 }
 bool bot_ai_retreat(qa_bots *b, bot_ai_state *s, bool *retreat, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
-    float aggression = qa_bot_knowledge_aggression(weapons, count, s->view.weapon, bot_ai_inventory(s));
+    float aggression = qa_bot_knowledge_aggression(weapons, count, bot_ai_weapon_number(s), bot_ai_inventory(s));
     b->services.arsenal_end(b->services.context, lease);
     *retreat = aggression < 50 || s->player.carrying_objective;
     return true;
@@ -343,7 +343,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if (!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     bool melee=false;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==s->view.weapon) melee=weapons[i].melee;
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) melee=weapons[i].melee;
     b->services.arsenal_end(b->services.context,lease);
     float desired=melee?0:140,range=melee?0:40;
     qa_bot_moves *moves=qa_bot_runtime_moves(b->runtime);bool moved;
@@ -352,7 +352,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(distance<desired-range) return qa_bot_moves_direction(moves,s->movement,backward,400,type,&moved,e);
         return true;
     }
-    bot_ai_attack_strafe_time_set(s,bot_ai_attack_strafe_time(s)+s->view.think_time);
+    bot_ai_attack_strafe_time_set(s,bot_ai_attack_strafe_time(s)+bot_ai_think_time(s));
     float change=.4f+(1-skill)*.2f;
     float random;
     if(skill>.7f) {
@@ -398,7 +398,7 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     qa_bot_weapon_knowledge selected={0};bool exists=false;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==s->view.weapon) {selected=weapons[i];exists=true;break;}
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {selected=weapons[i];exists=true;break;}
     b->services.arsenal_end(b->services.context,lease);
     if(!exists || s->retired || !bot_ai_live(b,s->view.actor)) return true;
     qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(&selected);
