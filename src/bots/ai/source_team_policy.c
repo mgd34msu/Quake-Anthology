@@ -150,6 +150,8 @@ static bool say_order(qa_bots *b, bot_ai_state *s, int32_t client, bool always, 
     char text[256],name[36],message[512];
     if(!qa_bot_chat_take_message(chat,text,sizeof(text),e)) return false;
     if(!alive(b,s)) return true;
+    if(!bot_ai_source_client(b,s,&self,e)) return false;
+    if(!alive(b,s)) return true;
     if(!bot_ai_client_name(b,self,name,sizeof(name),true,e)) return false;
     if(!alive(b,s)) return true;
     int length=snprintf(message,sizeof(message),"\x19(%s\x19)\x19: %s",name,text);
@@ -175,9 +177,9 @@ static bool follow_carrier(qa_bots *b, bot_ai_state *s, int32_t teammate,
                             const char *carrier, qa_error *e) {
     if(!alive(b,s)) return true;
     int32_t self;char name[36];
-    if(!bot_ai_source_client(b,s,&self,e)) return false;
-    if(!alive(b,s)) return true;
     if(!bot_ai_client_name(b,teammate,name,sizeof(name),true,e)) return false;
+    if(!alive(b,s)) return true;
+    if(!bot_ai_source_client(b,s,&self,e)) return false;
     if(!alive(b,s)) return true;
     bool own=bot_ai_flag_carrier(s)==self;
     if(!chat_initial(b,s,own?"cmd_accompanyme":"cmd_accompany",name,own?NULL:carrier,e) ||

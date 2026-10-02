@@ -10,6 +10,7 @@
 #include "source_timers.h"
 #include "source_behavior_state.h"
 #include "source_selectors.h"
+#include "source_storage.h"
 
 enum {
     SOURCE_CHAT_INSULT=24, SOURCE_CHAT_MISC=25, SOURCE_CHAT_START_END=26,
@@ -97,8 +98,8 @@ static bool ranked_name(qa_bots *b,bot_ai_state *s,bool first,char out[32],qa_er
 static bool opponent_name(qa_bots *b,bot_ai_state *s,char out[32],qa_error *e) {
     out[0]=0;int32_t max,self,opponents[64],count=0;
     CHAT_CALL(maximum(b,&b->source_chat.opponent_maxclients,&max,e));
-    CHAT_CALL(bot_ai_source_client(b,s,&self,e));
     for(int32_t client=0;client<max;++client) {
+        CHAT_CALL(bot_ai_source_client(b,s,&self,e));
         if(client==self) continue;
         bool present;CHAT_CALL(active(b,client,&present,e));if(!present) continue;
         bool same;CHAT_CALL(bot_ai_source_same_team(b,s,client,&same,e));
@@ -167,8 +168,9 @@ static bool observer(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     CHAT_CALL(bot_ai_source_team(b,self,&team,e));*out=team==3;return true;
 }
 bool bot_ai_source_visible_enemies(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
-    *out=false;int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));
+    *out=false;
     for(int32_t client=0;client<64;++client) {
+        int32_t self;CHAT_CALL(bot_ai_source_client(b,s,&self,e));
         if(client==self) continue;
         qa_bot_entity_info info;CHAT_CALL(observation(b,client,&info,e));
         if(!info.valid) continue;
@@ -176,7 +178,8 @@ bool bot_ai_source_visible_enemies(qa_bots *b,bot_ai_state *s,bool *out,qa_error
             qa_bot_source_player_state current;CHAT_CALL(player(b,info.number,&current,e));
             if(current.has_player && current.pm_type!=0) continue;
         }
-        if(info.number==s->view.entity) continue;
+        int32_t entity;CHAT_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+        if(info.number==entity) continue;
         uint32_t flags=(1u<<7)|(1u<<8)|(b->services.team_arena?(1u<<9):0);
         bool invisible=!((uint32_t)info.state.powerups&flags) && ((uint32_t)info.state.powerups&(1u<<4));
         if(invisible && !(info.state.flags&0x100)) continue;
@@ -199,10 +202,14 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     if(type==3) {*out=true;return true;}
     static const int powerups[]={QA_BOT_INV_QUAD,QA_BOT_INV_HASTE,QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT};
     for(size_t i=0;i<5;++i) if(bot_ai_inventory_value(s,powerups[i])!=0) return true;
-    qa_vec3 below=bot_ai_origin(s),above=below;int32_t point;
-    below.z-=24.0f;above.z+=32.0f;
-    qa_actor_id pass=bot_ai_source_actor(b,s->view.entity);
+    qa_vec3 below=bot_ai_origin(s);int32_t point,entity;
+    below.z-=24.0f;
+    CHAT_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+    qa_actor_id pass=bot_ai_source_actor(b,entity);
     CHAT_CALL(contents(b,below,pass,&point,e));if(point&(8|16)) return true;
+    qa_vec3 above=bot_ai_origin(s);above.z+=32.0f;
+    CHAT_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+    pass=bot_ai_source_actor(b,entity);
     CHAT_CALL(contents(b,above,pass,&point,e));if(point&(8|16|32)) return true;
     qa_bot_navigation *nav=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
     if(!nav) return bot_ai_fail(e,"Source chat position lacks its actual navigation");
