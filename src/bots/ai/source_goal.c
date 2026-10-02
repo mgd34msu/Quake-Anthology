@@ -310,7 +310,8 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
         qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
         if(qa_vec_dot(direction,direction)<bot_ai_formation_distance(s)*bot_ai_formation_distance(s)) {
             qa_bot_entity_info self;
-            SOURCE_CALL(observation(b,s->view.entity,&self,e));
+            int32_t entity;SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+            SOURCE_CALL(observation(b,entity,&self,e));
             const qa_bot_entity_update *a=&self.state,*c=&info.state;
             if(a->origin.z+a->maxs.z>c->origin.z+c->mins.z &&
                a->origin.x+a->maxs.x>(c->origin.x+c->mins.x)-4.0f &&
@@ -428,8 +429,9 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
     bool in_water;
     SOURCE_CALL(swimming(b,s,&in_water,e));
     if(in_water) bot_ai_attack_crouch_time_set(s,b->time-1.0f);
-    int32_t point_contents;
-    SOURCE_CALL(contents(b,bot_ai_eye(s),bot_ai_source_actor(b,s->view.entity),&point_contents,e));
+    int32_t point_contents,entity;
+    SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
+    SOURCE_CALL(contents(b,bot_ai_eye(s),bot_ai_source_actor(b,entity),&point_contents,e));
     if(point_contents&SOURCE_LIQUID) {
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER) {
             SOURCE_CALL(chat(b,s,"camp_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));

@@ -505,10 +505,12 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     char name[256],area[256];int32_t client,self;
     if(!variable(m,VAR_NAME,name,e) || !find_name(b,s,name,false,&client,e) ||
        !bot_ai_source_client(b,s,&self,e)) return false;
+    if(!alive(b,s)) return true;
     if(client<0) return send_chat(b,s,"whois",name,NULL,self,QA_BOT_CHAT_TEAM,e);
     if(!variable(m,VAR_AREA,area,e)) return false;
     if(m->subtype&MATCH_THERE) {
-        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)bot_ai_area(s),bot_ai_origin(s));
+        int32_t entity;if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e)) return false;
+        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,entity,(int32_t)bot_ai_area(s),bot_ai_origin(s));
     } else if(m->subtype&MATCH_HERE) {
         if(client==self) return true;
         if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_TEAM_GOAL,e)) return false;
