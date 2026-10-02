@@ -272,22 +272,47 @@ bool qa_bot_chat_log_initial(qa_bot_log *log, qa_bot_chat_asset *asset, qa_error
         return false;
     }
     if (!log) return true;
-    if(asset->initial_source && !chat_initial_asset_refresh(asset,error)) return false;
+    if (!asset->initial_source || !asset->initial_source->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Initial chat log requires its actual published source asset");
+        return false;
+    }
     qa_bot_chat_asset_retain(asset);
-    const qa_bot_chat_asset_view *view = qa_bot_chat_asset_read(asset);
+    const bot_chat_initial *chat = &asset->initial_source->initial;
     chat_log_output output = {.log = log};
-    bool okay = write_text(&output, "{", error);
-    for (size_t index = 0; okay && index < view->list_count; ++index) {
-        const qa_bot_chat_list *list = view->lists + index;
-        okay = write_format(&output, error, " type \"%s\"", list->name) &&
-            write_text(&output, " {", error) &&
-            write_format(&output, error, "  numchatmessages = %u", list->messages.count);
-        for (uint32_t message = 0; okay && message < list->messages.count; ++message) {
-            const char *text;
-            okay=chat_asset_message_text(asset,list->messages.first+message,&text,error) &&
-                write_format(&output, error, "  \"%s\"",text);
+    uint32_t type = 0;
+    bool okay = write_text(&output, "{", error) && bot_chat_initial_first(chat, &type, error);
+    for (size_t seen = 0; okay && type; ++seen) {
+        if (seen >= chat->type_count) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Initial chat log type list cycles");
+            okay = false;
+            break;
         }
-        if (okay) okay = write_text(&output, " }", error);
+        qa_bot_memory_span record;
+        okay = bot_chat_initial_type(chat, type, &record, error);
+        if (!okay) break;
+        char name[33];
+        memcpy(name, record.data, 32);
+        name[32] = 0;
+        int32_t count;
+        uint32_t message = 0;
+        okay = write_format(&output, error, " type \"%s\"", name) &&
+            write_text(&output, " {", error) &&
+            bot_chat_initial_type_count(chat, type, &count, error) &&
+            write_format(&output, error, "  numchatmessages = %d", count) &&
+            bot_chat_initial_type_first(chat, type, &message, error);
+        for (size_t visited = 0; okay && message; ++visited) {
+            if (visited >= chat->message_count) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Initial chat log message list cycles");
+                okay = false;
+                break;
+            }
+            qa_bytes text;
+            okay = bot_chat_initial_message_text(chat, message, &text, error) &&
+                write_format(&output, error, "  \"%s\"", (const char *)text.data) &&
+                bot_chat_initial_message_next(chat, message, &message, error);
+        }
+        if (okay) okay = write_text(&output, " }", error) &&
+            bot_chat_initial_type_next(chat, type, &type, error);
     }
     if (okay) okay = write_text(&output, "}", error);
     qa_bot_chat_asset_release(asset);
