@@ -456,8 +456,10 @@ static bool client(application_native_q1_wire_source *source, qa_actor_id actor,
     uint32_t *slot, qa_error *error) {
     uint32_t physical;
     if (!qa_q1_native_client_slot(source->provider->state.q1, actor, &physical, error) ||
-        physical >= source->receipt.client_slots)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 recipient has no physical source client row");
+        physical >= source->receipt.client_slots) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 recipient has no physical source client row");
+        return false;
+    }
     *slot = physical + 1;
     return true;
 }

@@ -4,8 +4,10 @@
 bool frontend_unified_media_inventory_count(const qa_frontend *f,size_t *out,qa_error *error)
 {
     size_t replicas=frontend_remote_unified_count(f);
-    if(!f || !out || replicas>SIZE_MAX/2)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified media inventory requires its actual bounded replica roster");
+    if(!f || !out || replicas>SIZE_MAX/2) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Unified media inventory requires its actual bounded replica roster");
+        return false;
+    }
     *out=replicas*2; return true;
 }
 bool frontend_unified_media_inventory_at(const qa_frontend *f,size_t ordinal,

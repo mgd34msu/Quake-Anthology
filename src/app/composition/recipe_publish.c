@@ -60,14 +60,16 @@ static bool physical_mount(const recipe_view *view, qa_vfs_mount_info info,
             }
         }
     }
-    return recipe_fail(error, "Actual content mount has no installed catalog owner");
+    recipe_fail(error, "Actual content mount has no installed catalog owner");
+    return false;
 }
 static bool mount_index(const qa_vfs *files, qa_mount_id id, size_t *out, qa_error *error)
 {
     for (size_t i = 0; i < qa_vfs_mount_count(files); ++i) { qa_vfs_mount_info info;
         if (qa_vfs_mount_at(files, i, &info) && info.id == id) { *out = i; return true; }
     }
-    return recipe_fail(error, "Recipe refers to a retired content mount");
+    recipe_fail(error, "Recipe refers to a retired content mount");
+    return false;
 }
 static bool order_write(qa_json_writer *w, const qa_vfs *files, const qa_mount_id *order, size_t count, qa_error *error)
 {
@@ -184,7 +186,10 @@ static bool held_sidecar_add(qa_executable_recipe *r, qa_product_id product,
     if (!source || !source->opening_present || view >= r->view_count ||
         !qa_vfs_acquisition_retained(r->views[view].files, source, error) ||
         qa_resource_pool_find(qa_vfs_resources(r->views[view].files), source->resource_id) != held->resource ||
-        r->resource_count == RECIPE_MAX_RECORDS) return recipe_fail(error, "Source sidecar lost its actual retained opening");
+        r->resource_count == RECIPE_MAX_RECORDS) {
+        recipe_fail(error, "Source sidecar lost its actual retained opening");
+        return false;
+    }
     recipe_resource *entry = calloc(1, sizeof(*entry));
     if (!entry) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining historical sidecar transfer"); return false; }
     qa_vfs_acquisition *receipt = &entry->acquisition;

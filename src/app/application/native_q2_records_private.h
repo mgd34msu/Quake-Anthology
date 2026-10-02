@@ -82,7 +82,8 @@ struct application_native_q2_records {
     nqr_pose_field view_height,crouch;
     uint32_t crouch_mask;
 };
-bool nqr_fail(qa_error *,qa_status,const char *);
+static inline bool nqr_fail(qa_error *e,qa_status code,const char *message)
+{ qa_error_set(e,code,0,"%s",message); return false; }
 bool nqr_current(application_native_q2_records *,qa_error *);
 bool nqr_live(application_native_q2_records *,qa_actor_id);
 nqr_actor *nqr_find(application_native_q2_records *,qa_actor_id);

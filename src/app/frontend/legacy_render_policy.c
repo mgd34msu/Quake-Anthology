@@ -11,8 +11,10 @@
 static bool number(const qa_cvars *registry, const char *name, float *out, qa_error *error)
 {
     const qa_cvar_view *row = qa_cvars_find(registry, name);
-    if (!row || !isfinite(row->number))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer lost its canonical setting");
+    if (!row || !isfinite(row->number)) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer lost its canonical setting");
+        return false;
+    }
     *out = row->number;
     return true;
 }
@@ -63,8 +65,10 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
             float saturate;
             const qa_cvar_view *mono = qa_cvars_find(registry, "gl_monolightmap");
             if (!number(registry, "gl_modulate", &value.lighting.modulate, error) ||
-                !number(registry, "gl_saturatelighting", &saturate, error) || !mono || !mono->value)
-                return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 policy lost its reached lighting setting");
+                !number(registry, "gl_saturatelighting", &saturate, error) || !mono || !mono->value) {
+                frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 policy lost its reached lighting setting");
+                return false;
+            }
             value.lighting.saturate = saturate != 0;
             value.lighting.monolightmap = (uint8_t)mono->value[0];
             const qa_cvar_view *flares = qa_cvars_find(registry, "cl_flares");

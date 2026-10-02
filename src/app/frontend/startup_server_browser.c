@@ -51,7 +51,7 @@ struct frontend_startup_server_browser {
     bool busy, retiring;
 };
 static bool fail(qa_error *e,qa_status code,const char *message)
-{ return frontend_fail(e,code,message); }
+{ frontend_fail(e,code,message); return false; }
 static double now(const frontend_startup_server_browser *o)
 { return (double)o->seat->frontend->time_ns/1000000.0; }
 static bool bound(const frontend_startup_server_browser *o)

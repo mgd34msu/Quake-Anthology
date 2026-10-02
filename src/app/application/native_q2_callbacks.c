@@ -99,7 +99,7 @@ struct application_native_q2_callbacks {
     qa_json_id active_call;
 };
 static bool fail(qa_error *e, const char *text)
-{ return application_fail(e, QA_ERROR_FORMAT, text); }
+{ application_fail(e, QA_ERROR_FORMAT, text); return false; }
 static qa_native_instance *instance(application_native_q2_callbacks *o)
 { return o->engine->provider->state.native.host ? qa_native_host_instance(o->engine->provider->state.native.host) : NULL; }
 static bool current(application_native_q2_callbacks *o, qa_error *e)

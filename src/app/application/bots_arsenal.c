@@ -139,7 +139,10 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
 bool application_bot_arsenal(void *opaque,qa_actor_id actor,const qa_bot_weapon_knowledge **out,
                             size_t *length,void **lease,qa_error *error) {
     application_bots *bots=opaque;
-    if(bots->arsenal_leases) return application_fail(error,QA_ERROR_ARGUMENT,"bot arsenal observation is already borrowed");
+    if(bots->arsenal_leases) {
+        application_fail(error,QA_ERROR_ARGUMENT,"bot arsenal observation is already borrowed");
+        return false;
+    }
     ++bots->arsenal_leases;
     if(!observe_arsenal(bots,actor,error)) {--bots->arsenal_leases;return false;}
     *out=bots->knowledge;*length=bots->knowledge_count;*lease=bots;return true;

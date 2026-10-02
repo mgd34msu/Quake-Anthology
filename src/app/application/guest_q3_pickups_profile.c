@@ -6,7 +6,10 @@ static bool u32(const qa_json_document *d, qa_json_id id, uint32_t *out, qa_erro
 {
     uint64_t n;
     if (!qa_json_u64(d,id,&n,e)) return false;
-    if (n>UINT32_MAX) return application_fail(e,QA_ERROR_FORMAT,"Pickup declaration exceeds its Source word");
+    if (n>UINT32_MAX) {
+        application_fail(e,QA_ERROR_FORMAT,"Pickup declaration exceeds its Source word");
+        return false;
+    }
     *out=(uint32_t)n; return true;
 }
 static bool integer(const qa_json_document *d,qa_json_id id,int32_t *out,qa_error *e)

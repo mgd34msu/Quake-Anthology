@@ -124,13 +124,17 @@ static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const
 {
     if (!f || !f->application || (edit &&
         (qa_cvars_edit_registry(edit) != qa_application_cvars(f->application) ||
-         !qa_cvars_edit_returned_is(edit, qa_application_cvars(f->application)))))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy requires its actual ENGINE registry");
+         !qa_cvars_edit_returned_is(edit, qa_application_cvars(f->application))))) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy requires its actual ENGINE registry");
+        return false;
+    }
     for (size_t i = 0; i < count; ++i) {
         out[i] = edit ? qa_cvars_edit_canonical_record(edit, names[i]) :
             frontend_render_control_record(qa_application_cvars(f->application), names[i]);
-        if (!out[i] || !out[i]->value)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
+        if (!out[i] || !out[i]->value) {
+            frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
+            return false;
+        }
     }
     return true;
 }

@@ -359,8 +359,10 @@ static bool physical_player(application_provider *source, const application_play
 {
     uint32_t slot;
     if (source->kind == APPLICATION_PROVIDER_Q1) {
-        if (!qa_q1_native_client_slot(source->state.q1, row->actor, &slot, error) || slot != row->client_slot)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q1 client");
+        if (!qa_q1_native_client_slot(source->state.q1, row->actor, &slot, error) || slot != row->client_slot) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q1 client");
+            return false;
+        }
         *entity = slot + 1;
         return true;
     }
@@ -375,28 +377,37 @@ static bool physical_player(application_provider *source, const application_play
     if (source->kind == APPLICATION_PROVIDER_Q2) {
         qa_builtin_player_info client;
         if (!qa_q2_player_projection(source->state.q2, row->actor, &client) ||
-            !client.connected || client.slot != row->client_slot)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q2 client");
+            !client.connected || client.slot != row->client_slot) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q2 client");
+            return false;
+        }
         *entity = client.slot + 1;
         return true;
     }
     if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
         const struct application_native_q2 *engine = source->state.native.q2_engine;
         slot = row->client_slot + 1;
-        if (slot >= 257) return application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 client exceeds its physical extent");
+        if (slot >= 257) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 client exceeds its physical extent");
+            return false;
+        }
         const application_native_q2_client *client = engine->clients + slot;
         qa_native_slot_binding binding;
         if (!client->connected || !client->begun || client->disconnect_started ||
             !qa_actor_id_equal(client->actor, row->actor) || !source->state.native.host ||
             !qa_native_slot(qa_native_host_instance(source->state.native.host), slot, &binding, error) ||
-            binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, row->actor))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its original Q2 physical binding");
+            binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, row->actor)) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its original Q2 physical binding");
+            return false;
+        }
         *entity = slot;
         return true;
     }
     slot = row->client_slot;
-    if (!qa_application_network_q3_client_bound(source->application, source->owner, row->actor, slot))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q3 client");
+    if (!qa_application_network_q3_client_bound(source->application, source->owner, row->actor, slot)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q3 client");
+        return false;
+    }
     *entity = slot;
     return true;
 }

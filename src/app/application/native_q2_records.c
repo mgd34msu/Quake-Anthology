@@ -1,7 +1,5 @@
 #include "native_q2_records_private.h"
 
-bool nqr_fail(qa_error *e,qa_status code,const char *message)
-{ qa_error_set(e,code,0,"%s",message); return false; }
 bool nqr_current(application_native_q2_records *o,qa_error *e)
 {
     if(!o||o->document!=application_native_q2_callbacks_document(o->options.callbacks))

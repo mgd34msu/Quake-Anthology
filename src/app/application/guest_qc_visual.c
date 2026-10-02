@@ -6,8 +6,10 @@
 static bool source_integer(float value, int32_t *out, qa_error *error)
 {
     double integer = trunc((double)value);
-    if (integer < INT32_MIN || integer > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "QC appearance integer exceeds source bounds");
+    if (!isfinite(integer) || integer < INT32_MIN || integer > INT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "QC appearance integer exceeds source bounds");
+        return false;
+    }
     *out = (int32_t)integer;
     return true;
 }

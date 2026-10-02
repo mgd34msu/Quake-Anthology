@@ -64,8 +64,10 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     if (cvars && !qa_source_frame_time_sample(cvars,milliseconds,frontend->options.dedicated,!remote,
         &milliseconds,error)) return false;
     double duration=milliseconds*1000000.0;
-    if (!isfinite(duration) || duration<0 || duration>=18446744073709551616.0)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration exceeds the native elapsed range");
+    if (!isfinite(duration) || duration<0 || duration>=18446744073709551616.0) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration exceeds the native elapsed range");
+        return false;
+    }
     *owner=cvars; *out=cvars?(uint64_t)duration:supplied; return true;
 }
 static bool selected_bindings(qa_frontend *frontend,qa_error *error)

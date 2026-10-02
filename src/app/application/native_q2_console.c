@@ -7,6 +7,7 @@
 #include "qa/console_cvars_prepare.h"
 #include "qa/game_q2_source.h"
 #include "qa/server_admin.h"
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -460,7 +461,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
         if (mode->rules.source == QA_MODE_Q2_DEATHBALL && !qa_cvars_find(cvars, "goallimit"))
             okay = qa_cvars_register(cvars, "goallimit", "0", 0, provider->owner, NULL, error);
     }
-    char skill[16], maximum[16];
+    char skill[16], maximum[sizeof(size_t) * CHAR_BIT + 1];
     snprintf(skill, sizeof(skill), "%d", rules->skill);
     snprintf(maximum, sizeof(maximum), "%zu", choices->seat_count ? choices->seat_count : 1);
     const char *values[] = {skill, rules->deathmatch ? "1" : "0", rules->cooperative ? "1" : "0", maximum};

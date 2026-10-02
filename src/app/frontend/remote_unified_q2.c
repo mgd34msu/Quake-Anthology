@@ -1942,13 +1942,17 @@ static bool style_sample(const char *pattern,double seconds,float *out,qa_error 
     if (!length) { *out=1; return true; }
     double sample=fmod(floor(seconds*10),(double)length);
     if (!isfinite(sample)) sample=0;
-    if (sample<0) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 lightstyle sampled an absent Source string cell");
+    if (sample<0) {
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 lightstyle sampled an absent Source string cell");
+        return false;
+    }
     size_t target=(size_t)sample,index=0; cursor=0;
     while (qa_utf8_next(bytes,&cursor,&scalar)) {
         uint32_t words[2]={scalar,0}; size_t count=1;
         if (scalar>UINT32_C(0xffff)) { scalar-=UINT32_C(0x10000); words[0]=UINT32_C(0xd800)+(scalar>>10); words[1]=UINT32_C(0xdc00)+(scalar&1023); count=2; }
         for (size_t i=0;i<count;++i,++index) if (index==target) { *out=((float)words[i]-97)/12; return true; }
     }
+    frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 lightstyle has no sampled Source string cell");
     return false;
 }
 bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input *input,qa_error *e)

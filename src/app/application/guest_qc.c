@@ -470,8 +470,10 @@ static bool control_store_vector(struct application_qc_state *engine, int32_t re
 }
 static bool control_integer(float value, int32_t *out, qa_error *error)
 {
-    if ((double)value < INT32_MIN || (double)value > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "QC control integer exceeds source bounds");
+    if (!isfinite(value) || (double)value < INT32_MIN || (double)value > INT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "QC control integer exceeds source bounds");
+        return false;
+    }
     *out = (int32_t)value;
     return true;
 }
@@ -482,8 +484,10 @@ static float control_flags(uint32_t bits)
 }
 static bool control_word(double value, float *out, qa_error *error)
 {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return application_fail(error, QA_ERROR_FORMAT, "QC control value exceeds finite source float bounds");
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        application_fail(error, QA_ERROR_FORMAT, "QC control value exceeds finite source float bounds");
+        return false;
+    }
     *out = value > FLT_MAX ? FLT_MAX : value < -FLT_MAX ? -FLT_MAX : (float)value;
     return true;
 }

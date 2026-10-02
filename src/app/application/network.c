@@ -253,7 +253,10 @@ static bool q1_wire_integer(float value, int32_t minimum, int32_t maximum, int32
  * conversion as the source protocol. Avoid undefined out-of-range C casts. */
 static bool q1_wire_bits(float value, uint32_t *out, qa_error *error)
 {
-    if (!isfinite(value)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
+    if (!isfinite(value)) {
+        application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
+        return false;
+    }
     double word = fmod(trunc((double)value), 4294967296.0);
     if (word < 0) word += 4294967296.0;
     *out = (uint32_t)word; return true;

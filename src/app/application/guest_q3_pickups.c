@@ -55,8 +55,10 @@ static bool table(application_q3_pickups *o,qa_q3_host_game_data *out,qa_error *
 static bool slot(application_q3_pickups *o,const qa_q3_host_game_data *t,int32_t pointer,uint32_t *out,qa_error *e)
 {
     if(pointer<0||(uint32_t)pointer<t->entities_address||((uint32_t)pointer-t->entities_address)%t->entity_stride||
-        ((uint32_t)pointer-t->entities_address)/t->entity_stride>=t->entity_count)
-        return application_fail(e,QA_ERROR_ARGUMENT,"Pickup pointer leaves the actual located Source entities");
+        ((uint32_t)pointer-t->entities_address)/t->entity_stride>=t->entity_count) {
+        application_fail(e,QA_ERROR_ARGUMENT,"Pickup pointer leaves the actual located Source entities");
+        return false;
+    }
     *out=(uint32_t)(((uint32_t)pointer-t->entities_address)/t->entity_stride);(void)o;return true;
 }
 static bool actor_current(application_q3_pickups *o,const qa_actor_record *captured,uint32_t source_slot)

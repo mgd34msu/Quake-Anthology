@@ -3,7 +3,10 @@
 #include "guest_q3_weapons.h"
 
 static bool fail(qa_error *error, qa_status status, const char *text)
-{ return application_fail(error, status, text); }
+{
+    application_fail(error, status, text);
+    return false;
+}
 static const application_q3_combat_definition *definition(const application_q3_combat_actor *a)
 { return application_q3_combat_profile_definition(a->profile); }
 static bool table_equal(qa_q3_host_game_data a, qa_q3_host_game_data b)

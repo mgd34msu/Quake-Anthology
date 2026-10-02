@@ -2,7 +2,14 @@
 #include "qa/text.h"
 
 static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error *e)
-{ uint64_t n; if(!qa_json_u64(d,id,&n,e)||n>UINT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Item address exceeds its source word"); *out=(uint32_t)n; return true; }
+{
+    uint64_t n;
+    if(!qa_json_u64(d,id,&n,e)||n>UINT32_MAX) {
+        q3mod_fail(e,QA_ERROR_FORMAT,"Item address exceeds its source word");
+        return false;
+    }
+    *out=(uint32_t)n; return true;
+}
 static bool integer(const qa_json_document *d,qa_json_id id,int32_t *out,qa_error *e)
 { int64_t n; if(!qa_json_i64(d,id,&n,e)||n<INT32_MIN||n>INT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Item value exceeds signed source storage"); *out=(int32_t)n; return true; }
 static bool text(const qa_json_document *d,qa_json_id id,char **out,qa_error *e)

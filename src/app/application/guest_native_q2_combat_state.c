@@ -8,7 +8,10 @@ static bool word(const qa_json_document *doc, qa_json_id object, const char *nam
 {
     uint64_t number;
     if (!qa_json_u64(doc, qa_json_get(doc, object, name), &number, error)) return false;
-    if (number > UINT32_MAX) return application_fail(error, QA_ERROR_FORMAT, "Native combat field exceeds its source word");
+    if (number > UINT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "Native combat field exceeds its source word");
+        return false;
+    }
     *out = (uint32_t)number; return true;
 }
 static bool range(uint32_t offset, uint64_t bytes, uint32_t extent, qa_error *error)

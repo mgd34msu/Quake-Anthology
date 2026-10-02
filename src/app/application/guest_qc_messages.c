@@ -5,8 +5,10 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
 {
     qa_actor_id recipient = {0};
     if (destination > 4 || (destination == 4 && engine->profile != QA_QC_QUAKEWORLD) ||
-        (destination == 3 && engine->profile == QA_QC_QUAKEWORLD && !engine->loading))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC message destination");
+        (destination == 3 && engine->profile == QA_QC_QUAKEWORLD && !engine->loading)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC message destination");
+        return false;
+    }
     if (destination == 1) {
         const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, "msg_entity");
         int32_t reference;
@@ -15,24 +17,35 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
         bool connected = false;
         for (uint32_t i = 1; i <= engine->max_clients; ++i)
             if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, recipient)) { connected = true; break; }
-        if (!connected) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC MSG_ONE does not name a client");
+        if (!connected) {
+            application_fail(error, QA_ERROR_ARGUMENT, "QuakeC MSG_ONE does not name a client");
+            return false;
+        }
     }
     for (size_t i = 0; i < engine->message_count; ++i)
         if (engine->messages[i].destination == destination &&
             qa_actor_id_equal(engine->messages[i].recipient, recipient)) { *out = &engine->messages[i]; return true; }
     if (engine->message_count == engine->message_capacity) {
         size_t capacity = engine->message_capacity ? engine->message_capacity * 2 : 8;
-        if (capacity < engine->message_capacity || capacity > SIZE_MAX / sizeof(*engine->messages))
-            return application_fail(error, QA_ERROR_MEMORY, "QuakeC message routing allocation overflow");
+        if (capacity < engine->message_capacity || capacity > SIZE_MAX / sizeof(*engine->messages)) {
+            application_fail(error, QA_ERROR_MEMORY, "QuakeC message routing allocation overflow");
+            return false;
+        }
         application_qc_message *messages = realloc(engine->messages, capacity * sizeof(*messages));
-        if (messages == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message routes");
+        if (messages == NULL) {
+            application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message routes");
+            return false;
+        }
         engine->messages = messages; engine->message_capacity = capacity;
     }
     size_t maximum = engine->profile == QA_QC_QUAKEWORLD ?
         destination == 1 ? 1450u * 5u : destination == 0 || destination == 3 ? 1024u : 1450u :
         destination == 0 || destination == 2 ? 1024u : 8000u;
     uint8_t *data = malloc(maximum);
-    if (data == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message buffer");
+    if (data == NULL) {
+        application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message buffer");
+        return false;
+    }
     application_qc_message *message = &engine->messages[engine->message_count++];
     *message = (application_qc_message){.destination = destination, .recipient = recipient,
                                      .data = data, .capacity = maximum};

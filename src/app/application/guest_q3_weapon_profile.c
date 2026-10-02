@@ -6,7 +6,10 @@ static bool u32(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_er
 {
     uint64_t value;
     if (!qa_json_u64(doc, id, &value, error)) return false;
-    if (value > UINT32_MAX) return application_fail(error, QA_ERROR_FORMAT, "Original weapon word exceeds uint32");
+    if (value > UINT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "Original weapon word exceeds uint32");
+        return false;
+    }
     *out = (uint32_t)value; return true;
 }
 static bool word(const qa_json_document *doc, qa_json_id object, const char *key,

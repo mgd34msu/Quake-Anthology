@@ -850,10 +850,14 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
         if (name_size > (SIZE_MAX - strlen(label) - 128) / 2)
             return application_fail(error, QA_ERROR_MEMORY, "Rogue flag announcement exceeds its source extent");
         capacity = name_size + strlen(label) + 128;
-        owned = malloc(capacity + name_size);
+        owned = malloc(capacity);
         if (!owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining the Rogue flag owner name");
         text = owned;
-        char *name = owned + capacity;
+        char *name = malloc(name_size);
+        if (!name) {
+            free(owned);
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining the Rogue flag owner name");
+        }
         memcpy(name, owner.name, name_size);
         bool self = qa_actor_id_equal(actor, flag->owner);
         if (single && self) key = "$qc_you_have_flag";
@@ -863,12 +867,17 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
             name, own ? "your" : "the enemy");
         else {
             double owner_team;
-            if (!team(call, flag->owner, &owner_team, error)) { free(owned); return false; }
+            if (!team(call, flag->owner, &owner_team, error)) {
+                free(name);
+                free(owned);
+                return false;
+            }
             if (single) snprintf(text, capacity, "%s of the %s team has the flag!\n",
                 name, team_name(owner_team));
             else snprintf(text, capacity, "%s of the %s team has the %s flag.\n",
                 name, team_name(owner_team), label);
         }
+        free(name);
     } else if (single) key = !flag ? "$qc_flag_missing" : flag->count == 0 ?
         "$qc_flag_at_base" : flag->count == 2 ? "$qc_flag_lying_about" : "$qc_flag_screwed_up";
     else {

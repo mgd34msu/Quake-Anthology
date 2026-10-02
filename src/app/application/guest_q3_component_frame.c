@@ -1,7 +1,15 @@
 #include "guest_q3_component_private.h"
 
 static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error *e)
-{ uint64_t n; if(!qa_json_u64(d,id,&n,e)) return false; if(n>UINT32_MAX) return q3records_fail(e,QA_ERROR_FORMAT,"Component frame address exceeds source word"); *out=(uint32_t)n; return true; }
+{
+    uint64_t n;
+    if(!qa_json_u64(d,id,&n,e)) return false;
+    if(n>UINT32_MAX) {
+        q3records_fail(e,QA_ERROR_FORMAT,"Component frame address exceeds source word");
+        return false;
+    }
+    *out=(uint32_t)n; return true;
+}
 bool q3component_bootstrap_profile(application_q3_component *c,qa_error *e)
 {
     qa_json_document *d=NULL;

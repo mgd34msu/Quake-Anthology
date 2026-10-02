@@ -10,13 +10,19 @@ typedef struct prediction_layout {
     uint8_t pointer_bytes, boolean_bytes;
 } prediction_layout;
 
+static bool fail(qa_error *error, qa_status code, const char *message)
+{
+    application_fail(error, code, message);
+    return false;
+}
+
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
     uint32_t *out, qa_error *error)
 {
     uint64_t value;
     if (!qa_json_u64(doc, qa_json_get(doc, object, name), &value, error)) return false;
     if (value > UINT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 prediction member exceeds uint32");
+        return fail(error, QA_ERROR_FORMAT, "Native Q2 prediction member exceeds uint32");
     *out = (uint32_t)value;
     return true;
 }
@@ -33,10 +39,10 @@ static bool member(const qa_json_document *doc, qa_json_id layout, const char *n
         if (found || !qa_json_string_equal(doc, qa_json_get(doc, field, "storage"), storage) ||
             !word(doc, field, "count", &count, error) || count != 1 ||
             !word(doc, field, "offset", out, error) || *out > extent || width > extent - *out)
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 prediction member changes its declared representation");
+            return fail(error, QA_ERROR_FORMAT, "Native Q2 prediction member changes its declared representation");
         found = true;
     }
-    return found || application_fail(error, QA_ERROR_UNSUPPORTED,
+    return found || fail(error, QA_ERROR_UNSUPPORTED,
         "Native Q2 prediction lacks its artifact-qualified client member");
 }
 
@@ -45,7 +51,7 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
 {
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     const qa_json_document *doc = application_native_q2_attack_declaration_read(engine);
-    if (!doc) return application_fail(error, QA_ERROR_ARGUMENT,
+    if (!doc) return fail(error, QA_ERROR_ARGUMENT,
         "Native Q2 prediction requires its prepared original declaration index");
     qa_json_id root = qa_json_root(doc), weapons = qa_json_get(doc, root, "weapons");
     prediction_layout p = {.pointer_bytes = info.image.target.pointer_bytes,
@@ -57,7 +63,7 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
         ok = qa_sha256_parse("8187df3fd5b4d435d8227434d3351aad2b47e546236403e52adcd4d275810c45", &artifact, error);
         if (ok && (p.pointer_bytes != 4 || p.client_pointer != 84 || p.client_bytes != 3832 ||
             !qa_sha256_equal(&artifact, &info.image.digest)))
-            ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+            ok = fail(error, QA_ERROR_UNSUPPORTED,
                 "Classic Q2 prediction requires its exact original Xatrix client layout");
         /* Artifact-matched i686 gclient_t. The animation members and newweapon
          * are declared by the original weapon/drop profiles. SDK g_local.h
@@ -68,7 +74,7 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
         p.blew_up = 0xe9c; p.grenade = 0xea0;
     } else if (ok) {
         if (p.pointer_bytes != 8 || p.client_pointer != 120)
-            ok = application_fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction changes the actual client pointer ABI");
+            ok = fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction changes the actual client pointer ABI");
         qa_json_id layouts = qa_json_get(doc, qa_json_get(doc,
             qa_json_get(doc, root, "continuation"), "private"), "layouts"), client = 0;
         bool found = false;
@@ -77,10 +83,10 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
             if (!qa_json_string_equal(doc, qa_json_get(doc, candidate, "domain"), "client")) continue;
             uint32_t extent;
             if (found || !word(doc, candidate, "byteLength", &extent, error) || extent != p.client_bytes)
-                ok = application_fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction repeats or changes its client layout");
+                ok = fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction repeats or changes its client layout");
             client = candidate; found = true;
         }
-        if (ok && !found) ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+        if (ok && !found) ok = fail(error, QA_ERROR_UNSUPPORTED,
             "Rerelease Q2 prediction lacks the real declared private client");
         if (ok && role == QA_ROLE_ARSENAL)
             ok = member(doc, client, "weaponstate", "int32", 4, p.client_bytes, &p.state, error) &&
@@ -135,7 +141,7 @@ static bool returned(qa_application *app, struct application_native_q2 *engine,
 static bool read_at(qa_native_instance *instance, qa_native_address base, uint32_t offset,
     void *out, size_t count, qa_error *error)
 {
-    if (base > UINT64_MAX - offset) return application_fail(error, QA_ERROR_FORMAT,
+    if (base > UINT64_MAX - offset) return fail(error, QA_ERROR_FORMAT,
         "Native Q2 prediction address overflows");
     return qa_native_read(instance, base + offset, out, count, error);
 }
@@ -144,12 +150,12 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
     qa_launch_role role, qa_application_native_q2_prediction *out, bool *found, qa_error *error)
 {
     if (!app || !out || !found || (role != QA_ROLE_ARSENAL && role != QA_ROLE_CHARACTER))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction requires its selected role and actor");
+        return fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction requires its selected role and actor");
     *found = false;
     struct application_native_q2 *engine = selected(app, actor, role);
     if (!engine) return true;
     qa_clock_state clock;
-    if (!returned(app, engine, actor, &clock)) return application_fail(error, QA_ERROR_ARGUMENT,
+    if (!returned(app, engine, actor, &clock)) return fail(error, QA_ERROR_ARGUMENT,
         "Native Q2 prediction requires its completed physical GAME and live actor");
     qa_application_native_q2_prediction value = {.actor = actor, .role = role,
         .owner = engine->provider->owner, .launch = engine->provider->launch,
@@ -161,11 +167,11 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
         const application_native_q2_client *client = engine->clients + slot;
         if (!client->connected || !client->begun || client->disconnect_started ||
             !qa_actor_id_equal(client->actor, actor)) continue;
-        if (value.source_slot) return application_fail(error, QA_ERROR_FORMAT,
+        if (value.source_slot) return fail(error, QA_ERROR_FORMAT,
             "Native Q2 prediction repeats its physical client actor");
         value.source_slot = slot;
     }
-    if (!value.source_slot) return application_fail(error, QA_ERROR_NOT_FOUND,
+    if (!value.source_slot) return fail(error, QA_ERROR_NOT_FOUND,
         "Selected original Q2 role has no admitted client for this actor");
     prediction_layout layout;
     if (!layout_read(engine, role, &layout, error)) return false;
@@ -175,10 +181,10 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
     if (!qa_native_slot(instance, value.source_slot, &binding, error) ||
         !qa_native_entity_address(instance, value.source_slot, &value.entity, error)) return false;
     if (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction changed its physical actor binding");
+        return fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction changed its physical actor binding");
     if (!read_at(instance, value.entity, layout.client_pointer, bytes, layout.pointer_bytes, error)) return false;
     value.client = layout.pointer_bytes == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
-    if (!value.client) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 prediction has no actual client address");
+    if (!value.client) return fail(error, QA_ERROR_FORMAT, "Native Q2 prediction has no actual client address");
     if (role == QA_ROLE_ARSENAL) {
         qa_q2_player player;
         if (!qa_native_host_q2_wire_player(engine->provider->state.native.host, value.source_slot, actor, &player, error)) return false;
@@ -197,7 +203,7 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
         if (!read_at(instance, value.client, layout.grenade, bytes, layout.boolean_bytes == 4 ? 4 : 8, error)) return false;
         if (value.grenade_time_kind == QA_NATIVE_Q2_PREDICTION_SECONDS) {
             value.grenade_time.seconds = qa_load_f32le(bytes);
-            if (!isfinite(value.grenade_time.seconds)) return application_fail(error, QA_ERROR_FORMAT,
+            if (!isfinite(value.grenade_time.seconds)) return fail(error, QA_ERROR_FORMAT,
                 "Native Q2 grenade timer is not finite");
         } else value.grenade_time.milliseconds = (int64_t)qa_load_u64le(bytes);
     } else {
@@ -217,7 +223,7 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
         clock.frame.number != value.frame.number || clock.frame.time_ns != value.frame.time_ns ||
         app->publication_generation != value.publication_generation || app->map_revision != value.map_revision ||
         qa_actors_revision(qa_session_actors(app->session)) != value.actors_revision)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction changed during its returned-state read");
+        return fail(error, QA_ERROR_ARGUMENT, "Native Q2 prediction changed during its returned-state read");
     *out = value; *found = true;
     return true;
 }

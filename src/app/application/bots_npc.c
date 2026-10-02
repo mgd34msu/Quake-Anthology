@@ -295,7 +295,10 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
     for(npc_graph *graph=owner->graphs;graph;graph=graph->next)
         if(graph->flags==flags && !memcmp(&graph->bounds,&bounds,sizeof(bounds))) {*out=graph;return true;}
     npc_graph *graph=calloc(1,sizeof(*graph));
-    if(!graph) return application_fail(error,QA_ERROR_MEMORY,"Retaining monster navigation graph");
+    if(!graph) {
+        application_fail(error,QA_ERROR_MEMORY,"Retaining monster navigation graph");
+        return false;
+    }
     qa_nav_profile profile={.movement=owner->movement,.shape={QA_SHAPE_BOX,bounds},
         .policy={.family=QA_COLLISION_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
         .maximum_drop=18,.monster=true,.capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|

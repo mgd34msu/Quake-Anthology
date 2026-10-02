@@ -36,8 +36,10 @@ static bool word(const qa_json_document *doc, qa_json_id object, const char *key
     uint32_t *out, qa_error *error) {
     uint64_t value;
     if (!qa_json_u64(doc, qa_json_get(doc, object, key), &value, error)) return false;
-    if (value > UINT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Original inventory descriptor exceeds its source word");
+    if (value > UINT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "Original inventory descriptor exceeds its source word");
+        return false;
+    }
     *out = (uint32_t)value;
     return true;
 }

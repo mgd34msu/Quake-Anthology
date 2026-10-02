@@ -22,17 +22,25 @@ bool frontend_qc_rerelease_idle(const qa_frontend *f)
 
 static bool source_get(qa_frontend *f,qa_actor_owner provider,qc_debug_source **out,qa_error *error)
 {
-    if (!provider || !qa_application_provider_instance(f->application,provider))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC debug source has no actual installed provider");
+    if (!provider || !qa_application_provider_instance(f->application,provider)) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"QC debug source has no actual installed provider");
+        return false;
+    }
     if (!f->qc_rerelease) {
         f->qc_rerelease=calloc(1,sizeof(*f->qc_rerelease));
-        if (!f->qc_rerelease) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating QC debug continuation");
+        if (!f->qc_rerelease) {
+            frontend_fail(error,QA_ERROR_MEMORY,"Allocating QC debug continuation");
+            return false;
+        }
     }
     qc_debug_source **link=&f->qc_rerelease->sources;
     while (*link && (*link)->provider!=provider) link=&(*link)->next;
     if (!*link) {
         qc_debug_source *source=calloc(1,sizeof(*source));
-        if (!source) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating QC debug source");
+        if (!source) {
+            frontend_fail(error,QA_ERROR_MEMORY,"Allocating QC debug source");
+            return false;
+        }
         source->texts=qa_font_world_store_create(error);
         if (!source->texts) { free(source); return false; }
         source->provider=provider; *link=source;

@@ -828,14 +828,19 @@ static bool character_read(frontend_unified_q3 *o,qa_json_id row,unified_q3_char
     const qa_recipe_provider *p=frontend_remote_unified_provider(o->replica,QA_ROLE_BODY,"");
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_product *product=p?qa_catalog_product(domain->catalog,p->selection.product):NULL;
-    if (!p || !product || product->family!=QA_GAME_Q3)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 character has no real received appearance provider");
+    if (!p || !product || product->family!=QA_GAME_Q3) {
+        frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 character has no real received appearance provider");
+        return false;
+    }
     unified_q3_bank *bank=NULL; if (!bank_read(o,product->identity,p->selection.instance,0,&bank,e)) return false;
     unified_q3_character *c=o->characters;
     while (c && !qa_actor_id_equal(c->actor,id)) c=c->next;
     if (!c) {
         c=calloc(1,sizeof(*c));
-        if (!c) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining full actor Q3 character pose");
+        if (!c) {
+            frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining full actor Q3 character pose");
+            return false;
+        }
         c->actor=id; c->bank=bank; c->reset=true; c->next=o->characters; o->characters=c;
     }
     if (c->bank!=bank) { qa_resource_release(c->animation_holder); c->animation_holder=NULL; c->bank=bank; c->reset=true; }
@@ -852,7 +857,10 @@ static bool character_read(frontend_unified_q3 *o,qa_json_id row,unified_q3_char
     if((scale!=QA_JSON_NONE && !real(o->frame,scale,&c->scale,e)) ||
         (opacity!=QA_JSON_NONE && !real(o->frame,opacity,&c->opacity,e)))return false;
     c->team=qa_json_string_equal(j,team,"red")?1:qa_json_string_equal(j,team,"blue")?2:0;
-    if(!c->team && qa_json_type(j,team)!=QA_JSON_NULL)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 character has no actual nullable team tag");
+    if(!c->team && qa_json_type(j,team)!=QA_JSON_NULL) {
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 character has no actual nullable team tag");
+        return false;
+    }
     const char *names[]={"x","y","z","w"}; qa_json_id color=field(j,row,"color");
     for (unsigned i=0;i<4;++i) if (!real(o->frame,field(j,color,names[i]),c->color+i,e)) return false;
     c->visible=true; *out=c; return true;

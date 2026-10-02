@@ -288,10 +288,15 @@ static bool custody_retain(application_unified_event_resource *row, const qa_vfs
             opening_equal(&row->custodies[i].opening, opening)) { *index = i + 1; return true; }
     if (row->custody_count == row->custody_capacity) {
         size_t capacity = row->custody_capacity ? row->custody_capacity * 2 : 4;
-        if (capacity <= row->custody_capacity || capacity > SIZE_MAX / sizeof(*row->custodies))
-            return application_fail(error, QA_ERROR_MEMORY, "Source resource opening extent overflows");
+        if (capacity <= row->custody_capacity || capacity > SIZE_MAX / sizeof(*row->custodies)) {
+            application_fail(error, QA_ERROR_MEMORY, "Source resource opening extent overflows");
+            return false;
+        }
         void *values = realloc(row->custodies, capacity * sizeof(*row->custodies));
-        if (!values) return application_fail(error, QA_ERROR_MEMORY, "Retaining Source resource openings");
+        if (!values) {
+            application_fail(error, QA_ERROR_MEMORY, "Retaining Source resource openings");
+            return false;
+        }
         row->custodies = values; row->custody_capacity = capacity;
     }
     application_unified_event_resource_custody held = {0};

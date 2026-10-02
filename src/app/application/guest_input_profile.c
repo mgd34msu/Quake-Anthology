@@ -6,8 +6,10 @@ static bool word(const qa_json_document *doc, qa_json_id object, const char *key
 {
     uint64_t value;
     if (!qa_json_u64(doc, qa_json_get(doc, object, key), &value, error)) return false;
-    if (value > UINT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest input word exceeds its source range");
+    if (value > UINT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "Guest input word exceeds its source range");
+        return false;
+    }
     *out = (uint32_t)value;
     return true;
 }
@@ -17,8 +19,10 @@ static bool mode(const qa_json_document *doc, qa_json_id object, const char *key
 {
     int64_t value;
     if (!qa_json_i64(doc, qa_json_get(doc, object, key), &value, error)) return false;
-    if (value < INT32_MIN || value > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest input mode exceeds its source range");
+    if (value < INT32_MIN || value > INT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "Guest input mode exceeds its source range");
+        return false;
+    }
     *out = (int32_t)value;
     return true;
 }

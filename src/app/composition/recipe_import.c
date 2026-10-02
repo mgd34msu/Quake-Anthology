@@ -12,7 +12,10 @@ static bool array(recipe_reader *r, qa_json_id id, size_t *count)
 static bool unsigned_field(const qa_json_document *json, qa_json_id id, uint32_t *out, qa_error *error)
 {
     uint64_t value;
-    if (!qa_json_u64(json, id, &value, error) || value > UINT32_MAX) return recipe_fail(error, "Recipe field exceeds uint32");
+    if (!qa_json_u64(json, id, &value, error) || value > UINT32_MAX) {
+        recipe_fail(error, "Recipe field exceeds uint32");
+        return false;
+    }
     *out = (uint32_t)value; return true;
 }
 static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id root, qa_error *error)
@@ -128,12 +131,20 @@ static bool resource_read(qa_executable_recipe *r, const qa_json_document *json,
     for (size_t i = 0; ok && i < qa_vfs_read_count(files); ++i) if (qa_vfs_read_at(files, i, &read) && read.mount == receipt.mount &&
         qa_resource_id(read.resource) == receipt.resource_id && !strcmp(read.path, path) && !strcmp(read.lookup_path, lookup) &&
         !strcmp(read.link_source, source) && !strcmp(read.link_target, target)) { found = true; break; }
-    size_t order_count;
-    if (ok) ok = found && array(&reader, order, &order_count) && order_count == read.opening.order_count &&
-        rank == read.opening.rank && overlay == read.opening.user_overlay &&
-        (prefix ? read.opening.prefix && !strcmp(prefix, read.opening.prefix) : !read.opening.prefix);
-    for (size_t i = 0; ok && i < order_count; ++i) { uint32_t index; qa_vfs_mount_info ordered;
-        ok = unsigned_field(json, qa_json_at(json, order, i), &index, error) && qa_vfs_mount_at(files, index, &ordered) && ordered.id == read.opening.order[i]; }
+    if (ok) {
+        size_t order_count;
+        ok = found && array(&reader, order, &order_count) && order_count == read.opening.order_count &&
+            rank == read.opening.rank && overlay == read.opening.user_overlay &&
+            (prefix ? read.opening.prefix && !strcmp(prefix, read.opening.prefix) : !read.opening.prefix);
+        if (ok) for (size_t i = 0; i < order_count; ++i) {
+            uint32_t index; qa_vfs_mount_info ordered;
+            if (!unsigned_field(json, qa_json_at(json, order, i), &index, error) ||
+                !qa_vfs_mount_at(files, index, &ordered) || ordered.id != read.opening.order[i]) {
+                ok = false;
+                break;
+            }
+        }
+    }
     if (!ok) { qa_resource_release(resource); qa_vfs_acquisition_dispose(&receipt); return recipe_fail(error, "Local resource bytes or opening authority differ from offered composition"); }
     recipe_resource *entry = malloc(sizeof(*entry));
     if (!entry) { qa_resource_release(resource); qa_vfs_acquisition_dispose(&receipt); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining resolved resource owner"); return false; }

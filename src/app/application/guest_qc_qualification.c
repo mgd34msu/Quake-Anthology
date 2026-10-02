@@ -26,8 +26,10 @@ static bool number(const qa_json_document *doc, qa_json_id node, float *out, qa_
 {
     double value;
     if (!qa_json_number(doc, node, &value, error)) return false;
-    if (!isfinite(value) || fabs(value) > FLT_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "QC declaration value exceeds binary32");
+    if (!isfinite(value) || fabs(value) > FLT_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "QC declaration value exceeds binary32");
+        return false;
+    }
     *out = (float)value; return true;
 }
 static bool input(const char *name, application_qc_input_id *out)

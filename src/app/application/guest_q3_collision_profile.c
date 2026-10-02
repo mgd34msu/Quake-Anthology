@@ -10,8 +10,10 @@ static bool field(const qa_json_document *document, qa_json_id root,
 {
     uint64_t number;
     if (!qa_json_u64(document, qa_json_get(document, root, name), &number, error)) return false;
-    if (number > UINT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "CG collision declaration exceeds its source address domain");
+    if (number > UINT32_MAX) {
+        application_fail(error, QA_ERROR_FORMAT, "CG collision declaration exceeds its source address domain");
+        return false;
+    }
     *out = (uint32_t)number;
     return true;
 }

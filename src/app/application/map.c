@@ -68,9 +68,11 @@ static bool entity_number(const qa_entities *entities, size_t entity,
         *out = fallback;
         return true;
     }
-    if (!qa_parse_number(value, out, error) || !isfinite(*out))
-        return application_fail(error, QA_ERROR_FORMAT,
-                                "map entity contains an invalid number");
+    if (!qa_parse_number(value, out, error) || !isfinite(*out)) {
+        application_fail(error, QA_ERROR_FORMAT,
+                         "map entity contains an invalid number");
+        return false;
+    }
     return true;
 }
 
@@ -81,9 +83,11 @@ static bool entity_float(const qa_entities *entities, size_t entity,
     double value;
     if (!entity_number(entities, entity, key, fallback, &value, error))
         return false;
-    if (value < -FLT_MAX || value > FLT_MAX)
-        return application_fail(error, QA_ERROR_FORMAT,
-                                "map entity number exceeds float range");
+    if (value < -FLT_MAX || value > FLT_MAX) {
+        application_fail(error, QA_ERROR_FORMAT,
+                         "map entity number exceeds float range");
+        return false;
+    }
     *out = (float)value;
     return true;
 }

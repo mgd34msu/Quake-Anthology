@@ -257,9 +257,11 @@ static bool source_integer_nonzero(const char *text) {
 }
 static bool effective_cheats(map_parser *parser, const map_registry *registry,
                                bool *out, qa_error *error) {
-    if (registry->callback_cheats)
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
+    if (registry->callback_cheats) {
+        application_fail(error, QA_ERROR_UNSUPPORTED,
             "nextmap protected assignment needs an actual prospective callback cheats policy");
+        return false;
+    }
     for (map_variable *v = parser->variables; v; v = v->next)
         if (v->registry == registry->cvars && v->present && equal_name(v->name, "sv_cheats")) {
             *out = source_integer_nonzero(v->value);

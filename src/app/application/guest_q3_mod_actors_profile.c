@@ -5,7 +5,10 @@ static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error 
 {
     uint64_t value;
     if (!qa_json_u64(d,id,&value,e)) return false;
-    if (value>UINT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Actor semantic field exceeds source word");
+    if (value>UINT32_MAX) {
+        q3mod_fail(e,QA_ERROR_FORMAT,"Actor semantic field exceeds source word");
+        return false;
+    }
     *out=(uint32_t)value; return true;
 }
 static bool field(application_q3_mod_actors *o,const qa_json_document *d,qa_json_id id,size_t record,uint32_t *out,qa_error *e)

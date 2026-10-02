@@ -13,7 +13,10 @@ static bool word(const qa_json_document *d, qa_json_id id, uint32_t *v, qa_error
 {
     uint64_t n;
     if (!qa_json_u64(d,id,&n,e)) return false;
-    if (n>UINT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Source declaration exceeds its address word");
+    if (n>UINT32_MAX) {
+        q3mod_fail(e,QA_ERROR_FORMAT,"Source declaration exceeds its address word");
+        return false;
+    }
     *v=(uint32_t)n; return true;
 }
 static bool text(const qa_json_document *d, qa_json_id id, char **v, qa_error *e)
@@ -56,7 +59,8 @@ static bool input(const qa_json_document *d, qa_json_id id, application_q3_mod_i
     for (size_t i=0;i<Q3_MOD_VALUE_COUNT;++i) if (qa_json_string_equal(d,id,input_names[i])) {
         *v=(application_q3_mod_input)i; return true;
     }
-    return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown source callback input");
+    q3mod_fail(e,QA_ERROR_FORMAT,"Unknown source callback input");
+    return false;
 }
 static bool vector(const qa_json_document *d, qa_json_id id, qa_vec3 *v, qa_error *e)
 {
