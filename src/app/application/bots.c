@@ -434,6 +434,21 @@ static bool bot_source_event_time(void *opaque,int32_t number,int32_t *out,qa_er
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot event time requires its actual fixed native Q3 source");
     return qa_q3_wire_entity_event_time(source->state.q3,(uint32_t)number,out,error);
 }
+static bool bot_source_activator_frame(void *opaque,int32_t number,int32_t *frame,
+                                     bool *present,qa_error *error) {
+    application_bots *bots=opaque;
+    application_provider *source=bot_source(bots);
+    if(!frame || !present || !source || source->kind!=APPLICATION_PROVIDER_Q3 ||
+       !source->constructed || !source->attached || source->close_pending || bots->restoring ||
+       number<0 || (uint32_t)number>=QA_Q3_SOURCE_ENTITIES)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot activator frame requires its actual native Q3 GAME row");
+    qa_q3_game *game=source->state.q3;
+    if(!qa_q3_source_activator_frame_read(game,(uint32_t)number,frame,present,error)) return false;
+    if(bot_source(bots)!=source || source->state.q3!=game || !source->constructed ||
+       !source->attached || source->close_pending)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot activator frame lost its actual GAME owner");
+    return true;
+}
 static bool bot_print(void *opaque,const char *text,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     if(!source || !source->constructed || !source->attached || source->close_pending || !text)
@@ -825,6 +840,8 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .source_player=bot_source_player,.source_player_state=bot_source_player_state,.source_intermission=bot_source_intermission,
         .source_row_count=bot_source_row_count,.source_row=bot_source_row,
         .snapshot_entity=bot_snapshot_entity,.source_entity=bot_source_entity,
+        .source_activator_frame=!bots->shared_world && source && source->kind==APPLICATION_PROVIDER_Q3?
+            bot_source_activator_frame:NULL,
         .source_event_time=bot_source_event_time,.print=bot_print,
         .console=bot_console,.userinfo=bot_userinfo,.get_userinfo=bot_get_userinfo,.set_userinfo=bot_set_userinfo,
         .source_game_type=bot_game_type,.exit_level=bot_exit_level,.insert_console_command=bot_insert_command,.random=bot_random,

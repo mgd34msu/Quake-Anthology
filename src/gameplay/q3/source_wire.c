@@ -1034,6 +1034,32 @@ bool qa_q3_source_model_read(const qa_q3_game *game, uint32_t slot,
     return true;
 }
 
+bool qa_q3_source_activator_frame_read(const qa_q3_game *game, uint32_t slot,
+                                        int32_t *frame, bool *present, qa_error *error) {
+    if (!game || !game->wire || !frame || !present || slot >= QA_Q3_SOURCE_NONE ||
+        game->source_restored || !game->source_entities[slot].in_use ||
+        !game->wire->rows[slot].initialized)
+        return q3_fail(error, "Q3 activator observation requires an initialized physical Source row");
+    qa_actor_id actor = game->source_entities[slot].actor;
+    if (!current(game, slot, actor))
+        return q3_fail(error, "Q3 activator observation has a stale Source actor generation");
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_OBELISK || !entry->state.obelisk.model.registry) {
+        *present = false;
+        return true;
+    }
+    qa_actor_id model = entry->state.obelisk.model;
+    uint32_t model_slot;
+    if (!qa_q3_source_actor_slot(game, model, &model_slot, error)) return false;
+    if (model_slot >= QA_Q3_SOURCE_NONE || !game->source_entities[model_slot].in_use ||
+        !game->wire->rows[model_slot].initialized || !current(game, model_slot, model) ||
+        !current(game, slot, actor) || !qa_actor_id_equal(entry->state.obelisk.model, model))
+        return q3_fail(error, "Q3 obelisk activator lost its actual current Source model");
+    *frame = game->wire->rows[model_slot].source.frame;
+    *present = true;
+    return true;
+}
+
 bool qa_q3_source_contents_read(const qa_q3_game *game, uint32_t slot,
                                  int32_t *out, qa_error *error) {
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored ||

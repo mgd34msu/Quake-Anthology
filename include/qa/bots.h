@@ -147,6 +147,8 @@ typedef struct qa_bot_services {
     bool (*source_row)(void *, int32_t, qa_bot_source_row *, qa_error *);
     bool (*snapshot_entity)(void *, qa_actor_id, int32_t, int32_t *, bool *, qa_error *);
     bool (*source_entity)(void *, int32_t, qa_q3_entity *, bool *, qa_error *);
+    /* Current GAME activator relationship; frame is published only if present. */
+    bool (*source_activator_frame)(void *,int32_t,int32_t *,bool *,qa_error *);
     bool (*source_event_time)(void *, int32_t, int32_t *, qa_error *);
     bool (*print)(void *, const char *, qa_error *);
     bool (*userinfo)(void *, qa_actor_id, const char *, const char *, qa_error *);

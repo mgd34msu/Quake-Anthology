@@ -67,6 +67,10 @@ typedef struct qa_q3_source_model {
 /* Pure initialized physical Source fields before model matching. */
 bool qa_q3_source_model_read(const qa_q3_game *, uint32_t physical_slot,
                               qa_q3_source_model *, qa_error *);
+/* Actual obelisk trigger activator's initialized Source frame, without a
+ * visibility or body observation. An absent relationship leaves frame alone. */
+bool qa_q3_source_activator_frame_read(const qa_q3_game *, uint32_t physical_slot,
+                                        int32_t *frame, bool *present, qa_error *);
 /* Literal current r.contents from its actual collision owner, only at the
  * requested contents stage of the Source scan. */
 bool qa_q3_source_contents_read(const qa_q3_game *, uint32_t physical_slot,
