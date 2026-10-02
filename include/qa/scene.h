@@ -248,6 +248,10 @@ bool qa_scene_model_replacement_policy_bind(qa_scene_model *, bool enabled, doub
     const qa_model_replacement *, qa_error *);
 bool qa_scene_model_replacement_policy_read(const qa_scene_model *, bool *configured,
     bool *enabled, double *distance, const qa_scene_model **selected);
+/* Update an admitted replacement's use policy without changing its selected
+ * child, parsed content, images or owning leases. */
+bool qa_scene_model_replacement_policy_update(qa_scene_model *, bool enabled, double distance,
+    qa_error *);
 bool qa_scene_model_image_policy_select(qa_scene_model_image_policy *, bool enabled, double distance,
     const qa_model_replacement *, qa_error *);
 bool qa_scene_model_source_bind(qa_scene_model *, struct qa_scene_model_content_lease *, qa_error *);

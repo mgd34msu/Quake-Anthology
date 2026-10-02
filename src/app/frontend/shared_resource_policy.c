@@ -18,6 +18,7 @@
 #include "qa/font_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/render_controls.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/q3_cinematic_handles.h"
 
 static bool policy_fail(qa_error *error, const char *text)
@@ -112,6 +113,48 @@ bool frontend_model_policy_select(const frontend_model_policy *policy, qa_scene_
 }
 double frontend_model_policy_distance(const frontend_model_policy *policy, const qa_model *model)
 { return policy->source_distance ? model->format == QA_MODEL_MDL ? 0 : policy->q2_distance : policy->distance; }
+bool frontend_model_policy_sync(qa_frontend *f, qa_error *error)
+{
+    if (!f || !f->application || f->stepping || f->preparing || f->round || f->capture ||
+        f->source_restoring || f->resource_inventory)
+        return policy_fail(error, "Model use refresh requires its returned frontend parent");
+    if (f->options.dedicated || qa_application_startup_pending(f->application) ||
+        frontend_config_store_shared_pending(f->config_store)) return true;
+    if (!qa_cvars_observer_idle(qa_application_cvars(f->application)))
+        return policy_fail(error, "Model use refresh requires returned ENGINE publications");
+    frontend_model_policy policy;
+    if (!frontend_model_policy_read(f, &policy, error)) return false;
+    frontend_resource_inventory *inventory = NULL;
+    if (!frontend_resource_inventory_collect(f, f->application, NULL, &inventory, error)) return false;
+    bool ok = true;
+    for (size_t i = 0; ok; ++i) {
+        const qa_scene_model *model = frontend_resource_inventory_model_at(inventory, i);
+        if (!model) break;
+        const qa_model *source = qa_scene_model_source(model);
+        if (!source || (source->format != QA_MODEL_MDL && source->format != QA_MODEL_MD2) ||
+            qa_scene_model_replacement_description(model)) continue;
+        const qa_scene_image_options *options = qa_scene_model_image_options(model);
+        if (!((options->family == QA_SCENE_Q1 && source->format == QA_MODEL_MDL) ||
+            (options->family == QA_SCENE_Q2 && source->format == QA_MODEL_MD2))) continue;
+        bool configured, enabled; double distance; const qa_scene_model *selected;
+        if (!qa_scene_model_replacement_policy_read(model, &configured, &enabled, &distance, &selected)) {
+            ok = policy_fail(error, "Model use refresh lost its actual replacement root"); break;
+        }
+        if (!configured || !selected) continue;
+        bool next_enabled = frontend_model_policy_select(&policy, options->family, source, 0, true);
+        double next_distance = frontend_model_policy_distance(&policy, source);
+        if (enabled != next_enabled || !(distance == next_distance || (isnan(distance) && isnan(next_distance))))
+            ok = qa_scene_model_replacement_policy_update((qa_scene_model *)model, next_enabled, next_distance, error);
+    }
+    if (ok && !frontend_resource_inventory_current(inventory))
+        ok = policy_fail(error, "Model use refresh changed its retained resource roster");
+    qa_error release_error = {0};
+    if (!frontend_resource_inventory_release(&inventory, &release_error)) {
+        if (ok && error) *error = release_error;
+        return false;
+    }
+    return ok;
+}
 static bool image_policy_rows(const qa_cvar_view *const rows[3], qa_scene_image_policy out[3], qa_error *error)
 {
     for (unsigned i = 0; i < 3; ++i)

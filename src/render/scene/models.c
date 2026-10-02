@@ -284,6 +284,16 @@ bool qa_scene_model_replacement_policy_read(const qa_scene_model *model, bool *c
     *configured = model->replacement_policy_set; *enabled = model->replacement_policy_enabled;
     *distance = model->replacement_distance; *selected = model->selected_replacement; return true;
 }
+bool qa_scene_model_replacement_policy_update(qa_scene_model *model, bool enabled, double distance,
+    qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || model->replacement_parent || model->replacement_next ||
+        !model->replacement_policy_set || !model->selected_replacement ||
+        (model->source->format != QA_MODEL_MDL && model->source->format != QA_MODEL_MD2)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement use requires its actual idle admitted root"); return false;
+    }
+    model->replacement_policy_enabled = enabled; model->replacement_distance = distance; return true;
+}
 bool qa_scene_model_source_bind(qa_scene_model *model, qa_scene_model_content_lease *lease, qa_error *error)
 {
     if (!model || !qa_scene_model_idle(model) || model->source_lease.context || model->source_lease.release ||

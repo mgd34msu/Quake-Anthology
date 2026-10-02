@@ -20,6 +20,9 @@ bool frontend_model_policy_load(const frontend_model_policy *, qa_scene_family, 
 bool frontend_model_policy_select(const frontend_model_policy *, qa_scene_family, const qa_model *,
     double distance, bool shadow);
 double frontend_model_policy_distance(const frontend_model_policy *, const qa_model *);
+/* Apply committed ENGINE use/distance values to already admitted replacements
+ * at the returned frame boundary. Asset admission remains a resource ticket. */
+bool frontend_model_policy_sync(qa_frontend *, qa_error *);
 bool frontend_image_policy_read(const qa_frontend *, qa_scene_image_policy policies[3], qa_error *);
 bool frontend_image_policy_edit_read(const qa_cvars_edit *, qa_scene_image_policy policies[3], qa_error *);
 /* Fresh live banks use the exact pending candidate edit when one is held.

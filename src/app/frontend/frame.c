@@ -16,6 +16,7 @@
 #include "input_profile.h"
 #include "config_store.h"
 #include "shared_settings.h"
+#include "shared_resource_policy.h"
 #include "music_sources.h"
 #include "source_acoustics.h"
 #include "view_bindings.h"
@@ -436,7 +437,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (!frontend_q3_source_color_publication_finish(frontend,error) ||
         !frontend_source_publish_music(frontend,error) ||
         !frontend_view_bindings_finish_restore(frontend,error) ||
-        !frontend_startup_replay(frontend,error)) return false;
+        !frontend_startup_replay(frontend,error) ||
+        !frontend_model_policy_sync(frontend,error)) return false;
     bool client_only=frontend_network_client_only(frontend);
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
