@@ -27,4 +27,14 @@ void qa_unified_session_source_retire(qa_unified_session *);
 /* A detached candidate or the exact retired lower owner has no physical
  * Source callback custody. This permits quiet bridge disposal while idle. */
 bool qa_unified_session_source_retired(const qa_unified_session *);
+uint32_t qa_unified_session_required(const qa_unified_session *);
+/* Qualifies one genuinely queued control against the retained unacked bytes
+ * or the actual cumulative acknowledgement. It never queues or sends. */
+bool qa_unified_session_control_receipt(const qa_unified_session *, uint32_t,
+    const qa_unified_document *, qa_error *);
+/* Joins the actual readonly CLIENT continuation to its retained receive head,
+ * including Source publication that returned a failure before lower commit. */
+bool qa_unified_session_client_receipt(const qa_unified_session *, uint32_t epoch,
+    bool admitted, bool retired, const qa_unified_document *pending_offer,
+    const qa_unified_document *published_frame, const qa_unified_document *pending_frame, qa_error *);
 #endif

@@ -301,13 +301,14 @@ static bool frame_shape(const q3n_remote_frame *f)
         (f->predicted_player == NULL) != (f->predicted_entity == NULL) ||
         (f->transition_player == NULL) != (f->previous_player == NULL)) return false;
     if (f->snapshots.stage == Q3N_REMOTE_INITIALIZATION) {
-        if (!f->initialization_scope || !f->source.publication.initializing ||
-            f->source.reached_command != f->source.publication.initial_command ||
+        if (!f->initialization_scope || f->source.basis.client.initialized ||
+            (!f->video_initialization && (!f->source.publication.initializing ||
+            f->source.reached_command != f->source.publication.initial_command)) ||
             f->snapshots.snapshot || f->snapshots.next_snapshot || f->prediction.owner || f->prediction.player ||
             f->transition_player || !f->predicted_player ||
             (f->snapshots.owner == NULL) != (f->snapshots.entities == NULL) ||
             (f->snapshots.owner ? !f->snapshots.revision : f->snapshots.revision != 0)) return false;
-    } else if (f->initialization_scope || !f->snapshots.owner || !f->snapshots.revision || !f->snapshots.entities)
+    } else if (f->initialization_scope || f->video_initialization || !f->snapshots.owner || !f->snapshots.revision || !f->snapshots.entities)
         return false;
     if (f->snapshots.stage == Q3N_REMOTE_PREDICTION_CALLBACK ?
         !f->transition_scope || !f->transition_player : f->transition_scope != 0) return false;
@@ -368,6 +369,7 @@ bool q3n_remote_frame_read(const q3n_remote_frame_options *o, q3n_remote_frame *
         .predicted_entity = o->predicted_entity, .predicted_player = o->predicted_player,
         .transition_player = o->transition_player,
         .previous_player = o->previous_player, .initialization_scope = o->initialization_scope,
+        .video_initialization = o->video_initialization,
         .transition_scope = o->transition_scope, .console_scope = o->console_scope,
         .awaiting_snapshot_scope = o->awaiting_snapshot_scope,
         .loading_information_scope = o->loading_information_scope,
@@ -465,9 +467,19 @@ bool q3n_remote_frame_prediction_error_clear(const q3n_remote_frame *f, qa_error
 bool q3n_frame_current(const q3n_frame *f)
 {
     if (!f) return false;
+    if (f->compiled) {
+        const q3n_compiled_source_basis *b=&f->compiled->source.basis;
+        return !f->remote && !f->source.source_game && !f->has_local_player && !f->effects_source &&
+            !f->unified_effects && !f->effect_event && !f->reader && !f->client_service &&
+            f->application==b->application && f->assets==b->assets && f->seat==b->seat &&
+            f->physical_presentation_seat==b->physical_seat && b->client_number>=0 &&
+            f->viewing_client==(uint32_t)b->client_number && qa_actor_id_equal(f->viewing_actor,b->viewer) &&
+            f->entities==f->compiled->entities && f->time==f->compiled->time &&
+            q3n_compiled_frame_current(f->compiled);
+    }
     if (f->unified_effects) {
         const q3n_unified_effect_source *s=f->unified_effects;
-        return !f->application && !f->remote && !f->effects_source && !f->effect_event &&
+        return !f->application && !f->remote && !f->compiled && !f->effects_source && !f->effect_event &&
             !f->source.source_game && !f->reader && !f->client_service && !f->has_local_player &&
             !f->clients && !f->entities && s->provider && s->content && s->assets && s->current &&
             f->assets==s->assets && f->time==s->time && s->current(s);
@@ -486,25 +498,26 @@ bool q3n_frame_current(const q3n_frame *f)
     return !f->effect_event && qa_application_native_q3_presentation_current(f->application, &f->source);
 }
 qa_q3_product q3n_frame_product(const q3n_frame *f)
-{ return f->unified_effects ? f->unified_effects->product : f->remote ? f->remote->source.basis.product : f->effects_source ? f->effects_source->q3_product : f->source.product; }
+{ return f->compiled ? f->compiled->source.basis.product : f->unified_effects ? f->unified_effects->product : f->remote ? f->remote->source.basis.product : f->effects_source ? f->effects_source->q3_product : f->source.product; }
 int32_t q3n_frame_game_type(const q3n_frame *f)
-{ return f->remote ? f->remote->source.game_type : f->source.game_type; }
+{ return f->compiled ? f->compiled->source.basis.game_type : f->remote ? f->remote->source.game_type : f->source.game_type; }
 int32_t q3n_frame_max_clients(const q3n_frame *f)
-{ return f->remote ? f->remote->source.max_clients : (int32_t)f->source.max_clients; }
+{ return f->compiled ? f->compiled->source.basis.max_clients : f->remote ? f->remote->source.max_clients : (int32_t)f->source.max_clients; }
 int32_t q3n_frame_match_start_time(const q3n_frame *f)
-{ return f->remote ? f->remote->source.match_start_time : f->effects_source ? f->effects_source->q3_match_start_ms : f->source.match_start_time_ms; }
+{ return f->compiled ? f->compiled->source.basis.level_start_time : f->remote ? f->remote->source.match_start_time : f->effects_source ? f->effects_source->q3_match_start_ms : f->source.match_start_time_ms; }
 uint32_t q3n_frame_entity_capacity(const q3n_frame *f)
-{ return f->remote ? QA_Q3_ENTITIES : f->source.entity_count; }
+{ return f->compiled || f->remote ? QA_Q3_ENTITIES : f->source.entity_count; }
 const qa_q3_player *q3n_frame_snapshot_player(const q3n_frame *f)
-{ return !f ? NULL : f->remote ? (f->remote->snapshots.snapshot ? &f->remote->snapshots.snapshot->player : NULL) :
+{ return !f ? NULL : f->compiled ? (f->compiled->snapshot ? &f->compiled->snapshot->player : NULL) : f->remote ? (f->remote->snapshots.snapshot ? &f->remote->snapshots.snapshot->player : NULL) :
     f->has_local_player ? &f->local_player : NULL; }
 const qa_q3_player *q3n_frame_predicted_player(const q3n_frame *f)
-{ return !f ? NULL : f->remote ? f->remote->predicted_player : f->has_local_player ? &f->local_player : NULL; }
+{ return !f ? NULL : f->compiled ? f->compiled->predicted_player : f->remote ? f->remote->predicted_player : f->has_local_player ? &f->local_player : NULL; }
 bool q3n_frame_configstring(const q3n_frame *f, uint32_t index, const char **text, uint64_t *revision, qa_error *e)
 {
     if (!q3n_frame_current(f) || f->effects_source || f->unified_effects)
         return fail(e, QA_ERROR_ARGUMENT, "Configstrings require an actual local or remote reached client receipt");
     if (f->remote) return q3n_remote_source_configstring(f->remote->source.owner, index, text, revision, e);
+    if (f->compiled) return q3n_compiled_source_configstring(f->compiled->source.owner,index,text,revision,e);
     return qa_native_q3_wire_reader_configstring(f->reader, index, text, revision, e);
 }
 bool q3n_frame_entity(const q3n_frame *f, uint32_t number, qa_q3_entity *state,
@@ -517,6 +530,11 @@ bool q3n_frame_entity(const q3n_frame *f, uint32_t number, qa_q3_entity *state,
         q3n_remote_entity row;
         if (!q3n_remote_frame_entity(f->remote, number, &row, e)) return false;
         *state = *row.current; *cent = row.presentation; *present = row.published; return true;
+    }
+    if (f->compiled) {
+        q3n_compiled_entity row;
+        if (!q3n_compiled_frame_entity(f->compiled,number,&row,e)) return false;
+        *state=*row.current; *cent=row.presentation; *present=row.published; return true;
     }
     qa_application_native_q3_entity row;
     if (!qa_application_native_q3_presentation_entity(f->application, &f->source, number, &row, e)) return false;

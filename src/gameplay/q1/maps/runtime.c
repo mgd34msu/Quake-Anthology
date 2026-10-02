@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/game_q1_source_entities.h"
 #include "../wire_internal.h"
 #include <errno.h>
 #include <limits.h>
@@ -553,6 +554,87 @@ void q1_map_frame_begin(qa_q1_game *g) {
         state->pool_next = g->maps->spare;
         g->maps->spare = state;
     }
+}
+static bool level_frame_current(qa_q1_game *game, const q1_map_runtime *maps,
+    const qa_q1_level *level, qa_error *error) {
+    if (!game->destroy_pending && !game->continuation_pending && game->maps == maps &&
+        maps->options.level == level && q1_alive(game, maps->world_actor)) return true;
+    return q1_map_fail(error, "Q1 source limit check lost its actual level/world owner");
+}
+bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error *error) {
+    if (!game->maps || !game->options.deathmatch) return true;
+    q1_map_runtime *maps = game->maps;
+    qa_q1_level *level = maps->options.level;
+    if (!level || !frame || !game->services.cvar ||
+        !level_frame_current(game, maps, level, error))
+        return q1_map_fail(error, "Q1 source limits require their real frame and cvar owner");
+    double seconds = game->time;
+    uint64_t time_ns = game->time_ns;
+    size_t count = 0;
+    for (uint32_t i = 0; i < game->capacity; ++i) {
+        const q1_player *player = game->players[i];
+        if (player && player->source_client && q1_alive(game, player->id)) ++count;
+    }
+    if (count > SIZE_MAX / sizeof(float))
+        return q1_map_fail(error, "Q1 source score extent overflows");
+    float *scores = count ? malloc(count * sizeof(*scores)) : NULL;
+    if (count && !scores) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Reading actual Q1 source scores");
+        return false;
+    }
+    size_t written = 0;
+    for (uint32_t i = 0; i < game->capacity; ++i) {
+        const q1_player *player = game->players[i];
+        if (player && player->source_client && q1_alive(game, player->id))
+            scores[written++] = player->source_frags;
+    }
+    qa_string_id timelimit, fraglimit;
+    float minutes, frags;
+    if (!qa_builtin_resource(&game->services, "timelimit", &timelimit, error) ||
+        !game->services.cvar(q1_cvar_context(game), timelimit, &minutes, error) ||
+        !level_frame_current(game, maps, level, error) ||
+        !qa_builtin_resource(&game->services, "fraglimit", &fraglimit, error) ||
+        !game->services.cvar(q1_cvar_context(game), fraglimit, &frags, error) ||
+        !level_frame_current(game, maps, level, error)) {
+        free(scores);
+        return false;
+    }
+    const qa_q1_level_state *state = qa_q1_level_read(level);
+    if (state->next_map || (minutes == 0 && frags == 0)) {
+        free(scores);
+        return true;
+    }
+    bool reached = minutes != 0 && seconds >= (double)minutes * 60;
+    for (size_t i = 0; i < written; ++i)
+        if (frags != 0 && scores[i] >= frags) reached = true;
+    if (!reached) {
+        free(scores);
+        return true;
+    }
+    qa_q1_source_entity changelevel = {0};
+    bool found = false;
+    qa_bytes map_name = qa_strings_text(qa_session_strings(game->services.session),
+        maps->options.current_map);
+    bool start = map_name.size == sizeof("start") - 1 &&
+        !memcmp(map_name.data, "start", sizeof("start") - 1);
+    bool okay = start || qa_q1_source_entity_first(game, "trigger_changelevel",
+        &changelevel, &found, error);
+    qa_string_id destination = 0;
+    if (okay && found) {
+        const q1_actor *entity = q1_entity_const(game, changelevel.actor);
+        if (!entity || entity->kind != Q1_MAP || !entity->map)
+            okay = q1_map_fail(error, "Q1 source limit lost its actual changelevel declaration");
+        else destination = entity->map->map;
+    }
+    if (okay) {
+        game->time_ns = time_ns;
+        game->time = seconds;
+        bool triggered;
+        okay = qa_q1_level_check_limits(level, seconds, scores, written, minutes, frags,
+            destination, &triggered, error) && level_frame_current(game, maps, level, error);
+    }
+    free(scores);
+    return okay;
 }
 void q1_map_destroy(qa_q1_game *g) {
     if (!g->maps)

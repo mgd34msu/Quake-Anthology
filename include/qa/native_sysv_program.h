@@ -6,6 +6,11 @@
 
 typedef struct qa_native_sysv_program qa_native_sysv_program;
 typedef struct qa_native_sysv_program_aux { uint64_t tag, value; } qa_native_sysv_program_aux;
+typedef struct qa_native_sysv_program_descriptor_status {
+    uint32_t flags;
+    int64_t offset;
+    bool seekable;
+} qa_native_sysv_program_descriptor_status;
 /* These are held kernel capabilities, independent of a userspace libc runtime.
  * Opening transfers a real close owner even on failure when opened is true.
  * Restore uses resolve_file only, and never reopens an original pathname. */
@@ -16,6 +21,13 @@ typedef struct qa_native_sysv_program_services {
         qa_native_sysv_file *, bool *, qa_error *);
     bool (*resolve_file)(void *, uint64_t, qa_native_sysv_file *, qa_error *);
     bool (*file_status)(void *, uint64_t, qa_fs_posix_status *, qa_error *);
+    /* Actual native status flags/current position at acquisition. ESPIPE is a
+     * successful nonseekable receipt; cold keeps its named logical position. */
+    bool (*descriptor_status)(void *, uint64_t,
+        qa_native_sysv_program_descriptor_status *, qa_error *);
+    /* Reached kernel F_SETFL/IO operation, not a cold installer. Preserve real
+     * native access/containment flags while applying source APPEND/NONBLOCK. */
+    bool (*descriptor_flags)(void *, uint64_t, uint32_t, qa_error *);
     bool (*identity)(void *, qa_native_process_linux_identity *, qa_error *);
     bool (*entropy)(void *, void *, size_t, qa_error *);
     /* Actual seconds and nanoseconds for the requested Linux clock ID. */

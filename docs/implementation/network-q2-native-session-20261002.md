@@ -78,6 +78,10 @@ immutable resource and its full acquisition receipt remain held across native
 Download replacement, signon restart, retirement, and completion release that
 holder. The inventory getter exposes the held view, resource, and acquisition
 for the enclosing ContentGraph capture lease. It never reopens a path.
+Qualified Source model downloads may also own nonempty derived wire bytes,
+such as a model with qualified external skin names. Transfers seek and chunk
+those bytes while the original immutable resource and opening remain held as
+provenance; this does not create a synthetic Source resource or file.
 
 ## Cold continuation
 
@@ -98,8 +102,12 @@ publication, command, or transport callback. Host zlib pointers are never saved.
 command backup and allocated command storage, retained batch cursor and stufftext
 offset, loading generation, preparation phase, native userinfo/settings,
 Source interval and protocol frame counters, independent logical command
-numbers, and held immutable download. The current session cold version is three.
-Candidate callbacks rebind to the actual isolated Source and ContentGraph.
+numbers, staged disconnect reason/queue/send/retirement marker, and held immutable
+download and its optional derived wire artifact. Genuine memory catalog
+downloads retain their owned Source bytes and actual view without a file
+resource or fabricated acquisition. The current session cold
+version is seven. Candidate callbacks receive
+the actual isolated runtime and rebind to its genuine Source and ContentGraph.
 Resource and view IDs map to candidate ownership. The acquisition receipt is
 checked against the retained view rather than reconstructed from the filesystem.
 Restore installs no peer and starts no signon; the generic save owner installs
@@ -139,10 +147,51 @@ wire visibility history, owns native old-origin recovery.
 The new `unified_q2_events` leaf projects original GAME service records at
 append time into independent presentation and simulation streams. One packet
 can publish multiple genuine events. Actual captured recipients, Source clock,
-public ABI entity geometry, full actor references and held sound acquisitions
+public ABI entity geometry, full actor references and actual sound precache registrations
 qualify those records. The existing raw message queue remains available to its
-native receiver. Complete fog observer continuation, split-group authority and
-the residual TEMP representation/consumer joins are still being implemented.
+native receiver. The Original client owns retained partial fog state, layout
+and inventory with actual map/admission/retirement resets and cold continuation.
+Service seat markers qualify genuine canonical connection groups. Rerelease
+duplicate keys use the shared HOST cache, checked before actual raw and normalized
+packet publication and remembered afterward. The pure cache has explicit graph
+capture/restore; its enclosing HOST cold wrapper remains a required parent join.
+
+Original `WriteEntity` records its full actor and exact byte offset at the real
+write, with the Engine namespace number supplied by the genuine Source bridge.
+Pending NativeHost messages save these references through checkpoint actor
+history, including retired provenance. The append-time observer follows that
+full identity to its actual current SDK binding when geometry is still live.
+It never turns a reused entity slot into another actor's reference.
+
+The actual Original import observer also captures primitive muzzle, beam and
+sound entity words from the executing SDK table before queue publication.
+Existing `WriteEntity` receipts retain their original identity and offset;
+sustain IDs and magnitudes remain literal fields. Source precache registration
+and emitted resource spelling/key receipts prevent later configstring reuse
+from changing a copied sound or image message. EVENTS retains those receipts
+and validates their immutable resource keys against the retained dictionary.
+
+`frontend/network_q2_events` decodes copied Original Source packets and
+reencodes each record with the admitted lower server codec. Captured connection
+IDs, epochs, seats and remote indices determine native KEX service markers.
+Foreign full actors and resources pass through the actual HOST namespace
+producer. Network owns queue acceptance and its journal cursor continuation.
+
+Original sound reads the actual import-time SDK origin, bounds, solid and server
+flags. It preserves native channel, reliability and PHS rules and captures the
+actual multicast or unicast recipients before publishing. Frontend audio uses
+those full recipient identities. API2023 Source sound uses its native index-width
+flag, while actual KEX wire retains its word index; the decoder records this
+Source-only distinction explicitly. Lossless residual TEMP records preserve all
+decoded fields and genuine full actor references; their actual remote and
+normalized consumer joins remain with the corresponding owners.
+
+Hosted disconnect retries retain one reason and atomically queued notice. The
+retiring channel accepts only native acknowledgements, progresses actual pending
+fragments and calls its enclosing retirement marker once after notice delivery.
+Production channel send commits its scalar sequencing only after transport
+acceptance; failed sends keep their genuine queued and fragment backing bytes.
+Server frame cursors and history also commit only for actually included datagrams.
 
 B29 still requires the complete remote content consumer, HTTP/native policy,
 metadata and package handling, discovery, master heartbeat, status/info replies,

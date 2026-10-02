@@ -229,6 +229,7 @@ void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *s) {
     if (!s)
         return;
     free(s->wind);
+    free(s->visited_maps);
     *s = (qa_q2_entities_checkpoint){0};
 }
 bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_error *e) {
@@ -239,7 +240,7 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_entities *r = g->entity_runtime;
-    qa_q2_entities_checkpoint s = {.version = 1,
+    qa_q2_entities_checkpoint s = {.version = 2,
                                    .poi_image = r->poi_image,
                                    .story = r->story,
                                    .poi_stage = r->poi_stage,
@@ -261,7 +262,12 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
                                    .goal_number = r->goal_number,
                                    .sky_auto = r->sky_auto,
                                    .has_goals = r->has_goals,
-                                   .wind_count = r->wind_count};
+                                   .wind_count = r->wind_count,
+                                   .total_monsters = r->total_monsters,
+                                   .killed_monsters = r->killed_monsters,
+                                   .level_count = r->level_count,
+                                   .visited_count = r->visited_count};
+    memcpy(s.levels, r->levels, sizeof(s.levels));
     if (!q2_save_reference(g, r->poi, &s.poi, e) ||
         !q2_save_reference(g, r->poi_dynamic, &s.poi_dynamic, e))
         return false;
@@ -290,11 +296,20 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
             }
         }
     }
+    if (s.visited_count) {
+        if (s.visited_count > SIZE_MAX / sizeof(*s.visited_maps) ||
+            !(s.visited_maps = malloc(s.visited_count * sizeof(*s.visited_maps)))) {
+            qa_q2_entities_checkpoint_free(&s);
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Capturing Q2 campaign visited maps");
+            return false;
+        }
+        memcpy(s.visited_maps, r->visited_maps, s.visited_count * sizeof(*s.visited_maps));
+    }
     *out = s;
     return true;
 }
 bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, qa_error *e) {
-    if (!g || !s || s->version != 1 || !q2_saved_fog(&s->world_fog) ||
+    if (!g || !s || s->version != 2 || !q2_saved_fog(&s->world_fog) ||
         !qa_vec_finite(s->sky_axis) || !isfinite(s->sky_rotation) ||
         !q2_saved_resource(g, s->poi_image) || !q2_saved_resource(g, s->story) ||
         !q2_saved_resource(g, s->sky) || !q2_saved_resource(g, s->goals) ||
@@ -305,6 +320,7 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
+    if (!q2_campaign_saved_valid(g, s, e)) return false;
     q2_entities next = *g->entity_runtime;
     next.wind = NULL;
     next.wind_count = next.wind_capacity = s->wind_count;
@@ -359,7 +375,23 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
     next.goal_number = s->goal_number;
     next.sky_auto = s->sky_auto;
     next.has_goals = s->has_goals;
+    next.total_monsters = s->total_monsters;
+    next.killed_monsters = s->killed_monsters;
+    next.level_count = s->level_count;
+    memcpy(next.levels, s->levels, sizeof(next.levels));
+    next.visited_maps = NULL;
+    next.visited_count = next.visited_capacity = s->visited_count;
+    if (s->visited_count) {
+        next.visited_maps = malloc(s->visited_count * sizeof(*next.visited_maps));
+        if (!next.visited_maps) {
+            free(next.wind);
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 campaign visited maps");
+            return false;
+        }
+        memcpy(next.visited_maps, s->visited_maps, s->visited_count * sizeof(*next.visited_maps));
+    }
     free(g->entity_runtime->wind);
+    free(g->entity_runtime->visited_maps);
     *g->entity_runtime = next;
     return true;
 }

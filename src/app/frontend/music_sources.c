@@ -7,26 +7,47 @@
 #include <stdio.h>
 
 static bool fail(qa_error *e, const char *text) { return frontend_fail(e, QA_ERROR_ARGUMENT, text); }
+static bool recipe_origin(const frontend_music_origin *origin) {
+    if ((origin->kind != FRONTEND_MUSIC_COMPONENT && origin->kind != FRONTEND_MUSIC_REMOTE) || origin->descriptor || !origin->recipe ||
+        qa_executable_recipe_catalog(origin->recipe) != origin->catalog ||
+        !qa_executable_recipe_current(origin->recipe, origin->catalog)) return false;
+    if (origin->kind == FRONTEND_MUSIC_REMOTE && !origin->recipe_provider && origin->recipe_content) {
+        qa_vfs *files=NULL;const qa_product *product=NULL;
+        return qa_executable_recipe_content_read(origin->recipe,origin->recipe_content,&files,&product) &&
+            files==origin->files && product && product->id==origin->product;
+    }
+    if (!origin->recipe_provider || origin->recipe_content) return false;
+    for (size_t i = 0; i < qa_executable_recipe_provider_count(origin->recipe); ++i) {
+        const qa_recipe_provider *actual = qa_executable_recipe_provider(origin->recipe, i);
+        if (actual == origin->recipe_provider) return actual->selection.product == origin->product;
+    }
+    return false;
+}
 static bool origin_current(const frontend_music_sources *owner) {
     const frontend_music_origin *origin = &owner->origin;
     const qa_launch_instance *held = qa_launch_instance_lease_view(owner->origin_metadata);
-    return owner->has_origin && owner->origin_bound && held && origin->descriptor &&
-        held->storage == origin->descriptor->storage && origin->current &&
-        origin->current(origin->context, origin) && frontend_music_sources_current(owner);
+    return owner->has_origin && owner->origin_bound && origin->current &&
+        origin->current(origin->context, origin) && frontend_music_sources_current(owner) &&
+        (owner->origin_recipe ? !held && recipe_origin(origin) : held && origin->descriptor &&
+            !origin->recipe && !origin->recipe_provider && !origin->recipe_content && held->storage == origin->descriptor->storage);
 }
 static void origin_dispose(frontend_music_sources *owner) {
     qa_launch_instance_lease_release(owner->origin_metadata); owner->origin_metadata = NULL;
     free(owner->origin_instance); free(owner->origin_product); owner->origin_instance = owner->origin_product = NULL;
-    owner->origin = (frontend_music_origin){0}; owner->has_origin = owner->origin_bound = false;
+    owner->origin = (frontend_music_origin){0}; owner->has_origin = owner->origin_bound = owner->origin_recipe = false;
 }
 static bool origin_admit(frontend_music_sources *owner, const frontend_music_origin *origin, qa_error *e) {
     const qa_product *row = origin && origin->catalog ? qa_catalog_product(origin->catalog, origin->product) : NULL;
     if (!frontend_music_sources_current(owner) || !origin || (unsigned)origin->kind > FRONTEND_MUSIC_COMPONENT ||
-        !origin->bus || !origin->descriptor || !origin->descriptor->storage || !origin->receiver ||
+        !origin->bus || !origin->receiver ||
         !row || row->availability != QA_CONTENT_INSTALLED || !origin->files || !origin->music ||
         !origin->context || !origin->current || !origin->stop || origin->physical_seat >= owner->frontend->options.seats ||
-        qa_launch_instance_catalog(origin->descriptor) != origin->catalog || origin->descriptor->selection.product != origin->product ||
-        !origin->current(origin->context, origin) || (!owner->restoring && !qa_audio_music_idle(origin->music)))
+        !origin->current(origin->context, origin) ||
+        (origin->recipe ? !recipe_origin(origin) : !origin->descriptor || !origin->descriptor->storage ||
+            origin->recipe_provider || origin->recipe_content ||
+            (origin->kind == FRONTEND_MUSIC_REMOTE ? !qa_catalog_product_view_current(origin->catalog,origin->product,origin->files) :
+                qa_launch_instance_catalog(origin->descriptor) != origin->catalog || origin->descriptor->selection.product != origin->product)) ||
+        (!owner->restoring && !qa_audio_music_idle(origin->music)))
         return fail(e, "Explicit music requires its actual source declaration, player and retained caller");
     return true;
 }
@@ -240,9 +261,14 @@ bool frontend_music_sources_world_retire(frontend_music_sources *owner, qa_error
     return retire_world(owner, true, e);
 }
 bool frontend_music_sources_explicit_selected(const frontend_music_sources *owner, const frontend_music_origin *origin) {
-    return owner && origin && origin->descriptor && owner->has_origin && origin_current(owner) &&
+    return owner && origin && owner->has_origin && origin_current(owner) &&
         owner->origin.context == origin->context && owner->origin.music == origin->music && owner->origin.bus == origin->bus &&
-        owner->origin.descriptor->storage == origin->descriptor->storage && owner->origin.kind == origin->kind &&
+        (owner->origin_recipe ? owner->origin.recipe == origin->recipe &&
+            owner->origin.recipe_provider == origin->recipe_provider &&
+            ((!owner->origin.recipe_content && !origin->recipe_content) || (owner->origin.recipe_content && origin->recipe_content &&
+                !strcmp(owner->origin.recipe_content,origin->recipe_content))) && !origin->descriptor :
+            origin->descriptor && !origin->recipe && !origin->recipe_provider && !origin->recipe_content &&
+            owner->origin.descriptor->storage == origin->descriptor->storage) && owner->origin.kind == origin->kind &&
         owner->origin.receiver == origin->receiver && owner->origin.physical_seat == origin->physical_seat &&
         owner->origin.catalog == origin->catalog && owner->origin.product == origin->product && owner->origin.files == origin->files;
 }
@@ -256,18 +282,26 @@ bool frontend_music_sources_explicit_begin(frontend_music_sources *owner, const 
             return fail(e, "Explicit music requires its actual current published WORLD receipt");
     }
     qa_launch_instance_lease *metadata = NULL;
-    if (!qa_launch_instance_retain_metadata(origin->descriptor, &metadata, e)) return false;
+    if (origin->descriptor && !qa_launch_instance_retain_metadata(origin->descriptor, &metadata, e)) return false;
     if (!retire_world(owner, false, e)) { qa_launch_instance_lease_release(metadata); return false; }
     if (!qa_audio_music_controls_is(origin->music, owner->controls) && !qa_audio_music_controls_bind(origin->music, owner->controls, e)) {
         qa_launch_instance_lease_release(metadata); return false;
     }
-    frontend_music_content content = {.catalog = origin->catalog, .product = origin->product, .files = origin->files};
+    const qa_product *source=qa_catalog_product(origin->catalog,origin->product);
+    const qa_product *other=origin->kind==FRONTEND_MUSIC_REMOTE?fallback(origin->catalog,source):NULL;
+    qa_vfs *alternate=NULL;
+    if(other && !qa_catalog_open(origin->catalog,other->id,&alternate,e)){
+        qa_launch_instance_lease_release(metadata);return false;}
+    frontend_music_content content = {.catalog = origin->catalog, .product = origin->product, .files = origin->files,
+        .fallback_product=other?other->id:0,.fallback_files=alternate};
     frontend_music_policy_options options = {.music = origin->music, .bus = origin->bus, .audience = origin->physical_seat,
         .bus_gain = 1, .external_player = true, .sources = &content, .source_count = 1, .authored_cue = "", .random_seed = owner->seed};
     if (!frontend_music_policy_create(owner->frontend, &options, owner->policies + FRONTEND_MUSIC_WORLD, e)) {
-        qa_launch_instance_lease_release(metadata); return false;
+        qa_vfs_destroy(alternate);qa_launch_instance_lease_release(metadata); return false;
     }
+    qa_vfs_destroy(alternate);
     owner->buses[FRONTEND_MUSIC_WORLD] = origin->bus; owner->origin = *origin;
+    owner->origin_recipe = origin->recipe != NULL;
     owner->origin_metadata = metadata; owner->has_origin = owner->origin_bound = true;
     return origin_current(owner) || fail(e, "Explicit music source changed during actual selection");
 }
@@ -282,6 +316,35 @@ bool frontend_music_sources_explicit(frontend_music_sources *owner, const fronte
     return (!attached || (attached == origin->music && qa_audio_engine_music_output(owner->engine, origin->bus,
         attached, owner->output == FRONTEND_MUSIC_WORLD, e))) && origin_current(owner);
 }
+bool frontend_music_sources_explicit_play(frontend_music_sources *owner,const frontend_music_origin *origin,
+    const char *cue,qa_error *e) {
+    if (!frontend_music_sources_explicit_begin(owner,origin,e)) return false;
+    if (!origin_current(owner) || !frontend_music_policy_source_play(owner->policies[FRONTEND_MUSIC_WORLD],cue,e)) return false;
+    qa_audio_music *attached=qa_audio_engine_bus_music(owner->engine,origin->bus);
+    return (!attached || (attached==origin->music && qa_audio_engine_music_output(owner->engine,origin->bus,
+        attached,owner->output==FRONTEND_MUSIC_WORLD,e))) && origin_current(owner);
+}
+bool frontend_music_sources_explicit_pause(frontend_music_sources *owner,const frontend_music_origin *origin,
+    bool paused,qa_error *e) {
+    if (!owner || !frontend_music_sources_idle(owner) || !frontend_music_sources_explicit_selected(owner,origin) ||
+        !origin_admit(owner,origin,e)) return fail(e,"Received music pause lost its actual selected source player");
+    qa_audio_music_state state;
+    if(!qa_audio_music_state_read(origin->music,&state))return false;
+    if(!state.enabled)return origin_current(owner);
+    qa_audio_music_pause(origin->music,paused);
+    return qa_audio_music_state_read(origin->music,&state) && state.paused==paused && origin_current(owner);
+}
+bool frontend_music_sources_received_pause(frontend_music_sources *owner,bool paused,qa_error *e) {
+    if(!owner || !frontend_music_sources_idle(owner) || owner->restoring || owner->frontend->capture || owner->frontend->source_restoring)
+        return fail(e,"Received music pause requires its returned shared soundtrack owner");
+    frontend_music_policy *policy=owner->policies[FRONTEND_MUSIC_WORLD];
+    if(!policy)return true;
+    qa_audio_music *music=frontend_music_policy_player(policy);qa_audio_music_state state;
+    if(!music || !qa_audio_music_state_read(music,&state))return fail(e,"Received pause lost its actual soundtrack player");
+    if(!state.enabled)return true;
+    qa_audio_music_pause(music,paused);
+    return qa_audio_music_state_read(music,&state) && state.paused==paused && frontend_music_sources_current(owner);
+}
 bool frontend_music_sources_explicit_retire(frontend_music_sources *owner, const void *context, qa_error *e) {
     if (!owner || !frontend_music_sources_current(owner)) return fail(e, "Explicit music retirement lost its installed owner");
     if (!owner->has_origin || owner->origin.context != context) return true;
@@ -293,25 +356,35 @@ bool frontend_music_sources_explicit_retire(frontend_music_sources *owner, const
     return retire_world(owner, false, e);
 }
 bool frontend_music_sources_restore_origin_matches(const frontend_music_sources *owner, const frontend_music_origin *origin) {
+    if (!origin || !origin->current || !origin->current(origin->context, origin)) return false;
     const qa_product *product = origin && origin->catalog ? qa_catalog_product(origin->catalog, origin->product) : NULL;
+    const char *instance = origin && origin->descriptor ? origin->descriptor->selection.instance :
+        origin && origin->recipe_provider ? origin->recipe_provider->selection.instance :
+        origin ? origin->recipe_content : NULL;
+    const qa_sha256_digest *identity = origin && origin->descriptor ? &origin->descriptor->identity :
+        origin && origin->recipe ? qa_executable_recipe_digest(origin->recipe) : NULL;
     return frontend_music_sources_current(owner) && owner->restoring && owner->frontend->source_restoring &&
-        owner->has_origin && origin && origin->descriptor && product && owner->origin_instance && owner->origin_product &&
+        owner->has_origin && origin && product && instance && identity && owner->origin_instance && owner->origin_product &&
+        owner->origin_recipe == (origin->recipe != NULL) &&
+        (owner->origin_recipe ? recipe_origin(origin) : origin->descriptor && !origin->recipe_provider) &&
         origin->kind == owner->origin.kind && origin->bus == owner->buses[FRONTEND_MUSIC_WORLD] &&
         origin->physical_seat == owner->origin.physical_seat && origin->receiver == owner->origin.receiver &&
-        !strcmp(origin->descriptor->selection.instance, owner->origin_instance) && !strcmp(product->key, owner->origin_product) &&
-        qa_sha256_equal(&origin->descriptor->identity, &owner->origin_identity);
+        !strcmp(instance, owner->origin_instance) && !strcmp(product->key, owner->origin_product) &&
+        qa_sha256_equal(identity, &owner->origin_identity);
 }
 bool frontend_music_sources_restore_origin(frontend_music_sources *owner, const frontend_music_origin *origin, qa_error *e) {
     if (!owner || !owner->restoring || !owner->frontend->source_restoring || !owner->has_origin || owner->origin_bound ||
         !origin_admit(owner, origin, e) || !frontend_music_sources_restore_origin_matches(owner, origin))
         return fail(e, "Saved explicit music does not resolve to its actual retained source declaration");
     const qa_product *row = qa_catalog_product(origin->catalog, origin->product);
-    frontend_music_content content = {.catalog = origin->catalog, .product = origin->product, .files = origin->files};
+    const qa_product *other=origin->kind==FRONTEND_MUSIC_REMOTE?fallback(origin->catalog,row):NULL;
+    frontend_music_content content = {.catalog = origin->catalog, .product = origin->product, .files = origin->files,
+        .fallback_product=other?other->id:0};
     if (!owner->origin_product || strcmp(row->key, owner->origin_product) ||
         !frontend_music_policy_source_is(owner->policies[FRONTEND_MUSIC_WORLD], &content))
         return fail(e, "Saved explicit music leaves its actual source product and private mounts");
     qa_launch_instance_lease *metadata = NULL;
-    if (!qa_launch_instance_retain_metadata(origin->descriptor, &metadata, e)) return false;
+    if (origin->descriptor && !qa_launch_instance_retain_metadata(origin->descriptor, &metadata, e)) return false;
     if (!qa_audio_music_controls_bind(origin->music, owner->controls, e) ||
         !frontend_music_policy_restore_player(owner->policies[FRONTEND_MUSIC_WORLD], origin->music, e)) {
         qa_launch_instance_lease_release(metadata); return false;

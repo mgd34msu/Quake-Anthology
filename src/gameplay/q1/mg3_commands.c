@@ -14,6 +14,16 @@ static bool item_count(qa_q1_game *game, q1_player *player, qa_item_id item,
         qa_inventory_count_read(game->services.inventory, actor, item, out, error) &&
         current(game, actor, player, error);
 }
+static bool weapon_message(qa_q1_game *game, q1_player *player, const char *text,
+    qa_error *error) {
+    qa_actor_id actor = player->id;
+    qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
+        .provider = game->options.provider, .actor = actor, .time_ns = game->time_ns,
+        .flags = 2};
+    return current(game, actor, player, error) &&
+        qa_builtin_resource(&game->services, text, &event.text, error) &&
+        qa_builtin_emit(&game->services, &event, error) && current(game, actor, player, error);
+}
 static bool enough(qa_q1_game *game, q1_player *player, qa_q1_weapon weapon,
     bool *out, qa_error *error) {
     int ammo = q1_weapon_declared_ammo(weapon);
@@ -115,12 +125,7 @@ static bool next_upgrade(qa_q1_game *g, q1_player *player, unsigned type, qa_err
     for (uint32_t bit = 1; bit <= 16384; bit <<= 1) {
         if (flags[type] & bit)
             continue;
-        bool collected;
-        float maximum;
-        return q1_mg3_upgrade(g, player, type, bit, &collected, &maximum, error) &&
-               q1_message(g, player->id, "$mg3_qc_upgrade_success", error) &&
-               q1_sound(g, player->id, type == 0 ? "player/tornoff2.wav" : "weapons/lock4.wav", 3,
-                        1, error);
+        return q1_mg3_debug_upgrade(g, player->id, type, bit, error);
     }
     return true;
 }
@@ -133,10 +138,10 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
         if (impulse == 1 && !melee(g, player, &weapon, error)) return false;
         double count;
         if (!item_count(g, player, g->weapons[weapon], &count, error)) return false;
-        if (count == 0) return q1_message(g, player->id, "$qc_no_weapon", error);
+        if (count == 0) return weapon_message(g, player, "$qc_no_weapon", error);
         bool available, selected;
         if (!enough(g, player, weapon, &available, error)) return false;
-        if (!available) return q1_message(g, player->id, "$qc_not_enough_ammo", error);
+        if (!available) return weapon_message(g, player, "$qc_not_enough_ammo", error);
         return select_weapon(g, player, weapon, &selected, error);
     }
     if (impulse == 10 || impulse == 12) return cycle(g, player, impulse == 12, error);
@@ -147,6 +152,7 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
             if (!qa_builtin_resource(&g->services, "sv_cheats", &name, error) ||
                 (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &enabled, error)))
                 return false;
+            if (!current(g, player->id, player, error)) return false;
             if (!enabled)
                 return true;
         }
@@ -182,18 +188,22 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
         return qa_q1_player_select(g, player->id, QA_Q1_ROCKET, error);
     }
     if (impulse == 100) {
+        if (!q1_developer_message(g, "Resetting to defaults\n", error) ||
+            !current(g, player->id, player, error)) return false;
         player->max_health = 100;
-        if (!q1_message(g, player->id, "Resetting to defaults\n", error) ||
-            !qa_combat_set_health(g->services.combat, player->id, 100, error))
+        if (!qa_combat_set_health(g->services.combat, player->id, 100, error) ||
+            !current(g, player->id, player, error))
             return false;
         static const float capacity[] = {100, 200, 100, 100};
         for (unsigned i = 0; i < 4; ++i) {
+            double count;
+            if (!item_count(g, player, g->ammo[i], &count, error)) return false;
             qa_inventory_entry entry = {.item = g->ammo[i],
-                                        .count = q1_ammo_count(g, player->id, (qa_q1_ammo)i),
+                                        .count = count,
                                         .capacity = capacity[i],
                                         .policy = QA_COUNT_SOURCE_FLOAT};
             if (!qa_inventory_configure(g->services.inventory, player->id, &entry, NULL, NULL,
-                                        error))
+                                        error) || !current(g, player->id, player, error))
                 return false;
         }
         return true;
@@ -203,7 +213,8 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
     if (impulse == 118)
         return set_count(g, player, g->weapons[QA_Q1_MG3_MJOLNIR], 1, 1, error);
     if (impulse == 122) {
-        if (!q1_message(g, player->id, "$m_inf_ammo", error))
+        if (!q1_developer_message(g, "$m_inf_ammo", error) ||
+            !current(g, player->id, player, error))
             return false;
         player->mg3_infinite_ammo = !player->mg3_infinite_ammo;
         return !player->mg3_infinite_ammo || restock(g, player, error);
@@ -211,7 +222,7 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
     if (impulse == 227 || impulse == 228) {
         uint32_t bit = impulse == 227 ? 1u : 2u;
         player->mg3_progress.bloody ^= bit;
-        return q1_message(g, player->id,
+        return q1_developer_message(g,
                           player->mg3_progress.bloody & bit
                               ? (impulse == 227 ? "activated 'bloody shotgun' upgrade\n"
                                                 : "activated 'bloody Super Shotgun' upgrade\n")

@@ -85,10 +85,12 @@ const char *frontend_remote_q1_light_style(const frontend_remote_q1 *row, uint32
 bool frontend_remote_q1_player_read(frontend_remote_q1 *row, frontend_remote_q1_player_view *out, bool *present, qa_error *error)
 {
     if (!remote_q1_mutable(row) || !out || !present || row->busy || !remote_q1_live(row, error)) return false;
-    *present = row->loaded && row->view_entity && row->has_data;
+    *present = row->published && row->loaded && row->view_entity && row->has_data;
     if (!*present) return true;
     qa_q1_entity value; qa_q1_entity_init(&value);
-    for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) { value = sampled(row, row->current.rows[i]); break; }
+    bool found=false;
+    for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) { value = sampled(row, row->current.rows[i]); found=true; break; }
+    if(!found) { *present=false; return true; }
     qa_actor_id actor;
     ++row->busy; bool ok = remote_q1_actor_read(row, row->view_entity, &actor, error); --row->busy;
     if (!ok) return false;
@@ -167,5 +169,6 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
     for (size_t i = 0; ok && i < row->current.count; ++i) ok = remote_q1_actor_read(row, row->current.rows[i].number, &actor, error);
     if (ok && row->view_entity) ok = remote_q1_actor_read(row, row->view_entity, &actor, error);
     if (ok && own_changed) ok = remote_q1_prediction_receive(row, error);
+    if (ok) remote_q1_publication_update(row);
     --row->busy; return ok && remote_q1_live(row, error);
 }

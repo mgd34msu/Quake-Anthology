@@ -48,6 +48,8 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
     size_t levels = reading ? 0 : source->level_count;
     bool source_q3 = reading ? false : source->source_q3, source_mipmap = reading ? false : source->source_mipmap;
     bool recipient_upload_pixels = reading ? false : source->recipient_upload_pixels;
+    bool recipient_mipmap = reading ? false : source->recipient_mipmap;
+    uint32_t source_texture_unit = reading ? 0 : source->source_texture_unit;
     bool ok = name_field(io, &name, &owned_name) && qa_source_save_u32(io, &kind) && kind <= QA_SCENE_DEPTH32F &&
         qa_source_save_u32(io, &wrap) && wrap <= QA_SCENE_CLAMP && qa_source_save_u32(io, &filter) && filter <= QA_SCENE_LINEAR_MIPMAP_LINEAR &&
         qa_source_save_u64(io, &revision) && revision && qa_source_save_u64(io, lineage_revision) && *lineage_revision >= revision &&
@@ -59,6 +61,10 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
     if (ok && version >= 2) ok = qa_source_save_bool(io, &source_q3) &&
         qa_source_save_bool(io, &source_mipmap) && (source_q3 || !source_mipmap) &&
         qa_source_save_bool(io, &recipient_upload_pixels);
+    if (ok && version >= 3) ok = qa_source_save_bool(io, &recipient_mipmap) &&
+        (recipient_upload_pixels || !recipient_mipmap);
+    if (ok && version >= 4) ok = qa_source_save_u32(io, &source_texture_unit) &&
+        source_texture_unit <= 1 && (source_q3 || !source_texture_unit);
     qa_scene_image_level *decoded = reading && ok ? calloc(levels, sizeof(*decoded)) : NULL;
     if (reading && ok && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
     for (size_t i = 0; ok && i < levels; ++i) {
@@ -88,7 +94,9 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         if (ok) {
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
             (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;
+            (*out)->source_texture_unit = source_texture_unit;
             (*out)->recipient_upload_pixels = recipient_upload_pixels;
+            (*out)->recipient_mipmap = recipient_mipmap;
             ((owned_image *)*out)->lineage->revision = *lineage_revision;
         }
     }
@@ -99,7 +107,7 @@ static bool signature(qa_source_save_io *io, uint32_t *version)
 {
     uint8_t magic[4] = {'Q','A','I','M'};
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAIM", 4) &&
-        qa_source_save_u32(io, version) && *version >= 1 && *version <= 2;
+        qa_source_save_u32(io, version) && *version >= 1 && *version <= 4;
 }
 bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t count, qa_buffer *out, qa_error *error)
 {
@@ -116,7 +124,7 @@ bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t 
     size_t at = 0;
     for (size_t i = 0; i < count; ++i) for (const owned_image *image = owners[i]->names->images; image; image = image->next) images[at++] = image;
     qa_source_save_io io = {0}; size_t owner_count = count;
-    uint32_t version = 2;
+    uint32_t version = 4;
     bool ok = at == total && qa_source_save_writer(&io, NULL, error) && signature(&io, &version) &&
         qa_source_save_count(&io, &owner_count, SIZE_MAX) && qa_source_save_count(&io, &total, SIZE_MAX);
     at = 0;

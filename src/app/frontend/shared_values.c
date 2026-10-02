@@ -14,6 +14,7 @@ struct frontend_shared_values {
     frontend_config_store *manager;
     qa_application *application;
     const qa_launch_snapshot *candidate;
+    qa_application_client_preparation *client;
     qa_cvars *registry;
     qa_cvars_edit *edit;
     qa_console *root_console;
@@ -27,6 +28,7 @@ static bool current(const frontend_shared_values *owner,qa_error *error)
     return (owner && owner->frontend && owner->application==owner->frontend->application &&
         owner->manager==owner->frontend->config_store &&
         owner->registry==qa_application_cvars(owner->application) &&
+        (!owner->client || qa_application_client_prepare_associated(owner->application,owner->client)) &&
         (!owner->root_console || owner->root_console==qa_application_console(owner->application))) ||
         fail(error,"Shared values lost their retained actual ENGINE parent");
 }
@@ -111,6 +113,38 @@ bool frontend_shared_values_begin_root(qa_frontend *f,frontend_config_store *man
 }
 qa_cvars *frontend_shared_values_registry(const frontend_shared_values *owner)
 { return owner?owner->registry:NULL; }
+bool frontend_shared_values_begin_client(qa_frontend *f,frontend_config_store *manager,
+    qa_application *app,qa_application_client_preparation *client,frontend_shared_values **out,qa_error *error)
+{
+    if (!f || !manager || f->config_store!=manager || f->application!=app || !out || *out ||
+        !qa_application_client_prepare_associated(app,client) ||
+        !qa_application_client_prepare_phase_is(client,QA_CLIENT_PREPARE_CONFIGURATION))
+        return fail(error,"Shared CLIENT values require their actual physical preparation");
+    frontend_shared_values *owner=calloc(1,sizeof(*owner));
+    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining canonical CLIENT settings preparation");
+    owner->frontend=f; owner->manager=manager; owner->application=app;
+    owner->client=client; owner->registry=qa_application_cvars(app);
+    if (!qa_cvars_edit_prepare(owner->registry,&owner->edit,error)) { free(owner); return false; }
+    *out=owner; return true;
+}
+bool frontend_shared_values_client_access(const frontend_shared_values *owner,
+    const qa_application_client_preparation *client,const qa_command_context *command,
+    qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
+{
+    const qa_application_client_source *source=qa_application_client_prepare_source(client);
+    if (!registry || !edit || !current(owner,error) || owner->client!=client ||
+        owner->terminal || owner->published || !owner->edit || !source || !command ||
+        !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CONFIGURATION) ||
+        command->owner!=source->context.command.owner || command->session!=source->context.command.session ||
+        command->seat!=source->context.command.seat || command->client!=source->context.command.client ||
+        command->dialect!=source->context.command.dialect || command->origin!=source->context.command.origin ||
+        command->registry!=source->context.command.registry || command->generation!=source->context.command.generation ||
+        !qa_actor_id_equal(command->actor,source->context.command.actor) ||
+        (!qa_application_command_context_active(owner->application,command) &&
+            !qa_console_cvar_entered(source->context.console,command)))
+        return fail(error,"Shared CLIENT edit requires its actual entered routed console operation");
+    *registry=owner->registry; *edit=owner->edit; return true;
+}
 bool frontend_shared_values_refresh(frontend_shared_values *owner,
     const qa_application_startup_source *source,qa_error *error)
 {
@@ -164,6 +198,13 @@ static bool input_restart(frontend_shared_values *owner,qa_error *error)
         .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name="in_joystickProfile"},error)) return false;
     owner->input_restart=true; return true;
 }
+bool frontend_shared_values_client_input_restart(frontend_shared_values *owner,
+    const qa_application_client_preparation *client,const qa_command_context *command,qa_error *error)
+{
+    qa_cvars *registry=NULL; qa_cvars_edit *edit=NULL;
+    return frontend_shared_values_client_access(owner,client,command,&registry,&edit,error) &&
+        input_restart(owner,error);
+}
 bool frontend_shared_values_programme_access(const frontend_shared_values *owner,
     const qa_console *console,const qa_command_context *command,qa_cvars **registry,
     qa_cvars_edit **edit,qa_error *error)
@@ -207,7 +248,7 @@ bool frontend_shared_values_q3_renderer_initialize(frontend_shared_values *owner
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Source renderer initialization requires its returned mutable canonical edit");
     const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
-        "r_vertexLight","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
+        "r_vertexLight","r_fullbright","r_stereo","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
     for (size_t i=0;i<sizeof(latched)/sizeof(latched[0]);++i) {
         const qa_cvar_view *setting=qa_cvars_edit_canonical_record(owner->edit,latched[i]);
         if (!setting || setting->console_created) return fail(error,"Source renderer lost its physical initialization declaration");
@@ -348,6 +389,7 @@ bool frontend_shared_values_engine_shutdown(frontend_shared_values **in,
         owner->frontend->source_restoring || !frontend_seat_callbacks_returned(owner->frontend) ||
         qa_application_engine_shutdown_owner(loan)!=owner->application ||
         qa_application_engine_shutdown_candidate(loan)!=owner->candidate ||
+        (owner->client && qa_application_engine_shutdown_client(loan)!=owner->client) ||
         !qa_application_engine_shutdown_read(loan,&console,&registry,error) || registry!=owner->registry ||
         !qa_console_idle(console) || !qa_cvars_edit_abort_is(owner->edit,registry))
         return fail(error,"Detached scalar cleanup lost its exact cancellation loan and edit");

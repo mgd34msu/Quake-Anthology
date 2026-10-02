@@ -19,6 +19,7 @@ typedef struct q3n_hud_options {
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
     qa_native_q3_remote_client_service *remote_client;
+    q3n_compiled_source *compiled_source;
     uint32_t seat;
     /* Actual physical compositor ordinal; the authored source seat ID may
      * differ. UI/fonts borrow this frontend seat until parent retirement. */
@@ -54,6 +55,7 @@ typedef struct q3n_hud_state {
 bool q3n_hud_create(const q3n_hud_options *, q3n_hud **, qa_error *);
 bool q3n_hud_create_restored(const q3n_hud_options *, q3n_hud **, qa_error *);
 bool q3n_hud_create_remote(const q3n_hud_options *, q3n_hud **, qa_error *);
+bool q3n_hud_create_compiled(const q3n_hud_options *, q3n_hud **, qa_error *);
 void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);

@@ -1,5 +1,5 @@
-#ifndef QA_APPLICATION_NATIVE_Q3_WIRE_H
-#define QA_APPLICATION_NATIVE_Q3_WIRE_H
+#ifndef QA_APPLICATION_NATIVE_Q3_WIRE_INTERNAL_H
+#define QA_APPLICATION_NATIVE_Q3_WIRE_INTERNAL_H
 
 #include "internal.h"
 #include "qa/application_network.h"

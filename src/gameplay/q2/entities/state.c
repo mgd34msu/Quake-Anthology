@@ -45,8 +45,10 @@ bool q2_entities_init(qa_q2_game *g, qa_error *e) {
     return true;
 }
 void q2_entities_close(qa_q2_game *g) {
-    if (g->entity_runtime)
+    if (g->entity_runtime) {
         free(g->entity_runtime->wind);
+        free(g->entity_runtime->visited_maps);
+    }
     free(g->entity_runtime);
     g->entity_runtime = NULL;
 }

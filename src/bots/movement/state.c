@@ -30,7 +30,7 @@ qa_bot_move_state *bot_move_source_state(qa_bot_moves *m,uint32_t id) {
 }
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actions *actions,
                          const qa_bot_move_services *services, qa_bot_moves **out, qa_error *e) {
-    if (!maximum || maximum > SIZE_MAX / sizeof(bot_move_slot) || !library || !actions ||
+    if (!maximum || SIZE_MAX / maximum < sizeof(bot_move_slot) || !library || !actions ||
         !services || !services->navigation || !services->random.next || !out)
         return bot_move_fail(e, "invalid bot movement services/capacity");
     qa_bot_moves *m = calloc(1, sizeof(*m));

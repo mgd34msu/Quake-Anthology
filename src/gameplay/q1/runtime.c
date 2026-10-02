@@ -28,6 +28,9 @@ static const char *const ammo_names[QA_Q1_AMMO_COUNT] = {
     "q1:ammo/shells",   "q1:ammo/nails",         "q1:ammo/rockets",
     "q1:ammo/cells",    "rogue:ammo/lava-nails", "rogue:ammo/multi-rockets",
     "rogue:ammo/plasma"};
+const char *qa_q1_ammo_identity(qa_q1_ammo ammo) {
+    return (unsigned)ammo < QA_Q1_AMMO_COUNT ? ammo_names[ammo] : NULL;
+}
 static const char *const weapon_models[QA_Q1_WEAPON_COUNT] = {
     "progs/v_axe.mdl",    "progs/v_shot.mdl",   "progs/v_shot2.mdl",  "progs/v_nail.mdl",
     "progs/v_nail2.mdl",  "progs/v_rock.mdl",   "progs/v_rock2.mdl",  "progs/v_light.mdl",
@@ -466,12 +469,12 @@ static bool prepare_frame(void *context, qa_session *session, const qa_source_fr
 static bool begin_frame(void *context, qa_session *session, const qa_source_frame *frame,
                         qa_error *error) {
     (void)session;
-    (void)frame;
     qa_q1_game *g = context;
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = q1_map_addon_frame(g, error) && q1_map_ctf_frame(g, error);
+    bool ok = q1_map_addon_frame(g, error) && q1_map_level_frame(g, frame, error) &&
+        q1_map_ctf_frame(g, error);
     return operation_finish(&operation, ok, error);
 }
 static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id actor,
@@ -721,6 +724,8 @@ bool qa_q1_game_combat_policy(qa_q1_game *g, qa_combat_policy *out, qa_error *er
 void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
+    if (g->host.monster_path_release)
+        g->host.monster_path_release(g->host.context, actor.id);
     q1_wire_actor_released(g, actor.id);
     q1_source_rogue_runes_release(g, actor.id);
     q1_grapple_released(g, actor.id);

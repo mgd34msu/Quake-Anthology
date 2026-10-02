@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_MUSIC_SOURCES_H
 #define QA_FRONTEND_MUSIC_SOURCES_H
 #include "shared_music_policy.h"
+#include "qa/executable_recipe.h"
 
 typedef struct frontend_music_sources frontend_music_sources;
 typedef enum frontend_music_slot { FRONTEND_MUSIC_MENU, FRONTEND_MUSIC_WORLD } frontend_music_slot;
@@ -18,6 +19,12 @@ typedef struct frontend_music_origin {
     uint32_t physical_seat;
     qa_actor_owner receiver;
     const qa_launch_instance *descriptor;
+    /* A remote COMPONENT instead borrows its actual executable recipe/provider.
+     * Its caller retains that recipe until explicit_retire; no local launch
+     * descriptor is synthesized for the remote declaration. */
+    const qa_executable_recipe *recipe;
+    const qa_recipe_provider *recipe_provider;
+    const char *recipe_content;
     qa_catalog *catalog;
     qa_product_id product;
     const qa_vfs *files;
@@ -37,6 +44,9 @@ bool frontend_music_sources_world_retire(frontend_music_sources *, qa_error *);
  * shares the source-owned player instead of manufacturing another soundtrack.
  * The returned boundary supplies actual intro/loop continuation after start. */
 bool frontend_music_sources_explicit_begin(frontend_music_sources *, const frontend_music_origin *, qa_error *);
+bool frontend_music_sources_explicit_play(frontend_music_sources *, const frontend_music_origin *, const char *, qa_error *);
+bool frontend_music_sources_explicit_pause(frontend_music_sources *, const frontend_music_origin *, bool, qa_error *);
+bool frontend_music_sources_received_pause(frontend_music_sources *,bool,qa_error *);
 bool frontend_music_sources_explicit_selected(const frontend_music_sources *, const frontend_music_origin *);
 bool frontend_music_sources_explicit(frontend_music_sources *, const frontend_music_origin *,
     const char *intro, const char *loop, bool looping, qa_error *);

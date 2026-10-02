@@ -1,5 +1,6 @@
 #include "controls_private.h"
 #include "qa/render_save.h"
+#include "qa/q3_source_scene_bank.h"
 #include "save_fields.h"
 
 static bool color_fields(qa_source_save_io *io, qa_scene_vec4 *color)
@@ -92,7 +93,35 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
     const qa_render_checkpoint_refs *refs)
 {
     if (source->entered) return false;
+    if (version >= 9) {
+        bool present = source->scene_bank != NULL;
+        if (!qa_source_save_bool(io, &present)) return false;
+        if (present) {
+            qa_q3_source_scene_bank_refs bank_refs = {.context = refs ? refs->context : NULL,
+                .assets_encode = refs ? refs->assets_encode : NULL,
+                .assets_decode = refs ? refs->assets_decode : NULL};
+            qa_buffer bytes = {0};
+            size_t size = 0;
+            bool reading = io->direction == QA_SOURCE_SAVE_READ;
+            bool ok = reading || qa_q3_source_scene_bank_checkpoint(source->scene_bank, &bank_refs, &bytes, io->error);
+            if (!reading) size = bytes.size;
+            if (ok) ok = qa_source_save_count(io, &size, SIZE_MAX);
+            if (ok && reading) {
+                ok = io->offset <= io->input.size && size <= io->input.size - io->offset;
+                if (ok) {
+                    qa_bytes input = {io->input.data + io->offset, size};
+                    ok = qa_q3_source_scene_bank_restore(input, &bank_refs, &source->scene_bank, io->error);
+                    if (ok) io->offset += size;
+                } else qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "Source scene bank exceeds its enclosing renderer capsule");
+            } else if (ok) ok = qa_source_save_bytes(io, bytes.data, size);
+            qa_buffer_free(&bytes);
+            if (!ok) return false;
+        }
+    }
     if (version >= 6 && !retained_fields(io, source, version, refs)) return false;
+    if (version >= 12 && !qa_source_save_f32(io, &source->identity_light)) return false;
+    for (size_t i = 0; version >= 12 && i < 8; ++i)
+        if (!qa_source_save_bytes(io, source->texts[i], sizeof(source->texts[i])) || source->texts[i][32] != 0) return false;
     if (version >= 7) {
         uint64_t key = 0;
         bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -134,12 +163,51 @@ bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *
     const qa_render_checkpoint_refs *refs)
 {
     /* The enclosing CPU/GL codec owns the schema version and idle boundary. */
+    qa_render_source_attributes *attributes=&controls->attributes;
+    if (version>=10) {
+        if (!color_fields(io,&attributes->color) || !qa_source_save_bool(io,&attributes->color_known) ||
+            !qa_source_save_bool(io,&attributes->color_array) ||
+            !qa_source_save_u32(io,&attributes->texture_unit) || attributes->texture_unit>1) return false;
+        for (size_t unit=0;unit<2;++unit) {
+            uint32_t environment=attributes->environment[unit];
+            uint32_t kind=attributes->coordinate_kind[unit];
+            if (!coordinates_fields(io,attributes->coordinates+unit) ||
+                !qa_source_save_bool(io,attributes->coordinates_known+unit) ||
+                !qa_source_save_bool(io,attributes->coordinate_array+unit) ||
+                !qa_source_save_bool(io,attributes->texture_enabled+unit) ||
+                !qa_source_save_u32(io,&environment) || environment>QA_TEXTURE_REPLACE ||
+                !qa_source_save_u32(io,&kind) || kind>MATERIAL_SOURCE_COORDINATES_DRAW ||
+                !qa_source_save_u32(io,attributes->coordinate_bank+unit) || attributes->coordinate_bank[unit]>1) return false;
+            if (io->direction==QA_SOURCE_SAVE_READ) {
+                attributes->environment[unit]=(qa_scene_texture_environment)environment;
+                attributes->coordinate_kind[unit]=(material_source_coordinate_kind)kind;
+            }
+            if (version>=12 && !qa_source_save_bool(io,attributes->actual_empty+unit)) return false;
+        }
+    } else if (io->direction==QA_SOURCE_SAVE_READ) qa_render_source_attributes_init(attributes);
     if (version>=6) {
         uint32_t filter=controls->source_filter;
         if (!qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||
             !qa_source_save_bool(io,&controls->source_filter_initialized)) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) controls->source_filter=(qa_scene_filter)filter;
     }
-    return !controls->ticket && qa_source_save_i32(io, &controls->values.primitives) &&
-        qa_source_save_bool(io, &controls->values.compiled_vertex_arrays) && source_fields(io, &controls->source, version, refs);
+    if (version>=8 && (!qa_source_save_bool(io,&controls->source_limits_initialized) ||
+        !qa_source_save_u32(io,&controls->source_max_polys) ||
+        !qa_source_save_u32(io,&controls->source_max_polyverts) ||
+        (controls->source_limits_initialized ? controls->source_max_polys<600 || controls->source_max_polyverts<3000 ||
+            controls->source_max_polys>INT32_MAX || controls->source_max_polyverts>INT32_MAX :
+            controls->source_max_polys!=0 || controls->source_max_polyverts!=0))) return false;
+    if (controls->ticket || !qa_source_save_i32(io, &controls->values.primitives) ||
+        !qa_source_save_bool(io, &controls->values.compiled_vertex_arrays) ||
+        !source_fields(io, &controls->source, version, refs)) return false;
+    if (controls->source.scene_bank) {
+        qa_q3_source_scene_membership membership;
+        if (!controls->source_limits_initialized ||
+            !qa_q3_source_scene_bank_membership(controls->source.scene_bank, &membership) ||
+            membership.max_polygons != controls->source_max_polys || membership.max_vertices != controls->source_max_polyverts) {
+            qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "Source bank differs from its actual renderer allocation limits");
+            return false;
+        }
+    }
+    return true;
 }

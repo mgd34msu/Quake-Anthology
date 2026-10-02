@@ -68,7 +68,7 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
     if (!frame)
         return false;
     bool okay = false;
-    qa_actor_registry *actors = qa_session_actors(g->services.session);
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     if (!qa_builtin_snapshot_reserve(&frame->snapshot, qa_actors_count(actors), e))
         goto out;
     frame->snapshot.count = 0;

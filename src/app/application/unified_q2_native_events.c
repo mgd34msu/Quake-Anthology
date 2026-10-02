@@ -278,8 +278,24 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
             boolean(&j, ",\"visible\":", v->visible, e) && alias(&j, app, ",\"primary\":", v->text, e) &&
             alias(&j, app, ",\"secondary\":", v->resource, e) && boolean(&j, ",\"slowTime\":", (v->flags & 1u) != 0, e); break;
     case QA_Q2_MAP_GOAL:
-    case QA_Q2_MAP_SECRET:
-    case QA_Q2_MAP_END_UNIT: break;
+    case QA_Q2_MAP_SECRET: break;
+    case QA_Q2_MAP_END_UNIT:
+        if (v->level_count>QA_Q2_CAMPAIGN_LEVEL_LIMIT || (v->level_count && !v->levels)) {
+            ok=application_fail(e,QA_ERROR_ARGUMENT,"Q2 unit report lost its actual campaign rows"); break;
+        }
+        ok=begin(&j,"q2-rerelease","end-of-unit",e) && text(&j,",\"levels\":[",e);
+        for (size_t i=0;ok && i<v->level_count;++i) {
+            const qa_q2_campaign_level *row=v->levels+i;
+            ok=(!i || text(&j,",",e)) && alias(&j,app,"{\"map\":",row->map,e) &&
+                alias(&j,app,",\"name\":",row->name,e) && number(&j,",\"visitOrder\":",row->visit_order,e) &&
+                number(&j,",\"totalSecrets\":",row->total_secrets,e) &&
+                number(&j,",\"foundSecrets\":",row->found_secrets,e) &&
+                number(&j,",\"totalMonsters\":",row->total_monsters,e) &&
+                number(&j,",\"killedMonsters\":",row->killed_monsters,e) &&
+                number(&j,",\"time\":",row->time_seconds,e) && text(&j,"}",e);
+        }
+        ok=ok && text(&j,"]",e) && number(&j,",\"buttonTime\":",(double)v->button_time_ns/1e9,e);
+        break;
     }
     if (ok) ok = emit(p, &j, NULL, v->actor, recipient, clock.frame.time_ns, audience, e);
     application_unified_json_dispose(&j);
@@ -376,7 +392,11 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
         bool monster = path && !strcmp(path, "q2:monster-muzzle");
         ok = begin(&j, monster ? "q2" : "q2-weapon", monster ? "monster-muzzleflash" : "muzzleflash", e) &&
             actor(&j, ",\"actor\":", v->actor, e) && number(&j, ",\"flash\":", v->code, e);
-        if (monster) ok = ok && vector(&j, ",\"origin\":", v->origin, e) && vector(&j, ",\"direction\":", v->direction, e);
+        if (monster) {
+            ok = ok && vector(&j, ",\"origin\":", v->origin, e) && vector(&j, ",\"direction\":", v->direction, e);
+            if (v->has_muzzle_pose) ok = ok && vector(&j, ",\"angles\":", v->muzzle_angles, e) &&
+                number(&j, ",\"scale\":", v->muzzle_scale, e);
+        }
         else ok = ok && boolean(&j, ",\"silenced\":", (v->flags & 128u) != 0, e);
         break;
     }
@@ -417,7 +437,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
         if (!path) {
             ok = begin(&j, "q2", "beam", e) && actor(&j, ",\"actor\":", v->actor, e) &&
                 vector(&j, ",\"start\":", v->origin, e) && vector(&j, ",\"end\":", v->end, e) &&
-                number(&j, ",\"width\":", v->value, e) && number(&j, ",\"color\":", v->code, e) &&
+                number(&j, ",\"width\":", v->value, e) && number(&j, ",\"color\":", (uint32_t)v->code, e) &&
                 boolean(&j, ",\"visible\":", (v->flags & 1u) != 0, e);
             break;
         }
@@ -426,6 +446,13 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
                 string(&j, ",\"effect\":", !strcmp(path, "q2:parasite") ? "parasite" : "medic", e) &&
                 actor(&j, ",\"actor\":", v->actor, e) && vector(&j, ",\"start\":", v->origin, e) &&
                 vector(&j, ",\"end\":", v->end, e);
+            break;
+        }
+        if (!strcmp(path, "q2:grapple-cable")) {
+            ok = begin(&j, "q2-composition", (v->flags & 1u) ? "lmctf" : "ctf", e) &&
+                text(&j, ",\"event\":{\"kind\":\"grapple-cable\"", e) && actor(&j, ",\"actor\":", v->actor, e) &&
+                vector(&j, ",\"start\":", v->origin, e) && vector(&j, ",\"end\":", v->end, e) &&
+                vector(&j, ",\"offset\":", v->direction, e) && text(&j, "}", e);
             break;
         }
         if (strncmp(path, "q2:", 3)) break;
@@ -445,6 +472,11 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
     case QA_BUILTIN_TELEPORT: {
         const char *effect = v->resource ? qa_strings_cstr(qa_session_strings(app->session), v->resource) : NULL;
         if (effect && !strncmp(effect, "q2:", 3)) effect += 3;
+        if (v->kind == QA_BUILTIN_EFFECT && effect && !strcmp(effect, "entity-event")) {
+            ok = begin(&j, "q2", "entity-event", e) && actor(&j, ",\"actor\":", v->actor, e) &&
+                number(&j, ",\"event\":", v->code, e);
+            break;
+        }
         if (!effect && v->kind == QA_BUILTIN_PARTICLES) effect = damage_effect(v->code);
         if (!effect) break;
         bool palette = !strcmp(effect, "splash") || !strcmp(effect, "laser-sparks") ||

@@ -278,6 +278,54 @@ bool frontend_qc_messages_stat_read(const frontend_qc_messages *owner,qa_actor_o
     return qa_application_qc_message_source_read(owner->application,provider,&source,&found,error) && found &&
         qa_application_qc_message_client(owner->application,&source,recipient,&slot,error);
 }
+static bool unified_player_current(void *context,qa_application *app,const application_unified_source *source,
+    qa_net_client_id client,const qa_unified_session_player *player)
+{
+    frontend_qc_unified_player_receipt *receipt=context;
+    if(!receipt || !source || !player || receipt->application!=app ||
+        !qa_net_client_id_equal(client,receipt->client) || !qa_actor_id_equal(player->actor,receipt->player.actor) ||
+        player->seat.owner!=receipt->player.seat.owner || player->seat.index!=receipt->player.seat.index ||
+        player->source_owner!=receipt->player.source_owner || player->source_slot!=receipt->player.source_slot ||
+        player->movement!=receipt->player.movement || source->owner!=receipt->source.owner ||
+        source->launch!=receipt->source.launch || source->session!=receipt->source.session ||
+        source->world!=receipt->source.world || source->family!=receipt->source.family ||
+        source->publication!=receipt->source.publication || source->map_revision!=receipt->source.map_revision ||
+        source->frame_revision!=receipt->source.frame_revision ||
+        !application_unified_source_current(app,&receipt->source) || !application_unified_source_current(app,source) ||
+        !application_unified_player_current(app,client,&receipt->player) || !application_unified_player_current(app,client,player) ||
+        !frontend_qc_messages_camera_current(receipt->owner,&receipt->camera)) return false;
+    int32_t ammo=0; bool has_ammo=false;
+    return frontend_qc_messages_stat_read(receipt->owner,receipt->source.owner,receipt->player.actor,3,&ammo,&has_ammo,NULL) &&
+        has_ammo==receipt->external.has_qc_ammo && (!has_ammo || ammo==receipt->external.qc_ammo);
+}
+bool frontend_qc_messages_unified_player_read(const frontend_qc_messages *owner,qa_application *app,
+    const application_unified_source *source,qa_net_client_id client,const qa_unified_session_player *player,
+    frontend_qc_unified_player_receipt *out,bool *present,qa_error *error)
+{
+    if(!out || !present || !source || !player ||
+        !application_unified_source_current(app,source) || !application_unified_player_current(app,client,player))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC output receipt requires its actual returned Source and full recipient");
+    *present=false;
+    qa_application_qc_message_source qc; bool found=false;
+    if(!qa_application_qc_message_source_read(app,source->owner,&qc,&found,error)) return false;
+    if(!found) { *out=(frontend_qc_unified_player_receipt){0}; return true; }
+    if(!current(owner) || owner->application!=app || owner->busy)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC output receipt requires its actual returned decoder owner");
+    frontend_qc_unified_player_receipt value={.owner=owner,.application=app,.source=*source,.client=client,.player=*player};
+    if(!frontend_qc_messages_camera_read(owner,source->owner,player->actor,&value.camera,error) ||
+        value.camera.source_slot!=player->source_slot || value.camera.source.instance!=qc.instance ||
+        value.camera.source.descriptor!=qc.descriptor || value.camera.source.map_revision!=source->map_revision ||
+        !frontend_qc_messages_stat_read(owner,source->owner,player->actor,3,
+            &value.external.qc_ammo,&value.external.has_qc_ammo,error)) return false;
+    value.player_camera=(application_unified_player_camera){.source=value.camera.source,.recipient=value.camera.recipient,
+        .view_entity=value.camera.view_entity,.source_slot=value.camera.source_slot,.intermission=value.camera.intermission,
+        .angles=qa_v3(value.camera.angles[0],value.camera.angles[1],value.camera.angles[2]),.has_angles=value.camera.has_angles};
+    *out=value;
+    out->external.context=out; out->external.current=unified_player_current; out->external.camera=&out->player_camera;
+    if(!unified_player_current(out,app,source,client,player))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC output receipt changed during actual decoder observation");
+    *present=true; return true;
+}
 static bool bytes_field(qa_source_save_io *io,qa_bytes *bytes)
 {
     size_t size=io->direction==QA_SOURCE_SAVE_WRITE?bytes->size:0;

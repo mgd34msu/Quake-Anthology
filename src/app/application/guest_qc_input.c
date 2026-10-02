@@ -29,10 +29,10 @@ static float move_scale(qa_movement_kind kind)
 float application_qc_input_scalar(const qa_movement_command *command, application_qc_input_id input)
 {
     switch (input) {
-    case QC_INPUT_ATTACK: return (command->buttons & 1u) ? 1 : 0;
+    case QC_INPUT_ATTACK: return (command->buttons & 1u) ? 1.0f : 0.0f;
     case QC_INPUT_JUMP: return command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD ?
-        (command->buttons & 2u) ? 1 : 0 : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
-        (command->buttons & 8u) ? 1 : 0 : command->up_move >= 10 ? 1 : 0;
+        (command->buttons & 2u) ? 1.0f : 0.0f : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
+        (command->buttons & 8u) ? 1.0f : 0.0f : command->up_move >= 10 ? 1.0f : 0.0f;
     case QC_INPUT_IMPULSE: return command->impulse;
     case QC_INPUT_FORWARD: return command->forward_move / move_scale(command->kind);
     case QC_INPUT_SIDE: return command->side_move / move_scale(command->kind);

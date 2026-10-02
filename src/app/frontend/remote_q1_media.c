@@ -3,6 +3,7 @@
 #include "shared_resource_policy.h"
 #include "visual_access.h"
 #include "qa/material.h"
+#include "qa/scene_world_save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
         .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
     if (!row->materials || !qa_material_library_load_scripts(row->materials, row->content.mounts, &options.images, error) ||
         !qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error) ||
+        !qa_scene_world_source_resource_bind(row->world, row->map, error) ||
         !qa_audio_bank_create(row->content.mounts, &row->sound_bank, error)) return false;
     row->sound_available = row->sound_count ? calloc(row->sound_count, sizeof(*row->sound_available)) : NULL;
     if (row->sound_count && !row->sound_available) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received sound availability");
@@ -110,7 +112,8 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
         qa_scene_world_options world_options = {.images = image_options(QA_IMAGE_USAGE_WALL), .subdivisions = 64,
             .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
         ok = qa_bsp_open(qa_resource_bytes(m->resource), &bsp, error) && qa_bsp_validate(&bsp, error) &&
-            qa_scene_world_create(&bsp, row->images, row->materials, &world_options, &m->world, error);
+            qa_scene_world_create(&bsp, row->images, row->materials, &world_options, &m->world, error) &&
+            qa_scene_world_source_resource_bind(m->world, m->resource, error);
     } else if (ok) ok = qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
         qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
         frontend_visual_model_opening_initialize(row->frontend, QA_SCENE_Q1, row->content.mounts,

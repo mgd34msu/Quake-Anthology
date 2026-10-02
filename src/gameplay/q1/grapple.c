@@ -245,7 +245,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
             link->count = (float)number / 4;
             link->physics.motion = QA_PHYSICS_NOCLIP;
             link->physics.angular_velocity = qa_v3(310, 410, 510);
-            qa_body_state chain = {.angles = {31.0f * number, 41.0f * number, 51.0f * number}};
+            qa_body_state chain = {.angles = {31.0f * (float)number, 41.0f * (float)number, 51.0f * (float)number}};
             if (!q1_model(g, link, "progs/bit.mdl", error) ||
                 !qa_world_body_write(g->services.world, link->id, &chain, error) ||
                 !position_link(g, link, error))

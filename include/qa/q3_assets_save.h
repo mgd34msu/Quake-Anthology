@@ -3,7 +3,7 @@
 #include "qa/q3_presentation.h"
 
 typedef struct qa_q3_asset_model_holder {
-    bool present, has_lods, owns_world;
+    bool present, has_lods, owns_world, shared_parent;
     qa_q3_presentation_provider provider;
     const qa_resource *resource, *lod_resources[3];
     const qa_model *sources[3];
@@ -16,6 +16,7 @@ typedef struct qa_q3_asset_skin_holder {
     qa_q3_presentation_provider provider;
     const qa_resource *resource;
     const qa_model_skin_map *map;
+    bool shared_parent;
 } qa_q3_asset_skin_holder;
 typedef struct qa_q3_asset_model_lease {
     void *context;
@@ -40,9 +41,15 @@ bool qa_q3_assets_skin_holder(const qa_q3_presentation_assets *, size_t ordinal,
     qa_q3_asset_skin_holder *, qa_error *);
 bool qa_q3_assets_services(const qa_q3_presentation_assets *,
     qa_q3_presentation_asset_options *, qa_scene_world **, qa_collision_geometry **, qa_error *);
+/* Cold attachment to an empty isolated registry; dispatches no source service. */
+bool qa_q3_assets_prepare_restored_map(qa_q3_presentation_assets *,
+    qa_scene_world *, qa_collision_geometry *, qa_error *);
 
 typedef struct qa_q3_asset_owner_refs {
     void *context;
+    /* Exact retired registry parents are restored before their shared rows. */
+    bool (*registry_encode)(void *, const qa_q3_presentation_assets *, uint64_t *, qa_error *);
+    bool (*registry_decode)(void *, uint64_t, qa_q3_presentation_assets **, qa_error *);
     /* Includes the genuine sound/media owners and source service policy. */
     bool (*services_encode)(void *, const qa_q3_presentation_asset_options *, uint64_t *, qa_error *);
     bool (*services_qualify)(void *, uint64_t, const qa_q3_presentation_asset_options *, qa_error *);

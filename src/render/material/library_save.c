@@ -84,7 +84,7 @@ static bool catalog_source_index(const qa_material_library *library, const qa_ma
     return false;
 }
 static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
-    const qa_material_library_checkpoint_refs *refs)
+    const qa_material_library_checkpoint_refs *refs, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
@@ -101,6 +101,16 @@ static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
             library->catalog_tail = entry;
         }
         bool external = entry->resource != NULL;
+        if (schema >= 2) {
+            uint32_t family = entry->dependency_family;
+            if (!qa_source_save_bool(io, &entry->dependency_scope) ||
+                !qa_source_save_u32(io, &family) || family > QA_SCENE_Q3 ||
+                !qa_source_save_bool(io, &entry->dependency_has_palette) ||
+                (!entry->dependency_scope && (family || entry->dependency_has_palette)) ||
+                (entry->dependency_has_palette && !qa_source_save_bytes(io,
+                    entry->dependency_palette, sizeof(entry->dependency_palette)))) return false;
+            if (reading) entry->dependency_family = (qa_scene_family)family;
+        }
         uint64_t pool = 0, resource = 0;
         size_t size = reading ? 0 : entry->bytes.size;
         if (!qa_source_save_bool(io, &external)) return false;
@@ -356,11 +366,11 @@ bool qa_material_library_catalog_checkpoint(const qa_material_library *source,
     qa_source_save_io io = {0};
     qa_material_library state = *source;
     uint8_t magic[4] = {'Q', 'A', 'M', 'C'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     bool video = source->video_required;
     bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
         qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &video) &&
-        builtin_fields(&io, &state, NULL, refs) && catalog_sources(&io, &state, refs) &&
+        builtin_fields(&io, &state, NULL, refs) && catalog_sources(&io, &state, refs, version) &&
         script_catalog(&io, &state, NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     qa_material_library_capture_end(source);
@@ -377,9 +387,9 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     qa_source_save_io io = {0};
     uint8_t magic[4] = {0}; uint32_t version = 0;
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_u32(&io, &version) && version == 1 &&
+        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_u32(&io, &version) && version >= 1 && version <= 2 &&
         qa_source_save_bool(&io, &library->video_required) && builtin_fields(&io, library, NULL, refs) &&
-        catalog_sources(&io, library, refs) && script_catalog(&io, library, NULL) && qa_source_save_finish(&io, NULL);
+        catalog_sources(&io, library, refs, version) && script_catalog(&io, library, NULL) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok) { library->catalog_ready = true; *out = library; }
     else {

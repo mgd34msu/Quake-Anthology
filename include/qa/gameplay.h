@@ -324,6 +324,8 @@ bool qa_combat_bind_power_inventory(qa_combat *, qa_actor_id, qa_inventory *, qa
 /* Read-only checkpoint/composition query; false means no reservoir. */
 bool qa_combat_power_inventory(qa_combat *, qa_actor_id, qa_inventory **, qa_item_id *);
 bool qa_combat_read(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
+/* Pure full-actor presence. Absence differs from a failing source reader. */
+bool qa_combat_has(qa_combat *, qa_actor_id);
 /* The actual before-reaction attack, retained for this full actor's lifetime.
  * Actor references keep their original generations even after retirement.
  * This query calls no source callbacks and does not require an attacker body. */

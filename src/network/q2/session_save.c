@@ -68,34 +68,54 @@ static bool channel_equal(const qa_q2_channel_options *a, const qa_q2_channel_op
 }
 static bool download(qa_source_save_io *io, q2_server *server, const qa_network_q2_checkpoint_refs *refs)
 {
-    bool present = server->download != NULL;
+    bool present = server->download != NULL || server->download_memory;
     if (!qa_source_save_bool(io, &present)) return false;
-    if (!present) return !server->download_view && !server->download_offset && !server->download_opening.path;
+    if (!present) return !server->download_view && !server->download_offset && !server->download_opening.path &&
+        !server->download_wire.data && !server->download_wire.size &&
+        !server->download_source.data && !server->download_source.size;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    if (!refs || (reading ? !refs->view_decode || !refs->resource_decode : !refs->view_encode || !refs->resource_encode))
+    if (!qa_source_save_bool(io, &server->download_memory)) return false;
+    if (!refs || (reading ? !refs->view_decode : !refs->view_encode) ||
+        (!server->download_memory && (reading ? !refs->resource_decode : !refs->resource_encode)))
         return invalid(io, "Q2 download lacks its immutable candidate content graph");
     uint64_t view = 0, pool = 0, resource = 0;
-    if (!reading && (!server->download_view || server->download_opening.resource_id != qa_resource_id(server->download) ||
-        !qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error) ||
-        !refs->view_encode(refs->context, server->download_view, &view, io->error) ||
-        !refs->resource_encode(refs->context, server->download, &pool, &resource, io->error))) return false;
-    if (!qa_source_save_u64(io, &view) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
-        !view || !pool || !resource || !qa_source_save_u64(io, &server->download_opening.mount) ||
-        !text(io, &server->download_opening.path) || !text(io, &server->download_opening.lookup_path) ||
-        !text(io, &server->download_opening.link_source) || !text(io, &server->download_opening.link_target) ||
-        !qa_source_save_count(io, &server->download_offset, INT32_MAX)) return false;
+    if (!reading && (!server->download_view ||
+        !refs->view_encode(refs->context, server->download_view, &view, io->error))) return false;
+    if (!qa_source_save_u64(io, &view) || !view) return false;
+    if (server->download_memory) {
+        if (server->download || server->download_opening.path || server->download_opening.lookup_path ||
+            server->download_opening.link_source || server->download_opening.link_target ||
+            server->download_opening.mount || server->download_opening.resource_id)
+            return invalid(io, "Memory Q2 download acquired a fabricated file opening");
+        if (!buffer(io, &server->download_source, INT32_MAX)) return false;
+    } else {
+        if (!reading && (!server->download ||
+            server->download_opening.resource_id != qa_resource_id(server->download) ||
+            !qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error) ||
+            !refs->resource_encode(refs->context, server->download, &pool, &resource, io->error))) return false;
+        if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) || !pool || !resource ||
+            !qa_source_save_u64(io, &server->download_opening.mount) ||
+            !text(io, &server->download_opening.path) || !text(io, &server->download_opening.lookup_path) ||
+            !text(io, &server->download_opening.link_source) || !text(io, &server->download_opening.link_target)) return false;
+        if (server->download_source.data || server->download_source.size)
+            return invalid(io, "File Q2 download retained unrelated catalog bytes");
+    }
+    if (!qa_source_save_count(io, &server->download_offset, INT32_MAX) ||
+        !buffer(io, &server->download_wire, INT32_MAX)) return false;
     if (reading) {
         const qa_resource *decoded = NULL;
         qa_vfs *decoded_view = NULL;
-        if (!refs->view_decode(refs->context, view, &decoded_view, io->error) || !decoded_view ||
-            !refs->resource_decode(refs->context, pool, resource, &decoded, io->error) || !decoded) return false;
+        if (!refs->view_decode(refs->context, view, &decoded_view, io->error) || !decoded_view) return false;
         server->download_view = decoded_view;
-        server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
-        server->download_opening.resource_id = qa_resource_id(decoded);
+        if (!server->download_memory) {
+            if (!refs->resource_decode(refs->context, pool, resource, &decoded, io->error) || !decoded) return false;
+            server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
+            server->download_opening.resource_id = qa_resource_id(decoded);
+        }
     }
-    qa_bytes bytes = qa_resource_bytes(server->download);
+    qa_bytes bytes = q2_download_bytes(server);
     return bytes.size <= INT32_MAX && server->download_offset <= bytes.size &&
-        qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error);
+        (server->download_memory || qa_vfs_acquisition_retained(server->download_view, &server->download_opening, io->error));
 }
 static bool server_fields(qa_source_save_io *io, q2_session *session, const qa_network_q2_checkpoint_refs *refs)
 {
@@ -116,7 +136,13 @@ static bool server_fields(qa_source_save_io *io, q2_session *session, const qa_n
         !qa_source_save_u64(io, &server->settings.source_interval_ns) ||
         !qa_source_save_bytes(io, server->userinfo, sizeof(server->userinfo)) ||
         !qa_source_save_bool(io, &server->has_source_frame) || !qa_source_save_u64(io, &server->last_source_frame) ||
-        !qa_source_save_i32(io, &server->wire_frame)) return false;
+        !qa_source_save_i32(io, &server->wire_frame) || !text(io, &server->drop_reason) ||
+        !qa_source_save_bool(io, &server->drop_queued) || !qa_source_save_bool(io, &server->drop_sent) ||
+        !qa_source_save_bool(io, &server->drop_hook_done)) return false;
+    if ((server->drop_reason && (!session->retiring || session->active)) ||
+        (!server->drop_reason && (server->drop_queued || server->drop_sent || server->drop_hook_done)) ||
+        (server->drop_sent && !server->drop_queued) || (server->drop_hook_done && !server->drop_sent))
+        return invalid(io, "Q2 disconnect continuation lost its actual staged packet");
     uint32_t source_fps = (uint32_t)(UINT64_C(1000000000) / policy.source_interval_ns), source_divisor = source_fps / 10;
     if (!source_divisor) source_divisor = 1;
     if (server->settings.source_interval_ns != policy.source_interval_ns || !server->settings.frame_divisor ||
@@ -227,11 +253,11 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
-    uint32_t tag = UINT32_C(0x32534e51), version = 4, slot = session->id.slot;
+    uint32_t tag = UINT32_C(0x32534e51), version = 7, slot = session->id.slot;
     uint64_t generation = session->id.generation; bool server = session->server; size_t seats = session->seats;
     if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) || !qa_source_save_bool(io, &server) ||
         !qa_source_save_u32(io, &slot) || !qa_source_save_u64(io, &generation) || !qa_source_save_count(io, &seats, QA_NETWORK_MAX_SEATS)) return false;
-    if (tag != UINT32_C(0x32534e51) || version != 4 || server != session->server || !seats ||
+    if (tag != UINT32_C(0x32534e51) || version != 7 || server != session->server || !seats ||
         slot != client->id.slot || generation != client->id.generation || seats != client->seat_count)
         return invalid(io, "Saved Q2 session does not belong to its actual candidate connection");
     session->seats = seats;

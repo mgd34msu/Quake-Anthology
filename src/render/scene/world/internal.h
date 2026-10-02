@@ -34,6 +34,7 @@ typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pendi
 typedef struct qaw_admission_change { uint32_t surface; uint64_t previous; } qaw_admission_change;
 
 struct qa_scene_world {
+    const qa_resource *source_resource;
     size_t references;
     qa_scene_resources *retained_resources;
     qa_material_library *retained_materials;

@@ -21,7 +21,7 @@ struct frontend_client_source {
     uint64_t configuration_generation;
     size_t references;
     unsigned calls;
-    bool constructing, ready, closing, app_attached, commands_verified;
+    bool constructing, ready, closing, app_attached, commands_verified, programme_retired;
 };
 static bool linked(const frontend_client_source *s)
 {
@@ -213,7 +213,8 @@ static uint32_t capabilities(const frontend_client_source_options *o)
         (o->command ? 32u : 0u) | (o->forward ? 64u : 0u) | (o->allow_command ? 128u : 0u) |
         (o->cvar_owner ? 256u : 0u) | (o->visible_cvars ? 512u : 0u) | (o->cvar_edit ? 1024u : 0u) |
         (o->install ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
-        (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u);
+        (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u) |
+        (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u);
 }
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
@@ -375,14 +376,23 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
 {
     frontend_client_source *s = owned ? *owned : NULL;
     if (!s) return true;
-    size_t expected = 1 + (s->registry != NULL) + s->app_attached;
+    size_t expected = 1u + (s->registry != NULL ? 1u : 0u) + (s->app_attached ? 1u : 0u);
     if (!frontend_client_source_idle(s) || s->frontend->capture || s->frontend->resource_inventory ||
         s->references != expected || !qa_console_destroy_ready(s->console) ||
         (s->app_attached && !qa_application_client_idle(s->frontend->application, &s->application)) ||
         !frontend_client_registry_release_ready(s->registry, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source retains an entered or borrowed physical child");
-    if (s->app_attached && !qa_application_client_retire(s->frontend->application, &s->application, error)) return false;
+    if(!s->programme_retired) {
+        if(s->options.retire) {
+            ++s->calls;
+            bool retired=s->options.retire(s->options.context,&s->application,error);
+            --s->calls;
+            if(!retired) return false;
+        }
+        s->programme_retired=true;
+    }
     s->closing = true;
+    if (s->app_attached && !qa_application_client_retire(s->frontend->application, &s->application, error)) return false;
     qa_console_destroy(s->console); s->console = NULL;
     if (!frontend_client_registry_release(&s->registry, error)) return false;
     qa_cvars_destroy(s->pending_cvars); s->pending_cvars = NULL;
@@ -390,6 +400,7 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     s->receiver = 0;
     qa_launch_instance_lease_release(s->metadata); s->metadata = NULL;
     qa_buffer_free(&s->imported_commands); qa_buffer_free(&s->imported_current);
+    if(s->options.released) s->options.released(s->options.context);
     frontend_client_source **link = &s->frontend->client_sources;
     while (*link != s) link = &(*link)->next;
     *link = s->next; free(s); *owned = NULL; return true;
@@ -524,7 +535,7 @@ static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
         if (!qa_source_save_u64(io, &a->actors[i].generation) || !qa_source_save_u32(io, &a->actors[i].slot)) return false;
     if (!command_fields(io, &p->state.command) || p->state.command.seat != a->seat ||
         p->state.command.owner != a->receiver || !qa_source_save_u32(io, &p->state.capabilities) ||
-        (p->state.capabilities & ~32767u) || (p->state.capabilities & 15u) != 15u ||
+        (p->state.capabilities & ~131071u) || (p->state.capabilities & 15u) != 15u ||
         !qa_source_save_bool(io, &p->state.ready) ||
         (!p->state.ready && a->client.owner) || !buffer_fields(io, &p->state.console)) return false;
     if (reading) {

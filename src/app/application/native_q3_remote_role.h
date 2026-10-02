@@ -36,6 +36,8 @@ bool application_native_q3_remote_role_transport_detach(application_provider *, 
     const qa_native_q3_remote_client_transport *, qa_error *);
 bool application_native_q3_remote_role_initialized(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
+bool application_native_q3_remote_role_video_reset(application_provider *,uint32_t,
+    qa_native_q3_remote_client_service *,qa_error *);
 bool application_native_q3_remote_role_detach(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_detach_ready(application_provider *, uint32_t,

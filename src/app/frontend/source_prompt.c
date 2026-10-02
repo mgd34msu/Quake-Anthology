@@ -36,7 +36,8 @@ static double now(const frontend_source_prompt *o)
 static char *copy(const char *text)
 {
     size_t length=strlen(text); char *value=malloc(length+1);
-    if(value)memcpy(value,text,length+1); return value;
+    if(value)memcpy(value,text,length+1);
+    return value;
 }
 static void dispose(frontend_source_prompt *o)
 {

@@ -27,6 +27,7 @@ static bool beam_event(qa_q2_game *game, q2_actor *actor, qa_vec3 start,
       .end = end,
       .direction = qa_vec_normalize(qa_vec_sub(end, start)),
       .value = 2.0f,
+      .flags = 1u,
       .code = (int32_t)(actor->monster->controller_medic ? UINT32_C(0xf3f3f1f1)
                                                          : UINT32_C(0xf2f2f0f0)),
   };

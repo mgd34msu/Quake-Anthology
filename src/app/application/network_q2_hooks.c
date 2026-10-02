@@ -58,8 +58,11 @@ static bool game_state(void *context, qa_net_client_id id,
     qa_application_network_q2 *owner = context;
     qa_actor_id values[QA_Q2_MAX_SEATS];
     size_t count;
-    return actors(owner, id, values, &count, error) &&
-        qa_application_network_q2_game_state(owner, values, count, out, error);
+    if (!actors(owner, id, values, &count, error) ||
+        !qa_application_network_q2_game_state(owner, values, count, out, error)) return false;
+    return !application_network_q2_materials_required(owner) ||
+        (owner->materials_bound && owner->materials_capability) ||
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 peer did not advertise the required actual material consumer");
 }
 
 static bool begin(void *context, qa_net_client_id id, qa_net_seat_id seat, qa_error *error)
@@ -359,7 +362,7 @@ bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner sourc
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast lost its executing Source clock or cache owner");
     qa_q2_unicast_claim claim = {.client = recipient.client, .connection_epoch = recipient.connection_epoch,
         .source = source, .source_frame = clock.frame.number, .source_time_ns = clock.frame.time_ns, .key = key};
-    qa_sha256(qa_resource_bytes(app->map_resource), &claim.map);
+    claim.map = *qa_resource_digest(app->map_resource);
     if (!engine->network_unicast(engine->network_recipient_context, &claim, remember, duplicate, error)) return false;
     qa_application_network_q2_recipient_view after;
     bool current;
@@ -383,7 +386,34 @@ bool qa_application_network_q2_entity_number(qa_application *app, qa_actor_owner
         engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity reference requires its genuine executing GAME namespace");
     if (!engine->wire_engine && !application_native_q2_wire_begin(engine, error)) return false;
+    application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    struct application_native_q2 *host = physical && physical->kind == APPLICATION_PROVIDER_NATIVE ?
+        physical->state.native.q2_engine : NULL;
+    if (host && host->profile != QA_NATIVE_Q2_CGAME_API2023 && physical->constructed && physical->attached &&
+        !physical->close_pending && host->world == app->world) {
+        if (!host->wire_engine && !application_native_q2_wire_begin(host, error)) return false;
+        return application_native_q2_wire_admit(host, actor, out, error);
+    }
     return application_native_q2_wire_number(engine, actor, out, error);
+}
+
+bool qa_application_network_q2_event_entity(qa_application_network_q2 *owner, qa_actor_owner emitter,
+    qa_actor_id actor, uint32_t *out, qa_error *error)
+{
+    if (!owner || !out || !actor.registry || !application_network_q2_current(owner, error)) return false;
+    application_provider *source = recipient_source(owner->app, emitter);
+    if (!source || !source->constructed || !source->attached || source->close_pending || !source->product ||
+        source->product->family != QA_GAME_Q2)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 event entity lost its actual emitting Source");
+    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
+        application_provider *physical = application_network_q2_provider(owner);
+        struct application_native_q2 *engine = physical ? physical->state.native.q2_engine : NULL;
+        return application_native_q2_wire_admit(engine, actor, out, error);
+    }
+    qa_q2_wire_binding binding;
+    qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
+    if (!qa_q2_wire_admit_actor(game, actor, error) || !qa_q2_wire_actor(game, actor, &binding, error)) return false;
+    *out = binding.source_slot; return true;
 }
 
 bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
@@ -427,8 +457,11 @@ bool qa_application_network_q2_client_frame(qa_application_network_q2 *owner,
     qa_net_client_id id, qa_q2_wire_frame *out, qa_error *error)
 {
     qa_actor_id values[QA_Q2_MAX_SEATS]; size_t count;
-    return actors(owner, id, values, &count, error) &&
-        qa_application_network_q2_frame(owner, values, count, out, error);
+    if (!actors(owner, id, values, &count, error) ||
+        !qa_application_network_q2_frame(owner, values, count, out, error)) return false;
+    return !application_network_q2_materials_required(owner) ||
+        (owner->materials_bound && owner->materials_capability) ||
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 peer did not advertise the required actual material consumer");
 }
 
 bool qa_application_network_q2_discovery(qa_application_network_q2 *owner,

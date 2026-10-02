@@ -27,7 +27,8 @@ static bool allocation_fields(qa_source_save_io *io,bot_fuzzy_heap *heap,qa_bot_
     bool ok=reading || qa_bot_memory_reference(heap->memory,*allocation,&reference,io->error);
     if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
     if(ok && reading) ok=qa_bot_memory_resolve(heap->memory,reference,allocation,io->error);
-    if(!ok) io->failed=true;return ok;
+    if(!ok) io->failed=true;
+    return ok;
 }
 static bool diagnostics_fields(qa_source_save_io *io,bot_fuzzy_diagnostic **rows,size_t *count) {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -138,7 +139,8 @@ static bool pointer_fields(qa_source_save_io *io,bot_fuzzy_heap *heap) {
         bool ok=qa_source_save_u32(io,&row->pointer) && qa_source_save_u32(io,&kind) &&
             allocation_fields(io,heap,&row->allocation);
         if(reading) {row->kind=(bot_fuzzy_pointer_kind)kind;heap->last=row;}
-        if(!ok) return false;tail=&row->next;
+        if(!ok) return false;
+        tail=&row->next;
     }
     return true;
 }
@@ -160,7 +162,8 @@ static bool config_fields(qa_source_save_io *io,bot_fuzzy_store *store) {
         bool ok=allocation_fields(io,&store->heap,&row->source.allocation) && bot_save_text(io,&path);
         if(reading) row->path=(char *)path;
         if(ok) ok=diagnostics_fields(io,&row->reported,&row->reported_count);
-        if(!ok) return false;tail=&row->next;
+        if(!ok) return false;
+        tail=&row->next;
     }
     if(!qa_source_save_count(io,&store->cached_count,128)) return false;
     for(size_t index=0;index<store->cached_count;++index) {

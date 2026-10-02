@@ -19,6 +19,33 @@ static bool document_clone(const qa_unified_document *document, qa_unified_docum
     return qa_unified_document_create(qa_unified_document_type(document),
         qa_json_source(qa_unified_document_json(document), qa_unified_document_root(document)), out, error);
 }
+static void player_receipt_clear(application_unified_server *owner)
+{
+    qa_buffer_free(&owner->admitted_arsenal);
+    owner->admitted_player=(qa_unified_session_player){0}; owner->admitted_receipt=false;
+}
+static bool player_receipt_retain(application_unified_server *owner,
+    const qa_unified_session_player *actual,qa_error *error)
+{
+    if (owner->admitted_receipt) {
+        const qa_unified_session_player *saved=&owner->admitted_player;
+        return (qa_actor_id_equal(saved->actor,actual->actor) && saved->seat.owner==actual->seat.owner &&
+            saved->seat.index==actual->seat.index && saved->movement==actual->movement &&
+            saved->source_owner==actual->source_owner && saved->source_slot==actual->source_slot &&
+            saved->arsenal.size==actual->arsenal.size && (!saved->arsenal.size ||
+                !memcmp(saved->arsenal.data,actual->arsenal.data,saved->arsenal.size))) ||
+            application_fail(error,QA_ERROR_ARGUMENT,"Unified ready changes its retained physical player admission");
+    }
+    qa_buffer arsenal={0};
+    if (actual->arsenal.size) {
+        arsenal.data=malloc(actual->arsenal.size);
+        if (!arsenal.data) return application_fail(error,QA_ERROR_MEMORY,"Retaining actual admitted player arsenal identity");
+        arsenal.size=actual->arsenal.size; memcpy(arsenal.data,actual->arsenal.data,arsenal.size);
+    }
+    owner->admitted_arsenal=arsenal; owner->admitted_player=*actual;
+    owner->admitted_player.arsenal=(qa_bytes){arsenal.data,arsenal.size}; owner->admitted_receipt=true;
+    return true;
+}
 
 static bool offered_current(application_unified_server *owner)
 {
@@ -69,6 +96,7 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
         qa_unified_document_destroy(copy); return false;
     }
     owner->inputs = NULL;
+    player_receipt_clear(owner);
     qa_unified_document_destroy(owner->offer);
     owner->offer = offer; owner->composition = canonical.digest; owner->offered = source;
     owner->epoch = epoch; owner->acknowledged = -1; owner->admitted = false;
@@ -168,6 +196,7 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             application_unified_player_admit(owner->application, runtime, &request, &actual, error);
         qa_buffer_free(&userinfo);
         if (okay) owner->player_attached = true;
+        if (okay) okay=player_receipt_retain(owner,&actual,error);
         if (okay && !owner->components) okay = application_unified_components_create(owner->application,
             client, actual.actor, &owner->components, error);
         if (okay && !owner->inputs) okay = application_unified_inputs_create(owner->application, runtime, client,
@@ -236,8 +265,23 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         qa_unified_document_destroy(component); commit->applied = okay; return okay;
     }
     if (qa_json_string_equal(json, kind, "disconnect")) {
+        if ((owner->inputs && owner->inputs->advancing) ||
+            (!owner->pending_capture && !application_unified_components_idle(owner->components)))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Unified disconnect retains an entered Source publication child");
         bool okay = !owner->player_attached || application_unified_player_disconnect(owner->application, client, owner->seat, error);
-        if (okay) owner->admitted = owner->player_attached = false;
+        if (okay) {
+            owner->admitted=owner->player_attached=false;
+            application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture=NULL;
+            okay=application_unified_components_destroy(&owner->components,error) &&
+                application_unified_inputs_destroy(owner->inputs,error);
+            if (okay) {
+                owner->inputs=NULL;
+                application_unified_output_dispose(&owner->pending);
+                owner->control_cursor=0; owner->pending_first=owner->pending_last=0;
+                owner->preparing_frame=false; owner->pending_events_through=0;
+                player_receipt_clear(owner);
+            }
+        }
         commit->applied = okay; return okay;
     }
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Unified command requires its actual typed Source or component command owner");
@@ -341,7 +385,12 @@ bool application_unified_server_publish(application_unified_server *owner,
     bool okay = true;
     while (okay && owner->control_cursor < owner->pending.control_count) {
         okay = qa_unified_session_control(owner->session, owner->pending.controls[owner->control_cursor], error);
-        if (okay) ++owner->control_cursor;
+        if (okay) {
+            uint32_t receipt=qa_unified_session_required(owner->session);
+            if (!owner->control_cursor) owner->pending_first=receipt;
+            owner->pending_last=receipt;
+            ++owner->control_cursor;
+        }
     }
     if (okay) okay = qa_unified_session_frame(owner->session, owner->pending.frame, error);
     owner->entered = false;
@@ -350,6 +399,7 @@ bool application_unified_server_publish(application_unified_server *owner,
         application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture = NULL;
         owner->events_after = owner->pending_events_through;
         application_unified_output_dispose(&owner->pending); owner->control_cursor = 0;
+        owner->pending_first=owner->pending_last=0;
         owner->preparing_frame = false;
     }
     return okay;
@@ -368,6 +418,7 @@ bool application_unified_server_destroy(application_unified_server *owner, qa_er
         owner->client, owner->seat, error)) return false;
     if (!application_unified_inputs_destroy(owner->inputs, error)) return false;
     qa_unified_document_destroy(owner->offer); application_unified_output_dispose(&owner->pending);
+    player_receipt_clear(owner);
     free(owner); return true;
 }
 bool application_unified_server_transport_retired(application_unified_server *owner,

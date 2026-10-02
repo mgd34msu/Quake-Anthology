@@ -114,6 +114,7 @@ static bool import(void *context, guest_host_child *child, uint64_t id,
             callback = guest->callbacks[i];
     if (!callback.invoke)
         return guest_fail(error, QA_ERROR_NOT_FOUND, id, "native import has no actual saved callback");
+    guest_dispatch_started(guest);
     guest->stepping = false;
     ++guest->callback_depth;
     bool okay = guest_mutable(guest, error) &&
@@ -171,9 +172,11 @@ static bool native_run(qa_native_guest *guest, uint64_t start,
     guest_run frame = {.parent = guest->run};
     guest->run = &frame; guest->stepping = true;
     program_call call = {guest, syscall, context};
+    bool entered = false;
     bool okay = syscall ? guest_host_child_run_with_syscalls(guest->child, start, stop,
         program_import, program_syscall, &call, program_stopped, error) :
-        guest_host_child_run(guest->child, start, stop, import, guest, error);
+        guest_host_child_run_receipt(guest->child, start, stop, import, guest, &entered, error);
+    if (entered) guest_dispatch_started(guest);
     guest->stepping = false; guest->run = frame.parent;
     if (!okay) {
         guest_host_stop fault = {0}; qa_error ignored = {0};

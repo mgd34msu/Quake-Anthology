@@ -79,12 +79,12 @@ bool qa_q1_source_entity_first(const qa_q1_game *game, const char *name,
 
 static bool observer_door(qa_q1_game *game, q1_actor *door, qa_body_state *body,
                           bool *written, qa_error *error) {
-    q1_door_group *group = door->map->movement.group;
+    q1_door_group *group = door->map->pending.mover.group;
     qa_actor_id master_id = group && group->count ? group->members[0] : door->owner;
     q1_actor *master = q1_entity(game, master_id);
     if (!master || master->kind != Q1_MAP || !master->map ||
-        master->map->movement.position != Q1_MAP_BOTTOM) return true;
-    group = master->map->movement.group;
+        master->map->pending.mover.position != Q1_MAP_BOTTOM) return true;
+    group = master->map->pending.mover.group;
     size_t count = group && group->count ? group->count : 1;
     qa_vec3 low = qa_v3(INFINITY, INFINITY, INFINITY);
     qa_vec3 high = qa_v3(-INFINITY, -INFINITY, -INFINITY);

@@ -99,8 +99,8 @@ bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bo
             int32_t denominator=signed_word((uint32_t)upper-(uint32_t)threshold);
             if(!denominator) {ok=fail(error,"Fuzzy interpolation thresholds divide by zero");break;}
             float scale=(float)((int64_t)numerator/(int64_t)denominator);
-            float left=scale*frame->left,inverse=1.0f-scale,right=inverse*last;
-            last=left+right;--stack.count;continue;
+            float left=scale*frame->left,inverse=1.0f-scale,right_value=inverse*last;
+            last=left+right_value;--stack.count;continue;
         }
         if(value<threshold) {
             frame->stage=1;ok=leaf(config->heap,frame->pointer,frame->undecided,random,&stack,&last,error);continue;
@@ -258,7 +258,7 @@ static bool breed_tree(const bot_fuzzy_config *first,const bot_fuzzy_config *sec
     bot_fuzzy_config *output,uint32_t one,uint32_t two,uint32_t destination,
     const bot_fuzzy_reporter *reporter,qa_error *error) {
     fuzzy_breed_frame *frames=NULL;size_t count=0,capacity=0;bool ok=true;
-    fuzzy_breed_frame pending={one,two,destination,false};
+    fuzzy_breed_frame pending={.first=one,.second=two,.output=destination};
     for(;;) {
         if(count==capacity) {
             size_t next=capacity?capacity*2:16;

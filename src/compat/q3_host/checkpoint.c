@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "files.h"
+#include "qa/bot_runtime.h"
 #include "qa/q3_host_save.h"
 #include "qa/source_save.h"
 
@@ -49,7 +50,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 15, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 16, role = o->role, abi = o->abi, owner = o->owner;
     bool write_present=o->write_view.root!=NULL;
     bool write_context=o->write_view.resolver.context!=NULL;
     bool write_resolver=o->write_view.resolver.root!=NULL;
@@ -137,6 +138,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     }
     uint32_t browser_mask=qa_q3_host_browser_services_mask(&o->browser);
     if (ok) ok=qa_source_save_u32(&io,&browser_mask);
+    if (ok) ok=q3_collision_scene_services(host,&io);
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;

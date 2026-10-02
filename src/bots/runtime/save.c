@@ -34,9 +34,9 @@ static bool fail(qa_error *error, const char *message)
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 6;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 7;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 6 ? true :
+        qa_source_save_u32(io, &version) && version == 7 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 

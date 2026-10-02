@@ -153,6 +153,8 @@ qa_q1_connect_state qa_nq_connect_state(const qa_nq_connect_client *);
 bool qa_nq_connect_next(qa_nq_connect_client *, uint64_t, bool *, qa_net_writer *, qa_error *);
 bool qa_nq_connect_receive(qa_nq_connect_client *, qa_bytes, qa_error *);
 bool qa_qw_connect_create(uint16_t qport, const char *userinfo, qa_qw_connect_client **, qa_error *);
+/* Replaces future connect text without changing challenge or retry progress. */
+bool qa_qw_connect_userinfo(qa_qw_connect_client *, const char *userinfo, qa_error *);
 void qa_qw_connect_destroy(qa_qw_connect_client *);
 qa_q1_connect_state qa_qw_connect_state(const qa_qw_connect_client *);
 bool qa_qw_connect_next(qa_qw_connect_client *, uint64_t, bool *, qa_net_writer *, qa_error *);

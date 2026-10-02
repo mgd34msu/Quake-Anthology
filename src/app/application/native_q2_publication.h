@@ -33,6 +33,10 @@ bool application_native_q2_publication_read(qa_application *, const application_
     application_native_q2_publication_view *, bool *found, qa_error *);
 bool application_native_q2_publication_current(qa_application *, const application_unified_source *,
     const application_native_q2_publication_view *);
+/* Pure imported/returned registration read for the actual checkpoint Source
+ * lane. It never invokes a HUD observer or native module callback. */
+bool application_native_q2_publication_checkpoint_read(qa_application *, const application_unified_source *,
+    application_native_q2_publication_view *, bool *found, qa_error *);
 bool application_native_q2_publication_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
 bool application_native_q2_publication_restore_prepare(struct application_native_q2 *, qa_bytes, bool map_ready,
     application_native_q2_publication_restore **, qa_error *);

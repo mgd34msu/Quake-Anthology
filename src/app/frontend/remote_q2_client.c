@@ -7,6 +7,8 @@
 #include "qa/font_save.h"
 #include "capture.h"
 #include "remote_q2_effects.h"
+#include "remote_q2_effects_bridge.h"
+#include "remote_q2_footsteps.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +95,8 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     free(row->overlay); row->overlay = NULL; memset(row->inventory, 0, sizeof(row->inventory));
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
     row->content = (frontend_remote_q2_content){0}; row->selected = row->content_admitted = false; row->height_set = false;
+    row->sample_frame_seconds = 0;
+    row->gun_set = false; row->gun_frame = row->gun_previous_frame = 0; row->gun_server_frame = 0;
     memset(row->sent, 0, sizeof(row->sent)); row->sent_set = row->input_set = false;
     memset(row->commands, 0, sizeof(row->commands)); row->last_command = row->acknowledged_command = 0;
     row->predicted = false; row->prediction_error = row->prediction_pml = qa_v3(0, 0, 0);
@@ -247,9 +251,25 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
     row->received_ns = received_ns; row->fraction = 0;
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;
+    if (row->layout.max_models == 8192) {
+        uint32_t seat;
+        if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
+        const qa_q2_player *player = &row->frame.players[seat].player;
+        const qa_q2_player *previous = row->previous.valid && seat < row->previous.player_count ?
+            &row->previous.players[seat].player : player;
+        if (previous->gunindex != player->gunindex) {
+            row->gun_frame = row->gun_previous_frame = player->gunframe;
+            row->gun_server_frame = row->frame.server_frame;
+        } else if (!row->gun_set || row->gun_frame != player->gunframe) {
+            row->gun_frame = player->gunframe; row->gun_previous_frame = previous->gunframe;
+            row->gun_server_frame = row->frame.server_frame;
+        }
+        row->gun_set = true;
+    }
     ++row->busy;
     remote_q2_prediction_receive(row);
     bool ok = remote_q2_prediction_replay(row, error);
+    if (ok) ok = remote_q2_effects_frame(row, error);
     --row->busy;
     return ok && remote_q2_live(row, error);
 }
@@ -512,6 +532,7 @@ bool frontend_remote_q2_content_visit(const qa_frontend *f, const qa_application
         if (row->content.catalog && (!visitor->catalog(visitor->context, row->content.catalog, error) ||
             !visitor->pool(visitor->context, qa_vfs_resources(row->content.mounts), error) ||
             !visitor->view(visitor->context, row->content.mounts, error))) return false;
+        if (!remote_q2_footsteps_visit(row, visitor, error)) return false;
     }
     return true;
 }

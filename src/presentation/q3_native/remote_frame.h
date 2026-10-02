@@ -115,6 +115,7 @@ typedef struct q3n_remote_frame_options {
     qa_q3_player *predicted_player;
     const qa_q3_player *transition_player, *previous_player;
     uint64_t initialization_scope; /* actual entered CG_Init constructor */
+    bool video_initialization; /* qualified entered reconstruction, not Network startup */
     uint64_t transition_scope; /* actual entered predictor-completion callback */
     /* Returned initialized CGAME enters these distinct lexical scopes with
      * its real cold/retained cache and PPS, without a predictor receipt. */
@@ -149,6 +150,7 @@ struct q3n_remote_frame {
     qa_q3_player *predicted_player;
     const qa_q3_player *transition_player, *previous_player;
     uint64_t initialization_scope;
+    bool video_initialization;
     uint64_t transition_scope;
     uint64_t console_scope;
     uint64_t awaiting_snapshot_scope;

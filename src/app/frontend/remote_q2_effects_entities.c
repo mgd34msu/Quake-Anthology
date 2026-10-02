@@ -5,14 +5,8 @@
 static uint32_t draw(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }
 static float unit(frontend_remote_q2_effects *o) { return (float)(draw(o)&32767)/32767; }
 static float signed_unit(frontend_remote_q2_effects *o) { return unit(o)*2-1; }
-static qa_vec3 random_direction(frontend_remote_q2_effects *o)
-{
-    float x=signed_unit(o),y=signed_unit(o),z=signed_unit(o);
-    return qa_vec_normalize(qa_v3(x,y,z));
-}
 static bool rerelease(const frontend_remote_q2_effects *o)
-{ return o->source.protocol.kind==QA_NET_Q2KEX_2023 || o->source.protocol.kind==QA_NET_Q2REPRO_1038 ||
-    o->source.protocol.kind==QA_NET_Q2PRIVATE_4038 || o->source.protocol.kind==QA_NET_Q2KEX_DEMO_2022; }
+{ return o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE; }
 static void append(frontend_remote_q2_effects *o, frontend_fx_q2_particle p)
 { o->particles.values.q2[o->particles.count++]=p; }
 static bool play(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_pose *p,
@@ -29,7 +23,7 @@ static void barrel(frontend_remote_q2_effects *o,qa_vec3 origin,double seconds)
 static void teleporter2(frontend_remote_q2_effects *o,qa_vec3 origin,double time)
 {
     for (unsigned i=0;i<8 && o->particles.count<FRONTEND_FX_PARTICLE_CAPACITY;++i) {
-        qa_vec3 dir=random_direction(o);
+        qa_vec3 dir=q2fx_random_direction(o);
         frontend_fx_q2_particle p={.spawn_milliseconds=time,.color=0xdb,.alpha=1,.alpha_velocity=-.8f,
             .origin=qa_vec_add(origin,qa_vec_scale(dir,30)),.velocity=qa_vec_scale(dir,-25)};
         p.origin.z+=20; append(o,p);
@@ -114,7 +108,7 @@ static void ion_trail(frontend_remote_q2_effects *o,qa_vec3 start,qa_vec3 end,do
 }
 static void orbital(frontend_remote_q2_effects *o,qa_vec3 origin,double time,int32_t count,bool bfg)
 {
-    if (o->particles.angular[0].x==0) for (unsigned i=0;i<QA_BYTE_NORMAL_COUNT;++i) {
+    if (!rerelease(o) && o->particles.angular[0].x==0) for (unsigned i=0;i<QA_BYTE_NORMAL_COUNT;++i) {
         float x=(float)(draw(o)&255)*.01f,y=(float)(draw(o)&255)*.01f,z=(float)(draw(o)&255)*.01f;
         o->particles.angular[i]=qa_v3(x,y,z);
     }
@@ -159,35 +153,93 @@ static void hologram(frontend_remote_q2_effects *o,qa_vec3 origin,double time)
         append(o,(frontend_fx_q2_particle){.spawn_milliseconds=time,.origin=qa_vec_add(origin,qa_vec_scale(dir,100)),.color=0xd0,.alpha=1,.alpha_velocity=-10000});
     }
 }
+static int32_t fireball_trail(frontend_remote_q2_effects *o,qa_vec3 *start,
+    qa_vec3 end,double time,int32_t count)
+{
+    qa_vec3 delta=qa_vec_sub(end,*start),step=qa_vec_scale(qa_vec_normalize(delta),.5f),move=*start;
+    double steps=floor((double)qa_vec_length(delta)*2);
+    float origin_scale=count>900?4:count>800?2:1,velocity_scale=count>900?15:count>800?10:5;
+    for (double i=0;i<steps;++i) {
+        if ((int32_t)(draw(o)&1023)<count) {
+            if (o->particles.count==FRONTEND_FX_PARTICLE_CAPACITY) break;
+            frontend_fx_q2_particle p={.spawn_milliseconds=time,.alpha=1,.acceleration={0,0,20}};
+            p.alpha_velocity=-1/(1+unit(o)*.4f);
+            p.origin.x=move.x+signed_unit(o)*origin_scale; p.velocity.x=signed_unit(o)*velocity_scale;
+            p.origin.y=move.y+signed_unit(o)*origin_scale; p.velocity.y=signed_unit(o)*velocity_scale;
+            p.origin.z=move.z+signed_unit(o)*origin_scale; p.velocity.z=signed_unit(o)*velocity_scale;
+            p.color=0xd8u+(uint32_t)((1024-count)/64); append(o,p);
+        }
+        count=count>105?count-5:100; move=qa_vec_add(move,step);
+    }
+    *start=move; return count;
+}
 bool q2fx_entities(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_sample *s,
     q2fx_trail *trails,bool advance,qa_error *e)
 {
-    (void)e; double seconds=s->milliseconds*.001;
+    double seconds=s->milliseconds*.001;
     frontend_fx_particles *p=&o->particles; qa_builtin_random *r=&o->random;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
     for (size_t i=0;i<s->entity_count;++i) {
         const frontend_remote_q2_effects_pose *row=&s->entities[i]; const q2fx_trail *prior=NULL;
         for (size_t j=0;j<o->trail_count;++j) if (qa_actor_id_equal(o->trails[j].actor,row->actor)) { prior=&o->trails[j]; break; }
         qa_vec3 delta=prior?qa_vec_sub(prior->origin,row->origin):qa_v3(0,0,0);
         bool reset=!prior || fabsf(delta.x)>512 || fabsf(delta.y)>512 || fabsf(delta.z)>512 || row->event==6 || row->event==7;
-        qa_vec3 start=reset?row->origin:prior->origin; int32_t count=reset?1024:prior->count;
+        qa_vec3 start=reset?row->origin:prior->origin,retained_origin=row->origin; int32_t count=reset?1024:prior->count;
         double fly_end=prior?prior->fly_end:0; uint64_t flags=row->effects;
+        float flashlight_fraction=prior?prior->flashlight_fraction:1;
         if (flags&UINT64_C(0x800000)) {
             double yaw=(s->milliseconds*.5+row->angles.y)*.017453292519943295;
             q2fx_sampled_light(o,qa_vec_add(row->origin,qa_v3((float)cos(yaw)*64,(float)sin(yaw)*64,0)),100,qa_v3(1,0,0),0);
         }
         if (flags&(UINT64_C(1)<<37)) q2fx_sampled_light(o,row->origin,100,qa_v3(1,1,0),0);
+        if (flags&(UINT64_C(1)<<34)) {
+            bool self=qa_actor_id_equal(row->actor,s->viewer);
+            float pitch=row->angles.x*.017453292519943295f,yaw=row->angles.y*.017453292519943295f;
+            qa_vec3 forward=self?s->view.axis[0]:qa_v3(cosf(pitch)*cosf(yaw),cosf(pitch)*sinf(yaw),-sinf(pitch));
+            qa_vec3 point=self?s->view.origin:row->origin;
+            qa_trace_query query={.start=point,.end=qa_vec_add(point,qa_vec_scale(forward,self || !s->per_pixel_lighting?256:1024)),
+                .shape={.kind=QA_SHAPE_POINT},.policy={.family=QA_COLLISION_Q2,
+                    .contents_mask=s->per_pixel_lighting?1u:1u|UINT32_C(0x02000000)|UINT32_C(0x40000000)},.pass_actor=row->actor};
+            qa_trace_result hit;
+            if (!o->source.trace)
+                return q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 flashlight lost its actual private collision owner");
+            if (!o->source.trace(o->source.context,&query,&hit,e) || !q2fx_source_current(o,e)) return false;
+            if (!isfinite(hit.fraction) || hit.fraction<0 || hit.fraction>1)
+                return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 flashlight collision fraction leaves its source interval");
+            if (s->per_pixel_lighting) {
+                if (self && s->hand!=2) point=qa_vec_add(point,qa_vec_scale(s->view.axis[1],s->hand==1?7:-7));
+                if (o->light_count<Q2FX_LIGHT_CAPACITY)
+                    o->sampled_lights[o->light_count++]=(qa_scene_light){.origin=point,.color={2,2,2},.direction=forward,
+                        .radius=512,.scale=1,.cos_half_angle=cosf(22*.017453292519943295f),.additive=true,
+                        .spot=true,.casts_shadow=true,.shadow_resolution=512,.family=QA_SCENE_Q2};
+            } else {
+                q2fx_sampled_light(o,qa_vec_lerp(query.start,query.end,flashlight_fraction),256,qa_v3(1,1,1),0);
+                if (advance) {
+                    float delta=hit.fraction-flashlight_fraction;
+                    flashlight_fraction+=fminf(s->frame_seconds,fmaxf(-s->frame_seconds,delta));
+                }
+            }
+        }
         if (qa_actor_id_equal(row->actor,s->viewer)) {
             if (flags&0x40000) q2fx_sampled_light(o,row->origin,225,qa_v3(1,.1f,.1f),0);
             else if (flags&0x80000) q2fx_sampled_light(o,row->origin,225,qa_v3(.1f,.1f,1),0);
             else if (flags&0x20000000) q2fx_sampled_light(o,row->origin,225,qa_v3(1,1,0),0);
             else if (flags&UINT64_C(0x80000000)) q2fx_sampled_light(o,row->origin,225,qa_v3(-1,-1,-1),0);
-        } else if (row->model_index) {
+        } else if (row->model_index || row->model_present) {
             if (advance && (flags&(UINT64_C(1)<<33))) hologram(o,row->origin,s->milliseconds);
-            if (flags&0x10) { if (advance) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_ROCKET); q2fx_sampled_light(o,row->origin,200,qa_v3(1,1,0),0); }
-            else if (flags&8) { bool tracker=(flags&0x04000000)!=0; if (advance) frontend_fx_q2_blaster_trail(p,r,start,row->origin,seconds,tracker); q2fx_sampled_light(o,row->origin,200,qa_v3(tracker?0:1,1,0),0); }
+            if (flags&0x10) {
+                if (advance) {
+                    if (rerelease(o) && (flags&2)) { count=fireball_trail(o,&start,row->origin,s->milliseconds,count); retained_origin=start; }
+                    else if (!(controls.disable_particles&8)) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_ROCKET);
+                }
+                else if (rerelease(o) && (flags&2)) retained_origin=start;
+                q2fx_sampled_light(o,row->origin,200,controls.dlight_hacks&1?qa_v3(1,.23f,0):qa_v3(1,1,0),0);
+            }
+            else if (flags&8) { bool tracker=(flags&0x04000000)!=0; if (advance && !(controls.disable_particles&32)) frontend_fx_q2_blaster_trail(p,r,start,row->origin,seconds,tracker); q2fx_sampled_light(o,row->origin,200,qa_v3(tracker?0:1,1,0),0); }
             else if (flags&0x40) q2fx_sampled_light(o,row->origin,200,qa_v3(flags&0x04000000?0:1,1,0),0);
-            else if (flags&2) { if (advance) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_BLOOD); }
-            else if (flags&0x20) { if (advance) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_SMOKE); }
+            else if (flags&2) { if (advance && !(controls.disable_particles&16)) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_BLOOD); }
+            else if (flags&0x20) { if (advance && !(controls.disable_particles&2)) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_SMOKE); }
             else if (flags&0x4000) {
                 if (fly_end<s->milliseconds) fly_end=s->milliseconds+60000;
                 double elapsed=s->milliseconds-(fly_end-60000),remaining=fly_end-s->milliseconds;
@@ -207,12 +259,12 @@ bool q2fx_entities(frontend_remote_q2_effects *o,const frontend_remote_q2_effect
                 if (flags&0x04000000) q2fx_sampled_light(o,row->origin,(float)(50+500*(sin(seconds*2)+1)),qa_v3(-1,-1,-1),0);
                 else { if (advance) frontend_fx_q2_tracker_shell(p,r,start,seconds); q2fx_sampled_light(o,row->origin,155,qa_v3(-1,-1,-1),0); }
             } else if (flags&0x04000000) { if (advance) frontend_fx_q2_tracker_trail(p,r,start,row->origin,seconds); q2fx_sampled_light(o,row->origin,200,qa_v3(-1,-1,-1),0); }
-            else if (flags&0x00200000) { if (advance) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_GREEN_BLOOD); }
+            else if (flags&0x00200000) { if (advance && !(controls.disable_particles&16)) count=frontend_fx_q2_diminishing_trail(p,r,start,row->origin,seconds,count,FRONTEND_FX_Q2_GREEN_BLOOD); }
             else if (flags&0x00100000) { if (advance) ion_trail(o,start,row->origin,s->milliseconds); q2fx_sampled_light(o,row->origin,100,qa_v3(1,.5f,.5f),0); }
             else if (flags&0x00400000) q2fx_sampled_light(o,row->origin,200,qa_v3(0,0,1),0);
             else if (flags&0x01000000) { if (advance && (flags&0x2000)) frontend_fx_q2_blaster_trail(p,r,start,row->origin,seconds,false); q2fx_sampled_light(o,row->origin,130,qa_v3(1,.5f,.5f),0); }
         }
-        trails[i]=(q2fx_trail){row->actor,row->origin,count,fly_end};
+        trails[i]=(q2fx_trail){row->actor,retained_origin,count,fly_end,flashlight_fraction};
     }
     return true;
 }

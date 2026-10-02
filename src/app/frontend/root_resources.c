@@ -1,4 +1,6 @@
 #include "root_resources.h"
+#include "renderer_materials.h"
+#include "qa/scene_world_save.h"
 #include "shared_resource_policy.h"
 #include "q3_render_policy.h"
 #include "q1_sky.h"
@@ -48,9 +50,16 @@ static bool dispose(frontend_root_resources **slot,qa_error *error)
 {
     frontend_root_resources *owner=*slot;
     if (!owner) return true;
+    qa_frontend *f=owner->frontend;
+    if (owner->installed && (f->root_resources!=owner || f->mounts!=owner->mounts ||
+        f->images!=owner->images || f->materials!=owner->materials))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Root resources lost their actual installed destructor association");
+    if (owner->movies && owner->media && !f->source_restoring) {
+        frontend_material_movie_source expected=source_view(owner);
+        if (!frontend_renderer_materials_adopt_movies(f,&expected,&owner->movies,&owner->media,error)) return false;
+    }
     if (!frontend_material_movies_destroy(&owner->movies,error)) return false;
     qa_media_library_destroy(owner->media); owner->media=NULL;
-    qa_frontend *f=owner->frontend;
     if (owner->installed) {
         if (f->root_resources!=owner || f->mounts!=owner->mounts ||
             f->images!=owner->images || f->materials!=owner->materials)
@@ -165,6 +174,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
         !qa_map_sidecars_apply_entities(owner->sidecars,&bsp,error) ||
         !qa_material_library_load_scripts(owner->materials,owner->mounts,&options.images,error) ||
         !qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&owner->world,error) ||
+        !qa_scene_world_source_resource_bind(owner->world,owner->map,error) ||
         (f->audio && !qa_audio_bank_create(owner->mounts,&owner->sounds,error))) goto fail;
     size_t length=strlen(map.name);
     owner->name=malloc(length+1);

@@ -21,7 +21,8 @@ bool frontend_shared_settings_current(const frontend_shared_settings *owner,cons
 {
     return owner && f && owner->frontend==f && owner->application==app && f->application==app &&
         owner->manager==f->config_store && owner->candidate==candidate &&
-        (owner->root_console?root_current(owner,app,candidate):
+        (owner->client?(!candidate && qa_application_client_prepare_associated(app,owner->client)):
+            owner->root_console?root_current(owner,app,candidate):
             candidate && qa_application_startup_candidate(app)==candidate) &&
         (!owner->root_console || owner->root_console==qa_application_console(owner->application)) &&
         frontend_shared_values_registry(owner->values)==qa_application_cvars(owner->application) &&
@@ -53,6 +54,20 @@ bool frontend_shared_settings_begin(qa_frontend *f,frontend_config_store *manage
 }
 frontend_shared_values *frontend_shared_settings_values(const frontend_shared_settings *owner)
 { return owner?owner->values:NULL; }
+qa_application_client_preparation *frontend_shared_settings_client(const frontend_shared_settings *owner)
+{ return owner?owner->client:NULL; }
+bool frontend_shared_settings_begin_client(qa_frontend *f,frontend_config_store *manager,qa_application *app,
+    qa_application_client_preparation *client,frontend_shared_settings **out,qa_error *error)
+{
+    if (!out || *out || !f || f->application!=app || f->config_store!=manager ||
+        !qa_application_client_prepare_associated(app,client))
+        return fail(error,"Shared settings require the actual standalone physical CLIENT preparation");
+    frontend_shared_settings *owner=calloc(1,sizeof(*owner));
+    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining standalone CLIENT shared settings");
+    owner->frontend=f; owner->manager=manager; owner->application=app; owner->client=client;
+    if (!frontend_shared_values_begin_client(f,manager,app,client,&owner->values,error)) { free(owner); return false; }
+    *out=owner; return true;
+}
 bool frontend_shared_settings_begin_root(qa_frontend *f,frontend_config_store *manager,qa_application *app,
     const qa_launch_snapshot *candidate,frontend_shared_settings **out,qa_error *error)
 {
@@ -175,7 +190,8 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
     if (complete) *complete=false;
     if (!complete || !owner || owner->aborting ||
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate) ||
-        !qa_application_startup_resource_phase(owner->application,owner->candidate) ||
+        !(owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_RELEASE):
+            qa_application_startup_resource_phase(owner->application,owner->candidate)) ||
         (validated && !owner->before_complete) || (!validated && owner->after_started))
         return fail(error,"Shared release advancement lost its actual candidate phase");
     bool *finished=validated?&owner->after_complete:&owner->before_complete;
@@ -194,8 +210,10 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
         }
         qa_input_seat *configuration[QA_INPUT_LOCAL_SEATS]={0};
         for (unsigned slot=0;slot<f->options.seats;++slot) {
-            if (!frontend_config_store_input_configuration(owner->manager,owner->application,
-                owner->candidate,slot,configuration+slot,error)) return false;
+            if (!(owner->client?frontend_config_store_client_input_configuration(owner->manager,
+                owner->client,slot,configuration+slot,error):
+                frontend_config_store_input_configuration(owner->manager,owner->application,
+                    owner->candidate,slot,configuration+slot,error))) return false;
         }
         bool prepared=frontend_input_settings_prepare(f,&owner->projected,configuration,
             (double)f->wall_time_ns/1000000.0,&owner->input,error);
@@ -246,7 +264,8 @@ bool frontend_shared_settings_cancel_advance(frontend_shared_settings *owner,
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate))
         return fail(error,"Shared cancellation lost its returned candidate parents");
     if (!owner->input) { *complete=true; return true; }
-    if (!qa_application_startup_release_cleanup_phase(owner->application,owner->candidate))
+    if (!(owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_CLEANUP):
+        qa_application_startup_release_cleanup_phase(owner->application,owner->candidate)))
         return fail(error,"Shared cancellation lacks its real returned release phase");
     owner->aborting=true;
     frontend_input_settings_view view;
@@ -281,6 +300,7 @@ bool frontend_shared_settings_engine_shutdown(frontend_shared_settings **in,
         !frontend_seat_callbacks_returned(f) ||
         qa_application_engine_shutdown_owner(loan)!=owner->application ||
         qa_application_engine_shutdown_candidate(loan)!=owner->candidate ||
+        (owner->client && qa_application_engine_shutdown_client(loan)!=owner->client) ||
         (owner->input && (f->input_settings!=owner->input ||
             !frontend_input_settings_current(owner->input,f,error))))
         return fail(error,"Shared cancellation lost its physical ENGINE loan parents");
@@ -298,4 +318,28 @@ bool frontend_shared_settings_engine_shutdown(frontend_shared_settings **in,
     }
     if (!frontend_shared_values_engine_shutdown(&owner->values,loan,error)) return false;
     free(owner); *in=NULL; *complete=true; return ok;
+}
+static bool client_retirement_ready(void *context,const qa_application_client_preparation *client,
+    const qa_cvars_edit *edit)
+{
+    const frontend_shared_settings *owner=context;
+    return owner && owner->client==client && owner->candidate==NULL &&
+        qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CLEANUP) &&
+        frontend_shared_settings_current(owner,owner->frontend,owner->application,NULL) &&
+        !owner->frontend->preparing && !owner->scalar_aborted && !owner->publication && !owner->consumed &&
+        owner->input && frontend_shared_values_prepared(owner->values)==edit &&
+        qa_cvars_edit_abort_is(edit,frontend_shared_values_registry(owner->values)) &&
+        frontend_input_settings_failed_coverage_is(owner->input,owner->frontend);
+}
+bool frontend_shared_settings_client_shutdown(frontend_shared_settings **in,bool *complete,qa_error *error)
+{
+    if (complete) *complete=false;
+    frontend_shared_settings *owner=in?*in:NULL;
+    if (!owner || !complete || !owner->client || owner->publication || owner->consumed)
+        return fail(error,"CLIENT cancellation lacks its actual failed settings parent");
+    qa_application_engine_shutdown *loan=NULL;
+    const qa_cvars_edit *values=frontend_shared_values_prepared(owner->values);
+    if (!qa_application_engine_shutdown_begin_client(owner->application,owner->client,values,owner,
+        client_retirement_ready,&loan,error)) return false;
+    return frontend_shared_settings_engine_shutdown(in,loan,complete,error);
 }

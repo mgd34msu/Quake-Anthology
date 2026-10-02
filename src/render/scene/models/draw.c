@@ -243,7 +243,8 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         input = &eyes;
     }
     bool shell_image = scene_model_has_shell(input) && (format == QA_MODEL_MD2 || format == QA_MODEL_MD5);
-    bool custom_allowed = format != QA_MODEL_MDL && format != QA_MODEL_SPR && format != QA_MODEL_SP2;
+    bool source_md4 = input->source_order && model->source_topology && format == QA_MODEL_MD4;
+    bool custom_allowed = !source_md4 && format != QA_MODEL_MDL && format != QA_MODEL_SPR && format != QA_MODEL_SP2;
     const qa_material *material = custom_allowed && input->custom_material ? input->custom_material : image ? image->material : NULL;
     if (shell_image) material = NULL;
     if (!material && input->family == QA_SCENE_Q3 && !shell_image &&
@@ -255,7 +256,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         qa_material_context context = material_context(input, world);
         context.source_white = qa_scene_white(model->resources);
         if (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4)
-            context.source_writer = QA_SOURCE_WRITE_MODEL;
+            context.source_writer = source_md4 ? QA_SOURCE_WRITE_MODEL_MD4 : QA_SOURCE_WRITE_MODEL;
         if (input->shadow_only) {
             qa_scene_mesh shadow_mesh;
             if (!qa_material_shadow_mesh(material, mesh, &context, frame, &shadow_mesh, error)) return false;
@@ -270,7 +271,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
             return qa_scene_frame_draw(frame, &draw, error);
         }
         if (!q3_model_shadow(model, input, mesh, material, &context, frame, error)) return false;
-        if (input->family == QA_SCENE_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
+        if (!source_md4 && input->family == QA_SCENE_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
         size_t begin = frame->command_count;
         if (!qa_material_submit(material, mesh, &context, frame, error)) return false;
         for (size_t i = begin; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW) {

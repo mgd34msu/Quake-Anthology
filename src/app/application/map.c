@@ -3,6 +3,7 @@
 #include "native_q1_wire.h"
 #include "native_q1_composition.h"
 #include "qa/game_q1_bots.h"
+#include "bots_npc.h"
 #include "qa/game_q2_wire.h"
 #include "unified_q2_native_events.h"
 #include "native_q2_console.h"
@@ -998,6 +999,13 @@ static bool q1_begin_map(application_provider *provider,
     if (!q1_map_options(provider, product, choices, current_map, &source,
                         &level, &options, error))
         return false;
+    if (!application_bots_npc_idle(provider)) {
+        qa_q1_level_destroy(level);
+        qa_q1_campaign_source_destroy(source);
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q1 map reset overlaps an entered monster path");
+    }
+    application_bots_npc_destroy(provider);
     bool ok = provider->map_bound
                   ? qa_q1_game_begin_map(provider->state.q1, &options, error)
                   : qa_q1_game_maps_bind(provider->state.q1, &options, error);
@@ -2179,6 +2187,8 @@ bool application_map_publish(qa_application *application,
             if (!q1_begin_map(provider, product, choices, current_map, error))
                 return false;
         } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
+            if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
+                return false;
             if (!qa_q2_begin_map(provider->state.q2, current_map, spawn_point,
                                  error))
                 return false;

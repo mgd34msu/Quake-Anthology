@@ -46,6 +46,7 @@ void qa_qvm_compatibility_free(qa_qvm_compatibility *compatibility)
     if (compatibility == NULL) return;
     qa_buffer_free(&compatibility->primary);
     qa_buffer_free(&compatibility->equipment_presentation);
+    qa_buffer_free(&compatibility->collision_scene);
     *compatibility = (qa_qvm_compatibility){0};
 }
 
@@ -98,14 +99,17 @@ bool qa_qvm_compatibility_parse(qa_bytes json, const char *artifact_path, const 
         else if (qa_json_string_equal(document,profile,"q3-1.16n-base")) abi = QA_QVM_Q3_116N;
         else { qa_qvm_error(error,QA_ERROR_FORMAT,i,"invalid QVM compatibility ABI profile"); goto finished; }
         qa_json_id primary = qa_json_get(document,entry,"primary"), equipment = qa_json_get(document,entry,"equipmentPresentation");
-        if ((primary != QA_JSON_NONE && entry_role != QA_QVM_GAME) || (equipment != QA_JSON_NONE && entry_role != QA_QVM_CGAME)) {
+        qa_json_id collision = qa_json_get(document,entry,"collisionScene");
+        if ((primary != QA_JSON_NONE && entry_role != QA_QVM_GAME) || (equipment != QA_JSON_NONE && entry_role != QA_QVM_CGAME) ||
+            (collision != QA_JSON_NONE && entry_role != QA_QVM_CGAME)) {
             qa_qvm_error(error,QA_ERROR_FORMAT,i,"QVM compatibility interface belongs to another role"); goto finished;
         }
         if (entry_role == role && key.size == selected_path.size && memcmp(key.data,selected_path.data,key.size) == 0) {
             if (!qa_sha256_equal(&expected,digest)) { qa_qvm_error(error,QA_ERROR_FORMAT,i,"QVM compatibility declaration belongs to different artifact bytes"); goto finished; }
             selected.abi = abi; selected.declared = true;
             if (!copy_value(document,primary,&selected.primary,error)
-                || !copy_value(document,equipment,&selected.equipment_presentation,error)) goto finished;
+                || !copy_value(document,equipment,&selected.equipment_presentation,error)
+                || !copy_value(document,collision,&selected.collision_scene,error)) goto finished;
         }
         qa_buffer_free(&path); qa_buffer_free(&folded); qa_buffer_free(&digest_text);
     }

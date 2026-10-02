@@ -1,32 +1,14 @@
-#include "network_unified.h"
+#include "network_unified_private.h"
+#include "network_unified_save.h"
 #include "internal.h"
 #include "remote_unified_presentation.h"
+#include "network_unified_client.h"
+#include "qc_messages.h"
+#include "../application/network_unified_private.h"
 #include "qa/network_unified_save.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-#define UNIFIED_PEERS 264u
-typedef struct unified_peer {
-    qa_net_connect request;
-    qa_net_seat_binding binding;
-    qa_net_client_id client;
-    qa_unified_session *session;
-    application_unified_server *server;
-    frontend_remote_unified *remote;
-    bool occupied, staging, travel_prepared, frame_published;
-} unified_peer;
-struct frontend_network_unified {
-    frontend_network_unified_options options;
-    qa_unified_bootstrap *bootstrap;
-    unified_peer peers[UNIFIED_PEERS];
-    application_unified_source source, travel_source;
-    size_t travel_cursor;
-    uint32_t epoch;
-    uint64_t frame_before;
-    unsigned calls;
-    bool closing, traveling, frame_boundary;
-};
 
 static bool fail(qa_error *error, const char *message)
 { return frontend_fail(error, QA_ERROR_ARGUMENT, message); }
@@ -41,9 +23,24 @@ static bool same_source(const application_unified_source *a, const application_u
         a->owner == b->owner && a->publication == b->publication &&
         a->map_revision == b->map_revision && a->max_clients == b->max_clients;
 }
+typedef struct unified_output_receipts {
+    const application_unified_output_external *base;
+    frontend_qc_unified_player_receipt *qc;
+} unified_output_receipts;
+static bool output_receipts_current(void *context, qa_application *app,
+    const application_unified_source *source, qa_net_client_id client,
+    const qa_unified_session_player *player)
+{
+    const unified_output_receipts *receipts = context;
+    return receipts && receipts->qc && receipts->qc->external.current &&
+        receipts->qc->external.current(receipts->qc->external.context, app, source, client, player) &&
+        (!receipts->base || (receipts->base->current &&
+            receipts->base->current(receipts->base->context, app, source, client, player)));
+}
 bool frontend_network_unified_idle(const frontend_network_unified *owner)
 {
     if (!owner) return true;
+    if (owner->restore_pending) return owner->calls == 0;
     if (owner->calls || !qa_network_callbacks_idle(owner->options.runtime) ||
         (owner->bootstrap && !qa_unified_bootstrap_idle(owner->bootstrap))) return false;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
@@ -82,6 +79,7 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
     if (!owner || !request || !recognized) return fail(error, "Missing actual Unified admission request");
     *recognized = request->protocol.kind == QA_NET_UNIFIED_1;
     if (!*recognized) return true;
+    if (owner->restore_pending) return frontend_network_unified_import_admit(owner, request, error);
     if (!parent(owner)) return fail(error, "Unified admission lost its installed Network owner");
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         const unified_peer *peer = owner->peers + i;
@@ -128,14 +126,18 @@ static bool attach(void *context, qa_network_runtime *runtime, const qa_net_addr
         if (okay) { peer->request.composition = *application_unified_server_composition(peer->server);
             hooks = application_unified_server_hooks(peer->server); }
     } else {
-        frontend_remote_unified_options options = owner->options.client;
-        options.domain.runtime = runtime; options.domain.client = (qa_net_client_id){0};
-        options.domain.seat = peer->binding.seat;
-        okay = frontend_remote_unified_presentation_create(owner->options.frontend, &options, &peer->remote, error);
+        frontend_remote_unified_options options = {0};
+        okay = frontend_network_unified_client_options_read(owner->options.client_service, &options, error);
+        if (okay && (options.domain.runtime != runtime || options.domain.client.owner ||
+            options.domain.seat.owner != peer->binding.seat.owner || options.domain.seat.index != peer->binding.seat.index))
+            okay = fail(error, "Unified challenge changes its actual prepared CLIENT service domain");
+        if (okay) okay = frontend_remote_unified_presentation_create(owner->options.frontend, &options, &peer->remote, error);
         if (okay) hooks = frontend_remote_unified_hooks(peer->remote);
     }
     if (okay) okay = qa_unified_session_attach(runtime, &peer->request, server, token, NULL,
         &hooks, now, &peer->client, &peer->session, error);
+    if (okay && !server) okay = frontend_network_unified_client_bind(owner->options.client_service,
+        peer->client, peer->binding.seat, peer->remote, error);
     if (okay) okay = server ? application_unified_server_bind(peer->server, peer->client, peer->session, error) :
         frontend_remote_unified_bind(peer->remote, peer->client, peer->session, error);
     if (okay && server) okay = qa_unified_session_control(peer->session, offer, error);
@@ -149,6 +151,8 @@ static bool attach(void *context, qa_network_runtime *runtime, const qa_net_addr
     }
     *id = peer->client; *session = peer->session; return true;
 }
+qa_unified_bootstrap_hooks frontend_network_unified_bootstrap_hooks(frontend_network_unified *owner)
+{ return (qa_unified_bootstrap_hooks){owner, attach}; }
 
 bool frontend_network_unified_create(const frontend_network_unified_options *options,
     frontend_network_unified **out, qa_error *error)
@@ -165,7 +169,7 @@ bool frontend_network_unified_create(const frontend_network_unified_options *opt
         if (!source.max_clients || source.max_clients > 256)
             return fail(error, "Unified Source capacity exceeds its genuine handshake domain");
         capacity = source.max_clients;
-    } else if (options->client.domain.application != options->frontend->application ||
+    } else if (!options->client_service || options->client.domain.application != options->frontend->application ||
         options->client.domain.runtime != options->runtime ||
         options->client.domain.seat.owner != options->seat_owner)
         return fail(error, "Unified client lacks its actual CLIENT factory domain");
@@ -235,7 +239,30 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
     for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (peer->server && !peer->frame_published) {
-            okay = application_unified_server_publish(peer->server, external, error);
+            frontend_qc_unified_player_receipt receipt = {0};
+            unified_output_receipts receipts = {.base = external, .qc = &receipt};
+            application_unified_output_external observed = external ? *external : (application_unified_output_external){0};
+            const application_unified_output_external *actual_external = external;
+            if (peer->server->admitted && !peer->server->pending_capture) {
+                qa_application_qc_message_source qc; bool found = false;
+                okay = qa_application_qc_message_source_read(owner->options.frontend->application,
+                    source.owner, &qc, &found, error);
+                if (okay && found) {
+                    qa_unified_session_player player; bool present = false;
+                    okay = application_unified_player_read(owner->options.frontend->application,
+                        peer->client, peer->binding.seat, &player, error) &&
+                        frontend_qc_messages_unified_player_read(owner->options.frontend->qc_messages,
+                            owner->options.frontend->application, &source, peer->client, &player,
+                            &receipt, &present, error) && present;
+                    if (okay && external && external->player)
+                        okay = fail(error, "Unified output has competing actual QC decoder receipts");
+                    if (okay) {
+                        observed.context = &receipts; observed.current = output_receipts_current;
+                        observed.player = &receipt.external; actual_external = &observed;
+                    }
+                }
+            }
+            if (okay) okay = application_unified_server_publish(peer->server, actual_external, error);
             if (okay) peer->frame_published = true;
         }
     }
@@ -254,6 +281,7 @@ bool frontend_network_unified_travel(frontend_network_unified *owner,
         if (owner->epoch == UINT32_MAX) return fail(error, "Unified Source epoch is exhausted");
         ++owner->epoch; owner->travel_source = source; owner->traveling = true; owner->frame_boundary = false;
         owner->travel_cursor = 0;
+        if (sidecars != owner->restored_sidecars) { free(owner->restored_sidecars); owner->restored_sidecars = NULL; }
         owner->options.sidecars = sidecars; owner->options.sidecar_count = count;
     } else if (!same_source(&source, &owner->travel_source) ||
         sidecars != owner->options.sidecars || count != owner->options.sidecar_count)
@@ -294,6 +322,7 @@ bool frontend_network_unified_destroy(frontend_network_unified **slot, qa_error 
 {
     if (!slot || !*slot) return true;
     frontend_network_unified *owner = *slot;
+    if (owner->restore_pending) return frontend_network_unified_restore_dispose(slot, error);
     if (!frontend_network_unified_idle(owner)) return fail(error, "Unified destruction requires returned actual callback owners");
     owner->closing = true;
     for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
@@ -310,7 +339,7 @@ bool frontend_network_unified_destroy(frontend_network_unified **slot, qa_error 
         }
         if (!release_peer(peer, error)) return false;
     }
-    qa_unified_bootstrap_destroy(owner->bootstrap); free(owner); *slot = NULL; return true;
+    qa_unified_bootstrap_destroy(owner->bootstrap); free(owner->restored_sidecars); free(owner); *slot = NULL; return true;
 }
 bool frontend_network_unified_close(frontend_network_unified *owner, qa_net_client_id id,
     const char *reason, qa_error *error)

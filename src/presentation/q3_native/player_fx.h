@@ -53,6 +53,15 @@ typedef struct q3n_player_fx_remote_backend {
     bool (*player_weapon)(void *, const q3n_frame *, const q3n_remote_entity *,
         const qa_q3_ref_entity *torso, int32_t team, qa_error *);
 } q3n_player_fx_remote_backend;
+typedef struct q3n_player_fx_compiled_backend {
+    void *context;
+    bool (*world_trace)(void *, const q3n_frame *, qa_vec3, qa_vec3, qa_bounds, uint32_t, qa_trace_result *, qa_error *);
+    bool (*world_point_contents)(void *, const q3n_frame *, qa_vec3, uint32_t *, qa_error *);
+    bool (*body_hidden)(void *, const q3n_frame *, const q3n_compiled_entity *, bool *, qa_error *);
+    bool (*body_submit)(void *, const q3n_frame *, const q3n_compiled_entity *, uint32_t,
+        const qa_q3_ref_entity *, bool, bool *, qa_error *);
+    bool (*player_weapon)(void *, const q3n_frame *, const q3n_compiled_entity *, const qa_q3_ref_entity *, int32_t, qa_error *);
+} q3n_player_fx_compiled_backend;
 
 /* Call once after body_build has advanced the genuine split-body pose. This
  * patches shadow flags/plane on those refs and preserves CG_Player order,
@@ -63,6 +72,9 @@ bool q3n_player_fx_submit(const q3n_frame *, const qa_application_native_q3_enti
 bool q3n_player_fx_submit_remote(const q3n_frame *, const q3n_remote_entity *,
     const q3n_client_info *, q3n_player_body *, const q3n_player_fx_settings *,
     const q3n_player_fx_remote_backend *, qa_error *);
+bool q3n_player_fx_submit_compiled(const q3n_frame *, const q3n_compiled_entity *,
+    const q3n_client_info *, q3n_player_body *, const q3n_player_fx_settings *,
+    const q3n_player_fx_compiled_backend *, qa_error *);
 /* Primitive-only aggregate field codec. No media acquisition, callbacks or
  * source writes; the entity aggregate owns versioning and actor admission. */
 bool q3n_player_fx_codec(qa_source_save_io *, q3n_player_fx_state *);

@@ -5,6 +5,47 @@
 #include <string.h>
 
 static bool token_equal(qa_unified_token a, qa_unified_token b) { return !memcmp(a.bytes, b.bytes, 16); }
+static bool document_equal(const qa_unified_document *a, const qa_unified_document *b)
+{
+    if (!a || !b) return a == b;
+    qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
+    qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
+    return qa_unified_document_type(a) == qa_unified_document_type(b) && x.size == y.size &&
+        (!x.size || !memcmp(x.data, y.data, x.size));
+}
+bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epoch,
+    bool admitted, bool retired, const qa_unified_document *offer,
+    const qa_unified_document *frame, const qa_unified_document *pending_frame, qa_error *e)
+{
+    if (!qa_unified_session_idle(s) || s->server || epoch < s->epoch)
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source changed its actual lower epoch");
+    const qa_unified_held *head = s->held;
+    bool receiving_offer = head && qa_unified_session_kind(head->document, "offer");
+    bool receiving_admission = head && qa_unified_session_kind(head->document, "admitted");
+    bool receiving_disconnect = head && qa_unified_session_kind(head->document, "disconnect");
+    if (offer && (!receiving_offer || !document_equal(offer, head->document)))
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source pending offer differs from its actual receive head");
+    if (epoch > s->epoch) {
+        uint32_t offered = 0;
+        if (!offer || !receiving_offer || head->source_finished ||
+            !qa_unified_session_document_epoch(head->document, &offered, e) || offered != epoch)
+            return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source publication has no actual unfinished offer");
+    }
+    if (admitted != s->admitted && !(admitted ?
+        (receiving_admission && head->source_finished && head->commit.applied) ||
+            (retired && (s->disconnected || (receiving_disconnect && head->source_finished && head->commit.applied))) :
+        receiving_offer && !head->source_finished))
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source admission differs from its actual control continuation");
+    if (retired && !s->disconnected && !(receiving_disconnect && head->source_finished && head->commit.applied))
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source retirement has no actual disconnect receipt");
+    if (pending_frame && (!head || head->kind != QA_UNIFIED_FRAME_DOCUMENT || head->source_finished ||
+        !document_equal(pending_frame, head->document)))
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source pending frame differs from its actual receive head");
+    if (head && head->kind == QA_UNIFIED_FRAME_DOCUMENT && head->source_finished && head->commit.applied &&
+        (!frame || !document_equal(frame, head->document)))
+        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source committed frame differs from its retained lower continuation");
+    return true;
+}
 static bool local_reason(const qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
     const qa_json_document *json = qa_unified_document_json(d);
@@ -48,11 +89,14 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
     uint64_t reliable = s->reliable_applied;
     size_t frames = 0;
     for (const qa_unified_held *held = s->held; held; held = held->next) {
-        if (++count > (size_t)limits.reliable_window_messages + 1 || !held->document ||
+        if (++count > (size_t)limits.reliable_window_messages + 1 ||
+            (!held->document && (!s->server || held->source_finished)) ||
             held->bytes != held->wire.size || (held->wire.size && !held->wire.data) ||
             held->wire.size > limits.message_bytes || held->wire.size > limits.queued_reliable_bytes + limits.message_bytes - bytes || !held->sequence)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Invalid held production document extent");
-        qa_unified_document_kind kind = qa_unified_document_type(held->document);
+        qa_unified_document_kind kind = held->kind;
+        if (held->document && kind != qa_unified_document_type(held->document))
+            return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Held production document changes its retained wire role");
         if ((held != s->held && held->source_finished) || !qa_unified_session_continuation_valid(s, held, e))
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Held Source continuation is not the actual processing head");
         if (kind == QA_UNIFIED_CONTROL_DOCUMENT) {
@@ -72,6 +116,7 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
     if (s->timeout_delivery) {
         const qa_unified_held *held = s->timeout_delivery;
         if (!s->timeout_pending || held->next || held->sequence || held->required || !held->wire.data ||
+            held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
             held->wire.size != held->bytes || held->wire.size > s->limits.message_bytes ||
             !qa_unified_session_kind(held->document, "disconnect") ||
             !local_reason(s, held->document, e) ||
@@ -117,7 +162,7 @@ bool qa_unified_session_checkpoint(const qa_unified_session *s, qa_buffer *out, 
     uint8_t *data = ok ? malloc(capacity) : NULL;
     if (ok && !data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Capturing complete production session");
     qa_net_writer w; qa_net_writer_init(&w, data, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAUS3", 5) && qa_net_write_u8(&w, s->server) &&
+    ok = ok && qa_net_write_data(&w, "QAUS4", 5) && qa_net_write_u8(&w, s->server) &&
         qa_net_write_u32(&w, s->epoch) && qa_net_write_u32(&w, s->required) && qa_net_write_u64(&w, (uint64_t)s->acknowledged) &&
         qa_net_write_u64(&w, s->now_ns) && qa_net_write_u64(&w, s->closing_ns) &&
         qa_net_write_u8(&w, s->admitted) && qa_net_write_u8(&w, s->disconnected) && qa_net_write_u8(&w, s->closing) &&
@@ -127,7 +172,7 @@ bool qa_unified_session_checkpoint(const qa_unified_session *s, qa_buffer *out, 
         qa_net_write_u32(&w, (uint32_t)inputs.size) && qa_net_write_data(&w, inputs.data, inputs.size) &&
         qa_net_write_u16(&w, (uint16_t)s->held_count);
     for (const qa_unified_held *held = s->held; ok && held; held = held->next)
-        ok = qa_net_write_u8(&w, (uint8_t)qa_unified_document_type(held->document)) &&
+        ok = qa_net_write_u8(&w, (uint8_t)held->kind) && qa_net_write_u8(&w, held->document != NULL) &&
             qa_net_write_u32(&w, held->sequence) && qa_net_write_u32(&w, held->required) &&
             qa_net_write_u32(&w, (uint32_t)held->wire.size) && qa_net_write_data(&w, held->wire.data, held->wire.size) &&
             qa_unified_session_continuation_write(&w, held);
@@ -176,7 +221,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
     char magic[5]; bool ok = qa_net_read_data(&r, magic, 5);
-    if (ok && memcmp(magic, "QAUS3", 5)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
+    if (ok && memcmp(magic, "QAUS4", 5)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
     ok = ok && flag(&r, &s->server);
     s->epoch = qa_net_read_u32(&r); s->required = qa_net_read_u32(&r);
     uint64_t acknowledged = qa_net_read_u64(&r);
@@ -204,11 +249,14 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     if (ok && count > (size_t)s->limits.reliable_window_messages + 1) ok = qa_net_reader_fail(&r, "Held production document count exceeds its source window");
     for (size_t i = 0; ok && i < count; ++i) {
         qa_unified_document_kind kind = (qa_unified_document_kind)qa_net_read_u8(&r);
+        bool decoded = false;
+        ok = flag(&r, &decoded);
         qa_unified_held *held = calloc(1, sizeof(*held));
         if (!held) { ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring held production delivery"); break; }
+        held->kind = kind;
         if (s->tail) s->tail->next = held; else s->held = held; s->tail = held; ++s->held_count;
         held->sequence = qa_net_read_u32(&r); held->required = qa_net_read_u32(&r);
-        qa_bytes wire = {0}; ok = blob(&r, &wire);
+        qa_bytes wire = {0}; ok = ok && blob(&r, &wire);
         if (ok && (wire.size > s->limits.message_bytes || s->limits.queued_reliable_bytes > SIZE_MAX - s->limits.message_bytes ||
             wire.size > s->limits.queued_reliable_bytes + s->limits.message_bytes - s->held_bytes))
             ok = qa_net_reader_fail(&r, "Held production document bytes exceed its authentic budget");
@@ -221,7 +269,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         if (ok) {
             held->wire.size = held->bytes = wire.size; s->held_bytes += wire.size;
             if (wire.size) memcpy(held->wire.data, wire.data, wire.size);
-            ok = qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, e) &&
+            ok = (decoded ? qa_unified_document_decode(kind,
+                (qa_bytes){held->wire.data, held->wire.size}, &held->document, e) : s->server) &&
                 qa_unified_session_continuation_read(&r, held);
         }
     }
@@ -231,6 +280,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         qa_unified_held *held = calloc(1, sizeof(*held));
         if (!held) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring actual timeout continuation");
         s->timeout_delivery = held;
+        if (held) held->kind = QA_UNIFIED_CONTROL_DOCUMENT;
         qa_bytes wire = {0};
         if (ok) ok = blob(&r, &wire);
         if (ok && wire.size > s->limits.message_bytes) ok = qa_net_reader_fail(&r, "Local closure continuation exceeds its actual control extent");

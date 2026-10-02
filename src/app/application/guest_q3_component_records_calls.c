@@ -65,7 +65,8 @@ bool application_q3_component_records_refresh(application_q3_component_records *
             }
         }
     }
-    if(ok) ok=rebase(r,e); r->refreshing=previous; return ok;
+    if(ok) ok=rebase(r,e);
+    r->refreshing=previous; return ok;
 }
 static bool capture(application_q3_component_records *r,qa_error *e)
 {
@@ -93,7 +94,7 @@ static bool commit(application_q3_component_records *r,const component_observati
     if(!projected(r,row->actor)) return q3records_fail(e,QA_ERROR_NOT_FOUND,"Component source wrote a retired canonical actor");
     component_field *f=row->field;
     if(f->kind<=COMPONENT_SCORE) {
-        double value=f->floating?qa_load_f32le(row->bytes):qa_load_i32le(row->bytes); uint8_t checked[4];
+        double value=f->floating?(double)qa_load_f32le(row->bytes):(double)qa_load_i32le(row->bytes); uint8_t checked[4];
         if(!q3records_scalar(value,f->floating,checked,e)) return false;
         if(f->kind==COMPONENT_HEALTH) {
             float health=(float)value; if(!isfinite(health)) return q3records_fail(e,QA_ERROR_FORMAT,"Component health exceeds canonical float");

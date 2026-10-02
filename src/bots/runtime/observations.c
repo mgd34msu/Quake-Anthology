@@ -210,6 +210,9 @@ static float dropped_weight(void *context) {
     const qa_bot_variable *v = qa_bot_library_variable(r->library, "droppedweight");
     return v ? v->value : 1000;
 }
+static bool maximum_level_items(void *context, int32_t *out, qa_error *error) {
+    return bot_runtime_integer(context, "max_levelitems", "256", out, error);
+}
 static int goal_order(const void *a, const void *b) {
     int32_t x = ((const qa_bot_goal_entity *)a)->number;
     int32_t y = ((const qa_bot_goal_entity *)b)->number;
@@ -302,7 +305,7 @@ static bool debug(void *context) { return ((qa_bot_runtime *)context)->options.d
 qa_bot_goal_services bot_runtime_goal_services(qa_bot_runtime *r) {
     return (qa_bot_goal_services){.context = r, .navigation = navigation,
         .entities = entities, .entities_end = entities_end, .entity = entity,
-        .dropped_weight = dropped_weight,
+        .dropped_weight = dropped_weight, .maximum_level_items = maximum_level_items,
         .pickups = r->services.goals.pickups ? pickups : NULL,
         .pickups_end = r->services.goals.pickups_end ? pickups_end : NULL,
         .pickup = r->services.goals.pickup ? pickup : NULL,

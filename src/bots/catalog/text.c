@@ -45,7 +45,8 @@ bool bot_catalog_info_value(const char *info,const char *key,char *out,size_t ca
         size_t k=(size_t)(separator-p),wanted=strlen(key);bool same=k==wanted;
         for(size_t i=0;same && i<k;++i) same=lower((unsigned char)p[i])==lower((unsigned char)key[i]);
         if(same) {if(n>=capacity) n=capacity-1;memcpy(out,value,n);out[n]=0;return true;}
-        if(!next) return true;p=next+1;
+        if(!next) return true;
+        p=next+1;
     }
     return true;
 }
@@ -69,7 +70,8 @@ bool bot_catalog_info_set(qa_bot_catalog *c,char info[1024],const char *key,cons
     if(!*value) return true;
     char pair[1024];size_t k=strlen(key),v=strlen(value),n=0;
     pair[n++]='\\';for(size_t i=0;i<k && n<1023;++i) pair[n++]=key[i];
-    if(n<1023) pair[n++]='\\';for(size_t i=0;i<v && n<1023;++i) pair[n++]=value[i];
+    if(n<1023) pair[n++]='\\';
+    for(size_t i=0;i<v && n<1023;++i) pair[n++]=value[i];
     if(n+size>1024) return c->services.print(c->services.context,"Info string length exceeded\n",e);
     if(n+size==1024) return bot_catalog_fail(e,QA_ERROR_FORMAT,"Info string overflows source terminator");
     memmove(info+n,info,size+1);memcpy(info,pair,n);return true;

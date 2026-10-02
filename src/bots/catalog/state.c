@@ -139,7 +139,8 @@ static bool load_catalog(qa_bot_catalog *c,bool bots,qa_error *e) {
         snprintf(filename,sizeof(filename),"scripts/%s",name);
         okay=load_file(c,filename,destination,e);
     }
-    for(size_t i=0;i<folded_count;++i) qa_buffer_free(&folded[i]);free(folded);
+    for(size_t i=0;i<folded_count;++i) qa_buffer_free(&folded[i]);
+    free(folded);
     qa_vfs_listing_free(&listing);
     if(!okay) return false;
     char message[80];snprintf(message,sizeof(message),"%u %s parsed\n",destination->count,kind);

@@ -797,9 +797,19 @@ bool native_host_import(void *context, qa_native_instance *instance,
     if (bootstrap)
         host->instance = instance;
     ++host->callback_depth;
-    bool ok = host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10
+    bool paired = (host->engine.source_before == NULL) == (host->engine.source_after == NULL);
+    bool prepared = paired && (!host->engine.source_before || host->engine.source_before(host->engine.context, error));
+    bool handled=false;
+    bool intercepted=prepared&&(!host->engine.source_import||host->engine.source_import(host->engine.context,call,result,&handled,error));
+    bool ok = intercepted && (handled || (host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10
                   ? native_host_q3_import(host, call, result, error)
-                  : native_host_q2_import(host, call, result, error);
+                  : native_host_q2_import(host, call, result, error)));
+    if (!paired) ok = native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source-import transfer callbacks must be paired");
+    if (prepared && host->engine.source_after) {
+        qa_error returned = {0};
+        bool refreshed = host->engine.source_after(host->engine.context, &returned);
+        if (!refreshed && ok) { ok = false; if (error) *error = returned; }
+    }
     --host->callback_depth;
     if (bootstrap)
         host->instance = NULL;

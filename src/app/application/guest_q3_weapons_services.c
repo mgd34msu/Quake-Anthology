@@ -208,20 +208,58 @@ static bool attempted(void *context, qa_actor_id actor, int32_t weapon, qa_error
     if (i < s->request_count && s->requests[i].weapon != weapon) request_remove(s, i);
     return true;
 }
-static bool accepted(void *context, qa_actor_id actor, int32_t weapon, qa_error *error)
+static bool request_store(application_q3_weapons_services *s, qa_actor_id actor,
+    int32_t weapon, qa_error *error)
 {
-    application_q3_weapons_services *s = context; q3_weapon_actor source;
-    if (weapon < 0) return application_fail(error, QA_ERROR_FORMAT, "Accepted Source weapon selection is negative");
-    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     size_t i = request_index(s, actor);
     if (i == s->request_count) {
         if (s->request_count == SIZE_MAX / sizeof(*s->requests))
             return application_fail(error, QA_ERROR_MEMORY, "Original weapon request continuation exceeds native extent");
         q3_weapon_request *grown = realloc(s->requests, (s->request_count + 1) * sizeof(*grown));
-        if (!grown) return application_fail(error, QA_ERROR_MEMORY, "Retaining accepted original weapon request");
+        if (!grown) return application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon command request");
         s->requests = grown; ++s->request_count;
     }
     s->requests[i] = (q3_weapon_request){actor, weapon}; return true;
+}
+static bool accepted(void *context, qa_actor_id actor, int32_t weapon, qa_error *error)
+{
+    application_q3_weapons_services *s = context; q3_weapon_actor source;
+    if (weapon < 0) return application_fail(error, QA_ERROR_FORMAT, "Accepted Source weapon selection is negative");
+    return q3_weapon_services_source(s, actor, &source, error) && request_store(s, actor, weapon, error);
+}
+bool application_q3_weapons_services_select_intent(application_q3_weapons_services *s,
+    qa_actor_id actor, qa_actor_owner owner, qa_item_id item, bool *admitted, qa_error *error)
+{
+    q3_weapon_actor source;
+    if (!owner || !item || !admitted)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon selection requires its actual owner and canonical item");
+    *admitted = false;
+    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
+    qa_application *app = application(s);
+    application_provider *provider = s->role->engine->provider;
+    if (provider->owner != owner || !provider->constructed || !provider->attached || provider->close_pending ||
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon selection changed its actual selected arsenal");
+    const application_q3_weapon_profile *profile = application_q3_weapons_profile(s->role->weapons);
+    size_t index = 0;
+    while (index < profile->catalog_count && profile->catalog[index].item != item) ++index;
+    if (index == profile->catalog_count) return true;
+    int32_t weapon = profile->catalog[index].weapon;
+    if (s->calls == SIZE_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "Original weapon selection nesting exceeds native extent");
+    ++s->calls;
+    qa_item_id active; double count = 0;
+    bool ok = application_q3_weapons_active(s->role->weapons, actor, &active, error);
+    if (ok && active != item) ok = qa_inventory_count_read(app->inventory, actor, item, &count, error);
+    if (ok && (!q3_weapons_current(s->role->weapons, &source) ||
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider ||
+        provider->owner != owner || !provider->constructed || !provider->attached || provider->close_pending))
+        ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon selection replaced its real actor or inventory owner");
+    if (ok && (active == item || count > 0)) {
+        if (active != item) ok = request_store(s, actor, weapon, error);
+        if (ok) *admitted = true;
+    }
+    --s->calls; return ok;
 }
 bool application_q3_weapons_services_request(application_q3_weapons_services *s, qa_actor_id actor,
     int32_t *out, bool *present, qa_error *error)

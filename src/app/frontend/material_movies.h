@@ -41,6 +41,13 @@ bool frontend_material_movies_roster_at(const qa_frontend *, size_t,
     frontend_material_movies **, qa_error *);
 bool frontend_material_movies_source_read(const frontend_material_movies *,
     frontend_material_movie_source *, qa_error *);
+/* The real retained renderer capsule prepares its destination slot before
+ * the retiring provider transfers custody. Both tuples keep the same resource
+ * heaps, media cache, frontend clock and reached-stage playback owner. */
+bool frontend_material_movies_transfer(frontend_material_movies **source_slot,
+    const frontend_material_movie_source *expected_source,
+    const frontend_material_movie_source *destination,
+    frontend_material_movies **destination_slot, qa_error *);
 const qa_scene_image *frontend_material_movies_start(void *, const char *, qa_error *);
 /* Frame admission only binds the true submitted frame. Playback advances at
  * a reached video stage, using the frontend monotonic media wall clock. */

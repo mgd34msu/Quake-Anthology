@@ -41,6 +41,9 @@ bool qa_application_content_retain_pool(qa_application_content_graph *, uint64_t
                                       qa_resource_pool **, qa_error *);
 bool qa_application_content_claim_view(qa_application_content_graph *, uint64_t,
     qa_vfs **, qa_error *);
+/* Return one real VFS reference without changing its pool custody. */
+bool qa_application_content_retain_view(qa_application_content_graph *, uint64_t,
+    qa_vfs **, qa_error *);
 bool qa_application_content_retain_catalog(qa_application_content_graph *, uint64_t,
     qa_catalog **, qa_error *);
 

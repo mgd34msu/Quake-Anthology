@@ -24,9 +24,10 @@ struct mod_protection_stage {
 static bool require(mod_actor_channel *c, qa_error *e)
 {
     int32_t slot;
-    return q3mod_storage_current(c->owner,e) && c->owner->services.live_client(c->owner->services.context,c->actor) &&
+    return q3mod_storage_current(c->owner,e) && qa_actors_get(qa_session_actors(c->owner->session),c->actor) &&
         c->owner->services.client_slot(c->owner->services.context,c->actor,&slot,e) && slot==c->client &&
-        qa_combat_protection_current(c->owner->combat,c->lease) ? true :
+        (c->owner->restoring ? c->bound :
+            c->owner->services.live_client(c->owner->services.context,c->actor)&&qa_combat_protection_current(c->owner->combat,c->lease)) ? true :
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection reservation left its actual client or canonical lease");
 }
 static bool read_scalar(application_q3_mod *o, uint32_t address, mod_scalar encoding, double *out, qa_error *e)

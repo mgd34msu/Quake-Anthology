@@ -363,6 +363,9 @@ bool application_unified_output_build(qa_application *app, const application_uni
             ok = text(&j, ",", error) && string(&j, optional[i], error) && text(&j, ":", error) &&
                 child_field(&j, children->presentation, p, optional[i], QA_JSON_OBJECT, error);
     }
+    if (ok && qa_json_get(presentation, p, "compiledQ3Sources") != QA_JSON_NONE)
+        ok = text(&j, ",\"compiledQ3Sources\":", error) &&
+            child_field(&j, children->presentation, p, "compiledQ3Sources", QA_JSON_ARRAY, error);
     if (ok) ok = text(&j, "}", error) && children_current(app, source, recipient, player, children, error) &&
         qa_unified_document_create(QA_UNIFIED_FRAME_DOCUMENT, (qa_bytes){j.bytes.data, j.bytes.size}, &candidate.frame, error);
     if (ok && children->control_count) {

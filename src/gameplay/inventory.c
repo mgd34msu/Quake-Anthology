@@ -935,6 +935,32 @@ bool qa_inventory_item_definitions(qa_inventory *table, qa_actor_id actor,
     return !out || total <= capacity || fail(e, QA_ERROR_ARGUMENT, "Item definition output buffer is too small");
 }
 
+bool qa_inventory_source_definition_read(const qa_inventory *table, qa_actor_id actor,
+    qa_actor_owner owner, qa_item_id item, qa_item_definition *out, qa_error *e)
+{
+    if (!out || !item || !qa_inventory_has(table, actor))
+        return fail(e, QA_ERROR_NOT_FOUND, "Source definition requires its actual inventory actor");
+    const inventory_store *store = table->stores[actor.slot];
+    const qa_item_definition *found = NULL;
+    bool storage = false;
+    for (const item_group *group = store->groups; group; group = group->next) {
+        if (!group->active || group->owner != owner) continue;
+        for (size_t i = 0; i < group->count; ++i) {
+            const qa_item_definition *definition = &group->items[i].definition;
+            if (definition->item != item || definition->owner != owner) continue;
+            if (found && storage == !group->definitions_only)
+                return fail(e, QA_ERROR_FORMAT, "Source definition has ambiguous admitted groups");
+            if (!found || !group->definitions_only) {
+                found = definition;
+                storage = !group->definitions_only;
+            }
+        }
+    }
+    if (!found) return fail(e, QA_ERROR_NOT_FOUND, "Source item has no admitted definition for this owner");
+    *out = *found;
+    return true;
+}
+
 typedef struct inventory_call {
     qa_inventory *table;
     qa_inventory_operation_kind kind;

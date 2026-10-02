@@ -39,6 +39,8 @@ struct qa_scene_resources {
     qa_scene_image *source_white, *source_missing, *source_identity;
     qa_q3_image_upload_options source_builtins_upload;
     bool source_builtins;
+    qa_scene_source_image_admit_fn source_admit;
+    void *source_admit_context;
     owned_image *variants;
     image_cache *cache;
     size_t cache_count, cache_capacity;

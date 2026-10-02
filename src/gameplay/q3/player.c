@@ -867,7 +867,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
                          int32_t source_milliseconds, bool *advanced, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !command || !isfinite(elapsed_ms) ||
-        elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
+        elapsed_ms < 0 || (double)elapsed_ms > (double)INT_MAX - 1024.0)
         return q3_fail(error, "invalid Q3 arsenal command");
     qa_q3_player_state *player = &entry->state.player;
     if (player->cutscene.active)
@@ -1070,7 +1070,7 @@ bool qa_q3_arsenal_source_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_
         !entry || entry->kind != Q3_ACTOR_PLAYER || !(entry->state.player.selections & QA_Q3_ARSENAL) ||
         !command || !source || !source->firing_delay || !qa_vec_finite(source->view_angles) ||
         !isfinite(source->view_height) || !isfinite(source->health) ||
-        !isfinite(elapsed_ms) || elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
+        !isfinite(elapsed_ms) || elapsed_ms < 0 || (double)elapsed_ms > (double)INT_MAX - 1024.0)
         return q3_fail(error, "Selected Q3 source slice requires its actual arsenal and source pose");
     qa_q3_arsenal_source captured = *source;
     ++game->observation_depth;
@@ -1759,9 +1759,9 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
     player->view_angles = view;
     player->view_height = height;
     uint32_t source_slot;
-    player->ground_entity_number = ground.hit == QA_TRACE_HIT_WORLD ? QA_Q3_SOURCE_WORLD :
+    player->ground_entity_number = ground.hit == QA_TRACE_HIT_WORLD ? (int32_t)QA_Q3_SOURCE_WORLD :
         ground.hit == QA_TRACE_HIT_ACTOR && qa_q3_source_actor_slot(game, ground.actor, &source_slot, NULL)
-        ? (int32_t)source_slot : QA_Q3_SOURCE_NONE;
+        ? (int32_t)source_slot : (int32_t)QA_Q3_SOURCE_NONE;
     qa_q3_native_client *client = &game->clients[slot];
     if (client->has_followed_player) {
         client->followed_player.commandTime = time;

@@ -83,12 +83,13 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
 bool qa_application_native_q3_client_modules_current(const application_native_q3_client_modules *owner,
     const qa_application_q3_remote_source *source)
 {
-    return owner && !owner->retiring && !owner->restore_pending && same_source(&owner->source, source) &&
+    return owner && (!owner->video || owner->video_entering) &&
+        !owner->retiring && !owner->restore_pending && same_source(&owner->source, source) &&
         qa_application_q3_remote_source_current(owner->app, source) &&
         application_native_q3_remote_role_modules_current(owner->provider, source, owner);
 }
 
-bool qa_application_native_q3_client_modules_idle(const application_native_q3_client_modules *owner)
+bool native_client_modules_executors_idle(const application_native_q3_client_modules *owner)
 {
     if (!owner || owner->calls || owner->initializing || owner->entered || owner->command_arguments) return false;
     const native_client_module *roles[] = {&owner->ui, &owner->cgame};
@@ -101,6 +102,11 @@ bool qa_application_native_q3_client_modules_idle(const application_native_q3_cl
             !application_q3_body_idle(role->body)) return false;
     }
     return true;
+}
+
+bool qa_application_native_q3_client_modules_idle(const application_native_q3_client_modules *owner)
+{
+    return owner && (!owner->video || owner->video_entering) && native_client_modules_executors_idle(owner);
 }
 
 static bool decoded_pure(const qa_q3_gamestate *state, bool *pure, qa_error *error)
@@ -555,7 +561,7 @@ bool qa_application_native_q3_client_modules_call(application_native_q3_client_m
     qa_qvm_role kind, int32_t command, const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
 {
     native_client_module *role = owner ? module_role(owner, kind) : NULL;
-    if (!role || owner->calls || command == (kind == QA_QVM_UI ? 1 : 0) || command == (kind == QA_QVM_UI ? 2 : 1) ||
+    if (!role || owner->video || owner->calls || command == (kind == QA_QVM_UI ? 1 : 0) || command == (kind == QA_QVM_UI ? 2 : 1) ||
         command == (kind == QA_QVM_UI ? NATIVE_Q3_UI_CONSOLE_COMMAND : NATIVE_Q3_CG_CONSOLE_COMMAND))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT entry requires its lifecycle or console adapter");
     return invoke(role, command, arguments, count, result, false, error);
@@ -584,7 +590,7 @@ bool qa_application_native_q3_client_modules_console_command(application_native_
     native_client_module *role = owner ? module_role(owner, kind) : NULL;
     const qa_command_tokens *reached = NULL;
     qa_command_tokens snapshot = {0}; uint64_t revision = 0;
-    if (!role || owner->calls || owner->command_arguments)
+    if (!role || owner->video || owner->calls || owner->command_arguments)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry retains another source call");
     if (!console_current(owner, call, error) ||
         !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
@@ -642,7 +648,8 @@ bool qa_application_native_q3_client_modules_initialize_ui(application_native_q3
     bool connecting, qa_error *error)
 {
     qa_application_q3_remote_source actual;
-    if (!owner || owner->options.gamestate || owner->pure || owner->calls || owner->initializing ||
+    if (!owner || (owner->video && !owner->video_entering) ||
+        owner->options.gamestate || owner->pure || owner->calls || owner->initializing ||
         owner->ui.initialized || owner->retiring || owner->restore_pending || !owner->ui.ready ||
         !native_client_modules_physical(owner, &actual, error) ||
         !owner->options.current(owner->options.context, &actual, NULL, error))
@@ -657,7 +664,8 @@ bool qa_application_native_q3_client_modules_initialize_ui(application_native_q3
 bool qa_application_native_q3_client_modules_initialize(application_native_q3_client_modules *owner,
     const qa_application_q3_remote_init *request, qa_error *error)
 {
-    if (!owner || !request || !request->current || owner->calls || owner->initializing || owner->retiring ||
+    if (!owner || (owner->video && !owner->video_entering) ||
+        !request || !request->current || owner->calls || owner->initializing || owner->retiring ||
         owner->restore_pending || request->client_number < 0 || request->client_number >= 64 ||
         owner->ui.initialized || owner->cgame.initialized || !owner->ui.ready ||
         !init_current(owner, request, error))
@@ -721,7 +729,7 @@ static bool shutdown(native_client_module *role, qa_error *error)
     role->initialized = !started; return okay;
 }
 
-static bool consume(native_client_module *role, qa_error *error)
+bool native_client_module_close_executor(native_client_module *role, qa_error *error)
 {
     if (!shutdown(role, error)) return false;
     if (role->body) {
@@ -751,6 +759,20 @@ static bool consume(native_client_module *role, qa_error *error)
         if (!qa_q3_host_destroy(role->host, error)) return false;
         role->host = NULL;
     }
+    role->client = (qa_q3_host_client_services){0};
+    role->body_services = (qa_application_q3_body_services){0};
+    role->initialized = false;
+    role->init_succeeded = false;
+    role->draw_revision = 0;
+    memset(role->draw_arguments, 0, sizeof(role->draw_arguments));
+    role->ready = false;
+    role->native_load_failed = false;
+    return true;
+}
+
+static bool consume(native_client_module *role, qa_error *error)
+{
+    if (!native_client_module_close_executor(role, error)) return false;
     qa_qvm_image_release(role->image); role->image = NULL;
     qa_native_module_release(role->module); role->module = NULL;
     qa_native_declaration_destroy(role->native_declaration); role->native_declaration = NULL;

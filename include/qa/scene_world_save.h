@@ -1,6 +1,9 @@
 #ifndef QA_SCENE_WORLD_SAVE_H
 #define QA_SCENE_WORLD_SAVE_H
 #include "qa/scene.h"
+/* The caller supplies the actual already opened immutable map resource. */
+bool qa_scene_world_source_resource_bind(qa_scene_world *, const qa_resource *, qa_error *);
+const qa_resource *qa_scene_world_source_resource_read(const qa_scene_world *);
 typedef struct qa_scene_world_image_refs {
     void *context;
     bool (*encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);

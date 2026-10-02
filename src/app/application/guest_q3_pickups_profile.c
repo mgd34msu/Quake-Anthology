@@ -195,7 +195,8 @@ static bool qualify(application_q3_pickup_profile *p,qa_error *e)
 }
 void application_q3_pickup_profile_free(application_q3_pickup_profile *p)
 {
-    if(!p)return;free(p->gate.calls);free(p->targets.calls);free(p->objective_types);
+    if(!p)return;
+    free(p->gate.calls);free(p->targets.calls);free(p->objective_types);
     for(size_t i=0;p->grants&&i<p->grant_count;++i){free(p->grants[i].function.calls);free(p->grants[i].inputs);free(p->grants[i].branches);}
     free(p->grants);*p=(application_q3_pickup_profile){0};
 }

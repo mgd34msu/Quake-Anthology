@@ -3,6 +3,8 @@
 #include "qa/frontend.h"
 #include "qa/console.h"
 #include "remote_config.h"
+#include "qa/application_client.h"
+bool frontend_network_client_configuration_primary(const qa_frontend *,const qa_application_client_source *);
 
 /* Borrow the installed CLIENT preparation registry. Absence before network
  * construction grants no alternate GAME or ENGINE timing authority. */

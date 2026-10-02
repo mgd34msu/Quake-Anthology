@@ -85,6 +85,9 @@ bool q3n_native_create(const q3n_native_options *, q3n_native **, qa_error *);
 bool q3n_native_idle(const q3n_native *);
 bool q3n_native_retire_ready(const q3n_native *, qa_error *);
 bool q3n_native_destroy(q3n_native *, qa_error *);
+/* Video restart returns the actual CG children while its parent keeps the
+ * installed client service, wire reader, GAME and input owners. */
+bool q3n_native_video_close(q3n_native **, qa_error *);
 /* Pure installed physical owners; no source clock, registration or callback
  * submission is replayed during aggregate graph collection. */
 bool q3n_native_owners_read(const q3n_native *, q3n_native_owners *, qa_error *);
@@ -94,6 +97,7 @@ bool q3n_native_current(const q3n_native *);
  * native console invocation. Raw PS is borrowed from this observation only. */
 bool q3n_native_command_frame(q3n_native *, q3n_frame *, qa_error *);
 bool q3n_native_initialize(q3n_native *, int32_t actual_command_baseline, qa_error *);
+bool q3n_native_initialize_video(q3n_native *,int32_t actual_reached_command_baseline,qa_error *);
 bool q3n_native_draw(q3n_native *, int32_t actual_latest_command, bool *rendered, qa_error *);
 /* The actual CGAME cvar callback reloads a physical CS_PLAYERS row. */
 bool q3n_native_reload_client(q3n_native *, uint32_t physical_client,

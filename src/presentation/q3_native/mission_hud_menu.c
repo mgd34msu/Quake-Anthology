@@ -45,7 +45,7 @@ static bool parse_menu(const char *path)
 static bool load_menus(q3n_mission_hud *o,const char *requested)
 {
     qa_resource *root=NULL; qa_buffer compressed={0};
-    const qa_cvar_view *selected=qa_cvars_find(o->options.recipient.cvars,"cg_hudFiles");
+    const qa_cvar_view *selected=qa_cvars_find(q3nm_registry(o),"cg_hudFiles");
     char path[1024]; q3menu_strncpyz(path,requested?requested:selected?selected->value:"",sizeof(path)); if(!path[0])strcpy(path,"ui/hud.txt");
     int start=o->options.milliseconds(o->options.context);
     if(!q3nm_current(o,o->frame,o->menus->error)||!qa_vfs_acquire(o->options.content,path,&root,NULL,o->menus->error))return false;
@@ -95,7 +95,8 @@ bool q3n_mission_hud_initialize(q3n_mission_hud *o,const q3n_frame *f,q3n_comman
 }
 static void score_selection(q3n_mission_hud *o,menuDef_t *menu)
 {
-    if(!o->commands)return; int red=0,blue=0;
+    if(!o->commands)return;
+    int red=0,blue=0;
     const qa_q3_player *p=q3nm_require_player(o); if(!p)return;
     for(int i=0;i<o->commands->num_scores;++i) { const q3n_command_score *s=&o->commands->scores[i];
         if(s->team==1)++red; else if(s->team==2)++blue; if(s->client==p->clientNum)o->selected_score=i; }
@@ -127,7 +128,8 @@ bool q3n_mission_hud_timed(q3n_mission_hud *o,const q3n_frame *f,qa_error *e)
     return q3nm_end(o,p,ok); }
 bool q3n_mission_hud_message(q3n_mission_hud *o,const q3n_frame *f,int32_t type,const char *text,qa_error *e)
 { q3menu_context *p; if(!text)return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD chat requires source text");
-    if(!q3nm_begin(o,f,e,&p))return false; if(type==0)q3menu_strncpyz(o->system_chat,text,256);
+    if(!q3nm_begin(o,f,e,&p))return false;
+    if(type==0)q3menu_strncpyz(o->system_chat,text,256);
     else { memcpy(o->team_chat[1],o->team_chat[0],256); q3menu_strncpyz(o->team_chat[0],text,256); } return q3nm_end(o,p,true); }
 static void event(q3n_mission_hud *o,int type)
 { o->event_handling=type; if(!type) { Menus_CloseByName("teamMenu"); Menus_CloseByName("getMenu"); } }
@@ -165,12 +167,15 @@ bool q3n_mission_hud_menu_buffer(q3n_mission_hud *o,const q3n_frame *f,const cha
 }
 bool q3n_mission_hud_mouse(q3n_mission_hud *o,const q3n_frame *f,int32_t dx,int32_t dy,qa_error *e)
 {
-    q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false; o->display.cursorx=(float)o->cursor_x; o->display.cursory=(float)o->cursor_y;
+    q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false; o->display.cursorx=o->cursor_x; o->display.cursory=o->cursor_y;
     const qa_q3_player *player=q3n_frame_predicted_player(f); if(!player)return q3nm_end(o,p,q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission mouse input requires its actual predicted player"));
     int type=player->pmType; bool ok=true;
     if((type==0||type==2)&&!o->hud->state.show_scores)ok=o->options.key_catcher(o->options.context,0,e);
     else { o->cursor_x=q3ne_plus(o->cursor_x,dx); o->cursor_y=q3ne_plus(o->cursor_y,dy);
-        if(o->cursor_x<0)o->cursor_x=0; if(o->cursor_x>640)o->cursor_x=640; if(o->cursor_y<0)o->cursor_y=0; if(o->cursor_y>480)o->cursor_y=480;
+        if(o->cursor_x<0)o->cursor_x=0;
+        if(o->cursor_x>640)o->cursor_x=640;
+        if(o->cursor_y<0)o->cursor_y=0;
+        if(o->cursor_y>480)o->cursor_y=480;
         int cursor=Display_CursorType(o->cursor_x,o->cursor_y); const q3n_media_view *m=q3n_media_read(f->media);
         o->active_cursor=m->graphics[cursor==CURSOR_ARROW?Q3N_G_SELECT_CURSOR:Q3N_G_SIZE_CURSOR];
         Display_MouseMove(o->captured_menu>=0?&o->menus->menus[o->captured_menu]:NULL,

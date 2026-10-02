@@ -7,8 +7,14 @@
 #include "qa/persistence_content.h"
 #include "qa/audio.h"
 #include "qa/scene.h"
+#include "qa/input.h"
 
 typedef struct frontend_remote_unified frontend_remote_unified;
+typedef enum frontend_unified_frame_preparation {
+    FRONTEND_UNIFIED_FRAME_WAIT,
+    FRONTEND_UNIFIED_FRAME_READY,
+    FRONTEND_UNIFIED_FRAME_OBSOLETE
+} frontend_unified_frame_preparation;
 typedef struct frontend_remote_unified_domain {
     qa_application *application;
     qa_network_runtime *runtime;
@@ -31,9 +37,13 @@ typedef struct frontend_remote_unified_consumers {
     bool (*offer_ready)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
     bool (*control)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
     bool (*frame)(void *, frontend_remote_unified *, const qa_unified_document *,
-        const qa_unified_document *prediction, bool *ready, qa_error *);
+        const qa_unified_document *prediction, frontend_unified_frame_preparation *, qa_error *);
     bool (*publish)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
     bool (*input)(void *, frontend_remote_unified *, const qa_unified_input *, double command_time_ms, qa_error *);
+    bool (*physical_ready)(void *, frontend_remote_unified *, uint64_t *completed_sequence,
+        bool *sample_needed, qa_error *);
+    bool (*physical_input)(void *, frontend_remote_unified *, const qa_seat_input_sample *,
+        uint64_t sequence, double source_elapsed_ms, qa_error *);
     bool (*sample)(void *, frontend_remote_unified *, uint64_t, qa_error *);
     bool (*draw)(void *, frontend_remote_unified *, float, qa_audio_listener *, qa_error *);
     bool (*idle)(void *, const frontend_remote_unified *);
@@ -54,6 +64,8 @@ typedef struct frontend_remote_unified_options {
 
 bool frontend_remote_unified_create(qa_frontend *, const frontend_remote_unified_options *,
     frontend_remote_unified **, qa_error *);
+size_t frontend_remote_unified_count(const qa_frontend *);
+frontend_remote_unified *frontend_remote_unified_at(const qa_frontend *, size_t);
 bool frontend_remote_unified_bind(frontend_remote_unified *, qa_net_client_id,
     qa_unified_session *, qa_error *);
 qa_unified_session_hooks frontend_remote_unified_hooks(frontend_remote_unified *);

@@ -81,6 +81,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "idle native host and checkpoint output are required");
     if ((host->engine.checkpoint == NULL) != (host->engine.restore == NULL) ||
+        (host->engine.source_before == NULL) != (host->engine.source_after == NULL) ||
         (host->q3.checkpoint == NULL) != (host->q3.restore == NULL))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native host checkpoint services must be paired");

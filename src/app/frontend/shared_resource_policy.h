@@ -3,8 +3,10 @@
 
 #include "internal.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/application_client_prepare.h"
 
 typedef struct frontend_shared_resource_policy frontend_shared_resource_policy;
+typedef struct frontend_video_guests frontend_video_guests;
 typedef struct frontend_model_policy {
     bool q1_enhanced, q2_load, q2_use, source_distance;
     double q2_distance, distance;
@@ -31,7 +33,13 @@ bool frontend_shared_resource_policy_prepare(qa_frontend *, const qa_launch_snap
     frontend_shared_resource_policy **, qa_error *);
 bool frontend_shared_resource_policy_begin(qa_frontend *, const qa_launch_snapshot *, const qa_cvars_edit *,
     frontend_shared_resource_policy **, qa_error *);
+bool frontend_shared_resource_policy_begin_client(qa_frontend *, const qa_application_client_preparation *,
+    const qa_cvars_edit *, frontend_shared_resource_policy **, qa_error *);
 bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_policy *, qa_error *);
+/* Only the real vid_restart ticket admits this committed-policy refresh after
+ * physical renderer replacement and before reconstructed CG/UI Init. */
+bool frontend_shared_resource_policy_restart_prepare(qa_frontend *, const frontend_video_guests *,
+    frontend_shared_resource_policy **, qa_error *);
 qa_scene_resource_policy *frontend_shared_resource_policy_images(
     const frontend_shared_resource_policy *, const qa_scene_resources *);
 qa_font_resource_policy *frontend_shared_resource_policy_fonts(

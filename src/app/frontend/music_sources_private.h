@@ -30,7 +30,7 @@ struct frontend_music_sources {
     qa_launch_instance_lease *origin_metadata;
     char *origin_instance, *origin_product;
     qa_sha256_digest origin_identity;
-    bool has_origin, origin_bound;
+    bool has_origin, origin_bound, origin_recipe;
     frontend_music_command *commands, *commands_tail;
     frontend_music_slot output;
     bool busy, restoring;

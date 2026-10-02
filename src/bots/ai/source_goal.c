@@ -585,7 +585,8 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         SOURCE_CALL(travel_time(b,s,&s->team_goal,SOURCE_DEFAULT_TRAVEL,&time,e));
         if((float)time>s->source_goal.defend_away_range) s->defend_away_time=0;
         if(!retreat && s->defend_away_time<b->time) {
-            const char *name=qa_bot_goals_name(goals(b),s->team_goal.number);
+            const char *name;
+            SOURCE_CALL(qa_bot_goals_name_read(goals(b),s->team_goal.number,&name,e));
             if(s->team_message_time && s->team_message_time<b->time) {
                 SOURCE_CALL(chat(b,s,"defend_start",name,0,QA_BOT_CHAT_TEAM,e));
                 SOURCE_CALL(bot_ai_source_voice(b,s,-1,"ondefense",true,e));
@@ -619,7 +620,8 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         return bot_ai_source_item_goal(b,s,out,found,e);
     }
     if(type==BOT_LTG_GET_ITEM && !retreat) {
-        const char *name=qa_bot_goals_name(goals(b),s->team_goal.number);
+        const char *name;
+        SOURCE_CALL(qa_bot_goals_name_read(goals(b),s->team_goal.number,&name,e));
         if(s->team_message_time && s->team_message_time<b->time)
             SOURCE_CALL(acknowledge(b,s,"getitem_start",name,e));
         *out=s->team_goal;

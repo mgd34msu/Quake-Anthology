@@ -147,7 +147,8 @@ bool qa_bot_catalog_add_utf8(qa_bot_catalog *c,const qa_bot_catalog_add_request 
             .skill=request->skill,.delay_ms=request->delay_ms};
         okay=qa_bot_catalog_add(c,&raw,e);
     }
-    for(size_t i=0;i<3;++i) free(source[i]);return okay;
+    for(size_t i=0;i<3;++i) free(source[i]);
+    return okay;
 }
 bool qa_bot_catalog_console(qa_bot_catalog *c,const char *const *argv,size_t argc,qa_error *e) {
     if((argc && !argv) || !bot_catalog_enter(c,e)) return false;
@@ -235,7 +236,8 @@ static bool add_random(qa_bot_catalog *c,int32_t team,const qa_bot_catalog_clock
         --selected;if(selected>0) continue;
         char skill[128],decimal[64],command[256];
         if(!bot_catalog_cvar(c,"g_spSkill",skill,sizeof(skill),NULL,e) || !fixed(bot_catalog_atof(skill),6,decimal,sizeof(decimal),e)) return false;
-        if(strlen(name)>35) name[35]=0;clean(name);
+        if(strlen(name)>35) name[35]=0;
+        clean(name);
         snprintf(command,sizeof(command),"addbot %s %s %s 0\n",name,decimal,team==1?"red":team==2?"blue":"");
         return c->services.insert_command(c->services.context,command,e);
     }

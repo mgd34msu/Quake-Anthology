@@ -402,7 +402,7 @@ static bool construct_and_reserve(qa_application *application,
             }
             bool constructed = false;
             if (product != NULL && !application_unified_event_owner_bind(application,
-                provider, provider == publication->map_provider, image != NULL, error)) {
+                provider, image != NULL, error)) {
                 okay = false;
                 break;
             }
@@ -526,7 +526,7 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
 {
     qa_application *application = opaque;
     qa_world *world = application->physics ? application->physics->world : NULL;
-    qa_actor_registry *actors = qa_session_actors(application->session);
+    const qa_actor_registry *actors = qa_session_actors(application->session);
     const qa_actor_record *record = qa_actors_get(actors, actor);
     uint64_t serial = world ? qa_world_body_storage_serial(world, actor) : 0;
     if (!world || (application->world && application->world != world) ||
@@ -568,7 +568,9 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     qa_vec3 pad = found && (flags & UINT32_C(256)) ? (qa_vec3){15, 15, 0} : (qa_vec3){1, 1, 1};
     bounds.mins = qa_vec_sub(bounds.mins, pad);
     bounds.maxs = qa_vec_add(bounds.maxs, pad);
-    if (!qa_collision_bounds_valid(bounds))
+    if (!qa_vec_finite(bounds.mins) || !qa_vec_finite(bounds.maxs) ||
+        bounds.mins.x > bounds.maxs.x || bounds.mins.y > bounds.maxs.y ||
+        bounds.mins.z > bounds.maxs.z)
         return application_fail(error, QA_ERROR_FORMAT, "Source link bounds overflowed");
     *out = bounds;
     return true;
@@ -628,6 +630,7 @@ static bool prepare_world(qa_application *application,
         !qa_map_sidecars_apply_entities(publication->map_sidecars, &publication->map, error) ||
         !qa_collision_create(&publication->map, &publication->geometry,
                              error) ||
+        !qa_collision_bind_resource(publication->geometry, publication->map_resource, error) ||
         !qa_map_sidecars_apply_materials(publication->map_sidecars, publication->geometry, error))
         return false;
 

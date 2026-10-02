@@ -76,6 +76,9 @@ bool qa_native_q3_client_service_idle(const qa_native_q3_client_service *);
 bool qa_native_q3_client_service_retire_ready(const qa_native_q3_client_service *, qa_error *);
 /* Called only after the actual native CGAME Init has completed. */
 bool qa_native_q3_client_initialized(qa_native_q3_client_service *, qa_error *);
+/* Clears only the returned CG initialization/cache state for a real video
+ * reconstruction. The installed source, character, input and userinfo remain. */
+bool qa_native_q3_client_video_reset(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_context_read(qa_native_q3_client_service *,
     qa_application_q3_client_context *, qa_error *);
 /* Borrowed owner inventory for the enclosing frontend graph codec. Callback

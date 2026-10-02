@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/map_sidecars.h"
+#include "bots_npc.h"
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
@@ -42,7 +43,7 @@ static bool guests_idle(const qa_application *application,
         (application->equipment && !qa_equipment_idle(application->equipment))) return false;
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
-        if (!application_native_q1_console_idle(provider) ||
+        if (!application_bots_npc_idle(provider) || !application_native_q1_console_idle(provider) ||
             !(language_count ? application_native_q1_wire_language_idle(provider, languages, language_count)
                              : application_native_q1_wire_idle(provider)) ||
             !application_native_q2_console_idle(provider) ||
@@ -228,6 +229,7 @@ bool application_finalize(qa_application *application, qa_error *error)
         return true;
     if (!application->destroy_requested || application->finalizing ||
         application->startup_flow || application->startup_program_owners || application->engine_shutdown ||
+        application->client_preparation ||
         application->failed_publications ||
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||

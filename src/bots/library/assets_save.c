@@ -2,6 +2,7 @@
 #include "../save_fields.h"
 #include "qa/bot_assets_save.h"
 #include "source_fuzzy_standalone_save.h"
+#include "character_source.h"
 
 bool bot_save_weights_fields(qa_source_save_io *io, const qa_bot_weights *source,
                              qa_bot_weights **out)
@@ -12,47 +13,11 @@ bool bot_save_weights_fields(qa_source_save_io *io, const qa_bot_weights *source
 bool bot_save_character_fields(qa_source_save_io *io, const qa_bot_character *source,
                                qa_bot_character **out)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_bot_character_view view = reading ? (qa_bot_character_view){0} : *qa_bot_character_read(source);
-    bool ok = bot_save_text(io, &view.path) && view.path && qa_source_save_f32(io, &view.skill);
-    for (size_t i = 0; ok && i < QA_BOT_CHARACTERISTICS; ++i) {
-        qa_bot_character_value *value = view.values + i;
-        uint32_t kind = (uint32_t)value->kind;
-        ok = qa_source_save_u32(io, &kind);
-        value->kind = (qa_bot_character_value_kind)kind;
-        if (!ok)
-            break;
-        switch (value->kind) {
-        case QA_BOT_CHARACTER_UNSET: break;
-        case QA_BOT_CHARACTER_INTEGER: ok = qa_source_save_i32(io, &value->data.integer); break;
-        case QA_BOT_CHARACTER_FLOAT: ok = qa_source_save_f32(io, &value->data.number); break;
-        case QA_BOT_CHARACTER_STRING: ok = bot_save_text(io, &value->data.string) && value->data.string; break;
-        default: ok = bot_save_fail(io, QA_ERROR_FORMAT, "Unknown bot character value kind"); break;
-        }
-    }
-    qa_bot_character *candidate = NULL;
-    if (ok && reading) {
-        ok = qa_bot_character_restore(&view, &candidate, io->error);
-        if (!ok)
-            io->failed = true;
-    }
-    if (reading) {
-        for (size_t i = 0; i < QA_BOT_CHARACTERISTICS; ++i)
-            if (view.values[i].kind == QA_BOT_CHARACTER_STRING)
-                free((void *)view.values[i].data.string);
-        free((void *)view.path);
-        if (ok)
-            *out = candidate;
-        else
-            qa_bot_character_release(candidate);
-    }
-    if (!ok && !io->failed)
-        return bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot character fields");
-    return ok;
+    return bot_character_standalone_fields(io, source, out);
 }
 
 static const uint8_t weight_magic[8] = {'Q', 'A', 'B', 'W', 'R', 'A', 'W', 0};
-static const uint8_t character_magic[8] = {'Q', 'A', 'B', 'C', 'H', 'A', 'R', 0};
+static const uint8_t character_magic[8] = {'Q', 'A', 'B', 'C', 'H', 'A', 'R', 2};
 
 bool qa_bot_weights_save_capture(const qa_bot_weights *source, qa_buffer *out, qa_error *error)
 {

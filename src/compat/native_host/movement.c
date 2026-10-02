@@ -36,16 +36,16 @@ static void store_vec3(uint8_t *bytes, size_t offset, qa_vec3 value)
     store_f32_at(bytes, offset + 8, value.z);
 }
 
-static bool contact_address(qa_native_host *host, const qa_trace_result *trace,
+static bool contact_address(qa_native_host *host, qa_trace_hit hit, qa_actor_id actor,
                             qa_native_address *out, qa_error *error)
 {
-    if (trace->hit == QA_TRACE_HIT_NONE) {
+    if (hit == QA_TRACE_HIT_NONE) {
         *out = 0;
         return true;
     }
-    if (trace->hit == QA_TRACE_HIT_WORLD)
+    if (hit == QA_TRACE_HIT_WORLD)
         return qa_native_entity_address(host->instance, 0, out, error);
-    return native_host_address_for_actor(host, trace->actor, out, error);
+    return native_host_address_for_actor(host, actor, out, error);
 }
 
 typedef struct movement_bridge {
@@ -287,7 +287,8 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     memset(bytes + layout->pmove.touches, 0, 32u * host->pointer_bytes);
     for (size_t index = 0; index < contacts; ++index) {
         qa_native_address entity;
-        if (!contact_address(host, &movement.contacts[index].trace, &entity, error)) {
+        if (!contact_address(host, movement.contacts[index].trace.hit,
+                             movement.contacts[index].trace.actor, &entity, error)) {
             qa_movement_result_free(&movement);
             return false;
         }
@@ -303,7 +304,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     store_vec3(bytes, layout->pmove.mins, movement.bounds.mins);
     store_vec3(bytes, layout->pmove.maxs, movement.bounds.maxs);
     qa_native_address ground = 0;
-    if (!contact_address(host, &movement.ground, &ground, error)) {
+    if (!contact_address(host, movement.ground.hit, movement.ground.actor, &ground, error)) {
         qa_movement_result_free(&movement);
         return false;
     }

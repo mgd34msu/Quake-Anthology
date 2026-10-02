@@ -11,6 +11,8 @@ typedef struct frontend_unified_render_children {
     bool (*world)(void *, const qa_scene_view *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*hud)(void *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
     bool (*model)(void *, qa_actor_id, const char *content, const char *path, qa_scene_model_input *, qa_error *);
+    bool (*model_after)(void *, qa_actor_id, const char *content, const char *path,
+        const qa_scene_model_input *, qa_scene_frame *, qa_error *);
 } frontend_unified_render_children;
 /* Owns a clone of one actually received frame and registered immutable model
  * bindings. No local application world or player state is observed. */

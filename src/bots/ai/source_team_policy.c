@@ -428,7 +428,7 @@ static bool known_bot_leader(qa_bots *b, bot_ai_state *s, bool *out, qa_error *e
     return true;
 }
 static bool picked(const bot_ai_state *s, const int32_t *before, uint32_t index) {
-    return before[index]==0 && bot_ai_inventory_value(s,index)>=1;
+    return before[index]==0 && bot_ai_inventory_value(s,(int32_t)index)>=1;
 }
 bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
                                    const int32_t *old_inventory, qa_error *e) {

@@ -1,4 +1,16 @@
 #include "internal.h"
+#include "guest/internal.h"
+
+bool qa_native_range_check(const qa_native_instance *instance, qa_native_address address,
+    size_t bytes, uint32_t permissions, qa_error *error) {
+    if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)) || !permissions || permissions > 7)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native range proof requires its live owner and actual permission bits");
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return guest_ready(instance->guest, error) && guest_range(instance->guest, address, bytes, permissions, error);
+    return instance->backend == QA_NATIVE_BACKEND_DIRECT ?
+        native_direct_range_check(address, bytes, permissions, error) :
+        native_runner_range_check((qa_native_instance *)instance, address, bytes, permissions, error);
+}
 
 bool qa_native_read(const qa_native_instance *instance, qa_native_address source, void *out,
                     size_t bytes, qa_error *error) {

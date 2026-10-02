@@ -162,7 +162,9 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, qa_err
 {
     const qa_unified_document *d = held->document;
     bool disconnect = qa_unified_session_kind(d, "disconnect"), offer = qa_unified_session_kind(d, "offer");
-    if (!disconnect && !(s->server ? client_control(d) : server_control(d)))
+    if (!disconnect && s->server && !client_control(d))
+        return qa_unified_session_close(s, "Client sent a server-only control message", e);
+    if (!disconnect && !s->server && !server_control(d))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Received production control changes its authenticated direction");
     uint32_t epoch = s->epoch;
     if (!disconnect && !qa_unified_session_document_epoch(d, &epoch, e)) return false;
@@ -232,10 +234,19 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, qa_error
 static bool process_input(qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
     qa_unified_input_batch batch = {0};
-    if (!qa_unified_inputs_read(d, &batch, e)) return false;
+    qa_error rejected = {0};
+    if (!qa_unified_inputs_read(d, &batch, &rejected)) {
+        if (rejected.code != QA_ERROR_MEMORY)
+            return qa_unified_session_close(s, rejected.message[0] ? rejected.message : "Invalid Unified input", e);
+        if (e) *e = rejected;
+        return false;
+    }
     bool ok = batch.epoch != s->epoch || !s->admitted ||
-        s->hooks.input(s->hooks.context, s->runtime, s->id, &batch, e);
+        s->hooks.input(s->hooks.context, s->runtime, s->id, &batch, &rejected);
     qa_unified_inputs_free(&batch);
+    if (!ok && rejected.code != QA_ERROR_MEMORY)
+        ok = qa_unified_session_close(s, rejected.message[0] ? rejected.message : "Invalid Unified input", e);
+    else if (!ok && e) *e = rejected;
     return ok;
 }
 
@@ -250,6 +261,7 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
         if (!s->timeout_delivery) {
             s->timeout_delivery = calloc(1, sizeof(*s->timeout_delivery));
             if (!s->timeout_delivery) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual timeout control continuation");
+            if (ok) s->timeout_delivery->kind = QA_UNIFIED_CONTROL_DOCUMENT;
             if (ok) ok = qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
                 (qa_bytes){(const uint8_t *)json, sizeof(json) - 1}, &s->timeout_delivery->document, e);
             if (ok) ok = qa_unified_document_encode(s->timeout_delivery->document, &s->timeout_delivery->wire, e);
@@ -264,21 +276,34 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
     }
     while (ok && s->held && !s->disconnected && !s->timeout_pending) {
         qa_unified_held *held = s->held;
-        qa_unified_document_kind kind = qa_unified_document_type(held->document);
+        qa_unified_document_kind kind = held->kind;
+        bool skipped = s->closing || (s->server && kind == QA_UNIFIED_INPUT_DOCUMENT && !s->admitted);
+        if (!skipped && !held->document) {
+            qa_error decode = {0};
+            if (!qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, &decode)) {
+                if (!s->server || decode.code == QA_ERROR_MEMORY) {
+                    if (e) *e = decode;
+                    ok = false; break;
+                }
+                ok = qa_unified_session_close(s, decode.message[0] ? decode.message : "Invalid Unified message", e);
+                if (!ok) break;
+                skipped = true;
+            }
+        }
         bool obsolete = false;
-        if (!held->source_finished && !s->server && !qa_unified_session_kind(held->document, "disconnect")) {
+        if (!skipped && !held->source_finished && !s->server && !qa_unified_session_kind(held->document, "disconnect")) {
             uint32_t epoch;
             ok = qa_unified_session_document_epoch(held->document, &epoch, e);
             if (!ok) break;
             obsolete = qa_unified_session_kind(held->document, "offer") ? epoch <= s->epoch : epoch != s->epoch;
             if (kind == QA_UNIFIED_FRAME_DOCUMENT && !s->admitted) obsolete = true;
         }
-        if (!held->source_finished && !s->server && !s->closing && !obsolete && !qa_unified_session_kind(held->document, "disconnect")) {
+        if (!skipped && !held->source_finished && !s->server && !obsolete && !qa_unified_session_kind(held->document, "disconnect")) {
             bool ready = false;
             ok = s->hooks.prepare(s->hooks.context, s->id, held->document, &ready, e);
             if (!ok || !ready) { *waiting = ok; break; }
         }
-        ok = s->closing || obsolete || (kind == QA_UNIFIED_CONTROL_DOCUMENT ? process_control(s, held, e) :
+        ok = skipped || obsolete || (kind == QA_UNIFIED_CONTROL_DOCUMENT ? process_control(s, held, e) :
             s->server ? process_input(s, held->document, e) : process_frame(s, held, e));
         if (!ok) break;
         if (kind == QA_UNIFIED_CONTROL_DOCUMENT) s->reliable_applied = held->sequence;

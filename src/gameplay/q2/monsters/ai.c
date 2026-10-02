@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "reinforcements.h"
 #include "medic.h"
+#include "../entities/internal.h"
 
 enum { Q2M_TRAIL_POINTS = 8 };
 
@@ -79,7 +80,8 @@ bool q2m_count(q2m_context *context, qa_q2_monster_count kind,
                  "Q2 monster campaign accounting is not bound");
     return false;
   }
-  return services->count(services->context, context->actor->id, kind, error);
+  return services->count(services->context, context->actor->id, kind, error) &&
+      q2_campaign_monster_count(context->game, kind, error);
 }
 
 static bool runtime_reserve(void **storage, size_t *capacity, size_t count,

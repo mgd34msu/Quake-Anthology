@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/source_save.h"
 #include "guest/sysv_libc_format.h"
+#include "guest/internal.h"
 
 static bool source_matches(const qa_native_instance *instance, const qa_native_image_info *image,
     qa_bytes bytes)
@@ -133,14 +134,22 @@ bool native_process_export(const qa_native_instance *instance, const char *name,
         qa_native_windows_process_export(instance->windows_process, instance->source_library, name, out, error);
 }
 
+static void process_dispatch(void *context)
+{ native_call_started(context); }
+
 bool native_process_invoke(qa_native_instance *instance, qa_native_address address,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)
 {
-    native_call_started(instance);
-    return instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+    void (*previous)(void *) = instance->guest->dispatch_started;
+    void *context = instance->guest->dispatch_context;
+    instance->guest->dispatch_started = process_dispatch;
+    instance->guest->dispatch_context = instance;
+    bool okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
         qa_native_sysv_process_invoke(instance->sysv_process, address, signature, arguments, count, result, error) :
         qa_native_windows_process_invoke(instance->windows_process, address, signature, arguments, count, result, error);
+    instance->guest->dispatch_started = previous; instance->guest->dispatch_context = context;
+    return okay;
 }
 
 static bool import_entry(void *context, qa_native_guest *guest, uint64_t id, qa_error *error)

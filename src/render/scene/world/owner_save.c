@@ -56,7 +56,7 @@ static bool palette(qa_source_save_io *io, qa_scene_world *world)
     return world->options.images.palette_rgb.data==installed.data &&
         qa_source_save_bytes(io,(void *)installed.data,installed.size);
 }
-static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_world_owner_refs *refs, const qa_bsp_view *expected)
+static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_world_owner_refs *refs, const qa_bsp_view *expected,uint32_t schema)
 {
     uint32_t family=world->bsp.family, format=world->bsp.format;
     qa_scene_world_options *options=&world->options; qa_scene_image_options *image=&options->images;
@@ -95,6 +95,7 @@ static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_
     }
     F(bool,image,mipmap); F(bool,image,transparent); F(bool,image,fullbright_only);
     F(f32,options,subdivisions); F(f32,options,q1_water_alpha); F(f32,options,q2_light_modulate); F(u32,options,q3_overbright);
+    if (schema>=3) { F(bool,options,source_fullbright); }
     if (!qa_source_save_u32(io,&encoding)) return false;
     if (reading) options->q1_lightmap_encoding=(qa_scene_q1_lightmap_encoding)encoding;
     if (!palette(io,world) || !refs->source_qualify(refs->context,(qa_bytes){world->bytes.data,world->bytes.size},options,io->error)) return false;
@@ -139,9 +140,9 @@ static bool q3_source_images(const qa_scene_world *world, qa_error *error)
 static bool fields(qa_source_save_io *io, qa_scene_world *world, const qa_scene_world_owner_refs *refs,
     const qa_bsp_view *expected, qa_bytes *state)
 {
-    uint8_t magic[4]={'Q','W','O','N'}; uint32_t schema=2;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWON",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
-        !qa_source_save_u64(io,&world->identity) || !world->identity || !source(io,world,refs,expected)) return false;
+    uint8_t magic[4]={'Q','W','O','N'}; uint32_t schema=3;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWON",4) || !qa_source_save_u32(io,&schema) || schema<2 || schema>3 ||
+        !qa_source_save_u64(io,&world->identity) || !world->identity || !source(io,world,refs,expected,schema)) return false;
     qaw_owner_refs core={.context=refs->context,.geometry_encode=refs->geometry_encode,
         .geometry_decode=refs->geometry_decode,.images=refs->state.images};
     return qaw_owner_core_fields(io,world,&core) &&

@@ -29,6 +29,10 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
     if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N && command > 5)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy CGAME has no requested export");
+    bool client_init = role->kind != QA_QVM_GAME && command == (role->kind == QA_QVM_UI ? 1 : 0);
+    if (client_init && (count != (role->kind == QA_QVM_UI ? 1u : 3u) ||
+        (role->kind == QA_QVM_UI && arguments[0] != 0 && arguments[0] != 1)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Client Init requires its actual source invocation arguments");
     if (!q3g_role_activate(role, error)) return false;
     q3g_fire_scope fire = {0};
     if (!q3g_fire_begin(role, &fire, error)) return false;
@@ -92,6 +96,10 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
         ok = false;
     }
     if (init && ok && role->initialized) role->init_succeeded = true;
+    if (init && ok && role->initialized && role->kind != QA_QVM_GAME) {
+        memcpy(role->init_arguments, arguments, count * sizeof(*arguments));
+        role->init_argument_count = (uint8_t)count;
+    }
     if (init && ok && role->kind == QA_QVM_GAME) ok = q3g_role_catalog_refresh(role, error);
     return ok;
 }
@@ -529,8 +537,12 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         qa_resource_release(artifact->body_resource);
         qa_vfs_acquisition_dispose(&artifact->body_acquisition);
         application_q3_body_profile_free(&artifact->body_profile);
+        qa_resource_release(artifact->weapon_models_resource);
+        qa_vfs_acquisition_dispose(&artifact->weapon_models_acquisition);
+        application_q3_weapon_models_profile_free(&artifact->weapon_models_profile);
         qa_launch_instance_lease_release(artifact->descriptor);
         qa_buffer_free(&artifact->equipment_presentation);
+        qa_buffer_free(&artifact->collision_scene);
         application_q3_equipment_profile_free(&artifact->equipment_profile);
         application_q3_grapple_profile_destroy(artifact->grapple_profile);
         application_q3_combat_profile_destroy(artifact->combat_profile);
@@ -594,6 +606,7 @@ bool application_q3_guest_idle(const application_provider *provider)
     for (const q3g_role *role = engine->roles; role; role = role->next) {
         if (role->equipment && !application_q3_equipment_idle(role->equipment)) return false;
         if (role->body && !application_q3_body_idle(role->body)) return false;
+        if (role->weapon_models && !application_q3_weapon_models_idle(role->weapon_models)) return false;
         if (role->weapons && !application_q3_weapons_idle(role->weapons)) return false;
         if (role->weapon_services && !application_q3_weapons_services_idle(role->weapon_services)) return false;
         if (role->combat && !application_q3_combat_idle(role->combat)) return false;

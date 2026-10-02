@@ -11,6 +11,8 @@ bool frontend_input_shutdown_prepare(qa_frontend *,double now_ms,
 /* Pure actual all-scope lease association for enclosing ENGINE detach. This
  * admits only the retained physical owner, not source history consumption. */
 bool frontend_input_shutdown_ready(const frontend_input_shutdown *,const qa_frontend *,qa_error *);
+/* Actual successful ALL capture receipt; it does not qualify parent ownership. */
+bool frontend_input_shutdown_prepared(const frontend_input_shutdown *);
 /* Execute only at a returned live-source boundary. Waits report complete=false;
  * a failed entered programme remains retained and is never replayed. */
 bool frontend_input_shutdown_advance(frontend_input_shutdown *,bool *complete,qa_error *);

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../checkpoint_internal.h"
 #include "../library/character_load.h"
+#include "../library/character_source.h"
 #include "../library/internal.h"
 #include "../library/source_weapon_library.h"
 #include "qa/bots_log_consumers.h"
@@ -82,8 +83,22 @@ bool qa_bot_runtime_character_load(qa_bot_runtime *r, const char *path, float sk
     bool interpolated;
     bool ok = bot_character_load(r->library, path, skill, &character, &interpolated, e);
     if (!ok) { r->busy = false; return false; }
+    /* Source defaults and lower interpolation profiles consume real handles
+     * before the requested profile, in their publication order. */
+    uint32_t limit = r->options.maximum_states < 64 ? r->options.maximum_states : 64;
+    for (qa_bot_character *held = r->library->characters; held; held = held->next) {
+        if (!held->ready || held->retired) continue;
+        bool present = false; uint32_t free_slot = limit;
+        for (uint32_t i = 0; i < limit; ++i) {
+            present |= r->characters[i] == held;
+            if (free_slot == limit && !r->characters[i]) free_slot = i;
+        }
+        if (!present && free_slot < limit) {
+            qa_bot_character_retain(held); r->characters[free_slot] = held;
+        }
+    }
     uint32_t available = 0, handle = 0;
-    for (uint32_t i = 0; i < r->options.maximum_states; ++i) {
+    for (uint32_t i = 0; i < limit; ++i) {
         if (r->characters[i] == character) { handle = i + 1; break; }
         if (!available && !r->characters[i]) available = i + 1;
     }
@@ -108,8 +123,25 @@ bool qa_bot_runtime_character_free(qa_bot_runtime *r, uint32_t id, qa_error *e) 
         }
         return true;
     }
-    qa_bot_character_release(r->characters[id - 1]);
+    qa_bot_character *character = r->characters[id - 1];
+    r->busy = true;
+    bool okay = qa_bot_character_free(character, e);
+    if (okay) bot_character_forget(r->library, character);
+    r->busy = false;
+    if (!okay) return false;
+    qa_bot_character_release(character);
     r->characters[id - 1] = NULL;
+    return true;
+}
+bool bot_runtime_characters_shutdown(qa_bot_runtime *r, qa_error *error) {
+    uint32_t limit = r->options.maximum_states < 64 ? r->options.maximum_states : 64;
+    for (uint32_t i = 0; i < limit; ++i) {
+        qa_bot_character *c = r->characters[i];
+        if (!c) continue;
+        if (!qa_bot_character_free(c, error)) return false;
+        bot_character_forget(r->library, c);
+        qa_bot_character_release(c); r->characters[i] = NULL;
+    }
     return true;
 }
 static bot_weapon_state *weapon_state(const qa_bot_runtime *r, uint32_t id, qa_error *e) {

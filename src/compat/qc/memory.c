@@ -68,7 +68,7 @@ static bool engine_reserve(qc_strings *strings, qa_error *error)
     else if (strings->engine_capacity > UINT32_MAX / 2u) capacity = UINT32_MAX;
     else capacity = strings->engine_capacity * 2u;
     if (capacity <= strings->engine_count ||
-        (size_t)capacity > SIZE_MAX / sizeof(*strings->engines))
+        (capacity && SIZE_MAX / capacity < sizeof(*strings->engines)))
         return memory_fail(error, QA_ERROR_MEMORY, strings->engine_count,
                            "QC engine string index overflow");
     qc_engine_string *grown = realloc(strings->engines,

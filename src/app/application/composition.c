@@ -8,6 +8,7 @@ static bool configuration_safe(void *opaque)
 {
     qa_application *application = opaque;
     return application != NULL && !application->publication_started &&
+           !application->client_preparation &&
            application_startup_flow_configuration_idle(application) &&
            application_bots_can_destroy(application) &&
            application->session != NULL &&
@@ -110,6 +111,9 @@ bool application_composition_destroy(qa_application *application,
 {
     if (application == NULL)
         return true;
+    if (application->client_preparation)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "CLIENT preparation still retains the application");
     if (!qa_application_startup_abort(application, error)) return false;
     if (!application_publication_retry_cleanup(application, error)) return false;
     if (application->configuration == NULL) return true;
@@ -123,6 +127,9 @@ bool application_composition_destroy(qa_application *application,
 bool application_apply(qa_application *application,
                        const qa_launch_draft *draft, qa_error *error)
 {
+    if (application->client_preparation)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "CLIENT preparation still retains the application");
     if (qa_application_startup_pending(application))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup configuration already retains a candidate");
     if (application->startup_hooks)

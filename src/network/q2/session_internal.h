@@ -37,9 +37,13 @@ typedef struct q2_server {
     uint64_t last_source_frame;
     int32_t wire_frame;
     bool has_source_frame;
+    char *drop_reason;
+    bool drop_queued, drop_sent, drop_hook_done;
     qa_resource *download;
     const qa_vfs *download_view;
     qa_vfs_acquisition download_opening;
+    qa_buffer download_source, download_wire;
+    bool download_memory;
     size_t download_offset;
     qa_buffer datagram;
     uint32_t dropped;
@@ -85,6 +89,7 @@ bool q2_queue_bytes(q2_session *, qa_bytes, uint8_t, bool, qa_error *);
 bool q2_send(q2_session *, qa_bytes, uint64_t, bool *included, qa_error *);
 bool q2_server_record(void *, const qa_q2_client_record *, qa_error *);
 bool q2_server_restart(q2_session *, qa_error *);
+bool q2_server_drop_progress(q2_session *, uint64_t, bool *complete, qa_error *);
 void q2_server_clear(q2_server *);
 bool q2_client_submit(q2_session *, const qa_network_command *, qa_error *);
 bool q2_client_send(q2_session *, uint64_t, qa_error *);
@@ -100,10 +105,12 @@ bool q2_server_userinfo_delta(q2_session *, const char *, const char *, qa_error
 bool q2_server_projection(q2_session *, const qa_q2_wire_frame *, const qa_q2_wire_frame *,
     const qa_q2_source_motion *, qa_q2_wire_frame *, qa_error *);
 void q2_download_close(q2_server *);
+qa_bytes q2_download_bytes(const q2_server *);
 extern const qa_network_peer_ops qa_network_q2_peer_ops;
 bool q2_server_hooks_valid(const qa_network_q2_server_hooks *);
 bool q2_client_hooks_valid(const qa_network_q2_client_hooks *);
 bool qa_network_q2_peer(const qa_network_peer *);
+bool qa_network_q2_retirement_pending(const qa_network_peer *);
 bool qa_network_q2_peer_matches(const qa_network_peer *, const qa_net_datagram *);
 
 #endif

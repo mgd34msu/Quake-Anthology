@@ -18,7 +18,7 @@ typedef struct frontend_remote_q1_skin_bindings {
     size_t maximum_bytes;
     void *context;
     bool (*current)(void *, const frontend_remote_q1_domain *, qa_error *);
-    bool (*permission)(void *, bool *allowed, bool *demo, qa_error *);
+    bool (*permission)(void *, bool *allowed, bool *demo_recording, bool *demo_playback, qa_error *);
     bool (*nonce)(void *, uint64_t *, qa_error *);
     bool (*reliable)(void *, const char *, qa_error *);
     bool (*print)(void *, const char *, qa_error *);

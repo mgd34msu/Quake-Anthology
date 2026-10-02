@@ -267,6 +267,29 @@ static bool append_region(qa_native_declaration *declaration, const qa_native_mo
     return true;
 }
 
+static bool inventory_region(qa_native_declaration *declaration, const qa_native_module *module,
+    qa_json_id object, const char *entry_key, const char *join_key, const char *path, qa_error *error)
+{
+    uint64_t entry, join;
+    if (!qa_json_u64(declaration->document, qa_json_get(declaration->document, object, entry_key), &entry, error) ||
+        !qa_json_u64(declaration->document, qa_json_get(declaration->document, object, join_key), &join, error)) return false;
+    return append_region(declaration, module, path, entry, join, false, 0, 0, error);
+}
+static bool inventory_regions(qa_native_declaration *declaration, const qa_native_module *module,
+    qa_json_id primary, qa_error *error)
+{
+    qa_json_id inventory = qa_json_get(declaration->document, primary, "inventory");
+    if (inventory == QA_JSON_NONE) return true;
+    qa_json_id next = qa_json_get(declaration->document, inventory, "next"),
+        previous = qa_json_get(declaration->document, inventory, "previous"),
+        use = qa_json_get(declaration->document, inventory, "use"),
+        named = qa_json_get(declaration->document, inventory, "namedUse");
+    return inventory_region(declaration, module, next, "scan", "join", "/inventory/next/scan", error) &&
+        inventory_region(declaration, module, previous, "scan", "join", "/inventory/previous/scan", error) &&
+        inventory_region(declaration, module, use, "call", "join", "/inventory/use/call", error) &&
+        inventory_region(declaration, module, named, "call", "join", "/inventory/namedUse/call", error) &&
+        inventory_region(declaration, module, named, "lookupCall", "lookupReturn", "/inventory/namedUse/lookup", error);
+}
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,
                             qa_json_id value, const char *path, unsigned depth, qa_error *error) {
     if (depth > 64u)
@@ -460,7 +483,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         declaration->primary_offset = (size_t)(primary_source.data - declaration->json);
         declaration->primary_size = primary_source.size;
         qa_sha256(owned_json, &declaration->digest);
-        valid = collect_regions(declaration, module, selected_primary, "", 0, error);
+        valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
+            inventory_regions(declaration, module, selected_primary, error);
     }
     for (size_t index = 0; index < module_count; ++index)
         free(paths[index]);

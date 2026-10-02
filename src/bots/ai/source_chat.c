@@ -175,7 +175,7 @@ bool bot_ai_source_visible_enemies(qa_bots *b,bot_ai_state *s,bool *out,qa_error
         }
         if(info.number==s->view.entity) continue;
         uint32_t flags=(1u<<7)|(1u<<8)|(b->services.team_arena?(1u<<9):0);
-        bool invisible=!(info.state.powerups&flags) && (info.state.powerups&(1u<<4));
+        bool invisible=!((uint32_t)info.state.powerups&flags) && ((uint32_t)info.state.powerups&(1u<<4));
         if(invisible && !(info.state.flags&0x100)) continue;
         bool same;CHAT_CALL(bot_ai_source_same_team(b,s,client,&same,e));if(same) continue;
         float visible;CHAT_CALL(bot_ai_source_entity_visible(b,s,client,&visible,e));

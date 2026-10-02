@@ -584,6 +584,8 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     qa_native_value *result, size_t budget, bool native, uint64_t bypass, qa_error *error)
 {
     if (!plan_guest(plan, guest, error) || !guest_mutable(guest, error)) return false;
+    qa_native_value discarded = {.type = QA_NATIVE_VOID};
+    if (!result && plan->result.layout.kind == QA_NATIVE_VOID) result = &discarded;
     if (native != (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) ||
         (native && (budget || guest->observe || plan->x87_result || bypass)))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, target,

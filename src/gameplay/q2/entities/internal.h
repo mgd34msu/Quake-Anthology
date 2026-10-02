@@ -22,7 +22,19 @@ typedef struct q2_entities {
     bool sky_auto, has_goals;
     q2_wind_time *wind;
     size_t wind_count, wind_capacity;
+    uint32_t total_monsters, killed_monsters, level_count;
+    qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT];
+    qa_string_id *visited_maps;
+    size_t visited_count, visited_capacity;
 } q2_entities;
+
+bool q2_campaign_enter(qa_q2_game *, qa_error *);
+bool q2_campaign_frame(qa_q2_game *, qa_error *);
+void q2_campaign_update(qa_q2_game *);
+void q2_campaign_leave(qa_q2_game *);
+bool q2_campaign_end_unit(qa_q2_game *, qa_actor_id, uint64_t, qa_error *);
+bool q2_campaign_monster_count(qa_q2_game *, qa_q2_monster_count, qa_error *);
+bool q2_campaign_saved_valid(qa_q2_game *, const qa_q2_entities_checkpoint *, qa_error *);
 
 q2_actor *q2_ent(qa_q2_game *, qa_actor_id);
 qa_string_id q2_actor_field(qa_q2_game *, qa_actor_id, const char *);

@@ -48,6 +48,8 @@ static const char *const stage_fragment[] = {
     "uniform sampler2D secondaryTexture;\n"
     "uniform int secondaryMode;\n"
     "uniform int alphaMode;\n"
+    "uniform int u_preblend_gamma;\n"
+    "uniform sampler2D u_preblend_table;\n"
     "uniform int u_fog_mode;\n"
     "uniform vec3 u_fog_color;\n"
     "uniform float u_fog_amount;\n"
@@ -153,6 +155,7 @@ static const char *const stage_fragment[] = {
     "  vec3 shade=vertexColor.rgb*u_shade_scale*max(keep,vec3(0.0));\n"
     "  return vec4(texel.rgb*min(shade,vec3(1.0)),texel.a*vertexColor.a);\n"
     "}\n"
+    "float preblendCorrect(float v) { return texture2D(u_preblend_table,vec2((floor(clamp(v,0.0,1.0)*255.0+0.5)+0.5)/256.0,0.5)).r; }\n"
     "void main() {\n"
     "  if (clipDistance < 0.0) discard;\n"
     "  vec4 texel=texture2D(primaryTexture,coordinates0);\n"
@@ -180,6 +183,7 @@ static const char *const stage_fragment[] = {
     "  if(alphaMode==1&&color.a<=0.0) discard;\n"
     "  if(alphaMode==2&&color.a>=0.5) discard;\n"
     "  if(alphaMode==3&&color.a<0.5) discard;\n"
+    "  if(u_preblend_gamma!=0) color.rgb=vec3(preblendCorrect(color.r),preblendCorrect(color.g),preblendCorrect(color.b));\n"
     "  gl_FragColor=color;\n"
     "}\n"};
 
@@ -334,6 +338,8 @@ static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
     STAGE_UNIFORM(secondary, "secondaryTexture");
     STAGE_UNIFORM(secondary_mode, "secondaryMode");
     STAGE_UNIFORM(alpha_mode, "alphaMode");
+    STAGE_UNIFORM(preblend_gamma, "u_preblend_gamma");
+    STAGE_UNIFORM(preblend_table, "u_preblend_table");
     STAGE_UNIFORM(fog_mode, "u_fog_mode");
     STAGE_UNIFORM(fog_color, "u_fog_color");
     STAGE_UNIFORM(fog_amount, "u_fog_amount");
@@ -431,6 +437,7 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
     renderer->gl.Uniform1i(p->stage_uniform.primary, 0);
     renderer->gl.Uniform1i(p->stage_uniform.secondary, 1);
     renderer->gl.Uniform1i(p->stage_uniform.shadow_map, 2);
+    renderer->gl.Uniform1i(p->stage_uniform.preblend_table, 2);
     renderer->gl.UseProgram(0);
     return gl_check(renderer, "OpenGL program initialization", error);
 }
@@ -489,7 +496,14 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
 {
     gl_api *gl = &renderer->gl;
     gl_stage_uniforms *u = &renderer->programs.stage_uniform;
+    bool preblend=renderer->preblend_gamma && renderer->gamma!=1 &&
+        !qa_display_gamma_applied_is(renderer->options.display);
+    if (preblend && (draw->lighting!=QA_LIGHT_VERTEX || draw->shadow_atlas || !renderer->output.table)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Generic overlay gamma requires its retained table and unlit primitive");
+        return false;
+    }
     gl->UseProgram(renderer->programs.stage);
+    gl->Uniform1i(u->preblend_gamma,preblend?1:0);
     gl->UniformMatrix4fv(u->mvp, 1, GL_FALSE, draw->mvp.m);
     gl->UniformMatrix4fv(u->model, 1, GL_FALSE, draw->model.m);
     GLfloat normal[9];

@@ -20,6 +20,11 @@ bool qa_render_controls_live_primitives(qa_render_controls *, int32_t, qa_error 
 bool qa_render_controls_source_texture_mode_read(const qa_render_controls *,
     qa_scene_filter *, bool *initialized, qa_error *);
 bool qa_render_controls_source_texture_mode(qa_render_controls *, qa_scene_filter, qa_error *);
+bool qa_render_controls_source_scene_limits_initialize(qa_render_controls *,int32_t max_polys,
+    int32_t max_polyverts,qa_error *);
+bool qa_render_controls_source_scene_limits_read(const qa_render_controls *,uint32_t *max_polys,
+    uint32_t *max_polyverts,bool *initialized,qa_error *);
+bool qa_render_controls_source_image_admit(qa_render_controls *,const qa_scene_image *,uint32_t texture_unit,qa_error *);
 
 /* Preserve the Source integer, including values which suppress stage draws.
  * A ticket holds the renderer until publish/finish or checked abort. */

@@ -80,6 +80,12 @@ selected combat policy does not apply quad a second time. A retained projectile
 continues to use its real weapon provider after a new arsenal selection.
 Movement reads original Source water. Prediction reads the genuine ABI player
 weapon/state/time tuple, separately from custom active-weapon identity.
+Explicit original weapon requests validate the actual selected provider, declared
+item and owned or active inventory entry before retaining its Source ordinal.
+This host admission shares the genuine command request continuation; it does
+not call the movement request function or create a Source acceptance receipt.
+The real user command publishes the ABI byte, while Source hooks own attempted,
+accepted and completed decisions.
 
 Classic selected Q2 firing retains the donor's per-weapon fractional credit in
 the actual weapon turn. Real source frames consume additional firing ticks,
@@ -106,11 +112,38 @@ QAG3WM/1 retains the actual source IDs, table rows, handles and binding ID.
 Import stores those receipts before outer RAM restoration; the parent qualifies
 them afterward against the actual restored CG registry and matching GAME
 namespace. The real host registry getter is
-`qa_q3_host_presentation_resources`. Factory owns artifact opening, constructor,
-lifetime and the complete callback codec; the selected frontend still needs
+`qa_q3_host_presentation_resources`. The factory now installs artifact opening,
+constructor, checked lifetime and the complete callback codec; the selected frontend still needs
 the genuine typed tuple consumer. A selected GAME arsenal can lack a CG role
 when HUD comes from another provider, so that caller must admit an actual
 matching CG registration owner instead of borrowing the physical HUD's table.
+
+The pure application getter `qa_application_equipment_q3_models_read` now
+qualifies the selected full actor and exact live GAME client, explicit actual CG
+recipient provider and launch seat ID, matching CG/GAME VM parents, host registry and completed registration
+receipt. It returns genuine absence while that CG owner is uninstalled. The
+equipment observation retains arbitrary int32 Source selection and reads item,
+ammo and label from the actual catalog. Its existing standard-roster policy
+remains bounded to the real default catalog constructor; custom IDs do not
+enter the native weapon-enum model lookup. The Source-rendering consumer and
+foreign-arsenal CG admission remain open; registered handles alone do not
+establish custom animation or continuous-flash policy.
+
+`application_q3_weapon_models_role_create` builds the real retained companion
+CG/GAME module after host construction and before Init. Its lifetime qualifier
+uses actual role inventory or the lexical constructor marker and the host's
+session, service owner and frontend lease. An absent profile creates no model
+owner and requires no GAME match. A separately selected CG uses its actual
+retained `client_engine` GAME lease, including source owner, seat and world
+qualification, rather than a different receiver GAME. Zero registered handles remain genuine
+absence, including a NULL gun path, and survive the cold receipt codec.
+QAG3MP/1 captures the immutable typed profile with exact CG/GAME artifact paths,
+digests, ABIs and all declared registration/table fields. Import owns those
+paths, consumes the complete binary child and qualifies the declaration against
+the actual artifact without reparsing JSON. QAG3PV13 carries that profile;
+QAG3FN6 includes the real registration binding and QAG3WM continuation before
+the single callback/RAM restore, with late registry qualification after frontend
+resources return.
 
 The lower complete callback inventory now supports a genuinely retained
 dynamic resolver alongside the full function union. Nested Source scratch

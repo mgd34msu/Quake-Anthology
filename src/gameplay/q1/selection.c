@@ -1,10 +1,25 @@
 #include "internal.h"
 
-static bool owns(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon) {
-    qa_inventory_entry entry;
-    return qa_inventory_entry_read(g->services.inventory, player->id, g->weapons[weapon], &entry,
-                                   NULL) &&
-           entry.count > 0;
+static bool player_current(qa_q1_game *game, qa_actor_id actor, const q1_player *player,
+    qa_error *error) {
+    if (!game->destroy_pending && !game->continuation_pending && q1_alive(game, actor) &&
+        q1_player_get(game, actor) == player && player->arsenal) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 weapon impulse lost its actual arsenal player");
+    return false;
+}
+static bool item_count(qa_q1_game *game, q1_player *player, qa_item_id item,
+    double *out, qa_error *error) {
+    qa_actor_id actor = player->id;
+    return player_current(game, actor, player, error) &&
+        qa_inventory_count_read(game->services.inventory, actor, item, out, error) &&
+        player_current(game, actor, player, error);
+}
+static bool owns(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon,
+    bool *out, qa_error *error) {
+    double count;
+    if (!item_count(g, player, g->weapons[weapon], &count, error)) return false;
+    *out = count != 0;
+    return true;
 }
 
 bool qa_q1_player_selected_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse,
@@ -76,9 +91,15 @@ static unsigned required(qa_q1_weapon weapon) {
                ? 2
                : 1;
 }
-static bool ammo(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon, unsigned amount) {
+static bool ammo(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon, unsigned amount,
+    bool *out, qa_error *error) {
     int kind = q1_weapon_ammo(weapon);
-    return kind < 0 || q1_ammo_count(g, player->id, (qa_q1_ammo)kind) >= amount;
+    *out = true;
+    if (kind < 0) return true;
+    double count;
+    if (!item_count(g, player, g->ammo[kind], &count, error)) return false;
+    *out = count >= amount;
+    return true;
 }
 static bool cycle(qa_q1_game *g, q1_player *player, bool reverse, qa_error *error) {
     static const qa_q1_weapon base[] = {QA_Q1_AXE,     QA_Q1_SHOTGUN,       QA_Q1_SUPER_SHOTGUN,
@@ -93,15 +114,6 @@ static bool cycle(qa_q1_game *g, q1_player *player, bool reverse, qa_error *erro
         QA_Q1_NAILGUN,   QA_Q1_LAVA_NAILGUN,  QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN,
         QA_Q1_GRENADE,   QA_Q1_MULTI_GRENADE, QA_Q1_ROCKET,        QA_Q1_MULTI_ROCKET,
         QA_Q1_LIGHTNING, QA_Q1_PLASMA};
-    qa_q1_weapon mg3[] = {owns(g, player, QA_Q1_MG3_MJOLNIR) ? QA_Q1_MG3_MJOLNIR : QA_Q1_AXE,
-                          QA_Q1_SHOTGUN,
-                          QA_Q1_SUPER_SHOTGUN,
-                          QA_Q1_NAILGUN,
-                          QA_Q1_SUPER_NAILGUN,
-                          QA_Q1_GRENADE,
-                          QA_Q1_ROCKET,
-                          QA_Q1_LIGHTNING,
-                          QA_Q1_MG3_LASER};
     const qa_q1_weapon *order = base;
     int count = (int)(sizeof(base) / sizeof(*base)), current = -1;
     if (g->options.program == QA_Q1_HIPNOTIC) {
@@ -112,36 +124,34 @@ static bool cycle(qa_q1_game *g, q1_player *player, bool reverse, qa_error *erro
         order = rogue;
         count = (int)(sizeof(rogue) / sizeof(*rogue));
     }
-    if (g->options.program == QA_Q1_MG3) {
-        order = mg3;
-        count = (int)(sizeof(mg3) / sizeof(*mg3));
-    }
     for (int i = 0; i < count; ++i)
         if (order[i] == player->weapon) {
             current = i;
             break;
         }
-    if (g->options.program == QA_Q1_MG3 &&
-        (player->weapon == QA_Q1_AXE || player->weapon == QA_Q1_MG3_MJOLNIR))
-        current = 0;
-    if (g->options.program == QA_Q1_MG3 && current < 0)
-        return true;
     for (int step = 1; step <= count; ++step) {
         qa_q1_weapon weapon = order[(current + (reverse ? -step : step) + 2 * count) % count];
         if (weapon == QA_Q1_ROGUE_GRAPPLE && !(g->options.deathmatch && g->options.teamplay >= 4))
             continue;
         unsigned needed = reverse && weapon == QA_Q1_LAVA_NAILGUN ? 2 : required(weapon);
-        if (owns(g, player, weapon) && ammo(g, player, weapon, needed))
-            return qa_q1_player_select(g, player->id, weapon, error);
+        bool enough, owned;
+        if (!ammo(g, player, weapon, needed, &enough, error)) return false;
+        if (!enough) continue;
+        if (!owns(g, player, weapon, &owned, error)) return false;
+        if (owned) return q1_player_select_read(g, player->id, player, weapon, error);
     }
     return true;
 }
-static qa_q1_weapon paired(qa_q1_game *g, q1_player *player, qa_q1_weapon base,
-                           qa_q1_weapon powered) {
-    return owns(g, player, powered) &&
-                   (player->weapon == base || !ammo(g, player, base, required(base)))
-               ? powered
-               : base;
+static bool paired(qa_q1_game *g, q1_player *player, qa_q1_weapon base,
+    qa_q1_weapon powered, qa_q1_weapon *out, qa_error *error) {
+    *out = base;
+    bool owned, enough;
+    if (!owns(g, player, powered, &owned, error)) return false;
+    if (!owned) return true;
+    if (player->weapon == base) { *out = powered; return true; }
+    if (!ammo(g, player, base, required(base), &enough, error)) return false;
+    if (!enough) *out = powered;
+    return true;
 }
 static const char *switch_message(qa_q1_weapon previous, qa_q1_weapon selected) {
     switch (previous) {
@@ -196,12 +206,6 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
     qa_q1_weapon selected =
         impulse >= 1 && impulse <= 8 ? (qa_q1_weapon)(impulse - 1) : QA_Q1_WEAPON_COUNT;
     bool hip = g->options.program == QA_Q1_HIPNOTIC, rogue = g->options.program == QA_Q1_ROGUE;
-    if (g->options.program == QA_Q1_MG3) {
-        if (impulse == 1)
-            selected = owns(g, player, QA_Q1_MG3_MJOLNIR) ? QA_Q1_MG3_MJOLNIR : QA_Q1_AXE;
-        if (impulse == 225)
-            selected = QA_Q1_MG3_LASER;
-    }
     if (hip) {
         if (impulse == 6)
             selected = player->weapon == QA_Q1_GRENADE ? QA_Q1_PROXIMITY : QA_Q1_GRENADE;
@@ -213,8 +217,11 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
             selected = QA_Q1_PROXIMITY;
         if (g->options.edition == QA_Q1_RERELEASE && impulse == 228)
             selected = QA_Q1_GRENADE;
-        if (selected == QA_Q1_GRENADE && !owns(g, player, selected))
-            selected = QA_Q1_PROXIMITY;
+        if (selected == QA_Q1_GRENADE) {
+            bool owned;
+            if (!owns(g, player, selected, &owned, error)) return false;
+            if (!owned) selected = QA_Q1_PROXIMITY;
+        }
     }
     if (rogue) {
         bool ctf = g->options.deathmatch && g->options.teamplay >= 4;
@@ -223,19 +230,19 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
             selected = ctf && player->weapon == QA_Q1_AXE ? QA_Q1_ROGUE_GRAPPLE : QA_Q1_AXE;
             break;
         case 4:
-            selected = paired(g, player, QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN);
+            if (!paired(g, player, QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, &selected, error)) return false;
             break;
         case 5:
-            selected = paired(g, player, QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN);
+            if (!paired(g, player, QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, &selected, error)) return false;
             break;
         case 6:
-            selected = paired(g, player, QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE);
+            if (!paired(g, player, QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, &selected, error)) return false;
             break;
         case 7:
-            selected = paired(g, player, QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET);
+            if (!paired(g, player, QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, &selected, error)) return false;
             break;
         case 8:
-            selected = paired(g, player, QA_Q1_LIGHTNING, QA_Q1_PLASMA);
+            if (!paired(g, player, QA_Q1_LIGHTNING, QA_Q1_PLASMA, &selected, error)) return false;
             break;
         case 22:
             selected = ctf ? QA_Q1_ROGUE_GRAPPLE : QA_Q1_WEAPON_COUNT;
@@ -268,18 +275,24 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
     }
     if (selected == QA_Q1_WEAPON_COUNT)
         return true;
-    if (!owns(g, player, selected))
+    bool owned;
+    if (!owns(g, player, selected, &owned, error)) return false;
+    if (!owned)
         return q1_message(g, player->id, "$qc_no_weapon", error);
     unsigned needed = rogue && impulse == 61 ? 1 : required(selected);
-    bool enough = ammo(g, player, selected, needed);
+    bool enough;
+    if (!ammo(g, player, selected, needed, &enough, error)) return false;
     if (rogue && impulse >= 65 && impulse <= 68 && player->weapon >= QA_Q1_LAVA_NAILGUN &&
-        player->weapon <= QA_Q1_PLASMA)
-        enough = q1_ammo_count(g, player->id,
-                               impulse <= 66 ? QA_Q1_LAVA_NAILS : QA_Q1_MULTI_ROCKETS) >= needed;
+        player->weapon <= QA_Q1_PLASMA) {
+        double count;
+        if (!item_count(g, player, g->ammo[impulse <= 66 ? QA_Q1_LAVA_NAILS : QA_Q1_MULTI_ROCKETS],
+            &count, error)) return false;
+        enough = count >= needed;
+    }
     if (!enough)
         return q1_message(g, player->id, "$qc_not_enough_ammo", error);
     if (rogue && selected != player->weapon &&
         !q1_message(g, player->id, switch_message(player->weapon, selected), error))
         return false;
-    return !q1_alive(g, player->id) || qa_q1_player_select(g, player->id, selected, error);
+    return q1_player_select_read(g, player->id, player, selected, error);
 }

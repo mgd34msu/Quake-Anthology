@@ -79,6 +79,35 @@ bool frontend_material_movies_source_read(const frontend_material_movies *owner,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie source read lost its actual provider tuple");
     *out = owner->source; return true;
 }
+bool frontend_material_movies_transfer(frontend_material_movies **source_slot,
+    const frontend_material_movie_source *expected,
+    const frontend_material_movie_source *destination,
+    frontend_material_movies **destination_slot, qa_error *error)
+{
+    frontend_material_movies *owner = source_slot ? *source_slot : NULL;
+    if (!owner || !expected || !destination || !destination_slot ||
+        source_slot == destination_slot || *destination_slot != owner ||
+        !member(owner) || !frontend_material_movies_idle(owner) || owner->restore_pending)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie transfer requires its actual prepared renderer custody");
+    const frontend_material_movie_source *old = &owner->source;
+    if (old->frontend != expected->frontend || old->files != expected->files ||
+        old->images != expected->images || old->materials != expected->materials ||
+        old->media != expected->media || old->context != expected->context ||
+        old->current != expected->current || destination->frontend != old->frontend ||
+        destination->files != old->files || destination->images != old->images ||
+        destination->materials != old->materials || destination->media != old->media ||
+        old->frontend->capture || old->frontend->resource_inventory ||
+        old->frontend->source_restoring || !frontend_material_movie_source_valid(destination) ||
+        !qa_material_library_idle(old->materials) || !qa_media_library_idle(old->media) ||
+        !qa_material_movies_idle(owner->registry) ||
+        qa_material_movies_resource_owner(owner->registry) != old->images ||
+        qa_material_movies_count(owner->registry) != frontend_material_movie_live_count(owner) ||
+        !qa_material_library_video_start_is(old->materials, frontend_material_movies_start, owner))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie transfer changed its retained provider resources");
+    owner->source = *destination;
+    *source_slot = NULL;
+    return true;
+}
 size_t frontend_material_movie_live_count(const frontend_material_movies *owner)
 {
     size_t count = 0;

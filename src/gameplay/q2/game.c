@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "player/feedback.h"
+#include "entities/internal.h"
 
 bool q2_actor_live(qa_q2_game *g, qa_actor_id id) {
     return qa_actors_get(qa_session_actors(g->services.session), id) != NULL;
@@ -223,7 +224,8 @@ static bool end_frame(void *context, qa_session *session, const qa_source_frame 
     (void)frame;
     qa_q2_game *game = context;
     if (game->frame_stopped) { game->frame_stopped = false; return true; }
-    return q2_player_end_server_frames(game, e) && qa_q2_monsters_end_frame(game, e);
+    return q2_player_end_server_frames(game, e) && q2_campaign_frame(game, e) &&
+        qa_q2_monsters_end_frame(game, e);
 }
 bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_id id = a->id;

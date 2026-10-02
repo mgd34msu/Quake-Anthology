@@ -17,7 +17,12 @@ bool application_q3_weapons_services_destroy(application_q3_weapons_services **,
 bool application_q3_weapons_services_idle(const application_q3_weapons_services *);
 application_q3_weapon_services application_q3_weapons_services_callbacks(application_q3_weapons_services *);
 void application_q3_weapons_services_actor_released(application_q3_weapons_services *, qa_actor_record);
-/* Source commands retain accepted int32 selection until that same located
+/* Host admission checks the actual selected provider, declaration and owned or
+ * active item. It queues the genuine Source command ordinal and does not invoke
+ * the movement request function or report Source action acceptance. */
+bool application_q3_weapons_services_select_intent(application_q3_weapons_services *,
+    qa_actor_id, qa_actor_owner arsenal, qa_item_id, bool *admitted, qa_error *);
+/* Source commands retain requested int32 selection until that same located
  * full actor's actual Source selection reaches it. Only physical usercmd
  * publication narrows to its actual ABI byte; the retained request stays int32. */
 bool application_q3_weapons_services_request(application_q3_weapons_services *, qa_actor_id,

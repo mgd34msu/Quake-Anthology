@@ -144,10 +144,55 @@ static bool transmit(q1_runtime_client *c, qa_bytes bytes, uint64_t now, qa_erro
         qa_nq_channel_unreliable(c->native.channel.nq, bytes, &packet, e)) &&
         qa_q1_peer_send(&c->native, packet, e);
 }
+static bool retire_client(q1_runtime_client *c, const char *reason, bool notify, qa_error *e)
+{
+    q1_client_retirement *r = &c->retirement;
+    if (!r->reason) {
+        if (!q1_client_retirement_start(r, reason, notify, c->policy.message_bytes + 10, e)) return false;
+        c->retiring = true; c->active = false;
+    }
+    if (r->marked) return true;
+    qa_network_peer *peer = qa_network_peer_get(c->runtime, c->id, e);
+    const qa_net_client *client = qa_net_connections_get(c->runtime->connections, c->id);
+    if (!peer || peer->state != c || !client || !same_protocol(client->protocol, c->admitted_protocol) ||
+        !qa_net_address_equal(&client->endpoint, &c->native.remote, true))
+        return qa_network_fail(e, "Q1 CLIENT retirement lost its actual connection");
+    unsigned required = c->qw ? 3u : 1u;
+    bool ok = true;
+    while (ok && r->notify && r->transmissions < required) {
+        if (!r->packet.size) {
+            uint8_t data[6]; qa_net_writer writer; qa_bytes packet;
+            qa_net_writer_init(&writer, data, sizeof(data), e);
+            qa_q1_client_message message = {.op = c->qw ? QA_Q1_CLC_STRING : QA_Q1_CLC_DISCONNECT,
+                .data.text = "drop"};
+            ok = qa_q1_client_write(&writer, c->protocol, 0, &message) &&
+                (c->qw ? qa_qw_channel_transmit(c->native.channel.qw,
+                    (qa_bytes){data, qa_net_writer_size(&writer)}, c->runtime->now_ns, false, &packet, e) :
+                    qa_nq_channel_unreliable(c->native.channel.nq,
+                    (qa_bytes){data, qa_net_writer_size(&writer)}, &packet, e));
+            if (ok && packet.size > r->capacity) ok = qa_network_fail(e, "Q1 CLIENT retirement packet exceeds its channel");
+            if (ok) { memcpy(r->packet.data, packet.data, packet.size); r->packet.size = packet.size; }
+        }
+        if (ok) ok = qa_q1_peer_send(&c->native, (qa_bytes){r->packet.data, r->packet.size}, e);
+        if (ok) { ++r->transmissions; r->packet.size = 0; }
+    }
+    if (ok) {
+        ok = c->hooks.drop(c->hooks.context, c->id, r->reason, e);
+        if (ok) r->marked = true;
+    }
+    return ok;
+}
 static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id id, uint64_t now, qa_error *e)
 {
     q1_runtime_client *c = context; (void)runtime; (void)id;
-    if (c->held || c->busy || c->retiring) return true;
+    if (c->busy) return true;
+    if (c->retiring) {
+        bool previous = c->runtime->callback;
+        c->runtime->callback = true; c->busy = true;
+        bool ok = retire_client(c, "server disconnected", false, e);
+        c->busy = false; c->runtime->callback = previous; return ok;
+    }
+    if (c->held) return true;
     if (!queue_next(c, e)) return false;
     if (!c->qw) {
         bool present; qa_bytes packet;
@@ -246,6 +291,7 @@ void q1_client_close(void *context)
 {
     q1_runtime_client *c = context; if (!c) return;
     queue_clear(c); q1_client_batch_clear(c);
+    q1_client_retirement_clear(&c->retirement);
     qa_nq_decoder_destroy(c->nq); qa_qw_decoder_destroy(c->qw); qa_qw_precache_destroy(c->precache);
     if (c->native.kind == QA_Q1_PEER_QUAKEWORLD) qa_qw_channel_destroy(c->native.channel.qw);
     else qa_nq_channel_destroy(c->native.channel.nq);
@@ -255,6 +301,12 @@ static bool pending(const void *context) { return ((const q1_runtime_client *)co
 const qa_network_peer_ops qa_network_q1_client_ops = {receive, flush, command, restart, rebind, q1_client_close, pending};
 bool qa_network_q1_client_peer(const qa_network_peer *p)
 { return p && p->ops.receive == receive; }
+bool qa_network_q1_client_retirement_pending(const qa_network_peer *p)
+{
+    if (!qa_network_q1_client_peer(p)) return false;
+    const q1_runtime_client *c = p->state;
+    return c->retiring && !c->retirement.marked;
+}
 void qa_network_q1_client_transport_rebind(qa_network_peer *p, qa_net_transport *transport)
 { if (qa_network_q1_client_peer(p)) ((q1_runtime_client *)p->state)->native.transport = transport; }
 q1_runtime_client *q1_client_get(qa_network_runtime *runtime, qa_net_client_id id, qa_error *e)
@@ -448,9 +500,8 @@ bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id
         }
     }
     if (c->retiring || !ok) {
-        c->retiring = true; c->active = false;
-        qa_error ignored = {0}; bool dropped = c->hooks.drop(c->hooks.context, id,
-            ok ? "server disconnected" : "source service failed", ok ? e : &ignored);
+        qa_error ignored = {0}; bool dropped = retire_client(c,
+            ok ? "server disconnected" : "source service failed", false, ok ? e : &ignored);
         ok = ok && dropped;
     }
     runtime->callback = false; c->busy = false; free(data); q1_client_batch_clear(c); return ok;
@@ -497,22 +548,10 @@ bool qa_network_q1_client_disconnect(qa_network_runtime *runtime, qa_net_client_
         return qa_network_fail(e, "Q1 CLIENT disconnect requires its actual idle owner and reason");
     q1_runtime_client *c = q1_client_get(runtime, id, e);
     if (!c || c->busy) return qa_network_fail(e, "Q1 CLIENT disconnect overlaps its Source callback");
-    if (c->retiring) return qa_network_detach(runtime, id, reason, e);
-    uint8_t data[6]; qa_net_writer writer;
-    qa_net_writer_init(&writer, data, sizeof(data), e);
-    qa_q1_client_message message = {.op = c->qw ? QA_Q1_CLC_STRING : QA_Q1_CLC_DISCONNECT,
-        .data.text = "drop"};
-    bool ok = qa_q1_client_write(&writer, c->protocol, 0, &message);
     runtime->callback = true; c->busy = true;
-    for (size_t i = 0; ok && i < (c->qw ? 3u : 1u); ++i)
-        ok = transmit(c, (qa_bytes){data, qa_net_writer_size(&writer)}, runtime->now_ns, e);
-    c->retiring = true; c->active = false;
-    qa_error ignored = {0};
-    bool dropped = c->hooks.drop(c->hooks.context, id, reason, ok ? e : &ignored);
-    ok = ok && dropped;
+    bool ok = retire_client(c, reason, !c->retiring, e);
     runtime->callback = false; c->busy = false;
-    bool detached = qa_network_detach(runtime, id, reason, ok ? e : &ignored);
-    return ok && detached;
+    return ok && qa_network_detach(runtime, id, reason, e);
 }
 bool qa_network_q1_client_move_nq(qa_network_runtime *runtime, qa_net_client_id id, const qa_q1_command *move, qa_error *e)
 {

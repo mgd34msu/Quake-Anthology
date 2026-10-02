@@ -3,6 +3,9 @@
 #include "qa/material_source_scratch.h"
 #include "qa/scene.h"
 #include "qa/material.h"
+typedef enum material_source_coordinate_kind {
+    MATERIAL_SOURCE_COORDINATES_STAGE, MATERIAL_SOURCE_COORDINATES_TESS, MATERIAL_SOURCE_COORDINATES_DRAW
+} material_source_coordinate_kind;
 
 typedef struct material_source_submission {
     struct material_source_submission *next;
@@ -12,6 +15,7 @@ typedef struct material_source_submission {
     qa_scene_command *commands;
     size_t command_count;
     qa_scene_world *held_light_world;
+    uint32_t packed_sort;
 } material_source_submission;
 typedef struct material_source_view {
     size_t command_offset;
@@ -23,6 +27,7 @@ typedef struct material_source_view {
     qa_scene_view view;
     qa_scene_light lights[32];
     size_t light_count;
+    char texts[8][33];
     qa_scene_world *world;
     float far_clip;
 } material_source_view;
@@ -68,6 +73,8 @@ struct qa_material_source_scratch {
     int32_t picture_milliseconds;
     const qa_material *material;
     float shader_time;
+    float identity_light;
+    char texts[8][33];
     uint32_t fog_index;
     qa_scene_fog fog;
     float fog_tc_scale;
@@ -79,6 +86,12 @@ struct qa_material_source_scratch {
     qa_scene_world *world;
     float far_clip;
     material_source_entity entity;
+    qa_q3_source_scene_bank *scene_bank;
+    qa_material_order *queued_order;
+    const qa_scene_image *(*runtime_video_frame)(void *, uint64_t, double, qa_error *);
+    void *runtime_video_context;
+    qa_scene_source_diagnostics_read_fn runtime_diagnostics;
+    void *runtime_diagnostics_context;
     material_source_entity entities[1023];
     uint32_t entity_count, first_scene_entity, entity_cell;
     uint32_t submitted_light_count, first_scene_light;
@@ -95,5 +108,19 @@ void material_source_release(qa_material_source_scratch *);
 bool material_source_depth_range(qa_material_source_scratch *, float near_depth, float far_depth, qa_error *);
 bool material_source_polygon_offset(qa_material_source_scratch *, bool enabled, float factor, float units, qa_error *);
 bool material_source_cull(qa_material_source_scratch *, qa_scene_cull, qa_error *);
+bool material_source_client_arrays(qa_material_source_scratch *, bool color, bool current_unit_uv, qa_error *);
+bool material_source_client_coordinate_pointer(qa_material_source_scratch *, material_source_coordinate_kind,
+    uint32_t bank, qa_error *);
+bool material_source_stage_state(qa_material_source_scratch *, const qa_scene_state *, qa_error *);
+bool material_source_view_read(qa_material_source_scratch *, qa_scene_view *, qa_error *);
+bool material_source_texture_select(qa_material_source_scratch *, uint32_t unit, qa_error *);
+bool material_source_texture_enable(qa_material_source_scratch *, bool enabled, qa_error *);
+bool material_source_texture_environment(qa_material_source_scratch *, qa_scene_texture_environment, qa_error *);
+bool material_source_texture_bind(qa_material_source_scratch *, const qa_scene_image *, qa_error *);
 bool material_source_lightmap_set(qa_material_source_scratch *, const qa_scene_image *, qa_error *);
+bool material_source_deform_overflow(qa_material_source_scratch *, const qa_material_context *,
+    qa_scene_frame *, qa_error *);
+bool material_source_order_attach(qa_material_order *, qa_material_source_scratch *, qa_error *);
+void material_source_order_detach(qa_material_order *, qa_material_source_scratch *);
+void material_source_sort_inserted(qa_material_source_scratch *, uint32_t);
 #endif

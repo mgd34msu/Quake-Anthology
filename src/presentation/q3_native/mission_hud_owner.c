@@ -65,8 +65,8 @@ static bool team_flag(q3n_mission_hud *o,bool yours)
 {
     const q3n_command_state *s=o->commands; if(!s)return false;
     const qa_q3_player *p=q3nm_require_player(o); if(!p)return false; int team=p->persistant[3];
-    if(s->game_type==5)return team==1&&s->flag_status==(yours?2:3)||team==2&&s->flag_status==(yours?3:2);
-    if(s->game_type==4)return team==1&&(yours?s->blue_flag:s->red_flag)==1||team==2&&(yours?s->red_flag:s->blue_flag)==1;
+    if(s->game_type==5)return (team==1&&s->flag_status==(yours?2:3))||(team==2&&s->flag_status==(yours?3:2));
+    if(s->game_type==4)return (team==1&&(yours?s->blue_flag:s->red_flag)==1)||(team==2&&(yours?s->red_flag:s->blue_flag)==1);
     return false;
 }
 qboolean q3nm_visible(int flags)
@@ -78,14 +78,19 @@ qboolean q3nm_visible(int flags)
     if(flags&CG_SHOW_OTHERTEAMHASFLAG)return team_flag(o,false);
     if(flags&CG_SHOW_YOURTEAMHASENEMYFLAG)return team_flag(o,true);
     if(flags&(CG_SHOW_BLUE_TEAM_HAS_REDFLAG|CG_SHOW_RED_TEAM_HAS_BLUEFLAG))return
-        (flags&CG_SHOW_BLUE_TEAM_HAS_REDFLAG)&&(s->red_flag==1||s->flag_status==2)||
-        (flags&CG_SHOW_RED_TEAM_HAS_BLUEFLAG)&&(s->blue_flag==1||s->flag_status==3);
-    if((flags&CG_SHOW_ANYTEAMGAME)&&type>=3)return qtrue; if((flags&CG_SHOW_ANYNONTEAMGAME)&&type<3)return qtrue;
-    if(flags&CG_SHOW_HARVESTER)return type==7; if(flags&CG_SHOW_ONEFLAG)return type==5;
-    if((flags&CG_SHOW_CTF)&&type==4)return qtrue; if(flags&CG_SHOW_OBELISK)return type==6;
+        ((flags&CG_SHOW_BLUE_TEAM_HAS_REDFLAG)&&(s->red_flag==1||s->flag_status==2))||
+        ((flags&CG_SHOW_RED_TEAM_HAS_BLUEFLAG)&&(s->blue_flag==1||s->flag_status==3));
+    if((flags&CG_SHOW_ANYTEAMGAME)&&type>=3)return qtrue;
+    if((flags&CG_SHOW_ANYNONTEAMGAME)&&type<3)return qtrue;
+    if(flags&CG_SHOW_HARVESTER)return type==7;
+    if(flags&CG_SHOW_ONEFLAG)return type==5;
+    if((flags&CG_SHOW_CTF)&&type==4)return qtrue;
+    if(flags&CG_SHOW_OBELISK)return type==6;
     if((flags&(CG_SHOW_HEALTHCRITICAL|CG_SHOW_HEALTHOK))&&!p&&!q3nm_require_player(o))return qfalse;
-    if((flags&CG_SHOW_HEALTHCRITICAL)&&p->stats[0]<25)return qtrue; if((flags&CG_SHOW_HEALTHOK)&&p->stats[0]>=25)return qtrue;
-    if((flags&CG_SHOW_SINGLEPLAYER)&&type==2)return qtrue; if((flags&CG_SHOW_TOURNAMENT)&&type==1)return qtrue;
+    if((flags&CG_SHOW_HEALTHCRITICAL)&&p->stats[0]<25)return qtrue;
+    if((flags&CG_SHOW_HEALTHOK)&&p->stats[0]>=25)return qtrue;
+    if((flags&CG_SHOW_SINGLEPLAYER)&&type==2)return qtrue;
+    if((flags&CG_SHOW_TOURNAMENT)&&type==1)return qtrue;
     if(flags&CG_SHOW_IF_PLAYER_HAS_FLAG) { if(!p&&!q3nm_require_player(o))return qfalse;
         return p->powerups[7]||p->powerups[8]||p->powerups[9]; } return qfalse;
 }
@@ -96,7 +101,8 @@ static const char *status_text(q3n_mission_hud *o)
 {
     const qa_q3_player *p=q3nm_player(o); const q3n_command_state *s=o->commands; if(!s)return "";
     if(s->game_type<3) { if(!p&&!q3nm_require_player(o))return "";
-        if(p->persistant[3]==3)return ""; int rank=q3ne_plus(p->persistant[2],1); bool tied=(rank&0x4000)!=0; rank&=~0x4000;
+        if(p->persistant[3]==3)return "";
+        int rank=q3ne_plus(p->persistant[2],1); bool tied=(rank&0x4000)!=0; rank&=~0x4000;
         const char *place=rank==1?"^41st^7":rank==2?"^12nd^7":rank==3?"^33rd^7":q3menu_format("%d%s",rank,
             rank==11||rank==12||rank==13?"th":rank%10==1?"st":rank%10==2?"nd":rank%10==3?"rd":"th");
         return q3menu_format("%s%s place with %d",tied?"Tied for ":"",place,p->persistant[0]); }
@@ -115,17 +121,20 @@ static void tint(q3n_mission_hud *o,const float *color) { if(!o->menus->failed)q
 static void text(rectDef_t r,float scale,float color[4],const char *value,int style)
 { q3nm_text(r.x,r.y+r.h,scale,color,value,0,0,style); }
 static void number(q3n_mission_hud *o,rectDef_t r,float scale,float color[4],int value,int picture,int style)
-{ if(picture) { tint(o,color); pic(o,r,picture); tint(o,NULL); } else { const char *s=q3menu_format("%d",value); q3nm_text(r.x+(r.w-q3nm_width(s,scale,0))/2,r.y+r.h,scale,color,s,0,0,style); } }
+{ if(picture) { tint(o,color); pic(o,r,picture); tint(o,NULL); } else { const char *s=q3menu_format("%d",value); q3nm_text(r.x+(r.w-(float)q3nm_width(s,scale,0))/2,r.y+r.h,scale,color,s,0,0,style); } }
 static const qa_q3_item *powerup(int index)
-{ size_t count; const qa_q3_item *items=qa_q3_items(QA_Q3_TEAM_ARENA,&count); for(size_t i=0;i<count;++i)
-    if((items[i].kind==QA_Q3_ITEM_POWERUP||items[i].kind==QA_Q3_ITEM_PERSISTENT||items[i].kind==QA_Q3_ITEM_TEAM)&&items[i].tag==index)return &items[i]; return NULL; }
+{ size_t count; const qa_q3_item *items=qa_q3_items(QA_Q3_TEAM_ARENA,&count);
+    for(size_t i=0;i<count;++i) {
+        if((items[i].kind==QA_Q3_ITEM_POWERUP||items[i].kind==QA_Q3_ITEM_PERSISTENT||items[i].kind==QA_Q3_ITEM_TEAM)&&items[i].tag==index)return &items[i];
+    }
+    return NULL; }
 static void item_picture(q3n_mission_hud *o,rectDef_t r,const qa_q3_item *item)
 { int handle=0; if(o->menus->failed)return; if(item&&item->icon)q3nm_result(qa_q3_register_shader(o->options.assets,item->icon,true,&handle,o->menus->error)); pic(o,r,handle); }
 static void armor(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
     const q3n_media_view *m=q3n_media_read(o->frame->media);
     if(flat||(!o->settings.draw_3d_icons&&o->settings.draw_icons)) { r.y+=r.h/2+1; pic(o,r,m->graphics[Q3N_G_ARMOR_ICON]); }
-    else if(o->settings.draw_3d_icons)q3nm_result(q3nh_model(&o->draw,r.x,r.y,r.w,r.h,m->graphics[Q3N_G_ARMOR],0,qa_v3(90,0,-10),qa_v3(0,(o->frame->time&2047)*360.0f/2048,0)));
+    else if(o->settings.draw_3d_icons)q3nm_result(q3nh_model(&o->draw,r.x,r.y,r.w,r.h,m->graphics[Q3N_G_ARMOR],0,qa_v3(90,0,-10),qa_v3(0,(float)(o->frame->time&2047)*360.0f/2048,0)));
 }
 static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
@@ -134,20 +143,20 @@ static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
     if(flat||(!o->settings.draw_3d_icons&&o->settings.draw_icons)) { weapon=q3n_frame_predicted_player(o->frame)->weapon;
         if(weapon>=0&&weapon<16&&m->weapons[weapon].ammo_icon)pic(o,r,m->weapons[weapon].ammo_icon); }
     else if(o->settings.draw_3d_icons) { weapon=entity_weapon(o); if(weapon>0&&weapon<16&&m->weapons[weapon].ammo_model)
-        q3nm_result(q3nh_model(&o->draw,r.x,r.y,r.w,r.h,m->weapons[weapon].ammo_model,0,qa_v3(70,0,0),qa_v3(0,90+20*sinf(o->frame->time/1000.0f),0))); }
+        q3nm_result(q3nh_model(&o->draw,r.x,r.y,r.w,r.h,m->weapons[weapon].ammo_model,0,qa_v3(70,0,0),qa_v3(0,90+20*sinf((float)o->frame->time/1000.0f),0))); }
 }
 static void player_head(q3n_mission_hud *o,rectDef_t r)
 {
     q3n_hud_state *s=&o->hud->state; const q3n_player_feedback *p=q3n_player_state_feedback(o->frame->player_state); int time=o->frame->time;
-    if(p&&p->damage_time&&q3ne_sub(time,p->damage_time)<500) {
-        float frac=(float)q3ne_sub(time,p->damage_time)/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
+    if(p&&p->damage_time&&q3ne_sub(time,q3ne_int(p->damage_time))<500) {
+        float frac=(float)q3ne_sub(time,q3ne_int(p->damage_time))/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
         r.x-=stretch*0.5f+p->damage_x*stretch*0.5f; s->head_start_yaw=180+p->damage_x*45;
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI); s->head_start_time=time;
-        s->head_end_time=q3ne_int(q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=q3ne_int((float)q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=q3ne_int(q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=q3ne_int((float)q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
     }
@@ -169,15 +178,17 @@ static void flag_status(q3n_mission_hud *o,rectDef_t r,bool blue,int background)
 }
 static void skulls(q3n_mission_hud *o,rectDef_t r,float scale,float color[4],bool flat,int style)
 {
-    if(o->commands->game_type!=7)return; const qa_q3_player *p=q3nm_player(o); const char *value=q3menu_format("%d",p->generic1>99?99:p->generic1);
-    q3nm_text(r.x+r.w-q3nm_width(value,scale,0),r.y+r.h,scale,color,value,0,0,style);
-    if(!o->settings.draw_icons)return; bool red=p->persistant[3]==2; const q3n_media_view *m=q3n_media_read(o->frame->media);
+    if(o->commands->game_type!=7)return;
+    const qa_q3_player *p=q3nm_player(o); const char *value=q3menu_format("%d",p->generic1>99?99:p->generic1);
+    q3nm_text(r.x+r.w-(float)q3nm_width(value,scale,0),r.y+r.h,scale,color,value,0,0,style);
+    if(!o->settings.draw_icons)return;
+    bool red=p->persistant[3]==2; const q3n_media_view *m=q3n_media_read(o->frame->media);
     if(!flat&&o->settings.draw_3d_icons)q3nm_result(q3nh_model(&o->draw,r.x,r.y,35,35,m->graphics[red?Q3N_G_RED_CUBE:Q3N_G_BLUE_CUBE],0,
-        qa_v3(90,0,-10),qa_v3(0,(o->frame->time&2047)*360.0f/2048,0)));
+        qa_v3(90,0,-10),qa_v3(0,(float)(o->frame->time&2047)*360.0f/2048,0)));
     else pic(o,(rectDef_t){r.x+3,r.y+16,20,20},m->graphics[red?Q3N_G_RED_CUBE_ICON:Q3N_G_BLUE_CUBE_ICON]);
 }
 static void flag(q3n_mission_hud *o,rectDef_t r,bool flat)
-{ int adj=flat?0:2; r.x+=adj; r.y+=adj; r.w-=adj; r.h-=adj; const qa_q3_player *p=q3n_frame_predicted_player(o->frame);
+{ float adj=flat?0:2; r.x+=adj; r.y+=adj; r.w-=adj; r.h-=adj; const qa_q3_player *p=q3n_frame_predicted_player(o->frame);
     int team=p->powerups[7]?1:p->powerups[8]?2:p->powerups[9]?0:-1;
     if(team>=0)q3nm_result(q3nh_flag(&o->draw,r.x,r.y,r.w,r.h,team,flat)); }
 static void held_item(q3n_mission_hud *o,rectDef_t r,bool persistent)
@@ -193,7 +204,7 @@ static void area_powerups(q3n_mission_hud *o,rectDef_t r,int align,float special
         sorted[j]=i; remaining[j]=rem; ++count; }
     float x=r.x,y=r.y;
     for(int i=0;i<count;++i) { const qa_q3_item *item=powerup(sorted[i]); if(!item)continue;
-        if(remaining[i]>=5000)tint(o,NULL); else { float alpha=remaining[i]/1000.0f; alpha-=truncf(alpha); float c[4]={alpha,alpha,alpha,alpha}; tint(o,c); }
+        if(remaining[i]>=5000)tint(o,NULL); else { float alpha=(float)remaining[i]/1000.0f; alpha-=truncf(alpha); float c[4]={alpha,alpha,alpha,alpha}; tint(o,c); }
         item_picture(o,(rectDef_t){x,y,r.w*0.75f,r.h},item);
         q3nm_text(x+r.w*0.75f+3,y+r.h,scale,color,q3menu_format("%d",remaining[i]/1000),0,0,0);
         if(!align)y+=r.w+special; else x+=r.w+special;
@@ -213,8 +224,9 @@ static void team_info(q3n_mission_hud *o,rectDef_t r,float text_y,float scale,fl
             if(item) { item_picture(o,(rectDef_t){(float)x,y,12,12},item); x+=12; } }
         x=(int)(r.x+38); float health[4]; q3nh_health(ci->dynamic.health,ci->dynamic.armor,health); tint(o,health);
         pic(o,(rectDef_t){(float)x,y+1,10,10},q3n_media_read(o->frame->media)->graphics[Q3N_G_HEART]); x+=13; tint(o,NULL);
-        if(!order_blink(o))pic(o,(rectDef_t){(float)x,y,12,12},q3nm_status(o,o->order_pending?o->current_order:ci->team_task)); x+=13;
-        float left=r.w-x,max=x+left/3; q3nm_limit(ci->name,(float)x,y+text_y,scale,color,max,0); x=(int)(x+left/3+2);
+        if(!order_blink(o))pic(o,(rectDef_t){(float)x,y,12,12},q3nm_status(o,o->order_pending?o->current_order:ci->team_task));
+        x+=13;
+        float left=r.w-(float)x,max=(float)x+left/3; q3nm_limit(ci->name,(float)x,y+text_y,scale,color,max,0); x=(int)((float)x+left/3+2);
         q3nm_limit(q3nm_location(o,ci->dynamic.location),(float)x,y+text_y,scale,color,r.w-4,0);
         y+=text_y+2; if(y+text_y+2>r.y+r.h)break;
     }
@@ -228,7 +240,7 @@ static void spectators(q3n_mission_hud *o,rectDef_t r,float scale,float color[4]
     const char *value=o->commands->spectator_list;
     if(o->frame->time>o->spectator_time) {
         o->spectator_time=q3ne_plus(o->frame->time,10);
-        if(o->spectator_paint_x<=r.x+2) { if(o->spectator_offset<length) { o->spectator_paint_x+=q3nm_width(value+o->spectator_offset,scale,1)-1; ++o->spectator_offset; }
+        if((float)o->spectator_paint_x<=r.x+2) { if(o->spectator_offset<length) { o->spectator_paint_x+=q3nm_width(value+o->spectator_offset,scale,1)-1; ++o->spectator_offset; }
             else { o->spectator_offset=0; o->spectator_paint_x=o->spectator_paint_x2>=0?o->spectator_paint_x2:(int)(r.x+r.w-2); o->spectator_paint_x2=-1; } }
         else { --o->spectator_paint_x; if(o->spectator_paint_x2>=0)--o->spectator_paint_x2; }
     }
@@ -246,7 +258,7 @@ static void medal(q3n_mission_hud *o,int id,rectDef_t r,float scale,const float 
     if(value>0) { value_text=id==CG_PERFECT?"Wow":id==CG_ACCURACY?q3menu_format("%lld%%",(long long)value):q3menu_format("%lld",(long long)value);
         if(id!=CG_ACCURACY||value>50)color[3]=1; }
     tint(o,color); pic(o,r,picture);
-    if(value_text) { color[3]=1; q3nm_text(r.x+(r.w-q3nm_width(value_text,scale,0))/2,r.y+r.h+10,scale,color,value_text,0,0,0); }
+    if(value_text) { color[3]=1; q3nm_text(r.x+(r.w-(float)q3nm_width(value_text,scale,0))/2,r.y+r.h+10,scale,color,value_text,0,0,0); }
     tint(o,NULL);
 }
 void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id,int flags,int align,
@@ -271,9 +283,9 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
     case CG_SELECTEDPLAYER_POWERUP:ci=selected(o); if(ci)for(int j=0;j<16;++j)if(ci->dynamic.powerups&(1<<j)) { const qa_q3_item *item=powerup(j); if(item) { item_picture(o,r,item); break; } } break;
     case CG_PLAYER_HEAD:player_head(o,r); break; case CG_PLAYER_ITEM:held_item(o,r,false); break; case CG_CTF_POWERUP:held_item(o,r,true); break;
     case CG_RED_SCORE:case CG_BLUE_SCORE:{ int score=id==CG_RED_SCORE?o->commands->scores1:o->commands->scores2; value=score==-9999?"-":q3menu_format("%d",score);
-        q3nm_text(x+w-q3nm_width(value,scale,0),y+h,scale,color,value,0,0,style); break; }
+        q3nm_text(x+w-(float)q3nm_width(value,scale,0),y+h,scale,color,value,0,0,style); break; }
     case CG_RED_NAME:case CG_BLUE_NAME:text(r,scale,color,team_name(o,id==CG_BLUE_NAME),style); break;
-    case CG_BLUE_FLAGHEAD:case CG_RED_FLAGHEAD:if(carrier(o,id==CG_BLUE_FLAGHEAD)>=0)q3nm_result(q3nh_head(&o->draw,x,y,w,h,0,qa_v3(0,180+20*sinf(o->frame->time/650.0f),0))); break;
+    case CG_BLUE_FLAGHEAD:case CG_RED_FLAGHEAD:if(carrier(o,id==CG_BLUE_FLAGHEAD)>=0)q3nm_result(q3nh_head(&o->draw,x,y,w,h,0,qa_v3(0,180+20*sinf((float)o->frame->time/650.0f),0))); break;
     case CG_BLUE_FLAGSTATUS:case CG_RED_FLAGSTATUS:flag_status(o,r,id==CG_BLUE_FLAGSTATUS,picture); break;
     case CG_BLUE_FLAGNAME:case CG_RED_FLAGNAME:{ int n=carrier(o,id==CG_BLUE_FLAGNAME); if(n>=0) { ci=q3nm_client(o,n); if(ci)text(r,scale,color,ci->name,style); } break; }
     case CG_HARVESTER_SKULLS:case CG_HARVESTER_SKULLS2D:skulls(o,r,scale,color,id==CG_HARVESTER_SKULLS2D,style); break;
@@ -284,7 +296,7 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
     case CG_PLAYER_HASFLAG:case CG_PLAYER_HASFLAG2D:flag(o,r,id==CG_PLAYER_HASFLAG2D); break;
     case CG_AREA_SYSTEMCHAT:text(r,scale,color,o->system_chat,0); break; case CG_AREA_TEAMCHAT:text(r,scale,color,o->team_chat[0],0); break; case CG_AREA_CHAT:text(r,scale,color,o->team_chat[1],0); break;
     case CG_GAME_TYPE:text(r,scale,color,type_text(o),style); break; case CG_GAME_STATUS:text(r,scale,color,status_text(o),style); break;
-    case CG_KILLER:value=killer(o); if(*value)q3nm_text((int)(x+w/2)-q3nm_width(value,scale,0)/2,y+h,scale,color,value,0,0,style); break;
+    case CG_KILLER:value=killer(o); if(*value)q3nm_text((float)((int)(x+w/2)-q3nm_width(value,scale,0)/2),y+h,scale,color,value,0,0,style); break;
     case CG_ACCURACY:case CG_ASSISTS:case CG_DEFEND:case CG_EXCELLENT:case CG_IMPRESSIVE:case CG_PERFECT:case CG_GAUNTLET:case CG_CAPTURES:medal(o,id,r,scale,color,picture); break;
     case CG_SPECTATORS:spectators(o,r,scale,color); break;
     case CG_TEAMINFO:if(q3nm_integer(o,"cg_currentSelectedPlayer")==o->commands->num_sorted_team_players)team_info(o,r,text_y,scale,color); break;
@@ -295,7 +307,8 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
 static bool pending_order(q3n_mission_hud *o,qa_error *e)
 {
     if(!o->commands)return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission order requires actual Team command state");
-    if(o->commands->game_type<4||!o->order_pending)return true; bool ok=true;
+    if(o->commands->game_type<4||!o->order_pending)return true;
+    bool ok=true;
     const qa_q3_player *p=q3nm_require_player(o); if(!p)return false;
     static const char *team[]={"offense","defend","patrol","followme","returnflag","followflagcarrier","camp"};
     static const char *personal[]={"onoffense","ondefense","onpatrol","onfollow","ongetflag","onfollowcarrier","oncamping"};
@@ -309,7 +322,8 @@ static bool pending_order(q3n_mission_hud *o,qa_error *e)
             else if(valid)command=q3menu_format("cmd vtell %d %s\n",client,team[order]); }
         else ok=q3ne_fail(e,QA_ERROR_FORMAT,"Mission order selected player leaves source team array");
         if(ok&&command)ok=q3nm_console(o,command,e);
-        if(ok&&valid&&buttons[order])ok=q3nm_console(o,buttons[order],e); if(ok)o->order_pending=false;
+        if(ok&&valid&&buttons[order])ok=q3nm_console(o,buttons[order],e);
+        if(ok)o->order_pending=false;
     }
     return ok;
 }

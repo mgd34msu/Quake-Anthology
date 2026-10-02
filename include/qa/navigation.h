@@ -130,6 +130,16 @@ typedef struct qa_navigation_services {
      * hooks use the shared world. End is paired with each successful begin. */
     bool (*prediction_begin)(void *, qa_actor_id, qa_movement_services *, void **lease, qa_error *);
     void (*prediction_end)(void *, void *lease);
+    /* Source monster traversal keeps one detached continuation for the whole
+     * route. Each admit returns a synchronous borrowed trajectory. */
+    bool (*traversal_begin)(void *, qa_actor_id, void **lease, qa_error *);
+    bool (*traversal_admit)(void *, void *lease, qa_vec3 from, qa_vec3 to,
+        qa_nav_travel, const qa_vec3 **points, size_t *count, float *seconds,
+        bool *admitted, qa_error *);
+    void (*traversal_end)(void *, void *lease);
+    /* Graph admission can restrict queries to the same scene's model zero.
+     * Actor runtimes leave this false and observe actual bodies and movers. */
+    bool topology_geometry_only;
 } qa_navigation_services;
 typedef struct qa_nav_graph qa_nav_graph;
 typedef struct qa_navigation qa_navigation;

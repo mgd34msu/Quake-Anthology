@@ -45,7 +45,10 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
             !qa_source_save_i32(io,&x->frames) || !qa_source_save_i32(io,&x->base) || !qa_source_save_i32(io,&x->skin) ||
             !qa_source_save_u32(io,&x->flags) || !vector(io,&x->origin) || !vector(io,&x->angles) || !vector(io,&x->light_color) ||
             !number(io,&x->start) || !scalar(io,&x->light) || !scalar(io,&x->scale) ||
-            (x->active && (!x->kind || x->kind>3 || x->model>=Q2FX_MODEL_COUNT || x->frames<2 || x->base<0 || x->skin<0 || x->scale<=0))) return false;
+            (x->active && (!x->kind || x->kind>5 || x->model>=Q2FX_MODEL_COUNT || x->frames<2 || x->base<0 || x->skin<0 || x->scale<=0)) ||
+            (x->active && x->kind==4 && (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE ||
+                x->model<Q2FX_MUZZLE_MACHINE || !o->models[x->model] || x->flags!=(8|32|8192))) ||
+            (x->active && x->kind==5 && o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)) return false;
         q2fx_laser *laser=&o->lasers[i];
         if (!qa_source_save_bool(io,&laser->active) || !vector(io,&laser->start) || !vector(io,&laser->end) ||
             !number(io,&laser->die) || !qa_source_save_u32(io,&laser->color) || laser->color>255 ||
@@ -62,9 +65,11 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
         for (size_t pool=0;pool<2;++pool) {
             q2fx_beam *b=(pool?o->player_beams:o->beams)+i;
             if (!qa_source_save_bool(io,&b->active) || !qa_source_save_bool(io,&b->player) || !qa_source_save_bool(io,&b->monster) ||
+                !qa_source_save_bool(io,&b->unkeyed) ||
                 !qa_source_save_u8(io,&b->model) || !actor(io,&b->actor,refs) || !actor(io,&b->destination,refs) ||
                 !vector(io,&b->start) || !vector(io,&b->end) || !vector(io,&b->offset) || !number(io,&b->die) ||
-                (b->active && (!b->actor.registry || b->player!=(pool!=0) || b->model>=Q2FX_MODEL_COUNT ||
+                (b->active && ((!b->actor.registry && !b->unkeyed) || b->player!=(pool!=0) || b->model>=Q2FX_MODEL_COUNT ||
+                    (b->unkeyed && (b->actor.registry || b->destination.registry || b->player || b->monster || b->model!=Q2FX_LIGHTNING)) ||
                     (b->model!=Q2FX_PARASITE && b->model!=Q2FX_CABLE && b->model!=Q2FX_LIGHTNING && b->model!=Q2FX_HEAT)))) return false;
         }
     }
@@ -76,13 +81,18 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
     for (size_t i=0;i<o->trail_count;++i) {
         q2fx_trail *t=&o->trails[i];
         if (!actor(io,&t->actor,refs) || !t->actor.registry || !vector(io,&t->origin) || !qa_source_save_i32(io,&t->count) ||
-            t->count<0 || t->count>1024 || !number(io,&t->fly_end)) return false;
+            t->count<0 || t->count>1024 || !number(io,&t->fly_end) || !scalar(io,&t->flashlight_fraction) ||
+            t->flashlight_fraction<0 || t->flashlight_fraction>1) return false;
         for (size_t j=0;j<i;++j) if (qa_actor_id_equal(o->trails[j].actor,t->actor)) return false;
     }
     if (!qa_source_save_count(io,&o->light_count,Q2FX_LIGHT_CAPACITY)) return false;
     for (size_t i=0;i<o->light_count;++i) {
         qa_scene_light *l=&o->sampled_lights[i];
-        if (!vector(io,&l->origin) || !vector(io,&l->color) || !scalar(io,&l->radius) || !scalar(io,&l->minimum) || l->radius<=0) return false;
+        if (!vector(io,&l->origin) || !vector(io,&l->color) || !vector(io,&l->direction) ||
+            !scalar(io,&l->radius) || !scalar(io,&l->minimum) || !scalar(io,&l->cos_half_angle) ||
+            !qa_source_save_bool(io,&l->spot) || !qa_source_save_bool(io,&l->casts_shadow) ||
+            !qa_source_save_u32(io,&l->shadow_resolution) || l->radius<=0 || l->cos_half_angle< -1 || l->cos_half_angle>1 ||
+            (l->spot && (qa_vec_length(l->direction)==0 || !l->shadow_resolution))) return false;
         l->scale=1; l->family=QA_SCENE_Q2; l->additive=true;
     }
     maximum=reading?(io->input.size-io->offset)/53:SIZE_MAX/sizeof(*o->draws);
@@ -96,6 +106,13 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
             !o->models[d->model] || !qa_source_save_u32(io,&d->flags) || !scalar(io,&d->alpha) || !scalar(io,&d->back_lerp) || !scalar(io,&d->scale) ||
             d->frame<0 || d->old_frame<0 || d->skin<0 || d->scale<=0 || d->back_lerp<0 || d->back_lerp>1) return false;
     }
+    q2fx_weapon_muzzle *m=&o->weapon_muzzle;
+    if (!qa_source_save_u32(io,&o->sampled_dlight_hacks) || !qa_source_save_u32(io,&o->sampled_disable_particles) ||
+        (!o->sampled && (o->sampled_dlight_hacks || o->sampled_disable_particles))) return false;
+    if (!qa_source_save_bool(io,&m->active) || !qa_source_save_u8(io,&m->model) || !actor(io,&m->actor,refs) ||
+        !vector(io,&m->offset) || !scalar(io,&m->scale) || !scalar(io,&m->roll) || !number(io,&m->start) ||
+        (m->active && (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || !m->actor.registry ||
+            m->model<Q2FX_MUZZLE_MACHINE || m->model>=Q2FX_MODEL_COUNT || !o->models[m->model] || m->scale<=0 || m->roll<0 || m->roll>=360))) return false;
     return o->sampled || (!o->trail_count && !o->light_count && !o->draw_count);
 }
 static bool fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
@@ -103,10 +120,11 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
 {
     uint8_t magic[4]={'Q','2','F','X'}; uint32_t version=1;
     uint64_t identity=o->source.identity, generation=o->source.content_generation, image=0;
-    uint32_t protocol=o->source.protocol.kind, revision=o->source.protocol.revision, flags=o->source.protocol.flags;
+    uint32_t profile=o->source.profile,protocol=o->source.protocol.kind, revision=o->source.protocol.revision, flags=o->source.protocol.flags;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q2FX",4) || !qa_source_save_u32(io,&version) || version!=1 ||
         !qa_source_save_u64(io,&identity) || identity!=o->source.identity || !qa_source_save_u64(io,&generation) || generation!=o->source.content_generation ||
+        !qa_source_save_u32(io,&profile) || profile!=(uint32_t)o->source.profile ||
         !qa_source_save_u32(io,&protocol) || protocol!=(uint32_t)o->source.protocol.kind ||
         !qa_source_save_u32(io,&revision) || revision!=o->source.protocol.revision || !qa_source_save_u32(io,&flags) || flags!=o->source.protocol.flags) return false;
     if (!reading && (!refs->image_encode || !refs->image_encode(refs->context,o->particle_image,&image,io->error))) return false;
@@ -121,8 +139,11 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
         bool present=o->models[i]!=NULL;
         if (!qa_source_save_bool(io,&o->model_admitted[i]) || !qa_source_save_bool(io,&present) ||
             (!o->model_admitted[i] && present)) return false;
-        if (reading && present) {
-            if (!o->source.model(o->source.context,q2fx_model_paths[i],false,&o->models[i],io->error) || !o->models[i]) return false;
+        if (o->model_admitted[i]) {
+            qa_scene_model *held=NULL;
+            if (!o->source.model(o->source.context,q2fx_model_paths[i],false,&held,io->error) ||
+                present!=(held!=NULL) || (!reading && held!=o->models[i])) return false;
+            if (reading) o->models[i]=held;
         }
     }
     return q2fx_state_fields(io,o,refs);

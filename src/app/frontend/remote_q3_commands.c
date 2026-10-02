@@ -14,7 +14,7 @@ struct frontend_remote_q3_commands {
     frontend_remote_q3 *row;
     remote_dispatch *dispatch;
     uint64_t identity;
-    qa_actor_owner service;
+    uint64_t service;
     uint32_t seat;
     size_t contributed;
     bool registered, closed, busy, retiring;
@@ -43,9 +43,11 @@ static size_t command_count(qa_q3_product product)
 { return local_count(product)+COUNT(forwarded); }
 static const char *command_name(qa_q3_product product,size_t index)
 {
-    if(index<COUNT(common))return common[index]; index-=COUNT(common);
+    if(index<COUNT(common))return common[index];
+    index-=COUNT(common);
     if(product==QA_Q3_TEAM_ARENA) { if(index<COUNT(mission))return mission[index]; index-=COUNT(mission); }
-    if(index<COUNT(tail))return tail[index]; index-=COUNT(tail);
+    if(index<COUNT(tail))return tail[index];
+    index-=COUNT(tail);
     return index<COUNT(forwarded)?forwarded[index]:NULL;
 }
 static bool fail(qa_error *e,qa_status status,const char *text)
@@ -103,7 +105,8 @@ static bool current(const frontend_remote_q3_commands *o,frontend_remote_q3_serv
     qa_native_q3_remote_client_basis basis;
     if(!qa_native_q3_remote_client_basis_read(actual.client,&basis,e) || basis.product!=o->dispatch->product)
         return fail(e,QA_ERROR_ARGUMENT,"Remote console changed its actual compiled CLIENT product");
-    if(out)*out=actual; return true;
+    if(out)*out=actual;
+    return true;
 }
 static bool invocation_current(frontend_remote_q3_commands *o,const qa_command_invocation *call,qa_error *e)
 {
@@ -201,7 +204,8 @@ static bool dispatch(frontend_remote_q3_commands *o,const qa_command_invocation 
         for(size_t i=1;i<call->argc;++i) {
             size_t n=strlen(call->argv[i]),space=i>1?1:0;
             if(n+space>=sizeof(args)-used)return fail(e,QA_ERROR_FORMAT,"Cmd_Args exceeds MAX_STRING_CHARS");
-            if(space)args[used++]=' '; memcpy(args+used,call->argv[i],n); used+=n;
+            if(space)args[used++]=' ';
+            memcpy(args+used,call->argv[i],n); used+=n;
         }
         args[used]=0; if(used>127)args[127]=0;
         snprintf(text,128,"%s %i %s",lower((unsigned char)*name)=='v'?"vtell":"tell",client,args); return send(o,call,text,e);
@@ -306,7 +310,8 @@ static bool handle(void *context,const qa_command_invocation *call,qa_error *e)
     if(!invocation_valid(d,call,e))return false;
     for(frontend_remote_q3_commands *p=d->owners;p;p=p->next)if(p->seat==call->context.seat && !p->retiring) {
         if(!invocation_current(p,call,e))return false;
-        if(o)return fail(e,QA_ERROR_FORMAT,"Remote console has duplicate actual CLIENT recipients"); o=p;
+        if(o)return fail(e,QA_ERROR_FORMAT,"Remote console has duplicate actual CLIENT recipients");
+        o=p;
     }
     if(!o || !o->registered || o->busy || o->closed || !frontend_remote_q3_runtime_idle(o->runtime))
         return fail(e,QA_ERROR_ARGUMENT,"Remote console has no idle open admitted CLIENT recipient");

@@ -1,6 +1,7 @@
 #include "native_q3_client_internal.h"
 #include "qa/audio_music_prepare.h"
 #include "save_private.h"
+#include "audio_identity_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_presentation_save.h"
 

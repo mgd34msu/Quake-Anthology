@@ -23,6 +23,10 @@ typedef struct remote_q2_picture {
     const qa_scene_image *image;
     uint64_t saved_image;
 } remote_q2_picture;
+typedef struct remote_q2_missing_model {
+    struct remote_q2_missing_model *next;
+    char *path;
+} remote_q2_missing_model;
 typedef struct remote_q2_layout {
     uint16_t models, sounds, images, lights, items, players, checksum;
     size_t max_models, max_sounds, max_images, max_configs;
@@ -68,8 +72,16 @@ struct frontend_remote_q2 {
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
     float fraction, frame_ms, height_previous, height_current;
+    double sample_frame_seconds;
     double height_changed_ms;
     bool height_set;
+    bool gun_set;
+    uint32_t gun_frame, gun_previous_frame;
+    int32_t gun_server_frame;
+    uint32_t hit_marker_count;
+    int32_t hit_marker_frame;
+    uint64_t hit_marker_ns;
+    bool hit_marker_set;
     qa_resource *map;
     qa_vfs_acquisition map_opening;
     qa_scene_resources *images;
@@ -85,6 +97,7 @@ struct frontend_remote_q2 {
     bool effects_imported;
     struct remote_q2_footsteps *footsteps;
     remote_q2_model *models;
+    remote_q2_missing_model *missing_models;
     remote_q2_picture *pictures;
     struct frontend_remote_q2_image_policy *image_policy;
     struct frontend_remote_q2_effects *effects;

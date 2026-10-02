@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/scene_model_save.h"
 #include "qa/scene_world_save.h"
+#include "qa/q3_assets_custody.h"
 
 static unsigned char key_byte(q3p_resource_kind kind, unsigned char byte)
 {
@@ -65,7 +66,8 @@ bool q3p_select(qa_q3_presentation_assets *a, const char *name, qa_q3_asset_kind
 {
     *out = a->options.provider;
     if (a->options.select && !a->options.select(a->options.context, name, kind, out, error)) return false;
-    return out->mounts && out->images && out->materials && out->family >= QA_SCENE_Q1 && out->family <= QA_SCENE_Q3 ? true :
+    return out->mounts && out->images && out->materials && out->family >= QA_SCENE_Q1 && out->family <= QA_SCENE_Q3 ?
+        qa_q3_assets_provider_hold(a, out, error) :
         q3p_fail(error, QA_ERROR_ARGUMENT, "selected Q3 presentation provider is incomplete");
 }
 
@@ -78,8 +80,9 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
     qa_q3_presentation_assets *a = calloc(1, sizeof(*a));
     if (!a) return q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 presentation resource handles");
     a->options = *options; a->users = 1;
+    if (!qa_q3_assets_provider_hold(a, &options->provider, error)) { free(a); return false; }
     if (options->zero_sound && !qa_audio_asset_retain(options->zero_sound)) {
-        free(a); return q3p_fail(error, QA_ERROR_MEMORY, "retaining Q3 fallback sound");
+        q3p_provider_custody_release(a); free(a); return q3p_fail(error, QA_ERROR_MEMORY, "retaining Q3 fallback sound");
     }
     *out = a; return true;
 }
@@ -108,13 +111,17 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
         q3p_name *next;
         for (q3p_name *row = a->names[i]; row; row = next) { next = row->next; free(row); }
     }
-    for (size_t i = 0; i < a->model_count; ++i) q3p_model_free(a->models[i]);
+    for (size_t i = 0; i < a->model_count; ++i)
+        if (!q3p_model_shared(a, a->models[i])) q3p_model_free(a->models[i]);
     for (size_t i = 0; i < a->skin_count; ++i) {
-        if (!a->skins[i]) continue;
+        if (!a->skins[i] || q3p_skin_shared(a, a->skins[i])) continue;
+        free(a->skins[i]->materials);
         qa_model_skin_map_free(&a->skins[i]->map); qa_resource_release(a->skins[i]->resource); free(a->skins[i]);
     }
     for (size_t i = 0; i < a->sound_count; ++i) qa_audio_asset_release(a->sounds[i]);
     qa_audio_asset_release(a->options.zero_sound);
+    q3p_provider_custody_release(a);
+    qa_q3_assets_release(a->parent);
     free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
 }
 bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
@@ -154,9 +161,94 @@ bool q3p_skin_get(const qa_q3_presentation_assets *a, int32_t handle, const qa_m
     *out = handle ? &a->skins[handle - 1]->map : NULL; return true;
 }
 
+bool q3p_skin_materials(const qa_q3_presentation_assets *a, int32_t handle,
+    const qa_material *const **out, size_t *count, qa_error *error)
+{
+    const qa_model_skin_map *map = NULL;
+    if (!out || !count || !q3p_skin_get(a, handle, &map, error)) return false;
+    *out = NULL; *count = 0;
+    if (!map) return true;
+    const q3p_skin *skin = a->skins[handle - 1];
+    if (!skin->source_registration) return true;
+    *out = skin->materials; *count = skin->map.count; return true;
+}
+static bool same_skin_name(const char *a, const char *b)
+{
+    size_t i = 0;
+    while (a[i] && b[i]) {
+        unsigned char x = (unsigned char)a[i], y = (unsigned char)b[i];
+        if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + ('a' - 'A'));
+        if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + ('a' - 'A'));
+        if (x != y) return false;
+        ++i;
+    }
+    return !a[i] && !b[i];
+}
+static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
+    int32_t *out, qa_error *error)
+{
+    if (!*path || strlen(path) >= 64) { *out = 0; return true; }
+    for (size_t i = 0; i < a->name_capacity; ++i)
+        for (const q3p_name *entry = a->names[i]; entry; entry = entry->next)
+            if (entry->kind == Q3P_SKIN && same_skin_name(entry->name, path)) {
+                *out = entry->handle; return true;
+            }
+    if (a->skin_count >= 1023) {
+        if (a->options.print) a->options.print(a->options.context, "WARNING: RE_RegisterSkin MAX_SKINS hit\n");
+        *out = 0; return true;
+    }
+    ++a->busy;
+    q3p_skin *skin = calloc(1, sizeof(*skin));
+    bool ok = skin != NULL;
+    if (!ok) q3p_fail(error, QA_ERROR_MEMORY, "Allocating Source skin registration");
+    if (ok) ok = q3p_select(a, path, QA_Q3_ASSET_SKIN, &skin->provider, error);
+    size_t length = strlen(path);
+    bool file = length >= 5 && !strcmp(path + length - 5, ".skin");
+    if (ok) {
+        skin->source_registration = true;
+        if (file) {
+            qa_error local = {0};
+            ok = qa_vfs_acquire(skin->provider.mounts, path, &skin->resource, NULL, &local);
+            if (!ok && local.code == QA_ERROR_NOT_FOUND) ok = true;
+            else if (!ok && error) *error = local;
+            if (ok && skin->resource) ok = qa_model_skin_map_load(qa_resource_bytes(skin->resource), &skin->map, error);
+        } else {
+            skin->map.mappings = calloc(8, sizeof(*skin->map.mappings));
+            if (!skin->map.mappings) ok = q3p_fail(error, QA_ERROR_MEMORY, "Allocating Source single-shader skin");
+            if (ok) {
+                skin->map.capacity = 8; skin->map.count = 1;
+                skin->map.mappings[0].shader = malloc(length + 1);
+                if (!skin->map.mappings[0].shader) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source skin shader");
+                else memcpy(skin->map.mappings[0].shader, path, length + 1);
+            }
+        }
+    }
+    if (ok && skin->map.count) {
+        skin->materials = calloc(skin->map.count, sizeof(*skin->materials));
+        if (!skin->materials) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source skin shader receipts");
+        qa_scene_image_options images = {.family = skin->provider.family, .wrap = QA_SCENE_REPEAT,
+            .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true,
+            .usage = QA_IMAGE_USAGE_SKIN, .transparent_index = -1};
+        for (size_t i = 0; ok && i < skin->map.count; ++i)
+            ok = qa_material_register_kind(skin->provider.materials, skin->map.mappings[i].shader,
+                &images, QA_MATERIAL_DYNAMIC, &skin->materials[i], error);
+    }
+    int32_t handle = ok && skin->map.count ? (int32_t)a->skin_count + 1 : 0;
+    if (ok) ok = q3p_reserve((void **)&a->skins, &a->skin_capacity,
+        a->skin_count + 1, sizeof(*a->skins), error) && q3p_add_name(a, Q3P_SKIN, path, handle, false, error);
+    if (ok) { a->skins[a->skin_count++] = skin; *out = handle; }
+    else if (skin) {
+        free(skin->materials); qa_model_skin_map_free(&skin->map);
+        qa_resource_release(skin->resource); free(skin);
+    }
+    --a->busy; return ok;
+}
+
 bool qa_q3_register_skin(qa_q3_presentation_assets *a, const char *path, int32_t *out, qa_error *error)
 {
-    if (!a || a->busy || !path || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 skin request");
+    if (!a || a->busy || a->retired || !path || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 skin request");
+    if (qa_material_library_has_source_profile(a->options.provider.materials))
+        return register_source_skin(a, path, out, error);
     q3p_name *prior = q3p_find_name(a, Q3P_SKIN, path);
     if (prior) { *out = prior->handle; return true; }
     ++a->busy;
@@ -192,28 +284,34 @@ bool qa_q3_register_skin(qa_q3_presentation_assets *a, const char *path, int32_t
 bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool mipmap,
                              int32_t *out, qa_error *error)
 {
-    if (!a || a->busy || !path || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 shader request");
-    if (qa_material_library_has_source_profile(a->options.provider.materials) && strlen(path) >= 64) {
+    if (!a || a->busy || a->retired || !path || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 shader request");
+    bool source_request = qa_material_library_has_source_profile(a->options.provider.materials);
+    if (source_request && (!*path || strlen(path) >= 64)) {
         *out = 0; return true;
     }
     q3p_name *prior = q3p_find_name(a, Q3P_SHADER, path);
     if (prior) { *out = prior->handle; return true; }
-    qa_error local = {0}; char *normalized = qa_vfs_normalize_path(path, &local);
-    if (!normalized) {
+    qa_error local = {0}; char *normalized = source_request ? NULL : qa_vfs_normalize_path(path, &local);
+    if (!source_request && !normalized) {
         if (local.code == QA_ERROR_ARGUMENT || local.code == QA_ERROR_FORMAT) { *out = 0; return true; }
-        if (error) *error = local; return false;
+        if (error) *error = local;
+        return false;
     }
     ++a->busy;
-    qa_q3_presentation_provider provider; const qa_material *material = NULL;
-    bool ok = q3p_select(a, normalized, QA_Q3_ASSET_SHADER, &provider, error);
+    qa_q3_presentation_provider provider = {0}; const qa_material *material = NULL;
+    bool ok = q3p_select(a, source_request ? path : normalized, QA_Q3_ASSET_SHADER, &provider, error);
     qa_scene_image_options images = {.family = provider.family, .wrap = QA_SCENE_REPEAT,
         .filter = mipmap ? QA_SCENE_LINEAR_MIPMAP_LINEAR : QA_SCENE_LINEAR, .mipmap = mipmap,
         .usage = QA_IMAGE_USAGE_PICTURE, .transparent_index = -1};
-    bool source_shader = ok && qa_material_library_has_source_profile(provider.materials);
+    bool source_shader = source_request || (ok && qa_material_library_has_source_profile(provider.materials));
     if (ok) ok = qa_material_register_kind(provider.materials, source_shader ? path : normalized,
         &images, QA_MATERIAL_PICTURE, &material, error);
     if (ok && material && material->registration == 0 && qa_material_library_has_source_profile(provider.materials)) {
-        if (a->options.print) a->options.print(a->options.context, "WARNING: MAX_SHADERS hit\n");
+        const char *default_name = "*default";
+        bool named_default = strcspn(path, ".") == strlen(default_name);
+        for (size_t i = 0; named_default && default_name[i]; ++i)
+            named_default = key_byte(Q3P_SHADER, (unsigned char)path[i]) == (unsigned char)default_name[i];
+        if (!named_default && a->options.print) a->options.print(a->options.context, "WARNING: MAX_SHADERS hit\n");
         free(normalized); --a->busy; *out = 0; return true;
     }
     int32_t handle = 0; bool append = false;
@@ -238,8 +336,9 @@ bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool 
 bool qa_q3_register_picture_image(qa_q3_presentation_assets *a, const qa_scene_image *image,
                                     int32_t *out, qa_error *error)
 {
-    if (!a || a->busy || !image || !image->name || !out)
+    if (!a || a->busy || a->retired || !image || !image->name || !out)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 generated picture request");
+    if (!qa_q3_assets_provider_hold(a, &a->options.provider, error)) return false;
     ++a->busy;
     const qa_material *material = NULL;
     bool ok = qa_material_register_generated_picture(a->options.provider.materials,
@@ -300,6 +399,7 @@ bool qa_q3_registered_skins(const qa_q3_presentation_assets *assets, qa_arena *s
     size_t n = 0;
     for (size_t i = 0; i < assets->skin_count; ++i) {
         const q3p_skin *skin = assets->skins[i]; if (!skin) continue;
+        if (skin->source_registration && !skin->map.count) continue;
         const char *name = registered_name(assets, Q3P_SKIN, (int32_t)i + 1);
         if (!name) return q3p_fail(error, QA_ERROR_FORMAT, "source skin handle has no retained registration name");
         rows[n++] = (qa_q3_registered_skin){(int32_t)i + 1, name, &skin->map};

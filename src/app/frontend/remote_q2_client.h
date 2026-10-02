@@ -34,6 +34,7 @@ typedef struct frontend_remote_q2_content {
 } frontend_remote_q2_content;
 typedef struct frontend_remote_q2_options {
     frontend_remote_q2_domain domain;
+    bool material_scripts;
     void *context;
     bool (*current)(void *, const frontend_remote_q2_domain *, qa_error *);
     bool (*download_allowed)(void *, const char *path, bool *allowed, qa_error *);

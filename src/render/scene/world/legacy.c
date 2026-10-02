@@ -377,7 +377,8 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
 static bool fragment_lights(qa_scene_world *world, const qa_scene_world_input *input,
                              qa_scene_frame *frame, qa_scene_draw *draw, qa_error *error)
 {
-    if (input->legacy_flashblend || !input->shadow_lights) return true;
+    if (input->legacy_flashblend || !input->shadow_lights ||
+        (input->legacy_policy.present && (input->legacy_policy.fullbright || !input->legacy_policy.dynamic))) return true;
     qa_scene_shadow_light *lights = NULL;
     if (input->shadow_light_count) {
         if (input->shadow_light_count > SIZE_MAX / sizeof(*lights)) {
@@ -391,7 +392,8 @@ static bool fragment_lights(qa_scene_world *world, const qa_scene_world_input *i
         const qa_scene_shadow_light *source = &input->shadow_lights[i];
         if (world->bsp.family == QA_BSP_Q1 && !source->light.spot && !source->light.casts_shadow) continue;
         lights[count] = *source;
-        lights[count++].light.scale *= world->options.q2_light_modulate;
+        lights[count++].light.scale *= input->legacy_policy.present ?
+            input->legacy_policy.modulate : world->options.q2_light_modulate;
     }
     draw->lighting = QA_LIGHT_Q2_WORLD;
     draw->lights = lights;
@@ -420,12 +422,13 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     if (!qawl_light_update(world, surface, &baked, input, error)) return false;
     if (surface->material) {
         qa_material_context selected = *context;
-        if (input->legacy_flashblend) {
+        if (input->legacy_flashblend || (input->legacy_policy.present &&
+            (input->legacy_policy.fullbright || !input->legacy_policy.dynamic))) {
             selected.light_count = 0;
             selected.fragment_lighting = false;
             selected.fragment_light_count = 0;
         }
-        selected.lightmap = surface->lightmap;
+        selected.lightmap = input->legacy_policy.present && input->legacy_policy.fullbright ? NULL : surface->lightmap;
         const qa_material *effective = surface->material->remapped ?
             surface->material->remapped : surface->material;
         if ((effective->surface_flags & 128u) != 0) return true;
@@ -438,7 +441,12 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     const qa_scene_image *base_image = qa_scene_image_at_time(texture->image, input->seconds);
     if (!recipient_image(context, &base_image, world->options.images.mipmap, error)) return false;
     float alpha = legacy->alpha * context->entity_color.w;
-    bool blended = alpha < 1, paired = surface->lightmap && (blended || (input->fog.kind == QA_FOG_EXP2 && input->fog.density > 0));
+    bool lightmapped = surface->lightmap && !(input->legacy_policy.present && input->legacy_policy.fullbright);
+    bool diagnostic = lightmapped && input->legacy_policy.present && input->legacy_policy.lightmap;
+    bool blended = alpha < 1, paired = lightmapped && !diagnostic &&
+        !(input->legacy_policy.present && (input->legacy_policy.saturate ||
+            (!q1 && input->legacy_policy.monolightmap != '0'))) &&
+        (blended || (input->fog.kind == QA_FOG_EXP2 && input->fog.density > 0));
     float intensity = !q1 && (legacy->warp || blended) ? 0.5f : 1;
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
@@ -463,7 +471,17 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     draw.state.alpha_test = legacy->fence ? QA_ALPHA_GT0 : QA_ALPHA_NONE;
     draw.state.blend_source = blended ? QA_BLEND_SRC_ALPHA : QA_BLEND_ONE;
     draw.state.blend_destination = blended ? QA_BLEND_ONE_MINUS_SRC_ALPHA : QA_BLEND_ZERO;
-    if (!surface->lightmap || paired) if (!fragment_lights(world, input, frame, &draw, error)) return false;
+    if (diagnostic) {
+        draw.textures[0] = surface->lightmap;
+        draw.state.blend_source = QA_BLEND_ONE;
+        draw.state.blend_destination = QA_BLEND_ZERO;
+        for (size_t i = 0; i < mesh.vertex_count; ++i) {
+            vertices[i].texcoord = vertices[i].lightmap;
+            vertices[i].color = (qa_scene_vec4){1, 1, 1, 1};
+        }
+    }
+    if ((!lightmapped || paired) && !diagnostic)
+        if (!fragment_lights(world, input, frame, &draw, error)) return false;
     if (paired) {
         draw.textures[1] = legacy->direct_lightmap;
         draw.texture_count = 2;
@@ -478,7 +496,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         }
     }
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
-    if (surface->lightmap && !paired) {
+    if (lightmapped && !paired && !diagnostic) {
         qa_scene_mesh light_mesh;
         qa_scene_vertex *light_vertices;
         if (!transient_mesh(surface, frame, &light_mesh, &light_vertices, error)) return false;
@@ -493,6 +511,17 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         light_draw.state.blend_source = inverted ? QA_BLEND_ZERO : QA_BLEND_DST_COLOR;
         light_draw.state.blend_destination = !inverted ? QA_BLEND_ZERO :
             world->options.q1_lightmap_encoding == QA_Q1_LIGHTMAP_INVERTED_ALPHA ? QA_BLEND_ONE_MINUS_SRC_ALPHA : QA_BLEND_ONE_MINUS_SRC_COLOR;
+        if (!q1 && input->legacy_policy.present) {
+            uint8_t mono = input->legacy_policy.monolightmap;
+            if (mono >= 'a' && mono <= 'z') mono -= 'a' - 'A';
+            if (input->legacy_policy.saturate) {
+                light_draw.state.blend_source = QA_BLEND_ONE;
+                light_draw.state.blend_destination = QA_BLEND_ONE;
+            } else if (mono != '0' && mono != 'L' && mono != 'I') {
+                light_draw.state.blend_source = QA_BLEND_SRC_ALPHA;
+                light_draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
+            }
+        }
         light_draw.state.depth_test = QA_DEPTH_EQUAL;
         light_draw.state.depth_write = false;
         light_draw.state.alpha_test = QA_ALPHA_NONE;
@@ -500,7 +529,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         light_draw.light_pass = QA_LIGHT_PASS_LIGHTMAP;
         if (!fragment_lights(world, input, frame, &light_draw, error) || !qa_scene_frame_draw(frame, &light_draw, error)) return false;
     }
-    if (texture->fullbright) {
+    if (texture->fullbright && !diagnostic) {
         qa_scene_mesh bright_mesh;
         qa_scene_vertex *bright_vertices;
         if (!transient_mesh(surface, frame, &bright_mesh, &bright_vertices, error)) return false;

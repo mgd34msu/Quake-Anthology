@@ -8,6 +8,9 @@
 #include "remote_q1_restore.h"
 #include "remote_q2_restore.h"
 #include "renderer_materials.h"
+#include "renderer_worlds.h"
+#include "unified_media_inventory.h"
+#include "source_restore.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -16,7 +19,8 @@
 #include "qa/scene_resource_save.h"
 
 typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3,
-    MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2, MATERIAL_RENDERER } material_owner_kind;
+    MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2, MATERIAL_RENDERER,MATERIAL_RENDERER_WORLD,
+    MATERIAL_UNIFIED } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -151,6 +155,18 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     frontend_renderer_materials_view retained; bool has_retained=false;
     if(!frontend_renderer_materials_read(f,&retained,&has_retained,error)) return false;
     if(has_retained) { if(capacity==SIZE_MAX) return false; ++capacity; }
+    frontend_renderer_worlds_view retained_world; bool has_world=false;
+    if(!frontend_renderer_worlds_read(f,&retained_world,&has_world,error)) return false;
+    if(has_world && retained_world.private_heaps) { if(capacity==SIZE_MAX) return false; ++capacity; }
+    size_t unified_count=0;
+    if(!frontend_unified_media_inventory_count(f,&unified_count,error)) return false;
+    for(size_t i=0;i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(f,i,&media,error)) return false;
+        size_t banks=media?frontend_unified_media_bank_count(media):0;
+        if(banks>SIZE_MAX-capacity) return false;
+        capacity+=banks;
+    }
     if(capacity>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote material inventory exceeds address space");
     material_owner *owners=calloc(capacity,sizeof(*owners));
@@ -203,6 +219,20 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     }
     if(ok && has_retained) ok=append(owners,count,graph,retained.library,retained.images,retained.mounts,
         MATERIAL_RENDERER,0,0,0,NULL,QA_SCENE_Q3,error);
+    if(ok && has_world && retained_world.private_heaps) ok=append(owners,count,graph,
+        retained_world.materials,retained_world.images,retained_world.files,MATERIAL_RENDERER_WORLD,0,0,0,NULL,QA_SCENE_Q3,error);
+    for(size_t i=0;ok && i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(f,i,&media,error);
+        for(size_t j=0;ok && media && j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank; uint64_t key;
+            ok=frontend_unified_media_bank_read(media,j,&bank) && bank.product &&
+                frontend_unified_media_bank_key(i,j,&key) && key<=SIZE_MAX;
+            if(ok) ok=append(owners,count,graph,bank.materials,bank.images,bank.files,MATERIAL_UNIFIED,
+                (size_t)key,0,0,NULL,bank.product->family==QA_GAME_Q1?QA_SCENE_Q1:
+                    bank.product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3,error);
+        }
+    }
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);
         else ok=frontend_capture_library_at(f->capture,i)==owners[i].library &&
@@ -268,8 +298,8 @@ static bool metadata(qa_source_save_io *io,qa_frontend *f,const material_owner *
 }
 static bool header(qa_source_save_io *io,size_t count,bool *order)
 {
-    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=4; size_t saved=count;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==4 &&
+    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=5; size_t saved=count;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==5 &&
         qa_source_save_count(io,&saved,SIZE_MAX) && saved==count && qa_source_save_bool(io,order) && (!count || *order);
 }
 static bool write_blob(qa_source_save_io *io,const qa_buffer *buffer)

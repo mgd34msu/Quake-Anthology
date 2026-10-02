@@ -3,6 +3,7 @@
 #include "guest_native_q2_private.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
+#include "qa/application_network_q2.h"
 
 static bool roster_row_equal(const application_player_record *a,
     const application_player_record *b)
@@ -120,6 +121,8 @@ static bool capture(application_provider *source, qa_vec3 origin,
     bool ok=true;
     for (size_t i=0;i<count && ok;++i) {
         application_player_record row=rows[i];
+        qa_application_network_q2_recipient_view transport={0};
+        bool has_transport=false;
         if (row.retiring || (row.source_begin_pending && !before_begin) || !row.actor.registry ||
             !qa_actors_get(qa_session_actors(app->session),row.actor)) continue;
         if (original) {
@@ -138,6 +141,8 @@ static bool capture(application_provider *source, qa_vec3 origin,
                 binding.kind==QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor,row.actor)) {
                 ok=application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 recipient lost its real source slot"); break;
             }
+            if (!qa_application_network_q2_recipient(app,source->owner,row.actor,
+                &transport,&has_transport,error)) { ok=false; break; }
         }
         if (physical->kind==APPLICATION_PROVIDER_Q2) {
             qa_builtin_player_info player;
@@ -191,8 +196,11 @@ static bool capture(application_provider *source, qa_vec3 origin,
                     ok=application_fail(error,QA_ERROR_FORMAT,"Q2 audience repeats a full physical client");
                     break;
                 }
-            if (ok) recipients[receipt.count++]=(qa_application_q2_recipient){row.actor,body.origin,
-                (int32_t)to.area,(int32_t)to.cluster};
+            if (ok) recipients[receipt.count++]=(qa_application_q2_recipient){
+                .actor=row.actor,.origin=body.origin,.area=(int32_t)to.area,.cluster=(int32_t)to.cluster,
+                .connection=transport.client,.connection_seat=transport.seat,
+                .connection_epoch=transport.connection_epoch,.remote_index=transport.remote_index,
+                .has_connection=has_transport};
         }
     }
     if (ok && (!source_current(app,source,world,roster,physical,publication,revision,geometry,routing,preparing) ||

@@ -13,14 +13,18 @@ static bool current(const frontend_remote_q2_effects_policy *t, bool parent)
     if (!t || !t->owner || t->owner->pending!=t || t->owner->busy ||
         t->owner->source.images!=t->source.images || t->owner->source.identity!=t->source.identity ||
         t->owner->source.content_generation!=t->source.content_generation ||
+        t->owner->source.profile!=t->source.profile ||
         t->owner->source.map!=t->source.map || t->owner->source.files!=t->source.files ||
         t->owner->source.materials!=t->source.materials || t->owner->source.world!=t->source.world || t->owner->source.context!=t->source.context ||
         t->owner->source.session!=t->source.session ||
         t->owner->source.protocol.kind!=t->source.protocol.kind || t->owner->source.protocol.revision!=t->source.protocol.revision ||
         t->owner->source.protocol.flags!=t->source.protocol.flags || t->owner->source.current!=t->source.current ||
         t->owner->source.actor!=t->source.actor || t->owner->source.actor_pose!=t->source.actor_pose ||
+        t->owner->source.viewer!=t->source.viewer ||
         t->owner->source.model!=t->source.model || t->owner->source.sound!=t->source.sound ||
-        t->owner->source.hit_marker!=t->source.hit_marker || t->owner->source.footstep!=t->source.footstep ||
+        t->owner->source.hit_marker!=t->source.hit_marker || t->owner->source.controls!=t->source.controls ||
+        t->owner->source.footstep!=t->source.footstep ||
+        t->owner->source.trace!=t->source.trace ||
         t->owner->source.white!=(t->published?t->prepared_white:t->white) ||
         t->owner->particle_image!=(t->published?t->prepared_particle:t->particle)) return false;
     qa_error e={0}; return !parent || q2fx_source_current(t->owner,&e);

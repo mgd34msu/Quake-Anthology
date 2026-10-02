@@ -20,6 +20,8 @@ Successful path rows own their retained path, asset reference, immutable initial
 
 The media clock samples the actual frontend's `wall_time_ns / 1e6`. Owner creation and frame admission bind `&frontend->frame` without ticking, including real renderer draws during UI/CG initialization. The reached renderer callback binds that same actual frame and sequence, ticks that instance and emits its immutable image barrier into the submitted frame. Repeated reached callbacks remain repeated ticks.
 
+The actual Source renderer retains its selected material across EndSurface and can keep that library after the original provider retires. The existing renderer resource capsule now adopts the same movie owner and original media cache before provider teardown. Atomic transfer checks the exact old raw tuple and the prepared capsule's real current tuple, preserves all resource pointers and the frontend roster, changes only the parent callback/context, and clears the retiring movie slot. The caller then transfers the original cache pointer. It does not reopen media, recreate playback, or invoke the retired Source callback. QFRM3 and QFVM3 retain that capsule's actual media/cache/movie continuation. Queued original material/world custody is being joined through the real renderer holder inventory.
+
 ## Prepared replacement
 
 The child prepares after the actual destination image bank and material library exist, before replacement skin registrations. Existing paths retain their actual playback and initial handles. New paths load from the real provider into an offside media cache and registry, with a private publication frame; preparation does not append to the submitted frame or change installed cache rows.

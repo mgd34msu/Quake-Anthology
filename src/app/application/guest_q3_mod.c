@@ -243,7 +243,7 @@ static bool invoke(application_q3_mod *o, const mod_call *call,
     }
     ++o->calls;
     bool ok=o->services.source_prepare(o->services.context,e) && q3mod_current(o,e);
-    if (ok) ok=r.length?qa_qvm_source_scratch_run(o->vm,o->profile->image,r.length,run,&r,e):run(&r,o->vm,0,e);
+    if (ok) ok=r.length?qa_qvm_source_scratch_run_reserved(o->vm,o->profile->image,r.length,65536,run,&r,e):run(&r,o->vm,0,e);
     --o->calls;
     if (!ok) return false;
     if (call->returns==MOD_VOID) *result=0;

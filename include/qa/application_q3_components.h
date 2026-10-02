@@ -22,5 +22,19 @@ bool qa_application_q3_component_draw_prepare(qa_application *,size_t,uint32_t p
     qa_actor_id viewer,const qa_vec3 *origin,const qa_vec3 axis[3],int32_t time_ms,
     int32_t elapsed_ms,uint64_t sequence,qa_application_q3_component_draw *,qa_error *);
 bool qa_application_q3_component_draw_current(const qa_application *,const qa_application_q3_component_draw *);
+typedef struct qa_application_q3_component_scene_association {
+    qa_actor_owner owner,service_owner;
+    uint64_t generation,frontend_identity;
+    uint32_t physical_seat;
+    qa_actor_id viewer;
+    const qa_launch_instance *descriptor;
+    void *frontend_owner;
+    application_q3_scene *scene;
+    qa_q3_presentation_assets *assets;
+} qa_application_q3_component_scene_association;
+/* Structural retained roster proof: no source acquire, parser, clock or
+ * executable owner callbacks are evaluated. */
+bool qa_application_q3_component_scene_association_read(const qa_application *,uint64_t,
+    qa_application_q3_component_scene_association *);
 
 #endif

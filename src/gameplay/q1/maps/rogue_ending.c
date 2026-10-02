@@ -203,7 +203,7 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     float yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
     actor->physics.ideal_yaw = yaw < 0 ? yaw + 360 : yaw;
     if (!next.registry)
-        actor->map->pause_time = g->time + 999999;
+        actor->map->pause_time = (float)(g->time + 999999);
     *handled = true;
     return next.registry || kind != Q1_MAP_BUZZSAW ||
            q1_map_schedule(g, actor, .1, Q1_MAP_SAW_STAND, error);
@@ -302,7 +302,7 @@ static bool fire(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     unsigned stage = actor->map->pending.follower.fire_stage;
     if (stage < 1 || stage > 21)
         return q1_map_fail(error, "invalid Rogue ending fire stage");
-    actor->frame = stage <= 6 ? 106 + stage : 12 + (stage - 7) % 5;
+    actor->frame = (int32_t)(stage <= 6 ? 106 + stage : 12 + (stage - 7) % 5);
     if (stage == 1) {
         if (!fire_rocket(g, id, error))
             return false;
@@ -346,7 +346,7 @@ static bool fire(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!actor)
         return true;
     if (stage != 21)
-        actor->map->pending.follower.fire_stage = stage + 1;
+        actor->map->pending.follower.fire_stage = (uint8_t)(stage + 1);
     return q1_map_schedule(g, actor, stage == 1 ? .1 : .15,
                            stage == 21 ? Q1_MAP_ENDING_CONTROL : Q1_MAP_ENDING_FIRE, error);
 }

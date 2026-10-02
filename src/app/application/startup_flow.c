@@ -783,7 +783,7 @@ bool qa_application_startup_bootstrap(qa_application *app, qa_error *error)
 {
     const qa_application_startup_hooks *hooks = app ? app->startup_hooks : NULL;
     if (!app || !hooks || !hooks->prepare_root || !hooks->finish_candidate ||
-        app->startup_flow || app->operation != APPLICATION_IDLE || app->frame_preparing ||
+        app->startup_flow || app->client_preparation || app->operation != APPLICATION_IDLE || app->frame_preparing ||
         app->q3_round_active || app->destroy_requested || app->engine_shutdown ||
         app->publication_started || app->failed_publications || qa_application_should_stop(app) ||
         app->live_providers || app->provider_states || app->pending_close || app->q1_original_save ||
@@ -829,7 +829,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         !hooks->prepare_candidate || !hooks->finish_candidate ||
         !hooks->preinit_source || !hooks->retire_source ||
         !hooks->read_source_script || !hooks->release_source_script ||
-        app->startup_flow)
+        app->startup_flow || app->client_preparation)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup preparation requires complete actual source owners");
     if ((hooks->prepare_publication || hooks->ready_publication || hooks->owned_publication_ready ||
          hooks->consume_publication || hooks->finish_publication || hooks->abort_publication) &&

@@ -60,6 +60,8 @@ static bool is_bsp(void *context, const qa_trace_result *trace, bool *out, qa_er
     return true;
 }
 void nav_prediction_close(nav_prediction *p) {
+    if (p->has_traversal)
+        p->navigation->services.traversal_end(p->navigation->services.context, p->lease);
     if (p->has_lease)
         p->navigation->services.prediction_end(p->navigation->services.context, p->lease);
     qa_movement_result_free(&p->result);
@@ -180,6 +182,28 @@ static bool command(nav_prediction *p, qa_vec3 target, qa_nav_travel mode, qa_er
 bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to, qa_nav_travel mode,
                  qa_nav_route *route, bool *admitted, qa_error *e) {
     *admitted = false;
+    qa_navigation_services *s = &p->navigation->services;
+    if (s->traversal_admit != NULL) {
+        if (!p->has_traversal) {
+            if (!s->traversal_begin(s->context, actor, &p->lease, e)) return false;
+            p->has_traversal = true;
+        }
+        const qa_vec3 *points = NULL;
+        size_t count = 0;
+        float seconds = 0;
+        if (!s->traversal_admit(s->context, p->lease, from, to, mode,
+                &points, &count, &seconds, admitted, e)) return false;
+        if (!*admitted) return true;
+        if ((count && !points) || !isfinite(seconds) || seconds < 0) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid source traversal trajectory");
+            return false;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            if (!qa_vec_finite(points[i]) || !nav_route_point(route, points[i], e)) return false;
+        }
+        route->travel_seconds += seconds;
+        return true;
+    }
     if (!p->initialized && !begin(p, actor, from, e))
         return false;
     float seconds = 0;

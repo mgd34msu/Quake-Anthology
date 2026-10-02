@@ -35,6 +35,14 @@ bool qa_network_q2_server_userinfo(qa_network_runtime *runtime, qa_net_client_id
     q2_session *session = q2_get(runtime, id, true, error);
     return session && q2_server_userinfo(session, text, error);
 }
+bool qa_network_q2_server_userinfo_read(qa_network_runtime *runtime, qa_net_client_id id,
+    const char **out, qa_error *error)
+{
+    q2_session *session = q2_get(runtime, id, true, error);
+    if (!session || !out)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 userinfo receipt has no actual server connection");
+    *out = session->state.server.userinfo; return true;
+}
 /* q2repro Info_SetValueForKey filters high bits after validating the raw
  * lengths, removes every matching key, and keeps the native 512-byte extent. */
 static bool info_part(const char *text, size_t *length)
@@ -131,6 +139,35 @@ bool qa_network_q2_server_settings(qa_network_runtime *runtime, qa_net_client_id
     q2_session *session = q2_get(runtime, id, true, error);
     if (!session || !out) return q2_fail(error, QA_ERROR_ARGUMENT, "Missing actual Q2 connection settings receipt");
     *out = &session->state.server.settings; return true;
+}
+bool qa_network_q2_server_prepare_restart(qa_network_runtime *runtime, qa_net_client_id id,
+    uint32_t max_clients, uint64_t interval, qa_error *error)
+{
+    q2_session *session = q2_get(runtime, id, true, error);
+    if (!session || !qa_network_callbacks_idle(runtime) || !max_clients || max_clients > 256 ||
+        !interval || interval > UINT64_C(1000000000))
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 restart lacks its returned physical Source policy");
+    q2_server *server = &session->state.server;
+    uint32_t source_fps = (uint32_t)(UINT64_C(1000000000) / interval), divisor = 1;
+    if (source_fps > 60)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source cadence exceeds its genuine motion history extent");
+    if (server->policy.max_clients == max_clients && server->policy.source_interval_ns == interval) return true;
+    if (session->codec.protocol.kind == QA_NET_Q2PRO_36) {
+        uint32_t requested = server->settings.frame_divisor == 1 ? source_fps : server->settings.fps;
+        uint32_t requested_divisor = requested / 10, source_divisor = source_fps / 10;
+        if (requested_divisor < 1) requested_divisor = 1;
+        if (requested_divisor > 6) requested_divisor = 6;
+        if (!source_divisor) source_divisor = 1;
+        divisor = source_divisor / gcd(source_divisor, requested_divisor);
+        qa_q2_server_event response = {.kind = QA_Q2_SVC_SETTING,
+            .data.setting = {.index = 1, .value = (int32_t)(source_fps / divisor)}};
+        if (!q2_queue_event(session, &response, 0, true, error)) return false;
+    }
+    server->policy.max_clients = max_clients; server->policy.source_interval_ns = interval;
+    server->settings.source_interval_ns = interval; server->settings.frame_divisor = divisor;
+    server->settings.fps = source_fps / divisor;
+    server->settings.values[Q2_FPS] = (int32_t)server->settings.fps;
+    return true;
 }
 static void player_projection(const qa_q2_server_settings *settings, const qa_q2_player *old,
     qa_q2_player *player, bool enhanced, bool rerelease)

@@ -116,6 +116,19 @@ bool frontend_config_store_input_configuration(const frontend_config_store *,qa_
  * do not imply ownership borrowed from a different frontend. */
 bool frontend_config_store_view_transition(const frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,frontend_view_transition *,qa_error *);
+bool frontend_config_store_client_input_configuration(const frontend_config_store *,
+    const qa_application_client_preparation *,uint32_t,qa_input_seat **,qa_error *);
+bool frontend_config_store_client_view_transition(const frontend_config_store *,
+    const qa_application_client_preparation *,frontend_view_transition *,qa_error *);
+bool frontend_config_store_client_settings_begin(frontend_config_store *,qa_application_client_preparation *,qa_error *);
+bool frontend_config_store_client_settings_seed(frontend_config_store *,qa_application_client_preparation *,qa_cvar_archive *,qa_error *);
+bool frontend_config_store_client_settings_advance(frontend_config_store *,qa_application_client_preparation *,bool,bool *,qa_error *);
+bool frontend_config_store_client_settings_prepare(frontend_config_store *,qa_application_client_preparation *,qa_error *);
+bool frontend_config_store_client_settings_ready_is(const frontend_config_store *,const qa_application_client_preparation *);
+void frontend_config_store_client_settings_consume(frontend_config_store *,qa_application_client_preparation *);
+bool frontend_config_store_client_settings_finish(frontend_config_store *,qa_application_client_preparation *,bool *,qa_error *);
+bool frontend_config_store_client_settings_abort(frontend_config_store *,qa_application_client_preparation *,qa_error *);
+qa_application_client_preparation *frontend_config_store_client_preparation(const frontend_config_store *);
 /* The actual source factory calls before destination options/capacity/Init.
  * A different physical program/profile returns carried=false. The supplied
  * tuple identifies that fresh factory's real console, registry, GAME scope

@@ -35,6 +35,9 @@ typedef struct application_unified_event_record {
      * decode. The original pair stays in the continuation until projection. */
     bool payload_checkpoint;
     uint64_t owner_generation;
+    /* Emission-time GAME rules receipt: 0 absent, 1 classic, 2 rerelease.
+     * Historical rows never rediscover it from a later selected product. */
+    uint8_t q2_source_profile;
 } application_unified_event_record;
 
 typedef struct application_unified_event_owner {
@@ -45,7 +48,7 @@ typedef struct application_unified_event_owner {
 } application_unified_event_owner;
 struct application_provider;
 bool application_unified_event_owner_bind(qa_application *, struct application_provider *,
-    bool primary, bool restoring, qa_error *);
+    bool restoring, qa_error *);
 bool application_unified_event_component_owner_bind(qa_application *, qa_actor_owner,
     bool restoring, qa_error *);
 
@@ -55,7 +58,7 @@ typedef struct application_unified_event_source {
     const qa_product *product;
     qa_vfs *content;
     qa_clock_kind clock;
-    uint64_t owner_generation;
+    bool component;
 } application_unified_event_source;
 bool application_unified_event_source_read(qa_application *, qa_actor_owner,
     application_unified_event_source *, qa_error *);
@@ -153,7 +156,8 @@ bool application_unified_events_read(qa_application *, const application_unified
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
     uint64_t after, application_unified_events *, qa_error *);
 /* Actual admission reads retained presentation only. It owns no simulation
- * replay; through is committed by the caller after retaining every control. */
+ * replay or world-text snapshot; through is committed by the caller after
+ * retaining every control. */
 bool application_unified_events_initial_read(qa_application *, const application_unified_source *,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
     application_unified_events *, qa_error *);

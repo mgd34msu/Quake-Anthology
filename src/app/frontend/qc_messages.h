@@ -2,6 +2,7 @@
 #define QA_FRONTEND_QC_MESSAGES_H
 #include "qa/frontend.h"
 #include "qa/application_qc_presentation.h"
+#include "../application/unified_player.h"
 typedef struct frontend_qc_messages frontend_qc_messages;
 typedef struct frontend_qc_camera_receipt {
     qa_application_qc_message_source source;
@@ -11,6 +12,21 @@ typedef struct frontend_qc_camera_receipt {
     uint64_t view_sequence,angle_sequence;
     bool has_view,has_angles;
 } frontend_qc_camera_receipt;
+typedef struct frontend_qc_unified_player_receipt {
+    const frontend_qc_messages *owner;
+    qa_application *application;
+    application_unified_source source;
+    qa_net_client_id client;
+    qa_unified_session_player player;
+    frontend_qc_camera_receipt camera;
+    application_unified_player_camera player_camera;
+    application_unified_player_external external;
+} frontend_qc_unified_player_receipt;
+/* The output owner retains this receipt through synchronous player/output
+ * capture. A non-QC physical Source has present=false, without an override. */
+bool frontend_qc_messages_unified_player_read(const frontend_qc_messages *,qa_application *,
+    const application_unified_source *,qa_net_client_id,const qa_unified_session_player *,
+    frontend_qc_unified_player_receipt *,bool *present,qa_error *);
 bool frontend_qc_messages_create(qa_frontend *,frontend_qc_messages **,qa_error *);
 bool frontend_qc_messages_idle(const frontend_qc_messages *);
 bool frontend_qc_messages_destroy(frontend_qc_messages **,qa_error *);

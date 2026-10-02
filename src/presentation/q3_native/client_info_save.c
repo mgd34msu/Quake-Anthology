@@ -66,6 +66,12 @@ static bool parser_fields(qa_source_save_io *io, qa_common_parser *parser)
 }
 static bool fixed_text(qa_source_save_io *io, char *value, size_t size)
 { return qa_source_save_bytes(io, value, size) && memchr(value, 0, size); }
+static bool remote_actor(qa_source_save_io *io,const qa_application_q3_client_context *client,qa_actor_id *actor)
+{
+    qa_session *previous=io->session; io->session=client->session;
+    bool okay=qa_source_save_actor(io,actor);
+    io->session=previous; return okay;
+}
 static bool color_fields(qa_source_save_io *io, qa_vec3 *value)
 {
     return qa_source_save_vec3(io, value) && (value->x == 0 || value->x == 1) &&
@@ -122,11 +128,12 @@ static bool holder_fields(qa_source_save_io *io, q3n_clients *owner,
 static bool fields(qa_source_save_io *io, q3n_clients *owner, const q3n_client_refs *refs)
 {
     uint8_t magic[4] = {'Q', '3', 'C', 'I'}; uint32_t schema = 1, product = owner->options.product;
-    const char *expected = owner->options.remote_source ? "Q3CR" : "Q3CI";
+    const char *expected = owner->options.compiled_source ? "Q3CC" : owner->options.remote_source ? "Q3CR" : "Q3CI";
     memcpy(magic, expected, 4);
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
         !qa_source_save_u32(io, &schema) || schema != 1 || !qa_source_save_u32(io, &product) ||
         product != (uint32_t)owner->options.product) return false;
+    if (owner->options.compiled_source && !q3n_compiled_source_fields(io,owner->options.compiled_source)) return false;
     if (owner->options.remote_source) {
         q3n_remote_source_view view;
         if (!q3n_remote_source_read(owner->options.remote_source, &view, io->error) ||
@@ -152,7 +159,7 @@ static bool fields(qa_source_save_io *io, q3n_clients *owner, const q3n_client_r
             !qa_source_save_u32(io, &physical) || physical != b->physical_client ||
             !qa_source_save_i32(io, &message) || message != b->initial_message ||
             !qa_source_save_i32(io, &command) || command != b->initial_command ||
-            !qa_source_save_actor(io, &actor) || !qa_actor_id_equal(actor, b->client.source_actor) ||
+            !remote_actor(io,&b->client,&actor) || !qa_actor_id_equal(actor, b->client.source_actor) ||
             !q3n_remote_source_current(&view)) return false;
     }
     if (!qa_source_save_u64(io, &owner->next_media_revision) ||

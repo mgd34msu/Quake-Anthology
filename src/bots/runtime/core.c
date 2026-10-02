@@ -140,6 +140,12 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
         r->busy=false;
         if(!ok) return false;
     }
+    if (source) {
+        r->busy = true;
+        bool okay = bot_runtime_characters_shutdown(r, error);
+        r->busy = false;
+        if (!okay) return false;
+    }
     bot_runtime_handles_close(r);
     qa_bot_chat_system_destroy(r->chat_system); r->chat_system = NULL;
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;

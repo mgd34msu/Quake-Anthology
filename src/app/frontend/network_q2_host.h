@@ -25,6 +25,8 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *,uint64_t,qa_error 
 bool frontend_network_q2_host_publish(frontend_network_q2_host *,uint64_t,qa_error *);
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *,qa_net_client_id);
 bool frontend_network_q2_host_idle(const frontend_network_q2_host *);
+bool frontend_network_q2_host_content_visit(const frontend_network_q2_host *,
+    const qa_application_content_visitor *,qa_error *);
 bool frontend_network_q2_host_destroy(frontend_network_q2_host **,qa_error *);
 bool frontend_network_q2_host_local_hooks(frontend_network_q2_host *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 #endif

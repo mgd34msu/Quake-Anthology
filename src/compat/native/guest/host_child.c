@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 extern char **environ;
 #endif
@@ -38,7 +39,7 @@ static bool fail(qa_error *error,qa_status code,uint64_t where,const char *messa
 
 #if defined(__linux__) && defined(__x86_64__)
 enum { HOST_READY=1,HOST_BACKING,HOST_MAP,HOST_CHANGE,HOST_BIND,HOST_UNBIND,
-    HOST_RUN,HOST_RESUME,HOST_ABORT,HOST_EXIT,HOST_DROP_BACKING,HOST_STOP,HOST_DONE,HOST_FINISH };
+    HOST_RUN,HOST_RESUME,HOST_ABORT,HOST_EXIT,HOST_DROP_BACKING,HOST_STOP,HOST_DONE,HOST_FINISH,HOST_CPU_CLOCK };
 #define HOST_REPLY UINT32_C(0x80000000)
 typedef struct host_packet { uint32_t operation,status; uint64_t sequence; qa_buffer body; int descriptor; } host_packet;
 typedef struct host_server_backing { guest_host_backing_view view; int descriptor; } host_server_backing;
@@ -303,6 +304,27 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
 {
     *completed=false;qa_error failure={0};bool okay=true;const uint8_t *data=packet->body.data;size_t bytes=packet->body.size;
     switch(packet->operation) {
+    case HOST_CPU_CLOCK: {
+        if(bytes!=4 || packet->descriptor>=0 ||
+            (qa_load_u32le(data)!=2 && qa_load_u32le(data)!=3)) {
+            okay=fail(&failure,QA_ERROR_FORMAT,0,"child CPU clock request is invalid");break;
+        }
+        struct timespec value;
+        clockid_t clock=qa_load_u32le(data)==2?CLOCK_PROCESS_CPUTIME_ID:CLOCK_THREAD_CPUTIME_ID;
+        if(clock_gettime(clock,&value)!=0) {
+            int code=errno;
+            qa_error_set(&failure,QA_ERROR_IO,(size_t)code,"reading actual child CPU clock failed: %s",strerror(code));
+            okay=false;break;
+        }
+        long thread=syscall(SYS_gettid);
+        if(thread<=0 || value.tv_sec<0 || value.tv_nsec<0 || value.tv_nsec>=1000000000L) {
+            okay=fail(&failure,QA_ERROR_IO,0,"actual child CPU clock identity or value is invalid");break;
+        }
+        uint8_t reply[28];
+        qa_store_u64le(reply,(uint64_t)getpid());qa_store_u64le(reply+8,(uint64_t)thread);
+        qa_store_u64le(reply+16,(uint64_t)value.tv_sec);qa_store_u32le(reply+24,(uint32_t)value.tv_nsec);
+        return packet_send(server->descriptor,HOST_CPU_CLOCK|HOST_REPLY,0,packet->sequence,(qa_bytes){reply,sizeof(reply)},-1,error);
+    }
     case HOST_BACKING: {
         if(bytes!=73 || packet->descriptor<0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child backing descriptor is absent");break;}
         guest_host_backing_view view={.id=qa_load_u64le(data),.bytes={NULL,(size_t)qa_load_u64le(data+8)},.file=data[16]!=0};
@@ -512,6 +534,33 @@ bool guest_host_child_process_read(const guest_host_child *child,uint64_t *proce
         return fail(error,QA_ERROR_ARGUMENT,0,"native process identity requires its actual stopped child");
     *process=(uint64_t)child->process;*thread=child->thread;return true;
 }
+bool guest_host_child_cpu_clock_read(guest_host_child *child,int32_t clock,int64_t *seconds,int32_t *nanoseconds,qa_error *error)
+{
+    if(!usable(child) || !seconds || !nanoseconds || (clock!=2 && clock!=3) ||
+        child->process<=0 || !child->thread || child->sequence==UINT64_MAX)
+        return fail(error,QA_ERROR_ARGUMENT,0,"CPU clock needs its actual stopped child and process/thread clock ID");
+    uint8_t data[4];qa_store_u32le(data,(uint32_t)clock);
+    uint64_t sequence=++child->sequence;host_packet packet;
+    if(!packet_send(child->descriptor,HOST_CPU_CLOCK,0,sequence,(qa_bytes){data,sizeof(data)},-1,error) ||
+        !packet_receive(child->descriptor,&packet,error)) {child->failed=true;return false;}
+    bool matched=packet.operation==(HOST_CPU_CLOCK|HOST_REPLY) && packet.sequence==sequence && packet.descriptor<0;
+    bool okay=matched && !packet.status && packet.body.size==28 &&
+        qa_load_u64le(packet.body.data)==(uint64_t)child->process &&
+        qa_load_u64le(packet.body.data+8)==child->thread &&
+        qa_load_u64le(packet.body.data+16)<=INT64_MAX && qa_load_u32le(packet.body.data+24)<1000000000;
+    if(okay) {
+        *seconds=(int64_t)qa_load_u64le(packet.body.data+16);
+        *nanoseconds=(int32_t)qa_load_u32le(packet.body.data+24);
+    } else {
+        bool native_failure=matched && packet.status==QA_ERROR_IO;
+        qa_error_set(error,native_failure?QA_ERROR_IO:QA_ERROR_FORMAT,(size_t)sequence,
+            "actual child CPU clock observation failed: %.*s",
+            native_failure?(packet.body.size>INT_MAX?INT_MAX:(int)packet.body.size):0,
+            native_failure && packet.body.data?(char *)packet.body.data:"");
+        if(!native_failure)child->failed=true;
+    }
+    packet_free(&packet);return okay;
+}
 bool guest_host_child_source_initialize(guest_host_child *child,qa_error *error)
 {
     if(!guest_host_child_idle(child) || child->sequence || child->source_initialized || child->state_written)
@@ -610,9 +659,11 @@ bool guest_host_child_write(guest_host_child *child,uint64_t address,qa_bytes by
 }
 
 static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
-    guest_host_import_fn invoke,guest_host_syscall_fn syscall,void *context,bool *program_stopped,qa_error *error)
+    guest_host_import_fn invoke,guest_host_syscall_fn syscall,void *context,bool *program_stopped,
+    bool *entered,qa_error *error)
 {
     if(program_stopped)*program_stopped=false;
+    if(entered)*entered=false;
     uint8_t trap;
     if(!usable(child) || !start || (!stop && !syscall) || !invoke || child->running==UINT_MAX || child->sequence==UINT64_MAX ||
         !guest_host_memory_check(child->memory,start,1,QA_NATIVE_GUEST_EXECUTE,error) ||
@@ -669,8 +720,13 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             guest_profile_cpu_current(&child->domain,&child->capability,&receipt.state,error);
         packet_free(&packet);if(!okay){guest_host_x86_64_state_free(&receipt.state);break;}
         guest_host_x86_64_state_free(&child->state);child->state=receipt.state;memset(&receipt.state,0,sizeof(receipt.state));
-        if(receipt.kind==GUEST_HOST_STOP_RETURN) {returned=receipt.address==stop && child->state.instruction==stop;continue;}
+        if(receipt.kind==GUEST_HOST_STOP_RETURN) {
+            returned=receipt.address==stop && child->state.instruction==stop;
+            if(returned && entered)*entered=true;
+            continue;
+        }
         if(receipt.kind==GUEST_HOST_STOP_FAULT) {
+            if(entered)*entered=true;
             guest_host_x86_64_state_free(&child->fault.state);child->fault=receipt;
             if(guest_host_x86_64_state_copy(&child->state,&child->fault.state,error))child->has_fault=true;
             fail(error,receipt.profile.kind==GUEST_PROFILE_GUARD_INSTRUCTION?QA_ERROR_UNSUPPORTED:QA_ERROR_ARGUMENT,
@@ -684,6 +740,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             if(child->callback_depth==UINT_MAX || child->state.instruction!=receipt.profile.instruction) {
                 okay=fail(error,QA_ERROR_FORMAT,receipt.address,"native syscall lost its stopped source CPU");break;
             }
+            if(entered)*entered=true;
             guest_host_syscall call={.instruction=child->state.instruction,.next_instruction=receipt.address,
                 .number=child->state.registers[0],.arguments={child->state.registers[7],child->state.registers[6],
                     child->state.registers[2],child->state.registers[10],child->state.registers[8],child->state.registers[9]}};
@@ -721,6 +778,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
         bool bound=false;for(size_t i=0;i<child->callback_count;++i)
             if(child->callbacks[i].id==receipt.callback_id && child->callbacks[i].address==receipt.address)bound=true;
         if(!bound || child->callback_depth==UINT_MAX) {okay=fail(error,QA_ERROR_FORMAT,receipt.callback_id,"native stopped callback lost physical registry identity");break;}
+        if(entered)*entered=true;
         ++child->callback_depth;uint64_t entry=child->state.instruction;
         okay=invoke(context,child,receipt.callback_id,&child->state,error);--child->callback_depth;
         if(okay && (child->failed || child->state.instruction==entry))okay=fail(error,QA_ERROR_ARGUMENT,entry,"native callback did not produce its real ABI continuation");
@@ -734,14 +792,23 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
 }
 bool guest_host_child_run(guest_host_child *child,uint64_t start,uint64_t stop,
     guest_host_import_fn invoke,void *context,qa_error *error)
-{return child_run(child,start,stop,invoke,NULL,context,NULL,error);}
+{
+    bool entered;
+    return guest_host_child_run_receipt(child,start,stop,invoke,context,&entered,error);
+}
+bool guest_host_child_run_receipt(guest_host_child *child,uint64_t start,uint64_t stop,
+    guest_host_import_fn invoke,void *context,bool *entered,qa_error *error)
+{
+    if(!entered)return fail(error,QA_ERROR_ARGUMENT,start,"native invocation requires its entered output receipt");
+    return child_run(child,start,stop,invoke,NULL,context,NULL,entered,error);
+}
 bool guest_host_child_run_with_syscalls(guest_host_child *child,uint64_t start,uint64_t stop,
     guest_host_import_fn invoke,guest_host_syscall_fn syscall,void *context,bool *program_stopped,qa_error *error)
 {
     if(!syscall || !program_stopped)return fail(error,QA_ERROR_ARGUMENT,start,"program invocation requires its actual syscall and stop owner");
     if(!child || child->target.os!=QA_NATIVE_OS_LINUX || child->target.abi!=QA_NATIVE_ABI_SYSTEM_V_X64)
         return fail(error,QA_ERROR_UNSUPPORTED,start,"Linux syscall invocation requires its actual System V source target");
-    return child_run(child,start,stop,invoke,syscall,context,program_stopped,error);
+    return child_run(child,start,stop,invoke,syscall,context,program_stopped,NULL,error);
 }
 bool guest_host_child_last_fault(const guest_host_child *child,guest_host_stop *out,qa_error *error)
 {
@@ -761,6 +828,8 @@ bool guest_host_child_source_domain(const guest_host_child *child,guest_profile_
 {(void)child;(void)out;return fail(error,QA_ERROR_UNSUPPORTED,0,"native source CPU domain platform is unavailable");}
 bool guest_host_child_process_read(const guest_host_child *child,uint64_t *process,uint64_t *thread,qa_error *error)
 {(void)child;(void)process;(void)thread;return fail(error,QA_ERROR_UNSUPPORTED,0,"native child process identity platform is unavailable");}
+bool guest_host_child_cpu_clock_read(guest_host_child *child,int32_t clock,int64_t *seconds,int32_t *nanoseconds,qa_error *error)
+{(void)child;(void)clock;(void)seconds;(void)nanoseconds;return fail(error,QA_ERROR_UNSUPPORTED,0,"native child CPU clock platform is unavailable");}
 bool guest_host_child_source_initialize(guest_host_child *child,qa_error *error)
 {(void)child;return fail(error,QA_ERROR_UNSUPPORTED,0,"native source CPU initialization platform is unavailable");}
 bool guest_host_child_destroy(guest_host_child **owner,qa_error *error)
@@ -779,6 +848,13 @@ HOST_UNAVAILABLE(guest_host_child_cpu_write,(guest_host_child *c,const guest_hos
 HOST_UNAVAILABLE(guest_host_child_read,(const guest_host_child *c,uint64_t a,void *d,size_t n,qa_error *error),(void)c;(void)a;(void)d;(void)n)
 HOST_UNAVAILABLE(guest_host_child_write,(guest_host_child *c,uint64_t a,qa_bytes b,qa_error *error),(void)c;(void)a;(void)b)
 HOST_UNAVAILABLE(guest_host_child_run,(guest_host_child *c,uint64_t a,uint64_t b,guest_host_import_fn f,void *x,qa_error *error),(void)c;(void)a;(void)b;(void)f;(void)x)
+bool guest_host_child_run_receipt(guest_host_child *c,uint64_t a,uint64_t b,guest_host_import_fn f,
+    void *x,bool *entered,qa_error *error)
+{
+    (void)c;(void)a;(void)b;(void)f;(void)x;
+    if(entered)*entered=false;
+    return fail(error,QA_ERROR_UNSUPPORTED,0,"native child platform is unavailable");
+}
 HOST_UNAVAILABLE(guest_host_child_run_with_syscalls,(guest_host_child *c,uint64_t a,uint64_t b,guest_host_import_fn f,guest_host_syscall_fn s,void *x,bool *stopped,qa_error *error),(void)c;(void)a;(void)b;(void)f;(void)s;(void)x;(void)stopped)
 HOST_UNAVAILABLE(guest_host_child_last_fault,(const guest_host_child *c,guest_host_stop *s,qa_error *error),(void)c;(void)s)
 #undef HOST_UNAVAILABLE

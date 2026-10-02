@@ -129,6 +129,8 @@ bool q3n_weapons_player(const q3n_frame *, const qa_q3_ref_entity *parent,
 bool q3n_weapons_player_remote(const q3n_frame *, const qa_q3_ref_entity *parent,
     const q3n_remote_entity *, qa_error *);
 bool q3n_weapons_trail_remote(const q3n_frame *, const q3n_remote_entity *, qa_error *);
+bool q3n_weapons_player_compiled(const q3n_frame *, const qa_q3_ref_entity *, const q3n_compiled_entity *, qa_error *);
+bool q3n_weapons_trail_compiled(const q3n_frame *, const q3n_compiled_entity *, qa_error *);
 /* Only the first attachment tag uses the supplied character registry. Weapon
  * models, passes, sounds and continuation remain the actual primary source.
  * No replacement callback runs; a missing tag or gun admits no replacement. */
@@ -141,6 +143,7 @@ bool q3n_weapons_trail(const q3n_frame *, q3n_entity *, const qa_q3_entity *, qa
 bool q3n_weapons_rail(const q3n_frame *, int32_t client, qa_vec3 *start, qa_vec3 end, qa_error *);
 bool q3n_weapons_effect_rail(const q3n_frame *, qa_vec3 color1, qa_vec3 color2, qa_vec3 *start, qa_vec3 end, qa_error *);
 bool q3n_weapons_effect_shotgun(const q3n_frame *, qa_vec3 muzzle, qa_vec3 direction, uint32_t seed, qa_error *);
+bool q3n_weapons_effect_plasma(const q3n_frame *, int32_t weapon, qa_vec3 origin, qa_error *);
 bool q3n_weapons_impact(const q3n_frame *, int32_t weapon, int32_t client,
     qa_vec3 origin, qa_vec3 direction, q3n_impact_sound, qa_error *);
 bool q3n_weapons_event(void *, const q3n_frame *, q3n_entity *,

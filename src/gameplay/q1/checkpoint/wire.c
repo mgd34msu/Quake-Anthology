@@ -10,7 +10,7 @@ static bool table(q1_save_io *io, q1_wire_table *rows) {
     if (!count || (io->reading && count > (io->input.size - io->offset) / 4))
         return q1_save_fail(io, "Invalid Q1 ordered precache extent");
     if (io->reading) {
-        if ((size_t)count > SIZE_MAX / sizeof(*rows->rows))
+        if (sizeof(*rows->rows) > SIZE_MAX / count)
             return q1_save_fail(io, "Q1 ordered precache allocation overflow");
         rows->rows = calloc(count, sizeof(*rows->rows));
         if (!rows->rows) {
@@ -122,7 +122,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
                 return q1_save_fail(io, "Duplicate Q1 source feedback recipient");
     }
     if (io->reading && g->options.max_clients) {
-        if ((size_t)g->options.max_clients > SIZE_MAX / sizeof(*wire->board))
+        if (sizeof(*wire->board) > SIZE_MAX / g->options.max_clients)
             return q1_save_fail(io, "Q1 source client observation allocation overflow");
         wire->board = calloc(g->options.max_clients, sizeof(*wire->board));
         if (!wire->board) {

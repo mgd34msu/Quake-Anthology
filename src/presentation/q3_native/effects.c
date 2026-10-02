@@ -92,13 +92,18 @@ q3n_local_entity *q3n_effect_explosion(const q3n_frame *f, const q3n_explosion *
     v->color[0]=v->color[1]=v->color[2]=1;
     return v;
 }
-void q3n_effect_bleed(const q3n_frame *f, qa_vec3 origin, int32_t client)
+q3n_local_entity *q3n_effect_bleed_entity(const q3n_frame *f,qa_vec3 origin)
 {
-    if(!f->event_settings->blood)return;
+    if(!f->event_settings->blood)return NULL;
     q3n_local_entity *v=q3n_local_allocate(f->events,Q3N_LE_EXPLOSION,QA_Q3_REF_SPRITE);
     v->start_time=f->time; v->end_time=q3ne_plus(f->time,500);
     v->ref.origin=origin; v->ref.rotation=(float)(q3n_events_rand(f->events)%360); v->ref.radius=24;
     v->ref.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_BLOOD_EXPLOSION];
+    return v;
+}
+void q3n_effect_bleed(const q3n_frame *f, qa_vec3 origin, int32_t client)
+{
+    q3n_local_entity *v=q3n_effect_bleed_entity(f,origin);if(!v)return;
     const qa_q3_player *ps=q3n_frame_snapshot_player(f);
     if(ps && client==ps->clientNum)v->ref.flags|=2;
 }

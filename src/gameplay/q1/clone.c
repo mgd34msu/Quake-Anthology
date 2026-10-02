@@ -75,6 +75,9 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     }
     if (target->kind == Q1_PICKUP && !q1_pickup_observe(g, target, error))
         goto fail;
+    if (g->host.monster_path_clone &&
+        !g->host.monster_path_clone(g->host.context, actor, id, error))
+        goto fail;
     if (target->physics.motion != QA_PHYSICS_PUSH && target->think != Q1_THINK_NONE &&
         target->next_think >= 0 &&
         !q1_schedule(g, target, target->next_think - g->time, target->think, error))

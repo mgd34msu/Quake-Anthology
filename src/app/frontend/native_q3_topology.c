@@ -1,5 +1,6 @@
 #include "native_q3_topology.h"
 #include "save_private.h"
+#include "capture.h"
 #include "qa/launch_native_save.h"
 
 typedef struct native_plan {

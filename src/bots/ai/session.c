@@ -67,9 +67,9 @@ bool bot_ai_session_read(qa_bots *b,bot_ai_state *s,qa_error *e) {
         return bot_ai_fail(e,"restarted bot requires its actual source session configuration");
     char name[48],text[1024];snprintf(name,sizeof(name),"botsession%d",client);
     const qa_cvar_view *cvar=qa_cvars_find(configuration,name);
-    const char *value=cvar?cvar->value:"";size_t length=strlen(value);
+    const char *source_text=cvar?cvar->value:"";size_t length=strlen(source_text);
     if(length>=sizeof(text)) length=sizeof(text)-1;
-    memcpy(text,value,length);text[length]=0;
+    memcpy(text,source_text,length);text[length]=0;
     qa_bot_goal saved_goal={0},*goal=&saved_goal;size_t cursor=0;
     int32_t decisionmaker=0,type=0,teammate=0;
     int32_t *integers[]={&decisionmaker,&type,&teammate,
@@ -142,7 +142,8 @@ bool bot_ai_session_write(qa_bots *b,bot_ai_state *s,qa_error *e) {
         goal->mins.x,goal->mins.y,goal->mins.z,goal->maxs.x,goal->maxs.y,goal->maxs.z};
     char name[48],text[512];size_t used=0;snprintf(name,sizeof(name),"botsession%d",client);
     for(size_t i=0;i<sizeof(integers)/sizeof(*integers);++i) {
-        if(i) text[used++]=' ';format_integer(text,&used,integers[i]);
+        if(i) text[used++]=' ';
+        format_integer(text,&used,integers[i]);
     }
     for(size_t i=0;i<sizeof(floats)/sizeof(*floats);++i) {
         text[used++]=' ';if(!format_float(text,&used,floats[i],e)) return false;

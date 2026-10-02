@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "source_fuzzy_store.h"
 #include "source_weapon_resource.h"
+#include "character_source.h"
 #include "../chat/internal.h"
 
 bool bot_grow(void **data, size_t *capacity, size_t need, size_t stride, qa_error *e) {
@@ -148,7 +149,12 @@ qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
 }
 bool qa_bot_library_idle(const qa_bot_library *library) {
     if(!library) return true;
-    if(!qa_bot_memory_idle(library->memory) || (library->fuzzy_store && library->fuzzy_store->active)) return false;
+    if(library->character_loading || library->item_loading || !qa_bot_memory_idle(library->memory) ||
+       (library->fuzzy_store && library->fuzzy_store->active)) return false;
+    for (qa_bot_character *c = library->characters; c; c = c->next)
+        if (c->active) return false;
+    for (qa_bot_items *c = library->item_configs; c; c = c->next)
+        if (c->active) return false;
     for(qa_bot_weapons *config=library->weapon_configs;config;config=config->next)
         if(config->source && config->source->active) return false;
     for(qa_bot_chat_asset *asset=library->chat_assets;asset;asset=asset->next)
@@ -187,6 +193,7 @@ void qa_bot_library_destroy(qa_bot_library *library) {
     }
     for (qa_bot_character *c = library->characters; c != NULL;) {
         qa_bot_character *next = c->next;
+        qa_script_close(c->reader); c->reader = NULL;
         qa_bot_character_release(c);
         c = next;
     }
@@ -197,11 +204,13 @@ void qa_bot_library_destroy(qa_bot_library *library) {
     }
     for (qa_bot_items *c = library->item_configs; c != NULL;) {
         qa_bot_items *next = c->next;
+        qa_script_close(c->reader); c->reader = NULL;
         qa_bot_items_release(c);
         c = next;
     }
     bot_chat_assets_close(library);
     bot_fuzzy_store_dispose(library->fuzzy_store);
+    bot_character_store_release(library->character_store);
     qa_bot_library_variables_clear(library);
     qa_script_defines_release((qa_script_defines *)library->options.preprocessor.globals);
     qa_arena_destroy(&library->arena);

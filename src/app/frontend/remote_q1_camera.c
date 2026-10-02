@@ -194,6 +194,10 @@ bool frontend_remote_q1_chase_camera(frontend_remote_q1 *row,const frontend_q1_v
         if (!qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
             !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&c->geometry,error)) return false;
         qa_resource_retain(row->map); c->map=row->map;
+        if(!qa_collision_bind_resource(c->geometry,c->map,error)) {
+            qa_collision_destroy(c->geometry); c->geometry=NULL;
+            qa_resource_release(c->map); c->map=NULL; return false;
+        }
     }
     if (c->map!=row->map) return false;
     double yaw=aim_angles.y*0.017453292519943295,pitch=aim_angles.x*0.017453292519943295;

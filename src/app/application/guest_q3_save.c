@@ -302,6 +302,8 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
 static bool owner(application_provider *provider, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
+    if (engine && engine->video_leases)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 continuation retains an incomplete actual video restart");
     if (engine) for (size_t i = 0; i < 64; ++i)
         if (engine->clients[i].carry_pending || engine->clients[i].reserved)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client still owns unfinished admission");
@@ -395,6 +397,13 @@ typedef struct saved_artifact {
     qa_vfs_acquisition body_acquisition;
     qa_buffer body_storage;
     qa_bytes body_profile;
+    qa_sha256_digest collision_digest;
+    qa_q3_host_collision_profile collision_profile;
+    uint64_t models_pool, models_resource;
+    qa_sha256_digest models_digest;
+    qa_vfs_acquisition models_acquisition;
+    qa_buffer models_storage;
+    qa_bytes models_profile;
     q3g_artifact *actual;
 } saved_artifact;
 typedef struct saved_interface {
@@ -439,6 +448,8 @@ typedef struct saved_role {
     qa_actor_owner source_owner;
     uint64_t sequence;
     qa_string_id owner;
+    int32_t init_arguments[3];
+    uint8_t init_argument_count;
     bool keys[256];
     qa_command_tokens arguments;
     saved_projection *projections;
@@ -476,8 +487,11 @@ static void saved_free(q3g_restore *saved)
             qa_vfs_acquisition_dispose(&saved->artifacts[i].acquisition);
             qa_vfs_acquisition_dispose(&saved->artifacts[i].items_acquisition);
             qa_vfs_acquisition_dispose(&saved->artifacts[i].body_acquisition);
+            qa_vfs_acquisition_dispose(&saved->artifacts[i].models_acquisition);
         }
     }
+    for (size_t i = 0; saved->artifacts && i < saved->artifact_count; ++i)
+        qa_buffer_free(&saved->artifacts[i].models_storage);
     for (size_t i = 0; saved->descriptors && i < saved->descriptor_count; ++i) {
         saved_descriptor *descriptor = saved->descriptors + i;
         if (saved->owns_text) {
@@ -692,13 +706,27 @@ static bool portable_executor(qa_bytes bytes, qa_error *error)
     return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 160 + (size_t)memory, (size_t)host}, error);
 }
 
+static bool collision_fields(qa_source_save_io *io, qa_q3_host_collision_profile *profile)
+{
+    if (!qa_source_save_bool(io, &profile->present)) return false;
+    if (!profile->present) return true;
+#define WORD(member) if (!qa_source_save_u32(io, &profile->member)) return false
+    WORD(snapshot); WORD(next_snapshot); WORD(time); WORD(physics_time);
+    WORD(this_frame_teleport); WORD(next_frame_teleport); WORD(processed_snapshot);
+    WORD(solid_count); WORD(solids); WORD(solid_capacity); WORD(entities); WORD(entity_count);
+    WORD(entity_stride); WORD(current_state); WORD(next_state); WORD(lerp_origin); WORD(lerp_angles);
+    WORD(snapshot_server_time); WORD(build_solids_entry); WORD(trace_entry); WORD(point_contents_entry);
+#undef WORD
+    return qa_source_save_f32(io, &profile->trajectory_gravity);
+}
+
 static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 11;
+    uint32_t version = 13;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 11 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 13 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
@@ -749,6 +777,20 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              strcmp(artifact->body_acquisition.path, "cgame-presentation.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained CGAME body declaration");
         if (artifact->kind == QA_QVM_CGAME && !blob(io, &artifact->body_profile, 12)) return false;
+        if (artifact->kind == QA_QVM_CGAME &&
+            (!qa_source_save_bytes(io, artifact->collision_digest.bytes, 32) ||
+             !collision_fields(io, &artifact->collision_profile))) return false;
+        bool models = artifact->models_resource != 0;
+        if (!qa_source_save_bool(io, &models) || (models &&
+            (artifact->kind != QA_QVM_CGAME ||
+             !qa_source_save_u64(io, &artifact->models_pool) || !artifact->models_pool ||
+             !qa_source_save_u64(io, &artifact->models_resource) || !artifact->models_resource ||
+             !qa_source_save_bytes(io, artifact->models_digest.bytes, 32) ||
+             !acquisition(io, &artifact->models_acquisition) ||
+             artifact->models_resource != artifact->models_acquisition.resource_id ||
+             strcmp(artifact->models_acquisition.path, "cgame-weapon-models.json"))))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid actual CG weapon model declaration opening");
+        if (models && !blob(io, &artifact->models_profile, 12)) return false;
         for (size_t j = 0; j < i; ++j)
             if (artifact->descriptor == saved->artifacts[j].descriptor &&
                 artifact->kind == saved->artifacts[j].kind && !strcmp(artifact->path, saved->artifacts[j].path))
@@ -778,6 +820,20 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              (!(role->flags & ROLE_COMMITTED) || (role->flags & ROLE_RETIRED))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source role identity or lifecycle");
         const saved_artifact *artifact = &saved->artifacts[role->artifact];
+        if (!qa_source_save_u8(io, &role->init_argument_count) || role->init_argument_count > 3 ||
+            (artifact->kind == QA_QVM_GAME && role->init_argument_count) ||
+            (artifact->kind != QA_QVM_GAME && role->init_argument_count &&
+             role->init_argument_count != (artifact->kind == QA_QVM_UI ? 1 : 3)) ||
+            ((role->flags & ROLE_INIT_SUCCEEDED) && artifact->kind != QA_QVM_GAME &&
+             role->init_argument_count != (artifact->kind == QA_QVM_UI ? 1 : 3)))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid retained actual client Init invocation");
+        for (size_t j = 0; j < 3; ++j)
+            if (!qa_source_save_i32(io, &role->init_arguments[j]) ||
+                (j >= role->init_argument_count && role->init_arguments[j]))
+                return state_fail(io, QA_ERROR_FORMAT, "Invalid retained client Init argument extent");
+        if (artifact->kind == QA_QVM_UI && role->init_argument_count &&
+            role->init_arguments[0] != 0 && role->init_arguments[0] != 1)
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid actual UI Init connection argument");
         if (artifact->kind != QA_QVM_GAME) {
             bool found = false;
             for (size_t j = 0; j < saved->globals_count; ++j)
@@ -989,6 +1045,32 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
         }
         if (a->kind == QA_QVM_CGAME) {
             saved_artifact *row = saved->artifacts + i;
+            if (a->weapon_models_resource) {
+                row->models_acquisition = a->weapon_models_acquisition;
+                row->models_digest = *qa_resource_digest(a->weapon_models_resource);
+                if (!a->weapon_models_profile.present ||
+                    strcmp(a->weapon_models_acquisition.path, "cgame-weapon-models.json") ||
+                    qa_resource_id(a->weapon_models_resource) != a->weapon_models_acquisition.resource_id ||
+                    !qa_vfs_acquisition_retained(a->view, &a->weapon_models_acquisition, error) ||
+                    !qa_application_content_resource_id(graph, a->weapon_models_resource, &row->models_pool, &row->models_resource) ||
+                    qa_application_content_pool(graph, row->models_pool) != qa_vfs_resources(a->view) ||
+                    !application_q3_weapon_models_profile_checkpoint(a->image, a->abi, a->path,
+                        &a->weapon_models_profile, &row->models_storage, error)) {
+                    saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                        "CG weapon model profile leaves its actual artifact opening");
+                }
+                row->models_profile = (qa_bytes){row->models_storage.data, row->models_storage.size};
+            } else if (a->weapon_models_profile.present) {
+                saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                    "CG weapon models have no actual retained declaration resource");
+            }
+            if (!qa_q3_host_collision_profile_qualify(a->image, a->kind, a->abi, &a->collision_profile, error) ||
+                a->collision_profile.present != (a->collision_scene.size != 0)) {
+                saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                    "CG collision profile changed its actual declaration presence");
+            }
+            row->collision_profile = a->collision_profile;
+            qa_sha256((qa_bytes){a->collision_scene.data, a->collision_scene.size}, &row->collision_digest);
             if (!application_q3_body_profile_checkpoint(a->image, a->abi, a->path,
                 &a->body_profile, &row->body_storage, error)) { saved_free(saved); return false; }
             row->body_profile = (qa_bytes){row->body_storage.data, row->body_storage.size};
@@ -1022,6 +1104,8 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             .source_owner = r->source_owner,
             .flags = role_flags(r), .sequence = r->service_sequence, .owner = r->service_owner,
             .arguments = r->arguments, .actual = r};
+        row->init_argument_count = r->init_argument_count;
+        memcpy(row->init_arguments, r->init_arguments, sizeof(row->init_arguments));
         if (r->kind != QA_QVM_GAME) {
             qa_cvars *registry = NULL;
             if (!qa_q3_host_console(r->host, &registry, NULL) || !registry) {
@@ -1217,6 +1301,13 @@ static bool qualify_content(application_provider *provider, q3g_restore *saved, 
                 !qa_vfs_acquisition_retained(view, &a->body_acquisition, error))
                 return application_fail(error, QA_ERROR_FORMAT, "CGAME body declaration changes its actual source bytes");
         }
+        if (a->models_resource) {
+            const qa_resource *models = qa_application_content_resource(graph, a->models_pool, a->models_resource);
+            if (!models || qa_application_content_pool(graph, a->models_pool) != qa_vfs_resources(view) ||
+                !qa_sha256_equal(qa_resource_digest(models), &a->models_digest) ||
+                !qa_vfs_acquisition_retained(view, &a->models_acquisition, error))
+                return application_fail(error, QA_ERROR_FORMAT, "CG weapon declaration changes its genuine retained source bytes");
+        }
     }
     return true;
 }
@@ -1285,6 +1376,13 @@ static bool prepare_artifact(application_provider *provider, struct application_
         if (!artifact->body_resource ||
             !q3g_acquisition_copy(&saved->body_acquisition, &artifact->body_acquisition, error)) return false;
     }
+    if (saved->models_resource) {
+        artifact->weapon_models_resource = (qa_resource *)qa_application_content_resource(
+            qa_application_content_graph_read(provider->application), saved->models_pool, saved->models_resource);
+        qa_resource_retain(artifact->weapon_models_resource);
+        if (!artifact->weapon_models_resource ||
+            !q3g_acquisition_copy(&saved->models_acquisition, &artifact->weapon_models_acquisition, error)) return false;
+    }
     if (primary && source == provider->launch) {
         artifact->image = provider->state.qvm.image;
         qa_qvm_image_retain(artifact->image);
@@ -1295,14 +1393,16 @@ static bool prepare_artifact(application_provider *provider, struct application_
                 !strcmp(saved->path, source->selection.artifact), &compatibility, error);
     }
     if (ok) {
-        qa_sha256_digest primary_digest, equipment_digest;
+        qa_sha256_digest primary_digest, equipment_digest, collision_digest;
         qa_sha256((qa_bytes){compatibility.primary.data, compatibility.primary.size}, &primary_digest);
         qa_sha256((qa_bytes){compatibility.equipment_presentation.data,
             compatibility.equipment_presentation.size}, &equipment_digest);
+        qa_sha256((qa_bytes){compatibility.collision_scene.data, compatibility.collision_scene.size}, &collision_digest);
         ok = compatibility.abi == (qa_qvm_abi)saved->abi &&
             qa_sha256_equal(qa_qvm_image_digest(artifact->image), &saved->digest) &&
             qa_sha256_equal(&primary_digest, &saved->primary_digest) &&
-            qa_sha256_equal(&equipment_digest, &saved->equipment_digest);
+            qa_sha256_equal(&equipment_digest, &saved->equipment_digest) &&
+            (artifact->kind != QA_QVM_CGAME || qa_sha256_equal(&collision_digest, &saved->collision_digest));
         if (!ok) application_fail(error, QA_ERROR_FORMAT, "Q3 artifact or source declaration differs from saved content");
     }
     if (ok) {
@@ -1310,12 +1410,24 @@ static bool prepare_artifact(application_provider *provider, struct application_
         artifact->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         artifact->equipment_presentation = compatibility.equipment_presentation;
         compatibility.equipment_presentation = (qa_buffer){0};
-        ok = artifact->kind != QA_QVM_CGAME || application_q3_equipment_profile_read(artifact->image, artifact->kind,
+        artifact->collision_scene = compatibility.collision_scene;
+        compatibility.collision_scene = (qa_buffer){0};
+        artifact->collision_profile = saved->collision_profile;
+        if (artifact->kind == QA_QVM_CGAME)
+            ok = artifact->collision_profile.present == (artifact->collision_scene.size != 0) &&
+                qa_q3_host_collision_profile_qualify(artifact->image, artifact->kind,
+                    artifact->abi, &artifact->collision_profile, error);
+        ok = ok && (artifact->kind != QA_QVM_CGAME || application_q3_equipment_profile_read(artifact->image, artifact->kind,
             artifact->abi, (qa_bytes){artifact->equipment_presentation.data,
-                artifact->equipment_presentation.size}, &artifact->equipment_profile, error);
+                artifact->equipment_presentation.size}, &artifact->equipment_profile, error));
         if (ok && artifact->kind == QA_QVM_CGAME)
             ok = application_q3_body_profile_restore(artifact->image, artifact->abi,
                 artifact->path, saved->body_profile, &artifact->body_profile, error);
+        if (ok && artifact->kind == QA_QVM_CGAME)
+            ok = saved->models_resource ? application_q3_weapon_models_profile_restore(
+                artifact->image, artifact->abi, artifact->path, saved->models_profile, &artifact->weapon_models_profile, error) :
+                application_q3_weapon_models_profile_read(artifact->image, artifact->kind,
+                    artifact->abi, artifact->path, NULL, &artifact->weapon_models_profile, error);
         if (ok && artifact->kind == QA_QVM_GAME)
             ok = application_q3_grapple_profile_create(artifact->image, artifact->kind,
                 artifact->abi, artifact->path, &artifact->grapple_profile, error);
@@ -1520,6 +1632,8 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         engine->restored_client_source_seat = 0;
         if (!created) return false;
         next->actual = role; role->next = engine->roles; engine->roles = role;
+        role->init_argument_count = next->init_argument_count;
+        memcpy(role->init_arguments, next->init_arguments, sizeof(role->init_arguments));
         if (registry) {
             qa_cvars *actual = NULL;
             if (!qa_q3_host_console(role->host, &actual, NULL) || !actual ||
@@ -1625,6 +1739,8 @@ bool application_guest_q3_save_finish(application_provider *provider, qa_error *
     }
     for (size_t i = 0; i < saved->role_count; ++i)
         if (!qa_q3_host_finish_restore(saved->roles[i].actual->host, error)) return false;
+    for (size_t i = 0; i < saved->role_count; ++i)
+        if (!application_q3_weapon_models_qualify(saved->roles[i].actual->weapon_models, error)) return false;
     qa_buffer actual = {0};
     bool ok = capture_body(provider, &actual, error) &&
         equal_bytes((qa_bytes){actual.data, actual.size}, (qa_bytes){saved->storage.data, saved->storage.size});

@@ -90,7 +90,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     body.origin = target.origin;
-    entity->physics.flags &= ~QA_PHYSICS_ONGROUND;
+    entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }
 static bool toss(qa_q1_game *g, q1_actor *entity, const char *model, qa_error *error) {

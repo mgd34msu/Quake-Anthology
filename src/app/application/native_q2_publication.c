@@ -1,5 +1,6 @@
 #include "native_q2_publication.h"
 #include "guest_native_q2_private.h"
+#include "native_q2_callbacks.h"
 #include "unified_output_json.h"
 #include "qa/application_native_q2_presentation.h"
 
@@ -140,7 +141,8 @@ bool application_native_q2_publication_activate(application_native_q2_publicatio
 {
     if (!p) return true;
     if (!storage(p) || !p->owner || !p->activation_generation || !p->engine->initialized ||
-        !p->engine->map_ready || !p->engine->provider->state.native.host || p->engine->shutting_down)
+        !p->engine->map_ready || !p->engine->provider->state.native.host || p->engine->shutting_down ||
+        (p->engine->callbacks && !application_native_q2_callbacks_current(p->engine->callbacks)))
         return application_fail(e, QA_ERROR_ARGUMENT, "Native component activation lacks its completed GAME initialization");
     p->active = true;
     return true;
@@ -173,7 +175,9 @@ bool application_native_q2_publication_read(qa_application *app, const applicati
     struct application_native_q2 *n = v ? v->state.native.q2_engine : NULL;
     application_native_q2_publication *p = n ? n->publication : NULL;
     if (!p || (!p->camera && p->hud == APPLICATION_NATIVE_Q2_HUD_NONE)) return true;
-    if (!storage(p) || !p->active || !p->owner || v->owner != source->owner || cut.source_owner != source->owner ||
+    if (!storage(p) || !p->active || !p->owner ||
+        (n->callbacks && !application_native_q2_callbacks_current(n->callbacks)) ||
+        v->owner != source->owner || cut.source_owner != source->owner ||
         cut.launch != v->launch || !qa_application_native_q2_presentation_current(app, &cut))
         return application_fail(e, QA_ERROR_ARGUMENT, "Native component lost its registered physical GAME activation");
     *out = (application_native_q2_publication_view){.registration = p,
@@ -192,6 +196,29 @@ bool application_native_q2_publication_current(qa_application *app, const applic
         v.identity == held->identity && v.owner == held->owner && v.source_owner == held->source_owner &&
         v.activation_generation == held->activation_generation && v.generation == held->generation &&
         v.hud == held->hud && v.camera == held->camera;
+}
+
+bool application_native_q2_publication_checkpoint_read(qa_application *app, const application_unified_source *source,
+    application_native_q2_publication_view *out, bool *found, qa_error *e)
+{
+    if (!out || !found || !(application_unified_source_current(app, source) ||
+        application_unified_source_checkpoint_current(app, source)))
+        return application_fail(e, QA_ERROR_ARGUMENT, "Native component checkpoint requires its actual imported Source");
+    application_provider *v = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    struct application_native_q2 *n = v && v->kind == APPLICATION_PROVIDER_NATIVE ? v->state.native.q2_engine : NULL;
+    application_native_q2_publication *p = n ? n->publication : NULL;
+    *found = false;
+    if (!p || (!p->camera && p->hud == APPLICATION_NATIVE_Q2_HUD_NONE)) return true;
+    if (v->owner != source->owner || n->provider != v || !n->initialized || !n->map_ready ||
+        n->calls || n->shutting_down || !storage(p) || !p->active || !p->owner || !p->activation_generation ||
+        p->activation_generation > QA_UNIFIED_SAFE_INTEGER || p->generation > QA_UNIFIED_SAFE_INTEGER)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Native checkpoint lost its imported component registration");
+    *out = (application_native_q2_publication_view){.registration = p,
+        .descriptor = qa_launch_instance_lease_view(p->lease), .metadata = p->metadata, .identity = p->identity,
+        .owner = p->owner, .source_owner = v->owner, .activation_generation = p->activation_generation,
+        .generation = p->generation, .hud = p->hud, .camera = p->camera};
+    *found = true;
+    return true;
 }
 
 bool application_native_q2_publication_capture(struct application_native_q2 *n, qa_buffer *out, qa_error *e)

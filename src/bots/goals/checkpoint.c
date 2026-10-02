@@ -38,7 +38,7 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
         return bot_goal_fail(error,"Invalid retained source-goal checkpoint storage");
     *out=*source;
     out->items=NULL;out->states=NULL;out->weights=NULL;out->indexes=NULL;out->last_indexes=NULL;
-    out->prepared_indexes=NULL;out->level=NULL;out->info=NULL;out->source=NULL;
+    out->prepared_indexes=NULL;out->info=NULL;out->source=NULL;
     out->items=source->items;qa_bot_items_retain(out->items);
     out->states=copy_array(source->states,source->options.maximum_states,sizeof(*source->states),error);
     if(!out->states) goto failed;
@@ -56,8 +56,6 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
         if(!*indexes) goto memory_failure;
         **indexes=*row;(*indexes)->next=NULL;out->last_indexes=*indexes;indexes=&(*indexes)->next;
     }
-    out->level=copy_array(source->level,source->level_capacity,sizeof(*source->level),error);
-    if(source->level_capacity && !out->level) goto failed;
     out->info=copy_array(source->info,source->info_count,sizeof(*source->info),error);
     out->info_capacity=source->info_count;
     if(source->info_count && !out->info) goto failed;
@@ -93,7 +91,7 @@ bool bot_goal_history_capture(qa_bot_goals *goals,bot_fuzzy_history *fuzzy,bot_g
 {
     if(!bot_goal_mutable(goals,error) || goals->prepared_indexes || !out || *out)
         return bot_goal_fail(error,"Complete goal checkpoint requires an actual idle owner and empty output");
-    if (!bot_goal_info_topology(goals,error)) return false;
+    if (!bot_goal_info_topology(goals,error) || !bot_goal_level_topology(goals,error)) return false;
     for(bot_goal_indexes *row=goals->indexes;row;row=row->next) {
         qa_bot_memory_span bytes;
         if(!qa_bot_memory_bytes(goals->memory,row->allocation,&bytes,error)) return false;
@@ -135,6 +133,9 @@ bool bot_goal_history_prepare(qa_bot_goals *goals,const bot_goal_history *image,
     for(size_t i=0;i<plan->state.info_count;++i)
         if(!qa_bot_memory_checkpoint_resolve(memory,plan->state.info[i].allocation,
             &plan->state.info[i].allocation,error)) goto failed;
+    if(plan->state.level_allocation.owner &&
+       !qa_bot_memory_checkpoint_resolve(memory,plan->state.level_allocation,
+           &plan->state.level_allocation,error)) goto failed;
     *out=plan;return true;
 failed:
     clear(&plan->state);free(plan);return false;

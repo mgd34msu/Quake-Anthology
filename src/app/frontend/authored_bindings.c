@@ -15,8 +15,10 @@ static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
         unsigned a=(unsigned char)*left,b=(unsigned char)*right;
-        if (a>='A' && a<='Z') a+='a'-'A'; if (b>='A' && b<='Z') b+='a'-'A';
-        if (a!=b) return false; if (!a) return true;
+        if (a>='A' && a<='Z') a+='a'-'A';
+        if (b>='A' && b<='Z') b+='a'-'A';
+        if (a!=b) return false;
+        if (!a) return true;
     }
 }
 static bool same_input(qa_physical_input a,qa_physical_input b)

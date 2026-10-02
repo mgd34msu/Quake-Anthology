@@ -194,7 +194,8 @@ qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
 }
 static bool best_player_current(qa_q1_game *g, qa_actor_id actor,
     const q1_player *player, qa_error *error) {
-    if (player && q1_player_get(g, actor) == player && player->arsenal) return true;
+    if (g && !g->destroy_pending && !g->continuation_pending && player &&
+        q1_alive(g, actor) && q1_player_get(g, actor) == player && player->arsenal) return true;
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 best-weapon read lost its selected arsenal player");
     return false;
 }

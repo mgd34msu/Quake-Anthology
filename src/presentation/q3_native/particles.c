@@ -4,6 +4,8 @@
 #include "pose.h"
 #include <stdio.h>
 
+static bool q3n_particles_load_received(q3n_particles *,const q3n_frame *,qa_error *);
+
 static float add(float a, float b) { volatile float v = a + b; return v; }
 static float mul(float a, float b) { volatile float v = a * b; return v; }
 static float divide(float a, float b) { volatile float v = a / b; return v; }
@@ -17,8 +19,12 @@ bool q3np_fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 static bool current(const q3n_frame *f, qa_error *error)
 {
+    if(f && f->compiled)return f->particles && f->particles->initialized && !f->particles->remote_source &&
+        f->particles->compiled_source==f->compiled->source.owner && f->particles->assets==f->assets &&
+        f->particles->product==q3n_frame_product(f) && f->events && f->presentation && q3n_frame_current(f)?true:
+        q3np_fail(error,QA_ERROR_ARGUMENT,"Compiled particles lost their actual CLIENT source and registry");
     if (f && f->unified_effects) {
-        return f->particles && f->particles->initialized && !f->particles->remote_source &&
+        return f->particles && f->particles->initialized && !f->particles->remote_source && !f->particles->compiled_source &&
             f->particles->assets==f->assets && f->particles->product==f->unified_effects->product &&
             f->events && f->presentation && q3n_frame_current(f) ? true :
             q3np_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 particles lost their actual CLIENT source and dictionary");
@@ -26,13 +32,13 @@ static bool current(const q3n_frame *f, qa_error *error)
     if(f&&f->remote) {
         if(!f->particles||!f->particles->initialized||!f->events||!f->presentation||
            f->particles->assets!=f->assets||f->particles->product!=f->remote->source.basis.product||
-           f->particles->remote_source!=f->remote->source.owner||!q3n_frame_snapshot_player(f)||
+           f->particles->remote_source!=f->remote->source.owner||f->particles->compiled_source||!q3n_frame_snapshot_player(f)||
            !q3n_frame_current(f))
             return q3np_fail(error,QA_ERROR_ARGUMENT,"Native Q3 particles require their actual remote source and snapshot");
         return true;
     }
     if (!(f && f->particles && f->particles->initialized && f->application && f->events &&
-        !f->particles->remote_source &&
+        !f->particles->remote_source && !f->particles->compiled_source &&
         f->presentation && f->particles->assets == f->assets && f->particles->product == f->source.product &&
         f->time == f->source.source_time_ms && f->has_local_player &&
         qa_application_native_q3_presentation_current(f->application,&f->source)))
@@ -46,7 +52,7 @@ static bool current(const q3n_frame *f, qa_error *error)
 static bool source_current(q3n_particles *o, qa_application *app,
     const qa_application_native_q3_presentation *cut, int32_t time, qa_error *error)
 {
-    return !o->remote_source && app && cut && cut->product == o->product && time == cut->source_time_ms &&
+    return !o->remote_source && !o->compiled_source && app && cut && cut->product == o->product && time == cut->source_time_ms &&
         qa_application_native_q3_presentation_current(app,cut) ? true :
         q3np_fail(error,QA_ERROR_ARGUMENT,"Native Q3 particle registration source was superseded");
 }
@@ -72,6 +78,13 @@ bool q3n_particles_create_remote(qa_q3_presentation_assets *assets,q3n_remote_so
     if(!q3n_particles_create(assets,view.basis.product,out,error))return false;
     (*out)->remote_source=source; return true;
 }
+bool q3n_particles_create_compiled(qa_q3_presentation_assets *assets,q3n_compiled_source *source,q3n_particles **out,qa_error *e)
+{
+    q3n_compiled_source_view view;
+    if(!q3n_compiled_source_read(source,&view,e) || view.basis.assets!=assets)return false;
+    if(!q3n_particles_create(assets,view.basis.product,out,e))return false;
+    (*out)->compiled_source=source; return true;
+}
 bool q3n_particles_idle(const q3n_particles *o) { return o && !o->busy; }
 void q3n_particles_destroy(q3n_particles *o) { if (q3n_particles_idle(o)) free(o); }
 void q3n_particles_round(q3n_particles *o, int32_t time) { if (q3n_particles_idle(o)) reset(o,time); }
@@ -88,6 +101,11 @@ bool q3n_particles_load(q3n_particles *o, qa_application *app,
 }
 static bool registration_current(const q3n_particles *o,const q3n_frame *f,qa_error *e)
 {
+    if(f && f->compiled)return f->particles==o && f->assets==o->assets && f->presentation &&
+        f->presentation->options.assets==o->assets && f->compiled->source.owner==o->compiled_source &&
+        !o->remote_source && q3n_frame_product(f)==o->product &&
+        (f->compiled->stage==Q3N_COMPILED_INITIALIZATION || f->compiled->stage==Q3N_COMPILED_SNAPSHOT_CALLBACK) &&
+        q3n_frame_current(f)?true:q3np_fail(e,QA_ERROR_ARGUMENT,"Compiled particles require real Init or reached command scope");
     return f&&f->remote&&f->particles==o&&f->assets==o->assets&&
         f->presentation&&f->presentation->options.assets==o->assets&&
         f->remote->source.owner==o->remote_source&&f->remote->source.basis.product==o->product&&
@@ -97,7 +115,11 @@ static bool registration_current(const q3n_particles *o,const q3n_frame *f,qa_er
 }
 bool q3n_particles_load_remote(q3n_particles *o,const q3n_frame *f,qa_error *e)
 {
-    if(!q3n_particles_idle(o)||!registration_current(o,f,e))return false;
+    if(!f || !f->remote || !q3n_particles_idle(o)||!registration_current(o,f,e))return false;
+    return q3n_particles_load_received(o,f,e);
+}
+static bool q3n_particles_load_received(q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
     o->busy=true; o->initialized=false; reset(o,f->time); bool ok=true;
     for(int32_t i=0;i<Q3N_PARTICLE_FRAMES&&ok;++i) {
         char name[32]; snprintf(name,sizeof(name),"explode1%d",i+1);
@@ -105,9 +127,13 @@ bool q3n_particles_load_remote(q3n_particles *o,const q3n_frame *f,qa_error *e)
     }
     o->initialized=ok; o->busy=false; return ok;
 }
+bool q3n_particles_load_compiled(q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
+    return f && f->compiled && q3n_particles_idle(o) && registration_current(o,f,e) && q3n_particles_load_received(o,f,e);
+}
 static bool unified_registration_current(q3n_particles *o,const q3n_frame *f,qa_error *e)
 {
-    return f && f->unified_effects && f->particles==o && !o->remote_source &&
+    return f && f->unified_effects && f->particles==o && !o->remote_source && !o->compiled_source &&
         f->assets==o->assets && f->unified_effects->product==o->product && f->presentation &&
         q3n_frame_current(f) ? true : q3np_fail(e,QA_ERROR_ARGUMENT,"Unified particle registration lost its actual CLIENT receipt");
 }

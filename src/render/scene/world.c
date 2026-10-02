@@ -48,6 +48,25 @@ bool qa_scene_world_retain(qa_scene_world *world,qa_error *error)
 void qa_scene_world_release(qa_scene_world *world) { qa_scene_world_destroy(world); }
 uint64_t qa_scene_world_identity(const qa_scene_world *world)
 { return world ? world->identity : 0; }
+bool qa_scene_world_source_resource_bind(qa_scene_world *world, const qa_resource *resource, qa_error *error)
+{
+    if (!qa_scene_world_idle(world) || !resource ||
+        (world->source_resource && world->source_resource != resource))
+        return world_error(error, QA_ERROR_ARGUMENT, "World source binding requires its actual idle map owner and resource");
+    qa_bytes bytes = qa_resource_bytes(resource);
+    if (bytes.size != world->bytes.size || (bytes.size &&
+        (!bytes.data || memcmp(bytes.data, world->bytes.data, bytes.size))))
+        return world_error(error, QA_ERROR_ARGUMENT, "World source resource differs from its immutable BSP bytes");
+    if (!world->source_resource) {
+        qa_resource_retain((qa_resource *)resource);
+        world->source_resource = resource;
+    }
+    return true;
+}
+const qa_resource *qa_scene_world_source_resource_read(const qa_scene_world *world)
+{
+    return qa_scene_world_observation_ready(world) ? world->source_resource : NULL;
+}
 bool qa_scene_world_source_light_mask_read(const qa_scene_world *world, uint32_t surface,
     uint32_t *out, qa_error *error)
 {
@@ -644,6 +663,7 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->pvs); free(world->secondary_pvs); free(world->sky_name);
     qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
+    qa_resource_release((qa_resource *)world->source_resource);
     qa_material_library_destroy(world->retained_materials);
     qa_scene_resources_destroy(world->retained_resources);
     free(world);

@@ -103,7 +103,8 @@ static bool pull(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     pull_scope scope = {.gear = gear};
     bool okay = qa_qvm_source_scratch(call, gear->image, gear->definition->movement_bytes,
         pull_scratch, &scope, error);
-    if (okay) *result = scope.result; return okay;
+    if (okay) *result = scope.result;
+    return okay;
 }
 
 typedef struct mover_scope { application_q3_gear *gear; int32_t result; } mover_scope;
@@ -121,7 +122,8 @@ static bool mover(void *context, const qa_qvm_call *call, int32_t *result, qa_er
     if (!gear->mover_pending) return qa_qvm_proceed(call, result, error);
     mover_scope scope = {.gear = gear};
     bool okay = qa_qvm_source_scratch(call, gear->image, 12, mover_scratch, &scope, error);
-    if (okay) *result = scope.result; return okay;
+    if (okay) *result = scope.result;
+    return okay;
 }
 
 bool q3gear_bind_hooks(application_q3_gear *gear, qa_error *error)

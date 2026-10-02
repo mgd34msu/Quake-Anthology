@@ -2,6 +2,7 @@
 #define QA_APPLICATION_EQUIPMENT_H
 
 #include "qa/application.h"
+#include "qa/application_q3_weapon_models.h"
 
 typedef enum qa_application_ammo_warning {
     QA_APPLICATION_AMMO_NONE,
@@ -25,6 +26,7 @@ typedef struct qa_application_equipment_view {
     qa_vec3 gun_origin, gun_angles;
     double ammo_count;
     qa_q3_weapon q3_weapon;
+    int32_t source_weapon;
     qa_q3_player_state q3_state;
     qa_q3_player q3_source;
     int32_t q3_time_ms;
@@ -35,6 +37,7 @@ typedef struct qa_application_equipment_view {
     /* A controller-selected EQUIPMENT slot has its own genuine source
      * namespace and is independent of the actor's ARSENAL binding. */
     bool equipment_slot;
+    bool original_qvm;
 } qa_application_equipment_view;
 
 /* Observes the actual active equipment slot, otherwise the selected arsenal,
@@ -48,5 +51,12 @@ bool qa_application_equipment_current(qa_application *, const qa_application_equ
  * capture/import. Reads its real constructed provider; no source call runs. */
 bool qa_application_equipment_q3_product_read(const qa_application *, qa_actor_owner,
     qa_q3_product *, qa_error *);
+/* Reads only completed registrations in the selected original GAME's matching
+ * CG receiver role for this actual launch seat ID. The renderer retains its own current
+ * recipient lease. Handles borrow the returned CG registry. Genuine absence
+ * clears present; no stock model is inferred from the source weapon number. */
+bool qa_application_equipment_q3_models_read(qa_application *,
+    const qa_application_equipment_view *, qa_actor_owner recipient, uint32_t launch_seat,
+    qa_application_q3_weapon_models *, bool *present, qa_error *);
 
 #endif

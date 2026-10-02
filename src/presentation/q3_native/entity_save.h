@@ -6,4 +6,6 @@
 /* Field kernel only. The containing local GAME or remote received owner
  * qualifies its actual row, actor provenance and aggregate version. */
 bool q3n_entity_codec(qa_source_save_io *, q3n_entity *);
+bool q3n_entity_codec_ref(qa_source_save_io *, q3n_entity *, void *,
+    bool (*actor_fields)(void *, qa_source_save_io *, qa_actor_id *));
 #endif

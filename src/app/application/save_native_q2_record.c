@@ -214,7 +214,8 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
             application_native_q2_prepare_restore(provider, error);
     }
     if (ok)
-        ok = qa_native_host_restore_cvars(provider->state.native.host, snapshot.host, error) &&
+        ok = qa_native_host_restore_cvars(provider->state.native.host,
+                (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
             application_startup_source_restore(provider, engine->console, engine->cvars,
                 &engine->command_context, error);
     if (ok) {

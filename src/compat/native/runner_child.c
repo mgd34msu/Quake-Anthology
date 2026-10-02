@@ -636,6 +636,26 @@ static bool child_call(native_child_state *state, native_wire_reader *reader,
     return ok;
 }
 
+typedef struct child_dispatch {
+    native_child_state *state;
+    uint64_t address;
+    bool *entered;
+} child_dispatch;
+
+static bool child_dispatch_started(void *context, qa_error *error) {
+    child_dispatch *dispatch = context;
+    if (*dispatch->entered) return true;
+    native_wire_buffer request = {0}; qa_buffer response = {0};
+    bool received = native_wire_put_u64(&request, dispatch->address, error) &&
+        child_request(dispatch->state, NATIVE_WIRE_DISPATCH_ENTERED,
+            (qa_bytes){request.data, request.size}, &response, error);
+    native_wire_reader reader = {.bytes = {response.data, response.size}};
+    bool okay = child_finish_response(dispatch->state, received,
+        received && native_wire_end(&reader, error), error);
+    native_wire_buffer_free(&request); qa_buffer_free(&response);
+    return okay;
+}
+
 static bool child_invoke(native_child_state *state, native_wire_reader *reader,
                          native_wire_buffer *body, qa_error *error) {
     uint64_t address;
@@ -649,11 +669,20 @@ static bool child_invoke(native_child_state *state, native_wire_reader *reader,
               native_wire_end(reader, error);
     qa_native_value result = {0};
     qa_buffer result_storage = {0};
-    if (ok)
-        ok = child_result_storage(&signature, &result, &result_storage, error) &&
-             qa_native_invoke(state->instance, address, &signature, arguments, count, &result,
-                              error) &&
-             native_wire_put_value(body, &result, error);
+    if (ok) ok = child_result_storage(&signature, &result, &result_storage, error);
+    if (ok) {
+        bool entered = false;
+        child_dispatch dispatch = {state, address, &entered};
+        bool (*previous)(void *, qa_error *) = state->instance->before_dispatch;
+        void *previous_context = state->instance->dispatch_context;
+        state->instance->before_dispatch = child_dispatch_started;
+        state->instance->dispatch_context = &dispatch;
+        ok = qa_native_invoke_receipt(state->instance, address, &signature, arguments, count,
+            &result, &entered, error);
+        state->instance->before_dispatch = previous;
+        state->instance->dispatch_context = previous_context;
+        if (ok) ok = native_wire_put_value(body, &result, error);
+    }
     qa_buffer_free(&result_storage);
     child_values_free(arguments, storage, count);
     native_wire_signature_free(&signature);
@@ -843,6 +872,18 @@ static bool child_observer_control(native_wire_reader *reader, qa_error *error) 
            native_fail(error, QA_ERROR_UNSUPPORTED, 0, "instrumented runner rejected write watch");
 }
 
+static bool child_range_check(native_child_state *state, native_wire_reader *reader,
+    native_wire_buffer *body, qa_error *error) {
+    uint64_t address, bytes; uint32_t permissions;
+    if (!native_wire_get_u64(reader, &address, error) || !native_wire_get_u64(reader, &bytes, error) ||
+        !native_wire_get_u32(reader, &permissions, error) || !native_wire_end(reader, error)) return false;
+    qa_error proof = {0};
+    bool okay = (native_u64_fits_size(bytes) || native_fail(&proof, QA_ERROR_ARGUMENT, 0,
+        "native VM range exceeds this child's actual size domain")) &&
+        qa_native_range_check(state->instance, address, (size_t)bytes, permissions, &proof);
+    return native_wire_put_error(body, okay ? NULL : &proof, error);
+}
+
 static bool child_read(native_child_state *state, native_wire_reader *reader,
                        native_wire_buffer *body, qa_error *error) {
     uint64_t address, count;
@@ -1027,6 +1068,9 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
         break;
     case NATIVE_WIRE_READ:
         ok = state->instance && child_read(state, &reader, &body, &operation_error);
+        break;
+    case NATIVE_WIRE_RANGE_CHECK:
+        ok = state->instance && child_range_check(state, &reader, &body, &operation_error);
         break;
     case NATIVE_WIRE_WRITE:
         ok = state->instance && child_write(state, &reader, &operation_error);

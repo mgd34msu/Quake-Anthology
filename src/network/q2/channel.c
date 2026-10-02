@@ -279,7 +279,6 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
     uint8_t*bytes=c->packet;
     qa_net_writer w;
     if(kex(c)) {
-        bool ok=true;
         if(c->queued_size) {
             qa_net_writer_init(&w,bytes,capacity,e);
             qa_net_write_u32(&w,0x80000000u);
@@ -287,8 +286,8 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
             qa_net_write_data(&w,c->queued,c->queued_size);
             if(w.failed||!qa_net_transport_send(t,to,(qa_bytes) {
                 bytes,qa_net_writer_size(&w)
-            },e))ok=false;
-            else c->queued_size=0;
+            },e))return false;
+            c->queued_size=0;
             c->sent_ns=now;
         }
         if(unreliable.size) {
@@ -297,22 +296,24 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
                 return false;
             }
             qa_net_writer_init(&w,bytes,capacity,e);
-            qa_net_write_u32(&w,c->outgoing++&0x7fffffffu);
+            qa_net_write_u32(&w,c->outgoing&0x7fffffffu);
             qa_net_write_u32(&w,c->incoming&0x7fffffffu);
             qa_net_write_data(&w,unreliable.data,unreliable.size);
             if(w.failed||!qa_net_transport_send(t,to,(qa_bytes) {
                 bytes,qa_net_writer_size(&w)
-            },e))ok=false;
-            else *included=true;
+            },e))return false;
+            c->outgoing++; *included=true;
             c->sent_ns=now;
         } else *included=true;
-        return ok;
+        return true;
     }
+    qa_q2_channel before=*c;
     qa_net_writer_init(&w,bytes,capacity,e);
     bool ok=qa_q2_channel_transmit(c,unreliable,now,&w,included);
     if(ok)ok=qa_net_transport_send(t,to,(qa_bytes) {
         bytes,qa_net_writer_size(&w)
     },e);
+    if(!ok) { *c=before; *included=false; }
     return ok;
 }
 bool qa_q2_channel_get_status(const qa_q2_channel *c,qa_q2_channel_status *out) {

@@ -34,7 +34,8 @@ static bool list(const mod_root *root, const char *relative, qa_fs_listing *out,
     qa_error local = {0};
     if (qa_fs_root_list(root->root, relative, out, &local)) return true;
     if (local.code != QA_ERROR_MEMORY) return true;
-    if (error) *error = local; return false;
+    if (error) *error = local;
+    return false;
 }
 
 static bool directory(const mod_root *root, const qa_fs_entry *entry, bool *out, qa_error *error)

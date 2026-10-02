@@ -6,7 +6,7 @@ bool bot_goal_memory_bind(qa_bot_goals *goals,qa_bot_memory *memory,qa_error *er
     if(!bot_goal_mutable(goals,error) || !memory || qa_bot_memory_disposed(memory))
         return bot_goal_fail(error,"Goal allocation binding requires its actual live memory owner");
     if(goals->memory==memory) {goals->shared_memory=true;return true;}
-    if(goals->indexes || goals->weights || goals->info_count)
+    if(goals->indexes || goals->weights || goals->info_count || goals->level_allocation.owner)
         return bot_goal_fail(error,"Goal allocation binding cannot replace populated source aliases");
     for(uint32_t i=0;i<goals->options.maximum_states;++i)
         if(goals->states[i].used) return bot_goal_fail(error,"Goal allocation binding requires its fresh constructor");

@@ -430,6 +430,10 @@ bool qa_modes_q3_source_frame(qa_modes *, qa_mode_id, uint64_t now_ns,
 bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_error *);
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
 bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);
+/* Only a live actor absent from this actual mode returns found=false. Source
+ * score/team callback failures remain errors and do not publish an output. */
+bool qa_modes_player_read_optional(qa_modes *, qa_mode_id, qa_actor_id,
+    qa_mode_player_view *, bool *found, qa_error *);
 typedef struct qa_mode_ctf_view {
     double last_team, status, access;
     bool start_map, pregame_over, observer, grapple_disabled;

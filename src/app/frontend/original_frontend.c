@@ -1,4 +1,6 @@
 #include "qc_messages.h"
+#include "restart_binding.h"
+#include "source_renderer_runtime.h"
 #include "original_frontend.h"
 #include "internal.h"
 #include "persistence.h"
@@ -11,6 +13,7 @@
 #include "keys.h"
 #include "equipment_events.h"
 #include "shared_register.h"
+#include "network_declarations.h"
 #include "view_bindings.h"
 #include "q1_sky.h"
 #include "music_sources.h"
@@ -107,6 +110,7 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     if ((active->cpu && !qa_cpu_gamma_read(active->cpu,&f->options.gamma,error)) ||
         (active->gl && !qa_gl_gamma_read(active->gl,&f->options.gamma,error)) ||
         !frontend_shared_register(qa_application_cvars(f->application),&dialect,output,f->options.gamma,error) ||
+        !frontend_network_declarations(qa_application_cvars(f->application),error) ||
         (!f->options.dedicated && !frontend_q1_sky_create(f,&f->q1_sky,error)) ||
         !frontend_qc_messages_create(f,&f->qc_messages,error) ||
         !frontend_view_bindings_create(f,error) ||
@@ -126,8 +130,10 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     bool music_ready=frontend_music_sources_create(f,&f->music_sources,error);
     f->options.game=NULL;
     if (!music_ready) return false;
-    if (!frontend_tools_create(f,error) || !frontend_save_commands_create(f,error) ||
+    if (!frontend_source_renderer_runtime_bind(f,error) ||
+        !frontend_tools_create(f,error) || !frontend_save_commands_create(f,error) ||
         !frontend_network_create(f,error)) return false;
+    if (!frontend_restart_binding_create(f,error)) return false;
     if (!f->options.dedicated) {
         if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
             &f->seats[0].assistance,error)) return false;

@@ -1,6 +1,8 @@
 #include "guest_q3_component_clients.h"
 #include "map_players_private.h"
 #include "guest_q3_private.h"
+#include "guest_projection_private.h"
+#include "guest_q3_weapons.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
 #include "native_q3_wire_state.h"
@@ -8,10 +10,15 @@
 #include "control_frame.h"
 #include "rankings.h"
 #include "bots_round.h"
+#include "client_events.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_player.h"
 #include "qa/game_q3_source.h"
+#include "qa/game_q3_wire.h"
+#include "qa/text.h"
+#include "qa/source_number.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -142,6 +149,44 @@ static char *info_dictionary(const char *text,qa_error *e)
     }
     result[used]=0;free(pairs);return result;
 }
+static char *info_replace(const char *text,const char *key,const char *value,qa_error *e)
+{
+    char *dictionary=info_dictionary(text,e);if(!dictionary) return NULL;
+    size_t length=strlen(dictionary),key_size=strlen(key),value_size=value?strlen(value):0;
+    if(length>SIZE_MAX-3||key_size>SIZE_MAX-length-3||value_size>SIZE_MAX-length-key_size-3) {
+        free(dictionary);application_fail(e,QA_ERROR_MEMORY,"Component Source info edit exceeds its actual extent");return NULL;
+    }
+    char *result=malloc(length+key_size+value_size+3);
+    if(!result) {free(dictionary);application_fail(e,QA_ERROR_MEMORY,"Retaining physical Source info edit");return NULL;}
+    const char *cursor=dictionary;size_t used=0;bool replaced=false;
+    while(*cursor) {
+        const char *entry=cursor+1,*separator=strchr(entry,'\\');
+        const char *end=strchr(separator+1,'\\');size_t span=end?(size_t)(end-cursor):strlen(cursor);
+        bool match=(size_t)(separator-entry)==key_size&&!memcmp(entry,key,key_size);
+        if(match) {
+            replaced=true;
+            if(value) {
+                result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
+                result[used++]='\\';memcpy(result+used,value,value_size);used+=value_size;
+            }
+        } else {memcpy(result+used,cursor,span);used+=span;}
+        if(!end) break;
+        cursor=end;
+    }
+    if(value&&!replaced) {
+        result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
+        result[used++]='\\';memcpy(result+used,value,value_size);used+=value_size;
+    }
+    result[used]=0;free(dictionary);return result;
+}
+static bool color_team(const char *text,int32_t *out,qa_error *e)
+{
+    double number;
+    if(!text||!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)text,strlen(text)},&number,e)) return false;
+    if(!isfinite(number)||trunc(number)!=number||number<1||number>14)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Component team has no original Quake color command");
+    *out=(int32_t)number;return true;
+}
 static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *e)
 {
     application_q3_component_client_adapter *a=context;
@@ -229,31 +274,155 @@ static bool drop(void *context,qa_actor_owner component,qa_actor_id actor,const 
     if(a->tail) a->tail->next=request;else a->drops=request;
     a->tail=request;return true;
 }
+static bool source_score(application_q3_component_client_adapter *a,qa_actor_id actor,double *out,qa_error *e)
+{
+    application_provider *source=a->source;
+    if(source->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_source_client_view view;
+        if(!qa_q1_source_client_read(source->state.q1,actor,&view))
+            return application_fail(e,QA_ERROR_NOT_FOUND,"Component score lost its actual Q1 client");
+        *out=view.frags;return true;
+    }
+    if(source->kind==APPLICATION_PROVIDER_QC) {
+        int32_t reference;float score;struct application_qc_state *engine=source->state.qc.engine;
+        if(!application_qc_reference(engine,actor,&reference,e)||
+            !application_qc_float(engine,reference,"frags",&score,e)) return false;
+        *out=score;return true;
+    }
+    if(source->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_player_info view;
+        if(!qa_q2_player_read(source->state.q2,actor,&view))
+            return application_fail(e,QA_ERROR_NOT_FOUND,"Component score lost its actual Q2 player state");
+        *out=view.score;return true;
+    }
+    int32_t score;
+    if(source->kind==APPLICATION_PROVIDER_Q3) {
+        application_player_record *p=player(a,actor);
+        if(!p||!qa_q3_wire_client_source_score_read(source->state.q3,p->client_slot,&score,e)) return false;
+    } else {
+        struct application_q3_guest *engine=q3g_engine(source);
+        if(!engine||!engine->game||!engine->game->weapons)
+            return application_fail(e,QA_ERROR_UNSUPPORTED,"Component score needs a genuine Source match declaration");
+        if(!application_q3_weapons_score(engine->game->weapons,actor,&score,e)) return false;
+    }
+    *out=score;return true;
+}
+static bool source_set_score(application_q3_component_client_adapter *a,qa_actor_id actor,double score,qa_error *e)
+{
+    application_provider *source=a->source;
+    if(!isfinite(score)) return application_fail(e,QA_ERROR_ARGUMENT,"Component Source score must be finite");
+    if(source->kind==APPLICATION_PROVIDER_Q1)
+        return qa_q1_source_client_set_score(source->state.q1,actor,(float)qa_source_fround(score),e);
+    if(source->kind==APPLICATION_PROVIDER_QC) {
+        int32_t reference;struct application_qc_state *engine=source->state.qc.engine;
+        return application_qc_reference(engine,actor,&reference,e)&&
+            application_qc_set_float(engine,reference,"frags",(float)qa_source_fround(score),e);
+    }
+    if(trunc(score)!=score||score<INT32_MIN||score>INT32_MAX)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Component Source score requires an int32");
+    struct application_q3_guest *engine=q3g_engine(source);
+    if(engine&&engine->game&&engine->game->weapons)
+        return application_q3_weapons_set_score(engine->game->weapons,actor,(int32_t)score,e);
+    if((source->kind!=APPLICATION_PROVIDER_Q2&&source->kind!=APPLICATION_PROVIDER_Q3)||
+        !a->application->modes||!a->application->primary_mode_ready)
+        return application_fail(e,QA_ERROR_UNSUPPORTED,"Component score write has no actual Source scoring owner");
+    if(!qa_modes_set_score(a->application->modes,a->application->primary_mode,actor,(int32_t)score,e)) return false;
+    double actual;
+    return source_score(a,actor,&actual,e)&&(actual==score||
+        application_fail(e,QA_ERROR_ARGUMENT,"Component score write did not reach the physical Source state"));
+}
+static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_id actor,qa_team_id team,qa_error *e)
+{
+    application_provider *source=a->source;qa_combat_state current_team;
+    if(!qa_combat_read(a->application->combat,actor,&current_team,e)) return false;
+    if(current_team.team==team) return true;
+    const char *text=team?qa_strings_cstr(qa_session_strings(a->application->session),team):NULL;
+    if(team&&!text) return application_fail(e,QA_ERROR_ARGUMENT,"Component team lost its actual identity");
+    struct application_q3_guest *engine=q3g_engine(source);
+    if(engine&&engine->game&&engine->game->weapons) {
+        const application_q3_weapon_team_command *command;
+        if(!application_q3_weapons_team_command(engine->game->weapons,actor,team,&command,e)) return false;
+        if(command->argument_count>SIZE_MAX/sizeof(const char *))
+            return application_fail(e,QA_ERROR_MEMORY,"Component team command exceeds its actual vector extent");
+        const char **arguments=malloc(command->argument_count*sizeof(*arguments));
+        if(!arguments) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual Source team command");
+        for(size_t i=0;i<command->argument_count;++i)
+            arguments[i]=qa_strings_cstr(qa_session_strings(a->application->session),command->arguments[i]);
+        bool ok=application_q3_guest_client_command_vector(source,actor,arguments,command->argument_count,e);
+        free(arguments);return ok;
+    }
+    if(source->kind==APPLICATION_PROVIDER_Q3) {
+        const char *argument=!team?"free":!strcmp(text,"team:red")?"red":!strcmp(text,"team:blue")?"blue":NULL;
+        return argument?application_native_q3_client_set_team(source,actor,argument,e):
+            application_fail(e,QA_ERROR_ARGUMENT,"Component team has no original Q3 command");
+    }
+    if(source->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_options options;double source_seconds;qa_q1_source_client_view view;int32_t color;
+        if(!qa_q1_source_respawn_options_read(source->state.q1,&options,&source_seconds,e)||
+            !qa_q1_source_client_read(source->state.q1,actor,&view)) return false;
+        if(options.program==QA_Q1_CTF) {
+            color=text&&!strcmp(text,"team:red")?5:text&&!strcmp(text,"team:blue")?14:0;
+            if(!color) return application_fail(e,QA_ERROR_ARGUMENT,"Component team has no actual Q1 CTF color command");
+        } else if(!color_team(text,&color,e)) return false;
+        return qa_q1_source_client_colors(source->state.q1,actor,view.shirt,color-1,e);
+    }
+    if(source->kind==APPLICATION_PROVIDER_QC) {
+        struct application_qc_state *qc=source->state.qc.engine;
+        if(source->state.qc.qualified)
+            return application_fail(e,QA_ERROR_UNSUPPORTED,"Component QC team needs its actual declared team aliases");
+        application_player_record *p=player(a,actor);if(!p) return false;
+        char *info;
+        if(qc->profile==QA_QC_QUAKEWORLD) {
+            if(text&&strpbrk(text,"\\\"\n\r"))
+                return application_fail(e,QA_ERROR_ARGUMENT,"Component QW team has invalid Source info bytes");
+            info=info_replace(p->userinfo?p->userinfo:"","team",text,e);
+        } else {
+            int32_t color,reference;char value[4];
+            if(!color_team(text,&color,e)||!application_qc_reference(qc,actor,&reference,e)) return false;
+            snprintf(value,sizeof(value),"%d",color-1);
+            info=info_replace(p->userinfo?p->userinfo:"","bottomcolor",value,e);
+            if(!info) return false;
+            if(!application_qc_set_float(qc,reference,"team",(float)color,e)) {free(info);return false;}
+        }
+        if(!info) return false;
+        p=player(a,actor);if(!p) {free(info);return application_fail(e,QA_ERROR_ARGUMENT,"Component QC team replaced its actual client");}
+        free(p->userinfo);p->userinfo=info;
+        return application_qc_client_userinfo(source,actor,e)&&application_client_userinfo_changed(a->application,actor,e);
+    }
+    if(source->kind==APPLICATION_PROVIDER_Q2) {
+        qa_application *app=a->application;qa_mode_view mode;
+        if(!app->modes||!app->primary_mode_ready||application_mode_provider(app,app->primary_mode)!=source||
+            !qa_modes_read(app->modes,app->primary_mode,&mode,e)) return false;
+        if(mode.rules.source!=QA_MODE_Q2_CTF&&mode.rules.source!=QA_MODE_LMCTF)
+            return application_fail(e,QA_ERROR_ARGUMENT,"Component Q2 team has no genuine CTF Source command");
+        const char *argument=text&&!strcmp(text,"team:red")?"red":text&&!strcmp(text,"team:blue")?"blue":NULL;
+        if(!argument) return application_fail(e,QA_ERROR_ARGUMENT,"Component Q2 team has no Source command argument");
+        const char *arguments[]={"team",argument};bool handled=false;
+        qa_command_invocation command={.context={.owner=source->owner,.actor=actor,.dialect=QA_CONSOLE_Q2,
+            .origin=QA_COMMAND_SERVER},.argc=2,.argv=arguments,.args_text=argument};
+        return qa_modes_console_command(app->modes,app->primary_mode,actor,&command,&handled,e)&&
+            (handled||application_fail(e,QA_ERROR_UNSUPPORTED,"Actual Q2 CTF Source did not handle its team command"));
+    }
+    return application_fail(e,QA_ERROR_UNSUPPORTED,"Component team needs its physical Source command authority");
+}
 bool application_q3_component_client_match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
 {
-    application_q3_component_client_adapter *a=context;int32_t points;
+    application_q3_component_client_adapter *a=context;qa_combat_state state;double points;
     if(!team||!score)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component match needs its actual team and score outputs");
     if(!entered(a,actor,e)) return false;
-    if(!a->application->modes||!a->application->primary_mode_ready)
-        return application_fail(e,QA_ERROR_ARGUMENT,"Component match has no genuine primary mode client");
     ++a->calls;
-    bool ok=qa_modes_team(a->application->modes,a->application->primary_mode,actor,team,e)&&
-        qa_modes_score(a->application->modes,a->application->primary_mode,actor,&points,e);
+    bool ok=qa_combat_read(a->application->combat,actor,&state,e)&&source_score(a,actor,&points,e);
     --a->calls;
     if(!ok||!current(a,actor)) return ok?application_fail(e,QA_ERROR_ARGUMENT,"Component match read changed its source client"):false;
-    *score=points;return true;
+    *team=state.team;*score=points;return true;
 }
 bool application_q3_component_client_match_write(void *context,qa_actor_id actor,bool team,qa_string_id value,double score,qa_error *e)
 {
     application_q3_component_client_adapter *a=context;
     if(!entered(a,actor,e)) return false;
-    if(!a->application->modes||!a->application->primary_mode_ready||
-        (!team&&(!isfinite(score)||trunc(score)!=score||score<INT32_MIN||score>INT32_MAX)))
-        return application_fail(e,QA_ERROR_ARGUMENT,"Component match write exceeds its real Source binding");
     ++a->calls;
-    bool ok=team?qa_modes_set_team(a->application->modes,a->application->primary_mode,actor,value,e):
-        qa_modes_set_score(a->application->modes,a->application->primary_mode,actor,(int32_t)score,e);
+    bool ok=team?source_set_team(a,actor,value,e):source_set_score(a,actor,score,e);
     --a->calls;
     return ok&&(current(a,actor)||application_fail(e,QA_ERROR_ARGUMENT,"Component match write changed its client"));
 }

@@ -5,6 +5,8 @@
 #include "qa/qc_host.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_qw.h"
+#include "qa/network_q1_channel.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/model.h"
 #include "qa/text.h"
 #include <stdlib.h>
@@ -31,6 +33,8 @@ typedef struct application_qc_client {
     bool receipt_seen;
     uint64_t receipt_sequence;
     uint64_t receipt_ordinal;
+    qa_item_id pending_weapon;
+    bool pending_weapon_following;
     application_client_outputs outputs;
 } application_qc_client;
 typedef struct application_qc_message {
@@ -124,5 +128,11 @@ bool application_qc_control_source_client(const application_provider *, qa_actor
 bool application_qc_player_source_actor(application_provider *, uint32_t, qa_actor_id *, qa_error *);
 bool application_qc_client_colors(application_provider *, qa_actor_id, int32_t top, int32_t bottom, qa_error *);
 bool application_qc_player_receive(application_provider *, qa_actor_id, uint64_t ordinal, qa_movement_command *, qa_error *);
+struct qa_application_qc_weapon_ui_binding;
+bool application_qc_weapon_binding_at(struct application_qc_state *,size_t,
+    struct qa_application_qc_weapon_ui_binding *,uint32_t *,qa_error *);
+bool application_qc_pending_weapon_ready(struct application_qc_state *,const application_qc_client *,qa_error *);
+bool application_qc_client_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
+void application_qc_weapon_command(struct application_qc_state *,qa_actor_id);
 bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 #endif

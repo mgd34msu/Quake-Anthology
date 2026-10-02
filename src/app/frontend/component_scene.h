@@ -7,6 +7,9 @@ bool frontend_component_scene_prepare(void *,const application_q3_component_scen
 bool frontend_component_scenes_idle(const qa_frontend *);
 typedef struct frontend_component_scene_view {
     uint64_t identity,sequence,generation,service_owner;
+    application_q3_component_scene_origin origin;
+    qa_executable_recipe *recipe;
+    const qa_recipe_provider *recipe_provider;
     size_t packet_count;
     qa_actor_owner receiver;
     uint32_t physical_seat;
@@ -29,6 +32,14 @@ typedef struct frontend_component_scene_view {
 } frontend_component_scene_view;
 size_t frontend_component_scene_count(const qa_frontend *);
 bool frontend_component_scene_read(const qa_frontend *,size_t,frontend_component_scene_view *,qa_error *);
+bool frontend_component_scene_metadata_read(const qa_frontend *,size_t,frontend_component_scene_view *,qa_error *);
+bool frontend_component_scene_metadata_current(const qa_frontend *,const frontend_component_scene_view *,qa_error *);
+/* Install the genuine claimed graph VFS and decoded constructor policy before
+ * the app's saved scene roster invokes its empty frontend factory. */
+bool frontend_component_scene_restore_prepare(qa_frontend *,uint64_t identity,qa_vfs **claimed,
+    const qa_q3_presentation_options *,qa_error *);
+bool frontend_component_scene_restores_destroy(qa_frontend *,qa_error *);
+bool frontend_component_scene_packet_count(const qa_frontend *,uint64_t identity,uint64_t sequence,size_t *,qa_error *);
 typedef struct frontend_component_scene_packet {
     qa_q3_refdef definition;
     qa_q3_scene_options options;

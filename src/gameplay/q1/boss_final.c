@@ -626,7 +626,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
         body.ground = (qa_actor_id){0};
         q1_actor *native = q1_entity(g, player);
         if (native)
-            native->physics.flags &= ~QA_PHYSICS_FLYING;
+            native->physics.flags &= ~(uint32_t)QA_PHYSICS_FLYING;
         q1_player *state = q1_player_get(g, player);
         if (state)
             state->input.view_angles = body.angles;

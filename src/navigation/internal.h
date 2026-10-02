@@ -52,7 +52,7 @@ typedef struct nav_prediction {
     void *lease;
     qa_vec3 pml_origin;
     uint64_t sequence;
-    bool initialized, has_lease;
+    bool initialized, has_lease, has_traversal;
     bool has_trace, damaging_fall;
     qa_trace_query last_query;
     qa_trace_result last_trace;

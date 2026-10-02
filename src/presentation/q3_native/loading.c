@@ -161,7 +161,8 @@ static int32_t integer(const char *text)
     while(*text==' ' || (*text>='\t' && *text<='\r'))++text;
     bool negative=*text=='-'; if(*text=='-' || *text=='+')++text;
     uint32_t value=0; while(*text>='0' && *text<='9')value=value*10u+(uint32_t)(*text++-'0');
-    if(negative)value=0u-value; int32_t result; memcpy(&result,&value,sizeof(result)); return result;
+    if(negative)value=0u-value;
+    int32_t result; memcpy(&result,&value,sizeof(result)); return result;
 }
 static bool info_text(const char *info,const char *key,char *out,size_t capacity,qa_error *e)
 {
@@ -343,7 +344,8 @@ static bool draw_information(loading_draw *d)
     }
     if(*message) { if(!text(d,y,message))return false; y+=27; }
     if(cheats[0]=='1') { if(!text(d,y,"CHEATS ARE ENABLED"))return false; y+=27; }
-    if(!text(d,y,game_name(o->product,game_type)))return false; y+=27;
+    if(!text(d,y,game_name(o->product,game_type)))return false;
+    y+=27;
     int32_t limit=time_limit;
     if(limit) { snprintf(buffer,sizeof(buffer),"timelimit %i",limit); if(!text(d,y,buffer))return false; y+=27; }
     limit=game_type<4?frag_limit:capture_limit;

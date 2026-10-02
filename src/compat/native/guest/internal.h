@@ -56,6 +56,8 @@ struct qa_native_guest {
     void *observe_context;
     qa_native_guest_instruction_fn instruction_observer;
     void *instruction_context;
+    void (*dispatch_started)(void *);
+    void *dispatch_context;
     unsigned callback_depth, publication_depth;
     bool stepping, failed, restoring, faulting;
     bool has_memory_fault;
@@ -81,7 +83,10 @@ bool guest_cpu_open(qa_native_guest *, bool, qa_error *);
 bool guest_cpu_transfer(qa_native_guest *, qa_native_guest_cpu *, bool, qa_error *);
 bool guest_allocation_storage(const qa_native_guest *, const guest_allocation *,
     uint64_t *, size_t *, qa_error *);
+bool guest_allocation_transfer(qa_native_guest *, uint64_t, guest_allocation *,
+    uint64_t *, qa_error *);
 bool guest_native_result(qa_native_guest *, bool, qa_error *);
+void guest_dispatch_started(qa_native_guest *);
 bool guest_native_map(qa_native_guest *, const qa_native_guest_mapping *, qa_error *);
 bool guest_backing_retire(qa_native_guest *, guest_backing *, qa_error *);
 bool guest_native_transfer(qa_native_guest *, qa_native_guest_cpu *, bool, qa_error *);

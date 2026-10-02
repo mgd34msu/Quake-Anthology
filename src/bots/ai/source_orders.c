@@ -322,7 +322,8 @@ static bool deadline(qa_bots *b,const qa_bot_chat_match *m,float *out,qa_error *
         }
         break;
     }
-    if(duration>0) *out=b->time+duration;return true;
+    if(duration>0) *out=b->time+duration;
+    return true;
 }
 static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,qa_error *e) {
     if(!alive(b,s)) return true;
@@ -600,7 +601,8 @@ static bool formation_space(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *
     if(m->subtype&MATCH_FEET) {volatile float feet=.3048f*32.0f;space=feet*value;}
     else space=32.0f*value;
     if(space<48 || space>500) space=100;
-    if(alive(b,s)) s->formation_distance=space;return true;
+    if(alive(b,s)) s->formation_distance=space;
+    return true;
 }
 static bool dismiss(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
     bool allowed;if(!order_allowed(b,s,m,&allowed,e)) return false;
@@ -629,10 +631,13 @@ static bool doing(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error
         type=s->long_term_goal==BOT_LTG_TEAM_HELP?"helping":"accompanying";
         if(!bot_ai_easy_name(b,s->teammate,text,sizeof(text),e)) return false;
         argument=text;break;
-    case BOT_LTG_DEFEND:case BOT_LTG_GET_ITEM:
+    case BOT_LTG_DEFEND:case BOT_LTG_GET_ITEM: {
+        const char *name;
         type=s->long_term_goal==BOT_LTG_DEFEND?"defending":"gettingitem";
-        copy_name(text,sizeof(text),qa_bot_goals_name(qa_bot_runtime_goals(b->runtime),s->team_goal.number));
+        if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),s->team_goal.number,&name,e)) return false;
+        copy_name(text,sizeof(text),name);
         argument=text;break;
+    }
     case BOT_LTG_KILL:
         type="killing";
         if(!bot_ai_client_name(b,s->team_goal.entity,text,sizeof(text),true,e)) return false;
@@ -701,8 +706,9 @@ static bool nearest_item(qa_bots *b,bot_ai_state *s,const char *name,qa_bot_goal
     for(;;) {
         bool found;if(!qa_bot_goals_level_item(qa_bot_runtime_goals(b->runtime),index,name,&candidate,&found,e)) return false;
         if(!found) return true;
-        index=candidate.number;char goal_name[64];
-        copy_name(goal_name,sizeof(goal_name),qa_bot_goals_name(qa_bot_runtime_goals(b->runtime),candidate.number));
+        index=candidate.number;char goal_name[64];const char *current_name;
+        if(!qa_bot_goals_name_read(qa_bot_runtime_goals(b->runtime),candidate.number,&current_name,e)) return false;
+        copy_name(goal_name,sizeof(goal_name),current_name);
         if(same(goal_name,name)) {
             float distance=qa_vec_length(qa_vec_sub(candidate.origin,s->player.origin));
             if(distance<*out) {
@@ -882,7 +888,8 @@ bool bot_ai_source_order_message(qa_bots *b,bot_ai_state *s,const char *message,
     case MSG_DOING:return doing(b,s,&m,e);
     case MSG_MY_COMMAND: {
         bool leader;if(!self_is_leader(b,s,36,&leader,e)) return false;
-        if(leader && alive(b,s)) s->source_order.force_orders=true;return true;
+        if(leader && alive(b,s)) s->source_order.force_orders=true;
+        return true;
     }
     case MSG_WHERE:return where(b,s,&m,e);
     case MSG_LEAD:return lead(b,s,&m,e);
@@ -891,7 +898,8 @@ bool bot_ai_source_order_message(qa_bots *b,bot_ai_state *s,const char *message,
         char name[36];int32_t client;
         if(!qa_bot_chat_match_variable(&m,VAR_NAME,name,sizeof(name),e) ||
            !find_name(b,s,name,false,&client,e)) return false;
-        if(client>=0) b->not_leader[client]=false;return true;
+        if(client>=0) b->not_leader[client]=false;
+        return true;
     }
     case MSG_NEW_LEADER: {
         char name[36];int32_t client;bool same_team;

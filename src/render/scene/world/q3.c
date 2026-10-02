@@ -1,5 +1,6 @@
 #include "q3/internal.h"
 #include "qa/scene_effects.h"
+#include "qa/scene_world_save.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -115,6 +116,27 @@ static bool load_fogs(qa_scene_world *world, q3_data *data, qa_error *error) {
     return true;
 }
 
+bool qa_scene_world_source_fog_read(const qa_scene_world *world, uint32_t index,
+    qa_scene_fog_volume *out, qa_error *error)
+{
+    if (!out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source fog read requires its output"); return false;
+    }
+    *out = (qa_scene_fog_volume){0};
+    if (!index) return true;
+    if (!qa_scene_world_observation_ready(world) || world->bsp.family != QA_BSP_Q3 || !world->q3_data) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, index, "Source fog read requires its actual retained Q3 world"); return false;
+    }
+    const q3_data *data = world->q3_data;
+    if (index > data->fog_count) {
+        qa_error_set(error, QA_ERROR_FORMAT, index, "Source fog ordinal exceeds its actual world"); return false;
+    }
+    const q3_fog *fog = data->fogs + index - 1;
+    *out = (qa_scene_fog_volume){.index = index, .fog = fog->fog,
+        .tc_scale = fog->tc_scale, .has_surface = fog->has_surface, .surface = fog->surface};
+    return true;
+}
+
 static bool equal_key(qa_bytes key, const char *expected) {
     size_t length = strlen(expected);
     if (key.size != length) return false;
@@ -207,6 +229,13 @@ static bool load_surface(qa_scene_world *world, q3_data *data, const qa_bsp_mate
     surface->skip = source.type == QA_BSP_SURFACE_PATCH && ((uint32_t)shader->surface_flags & 0x80u) != 0;
     surface->flare = source.type == QA_BSP_SURFACE_FLARE;
     int32_t lightmap = source.type == QA_BSP_SURFACE_PLANAR || source.type == QA_BSP_SURFACE_PATCH ? source.lightmap : -3;
+    if (qa_material_library_has_source_profile(world->materials)) {
+        qa_material_profile profile;
+        if (!qa_material_library_source_profile_read(world->materials,&profile,error)) return false;
+        if (profile.vertex_lighting || profile.permedia2) lightmap=-3;
+        if (world->options.source_fullbright) lightmap=-2;
+        if (lightmap>=0 && (size_t)lightmap>=data->lightmap_count) lightmap=-3;
+    }
     if (lightmap >= 0 && (size_t)lightmap < data->lightmap_count) {
         surface->lightmap = data->lightmaps[lightmap];
         qa_scene_image_retain(surface->lightmap);

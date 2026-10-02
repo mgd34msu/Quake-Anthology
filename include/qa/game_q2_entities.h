@@ -51,6 +51,12 @@ typedef enum qa_q2_map_event_kind {
     QA_Q2_MAP_MISSION_OBJECTIVE,
     QA_Q2_MAP_HELP_COMPUTER
 } qa_q2_map_event_kind;
+#define QA_Q2_CAMPAIGN_LEVEL_LIMIT 8
+typedef struct qa_q2_campaign_level {
+    qa_string_id map, name;
+    uint32_t visit_order, total_secrets, found_secrets, total_monsters, killed_monsters;
+    double time_seconds;
+} qa_q2_campaign_level;
 typedef struct qa_q2_map_event {
     qa_q2_map_event_kind kind;
     qa_actor_id actor, recipient, target;
@@ -65,6 +71,10 @@ typedef struct qa_q2_map_event {
     bool visible;
     const qa_builtin_message_arg *arguments;
     size_t argument_count;
+    /* Synchronous copy of the real simulation's ordered unit report. */
+    const qa_q2_campaign_level *levels;
+    size_t level_count;
+    uint64_t button_time_ns;
 } qa_q2_map_event;
 typedef struct qa_q2_path_follower {
     qa_actor_id move_target, enemy, old_enemy, activator;
@@ -371,6 +381,10 @@ typedef struct qa_q2_entities_checkpoint {
     bool sky_auto, has_goals;
     qa_q2_wind_checkpoint *wind;
     size_t wind_count;
+    uint32_t total_monsters, killed_monsters, level_count;
+    qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT];
+    qa_string_id *visited_maps;
+    size_t visited_count;
 } qa_q2_entities_checkpoint;
 /* Owned native value snapshots, not serialized C memory. Codecs remap string
  * identities and encode individual fields. Embedded live actor IDs are zero;
@@ -384,6 +398,9 @@ bool qa_q2_entities_restore(qa_q2_game *, const qa_q2_entities_checkpoint *, qa_
 void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *);
 bool qa_q2_entities_validate_links(qa_q2_game *, qa_error *);
 bool qa_q2_entities_configure(qa_q2_game *, const qa_q2_entity_services *, qa_error *);
+/* Actual application unit travel clears report rows; visited-map history is
+ * retained across units, matching the Source campaign lifetime. */
+bool qa_q2_campaign_leave_unit(qa_q2_game *, qa_error *);
 bool qa_q2_entity_spawn(qa_q2_game *, qa_actor_id, const qa_q2_map_fields *, bool *handled,
                         qa_error *);
 bool qa_q2_entity_use(qa_q2_game *, qa_actor_id, qa_actor_id other, qa_actor_id activator,

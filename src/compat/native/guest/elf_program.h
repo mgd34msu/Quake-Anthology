@@ -35,6 +35,7 @@ typedef struct guest_elf_program_options {
 typedef struct guest_elf_program_view {
     uint64_t program, interpreter, stack, initial_stack, entry;
     size_t stack_bytes, argc, environment_count;
+    int32_t stack_tag;
 } guest_elf_program_view;
 
 /* Kernel-style fresh startup, with raw PROGRAM-role attachments for both
@@ -48,11 +49,16 @@ typedef struct guest_elf_program_view {
 bool guest_elf_program_prepare(const guest_elf_program_options *,
     guest_elf_program **, qa_error *);
 const guest_elf_program_view *guest_elf_program_describe(const guest_elf_program *);
+/* Move the real initial allocation claim to kernel VM ownership, retaining
+ * its pages and historical startup identity. Library stacks do not use this. */
+bool guest_elf_program_transfer_stack(guest_elf_program *, qa_error *);
+bool guest_elf_program_stack_changed(guest_elf_program *, uint64_t, size_t, qa_error *);
+bool guest_elf_program_stack_owned(const guest_elf_program *);
 bool guest_elf_program_checkpoint(const guest_elf_program *, qa_buffer *, qa_error *);
 /* The process capsule retains both actual QALM attachments separately. Their
  * inert artifacts and live memory owners outlive this borrowed startup owner.
  * Pure host-record adoption against the actual restored guest, artifact graph
- * and allocator-owned stack. Saved mutable stack/RAM/CPU win; no strings,
+ * and historical startup stack ownership. Saved mutable stack/RAM/CPU win; no strings,
  * random bytes, auxiliary words or initial register values are replayed. */
 bool guest_elf_program_adopt(const guest_elf_program_images *, qa_bytes,
     guest_elf_program **, qa_error *);

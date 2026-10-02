@@ -8,11 +8,12 @@
 #include <string.h>
 
 typedef struct component_scene_row component_scene_row;
+typedef struct application_q3_components_video application_q3_components_video;
 typedef struct component_saved_row {
     const char *instance,*key;
     uint64_t owner,generation,services;
     qa_sha256_digest program,declaration;
-    qa_buffer game;
+    qa_buffer game,scenes;
 } component_saved_row;
 typedef struct component_game_row {
     application_q3_components *roster;
@@ -28,7 +29,9 @@ typedef struct component_game_row {
     char *presentation_runtime;
     qa_unified_document *identity;
     component_scene_row *scenes;
-    bool attached,initialized,initializing,activated,registered;
+    bool attached,initialized,initializing,activated,registered,destroying;
+    qa_source_frame retirement_clock;
+    bool retirement_clock_held,events_retired;
 } component_game_row;
 struct application_q3_components {
     application_q3_components_options options;
@@ -42,6 +45,8 @@ struct application_q3_components {
     qa_buffer entity_text;
     component_saved_row *saved;
     size_t saved_count;
+    application_q3_components_video *video;
+    bool video_entering;
 };
 bool q3components_storage(void *);
 bool q3components_current(void *);
@@ -51,4 +56,6 @@ bool q3components_scenes_idle(const component_game_row *);
 bool q3components_identity(component_game_row *,qa_error *);
 bool q3components_saved_read(application_q3_components *,qa_bytes,qa_error *);
 bool q3components_saved_import(component_game_row *,qa_error *);
+bool q3components_scenes_checkpoint(component_game_row *,qa_buffer *,qa_error *);
+bool q3components_scenes_saved_read(component_game_row *,qa_bytes,qa_error *);
 #endif

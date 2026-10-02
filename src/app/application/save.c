@@ -40,6 +40,7 @@
 #include "q3_product.h"
 #include "qa/map_sidecars.h"
 #include "guest_q3_components.h"
+#include "bots_npc.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -642,7 +643,8 @@ typedef struct application_persistence {
 
 static bool persistence_safe(qa_application *app)
 {
-    return app && app->operation == APPLICATION_IDLE && !app->q3_round_active && !app->frame_preparing && app->session && app->world &&
+    return app && app->operation == APPLICATION_IDLE && !app->client_preparation &&
+        !app->q3_round_active && !app->frame_preparing && app->session && app->world &&
         app->configuration && qa_application_launch(app) && qa_session_safe(app->session) &&
         qa_world_idle(app->world) && qa_combat_idle(app->combat) &&
         application_guests_idle(app) && application_bots_can_destroy(app) &&
@@ -1161,14 +1163,15 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
 
 static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa_error *error)
 {
-    qa_buffer game = {0}, cvars = {0};
+    qa_buffer game = {0}, cvars = {0}, npc = {0};
     bool ok = qa_q1_game_capture(provider->state.q1, &game, error) &&
-        application_native_q1_console_capture(provider, &cvars, error);
-    if (ok && (!game.size || !cvars.size || game.size > SIZE_MAX - 24 ||
-        cvars.size > SIZE_MAX - 24 - game.size))
+        application_native_q1_console_capture(provider, &cvars, error) &&
+        application_bots_npc_capture(provider, &npc, error);
+    if (ok && (!game.size || !cvars.size || !npc.size || game.size > SIZE_MAX - 32 ||
+        cvars.size > SIZE_MAX - 32 - game.size || npc.size > SIZE_MAX - 32 - game.size - cvars.size))
         ok = application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner extent");
     if (ok) {
-        out->size = 24 + game.size + cvars.size;
+        out->size = 32 + game.size + cvars.size + npc.size;
         out->data = malloc(out->size);
         if (!out->data) {
             out->size = 0;
@@ -1176,31 +1179,37 @@ static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa
         }
     }
     if (ok) {
-        memcpy(out->data, "QAN1", 4); qa_store_u32le(out->data + 4, 1);
+        memcpy(out->data, "QAN1", 4); qa_store_u32le(out->data + 4, 2);
         qa_store_u64le(out->data + 8, game.size); qa_store_u64le(out->data + 16, cvars.size);
-        memcpy(out->data + 24, game.data, game.size);
-        memcpy(out->data + 24 + game.size, cvars.data, cvars.size);
+        qa_store_u64le(out->data + 24, npc.size);
+        memcpy(out->data + 32, game.data, game.size);
+        memcpy(out->data + 32 + game.size, cvars.data, cvars.size);
+        memcpy(out->data + 32 + game.size + cvars.size, npc.data, npc.size);
     }
-    qa_buffer_free(&game); qa_buffer_free(&cvars);
+    qa_buffer_free(&game); qa_buffer_free(&cvars); qa_buffer_free(&npc);
     return ok;
 }
 
 static bool native_q1_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QAN1", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1)
+    if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAN1", 4) ||
+        qa_load_u32le(bytes.data + 4) != 2)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner bundle");
     uint64_t game_size = qa_load_u64le(bytes.data + 8), cvars_size = qa_load_u64le(bytes.data + 16);
-    if (!game_size || game_size > bytes.size - 24 ||
-        !cvars_size || cvars_size != bytes.size - 24 - (size_t)game_size)
+    uint64_t npc_size = qa_load_u64le(bytes.data + 24);
+    if (!game_size || game_size > bytes.size - 32 || !cvars_size ||
+        cvars_size > bytes.size - 32 - (size_t)game_size || !npc_size ||
+        npc_size != bytes.size - 32 - (size_t)game_size - (size_t)cvars_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner lengths");
     qa_q1_restore *ticket = NULL;
     bool ok = application_native_q1_console_restore(provider,
-        (qa_bytes){bytes.data + 24 + (size_t)game_size, (size_t)cvars_size}, error) &&
+        (qa_bytes){bytes.data + 32 + (size_t)game_size, (size_t)cvars_size}, error) &&
         qa_q1_game_restore_prepare_source(provider->state.q1,
-            (qa_bytes){bytes.data + 24, (size_t)game_size}, &ticket, error) &&
+            (qa_bytes){bytes.data + 32, (size_t)game_size}, &ticket, error) &&
         qa_q1_game_restore_commit(ticket, error);
     if (!ok) qa_q1_game_restore_abort(ticket);
+    if (ok) ok = application_bots_npc_restore(provider,
+        (qa_bytes){bytes.data + 32 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size}, error);
     return ok;
 }
 
@@ -1303,13 +1312,15 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->schema = schema;
             owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 8 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
+                                     provider->kind == APPLICATION_PROVIDER_Q1) ? 2 :
+                                    (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_Q3) ? 7 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_NATIVE &&
                                      provider->state.native.q2_engine) ? 2 :
                                     owner->kind == QA_SAVE_CONTROLS ? 11 :
                                     owner->kind == QA_SAVE_EQUIPMENT ? 3 :
-                                    owner->kind == QA_SAVE_EVENTS ? 9 :
+                                    owner->kind == QA_SAVE_EVENTS ? APPLICATION_EVENTS_SAVE_VERSION :
                                     owner->kind == QA_SAVE_INVENTORY || owner->kind == QA_SAVE_PROGRESSION ||
                                     owner->kind == QA_SAVE_TARGETS ? 2 : 1;
             if (!owner->backend) owner->backend = "";

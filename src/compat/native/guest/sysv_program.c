@@ -1,4 +1,69 @@
 #include "sysv_program_private.h"
+#include <time.h>
+
+static bool physical_clock(qa_native_sysv_program *owner, int32_t clock_id,
+    int64_t *seconds, int32_t *nanoseconds, qa_error *error)
+{
+    if (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64)
+        return guest_host_child_cpu_clock_read(owner->guest->child, clock_id, seconds, nanoseconds, error);
+#if defined(__linux__)
+    /* The emulated task executes synchronously on this exclusive strand.
+     * Count only its entered execution interval, including its kernel work;
+     * other controller threads and stopped construction are not source tasks. */
+    struct timespec value;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value))
+        return guest_fail(error, QA_ERROR_IO, 0, "observing the actual emulated task execution clock");
+    *seconds = (int64_t)value.tv_sec; *nanoseconds = (int32_t)value.tv_nsec; return true;
+#else
+    (void)clock_id; (void)seconds; (void)nanoseconds;
+    return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "emulated task CPU accounting requires its actual platform execution clock");
+#endif
+}
+bool program_clock_read(qa_native_sysv_program *owner, int32_t clock_id,
+    int64_t *seconds, int32_t *nanoseconds, qa_error *error)
+{
+    if (!owner || (clock_id != 2 && clock_id != 3) || !seconds || !nanoseconds)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "source CPU clock needs its actual task owner");
+    const program_clock *saved = owner->clocks + (clock_id - 2);
+    uint64_t total = saved->seconds; int64_t part = saved->nanoseconds;
+    if (owner->clock_active) {
+        int64_t now; int32_t nanos;
+        if (!physical_clock(owner, clock_id, &now, &nanos, error)) return false;
+        if (now < saved->baseline_seconds || nanos < 0 || nanos >= 1000000000 ||
+            (now == saved->baseline_seconds && nanos < saved->baseline_nanoseconds))
+            return guest_fail(error, QA_ERROR_FORMAT, 0, "physical source CPU clock moved backwards");
+        uint64_t elapsed = (uint64_t)(now - saved->baseline_seconds);
+        if (elapsed > (uint64_t)INT64_MAX - total)
+            return guest_fail(error, QA_ERROR_FORMAT, 0, "source CPU accounting overflowed its timespec domain");
+        total += elapsed; part += (int64_t)nanos - saved->baseline_nanoseconds;
+        if (part < 0) { --total; part += 1000000000; }
+        if (part >= 1000000000) {
+            if (total == INT64_MAX) return guest_fail(error, QA_ERROR_FORMAT, 0, "source CPU accounting seconds overflow");
+            ++total; part -= 1000000000;
+        }
+    }
+    *seconds = (int64_t)total; *nanoseconds = (int32_t)part; return true;
+}
+static bool clocks_start(qa_native_sysv_program *owner, qa_error *error)
+{
+    for (int32_t clock_id = 2; clock_id <= 3; ++clock_id) {
+        program_clock *saved = owner->clocks + (clock_id - 2);
+        if (!physical_clock(owner, clock_id, &saved->baseline_seconds, &saved->baseline_nanoseconds, error)) return false;
+        if (saved->baseline_seconds < 0 || saved->baseline_nanoseconds < 0 || saved->baseline_nanoseconds >= 1000000000)
+            return guest_fail(error, QA_ERROR_FORMAT, 0, "source physical CPU clock has invalid fields");
+    }
+    owner->clock_active = true; return true;
+}
+static bool clocks_finish(qa_native_sysv_program *owner, qa_error *error)
+{
+    for (int32_t clock_id = 2; clock_id <= 3; ++clock_id) {
+        int64_t seconds; int32_t nanos;
+        if (!program_clock_read(owner, clock_id, &seconds, &nanos, error)) return false;
+        owner->clocks[clock_id - 2].seconds = (uint64_t)seconds;
+        owner->clocks[clock_id - 2].nanoseconds = (uint32_t)nanos;
+    }
+    owner->clock_active = false; return true;
+}
 
 bool program_current(qa_native_sysv_program *owner, qa_error *error)
 {
@@ -14,6 +79,7 @@ static bool options_valid(const qa_native_sysv_program_options *o, qa_error *err
         o->guest.image.target.abi != QA_NATIVE_ABI_SYSTEM_V_X64 || o->guest.image.target.pointer_bytes != 8 ||
         !o->stack_bytes || o->stack_bytes % QA_NATIVE_GUEST_PAGE || o->anonymous_permissions > 7 ||
         !o->services.id || !o->services.current || !o->services.resolve_file || !o->services.file_status ||
+        !o->services.descriptor_status || !o->services.descriptor_flags ||
         !o->services.identity || !o->services.entropy || !o->services.clock || !o->services.native_error ||
         (o->auxiliary_count && !o->auxiliary) ||
         (o->guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ? o->instruction_budget != 0 :
@@ -87,6 +153,7 @@ bool qa_native_sysv_program_create(const qa_native_sysv_program_options *options
     }
     startup.auxiliary = aux; startup.auxiliary_count = options->auxiliary_count;
     if (okay) okay = guest_elf_program_prepare(&startup, &owner->startup, error);
+    if (okay) okay = guest_elf_program_transfer_stack(owner->startup, error);
     free(aux);
     owner->status.process_id = options->process_id; owner->status.thread_id = options->thread_id;
     if (okay && options->guest.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
@@ -118,7 +185,17 @@ bool qa_native_sysv_program_create(const qa_native_sysv_program_options *options
         if (okay) {
             owner->files[owner->file_count] = (program_file){.capability = *source, .references = 1,
                 .flags = source->mode == 2 ? 1u : source->mode == 3 ? 2u : 0u};
-            owner->descriptors[owner->descriptor_count++] = (program_descriptor){(int32_t)i, owner->file_count++, false};
+            size_t file = owner->file_count++;
+            owner->descriptors[owner->descriptor_count++] = (program_descriptor){(int32_t)i, file, false};
+            qa_native_sysv_program_descriptor_status status;
+            okay = options->services.descriptor_status(options->services.context, source->capability, &status, error);
+            if (okay && (status.offset < 0 || (!status.seekable && status.offset)))
+                okay = guest_fail(error, QA_ERROR_FORMAT, i, "Linux inherited descriptor has invalid position ownership");
+            if (okay) {
+                owner->files[file].offset = (uint64_t)status.offset;
+                owner->files[file].flags = status.flags;
+                owner->files[file].seekable = status.seekable;
+            }
         }
     }
     owner->options.program.bytes = owner->options.interpreter.bytes = (qa_bytes){0};
@@ -142,13 +219,14 @@ bool qa_native_sysv_program_run(qa_native_sysv_program *owner, qa_error *error)
         !qa_native_guest_idle(owner->guest) || !program_current(owner, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux scheduling requires its live stopped program");
     owner->busy = true; qa_native_guest_cpu cpu; bool stopped = false;
-    bool okay = qa_native_guest_cpu_read(owner->guest, &cpu, error) &&
+    bool okay = qa_native_guest_cpu_read(owner->guest, &cpu, error) && clocks_start(owner, error) &&
         qa_native_guest_run_program(owner->guest, cpu.instruction, owner->returned,
             owner->options.instruction_budget, program_syscall, owner, &stopped, error);
+    if (okay) okay = clocks_finish(owner, error);
     if (okay && (!stopped || !owner->status.exited))
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.instruction, "Linux program reached a controller return without a kernel exit");
     if (!okay) { owner->failed = true; owner->guest->failed = true; }
-    owner->busy = false; return okay;
+    owner->clock_active = false; owner->busy = false; return okay;
 }
 bool qa_native_sysv_program_dispose(qa_native_sysv_program **slot, qa_error *error)
 {

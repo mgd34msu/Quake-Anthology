@@ -8,6 +8,7 @@ struct frontend_shared_settings {
     frontend_config_store *manager;
     qa_application *application;
     const qa_launch_snapshot *candidate;
+    qa_application_client_preparation *client;
     qa_console *root_console;
     frontend_shared_values *values;
     frontend_input_settings *input;

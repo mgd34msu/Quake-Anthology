@@ -2,6 +2,7 @@
 #include "../save_fields.h"
 #include "qa/render_gl_save.h"
 #include "qa/display_settings.h"
+#include "qa/q3_source_scene_bank.h"
 
 #include <SDL_video.h>
 #include <SDL_loadso.h>
@@ -311,6 +312,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
             gl_texture_entry *entry = renderer->textures;
             renderer->textures = entry->next;
             qa_scene_image_release(entry->image);
+            qa_scene_resources_destroy(entry->source_owner);
             free(entry);
         }
         while (renderer->meshes != NULL) {
@@ -435,12 +437,30 @@ static GLenum stencil_operation(qa_scene_stencil_op operation)
                                    GL_DECR, GL_INVERT};
     return names[operation];
 }
+static void stage_state_bits(qa_gl_renderer *renderer,const qa_scene_state *state)
+{
+    gl_api *gl=&renderer->gl;
+    gl->Enable(GL_DEPTH_TEST);
+    gl->DepthFunc(state->depth_test==QA_DEPTH_ALWAYS?GL_ALWAYS:state->depth_test==QA_DEPTH_LEQUAL?GL_LEQUAL:
+        state->depth_test==QA_DEPTH_EQUAL?GL_EQUAL:state->depth_test==QA_DEPTH_GEQUAL?GL_GEQUAL:GL_LESS);
+    gl->DepthMask(state->depth_write?GL_TRUE:GL_FALSE);
+    if (state->blend_source==QA_BLEND_ONE && state->blend_destination==QA_BLEND_ZERO) gl->Disable(GL_BLEND);
+    else { gl->Enable(GL_BLEND); gl->BlendFunc(blend_factor(state->blend_source),blend_factor(state->blend_destination)); }
+    gl->PolygonMode(GL_FRONT_AND_BACK,state->wireframe?GL_LINE:GL_FILL);
+    if (state->alpha_test==QA_ALPHA_NONE) gl->Disable(GL_ALPHA_TEST);
+    else {
+        gl->Enable(GL_ALPHA_TEST);
+        gl->AlphaFunc(state->alpha_test==QA_ALPHA_GT0?GL_GREATER:state->alpha_test==QA_ALPHA_LT128?GL_LESS:GL_GEQUAL,
+            state->alpha_test==QA_ALPHA_GT0?0:.5f);
+    }
+}
 
 static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
                        qa_scene_primitive primitive)
 {
     renderer->pipeline=*state;
     gl_api *gl = &renderer->gl;
+    stage_state_bits(renderer,state);
     gl->Enable(GL_DEPTH_TEST);
     gl->DepthFunc(state->depth_test == QA_DEPTH_ALWAYS ? GL_ALWAYS :
                   state->depth_test == QA_DEPTH_LEQUAL ? GL_LEQUAL :
@@ -643,11 +663,13 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
             if (!discrete) gl->ArrayElement((GLint)index);
             else {
                 const qa_scene_vertex *v = draw->mesh.vertices + index;
+                qa_scene_vec4 color; qa_scene_vec2 uv[2];
+                qa_render_source_attributes_vertex(&renderer->controls,draw,QA_RENDER_PRIMITIVES_DISCRETE_STRIPS,index,v,&color,uv);
                 gl->VertexAttrib4f(1, v->normal.x, v->normal.y, v->normal.z, 1);
-                gl->VertexAttrib4f(2, v->texcoord.x, v->texcoord.y, 0, 1);
-                gl->VertexAttrib4f(3, v->lightmap.x, v->lightmap.y, 0, 1);
-                gl->VertexAttrib4f(4, source_color(v->color.x), source_color(v->color.y),
-                    source_color(v->color.z), source_color(v->color.w));
+                gl->VertexAttrib4f(2, uv[0].x, uv[0].y, 0, 1);
+                gl->VertexAttrib4f(3, uv[1].x, uv[1].y, 0, 1);
+                gl->VertexAttrib4f(4, source_color(color.x), source_color(color.y),
+                    source_color(color.z), source_color(color.w));
                 gl->VertexAttrib4f(0, v->position.x, v->position.y, v->position.z, 1);
             }
         }
@@ -660,15 +682,44 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
 {
     qa_scene_draw draw = *source;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
-    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_SHADOW_FINISH || !draw_valid(renderer,&draw,error)) {
+    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_SHADOW_VOLUME_END || !draw_valid(renderer,&draw,error)) {
         if (!error || error->code==QA_OK)
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
         return false;
     }
     if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->view.clip_enabled=false;
+    bool source_pipeline=draw.source_arrays || draw.source_retain_depth_range || draw.source_direct!=QA_SOURCE_DIRECT_NONE;
+    bool compiled_arrays = renderer->capabilities.compiled_vertex_arrays &&
+        renderer->controls.values.compiled_vertex_arrays;
+    qa_render_primitive_mode mode = draw.source_primitives && draw.mesh.primitive == QA_SCENE_TRIANGLES
+        ? qa_render_primitives_mode(renderer->controls.values.primitives, compiled_arrays)
+        : QA_RENDER_PRIMITIVES_INDEXED;
+    for (size_t unit=0;unit<source->texture_count;++unit) {
+        size_t destination=source_pipeline && !draw.source_arrays && unit==0?renderer->controls.attributes.texture_unit:unit;
+        if (!draw.source_arrays && !source->retain_texture[unit] && source->textures[unit]) {
+            if (source_pipeline) {
+                if (!gl_source_texture_bind(renderer,source->textures[unit],error)) return false;
+            } else {
+                retain_binding(renderer,destination,source->textures[unit]);
+                renderer->controls.attributes.actual_empty[destination]=false;
+            }
+        }
+        if (draw.retain_texture[unit]) draw.textures[unit]=renderer->bound[destination];
+    }
+    draw_state(renderer,&draw.state,draw.mesh.primitive);
+    if (draw.source_stage_state) renderer->gl.LineWidth(draw.state.line_width);
+    if (!qa_render_source_attributes_resolve(&renderer->controls,&draw,renderer->bound,mode,error)) {
+        if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && renderer->controls.attributes.texture_unit!=0 &&
+            renderer->controls.attributes.color_known) {
+            qa_scene_vec4 color=renderer->controls.attributes.color;
+            renderer->gl.Color4f(color.x,color.y,color.z,color.w);
+            renderer->gl.VertexAttrib4f(4,color.x,color.y,color.z,color.w);
+        }
+        return false;
+    }
     gl_texture_entry *textures[2] = {NULL, NULL}, *shadow = NULL;
     for (size_t unit = 0; unit < draw.texture_count; ++unit) {
-        if (draw.retain_texture[unit]) draw.textures[unit] = renderer->bound[unit];
+        if (!source_pipeline && draw.retain_texture[unit]) draw.textures[unit] = renderer->bound[unit];
         if (draw.textures[unit] != NULL &&
             !gl_texture_get(renderer, draw.textures[unit], &textures[unit], error))
             return false;
@@ -682,37 +733,52 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
             return false;
         }
     }
-    for (size_t unit = 0; unit < draw.texture_count; ++unit)
-        if (!source->retain_texture[unit] && source->textures[unit] != NULL)
-            retain_binding(renderer, unit, source->textures[unit]);
     if (!gl_bind_destination(renderer, error) ||
         !gl_program_stage(renderer, &draw, error)) return false;
     for (unsigned unit = 0; unit < 2; ++unit) {
-        renderer->gl.ActiveTexture(GL_TEXTURE0 + unit);
-        renderer->gl.BindTexture(GL_TEXTURE_2D,
-            unit < draw.texture_count && textures[unit] != NULL
-                ? textures[unit]->name : renderer->white_texture);
+        if (!source_pipeline) {
+            renderer->gl.ActiveTexture(GL_TEXTURE0 + unit);
+            renderer->gl.BindTexture(GL_TEXTURE_2D,
+                unit < draw.texture_count && textures[unit] != NULL
+                    ? textures[unit]->name : renderer->white_texture);
+        }
     }
     renderer->gl.ActiveTexture(GL_TEXTURE2);
     renderer->gl.BindTexture(GL_TEXTURE_2D,
+                             renderer->preblend_gamma && renderer->gamma!=1 &&
+                               !qa_display_gamma_applied_is(renderer->options.display) ? renderer->output.table :
                              shadow == NULL ? renderer->white_texture :
                                               shadow->name);
-    renderer->gl.ActiveTexture(GL_TEXTURE0);
-    draw_state(renderer, &draw.state, draw.mesh.primitive);
+    renderer->gl.ActiveTexture(GL_TEXTURE0+renderer->controls.attributes.texture_unit);
+    if (draw.source_arrays && draw.mesh.vertex_count<=QA_SOURCE_TESS_VERTICES) {
+        for (size_t i=0;i<draw.mesh.vertex_count;++i) {
+            qa_scene_vec4 color; qa_scene_vec2 uv[2];
+            qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,i,draw.mesh.vertices+i,&color,uv);
+            renderer->source_vertices[i]=draw.mesh.vertices[i];
+            renderer->source_vertices[i].color=color; renderer->source_vertices[i].texcoord=uv[0];
+            renderer->source_vertices[i].lightmap=uv[1];
+        }
+        draw.mesh.vertices=renderer->source_vertices;
+        draw.mesh.identity=draw.mesh.revision=0;
+        draw.mesh.geometry=NULL;
+    }
     if (!gl_mesh_bind(renderer, &draw.mesh, error)) return false;
-    bool compiled_arrays = renderer->capabilities.compiled_vertex_arrays &&
-        renderer->controls.values.compiled_vertex_arrays;
-    qa_render_primitive_mode mode = draw.source_primitives && draw.mesh.primitive == QA_SCENE_TRIANGLES
-        ? qa_render_primitives_mode(renderer->controls.values.primitives, compiled_arrays)
-        : QA_RENDER_PRIMITIVES_INDEXED;
+    if (source_pipeline && draw.mesh.vertex_count) {
+        qa_scene_vec4 color; qa_scene_vec2 uv[2];
+        qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
+        if (draw.source_arrays && !renderer->controls.attributes.color_array) {
+            renderer->gl.DisableVertexAttribArray(4);
+            renderer->gl.VertexAttrib4f(4,color.x,color.y,color.z,color.w);
+        }
+        for (uint32_t unit=0;unit<2;++unit)
+            if ((draw.source_direct!=QA_SOURCE_DIRECT_SKY || unit!=0) &&
+                (!draw.source_arrays || !renderer->controls.attributes.coordinate_array[unit])) {
+                renderer->gl.DisableVertexAttribArray(2+unit);
+                renderer->gl.VertexAttrib4f(2+unit,uv[unit].x,uv[unit].y,0,1);
+            }
+    }
     bool locked = draw.source_primitives && mode != QA_RENDER_PRIMITIVES_DISCRETE_STRIPS &&
         compiled_arrays && draw.mesh.vertex_count <= INT_MAX;
-    if (mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && draw.texture_count > 1) {
-        gl_mesh_unbind(renderer);
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-            "Q3 Source discrete multitexture targets 0 and 1 are invalid");
-        return false;
-    }
     if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS)
         for (size_t i = 0; i < draw.mesh.index_count; ++i)
             if (draw.mesh.indices[i] > INT_MAX) {
@@ -729,7 +795,15 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
         draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
     if (locked) renderer->gl.UnlockArraysEXT();
+    qa_render_source_attributes_finish(&renderer->controls,&draw,mode);
+    if (source_pipeline && renderer->controls.attributes.color_known) {
+        qa_scene_vec4 color=renderer->controls.attributes.color;
+        renderer->gl.Color4f(color.x,color.y,color.z,color.w);
+    }
     gl_mesh_unbind(renderer);
+    if (renderer->controls.attributes.color_array) renderer->gl.EnableVertexAttribArray(4);
+    for (uint32_t unit=0;unit<2;++unit)
+        if (renderer->controls.attributes.coordinate_array[unit]) renderer->gl.EnableVertexAttribArray(2+unit);
     if (draw.source_direct==QA_SOURCE_DIRECT_AXIS) {
         renderer->gl.LineWidth(1);
         renderer->pipeline.line_width=1;
@@ -737,6 +811,10 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) {
         renderer->gl.Disable(GL_STENCIL_TEST);
         renderer->pipeline.stencil_enabled=false;
+    }
+    if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_VOLUME_END) {
+        renderer->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        renderer->pipeline.color_write=true;
     }
     return gl_check(renderer, "OpenGL scene draw", error);
 }
@@ -784,6 +862,7 @@ static bool gl_swap(qa_gl_renderer *renderer, qa_error *error)
     renderer->controls.source.projection_2d=false;
     renderer->controls.source.entity_count=renderer->controls.source.first_scene_entity=0;
     renderer->controls.source.submitted_light_count=renderer->controls.source.first_scene_light=0;
+    qa_q3_source_scene_bank_frame(renderer->controls.source.scene_bank);
     return true;
 }
 
@@ -866,8 +945,14 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             else ok=gl_dimensions(renderer,&width,&height,error) &&
                 qa_output_domains_assign(&renderer->output_domains,command->data.output_domain.rect,
                     renderer->draw_buffer,command->data.output_domain.source,width,height,error);
+            if (ok) renderer->preblend_gamma=false;
             break;
         }
+        case QA_SCENE_COMMAND_PREBLEND_GAMMA:
+            ok=renderer->target==NULL && !renderer->opacity.active;
+            if (!ok) qa_error_set(error,QA_ERROR_ARGUMENT,i,"Generic overlay gamma requires the actual GL display target");
+            else renderer->preblend_gamma=command->data.preblend_gamma.enabled;
+            break;
         default:
             qa_error_set(error, QA_ERROR_ARGUMENT, i,
                          "Unknown OpenGL scene command");
@@ -954,6 +1039,74 @@ bool qa_gl_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error 
     }
     return gl_check(renderer,"Source cull",error);
 }
+static bool source_texture_owner(qa_render_controls *controls,qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+        !controls->source.issuing || controls->attributes.texture_unit>1) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source texture state lost its actual OpenGL issue owner");
+        return false;
+    }
+    return qa_display_make_current(controls->owner.gl->options.display,error);
+}
+bool qa_gl_source_texture_select(qa_render_controls *controls,uint32_t unit,qa_error *error)
+{
+    if (!source_texture_owner(controls,error) || unit>1) return false;
+    qa_gl_renderer *renderer=controls->owner.gl;
+    renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
+    renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
+    controls->attributes.texture_unit=unit;
+    return gl_check(renderer,"Source texture-unit selection",error);
+}
+bool qa_gl_source_texture_enable(qa_render_controls *controls,bool enabled,qa_error *error)
+{
+    if (!source_texture_owner(controls,error)) return false;
+    qa_gl_renderer *renderer=controls->owner.gl;
+    renderer->gl.ActiveTexture(GL_TEXTURE0+controls->attributes.texture_unit);
+    if (enabled) renderer->gl.Enable(GL_TEXTURE_2D); else renderer->gl.Disable(GL_TEXTURE_2D);
+    controls->attributes.texture_enabled[controls->attributes.texture_unit]=enabled;
+    return gl_check(renderer,"Source texture-unit enable",error);
+}
+bool qa_gl_source_texture_environment(qa_render_controls *controls,qa_scene_texture_environment environment,qa_error *error)
+{
+    if (!source_texture_owner(controls,error) || (unsigned)environment>QA_TEXTURE_REPLACE) return false;
+    qa_gl_renderer *renderer=controls->owner.gl;
+    renderer->gl.ActiveTexture(GL_TEXTURE0+controls->attributes.texture_unit);
+    renderer->gl.TexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,
+        environment==QA_TEXTURE_ADD?GL_ADD:environment==QA_TEXTURE_REPLACE?GL_REPLACE:GL_MODULATE);
+    controls->attributes.environment[controls->attributes.texture_unit]=environment;
+    return gl_check(renderer,"Source texture environment",error);
+}
+bool qa_gl_source_client_arrays(qa_render_controls *controls,bool color,bool uv,qa_error *error)
+{
+    if (!source_texture_owner(controls,error)) return false;
+    qa_gl_renderer *renderer=controls->owner.gl;
+    uint32_t unit=controls->attributes.texture_unit;
+    if (color) renderer->gl.EnableVertexAttribArray(4); else renderer->gl.DisableVertexAttribArray(4);
+    if (uv) renderer->gl.EnableVertexAttribArray(2+unit); else renderer->gl.DisableVertexAttribArray(2+unit);
+    controls->attributes.color_array=color;
+    controls->attributes.coordinate_array[unit]=uv;
+    return gl_check(renderer,"Source client-array enable",error);
+}
+bool qa_gl_source_texture_bind(qa_render_controls *controls,const qa_scene_image *image,qa_error *error)
+{
+    if (!source_texture_owner(controls,error)) return false;
+    return gl_source_texture_bind(controls->owner.gl,image,error);
+}
+bool qa_gl_source_stage_state(qa_render_controls *controls,const qa_scene_state *state,qa_error *error)
+{
+    if (!source_texture_owner(controls,error) || !state) return false;
+    qa_gl_renderer *renderer=controls->owner.gl;
+    qa_render_source_stage_state(&renderer->pipeline,state);
+    stage_state_bits(renderer,&renderer->pipeline);
+    return gl_check(renderer,"Source reached GL_State",error);
+}
+bool qa_gl_source_view_read(qa_render_controls *controls,qa_scene_view *out,qa_error *error)
+{
+    if (!out || !qa_gl_source_scratch_current(controls) || controls->ticket) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source view lost its actual OpenGL owner"); return false;
+    }
+    *out=controls->owner.gl->view; return true;
+}
 bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
     if (renderer && renderer->controls.source.entered)
@@ -1025,7 +1178,12 @@ bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error)
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL swap requires its actual idle renderer/display");
         return false;
     }
-    return gl_swap(renderer,error);
+    qa_scene_frame frame;
+    qa_scene_frame_init(&frame,renderer->options.owner);
+    frame.source_backend=true;
+    bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
+    qa_scene_frame_destroy(&frame);
+    return ok && gl_swap(renderer,error);
 }
 
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error)

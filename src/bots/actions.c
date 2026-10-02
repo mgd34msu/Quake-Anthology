@@ -55,7 +55,8 @@ uint32_t qa_bot_actions_capacity(const qa_bot_actions *actions) {
     return actions ? actions->capacity : 0;
 }
 bool qa_bot_actions_setup(qa_bot_actions *actions, uint32_t clients, qa_error *e) {
-    if (!actions || actions->restoring || clients > INT32_MAX / 40 || clients > SIZE_MAX / sizeof(qa_bot_input))
+    if (!actions || actions->restoring || clients > INT32_MAX / 40 ||
+        (clients && sizeof(qa_bot_input) > SIZE_MAX / clients))
         return action_fail(e, "bot action capacity exceeds source allocation range");
     qa_bot_input *inputs = clients ? calloc(clients, sizeof(*inputs)) : NULL;
     if (clients && !inputs) {

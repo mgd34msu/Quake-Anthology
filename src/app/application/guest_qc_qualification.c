@@ -303,6 +303,20 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
             qa_strings_intern_cstr(qa_session_strings(provider->application->session), item, &value->item, error);
         free(item);
         if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon item requires a canonical namespace");
+        qa_json_id ammo = qa_json_get(doc, row, "ammo");
+        if (ammo != QA_JSON_NONE) {
+            value->ammo_declared = true;
+            if (qa_json_type(doc, ammo) != QA_JSON_NULL) {
+                char *name = string(doc, ammo, error);
+                if (!name) return false;
+                const char *separator = strchr(name, ':');
+                bool admitted = separator && separator != name && separator[1] &&
+                    qa_strings_intern_cstr(qa_session_strings(provider->application->session),name,&value->ammo,error);
+                free(name);
+                if (!admitted) return application_fail(error, QA_ERROR_FORMAT,
+                    "QC selected weapon ammunition requires its declared canonical namespace or null");
+            }
+        }
         qa_json_id label = qa_json_get(doc, row, "label"), bit = qa_json_get(doc, row, "bit"),
             impulse = qa_json_get(doc, row, "impulse");
         if (label != QA_JSON_NONE || bit != QA_JSON_NONE || impulse != QA_JSON_NONE) {
@@ -316,6 +330,13 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
                 return application_fail(error, QA_ERROR_FORMAT, "QC weapon UI requires its authored label, bit and integer impulse");
             value->bit = (uint32_t)declared_bit; value->impulse = (int32_t)declared_impulse;
             value->ui_declared = true;
+            qa_json_id via=qa_json_get(doc,row,"via");
+            if(via!=QA_JSON_NONE) {
+                uint64_t declared_via=0;
+                if(!qa_json_u64(doc,via,&declared_via,error) || !declared_via || declared_via>UINT32_MAX)
+                    return application_fail(error,QA_ERROR_FORMAT,"QC weapon transition requires its authored source bit");
+                value->via=(uint32_t)declared_via;
+            }
             for (size_t j = 0; j < i; ++j)
                 if (profile->weapon_values[j].ui_declared && profile->weapon_values[j].bit == value->bit)
                     return application_fail(error, QA_ERROR_FORMAT, "QC weapon UI repeats a declared source bit");

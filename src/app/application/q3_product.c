@@ -3,6 +3,7 @@
 #include "qa/catalog_save.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_q3_factory.h"
+#include "qa/application_client_prepare.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -246,6 +247,33 @@ bool qa_application_startup_command_seeded(const qa_application *app, size_t ord
 {
     return app && app->startup && ordinal < app->startup->count && app->startup->rows[ordinal].consumed;
 }
+bool qa_application_client_prepare_startup_ready(const qa_application_client_preparation *preparation)
+{
+    if (!qa_application_client_prepare_phase_is(preparation,QA_CLIENT_PREPARE_RESOURCES) ||
+        !qa_application_client_prepare_startup_current(preparation))
+        return false;
+    qa_application *app=qa_application_client_prepare_application(preparation);
+    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    if (!source) return false;
+    qa_console_dialect dialect=source->context.command.dialect;
+    if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
+    for (size_t i=0;app->startup && i<app->startup->count;++i) {
+        application_startup_row *row=app->startup->rows+i;
+        if (row->name && row->queued_instance)
+            return false;
+    }
+    return true;
+}
+void qa_application_client_prepare_startup_publish(qa_application_client_preparation *preparation)
+{
+    qa_application *app=qa_application_client_prepare_application(preparation);
+    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    if (source->context.command.dialect!=QA_CONSOLE_Q2 && source->context.command.dialect!=QA_CONSOLE_Q2_RERELEASE) return;
+    /* Q2 early variables are the commands excluded from its late programme.
+     * Q1/QW stuffed commands and Q3 late sets keep their original ordinals. */
+    for (size_t i=0;app->startup && i<app->startup->count;++i)
+        if (app->startup->rows[i].name) app->startup->rows[i].consumed=true;
+}
 bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_instance *selected,
     qa_console *console,bool *safe,qa_error *error)
 {
@@ -463,7 +491,8 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
             }
             if (!qa_source_save_bytes(io, row->queued_instance, extent) || memchr(row->queued_instance, 0, extent) ||
                 (row->queued_kind == QA_APPLICATION_CONSOLE_ENGINE ? extent || row->queued_seat : !extent) ||
-                (row->queued_seat && row->queued_kind != QA_APPLICATION_CONSOLE_Q3_CGAME && row->queued_kind != QA_APPLICATION_CONSOLE_Q3_UI) ||
+                (row->queued_seat && row->queued_kind != QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                    row->queued_kind != QA_APPLICATION_CONSOLE_Q3_UI && row->queued_kind != QA_APPLICATION_CONSOLE_CLIENT) ||
                 row->consumed || row->completed)
                 return application_fail(io->error, QA_ERROR_FORMAT, "Queued startup ordinal leaves its real source scope");
             for (size_t j = 0; j < i; ++j)

@@ -1,8 +1,11 @@
 #include "q3_color_policy.h"
+#include "restart.h"
 #include "network_q2_input.h"
+#include "network_q1_input.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
 #include "remote_unified.h"
+#include "remote_unified_input.h"
 #include "internal.h"
 #include "capture.h"
 #include "save_commands.h"
@@ -100,7 +103,42 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     bool remote=frontend_network_remote(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
-        bool q2_owned=false;
+        bool unified_owned=false,sample_needed=false;
+        if (!frontend_remote_unified_input_prepare(frontend,i,&seat->sequence,&unified_owned,&sample_needed,error)) return false;
+        if (unified_owned) {
+            if (!sample_needed) continue;
+            if (seat->sequence==UINT64_MAX)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified physical sample sequence overflow");
+            qa_seat_input_sample sample;
+            if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error)) return false;
+            qa_actor_id selected_actor; uint32_t selected_seat;
+            if (frontend_seat_launch_id_read(frontend,i,&selected_seat) &&
+                qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
+                qa_application_control_view selected_control;
+                if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
+                    qa_hud_wheel_command wheel;
+                    if (!qa_hud_wheel_update(seat->wheel,frontend->time_ns,error) ||
+                        !qa_hud_wheel_prepare(seat->wheel,sample.buttons[QA_INPUT_ATTACK].active,
+                            frontend->time_ns,&wheel,error)) return false;
+                    if (wheel.consume_attack) sample.buttons[QA_INPUT_ATTACK]=(qa_input_action_sample){0};
+                    if (wheel.holster) sample.buttons[QA_INPUT_HOLSTER].active=true;
+                }
+            }
+            bool handled=false; uint64_t sequence=seat->sequence+1;
+            if (!frontend_remote_unified_input(frontend,i,&sample,sequence,duration,&handled,error)) return false;
+            if (!handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified sample lost its actual replica recipient");
+            seat->sequence=sequence;
+            continue;
+        }
+        bool q2_owned=false,q1_owned=false;
+        for (size_t row=0;row<frontend_remote_q1_count(frontend);++row) {
+            frontend_remote_q1_view view;
+            if (!frontend_remote_q1_metadata_read(frontend_remote_q1_at(frontend,row),&view,error)) return false;
+            if (!view.retired && view.domain.physical_seat==i) {
+                if (q1_owned) return frontend_fail(error,QA_ERROR_ARGUMENT,"Two Q1 CLIENT receivers own one physical input");
+                q1_owned=true;
+            }
+        }
         for (size_t row=0;row<frontend_remote_q2_count(frontend);++row) {
             frontend_remote_q2_view view;
             if (!frontend_remote_q2_metadata_read(frontend_remote_q2_at(frontend,row),&view,error)) return false;
@@ -109,7 +147,9 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 q2_owned=true;
             }
         }
-        if (q2_owned) {
+        if (q1_owned && q2_owned)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Two remote protocols own the same physical input");
+        if (q1_owned || q2_owned) {
             if (seat->sequence==UINT64_MAX)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 physical sample sequence overflow");
             qa_seat_input_sample sample;
@@ -129,8 +169,9 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             }
             bool handled=false;
             uint64_t sequence=seat->sequence+1;
-            if (!frontend_network_q2_input(frontend,i,&sample,sequence,&handled,error)) return false;
-            if (!handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 physical sample lost its genuine CLIENT owner");
+            if (!(q1_owned?frontend_network_q1_input(frontend,i,&sample,sequence,duration,&handled,error):
+                frontend_network_q2_input(frontend,i,&sample,sequence,&handled,error))) return false;
+            if (!handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Physical sample lost its genuine remote CLIENT owner");
             seat->sequence=sequence;
             continue;
         }
@@ -352,6 +393,13 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
     }
+    if (frontend->restart && !frontend_restart_idle(frontend->restart)) {
+        if (frontend->capture || frontend->resource_inventory || frontend->source_restoring ||
+            !frontend_seat_callbacks_returned(frontend))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Video continuation retains an entered frontend callback");
+        frontend->wall_time_ns+=elapsed_ns;
+        return frontend_restart_drain(frontend->restart,error);
+    }
     bool waiting=resource_wait(frontend),wall_advanced=false;
     if (waiting) {
         if (!resource_returned(frontend,error)) return false;
@@ -399,6 +447,11 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         qa_console_drain(console, 4096, &executed, error)) &&
         frontend_tools_sync(frontend, error) && frontend_network_pump(frontend, error);
     if (ok) ok=frontend_cinematic_drain(frontend,error);
+    if (ok) ok=frontend_restart_drain_frame(frontend->restart,error);
+    if (ok && frontend->restart && !frontend_restart_idle(frontend->restart)) {
+        frontend->stepping=false;
+        return true;
+    }
     if (ok && !qa_application_should_stop(frontend->application) && frontend_cinematic_running(frontend)) {
         bool rendered=false;
         /* Playback owns its separate media clock. A console fallback may

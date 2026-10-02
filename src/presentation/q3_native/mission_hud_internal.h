@@ -36,6 +36,7 @@ float q3nm_number(q3n_mission_hud *, const char *);
 bool q3nm_cvar(q3n_mission_hud *, const char *, qa_native_q3_client_cvar *, qa_error *);
 bool q3nm_integer_set(q3n_mission_hud *, const char *, int32_t, qa_error *);
 bool q3nm_console(q3n_mission_hud *, const char *, qa_error *);
+qa_cvars *q3nm_registry(const q3n_mission_hud *);
 const qa_q3_player *q3nm_player(const q3n_mission_hud *);
 const qa_q3_player *q3nm_require_player(q3n_mission_hud *);
 bool q3nm_set(q3n_mission_hud *, const char *, const char *);

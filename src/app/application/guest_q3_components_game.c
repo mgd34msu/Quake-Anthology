@@ -106,7 +106,6 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .program_path=row->publication.metadata->program_path,.program_digest=row->publication.metadata->program_digest,
         .declaration_digest=row->publication.metadata->declaration_digest,.image=row->image,.abi=layout,
         .host={.role=QA_QVM_GAME,.abi=layout,.session=options->application->session,.world=options->world,
-            .restoring=options->restoring,
             .owner=row->publication.owner,.service_owner=row->services,.mounts=row->publication.content,
             .command_context={.owner=row->publication.owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER},
             .common={.context=row,.print=print,.calendar=calendar},

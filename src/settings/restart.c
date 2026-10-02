@@ -82,7 +82,7 @@ bool qa_restart_request(qa_restart_controls *controls, qa_restart_kind kind, qa_
     controls->pending[controls->count++] = kind;
     return true;
 }
-bool qa_restart_drain(qa_restart_controls *controls, qa_error *e) {
+static bool drain(qa_restart_controls *controls,bool one,qa_error *e) {
     if (!controls || controls->running)
         return settings_fail(e, "Restart controls already active");
     controls->running = true;
@@ -97,10 +97,15 @@ bool qa_restart_drain(qa_restart_controls *controls, qa_error *e) {
             ok = qa_cvars_apply_latched(controls->vars, service->latched[i], e);
         if (ok)
             ok = service->restart(service->context, e);
+        if (one) break;
     }
     controls->running = false;
     return ok;
 }
+bool qa_restart_drain(qa_restart_controls *controls,qa_error *error)
+{ return drain(controls,false,error); }
+bool qa_restart_drain_one(qa_restart_controls *controls,qa_error *error)
+{ return drain(controls,true,error); }
 static bool command(void *context, const qa_command_invocation *invocation, qa_error *e) {
     qa_restart_controls *controls = context;
     if (invocation->context.origin==QA_COMMAND_REMOTE) {

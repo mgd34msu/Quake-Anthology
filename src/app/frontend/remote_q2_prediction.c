@@ -39,11 +39,23 @@ qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
 bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
     frontend_remote_q2 *row = context; const qa_q2_player *self = player(row);
+    uint32_t pass_number = 0;
+    if (query->pass_actor.registry) {
+        const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
+            qa_application_session(row->options.domain.application)), query->pass_actor);
+        uint32_t number = record && record->has_source ? record->source_slot : 0;
+        qa_actor_id actual;
+        if (!record || !record->has_source || !frontend_remote_q2_entity_received(row, number) ||
+            !row->options.entity_actor || !row->options.entity_actor(row->options.context, &row->options.domain,
+                number, &actual, error) || !qa_actor_id_equal(actual, query->pass_actor))
+            return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 trace pass actor has another received Source namespace");
+        pass_number = number;
+    }
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
     if (!qa_collision_trace(row->geometry, &q, out, error)) return false;
     for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
-        if (!entity->solid || (self && entity->number == (uint32_t)self->clientnum + 1)) continue;
+        if (!entity->solid || (self && entity->number == (uint32_t)self->clientnum + 1) || entity->number == pass_number) continue;
         bool extended = row->layout.max_models == 8192 ||
             (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
                 row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));

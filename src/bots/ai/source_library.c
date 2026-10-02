@@ -79,7 +79,7 @@ bool qa_bots_create_source(qa_bot_runtime *runtime, const qa_bot_services *servi
     if (okay && !*result) {
         bots->client_capacity = qa_bot_actions_capacity(qa_bot_runtime_actions(runtime));
         free(bots->clients); bots->clients = NULL;
-        if (bots->client_capacity > SIZE_MAX / sizeof(*bots->clients))
+        if (bots->client_capacity && sizeof(*bots->clients) > SIZE_MAX / bots->client_capacity)
             okay = bot_ai_fail(error, "Initialized bot client aliases exceed their actual allocation extent");
     }
     if (okay && !*result) {

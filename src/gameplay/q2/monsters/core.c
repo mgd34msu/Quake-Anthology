@@ -111,6 +111,19 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       .code = code,
       .frame = context->monster->frame,
   };
+  if (kind == QA_BUILTIN_MUZZLE) {
+    qa_body_state body;
+    if (!qa_world_body_read(context->game->services.world, context->actor->id,
+                            &body, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    event.has_muzzle_pose = true;
+    event.muzzle_angles = body.angles;
+    event.muzzle_scale = context->game->options.edition == QA_Q2_RERELEASE
+                             ? context->monster->entity_scale
+                             : 1.0f;
+  }
   if (resource != NULL &&
       !qa_builtin_resource(&context->game->services, resource, &event.resource,
                            error))

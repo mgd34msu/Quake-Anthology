@@ -4,6 +4,11 @@
 #include "qa/source_save.h"
 
 typedef struct frontend_unified_events frontend_unified_events;
+typedef struct frontend_unified_event_refs {
+    void *context;
+    bool (*asset_encode)(void *, const qa_audio_asset *, uint64_t *, qa_error *);
+    bool (*asset_decode)(void *, uint64_t, const qa_audio_asset **, qa_error *);
+} frontend_unified_event_refs;
 typedef struct frontend_unified_event_options {
     uint64_t audio_owner;
     void *context;
@@ -20,6 +25,11 @@ bool frontend_unified_events_create(qa_frontend *, frontend_remote_unified *,
 /* Reliable controls are completely parsed and retained before return. They
  * may arrive before the first frame. Resource declarations precede sounds. */
 bool frontend_unified_events_control(frontend_unified_events *, const qa_unified_document *, qa_error *);
+/* Literal reliable component metadata is retained independently of the live
+ * component VM. Retired tokens remain available to pending historical events. */
+bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_unified_document *, const char *content, qa_error *);
+bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_unified_document *, qa_error *);
+bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_unified_document *, const char *content, bool *active, qa_error *);
 bool frontend_unified_events_frame_prepare(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_frame_ready(frontend_unified_events *, const qa_unified_document *, qa_error *);
 void frontend_unified_events_frame_commit(frontend_unified_events *);
@@ -30,11 +40,12 @@ bool frontend_unified_events_enter(frontend_unified_events *, qa_error *);
 bool frontend_unified_events_draw(frontend_unified_events *, const qa_scene_view *, qa_scene_frame *, qa_error *);
 bool frontend_unified_events_idle(const frontend_unified_events *);
 bool frontend_unified_events_destroy(frontend_unified_events **, qa_error *);
-bool frontend_unified_events_checkpoint(frontend_unified_events *, qa_buffer *, qa_error *);
+bool frontend_unified_events_assets_read(const frontend_unified_events *, qa_audio_asset ***, size_t *, qa_error *);
+bool frontend_unified_events_checkpoint(frontend_unified_events *, const frontend_unified_event_refs *, qa_buffer *, qa_error *);
 /* Actual media/resource and audio dictionaries are restored first. This codec
  * restores pending documents, delivery cursors and HUD without event replay. */
 bool frontend_unified_events_restore(qa_frontend *, frontend_remote_unified *, frontend_unified_media *,
-    const frontend_unified_event_options *, qa_bytes, frontend_unified_events **, qa_error *);
+    const frontend_unified_event_options *, const frontend_unified_event_refs *, qa_bytes, frontend_unified_events **, qa_error *);
 /* Transfer actual engine route custody only when the enclosing candidate is
  * published. Rejected cold candidates never stop a previous owner's voices. */
 void frontend_unified_events_adopt(frontend_unified_events *);

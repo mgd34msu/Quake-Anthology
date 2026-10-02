@@ -3,6 +3,7 @@
 #include "qa/q3_presentation_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/scene_world_save.h"
+#include "qa/q3_assets_custody.h"
 
 bool qa_q3_presentation_idle(const qa_q3_presentation *p)
 {
@@ -47,6 +48,7 @@ bool qa_q3_presentation_prepare_restored(qa_q3_presentation *p,qa_scene_frame *f
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 restore binding requires genuine empty candidate owners");
     for (size_t i=0;i<16;++i) if (p->movies[i].kind!=Q3P_MOVIE_EMPTY)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 restore binding retains an existing movie owner");
+    if (!qa_q3_assets_map_hold(a, world, geometry, error)) return false;
     p->frame=frame; p->world=world; p->geometry=geometry; p->entity_text=entities;
     a->world=world; a->geometry=geometry; return true;
 }
@@ -72,7 +74,7 @@ bool q3p_reserve(void **data, size_t *capacity, size_t count, size_t width, qa_e
 
 bool q3p_begin(qa_q3_presentation *p, qa_error *error)
 {
-    if (!p || p->busy || !p->options.assets || p->options.assets->busy ||
+    if (!p || p->busy || !p->options.assets || p->options.assets->busy || p->options.assets->retired ||
         !q3p_assets_children_idle(p->options.assets))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation or retained asset owner is absent or executing");
     ++p->busy; ++p->options.assets->busy; return true;
@@ -126,7 +128,7 @@ void qa_q3_presentation_frontend_rebind(qa_q3_presentation *p, const qa_scene_fr
 bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
                                 qa_q3_presentation **out, qa_error *error)
 {
-    if (!options || !out || !options->assets || options->assets->busy ||
+    if (!options || !out || !options->assets || options->assets->busy || options->assets->retired ||
         !q3p_assets_children_idle(options->assets) || !options->clock.sample ||
         !options->owner || options->owner == QA_AUDIO_NO_OWNER || !options->viewport.width ||
         !options->viewport.height || options->seat == QA_AUDIO_WORLD ||
@@ -208,6 +210,7 @@ bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
         for (size_t i = 0; i < assets->model_count; ++i)
             if (assets->models[i] && assets->models[i]->world && !assets->models[i]->owns_world)
                 return q3p_fail(error, QA_ERROR_ARGUMENT, "registered Q3 inline models retain their map owner");
+    if (!qa_q3_assets_map_hold(assets, world, geometry, error)) return false;
     p->world = world; p->geometry = geometry; p->entity_text = entities; p->world_loaded = false;
     assets->world = world; assets->geometry = geometry;
     return true;
@@ -215,14 +218,15 @@ bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
 
 bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
 {
-    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets))
+    if (!p || p->busy || p->options.assets->busy || p->options.assets->retired || !q3p_assets_children_idle(p->options.assets))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 map presentation is executing");
     if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) return false;
     qa_q3_presentation_assets *assets = p->options.assets;
     for (size_t i = 0; i < assets->model_count; ++i) {
         q3p_model *model = assets->models[i];
         if (!model || !model->world || model->owns_world) continue;
-        q3p_model_free(model); assets->models[i] = NULL;
+        if (!q3p_model_shared(assets, model)) q3p_model_free(model);
+        assets->models[i] = NULL;
     }
     for (size_t i = 0; i < assets->name_capacity; ++i) {
         q3p_name **link = &assets->names[i];
@@ -240,6 +244,23 @@ bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
     p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
     p->world_loaded = p->material_view_valid = false;
     return true;
+}
+
+bool qa_q3_presentation_retire_world_retained(qa_q3_presentation *p,
+    qa_q3_presentation_assets **out, qa_error *error)
+{
+    if (!p || p->busy || !out || *out || !qa_q3_assets_idle(p->options.assets))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Retained map retirement requires its actual idle presentation");
+    qa_q3_presentation_assets *prior = p->options.assets, *next = NULL;
+    if (!q3p_assets_fork(prior, &next, error)) return false;
+    p->options.assets = next;
+    if (!qa_q3_presentation_retire_world(p, error)) {
+        p->options.assets = prior; qa_q3_presentation_assets_destroy(next); return false;
+    }
+    ++next->users;
+    prior->retired = true;
+    qa_q3_assets_release(prior);
+    *out = next; return true;
 }
 
 bool qa_q3_presentation_load_world(qa_q3_presentation *p, const char *path, qa_error *error)

@@ -408,8 +408,7 @@ bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) 
     if (!q2_actor_live(g, a->id))
         return true;
     if ((v->hackflags & 128) &&
-        !q2_map_event(
-            g, &(qa_q2_map_event){.kind = QA_Q2_MAP_END_UNIT, .actor = a->id, .duration = 5}, e))
+        !q2_campaign_end_unit(g, a->id, q2_deadline(g->now_ns, 5 * Q2_NS), e))
         return false;
     return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_CAMERA, s->wait);
 }

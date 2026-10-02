@@ -2,6 +2,7 @@
 #include "remote_q3_services.h"
 #include "remote_q3_runtime.h"
 #include "remote_q3_commands.h"
+#include "remote_q3_compiled_video.h"
 #include "capture.h"
 #include "network_restore_publication.h"
 #include "../application/native_q3_remote_client_settings.h"
@@ -308,4 +309,37 @@ bool frontend_remote_q3_services_destroy(frontend_remote_q3_services **owned,qa_
     owner->view.source=NULL;
     if(!qa_native_q3_remote_client_destroy(owner->view.client,error)) return false;
     owner->view.client=NULL; free(owner); *owned=NULL; return true;
+}
+bool frontend_remote_q3_services_video_read(const frontend_remote_q3 *row,
+    frontend_remote_q3_services_view *out,qa_error *error)
+{
+    frontend_remote_q3_services *owner=row?row->services:NULL;
+    if(!out || !row || !frontend_remote_q3_compiled_video_parent_is(row,row->compiled_video) ||
+        !owner || owner->retiring || owner->released ||
+        !owner->view.client || !owner->view.source || !frontend_remote_q3_services_idle(owner))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Compiled video lost its returned actual service and Source reader");
+    *out=owner->view; return true;
+}
+bool frontend_remote_q3_services_video_close(frontend_remote_q3 *row,qa_error *error)
+{
+    frontend_remote_q3_services_view view;
+    if(!frontend_remote_q3_services_video_read(row,&view,error) || row->runtime || row->frames)return false;
+    frontend_remote_q3_services *owner=row->services;
+    q3n_clients_destroy(owner->view.clients); owner->view.clients=NULL;
+    q3n_media_destroy(owner->view.media); owner->view.media=NULL;
+    return qa_native_q3_remote_client_video_reset(owner->view.client,error);
+}
+bool frontend_remote_q3_services_video_reopen(frontend_remote_q3 *row,qa_error *error)
+{
+    frontend_remote_q3_services_view view; frontend_remote_q3_resources resources;
+    if(!frontend_remote_q3_services_video_read(row,&view,error) || row->runtime || row->frames ||
+        view.media || view.clients || !frontend_remote_q3_resources_read(row,&resources,error))return false;
+    qa_native_q3_remote_client_basis basis;
+    if(!qa_native_q3_remote_client_basis_read(view.client,&basis,error))return false;
+    frontend_remote_q3_services *owner=row->services;
+    q3n_media_options media={.product=basis.product,.assets=resources.assets,.remote_source=view.source};
+    q3n_client_options clients={.content=resources.domain.content,.assets=resources.assets,.product=basis.product,
+        .remote_source=view.source,.context=owner,.print=print};
+    return q3n_media_create(&media,&owner->view.media,error) &&
+        q3n_clients_create_remote(&clients,&owner->view.clients,error);
 }

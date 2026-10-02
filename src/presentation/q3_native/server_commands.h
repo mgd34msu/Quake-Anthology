@@ -38,6 +38,8 @@ typedef struct q3n_server_command_receipt {
     /* The frontend adds its fresh recipient context to this real wire claim. */
     qa_native_q3_wire_receipt wire;
     q3n_remote_command remote;
+    const q3n_compiled_source *compiled_source;
+    qa_command_context compiled_context;
     qa_application_q3_client_context recipient;
     uint64_t publication_generation, map_revision;
     int32_t sequence;
@@ -51,6 +53,7 @@ typedef struct q3n_command_message {
     q3n_command_message_kind kind;
     const q3n_frame *frame;
     const qa_application_q3_client_context *recipient;
+    const qa_command_context *command_context;
     const char *text, *voice_command;
     /* Only voice has an authored numeric sender. Plain server text never
      * guesses a sender from names or selected role. */
@@ -73,6 +76,15 @@ typedef struct q3n_server_command_options {
     qa_native_q3_wire_reader *reader;
     qa_native_q3_remote_client_service *remote_client;
     q3n_remote_source *remote_source;
+    q3n_compiled_source *compiled_source;
+    qa_cvars *compiled_cvars;
+    qa_command_context compiled_context;
+    bool (*compiled_current)(void *, const q3n_frame *, qa_cvars *, const qa_command_context *);
+    bool (*compiled_cvar_read)(void *, const char *, qa_native_q3_client_cvar *, qa_error *);
+    bool (*compiled_register)(void *, const q3n_frame *, qa_error *);
+    bool (*compiled_console)(void *, const q3n_frame *, const char *, qa_error *);
+    bool (*compiled_center_print)(void *, const q3n_frame *, const qa_command_context *,
+        const char *, int32_t, int32_t, qa_error *);
     qa_application_q3_client_context recipient;
     uint64_t publication_generation, map_revision;
     qa_q3_product product;
@@ -104,6 +116,7 @@ typedef struct q3n_server_command_options {
 } q3n_server_command_options;
 bool q3n_server_commands_create(const q3n_server_command_options *, q3n_server_commands **, qa_error *);
 bool q3n_server_commands_create_remote(const q3n_server_command_options *, q3n_server_commands **, qa_error *);
+bool q3n_server_commands_create_compiled(const q3n_server_command_options *, q3n_server_commands **, qa_error *);
 void q3n_server_commands_destroy(q3n_server_commands *);
 bool q3n_server_commands_idle(const q3n_server_commands *);
 const q3n_command_state *q3n_server_commands_state(const q3n_server_commands *);
@@ -111,11 +124,17 @@ const q3n_command_state *q3n_server_commands_state(const q3n_server_commands *);
  * gamestate baseline, never a guessed zero or a newest-command shortcut. */
 bool q3n_server_commands_initialize(q3n_server_commands *, const q3n_frame *,
     int32_t initial_server_command_sequence, qa_error *);
+/* Reconstructs the actual presentation child against its preserved reached
+ * gamestate, without claiming or dispatching pending Source commands. */
+bool q3n_server_commands_initialize_video(q3n_server_commands *,const q3n_frame *,
+    int32_t reached_server_command_sequence,qa_error *);
 bool q3n_server_commands_execute(q3n_server_commands *, const q3n_frame *,
     int32_t latest_sequence, qa_error *);
 /* Dispatch the actual Network receipt already adopted by the snapshot owner.
  * This advances CGAME's distinct command sequence and never reexecutes it. */
 bool q3n_server_commands_remote_dispatch(q3n_server_commands *, const q3n_frame *,
+    const q3n_server_command_receipt *, qa_error *);
+bool q3n_server_commands_compiled_dispatch(q3n_server_commands *, const q3n_frame *,
     const q3n_server_command_receipt *, qa_error *);
 bool q3n_server_commands_voice(q3n_server_commands *, const q3n_frame *, int32_t mode,
     bool voice_only, int32_t client, int32_t color, const char *command, qa_error *);

@@ -399,6 +399,35 @@ bool qa_native_process_resources_linux_identity_read(qa_native_process_resources
         qa_native_process_platform_linux_identity_read(owner->options.platform, out, error) &&
         qa_native_process_resources_current(owner, error);
 }
+bool qa_native_process_resources_descriptor_status(qa_native_process_resources *owner, uint64_t id,
+    qa_native_sysv_program_descriptor_status *out, qa_error *error)
+{
+    resource_native_begin(owner);
+    if (!out || !qa_native_process_resources_current(owner, error)) return false;
+    qa_fs_posix_descriptor_status value;
+    bool found = false, okay = false;
+    for (size_t i = 0; i < 3; ++i) if (owner->standards[i].capability == id) {
+        found = true;
+        okay = qa_native_process_platform_descriptor_status(owner->options.platform, id, &value, error);
+        break;
+    }
+    if (!found) for (size_t i = 0; i < owner->file_count; ++i) {
+        process_file *row = owner->files[i];
+        if (row->id != id) continue;
+        found = true;
+        if (!row->ready || row->closed || !row->file)
+            return fail(error, QA_ERROR_NOT_FOUND, "Actual native descriptor capability is closed");
+        ++owner->busy;
+        okay = qa_fs_opened_file_posix_descriptor_read(row->file, &value, error);
+        resource_native_filesystem(owner); --owner->busy;
+        break;
+    }
+    if (!found) return fail(error, QA_ERROR_NOT_FOUND, "Actual native descriptor capability is absent");
+    if (!okay || !qa_native_process_resources_current(owner, error)) return false;
+    *out = (qa_native_sysv_program_descriptor_status){.flags = value.flags,
+        .offset = value.offset, .seekable = value.seekable};
+    return true;
+}
 bool qa_native_process_resources_linux_clock_read(qa_native_process_resources *owner,
     int32_t id, int64_t *seconds, int32_t *nanoseconds, qa_error *error)
 {
@@ -406,6 +435,28 @@ bool qa_native_process_resources_linux_clock_read(qa_native_process_resources *o
     return qa_native_process_resources_current(owner, error) &&
         qa_native_process_platform_linux_clock_read(owner->options.platform, id, seconds, nanoseconds, error) &&
         qa_native_process_resources_current(owner, error);
+}
+bool qa_native_process_resources_descriptor_flags(qa_native_process_resources *owner, uint64_t id,
+    uint32_t flags, qa_error *error)
+{
+    resource_native_begin(owner);
+    if (!qa_native_process_resources_current(owner, error)) return false;
+    bool append = (flags & UINT32_C(1024)) != 0, nonblocking = (flags & UINT32_C(2048)) != 0;
+    for (size_t i = 0; i < 3; ++i) if (owner->standards[i].capability == id)
+        return qa_native_process_platform_descriptor_flags(owner->options.platform, id, append, nonblocking, error) &&
+            qa_native_process_resources_current(owner, error);
+    for (size_t i = 0; i < owner->file_count; ++i) {
+        process_file *row = owner->files[i];
+        if (row->id != id) continue;
+        if (!row->ready || row->closed || !row->file)
+            return fail(error, QA_ERROR_NOT_FOUND, "Actual native descriptor capability is closed");
+        ++owner->busy;
+        bool okay = qa_fs_opened_file_posix_flags(row->file, append, nonblocking, error);
+        resource_native_filesystem(owner);
+        if (okay) okay = qa_native_process_resources_current(owner, error);
+        --owner->busy; return okay;
+    }
+    return fail(error, QA_ERROR_NOT_FOUND, "Actual native descriptor capability is absent");
 }
 static bool windows_open(void *context, const char *name, uint32_t mode, uint32_t creation,
     qa_native_windows_file *out, bool *opened, qa_error *error)
@@ -510,7 +561,8 @@ static bool resources_create(const qa_native_process_resources_options *options,
     owner->root_capacity = options->root_count;
     if (!owner->artifacts || !owner->sysv_artifacts || !owner->windows_artifacts || (options->root_count && !owner->roots))
         return fail(error, QA_ERROR_MEMORY, "Owning native artifact and root inventories");
-    uint64_t cursor = UINT64_C(65536);
+    uint64_t cursor = program && options->policy.backend == QA_NATIVE_GUEST_EMULATED ?
+        QA_NATIVE_GUEST_PAGE : UINT64_C(65536);
     for (size_t i = 0; i < options->artifact_count; ++i) {
         const qa_native_process_resource_artifact *source = options->artifacts + i;
         process_artifact *row = owner->artifacts + i; owner->artifact_count = i + 1;
@@ -612,7 +664,8 @@ static bool resources_create(const qa_native_process_resources_options *options,
         if (!owner->bootstrap_path || !qa_fs_file_open(owner->bootstrap_path, &owner->bootstrap, &owner->bootstrap_identity, error)) return false;
     }
     bool terminal;
-    if (!qa_native_process_platform_sysv_files(options->platform, owner->standards, &terminal, error)) return false;
+    if (!qa_native_process_platform_sysv_files(options->platform, owner->standards, &terminal, error) ||
+        (program && !qa_native_process_platform_program_files(options->platform, owner->standards, error))) return false;
     owner->next_file = 1;
     for (size_t i = 0; i < 3; ++i) {
         if (owner->standards[i].capability == UINT64_MAX) return fail(error, QA_ERROR_ARGUMENT, "Native standard identity exhausts the file namespace");
@@ -666,6 +719,11 @@ static bool program_status(void *context, uint64_t id, qa_fs_posix_status *out, 
 { return qa_native_process_resources_file_status(context, id, out, error); }
 static bool program_identity(void *context, qa_native_process_linux_identity *out, qa_error *error)
 { return qa_native_process_resources_linux_identity_read(context, out, error); }
+static bool program_descriptor(void *context, uint64_t id,
+    qa_native_sysv_program_descriptor_status *out, qa_error *error)
+{ return qa_native_process_resources_descriptor_status(context, id, out, error); }
+static bool program_descriptor_flags(void *context, uint64_t id, uint32_t flags, qa_error *error)
+{ return qa_native_process_resources_descriptor_flags(context, id, flags, error); }
 static bool program_clock(void *context, int32_t id, int64_t *seconds, int32_t *nanoseconds, qa_error *error)
 { return qa_native_process_resources_linux_clock_read(context, id, seconds, nanoseconds, error); }
 static bool program_native_error(const void *context, qa_fs_native_error *out)
@@ -710,7 +768,9 @@ bool qa_native_process_resources_program_create(const qa_native_process_resource
         .random = {owner->program_random, 16}, .auxiliary = owner->program_auxiliary,
         .auxiliary_count = program->auxiliary_count, .process_id = program->process_id, .thread_id = program->thread_id,
         .services = {.id = options->service_owner, .current = current_callback, .open_file = sysv_open,
-            .resolve_file = sysv_resolve, .file_status = program_status, .identity = program_identity,
+            .resolve_file = sysv_resolve, .file_status = program_status,
+            .descriptor_status = program_descriptor, .descriptor_flags = program_descriptor_flags,
+            .identity = program_identity,
             .entropy = platform_entropy, .clock = program_clock, .native_error = program_native_error, .context = owner}};
     memcpy(owner->program.standard_files, owner->standards, sizeof(owner->standards));
     owner->failed = false;
@@ -720,12 +780,16 @@ bool qa_native_process_resources_program_read(qa_native_process_resources *owner
     qa_native_sysv_program_options *out, qa_error *error)
 {
     if (!out || !owner || !owner->raw_program || !qa_native_process_resources_current(owner, error)) return false;
+    if (owner->options.policy.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
+        !qa_native_runtime_profile_launch(owner->options.runtime, &owner->guard, error)) return false;
     *out = owner->program; return true;
 }
 bool qa_native_process_resources_program_restore_read(qa_native_process_resources *owner,
     qa_native_sysv_program_restore_bindings *out, qa_error *error)
 {
     if (!out || !owner || !owner->raw_program || !qa_native_process_resources_current(owner, error)) return false;
+    if (owner->options.policy.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
+        !qa_native_runtime_profile_launch(owner->options.runtime, &owner->guard, error)) return false;
     *out = (qa_native_sysv_program_restore_bindings){.backend = owner->options.policy.backend,
         .maximum_backing_bytes = owner->options.policy.maximum_backing_bytes,
         .maximum_image_bytes = owner->options.policy.maximum_image_bytes,
@@ -926,7 +990,8 @@ static bool resource_copy(const qa_native_process_resources *source,
         !units_copy(source->windows_environment, source->options.windows_environment_units, &copy->windows_environment))
         return fail(error, QA_ERROR_MEMORY, "Retaining actual source process argument rows");
     bool terminal;
-    if (!qa_native_process_platform_sysv_files(copy->options.platform, copy->standards, &terminal, error)) return false;
+    if (!qa_native_process_platform_sysv_files(copy->options.platform, copy->standards, &terminal, error) ||
+        (copy->raw_program && !qa_native_process_platform_program_files(copy->options.platform, copy->standards, error))) return false;
     copy->sysv = source->sysv; copy->windows = source->windows;
     copy->sysv_restore = source->sysv_restore; copy->windows_restore = source->windows_restore;
     copy->sysv.artifacts = copy->sysv_artifacts; copy->sysv.files = copy->standards;

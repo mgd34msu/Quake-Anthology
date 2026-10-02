@@ -87,7 +87,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     const qa_network_options *options, const qa_network_checkpoint_refs *refs,
     qa_network_runtime **out, qa_error *error)
 {
-    if (!options || !out || !transport || !refs ||
+    if (!options || !out || *out || !transport || !refs ||
         (!refs->source && !refs->source_nq && !refs->source_qw &&
          !refs->q2.source_server && !refs->q2.source_client && !refs->source_unified &&
          !refs->source_q1_client && !refs->source_local) || !bytes.data)
@@ -101,6 +101,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     if (!read_blob(&r, &table_bytes)) return false;
     qa_network_runtime *runtime = NULL;
     if (!qa_network_create(transport, options, &runtime, error)) return false;
+    *out=runtime;
     qa_net_reader table_reader; qa_net_reader_init(&table_reader, table_bytes, error);
     qa_net_connections *connections = NULL;
     if (!qa_net_connections_restore(&table_reader, options->owner, options->clients,
@@ -129,12 +130,12 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
             restored=qa_network_local_restore_peer(runtime,client,source,refs,peer,error);
         } else if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
             qa_network_q1_client_policy policy={0}; qa_network_q1_client_hooks hooks={0};
-            restored=refs->source_q1_client && refs->source_q1_client(refs->context,client,&policy,&hooks,error) &&
+            restored=refs->source_q1_client && refs->source_q1_client(refs->context,runtime,client,&policy,&hooks,error) &&
                 qa_network_q1_client_restore_peer(runtime,client,source,&policy,&hooks,peer,error);
             if(!refs->source_q1_client) qa_network_fail(error,"Q1 CLIENT restore lacks its actual candidate Source callbacks");
         } else if(kind==QA_NETWORK_SOURCE_UNIFIED) {
             qa_unified_session_hooks hooks={0}; qa_unified_session *session=NULL; qa_network_peer_ops ops;
-            restored=refs->source_unified && refs->source_unified(refs->context,client,&hooks,error) &&
+            restored=refs->source_unified && refs->source_unified(refs->context,runtime,client,&hooks,error) &&
                 qa_unified_session_restore(source,runtime,client,&hooks,&session,&ops,error);
             if(restored) *peer=(qa_network_peer){.id=client->id,.ops=ops,.state=session};
             else if(!refs->source_unified) qa_network_fail(error,"Unified restore lacks its actual candidate Source callbacks");
@@ -172,8 +173,9 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     if (!qa_net_reader_finish(&r)) goto failure;
     *out = runtime; return true;
 failure:
-    runtime->options.hooks.disconnected = NULL; runtime->transport = NULL;
-    qa_network_destroy(runtime); return false;
+    /* Physical Source factories may already borrow this exact runtime.
+     * Its caller retains the partial candidate until those owners release. */
+    return false;
 }
 
 bool qa_network_source_publication_ready(const qa_network_runtime *runtime,qa_error *error)

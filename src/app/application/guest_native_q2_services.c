@@ -2,6 +2,8 @@
 #include "guest_native_q2_combat.h"
 #include "control_frame.h"
 #include "native_q2_delivery.h"
+#include "native_q2_callbacks.h"
+#include "native_q2_protocol_resources.h"
 #include "unified_events.h"
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
@@ -20,7 +22,24 @@ static bool protocol(struct application_native_q2 *engine, const qa_q2_server_ev
     qa_application_protocol_event event = {.recipient = recipient,
         .payload = {bytes, qa_net_writer_size(&writer)}, .reliable = reliable,
         .multicast = !recipient.registry};
-    return application_emit_protocol(engine->provider, &event, error);
+    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023)
+        return application_emit_protocol(engine->provider, &event, error);
+    qa_native_host_message packet = {.target = recipient.registry ? QA_NATIVE_HOST_UNICAST : QA_NATIVE_HOST_MULTICAST,
+        .payload = event.payload, .client = recipient, .destination = 0, .reliable = reliable};
+    qa_application_q2_protocol_delivery delivery = {.profile = engine->profile, .original = true};
+    if (engine->initialized && engine->map_ready && engine->calls &&
+        !application_native_q2_message_capture(engine, &packet, &delivery, error)) return false;
+    application_native_q2_protocol_resources resources = {0};
+    bool ok = application_native_q2_protocol_resources_capture(engine, event.payload,
+        event.references, event.reference_count, &resources, error);
+    if (ok) {
+        event.resources = resources.rows; event.resource_count = resources.count;
+        event.references = resources.references; event.reference_count = resources.reference_count;
+        ok = application_emit_q2_protocol(engine->provider, &event, &delivery, error);
+    }
+    application_native_q2_protocol_resources_dispose(&resources);
+    application_native_q2_delivery_dispose(&delivery.audience);
+    return ok;
 }
 
 static void print(void *opaque, const qa_native_host_print *source)
@@ -77,19 +96,20 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     return protocol(engine, &event, (qa_actor_id){0}, true, error);
 }
 
-static bool register_sound(struct application_native_q2 *engine, const char *name, qa_error *error)
+static bool register_file(struct application_native_q2 *engine, qa_native_host_resource_kind kind,
+    const char *name, qa_error *error)
 {
-    if (!*name || *name == '*') return true;
+    if (!*name || *name == '*' || kind == QA_NATIVE_HOST_IMAGE) return true;
     char id[81]; bool found;
     if (!application_unified_event_resource_lookup(engine->provider->application,
         engine->provider->owner, name, id, &found, error)) return false;
     if (found) return true;
     const char *opening = *name == '#' ? name + 1 : name;
-    size_t length = strlen(opening), prefix = *name == '#' ? 0 : 6;
+    size_t length = strlen(opening), prefix = kind == QA_NATIVE_HOST_SOUND && *name != '#' ? 6 : 0;
     if (length > SIZE_MAX - 7)
-        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 sound precache path is too large");
+        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 resource precache path is too large");
     char *path = malloc(length + 7);
-    if (!path) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 sound precache path");
+    if (!path) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 resource precache path");
     if (prefix) memcpy(path, "sound/", prefix);
     memcpy(path + prefix, opening, length + 1);
     qa_resource *held = NULL; qa_error acquisition = {0};
@@ -118,12 +138,12 @@ static bool resource(void *opaque, qa_native_host_resource_kind kind, const char
     for (uint32_t i = 1; i < maximum; ++i) {
         const char *value = engine->configstrings[base + i];
         if (value && !strcmp(value, name)) {
-            if (kind == QA_NATIVE_HOST_SOUND && !register_sound(engine, name, error)) return false;
+            if (!register_file(engine, kind, name, error)) return false;
             *out = (int32_t)i; return true;
         }
         if (!value || !*value) {
-            if (!config_set(engine, (int32_t)(base + i), name, error)) return false;
-            if (kind == QA_NATIVE_HOST_SOUND && !register_sound(engine, name, error)) return false;
+            if (!register_file(engine, kind, name, error) ||
+                !config_set(engine, (int32_t)(base + i), name, error)) return false;
             *out = (int32_t)i; return true;
         }
     }
@@ -167,10 +187,18 @@ static bool message(void *opaque, const qa_native_host_message *source, qa_error
     if (duplicate) {
         free(references); application_native_q2_delivery_dispose(&delivery.audience); return true;
     }
-    bool emitted=application_emit_q2_protocol(engine->provider,&event,&delivery,error);
+    application_native_q2_protocol_resources resources = {0};
+    bool emitted = application_native_q2_protocol_resources_capture(engine, event.payload,
+        event.references, event.reference_count, &resources, error);
+    if (emitted) {
+        event.resources = resources.rows; event.resource_count = resources.count;
+        event.references = resources.references; event.reference_count = resources.reference_count;
+        emitted = application_emit_q2_protocol(engine->provider,&event,&delivery,error);
+    }
     if (emitted && keyed) emitted = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     free(references);
+    application_native_q2_protocol_resources_dispose(&resources);
     application_native_q2_delivery_dispose(&delivery.audience);
     if (!emitted) return false;
     return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
@@ -265,11 +293,19 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
     named.channel = event.data.sound.channel; named.recipients = recipients;
     named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
-    bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, error);
+    application_native_q2_protocol_resources resources = {0};
+    bool ok = application_native_q2_protocol_resources_capture(engine, publication.payload,
+        publication.references, publication.reference_count, &resources, error);
+    if (ok) {
+        publication.resources = resources.rows; publication.resource_count = resources.count;
+        publication.references = resources.references; publication.reference_count = resources.reference_count;
+        ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, error);
+    }
     if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     if (ok && named.audience_captured && engine->platform.sound)
         ok = engine->platform.sound(engine->platform.context, &named, error);
+    application_native_q2_protocol_resources_dispose(&resources);
     free(recipients); application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }
@@ -308,7 +344,10 @@ qa_native_host_engine_services application_native_q2_services(struct application
         .entity_number = entity_number,
         .checkpoint = application_native_q2_capture_engine, .restore = application_native_q2_restore_engine,
         .content_files = engine->provider->launch->content, .cvars = engine->cvars,
-        .hud_view = hud_view};
+        .hud_view = hud_view,
+        .source_before = engine->callbacks ? application_native_q2_callbacks_source_before : NULL,
+        .source_import = engine->callbacks ? application_native_q2_callbacks_import : NULL,
+        .source_after = engine->callbacks ? application_native_q2_callbacks_source_after : NULL};
 }
 
 static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_address record,

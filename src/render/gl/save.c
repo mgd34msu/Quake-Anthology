@@ -377,8 +377,8 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     const qa_render_checkpoint_refs *refs,const qa_gl_options *installed,const qa_gl_renderer *active)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=6,draw=renderer->draw_buffer;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>6 ||
+    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=12,draw=renderer->draw_buffer;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>12 ||
         !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
         !qa_source_save_u64(io,&renderer->options.owner) || !qa_source_save_u32(io,&saved->width) ||
         !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities) ||
@@ -396,6 +396,9 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     if (version>=6) {
         if (!render_save_pipeline(io,&renderer->pipeline)) return false;
     } else if (reading) qa_scene_state_default(&renderer->pipeline);
+    if (version>=11) {
+        if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
+    } else if (reading) renderer->preblend_gamma=false;
     if (reading) {
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;

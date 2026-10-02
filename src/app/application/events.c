@@ -63,7 +63,7 @@ static bool valid_q1_source_event(qa_application *app,
 static bool valid_event(qa_application *application,
                         const qa_builtin_event *event, qa_error *error)
 {
-    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_CLEAR_PROMPT ||
+    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_Q2_ENTITY_EVENT ||
         (unsigned)event->family > QA_GAME_Q3 ||
         (event->argument_count != 0 && event->arguments == NULL) ||
         event->argument_count > SIZE_MAX / sizeof(*event->arguments) ||
@@ -83,6 +83,14 @@ static bool valid_event(qa_application *application,
          !qa_actor_id_equal(event->other, (qa_actor_id){0})))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 source log requires provider-owned text");
+    if (event->has_muzzle_pose &&
+        (event->family != QA_GAME_Q2 || event->kind != QA_BUILTIN_MUZZLE ||
+         !event->provider || !qa_actors_get(qa_session_actors(application->session), event->actor) ||
+         !qa_vec_finite(event->muzzle_angles) || !isfinite(event->muzzle_scale) || event->muzzle_scale <= 0))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 muzzle pose has no genuine finite Source receipt");
+    if (!event->has_muzzle_pose &&
+        (event->muzzle_scale || event->muzzle_angles.x || event->muzzle_angles.y || event->muzzle_angles.z))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Absent muzzle pose has retained Source fields");
     if (event->kind == QA_BUILTIN_CTF_STATUS &&
         (event->family != QA_GAME_Q1 || !event->provider ||
          !qa_actors_get(qa_session_actors(application->session), event->actor) ||
@@ -104,6 +112,22 @@ static bool valid_event(qa_application *application,
          event->other.registry || event->text || event->resource || event->argument_count ||
          event->q1_powerup.power >= QA_Q1_POWER_COUNT || !isfinite(event->q1_powerup.expires)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 powerup requires its actual typed source expiry");
+    if (event->family == QA_GAME_Q2 && event->kind == QA_BUILTIN_ITEM && event->code == 0) {
+        if (!event->item || !valid_string(application, event->item))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q2 pickup requires its authored canonical item");
+    } else if (event->item)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Non-pickup event has a Q2 pickup item");
+    if (event->kind == QA_BUILTIN_Q2_PLAYER_ANIMATION || event->kind == QA_BUILTIN_Q2_ENTITY_EVENT) {
+        if (event->family != QA_GAME_Q2 || !event->provider ||
+            !qa_actors_get(qa_session_actors(application->session), event->actor) ||
+            (event->kind == QA_BUILTIN_Q2_PLAYER_ANIMATION && (event->code < 0 || event->code > 2)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q2 animation requires its actual source and live actor");
+        bool found = false;
+        for (const application_provider *source = application->live_providers; source; source = source->next_live)
+            if (source->owner == event->provider && source->kind == APPLICATION_PROVIDER_Q2 && !source->close_pending)
+                found = true;
+        if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 animation lost its actual native source");
+    }
     for (size_t index = 0; index < event->argument_count; ++index) {
         const qa_builtin_message_arg *argument = &event->arguments[index];
         if ((argument->kind == QA_BUILTIN_MESSAGE_STRING &&
@@ -253,6 +277,13 @@ bool application_emit_q2_map(application_provider *provider,
     if (!valid_arguments(application, event->arguments,
                          event->argument_count, error))
         return false;
+    if ((event->level_count && !event->levels) || event->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT ||
+        (event->kind != QA_Q2_MAP_END_UNIT && (event->level_count || event->button_time_ns)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 map event has an invalid unit report");
+    for (size_t i = 0; i < event->level_count; ++i)
+        if (!event->levels[i].map || !valid_string(application, event->levels[i].map) ||
+            !valid_string(application, event->levels[i].name) || !isfinite(event->levels[i].time_seconds))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual level or clock");
     if (event->kind == QA_Q2_MAP_WORLD_TEXT &&
         !application_unified_world_text_emit(application, provider->owner, event, error)) return false;
     qa_application_q2_audience audience={0},retained={0};
@@ -269,7 +300,6 @@ bool application_emit_q2_map(application_provider *provider,
         application_native_q2_delivery_retain(application,&audience,&retained,error);
     application_native_q2_delivery_dispose(&audience);
     if (!ready) return false;
-    if (!application_unified_q2_native_map(provider, event, &retained, error)) return false;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
         size_t bytes = event->argument_count * sizeof(*event->arguments);
@@ -279,6 +309,14 @@ bool application_emit_q2_map(application_provider *provider,
             return false;
         memcpy(arguments, event->arguments, bytes);
     }
+    qa_q2_campaign_level *levels = NULL;
+    if (event->level_count) {
+        size_t bytes = event->level_count * sizeof(*levels);
+        levels = qa_arena_alloc(&application->event_arena, bytes, _Alignof(qa_q2_campaign_level), error);
+        if (!levels) return false;
+        memcpy(levels, event->levels, bytes);
+    }
+    if (!application_unified_q2_native_map(provider, event, &retained, error)) return false;
     application_q2_map_event_record *record =
         &application->q2_map_events[application->q2_map_event_count];
     *record = (application_q2_map_event_record){.audience=retained,.source={
@@ -287,6 +325,7 @@ bool application_emit_q2_map(application_provider *provider,
         .event = *event,
     }};
     record->source.event.arguments = arguments;
+    record->source.event.levels = levels;
     application_event_journal_append(application, APPLICATION_EVENT_Q2_MAP,
         application->q2_map_event_count++, provider->owner);
     return true;
@@ -588,11 +627,20 @@ static bool emit_protocol(application_provider *provider,
     if (!application || !application->session || application->destroy_requested || !event ||
         (event->payload.size && !event->payload.data) || !qa_vec_finite(event->origin) ||
         (event->reference_count && !event->references) ||
-        event->reference_count > SIZE_MAX / sizeof(*event->references))
+        event->reference_count > SIZE_MAX / sizeof(*event->references) ||
+        (event->resource_count && !event->resources) ||
+        event->resource_count > SIZE_MAX / sizeof(*event->resources))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid source protocol event");
     for (size_t i = 0; i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
+    for (size_t i = 0; i < event->resource_count; ++i) {
+        const qa_application_protocol_resource_reference *resource = event->resources + i;
+        if ((unsigned)resource->kind > QA_NATIVE_HOST_IMAGE || !resource->name ||
+            resource->record_ordinal >= event->payload.size || resource->resource_key[80] ||
+            (resource->resource_key[0] && !application_unified_event_resource_read(application, resource->resource_key)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol resource lost its immutable precache receipt");
+    }
     application_protocol_record *storage = event_storage(application->protocol_events,
         application->protocol_event_count, &application->protocol_event_capacity,
         sizeof(*storage), error);
@@ -609,6 +657,18 @@ static bool emit_protocol(application_provider *provider,
     if (event->reference_count && !references) return false;
     if (event->reference_count)
         memcpy(references, event->references, event->reference_count * sizeof(*references));
+    qa_application_protocol_resource_reference *resources = event->resource_count ?
+        qa_arena_alloc(&application->event_arena, event->resource_count * sizeof(*resources),
+            _Alignof(qa_application_protocol_resource_reference), error) : NULL;
+    if (event->resource_count && !resources) return false;
+    for (size_t i = 0; i < event->resource_count; ++i) {
+        resources[i] = event->resources[i];
+        size_t length = strlen(resources[i].name);
+        if (length == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Source resource spelling extent overflows");
+        char *name = qa_arena_alloc(&application->event_arena, length + 1, 1, error);
+        if (!name) return false;
+        memcpy(name, resources[i].name, length + 1); resources[i].name = name;
+    }
     qa_application_protocol_event copied = *event;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;
@@ -620,6 +680,7 @@ static bool emit_protocol(application_provider *provider,
     }
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
+    copied.resources = resources;
     if (copied.signon &&
         !application_q1_signon_retain(provider, &copied, error))
         return false;

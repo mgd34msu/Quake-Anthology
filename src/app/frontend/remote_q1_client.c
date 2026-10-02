@@ -116,7 +116,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     memset(row->qw_player_valid, 0, sizeof(row->qw_player_valid)); memset(row->qw_stats, 0, sizeof(row->qw_stats));
     row->max_clients = row->view_entity = 0; row->view_angles = qa_v3(0, 0, 0);
     row->pending_impulse = 0;
-    row->has_data = row->loaded = row->qw_ready = row->qw_frame = row->qw_intermission = row->intermission = false;
+    row->has_data = row->loaded = row->qw_ready = row->qw_frame = row->qw_intermission = row->intermission = row->published = false;
     row->seconds = row->previous_seconds = 0; row->fraction = 1; row->qw_kick = 0;
     qa_resource_release(row->map); row->map = NULL; qa_vfs_acquisition_dispose(&row->map_opening);
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog); row->content = (frontend_remote_q1_content){0};
@@ -193,6 +193,27 @@ void remote_q1_time_advance(frontend_remote_q1 *row, double seconds, uint64_t re
     remote_q1_entities spare = row->previous; row->previous = row->current; row->current = spare; row->current.count = 0;
     row->received_ns = received; row->fraction = 1; ++row->frame_number;
 }
+static bool trim_space(unsigned char byte)
+{ return byte==' ' || (byte>=9 && byte<=13) || byte==160; }
+static bool reconnect(frontend_remote_q1 *row,const char *text,qa_error *error)
+{
+    if(!text) return remote_q1_fail(error,QA_ERROR_FORMAT,"Received Q1 server command has no text");
+    size_t length=strlen(text);
+    for(size_t at=0;at<length;) {
+        size_t count=qa_command_separator(text+at,length-at,QA_CONSOLE_Q1),first=0,last=count;
+        while(first<last && trim_space((unsigned char)text[at+first])) ++first;
+        while(last>first && trim_space((unsigned char)text[at+last-1])) --last;
+        if(last-first==9 && !memcmp(text+at+first,"reconnect",9)) row->published=false;
+        at+=count+1;
+    }
+    return true;
+}
+void remote_q1_publication_update(frontend_remote_q1 *row)
+{
+    if(!row->loaded || !row->view_entity || !row->has_data) return;
+    for(size_t i=0;i<row->current.count;++i)
+        if(row->current.rows[i].number==row->view_entity) { row->published=true; return; }
+}
 bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message *message, uint64_t received, qa_error *error)
 {
     if (!message || !remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error) || !row->revision || !row->next_event ||
@@ -233,6 +254,7 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
         break;
     }
     case QA_NQ_INTERMISSION: case QA_NQ_FINALE: case QA_NQ_CUTSCENE: row->intermission = true; break;
+    case QA_NQ_STUFFTEXT: ok=reconnect(row,message->data.text,error); break;
     default: break;
     }
     if (ok) ok = remote_q1_effects_service(row, message, error);
@@ -250,7 +272,7 @@ bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *
     double duration = fmax(0, row->seconds - row->previous_seconds);
     row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, now >= row->received_ns ?
         (double)(now - row->received_ns) / (duration * 1000000000.0) : 0));
-    ++row->revision; return true;
+    remote_q1_publication_update(row); ++row->revision; return true;
 }
 bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 {
@@ -262,10 +284,21 @@ bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_re
         row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction, row->fraction,
         row->view_entity, row->max_clients, viewer, row->view_angles, row->has_data ? &row->data : NULL,
         row->skybox ? row->skybox : "", row->bound, row->loaded, row->retired, row->map, &row->map_opening,
-        row->images, row->materials, row->world, row->protocol}; return true;
+        row->images, row->materials, row->world, row->protocol, row->published}; return true;
 }
 bool frontend_remote_q1_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 { return remote_q1_live(row, error) && frontend_remote_q1_metadata_read(row, out, error); }
+bool frontend_remote_q1_application_read(const frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)
+{
+    return row && out && row->options.application_read && remote_q1_live(row,error) &&
+        row->options.application_read(row->options.context,&row->options.domain,out,error) && remote_q1_live(row,error);
+}
+bool frontend_remote_q1_application_metadata_read(const frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)
+{
+    return row && out && row->frontend->application==row->options.domain.application &&
+        row->options.application_metadata_read &&
+        row->options.application_metadata_read(row->options.context,&row->options.domain,out,error);
+}
 bool frontend_remote_q1_current(const frontend_remote_q1_view *view)
 {
     qa_error error = {0}; const frontend_remote_q1 *row = view ? view->owner : NULL;
@@ -273,10 +306,11 @@ bool frontend_remote_q1_current(const frontend_remote_q1_view *view)
         view->revision == row->revision && view->map_generation == row->map_generation && view->received_ns == row->received_ns &&
         view->protocol.kind == row->protocol.kind && view->protocol.revision == row->protocol.revision && view->protocol.flags == row->protocol.flags &&
         view->content.catalog == row->content.catalog && view->content.mounts == row->content.mounts &&
-        view->loaded == row->loaded && view->retired == row->retired;
+        view->loaded == row->loaded && view->retired == row->retired && view->published == row->published;
 }
 bool frontend_remote_q1_idle(const frontend_remote_q1 *row)
-{ return row && !row->busy && !row->sky_policy && (!row->skins || frontend_remote_q1_skins_idle(row->skins)); }
+{ return row && !row->busy && !row->sky_policy && remote_q1_effects_idle(row) &&
+    (!row->skins || frontend_remote_q1_skins_idle(row->skins)); }
 struct frontend_remote_q1_skins *frontend_remote_q1_skins_owner(const frontend_remote_q1 *row)
 { return row ? row->skins : NULL; }
 bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)

@@ -283,6 +283,11 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
                 field_vector(&presentation, ",\"origin\":", event->origin, error) &&
                 field_number(&presentation, ",\"colorStart\":", event->code, error) &&
                 field_number(&presentation, ",\"colorLength\":", event->count, error);
+        else if (resource.size == sizeof("developer-message") - 1 &&
+            !memcmp(resource.data, "developer-message", resource.size))
+            okay = application_unified_json_text(&presentation,
+                "{\"kind\":\"q1-composition\",\"event\":{\"kind\":\"developer-message\"", error) &&
+                field_text(&presentation, app, ",\"text\":", event->text, error);
         else if (!event->actor.registry && event->resource &&
             !(event->flags & UINT32_C(0x80000000))) {
             /* Only the genuine held model declaration identifies a static

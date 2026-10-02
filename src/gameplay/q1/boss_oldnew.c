@@ -133,7 +133,7 @@ bool q1_major_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_erro
     if (!q1_boss_damageable(g, e, false, error))
         return false;
     if (m->addon.boss == Q1_BOSS_FINAL) {
-        e->physics.flags &= ~(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
+        e->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
         return q1_boss_targets(g, e, attacker, e->target, error) &&
                (!q1_alive(g, e->id) || q1_monster_play(g, e, "boss_final_death1", error));
     }

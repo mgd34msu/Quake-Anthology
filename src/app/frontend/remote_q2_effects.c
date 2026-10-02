@@ -11,13 +11,21 @@ const char *const q2fx_model_paths[Q2FX_MODEL_COUNT] = {
     "models/objects/flash/tris.md2", "models/monsters/parasite/segment/tris.md2",
     "models/ctf/segment/tris.md2", "models/objects/r_explode/tris.md2",
     "sprites/s_bfg2.sp2", "models/proj/lightning/tris.md2",
-    "models/proj/beam/tris.md2", "models/objects/r_explode2/tris.md2"
+    "models/proj/beam/tris.md2", "models/objects/r_explode2/tris.md2",
+    "models/weapons/v_machn/flash/tris.md2", "models/weapons/v_shotg2/flash/tris.md2",
+    "models/weapons/v_shotg/flash/tris.md2", "models/weapons/v_rocket/flash/tris.md2",
+    "models/weapons/v_rail/flash/tris.md2", "models/weapons/v_launch/flash/tris.md2",
+    "models/weapons/v_etf_rifle/flash/tris.md2", "models/weapons/v_dist/flash/tris.md2",
+    "models/weapons/v_boomer/flash/tris.md2", "models/weapons/v_blast/flash/tris.md2",
+    "models/weapons/v_bfg/flash/tris.md2", "models/weapons/v_beamer/flash/tris.md2"
 };
 bool q2fx_fail(qa_error *error, qa_status code, const char *message)
 { if (error) { error->code = code; snprintf(error->message, sizeof(error->message), "%s", message); } return false; }
 bool q2fx_source_valid(const frontend_remote_q2_effects_source *s)
 { return s && s->identity && s->content_generation && s->map && s->files &&
-    s->images && s->materials && s->world && s->white && s->current && s->actor && s->model && s->sound; }
+    (s->profile==FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC || s->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) &&
+    s->images && s->materials && s->world && s->white && s->current && s->actor && s->model && s->sound &&
+    (s->profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || (s->controls && s->viewer)); }
 bool q2fx_source_current(const frontend_remote_q2_effects *owner, qa_error *error)
 { return owner && q2fx_source_valid(&owner->source) && owner->source.current(owner->source.context, &owner->source, error); }
 bool frontend_remote_q2_effects_idle(const frontend_remote_q2_effects *owner)
@@ -29,12 +37,12 @@ bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *owner,
 {
     if (!owner || !s) return false;
     const frontend_remote_q2_effects_source *a = &owner->source;
-    return a->session == s->session && a->identity == s->identity && a->content_generation == s->content_generation &&
+    return a->session == s->session && a->identity == s->identity && a->content_generation == s->content_generation && a->profile == s->profile &&
         a->protocol.kind == s->protocol.kind && a->protocol.revision == s->protocol.revision && a->protocol.flags == s->protocol.flags &&
         a->map == s->map && a->files == s->files && a->images == s->images && a->materials == s->materials && a->world == s->world &&
         a->white == s->white && a->context == s->context && a->current == s->current && a->actor == s->actor &&
-        a->actor_pose == s->actor_pose && a->model == s->model && a->sound == s->sound &&
-        a->hit_marker == s->hit_marker && a->footstep == s->footstep && q2fx_source_current(owner, error);
+        a->actor_pose == s->actor_pose && a->viewer == s->viewer && a->model == s->model && a->sound == s->sound &&
+        a->hit_marker == s->hit_marker && a->controls == s->controls && a->footstep == s->footstep && a->trace == s->trace && q2fx_source_current(owner, error);
 }
 bool q2fx_model_admit(frontend_remote_q2_effects *owner, q2fx_model model, qa_error *error)
 {
@@ -51,12 +59,20 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     frontend_remote_q2_effects *owner = calloc(1, sizeof(*owner));
     if (!owner) return q2fx_fail(error, QA_ERROR_MEMORY, "Allocating remote Q2 effect pools");
     owner->source = *source; owner->particles.family = QA_GAME_Q2; qa_builtin_random_seed(&owner->random, 1);
+    if (source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)
+        for (size_t i=0;i<QA_BYTE_NORMAL_COUNT;++i) {
+            float x=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
+            float y=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
+            float z=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
+            owner->particles.angular[i]=qa_v3(x,y,z);
+        }
     *out = owner;
     qa_scene_image *image = NULL; qa_bytes palette;
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_SCENE_Q2, &image, error)) return false;
     owner->particle_image = image;
     if (!qa_scene_resources_palette(source->images, QA_SCENE_Q2, &palette, error)) return false;
-    for (size_t i = 0; i < Q2FX_MODEL_COUNT; ++i)
+    size_t models=source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_MODEL_COUNT:Q2FX_MUZZLE_MACHINE;
+    for (size_t i = 0; i < models; ++i)
         if (!q2fx_model_admit(owner, (q2fx_model)i, error)) return false;
     return q2fx_source_current(owner, error);
 }
@@ -71,8 +87,14 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
 static uint32_t random_word(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }
 static double random_unit(frontend_remote_q2_effects *o) { return (double)(random_word(o) & 32767) / 32767; }
 static float random_signed(frontend_remote_q2_effects *o) { return (float)(2 * random_unit(o) - 1); }
-static qa_vec3 random_direction(frontend_remote_q2_effects *o)
+qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *o)
 {
+    if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
+        float x,y,square;
+        do { x=random_signed(o); y=random_signed(o); square=x*x+y*y; } while (square>1);
+        float scale=2*sqrtf(1-square);
+        return qa_v3(x*scale,y*scale,-1+2*square);
+    }
     float x = random_signed(o), y = random_signed(o), z = random_signed(o);
     return qa_vec_normalize(qa_v3(x, y, z));
 }
@@ -154,7 +176,8 @@ static void beam(frontend_remote_q2_effects *o, qa_actor_id actor, qa_actor_id d
     double duration = player && !row ? 100 : 200;
     if (!row) for (size_t i = 0; i < Q2FX_POOL; ++i)
         if (!pool[i].active || pool[i].die < time) { row = &pool[i]; break; }
-    if (row) *row = (q2fx_beam){true, player, monster, (uint8_t)model, actor, destination, start, end, offset, time + duration};
+    if (row) *row = (q2fx_beam){.active=true,.player=player,.monster=monster,.model=(uint8_t)model,
+        .actor=actor,.destination=destination,.start=start,.end=end,.offset=offset,.die=time+duration};
 }
 static void laser(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time)
 {
@@ -168,11 +191,12 @@ static void radial_particles(frontend_remote_q2_effects *o, qa_vec3 origin, doub
 {
     static const uint32_t colors[4] = {16,104,168,144};
     for (int32_t i = 0; i < count && o->particles.count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
-        uint32_t index = random_word(o) & 3;
+        uint32_t index = palette == 0xe0 ? 0 : random_word(o) & 3;
         frontend_fx_q2_particle p = {.spawn_milliseconds = time, .alpha = 1,
             .color = palette == 0 ? colors[index] : palette + (palette == 110 ? index * 2 : index)};
-        qa_vec3 dir = random_direction(o); p.origin = qa_vec_add(origin, qa_vec_scale(dir, radius));
-        p.velocity = qa_vec_scale(dir, speed); p.alpha_velocity = instant ? -10000 : (float)(-.8 / (.5 + random_unit(o) * .3));
+        qa_vec3 dir = q2fx_random_direction(o); p.origin = qa_vec_add(origin, qa_vec_scale(dir, radius));
+        p.velocity = qa_vec_scale(dir, speed);
+        p.alpha_velocity = instant ? -10000 : (float)((palette == 208 ? -1 : -.8) / (.5 + random_unit(o) * .3));
         o->particles.values.q2[o->particles.count++] = p;
     }
 }
@@ -200,6 +224,9 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     qa_vec3 pos = {0}, end = {0}, dir = {0}, offset = {0}; int32_t count = 0, color = 0, id = 0, magnitude = 0, duration = 0;
     qa_actor_id actor = {0}, destination = {0}; double seconds = time * .001;
     frontend_fx_particles *p = &o->particles; qa_builtin_random *r = &o->random;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
+    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
     if (t->type != QA_Q2_TE_POWER_SPLASH && t->type != QA_Q2_TE_Q2PRO_DAMAGE_DEALT &&
         !vector_field(t, QA_Q2_TEMP_POSITION1, &pos, e)) return false;
     if (field(t, QA_Q2_TEMP_POSITION2) && !vector_field(t, QA_Q2_TEMP_POSITION2, &end, e)) return false;
@@ -208,7 +235,9 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     if (field(t, QA_Q2_TEMP_COLOR) && !integer_field(t, QA_Q2_TEMP_COLOR, &color, e)) return false;
     switch (t->type) {
     case QA_Q2_TE_BLOOD: case QA_Q2_TE_MOREBLOOD:
-        frontend_fx_q2_impact_particles(p,r,pos,dir,0xe8,t->type == QA_Q2_TE_BLOOD ? 60 : 250,seconds,FRONTEND_FX_Q2_NORMAL); break;
+        if (!(controls.disable_particles&16))
+            frontend_fx_q2_impact_particles(p,r,pos,dir,0xe8,t->type == QA_Q2_TE_BLOOD ? 60 : 250,seconds,FRONTEND_FX_Q2_NORMAL);
+        break;
     case QA_Q2_TE_GUNSHOT: case QA_Q2_TE_SHOTGUN: case QA_Q2_TE_SPARKS: case QA_Q2_TE_BULLET_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,t->type == QA_Q2_TE_GUNSHOT || t->type == QA_Q2_TE_SHOTGUN ? 0 : 0xe0,
             t->type == QA_Q2_TE_GUNSHOT ? 40 : t->type == QA_Q2_TE_SHOTGUN ? 20 : 6,seconds,FRONTEND_FX_Q2_NORMAL);
@@ -227,16 +256,16 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     }
     case QA_Q2_TE_LASER_SPARKS: case QA_Q2_TE_WELDING_SPARKS: case QA_Q2_TE_TUNNEL_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,(uint32_t)color,count,seconds,t->type == QA_Q2_TE_TUNNEL_SPARKS ? FRONTEND_FX_Q2_UP : FRONTEND_FX_Q2_FIXED);
-        if (t->type == QA_Q2_TE_WELDING_SPARKS) explosion(o,2,Q2FX_FLASH,pos,server-.1,2,0,128,0,100+(float)(random_word(o)%75),qa_v3(1,1,.3f),qa_v3(0,0,0),1);
+        if (t->type == QA_Q2_TE_WELDING_SPARKS) explosion(o,2,Q2FX_FLASH,pos,rerelease?server-100:server-.1,2,0,128,0,100+(float)(random_word(o)%75),qa_v3(1,1,.3f),qa_v3(0,0,0),1);
         break;
     case QA_Q2_TE_GREENBLOOD: frontend_fx_q2_impact_particles(p,r,pos,dir,0xdf,30,seconds,FRONTEND_FX_Q2_FIXED); break;
-    case QA_Q2_TE_BLUEHYPERBLASTER: case QA_Q2_TE_BLUEHYPERBLASTER_2:
-        frontend_fx_q2_impact_particles(p,r,pos,t->type == QA_Q2_TE_BLUEHYPERBLASTER ? end : dir,0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER); break;
-    case QA_Q2_TE_BLASTER: case QA_Q2_TE_BLASTER2: case QA_Q2_TE_FLECHETTE: {
-        bool green = t->type == QA_Q2_TE_BLASTER2, blue = t->type == QA_Q2_TE_FLECHETTE;
-        frontend_fx_q2_impact_particles(p,r,pos,dir,green ? 0xd0 : blue ? 0x6f : 0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER);
-        explosion(o,1,Q2FX_EXPLODE,pos,server-100,4,0,8|32,green ? 1 : blue ? 2 : 0,150,
-            green ? qa_v3(0,1,0) : blue ? qa_v3(.19f,.41f,.75f) : qa_v3(1,1,0),direction_angles(dir),1);
+    case QA_Q2_TE_BLUEHYPERBLASTER:
+        frontend_fx_q2_impact_particles(p,r,pos,end,0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER); break;
+    case QA_Q2_TE_BLUEHYPERBLASTER_2: case QA_Q2_TE_BLASTER: case QA_Q2_TE_BLASTER2: case QA_Q2_TE_FLECHETTE: {
+        bool green=t->type==QA_Q2_TE_BLASTER2, blue=t->type==QA_Q2_TE_FLECHETTE, hyper=t->type==QA_Q2_TE_BLUEHYPERBLASTER_2;
+        frontend_fx_q2_impact_particles(p,r,pos,dir,green?0xd0:blue?0x6f:hyper?0xb0:0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER);
+        explosion(o,1,Q2FX_EXPLODE,pos,server-100,4,0,8|32,green?1:blue || hyper?2:0,rerelease && t->type==QA_Q2_TE_BLASTER?200:150,
+            green?qa_v3(0,1,0):blue?qa_v3(.19f,.41f,.75f):hyper?qa_v3(0,0,1):qa_v3(1,1,0),direction_angles(dir),1);
         return sound(o,"weapons/lashit.wav",pos,actor,time,0,1,1,0,e);
     }
     case QA_Q2_TE_RAILTRAIL: case QA_Q2_TE_RAILTRAIL2:
@@ -313,9 +342,19 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         bool grenade=t->type==QA_Q2_TE_EXPLOSION2 || t->type==QA_Q2_TE_EXPLOSION2_NL || t->type==QA_Q2_TE_GRENADE_EXPLOSION || t->type==QA_Q2_TE_GRENADE_EXPLOSION_WATER;
         bool water=t->type==QA_Q2_TE_ROCKET_EXPLOSION_WATER || t->type==QA_Q2_TE_GRENADE_EXPLOSION_WATER;
         bool big=t->type==QA_Q2_TE_EXPLOSION1_BIG, unlit=t->type==QA_Q2_TE_EXPLOSION1_NL || t->type==QA_Q2_TE_EXPLOSION2_NL;
-        qa_vec3 angles=qa_v3(0,(float)(random_word(o)%360),0); int32_t base=grenade?30:random_unit(o)<.5?15:0;
-        explosion(o,3,big?Q2FX_BIG:Q2FX_ROCKET,pos,server-100,grenade?19:15,base,8,0,unlit?0:350,qa_v3(1,.5f,.5f),angles,1);
-        if (!big && t->type!=QA_Q2_TE_EXPLOSION1_NP && t->type!=QA_Q2_TE_PLAIN_EXPLOSION) frontend_fx_q2_explosion(p,r,pos,seconds,false);
+        bool grenade_weapon=t->type==QA_Q2_TE_GRENADE_EXPLOSION || t->type==QA_Q2_TE_GRENADE_EXPLOSION_WATER;
+        bool rocket_weapon=t->type==QA_Q2_TE_ROCKET_EXPLOSION || t->type==QA_Q2_TE_ROCKET_EXPLOSION_WATER;
+        qa_vec3 angles=qa_v3(0,(float)(random_word(o)%360),0);
+        int32_t base=rerelease?(int32_t)(random_word(o)&1)*15:grenade?30:random_unit(o)<.5?15:0;
+        if (grenade) base=30;
+        bool only_light=(grenade_weapon && (controls.disable_explosions&1)) || (rocket_weapon && (controls.disable_explosions&2));
+        float radius=unlit?0:((grenade_weapon || rocket_weapon) && (controls.dlight_hacks&2))?200:350;
+        explosion(o,only_light?5:3,big && !rerelease?Q2FX_BIG:Q2FX_ROCKET,pos,server-100,grenade?19:15,base,8,0,radius,
+            qa_v3(1,.5f,.5f),angles,big && rerelease?2:1);
+        if (!big && t->type!=QA_Q2_TE_EXPLOSION1_NP && t->type!=QA_Q2_TE_PLAIN_EXPLOSION &&
+            !(grenade_weapon && (controls.disable_particles&1)) && !(rocket_weapon && (controls.disable_particles&4)))
+            frontend_fx_q2_explosion(p,r,pos,seconds,false);
+        if (rerelease && t->type==QA_Q2_TE_PLAIN_EXPLOSION) break;
         return sound(o,water?"weapons/xpld_wat.wav":grenade?"weapons/grenlx1a.wav":"weapons/rocklx1a.wav",pos,actor,time,0,1,1,0,e);
     }
     default: return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect has no admitted source recipe");
@@ -333,22 +372,98 @@ bool frontend_remote_q2_effects_temporary(frontend_remote_q2_effects *owner,
     ++owner->busy; bool ok=temporary(owner,value,actors,time,server,error); owner->dirty=true; --owner->busy;
     return ok && q2fx_source_current(owner,error);
 }
+bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *o,
+    const char *name,qa_vec3 origin,qa_vec3 direction,int32_t count,int32_t color,double time,qa_error *e)
+{
+    static const struct { const char *name; uint8_t type; } recipes[]={
+        {"gunshot",QA_Q2_TE_GUNSHOT},{"blood",QA_Q2_TE_BLOOD},{"blaster",QA_Q2_TE_BLASTER},
+        {"shotgun",QA_Q2_TE_SHOTGUN},{"sparks",QA_Q2_TE_SPARKS},{"screen-sparks",QA_Q2_TE_SCREEN_SPARKS},
+        {"shield-sparks",QA_Q2_TE_SHIELD_SPARKS},{"bullet-sparks",QA_Q2_TE_BULLET_SPARKS},{"greenblood",QA_Q2_TE_GREENBLOOD},
+        {"blaster2",QA_Q2_TE_BLASTER2},{"flechette",QA_Q2_TE_FLECHETTE},{"moreblood",QA_Q2_TE_MOREBLOOD},
+        {"electric-sparks",QA_Q2_TE_ELECTRIC_SPARKS},{"splash",QA_Q2_TE_SPLASH},{"laser-sparks",QA_Q2_TE_LASER_SPARKS},
+        {"welding-sparks",QA_Q2_TE_WELDING_SPARKS},{"tunnel-sparks",QA_Q2_TE_TUNNEL_SPARKS},
+        {"explosion1",QA_Q2_TE_EXPLOSION1},{"explosion2",QA_Q2_TE_EXPLOSION2},{"rocket-explosion",QA_Q2_TE_ROCKET_EXPLOSION},
+        {"grenade-explosion",QA_Q2_TE_GRENADE_EXPLOSION},{"rocket-explosion-water",QA_Q2_TE_ROCKET_EXPLOSION_WATER},
+        {"grenade-explosion-water",QA_Q2_TE_GRENADE_EXPLOSION_WATER},{"bfg-explosion",QA_Q2_TE_BFG_EXPLOSION},
+        {"bfg-bigexplosion",QA_Q2_TE_BFG_BIGEXPLOSION},{"boss-teleport",QA_Q2_TE_BOSSTPORT},{"other-teleport",QA_Q2_TE_TELEPORT_EFFECT},
+        {"player-teleport",QA_Q2_TE_TELEPORT_EFFECT},{"heatbeam-sparks",QA_Q2_TE_HEATBEAM_SPARKS},
+        {"heatbeam-steam",QA_Q2_TE_HEATBEAM_STEAM},{"chainfist-smoke",QA_Q2_TE_CHAINFIST_SMOKE},
+        {"tracker-explosion",QA_Q2_TE_TRACKER_EXPLOSION},{"bluehyperblaster",QA_Q2_TE_BLUEHYPERBLASTER_2},
+        {"berserk-slam",QA_Q2_TE_BERSERK_SLAM},{"plain-explosion",QA_Q2_TE_PLAIN_EXPLOSION}
+    };
+    if (!name || !qa_vec_finite(origin) || !qa_vec_finite(direction)) return false;
+    char canonical[64]; size_t offset=!strncmp(name,"q2:",3)?3:0, length=strlen(name+offset);
+    if (length>=sizeof(canonical)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect recipe exceeds its source name");
+    for (size_t i=0;i<=length;++i) canonical[i]=name[offset+i]=='_'?'-':name[offset+i];
+    if (!strcmp(canonical,"item-respawn") || !strcmp(canonical,"logout")) {
+        if (!o || !frontend_remote_q2_effects_idle(o) || !isfinite(time) || !q2fx_source_current(o,e)) return false;
+        ++o->busy;
+        frontend_fx_q2_respawn_particles(&o->particles,&o->random,origin,time*.001,
+            !strcmp(canonical,"logout")?FRONTEND_FX_Q2_LOGOUT:FRONTEND_FX_Q2_ITEM);
+        o->dirty=true; --o->busy; return q2fx_source_current(o,e);
+    }
+    for (size_t i=0;i<sizeof(recipes)/sizeof(*recipes);++i) if (!strcmp(canonical,recipes[i].name)) {
+        qa_q2_temp_entity t={.type=recipes[i].type,.field_count=4};
+        t.fields[0]=(qa_q2_temp_field){.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.value.vector={origin.x,origin.y,origin.z}};
+        t.fields[1]=(qa_q2_temp_field){.name=QA_Q2_TEMP_DIRECTION,.kind=QA_Q2_TEMP_VECTOR,.value.vector={direction.x,direction.y,direction.z}};
+        t.fields[2]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COUNT,.kind=QA_Q2_TEMP_INTEGER,.value.integer=count};
+        t.fields[3]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COLOR,.kind=QA_Q2_TEMP_INTEGER,.value.integer=color};
+        return frontend_remote_q2_effects_temporary(o,&t,NULL,time,time,e);
+    }
+    return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized effect has no source recipe");
+}
+bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
+    const char *name,qa_actor_id actor_id,qa_vec3 start,qa_vec3 end,double duration,double time,qa_error *e)
+{
+    if (!o || !frontend_remote_q2_effects_idle(o) || !name || !qa_vec_finite(start) || !qa_vec_finite(end) ||
+        !isfinite(time) || !isfinite(duration) || !q2fx_source_current(o,e)) return false;
+    double die=time+(duration>0?duration*1000:100);
+    if (!isfinite(die)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam lifetime exceeds its source clock");
+    ++o->busy; bool ok=true;
+    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) frontend_fx_q2_rail(&o->particles,&o->random,start,end,time*.001);
+    else if (!strcmp(name,"bubble-trail")) frontend_fx_q2_bubbles(&o->particles,&o->random,start,end,time*.001);
+    else if (!strcmp(name,"bfg-laser") || !strcmp(name,"bfg-zap")) {
+        for (size_t i=0;i<Q2FX_POOL;++i) if (!o->lasers[i].active || o->lasers[i].die<time) {
+            o->lasers[i]=(q2fx_laser){true,start,end,die,0xd0+(random_word(o)&3),4}; break;
+        }
+        if (!strcmp(name,"bfg-zap")) bfg_explosion(o,end,time);
+    } else if (!strcmp(name,"bfg-lightning")) {
+        for (size_t i=0;i<Q2FX_POOL;++i) if (!o->beams[i].active || o->beams[i].die<time) {
+            o->beams[i]=(q2fx_beam){.active=true,.unkeyed=!actor_id.registry,.model=Q2FX_LIGHTNING,.actor=actor_id,
+                .start=start,.end=end,.die=die}; break;
+        }
+    } else if (!strcmp(name,"heatbeam") || !strcmp(name,"monster-heatbeam")) {
+        if (!actor_id.registry || !actor_id.generation) ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
+        else {
+            bool monster=!strcmp(name,"monster-heatbeam");
+            beam(o,actor_id,(qa_actor_id){0},start,end,monster?qa_v3(0,0,0):qa_v3(2,7,-3),time,Q2FX_HEAT,true,monster);
+            for (size_t i=0;i<Q2FX_POOL;++i) if (o->player_beams[i].active && qa_actor_id_equal(o->player_beams[i].actor,actor_id)) o->player_beams[i].die=die;
+        }
+    } else ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
+    o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
+}
 static bool soldier_flash(uint32_t flash, unsigned kind)
 {
     static const uint32_t values[3][8] = {{39,40,83,86,89,92,95,98},{41,42,84,87,90,93,96,99},{43,44,85,88,91,94,97,100}};
     for (size_t i=0;i<8;++i) if (values[kind][i]==flash) return true;
     return false;
 }
-static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
-    uint32_t flash, double time, double server, qa_error *e)
+bool q2fx_controls(frontend_remote_q2_effects *o, frontend_remote_q2_effects_controls *out, qa_error *e)
 {
-    bool rerelease=o->source.protocol.kind==QA_NET_Q2KEX_2023 || o->source.protocol.kind==QA_NET_Q2REPRO_1038 ||
-        o->source.protocol.kind==QA_NET_Q2PRIVATE_4038 || o->source.protocol.kind==QA_NET_Q2KEX_DEMO_2022;
+    *out=(frontend_remote_q2_effects_controls){0};
+    if (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) return true;
+    if (!o->source.controls || !o->source.controls(o->source.context,out,e) || !q2fx_source_current(o,e)) return false;
+    if (out->muzzlelight_milliseconds<0) out->muzzlelight_milliseconds=0;
+    if (out->muzzlelight_milliseconds>1000) out->muzzlelight_milliseconds=1000;
+    return true;
+}
+static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_id,
+    qa_vec3 origin, const qa_vec3 *angles, float scale, uint32_t flash, double time, double server, qa_error *e)
+{
+    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
     const qa_vec3 *offsets=rerelease?q2m_rerelease_muzzle_offsets:q2m_classic_muzzle_offsets;
     size_t size=rerelease?sizeof(q2m_rerelease_muzzle_offsets)/sizeof(*offsets):sizeof(q2m_classic_muzzle_offsets)/sizeof(*offsets);
     if (!flash || flash>=size-1) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
-    qa_vec3 axis[3]; axes(pose.angles,axis); qa_vec3 offset=offsets[flash];
-    qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],offset.x)),qa_vec_scale(axis[1],offset.y)); origin.z+=offset.z;
     uint32_t profile=flash;
     if (rerelease) {
         if ((flash>=232 && flash<=239) || flash==260) profile=26;
@@ -358,7 +473,10 @@ static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_eff
         else if (flash>=265 && flash<=276) profile=60;
         else if (flash==74 || flash==134) profile=58;
     }
-    qa_vec3 color=qa_v3(1,1,0); float radius=200; uint32_t mask=31; double duration=0;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
+    qa_vec3 color=qa_v3(1,1,0); float radius=200+(float)(random_word(o)&31);
+    double duration=rerelease?controls.muzzlelight_milliseconds:0;
     const char *path=NULL; bool particles=false, smoke=false, tank_sound=false; float attenuation=1; char random_path[64];
     if ((profile>=26 && profile<=38) || profile==63 || (profile>=64 && profile<=69) || profile==141) {
         particles=smoke=true; path="infantry/infatck1.wav";
@@ -386,34 +504,116 @@ static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_eff
     else if (profile==101 || profile==132) color=qa_v3(.5f,1,.5f);
     else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path="tank/tnkatck3.wav"; }
     else if (profile==148) { color=qa_v3(-1,-1,-1); path="weapons/disint2.wav"; }
-    else if (profile==151 || (profile>=195 && profile<=210)) { radius=300; mask=100; duration=200; }
+    else if (profile==151 || (profile>=195 && profile<=210)) { radius=300+(float)(random_word(o)&100); duration=200; }
     else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path="weapons/rippfire.wav"; }
     else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path="weapons/hyprbf1a.wav"; }
     else if (rerelease && flash==227) path="weapons/hyprbf1a.wav";
     else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path="guncmdr/gcdratck2.wav"; }
     else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path="guncmdr/gcdratck3.wav"; }
     else return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle lacks its source effect definition");
-    light(o,pose.actor,origin,time,radius+(float)(random_word(o)&mask),duration,color,0,32);
+    light(o,actor_id,origin,time,radius,duration,color,0,rerelease?0:32);
     if (particles) frontend_fx_q2_impact_particles(&o->particles,&o->random,origin,qa_v3(0,0,0),0,40,time*.001,FRONTEND_FX_Q2_NORMAL);
     if (smoke) smoke_flash(o,origin,server);
     if (tank_sound) { snprintf(random_path,sizeof(random_path),"tank/tnkatk2%c.wav",(int)('a'+random_word(o)%5)); path=random_path; }
-    return !path || sound(o,path,origin,pose.actor,time,1,1,attenuation,0,e);
+    if (path && !sound(o,path,origin,actor_id,time,1,1,attenuation,0,e)) return false;
+    if (rerelease && controls.muzzleflashes && angles) {
+        q2fx_model model=Q2FX_MUZZLE_BLAST; int32_t skin=0; float size=8;
+        if (particles) { model=Q2FX_MUZZLE_MACHINE;
+            size=tank_sound?20:soldier_flash(profile,2)?13:profile>=45 && profile<=52?24:
+                profile>=26 && profile<=38?18:32;
+        } else if (soldier_flash(profile,1)) { model=Q2FX_MUZZLE_SHOTGUN; size=17; }
+        else if (profile==57 || profile==142 || (profile>=23 && profile<=25) ||
+            (profile>=70 && profile<=72) || (profile>=78 && profile<=81) || (profile>=191 && profile<=194))
+            { model=Q2FX_MUZZLE_ROCKET; size=profile==57 || profile==142?16:28; }
+        else if ((profile>=53 && profile<=56) || profile==140 || (flash>=242 && flash<=250)) { model=Q2FX_MUZZLE_LAUNCH; size=18; }
+        else if (profile==61 || profile==119 || profile==147 || profile==150 || profile==154 || profile==155 || (flash>=228 && flash<=231))
+            { model=Q2FX_MUZZLE_RAIL; size=32; }
+        else if (profile==101 || profile==132) { model=Q2FX_MUZZLE_BFG; size=64; }
+        else if (profile==148) { model=Q2FX_MUZZLE_DIST; size=32; }
+        else if (profile==151 || (profile>=195 && profile<=210)) { model=Q2FX_MUZZLE_BEAM; size=32; }
+        else if ((flash>=211 && flash<=218) || flash==254) { model=Q2FX_MUZZLE_BOOMER; size=32; }
+        else if (flash==240 || flash==241) { model=Q2FX_MUZZLE_ETF; size=16; }
+        else if ((flash>=219 && flash<=226) || flash==255) skin=1;
+        else if (color.x==0 && color.y==1 && color.z==0) { skin=2; size=22; }
+        else if (profile>=1 && profile<=3) size=24;
+        else if (profile>=102 && profile<=118) size=22;
+        else if (flash==74 || flash==134) size=12;
+        else if (flash==227) size=16;
+        if (o->models[model]) {
+            qa_vec3 axis[3]; axes(*angles,axis);
+            qa_vec3 flash_origin=qa_vec_add(origin,qa_vec_scale(axis[0],4*scale)), rotation=*angles;
+            if (model!=Q2FX_MUZZLE_BOOMER) rotation.z=(float)(random_word(o)%360);
+            explosion(o,4,model,flash_origin,server-100,2,0,8|32|8192,skin,0,qa_v3(0,0,0),rotation,size*scale);
+        }
+    }
+    return true;
+}
+static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
+    uint32_t flash, double time, double server, qa_error *e)
+{
+    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    const qa_vec3 *offsets=rerelease?q2m_rerelease_muzzle_offsets:q2m_classic_muzzle_offsets;
+    size_t size=rerelease?sizeof(q2m_rerelease_muzzle_offsets)/sizeof(*offsets):sizeof(q2m_classic_muzzle_offsets)/sizeof(*offsets);
+    if (!flash || flash>=size-1) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
+    float scale=rerelease && pose.scale!=0?pose.scale:1;
+    if (!isfinite(scale) || scale<=0) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 monster muzzle has invalid received scale");
+    qa_vec3 axis[3]; axes(pose.angles,axis); qa_vec3 offset=qa_vec_scale(offsets[flash],scale);
+    qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],offset.x)),qa_vec_scale(axis[1],offset.y)); origin.z+=offset.z;
+    return monster_muzzle_at(o,pose.actor,origin,&pose.angles,scale,flash,time,server,e);
+}
+static bool weapon_muzzle(frontend_remote_q2_effects *o, qa_actor_id actor_id, uint32_t flash,
+    const frontend_remote_q2_effects_controls *controls, double server, qa_error *e)
+{
+    if (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || !controls->muzzleflashes) return true;
+    qa_actor_id viewer;
+    if (!o->source.viewer(o->source.context,&viewer,e) || !q2fx_source_current(o,e)) return false;
+    if (!qa_actor_id_equal(viewer,actor_id)) return true;
+    q2fx_model model; qa_vec3 offset; float scale;
+    switch (flash) {
+    case 0: model=Q2FX_MUZZLE_BLAST; offset=qa_v3(27,7.4f,-6.6f); scale=8; break;
+    case 14: model=Q2FX_MUZZLE_BLAST; offset=qa_v3(23.5f,6,-6); scale=9; break;
+    case 1: model=Q2FX_MUZZLE_MACHINE; offset=qa_v3(29,9.7f,-8); scale=12; break;
+    case 2: model=Q2FX_MUZZLE_SHOTGUN; offset=qa_v3(26.5f,8.6f,-9.5f); scale=12; break;
+    case 13: model=Q2FX_MUZZLE_SSHOTGUN; offset=qa_v3(25,7,-5.5f); scale=12; break;
+    case 3: case 4: case 5:
+        model=Q2FX_MUZZLE_MACHINE; offset=qa_v3(29,9.7f,-10); scale=flash==3?12:flash==4?16:20; break;
+    case 6: model=Q2FX_MUZZLE_RAIL; offset=qa_v3(20,5.2f,-7); scale=12; break;
+    case 7: model=Q2FX_MUZZLE_ROCKET; offset=qa_v3(20.8f,5,-11); scale=10; break;
+    case 8: case 31: model=Q2FX_MUZZLE_LAUNCH; offset=qa_v3(18,6,-6.5f); scale=9; break;
+    case 19: model=Q2FX_MUZZLE_BFG; offset=qa_v3(18,8,-7.5f); scale=16; break;
+    case 20: model=Q2FX_MUZZLE_ROCKET; offset=qa_v3(18,10,-6); scale=9; break;
+    case 16: model=Q2FX_MUZZLE_BOOMER; offset=qa_v3(24,3.8f,-5.5f); scale=15; break;
+    case 30: case 32: model=Q2FX_MUZZLE_ETF; offset=qa_v3(24,flash==30?5.25f:4,-5.5f); scale=4; break;
+    case 33: model=Q2FX_MUZZLE_BEAM; offset=qa_v3(18,6,-8.5f); scale=16; break;
+    case 35: model=Q2FX_MUZZLE_DIST; offset=qa_v3(18,6,-6.5f); scale=10; break;
+    default: return true;
+    }
+    if (!o->models[model]) return true;
+    float roll=model==Q2FX_MUZZLE_MACHINE || model==Q2FX_MUZZLE_BEAM?(float)(random_word(o)%360):0;
+    o->weapon_muzzle=(q2fx_weapon_muzzle){.active=true,.model=(uint8_t)model,.actor=actor_id,
+        .offset=offset,.scale=scale,.roll=roll,.start=server-100};
+    return true;
 }
 static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
-    uint32_t flash, bool silenced, double time, qa_error *e)
+    uint32_t flash, bool silenced, double time, double server, qa_error *e)
 {
     if (!((flash<=20 && flash!=15) || (flash>=30 && flash<=39)))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Received player muzzle lacks its source effect definition");
     qa_vec3 axis[3]; axes(pose.angles,axis);
     qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],18)),qa_vec_scale(axis[1],16));
+    bool extended=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
     qa_vec3 color=flash==6?qa_v3(.5f,.5f,1):flash==7?qa_v3(1,.5f,.2f):flash==8 || flash==4 || flash==31?qa_v3(1,.5f,0):
         flash==3?qa_v3(1,.25f,0):flash==12 || flash==19 || flash==34 || flash==9?qa_v3(0,1,0):
         flash==10 || flash==36?qa_v3(1,0,0):flash==35?qa_v3(-1,-1,-1):flash==17 || flash==38?qa_v3(0,0,1):
-        flash==39?qa_v3(0,1,1):flash==16 || flash==18 || flash==20?qa_v3(1,.5f,.5f):flash==30?qa_v3(.9f,.7f,0):qa_v3(1,1,0);
+        flash==39?qa_v3(0,1,1):flash==16 || flash==18 || flash==20?qa_v3(1,.5f,.5f):flash==30 || (flash==32 && extended)?qa_v3(.9f,.7f,0):qa_v3(1,1,0);
     float radius=(silenced?100:200)+(float)(random_word(o)&31);
     if (flash>=3 && flash<=5) radius=(flash==4?225:flash==5?250:200)+(float)(random_word(o)&31);
-    double duration=flash==33 || (flash>=36 && flash<=39)?100:flash>=9 && flash<=11?1:flash==4 || flash==5?.1:0;
-    light(o,pose.actor,origin,time,radius,duration,color,0,32);
+    double duration=flash==33 || (flash>=36 && flash<=39)?100:extended?controls.muzzlelight_milliseconds:
+        flash>=9 && flash<=11?1:flash==4 || flash==5?.1:0;
+    bool suppress=extended && (controls.dlight_hacks&4) && (flash==1 || (flash>=3 && flash<=5));
+    light(o,pose.actor,origin,time,suppress?0:radius,duration,color,0,extended?0:32);
     float volume=silenced?.2f:1; const char *path=NULL; const char *reload=NULL;
     if (flash==0 || flash==34) path="weapons/blastf1a.wav";
     else if (flash==14 || flash==17) path="weapons/hyprbf1a.wav";
@@ -431,7 +631,6 @@ static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effe
     else if (flash==18) path="weapons/plasshot.wav";
     else if (flash==30) path="weapons/nail1.wav";
     else if (flash==32) {
-        bool extended=o->source.protocol.kind==QA_NET_Q2KEX_2023 || o->source.protocol.kind==QA_NET_Q2REPRO_1038 || o->source.protocol.kind==QA_NET_Q2PRIVATE_4038;
         path=extended?"weapons/nail1.wav":"weapons/shotg2.wav";
     }
     else if (flash==35) path="weapons/disint2.wav";
@@ -442,8 +641,12 @@ static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effe
             if (!sound(o,name,origin,pose.actor,time,1,volume,1,flash==4?i*.05:flash==5?i*.033:0,e)) return false;
         }
     }
-    return (!path || sound(o,path,origin,pose.actor,time,1,volume,1,0,e)) &&
-        (!reload || sound(o,reload,origin,pose.actor,time,0,volume,1,.1,e));
+    if (path && !sound(o,path,origin,pose.actor,time,1,volume,1,0,e)) return false;
+    if (reload && !sound(o,reload,origin,pose.actor,time,0,volume,1,
+        extended && controls.rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
+    if (extended && controls.rerelease_effects && flash==6 &&
+        !sound(o,"weapons/railgr1b.wav",origin,pose.actor,time,7,volume,1,.4,e)) return false;
+    return weapon_muzzle(o,pose.actor,flash,&controls,server,e);
 }
 bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,
     uint32_t entity, uint32_t flash, bool monster, bool silenced, double time, double server, qa_error *e)
@@ -453,7 +656,7 @@ bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,
     ++o->busy;
     bool ok=o->source.actor(o->source.context,entity,&pose,e) && q2fx_source_current(o,e) && pose.actor.registry && pose.actor.generation &&
         qa_vec_finite(pose.origin) && qa_vec_finite(pose.angles) &&
-        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,e));
+        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e));
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
 }
 bool frontend_remote_q2_effects_actor_muzzle(frontend_remote_q2_effects *o,
@@ -465,8 +668,68 @@ bool frontend_remote_q2_effects_actor_muzzle(frontend_remote_q2_effects *o,
     ++o->busy;
     bool ok=o->source.actor_pose(o->source.context,actor_id,&pose,e) && qa_actor_id_equal(pose.actor,actor_id) &&
         q2fx_source_current(o,e) && qa_vec_finite(pose.origin) && qa_vec_finite(pose.angles) &&
-        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,e));
+        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e));
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
+}
+bool frontend_remote_q2_effects_monster_muzzle(frontend_remote_q2_effects *o,
+    qa_actor_id actor_id, uint32_t flash, qa_vec3 origin, qa_vec3 direction,
+    double time, double server, qa_error *e)
+{
+    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry || !actor_id.generation ||
+        !isfinite(time) || !isfinite(server) || !qa_vec_finite(origin) || !qa_vec_finite(direction) ||
+        !q2fx_source_current(o,e)) return false;
+    ++o->busy;
+    bool ok=monster_muzzle_at(o,actor_id,origin,NULL,1,flash,time,server,e);
+    o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
+}
+bool frontend_remote_q2_effects_monster_muzzle_pose(frontend_remote_q2_effects *o,
+    qa_actor_id actor_id,uint32_t flash,qa_vec3 origin,qa_vec3 angles,float scale,
+    double time,double server,qa_error *e)
+{
+    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry || !actor_id.generation ||
+        !isfinite(time) || !isfinite(server) || !qa_vec_finite(origin) || !qa_vec_finite(angles) ||
+        !isfinite(scale) || scale<0 || !q2fx_source_current(o,e)) return false;
+    ++o->busy;
+    bool ok=monster_muzzle_at(o,actor_id,origin,&angles,scale==0?1:scale,flash,time,server,e);
+    o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
+}
+bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_actor_id viewer,
+    const qa_scene_model_input *weapon,qa_scene_frame *frame,qa_error *e)
+{
+    if (!o || !frontend_remote_q2_effects_idle(o) || !weapon || !frame ||
+        !isfinite(weapon->seconds) || weapon->family!=QA_SCENE_Q2 ||
+        weapon->material_library!=o->source.materials || !q2fx_source_current(o,e)) return false;
+    q2fx_weapon_muzzle *m=&o->weapon_muzzle;
+    if (!m->active || !qa_actor_id_equal(m->actor,viewer)) return true;
+    double time=weapon->seconds*1000;
+    if (time-m->start>50) { m->active=false; return true; }
+    qa_actor_id actual;
+    if (!o->source.viewer || !o->source.viewer(o->source.context,&actual,e) ||
+        !qa_actor_id_equal(actual,viewer) || !q2fx_source_current(o,e)) return false;
+    qa_scene_model_input input=*weapon;
+    qa_vec3 origin=qa_v3(input.transform.origin[0],input.transform.origin[1],input.transform.origin[2]);
+    for (size_t i=0;i<3;++i) {
+        float offset=i==0?m->offset.x:i==1?-m->offset.y:m->offset.z;
+        origin.x+=input.transform.axes[i][0]*offset;
+        origin.y+=input.transform.axes[i][1]*offset;
+        origin.z+=input.transform.axes[i][2]*offset;
+    }
+    input.transform.origin[0]=origin.x; input.transform.origin[1]=origin.y; input.transform.origin[2]=origin.z;
+    float angle=m->roll*.017453292519943295f,cosine=cosf(angle),sine=sinf(angle);
+    qa_vec3 basis[3]={input.view.axis[0],qa_vec_add(qa_vec_scale(input.view.axis[1],cosine),qa_vec_scale(input.view.axis[2],sine)),
+        qa_vec_add(qa_vec_scale(input.view.axis[1],-sine),qa_vec_scale(input.view.axis[2],cosine))};
+    for (size_t i=0;i<3;++i) {
+        input.transform.axes[i][0]=basis[i].x; input.transform.axes[i][1]=basis[i].y;
+        input.transform.axes[i][2]=basis[i].z; input.transform.scale[i]=m->scale;
+    }
+    input.previous_origin=origin; input.flags=8|16|4|32; input.color=(qa_scene_vec4){1,1,1,1};
+    input.frame=0; input.old_frame=0; input.skin=0; input.back_lerp=0;
+    input.ambient=qa_v3(1,1,1); input.source_path=q2fx_model_paths[m->model];
+    input.pose=NULL; input.pose_count=0; input.custom_material=NULL; input.custom_skin=NULL;
+    input.custom_skin_materials=NULL; input.custom_skin_material_count=0; input.indexed_skin=NULL;
+    input.replacement=NULL; input.animation=NULL; input.attachments=NULL; input.attachment_count=0;
+    ++o->busy; bool ok=qa_scene_model_submit(o->models[m->model],&input,frame,e); --o->busy;
+    return ok && q2fx_source_current(o,e);
 }
 void q2fx_sampled_light(frontend_remote_q2_effects *o, qa_vec3 origin, float radius, qa_vec3 color, float minimum)
 {
@@ -567,7 +830,8 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_sample *s, const qa_scene_light **lights_out, size_t *count_out, qa_error *e)
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !s || !lights_out || !count_out || !isfinite(s->milliseconds) || !isfinite(s->server_milliseconds) ||
-        !isfinite(s->fraction) || s->fraction<0 || s->fraction>1 || (s->entity_count && !s->entities) ||
+        !isfinite(s->fraction) || s->fraction<0 || s->fraction>1 || !isfinite(s->frame_seconds) || s->frame_seconds<0 ||
+        (s->entity_count && !s->entities) ||
         s->entity_count>SIZE_MAX/sizeof(q2fx_trail) || !q2fx_source_current(o,e)) return false;
     if (o->sampled && s->milliseconds<o->time) return q2fx_fail(e,QA_ERROR_ARGUMENT,"Remote Q2 source time rewound without replacing its effects owner");
     for (size_t i=0;i<s->entity_count;++i) {
@@ -575,7 +839,10 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
         for (size_t j=0;j<i;++j) if (qa_actor_id_equal(s->entities[i].actor,s->entities[j].actor)) return false;
     }
     bool advance=!o->sampled || s->milliseconds>o->time, events=!o->sampled || s->frame_sequence!=o->frame_sequence;
-    if (advance || events || o->dirty) {
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
+    bool policy_changed=o->sampled_dlight_hacks!=controls.dlight_hacks || o->sampled_disable_particles!=controls.disable_particles;
+    if (advance || events || o->dirty || policy_changed) {
         q2fx_trail *trails=s->entity_count?calloc(s->entity_count,sizeof(*trails)):NULL;
         if (s->entity_count && !trails) return q2fx_fail(e,QA_ERROR_MEMORY,"Retaining received Q2 entity trails");
         ++o->busy; o->light_count=0; o->draw_count=0;
@@ -594,7 +861,8 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
             if (row->end<s->milliseconds) { row->active=false; continue; }
             if (advance && row->next<=s->milliseconds) {
                 if (!row->kind) {
-                    if (frontend_fx_q2_steam(&o->particles,&o->random,row->origin,row->direction,(uint32_t)row->color,row->count,(float)row->magnitude,s->milliseconds*.001,false)) row->next+=100;
+                    bool emitted=frontend_fx_q2_steam(&o->particles,&o->random,row->origin,row->direction,(uint32_t)row->color,row->count,(float)row->magnitude,s->milliseconds*.001,false);
+                    if (emitted || o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) row->next+=100;
                 } else { bool nuke=row->kind==2; double ratio=1-(row->end-s->milliseconds)/(nuke?1000:2100);
                     radial_particles(o,row->origin,s->milliseconds,nuke?700:300,(float)((nuke?200:45)*ratio),0,nuke?110:0,true); }
             }
@@ -602,24 +870,40 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
         for (size_t i=0;i<Q2FX_POOL;++i) {
             q2fx_light *row=&o->lights[i]; if (!row->active) continue;
             if (row->die<s->milliseconds) { row->active=false; continue; }
-            q2fx_sampled_light(o,row->origin,(float)(row->radius-(s->milliseconds-row->born)*.001*row->decay),row->color,row->minimum);
+            float radius;
+            if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE && row->die>row->born)
+                radius=(float)(row->radius*(1-(s->milliseconds-row->born)/(row->die-row->born)));
+            else radius=(float)(row->radius-(s->milliseconds-row->born)*.001*row->decay);
+            q2fx_sampled_light(o,row->origin,radius,row->color,row->minimum);
         }
         bool ok=q2fx_entities(o,s,trails,advance,e) && prepare_beams(o,o->beams,s,advance,e) && prepare_beams(o,o->player_beams,s,advance,e);
         for (size_t i=0;ok && i<Q2FX_POOL;++i) {
             q2fx_explosion *row=&o->explosions[i]; if (!row->active) continue;
+            if (row->kind==4) {
+                if (s->milliseconds-row->start>50) { row->active=false; continue; }
+                ok=model_draw(o,(q2fx_model)row->model,row->origin,row->angles,0,0,0,row->skin,row->flags,1,row->scale,e);
+                continue;
+            }
             double fraction=(s->milliseconds-row->start)/100, floored=floor(fraction);
             if (floored>=row->frames-1) { row->active=false; continue; }
             int32_t frame=floored<0?0:(int32_t)floored, skin=row->skin; uint32_t flags=row->flags;
-            float alpha=row->kind==2?1:row->kind==1?(float)(1-fraction/(row->frames-1)):(16-(float)frame)/16;
-            if (row->kind==3) { skin=frame<10?frame>>1:frame<13?5:6; if (frame>=10) flags|=32; }
+            float alpha=row->kind==2?1:row->kind==1 || row->kind==5?(float)(1-fraction/(row->frames-1)):(16-(float)frame)/16;
+            if (row->kind==3) {
+                if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
+                    double fade=fraction/(row->frames-1); alpha=(float)(1-fade*fade*fade); flags|=32;
+                }
+                skin=frame<10?frame>>1:frame<13?5:6; if (frame>=10) flags|=32;
+            }
             if (row->light) q2fx_sampled_light(o,row->origin,row->light*alpha,row->light_color,0);
-            if (!(flags&128)) ok=model_draw(o,(q2fx_model)row->model,row->origin,row->angles,row->base+frame+1,row->base+frame,1-s->fraction,skin,flags,alpha,row->scale,e);
+            if (!(flags&128) && row->kind!=5) ok=model_draw(o,(q2fx_model)row->model,row->origin,row->angles,row->base+frame+1,row->base+frame,
+                o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?(float)(1-(fraction-frame)):1-s->fraction,skin,flags,alpha,row->scale,e);
         }
         --o->busy;
         if (!ok) { free(trails); return false; }
         free(o->trails); o->trails=trails; o->trail_count=s->entity_count;
         o->sampled_particle_count=o->particles.count; o->time=s->milliseconds; o->server_time=s->server_milliseconds;
         o->frame_sequence=s->frame_sequence; o->sampled=true; o->dirty=false;
+        o->sampled_dlight_hacks=controls.dlight_hacks; o->sampled_disable_particles=controls.disable_particles;
     }
     *lights_out=o->sampled_lights; *count_out=o->light_count; return q2fx_source_current(o,e);
 }
@@ -671,6 +955,7 @@ bool frontend_remote_q2_effects_entity_beam(frontend_remote_q2_effects *o,
     ++o->busy;
     uint32_t color=(packed_colors>>((random_word(o)%4)*8))&255;
     qa_scene_vec4 rgba={palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,.3f};
-    bool ok=qa_scene_beam(frame,view,start,end,(float)width,rgba,o->source.white,e);
+    float diameter=(float)(width/2)*2;
+    bool ok=qa_scene_beam(frame,view,start,end,diameter,rgba,o->source.white,e);
     --o->busy; return ok && q2fx_source_current(o,e);
 }

@@ -19,16 +19,10 @@ static bool monster_contents(qa_physics *p, qa_actor_id actor,
     return true;
 }
 
-bool qa_physics_check_bottom(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
-                             bool *supported, qa_error *error) {
-    if (!p || !supported || !qa_vec_finite(origin)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid monster bottom query"); return false;
-    }
+static bool monster_bottom_state(qa_physics *p, qa_actor_id actor,
+    qa_body_state body, qa_physics_properties props, qa_vec3 origin,
+    bool *supported, qa_error *error) {
     *supported = false;
-    qa_body_state body;
-    qa_physics_properties props;
-    int read = ph_read(p, actor, &body, &props, error);
-    if (read <= 0) return read == 0;
     qa_bounds box = qa_bounds_translate(body.bounds, origin);
     bool q1 = props.family == QA_COLLISION_Q1;
     float direction = !q1 && props.gravity_direction.z > 0 ? 1 : -1;
@@ -64,6 +58,19 @@ bool qa_physics_check_bottom(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
     }
     *supported = true;
     return true;
+}
+
+bool qa_physics_check_bottom(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
+                             bool *supported, qa_error *error) {
+    if (!p || !supported || !qa_vec_finite(origin)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid monster bottom query"); return false;
+    }
+    *supported = false;
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, actor, &body, &props, error);
+    if (read <= 0) return read == 0;
+    return monster_bottom_state(p, actor, body, props, origin, supported, error);
 }
 
 bool qa_physics_check_ground(qa_physics *p, qa_actor_id actor, qa_error *error) {
@@ -174,17 +181,10 @@ static bool commit_monster(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
     return !relink || ph_link(p, actor, true, error);
 }
 
-bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
-                             float elapsed, bool commit, bool relink,
-                             bool *moved, qa_error *error) {
-    if (!p || !moved || !qa_vec_finite(move) || !isfinite(elapsed) || elapsed < 0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid monster step"); return false;
-    }
-    *moved = false;
-    qa_body_state body;
-    qa_physics_properties props;
-    int read = ph_read(p, actor, &body, &props, error);
-    if (read <= 0) return read == 0;
+static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
+    float elapsed, bool commit, bool relink, qa_body_state body,
+    qa_physics_properties props, qa_body_state *detached_body,
+    qa_physics_properties *detached_props, bool *moved, qa_error *error) {
     bool q1 = props.family == QA_COLLISION_Q1;
     if (!q1 && p->services.before_monster_step) {
         bool handled;
@@ -226,7 +226,7 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
                     float dz = body.origin.z-target.origin.z;
                     float stride = !q1 && props.q2_rerelease ? elapsed*80 : 8;
                     qa_physics_properties target_props;
-                    bool player = p->services.read(p->services.context, goal, &target_props) &&
+                    bool player = !detached_body && p->services.read(p->services.context, goal, &target_props) &&
                                   (target_props.flags & QA_PHYSICS_PLAYER);
                     if (q1 || player) {
                         if (dz > 40) destination.z -= stride;
@@ -249,6 +249,7 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
             }
             if (trace.fraction == 1 && (q1 || (!trace.start_solid && !trace.all_solid))) {
                 if (commit && !commit_monster(p, actor, trace.end, false, ph_none(), false, relink, error)) return false;
+                if (detached_body) detached_body->origin = trace.end;
                 *moved = true;
                 return true;
             }
@@ -281,7 +282,14 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
         if (!(props.flags & QA_PHYSICS_PARTIAL_GROUND)) return true;
         /* Q1 clears onground after the synchronous link/touch callback. */
         if (commit && !commit_monster(p, actor, destination, !q1, ph_none(), false, relink, error)) return false;
-        if (commit && q1 && !ph_ground(p, actor, ph_none(), error)) return false;
+        if (commit && q1 && ph_live(p, actor) && p->services.read(p->services.context, actor, &props)) {
+            props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
+            if (!ph_properties(p, actor, &props, error)) return false;
+        }
+        if (detached_body) {
+            detached_body->origin = destination;
+            detached_props->flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
+        }
         *moved = true;
         return true;
     }
@@ -296,7 +304,9 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
         if (!ph_write(p, actor, &body, error)) return false;
     }
     bool bottom;
-    if (!qa_physics_check_bottom(p, actor, trace.end, &bottom, error)) return false;
+    if (detached_body) {
+        if (!monster_bottom_state(p, actor, body, props, trace.end, &bottom, error)) return false;
+    } else if (!qa_physics_check_bottom(p, actor, trace.end, &bottom, error)) return false;
     if (!bottom) {
         if (!(props.flags & QA_PHYSICS_PARTIAL_GROUND)) {
             if (q1 && commit) {
@@ -306,6 +316,7 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
             return true;
         }
         if (commit && !commit_monster(p, actor, trace.end, false, ph_none(), false, relink, error)) return false;
+        if (detached_body) detached_body->origin = trace.end;
         *moved = true;
         return true;
     }
@@ -313,7 +324,55 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
         qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Monster landed without a ground hit"); return false;
     }
     if (commit && !commit_monster(p, actor, trace.end, true, ph_hit(p, &trace), true, relink, error)) return false;
+    if (detached_body) {
+        detached_body->origin = trace.end;
+        detached_body->ground = ph_hit(p, &trace);
+        detached_props->flags &= ~(uint32_t)QA_PHYSICS_PARTIAL_GROUND;
+    }
     *moved = true;
+    return true;
+}
+
+bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
+                             float elapsed, bool commit, bool relink,
+                             bool *moved, qa_error *error) {
+    if (!p || !moved || !qa_vec_finite(move) || !isfinite(elapsed) || elapsed < 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid monster step"); return false;
+    }
+    *moved = false;
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, actor, &body, &props, error);
+    if (read <= 0) return read == 0;
+    return monster_step_state(p, actor, move, elapsed, commit, relink,
+        body, props, NULL, NULL, moved, error);
+}
+
+bool qa_physics_monster_walk_detached(qa_physics *p, qa_actor_id actor,
+    const qa_body_state *initial, const qa_physics_properties *initial_source,
+    float yaw, float distance, qa_body_state *out,
+    qa_physics_properties *out_source, bool *moved, qa_error *error) {
+    if (!p || !p->world || !initial || !initial_source || !out || !out_source || !moved ||
+        initial_source->family != QA_COLLISION_Q1 || !isfinite(yaw) || !isfinite(distance) ||
+        !qa_vec_finite(initial->origin) || !qa_vec_finite(initial->angles) ||
+        !qa_vec_finite(initial->velocity) || !qa_vec_finite(initial->bounds.mins) ||
+        !qa_vec_finite(initial->bounds.maxs) || initial->bounds.mins.x > initial->bounds.maxs.x ||
+        initial->bounds.mins.y > initial->bounds.maxs.y || initial->bounds.mins.z > initial->bounds.maxs.z) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached monster walk requires actual Q1 state and finite bounds");
+        return false;
+    }
+    qa_body_state body = *initial;
+    qa_physics_properties props = *initial_source;
+    *out = body; *out_source = props; *moved = false;
+    if (!ph_live(p, actor) || !(props.flags & (QA_PHYSICS_ONGROUND | QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))
+        return true;
+    float radians = yaw*0.01745329251994329577f;
+    qa_vec3 move = qa_v3(cosf(radians)*distance, sinf(radians)*distance, 0);
+    if (!qa_vec_finite(move)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Detached monster walk displacement overflowed"); return false;
+    }
+    if (!monster_step_state(p, actor, move, 0, false, false, body, props, out, out_source, moved, error)) return false;
+    if (!ph_live(p, actor)) { *out = body; *out_source = props; *moved = false; }
     return true;
 }
 

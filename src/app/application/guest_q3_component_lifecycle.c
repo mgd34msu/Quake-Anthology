@@ -81,6 +81,11 @@ bool q3component_call(application_q3_component *c,uint32_t entry,const int32_t *
     if(result) *result=raw;
     return true;
 }
+static bool hook_body(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
+{
+    component_hook *binding=context;
+    return binding->frame?q3component_frame_proceed(binding->owner,call,result,e):qa_qvm_proceed(call,result,e);
+}
 static bool hook(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
 {
     component_hook *binding=context; application_q3_component *c=binding->owner;
@@ -97,8 +102,10 @@ static bool hook(void *context,const qa_qvm_call *call,int32_t *result,qa_error 
     for(size_t i=0;ok&&i<count;++i) ok=qa_qvm_call_argument(call,i,words+i,e);
     if(ok&&source&&(binding->allocate||binding->release)) ok=application_q3_component_records_prepare(c->records,e)&&application_q3_component_records_enter(c->records,call->instruction,words,count,&lease->scope,e);
     if(ok&&binding->middleware) ok=application_q3_mod_entry_begin(c->mod,call,&lease->middleware,e);
-    if(ok) ok=binding->actor?application_q3_mod_actors_hook(c->actor_semantics,call,&lease->result,e):
-        binding->frame?q3component_frame_proceed(c,call,&lease->result,e):qa_qvm_proceed(call,&lease->result,e);
+    bool actor=false;
+    if(ok) ok=application_q3_mod_actors_match(c->actor_semantics,call,&actor,e);
+    if(ok) ok=actor?application_q3_mod_actors_hook_run(c->actor_semantics,call,hook_body,binding,&lease->result,e):
+        hook_body(binding,call,&lease->result,e);
     lease->succeeded=ok; int32_t raw=lease->result; qa_error first=e?*e:(qa_error){0},cleanup={0};
     bool closed=finish_call(c,lease,&cleanup);
     if(!closed) { lease->next=c->calls; c->calls=lease; } else free(lease);
@@ -155,7 +162,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
     if(!slot||!*slot) return true;
     application_q3_component *c=*slot; c->closing=true;
     if(c->calls&&!drain(c,e)) return false;
-    if(c->busy||(c->vm&&!qa_qvm_can_destroy(c->vm))||(c->source&&!application_q3_component_source_idle(c->source))||!qa_console_idle(c->console))
+    if(c->busy||(c->vm&&!qa_qvm_source_returned(c->vm))||(c->source&&!application_q3_component_source_idle(c->source))||!qa_console_idle(c->console))
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component lifetime has active source or presentation users");
     /* Returned refused mod scopes retry while their real RAM and canonical
      * bindings still exist. Their false idle bit is not an execution lock. */
@@ -175,6 +182,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
     if(c->mod&&!application_q3_mod_destroy(&c->mod,e)) return false;
     if(c->records&&!application_q3_component_records_destroy(&c->records,e)) return false;
     if(c->source&&!application_q3_component_source_destroy(&c->source,e)) return false;
+    if(c->vm&&!qa_qvm_can_destroy(c->vm)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component VM retains its actual projected source cleanup");
     if(c->host&&!qa_q3_host_destroy_ready(c->host)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component host has retained service users");
     for(size_t i=0;i<c->hook_count;++i) if(c->hooks[i].id) { if(!qa_qvm_unbind(c->vm,c->hooks[i].id,e)) return false; c->hooks[i].id=0; }
     if(c->actor_resolver) { if(!qa_qvm_unbind(c->vm,c->actor_resolver,e)) return false; c->actor_resolver=0; }

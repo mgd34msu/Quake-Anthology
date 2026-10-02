@@ -15,6 +15,7 @@
 #include "remote_q1_camera.h"
 #include "qa/network_q1.h"
 #include "q3_render_policy.h"
+#include "q3_color_policy.h"
 #include "view_settings.h"
 #include "q1_sky.h"
 #include "shared_resource_policy.h"
@@ -218,6 +219,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
                     (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
         }
+        if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;
         if (live && !native_rendered && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
@@ -238,6 +240,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
                 .height = (float)rect.height * .6f, .scale = preferences.text_scale};
             if (!qa_console_draw(&frontend->frame, &console, error)) return false;
         }
+        if (!frontend_q3_generic_overlay_end(frontend,error)) return false;
     }
     if (frontend->audio && !qa_audio_engine_listeners(frontend->audio, listeners, listener_count, error)) return false;
     if (!frontend_render_controls_live(frontend,error)) return false;

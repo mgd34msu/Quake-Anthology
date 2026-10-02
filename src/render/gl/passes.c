@@ -368,6 +368,7 @@ static void composite_state(qa_gl_renderer *renderer, uint32_t width,
     gl->Disable(GL_CULL_FACE);
     gl->Disable(GL_STENCIL_TEST);
     gl->Disable(GL_BLEND);
+    gl->Disable(GL_ALPHA_TEST);
     gl->Disable(GL_POLYGON_OFFSET_FILL);
     gl->DepthMask(GL_FALSE);
     gl->ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -377,8 +378,9 @@ static void composite_state(qa_gl_renderer *renderer, uint32_t width,
 typedef struct gl_composite_state {
     GLint depth_mask,color_mask[4],polygon_mode[2],program,active,texture[3];
     GLint blend_source,blend_destination,viewport[4],scissor[4];
-    GLfloat color[4];
-    bool depth,cull,stencil,blend,offset,scissor_enabled;
+    GLfloat color[4],alpha_reference;
+    GLint alpha_function;
+    bool depth,cull,stencil,blend,alpha,offset,scissor_enabled;
 } gl_composite_state;
 static void composite_state_read(qa_gl_renderer *renderer,gl_composite_state *state)
 {
@@ -393,6 +395,8 @@ static void composite_state_read(qa_gl_renderer *renderer,gl_composite_state *st
     gl->GetIntegerv(GL_VIEWPORT,state->viewport);
     gl->GetIntegerv(GL_SCISSOR_BOX,state->scissor);
     gl->GetFloatv(GL_CURRENT_COLOR,state->color);
+    gl->GetFloatv(GL_ALPHA_TEST_REF,&state->alpha_reference);
+    gl->GetIntegerv(GL_ALPHA_TEST_FUNC,&state->alpha_function);
     for (size_t i=0;i<3;++i) {
         gl->ActiveTexture(GL_TEXTURE0+(GLenum)i);
         gl->GetIntegerv(GL_TEXTURE_BINDING_2D,state->texture+i);
@@ -402,6 +406,7 @@ static void composite_state_read(qa_gl_renderer *renderer,gl_composite_state *st
     state->cull=gl->IsEnabled(GL_CULL_FACE)!=GL_FALSE;
     state->stencil=gl->IsEnabled(GL_STENCIL_TEST)!=GL_FALSE;
     state->blend=gl->IsEnabled(GL_BLEND)!=GL_FALSE;
+    state->alpha=gl->IsEnabled(GL_ALPHA_TEST)!=GL_FALSE;
     state->offset=gl->IsEnabled(GL_POLYGON_OFFSET_FILL)!=GL_FALSE;
     state->scissor_enabled=gl->IsEnabled(GL_SCISSOR_TEST)!=GL_FALSE;
 }
@@ -419,6 +424,8 @@ static void composite_state_restore(qa_gl_renderer *renderer,const gl_composite_
     composite_enable(gl,GL_CULL_FACE,state->cull);
     composite_enable(gl,GL_STENCIL_TEST,state->stencil);
     composite_enable(gl,GL_BLEND,state->blend);
+    composite_enable(gl,GL_ALPHA_TEST,state->alpha);
+    gl->AlphaFunc((GLenum)state->alpha_function,state->alpha_reference);
     composite_enable(gl,GL_POLYGON_OFFSET_FILL,state->offset);
     gl->BlendFunc((GLenum)state->blend_source,(GLenum)state->blend_destination);
     gl->Viewport(state->viewport[0],state->viewport[1],state->viewport[2],state->viewport[3]);

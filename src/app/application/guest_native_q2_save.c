@@ -5,6 +5,9 @@
 #include "qa/network.h"
 #include "native_q2_publication.h"
 #include "native_q2_wire_engine.h"
+#include "native_q2_callbacks.h"
+#include "native_q2_inventory_scanner.h"
+#include "native_q2_inventory_rows.h"
 #include <limits.h>
 
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors,
@@ -59,6 +62,8 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     if (!engine || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore requires an idle detached candidate owner");
     if (!application_q2_control_suspend(engine, error)) return false;
+    if (!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
+    if (!application_native_q2_callbacks_suspend(engine,error)) return false;
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (!application_native_q2_inventory_detach(engine, i, error)) return false;
@@ -77,7 +82,14 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
     if (engine->initialized && engine->map_ready &&
         !application_q2_control_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;
-    return application_native_q2_inventory_finish(provider, error);
+    if(!application_native_q2_callbacks_finish_restore(engine,error)) return false;
+    if(engine->inventory_rows&&engine->map_ready&&
+        (!application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)||
+         !application_native_q2_inventory_scanner_finish_restore(engine->inventory_scanner,error)||
+         !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error))) return false;
+    return application_native_q2_inventory_finish(provider, error) &&
+        (!engine->map_ready || (application_native_q2_callbacks_validate(engine,error) &&
+        application_native_q2_callbacks_register(engine,error)));
 }
 
 bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error *error)
@@ -85,6 +97,8 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     struct application_native_q2 *engine = opaque;
     if (!engine || !out || engine->current_client || engine->disconnect_client || engine->arguments.count || engine->shutting_down)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 engine continuation requires drained client and command calls");
+    if(engine->callbacks&&!application_native_q2_callbacks_current(engine->callbacks))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native callback continuation retains source projections or lacks validation");
     qa_application *app = engine->provider->application;
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
     const char *spawn = engine->spawn_point ? qa_strings_cstr(qa_session_strings(app->session), engine->spawn_point) : "";
@@ -133,11 +147,24 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         return application_fail(error, QA_ERROR_MEMORY, "Original Q2 Engine namespace exceeds the cold budget");
     }
     size += 4u + wire.size;
+    qa_buffer callbacks={0},scanner={0};
+    bool children=application_native_q2_callbacks_capture(engine,&callbacks,error)&&
+        (!engine->inventory_scanner||application_native_q2_inventory_scanner_capture(engine->inventory_scanner,&scanner,error));
+    qa_buffer *additional[]={&callbacks,&scanner};
+    for(size_t i=0;children&&i<2;++i) {
+        if(size>64u*1024u*1024u-4u||additional[i]->size>64u*1024u*1024u-size-4u)
+            children=application_fail(error,QA_ERROR_MEMORY,"Native callback/scanner continuation exceeds its engine budget");
+        else size+=4u+additional[i]->size;
+    }
+    if(!children) {
+        qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire);
+        qa_buffer_free(&callbacks); qa_buffer_free(&scanner); return false;
+    }
     qa_buffer buffer = {.data = malloc(size), .size = size};
-    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
+    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); qa_buffer_free(&callbacks); qa_buffer_free(&scanner); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 7) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 8) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -151,8 +178,9 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         const application_native_q2_client *client = &engine->clients[i];
         uint8_t flags = (uint8_t)(client->reserved | client->connected << 1 | client->begun << 2 |
             client->bot << 3 | client->disconnect_started << 4 | client->userinfo_present << 5);
-        size_t userinfo_limit = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
+        size_t userinfo_limit = engine->callbacks ? sizeof(client->userinfo) : engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
         if (!memchr(client->userinfo, 0, userinfo_limit) ||
+            (engine->callbacks&&!application_native_q2_callbacks_userinfo_validate(engine,client->userinfo,error)) ||
             (!client->userinfo_present && client->userinfo[0]) ||
             (client->connected && !client->userinfo_present) ||
             !qa_actor_id_equal(client->protocol_fog_actor, client->actor) ||
@@ -175,9 +203,12 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)combat.size) && qa_net_write_data(&writer, combat.data, combat.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)publication.size) && qa_net_write_data(&writer, publication.data, publication.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)wire.size) && qa_net_write_data(&writer, wire.data, wire.size);
+    for(size_t i=0;ok&&i<2;++i)
+        ok=qa_net_write_u32(&writer,(uint32_t)additional[i]->size)&&qa_net_write_data(&writer,additional[i]->data,additional[i]->size);
     qa_buffer_free(&attack); qa_buffer_free(&combat);
     qa_buffer_free(&publication);
     qa_buffer_free(&wire);
+    qa_buffer_free(&callbacks); qa_buffer_free(&scanner);
     if (!ok) { qa_buffer_free(&buffer); return false; }
     buffer.size = qa_net_writer_size(&writer); *out = buffer;
     return true;
@@ -193,7 +224,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 7 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 8 ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
@@ -234,9 +265,10 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         client->userinfo_present = flags & 32;
         char *userinfo = NULL;
         if (ok) ok = read_text(&reader, &userinfo, error);
-        size_t userinfo_limit = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
+        size_t userinfo_limit = engine->callbacks ? sizeof(client->userinfo) : engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
         if (ok) {
             ok = strlen(userinfo) < userinfo_limit &&
+                (!engine->callbacks||application_native_q2_callbacks_userinfo_validate(engine,userinfo,error))&&
                 (client->userinfo_present || !*userinfo) &&
                 (!client->connected || client->userinfo_present);
             if (ok) memcpy(client->userinfo, userinfo, strlen(userinfo) + 1);
@@ -286,6 +318,15 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (ok && ((map_ready && engine->profile != QA_NATIVE_Q2_CGAME_API2023) != (wire != NULL)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine namespace differs from its real map lifecycle");
     }
+    qa_bytes callbacks_state={0},scanner_state={0};
+    if(ok) {
+        uint32_t extent=qa_net_read_u32(&reader);
+        ok=!reader.failed&&qa_net_read_bytes(&reader,extent,&callbacks_state)&&
+            ((callbacks_state.size!=0)==(engine->callbacks!=NULL));
+        if(ok) { extent=qa_net_read_u32(&reader); ok=!reader.failed&&qa_net_read_bytes(&reader,extent,&scanner_state)&&
+            ((scanner_state.size!=0)==(engine->inventory_scanner!=NULL)); }
+        if(!ok&&!reader.failed) application_fail(error,QA_ERROR_FORMAT,"Native saved callback/scanner owner differs from its acquired declaration");
+    }
     qa_string_id map_id = 0, spawn_id = 0;
     if (ok) ok = qa_net_reader_finish(&reader) &&
         qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), map, &map_id, error) &&
@@ -293,6 +334,8 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     /* Deferred preparation writes only the isolated source candidate, after
      * every engine field and owned allocation has been validated. */
     if (ok) ok = application_native_q2_combat_restore_prepare(engine, combat_state, &combat, error);
+    if(ok) ok=application_native_q2_callbacks_restore(engine,callbacks_state,error)&&
+        (!engine->inventory_scanner||application_native_q2_inventory_scanner_restore(engine->inventory_scanner,scanner_state,error));
     if (ok) {
         application_native_q2_attack_restore_commit(engine, attack); attack = NULL;
         application_native_q2_combat_restore_commit(engine, combat); combat = NULL;

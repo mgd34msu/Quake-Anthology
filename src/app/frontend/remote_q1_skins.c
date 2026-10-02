@@ -28,7 +28,7 @@ struct frontend_remote_q1_skins {
     float noskins;
     char paths[32][27];
     size_t path_count, cursor, received;
-    qa_fs_stage *stage, *inspection;
+    qa_fs_stage *stage;
     uint64_t nonce;
     uint8_t percent;
     qa_sha256_context hash;
@@ -70,8 +70,7 @@ static void cache_clear(frontend_remote_q1_skins *o)
 static bool transfer_clear(frontend_remote_q1_skins *o, qa_error *e)
 {
     if (!o->cleanup) { o->cleanup_keep = o->checkpointed; o->cleanup = true; }
-    if (!qa_fs_stage_close_checked(&o->inspection, true, e) ||
-        !qa_fs_stage_close_checked(&o->stage, o->cleanup_keep, e)) return false;
+    if (!qa_fs_stage_close_checked(&o->stage, o->cleanup_keep, e)) return false;
     o->received = 0; o->percent = 0; o->nonce = 0;
     o->waiting = o->staged = false; memset(&o->hash, 0, sizeof(o->hash));
     memset(&o->saved_hash, 0, sizeof(o->saved_hash));
@@ -198,21 +197,19 @@ static bool advance(frontend_remote_q1_skins *o, bool *ready, qa_error *e)
     *ready = false;
     if (o->paused) return true;
     while (o->cursor < o->path_count) {
-        bool found, allowed, demo; uint64_t size;
+        bool found, allowed, recording, playback; uint64_t size;
         if (!qa_vfs_probe(o->files, o->paths[o->cursor], &found, &size, e) || !current(o, e)) return false;
         if (found) { ++o->cursor; continue; }
-        if (!o->bindings.permission(o->bindings.context, &allowed, &demo, e) || !current(o, e)) return false;
+        if (!o->bindings.permission(o->bindings.context, &allowed, &recording, &playback, e) || !current(o, e)) return false;
         const qa_cvar_view *noskins = qa_cvars_find(o->row->options.domain.cvars, "noskins");
         if (!noskins) return remote_q1_fail(e, QA_ERROR_ARGUMENT, "QW download lost its actual noskins policy");
-        if (!allowed || demo || noskins->number != 0) {
+        if (!allowed || recording || playback || noskins->number != 0) {
             char message[104]; snprintf(message, sizeof(message), "Skipping QuakeWorld download %s: %s\n",
                 o->paths[o->cursor], !allowed ? "local permission" : "demo or skin policy");
             if (!o->bindings.print(o->bindings.context, message, e) || !current(o, e)) return false;
             ++o->cursor; continue;
         }
         char command[36]; snprintf(command, sizeof(command), "download %s", o->paths[o->cursor]);
-        char message[64]; snprintf(message, sizeof(message), "Downloading %s...\n", o->paths[o->cursor]);
-        if (!o->bindings.print(o->bindings.context, message, e) || !current(o, e)) return false;
         o->waiting = o->waiting_block = true;
         if (!o->bindings.reliable(o->bindings.context, command, e) || !current(o, e)) return false;
         return true;
@@ -300,9 +297,9 @@ bool frontend_remote_q1_skins_receive(frontend_remote_q1_skins *o, const qa_qw_s
     bool *completed, qa_error *e)
 {
     if (!m || m->kind != QA_QW_DOWNLOAD || !completed || !enter(o, e)) return false;
-    *completed = false; bool ok = true, allowed = false, demo = false;
-    if (!o->bindings.permission(o->bindings.context, &allowed, &demo, e) || !current(o, e)) ok = false;
-    else if (demo) {
+    *completed = false; bool ok = true, allowed = false, recording = false, playback = false;
+    if (!o->bindings.permission(o->bindings.context, &allowed, &recording, &playback, e) || !current(o, e)) ok = false;
+    else if (playback) {
         ok = transfer_clear(o, e);
         if (ok) o->paused = o->resume_requested = false;
     }
@@ -314,12 +311,15 @@ bool frontend_remote_q1_skins_receive(frontend_remote_q1_skins *o, const qa_qw_s
     }
     else if (!o->waiting || o->cursor >= o->path_count) ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Unsolicited QW skin download block");
     else if (m->data.download.missing || !allowed) {
-        ok = o->bindings.print(o->bindings.context, m->data.download.missing ? "File not found.\n" :
-            "Download permission withdrawn.\n", e) && current(o, e);
+        if (m->data.download.missing) {
+            char message[80]; snprintf(message, sizeof(message), "QuakeWorld file not found: %s\n", o->paths[o->cursor]);
+            ok = o->bindings.print(o->bindings.context, message, e) && current(o, e);
+        }
         if (ok) ok = transfer_clear(o, e);
         if (ok) { ++o->cursor; ok = advance(o, completed, e); }
     } else {
         o->waiting_block = false;
+        const char *path = o->paths[o->cursor];
         qa_bytes bytes = m->data.download.bytes;
         qa_error disk = {0}; bool disk_failed = false, published = false;
         if (m->data.download.percent > 100 || m->data.download.percent < o->percent || bytes.size > 768 ||
@@ -370,7 +370,7 @@ bool frontend_remote_q1_skins_receive(frontend_remote_q1_skins *o, const qa_qw_s
         if (disk_failed) {
             if (disk.code == QA_ERROR_MEMORY) { if (e) *e = disk; }
             else {
-                char message[320]; snprintf(message, sizeof(message), "Download failed: %s\n", disk.message);
+                char message[320]; snprintf(message, sizeof(message), "QuakeWorld download failed for %s: %s\n", path, disk.message);
                 if (!published) {
                     if (!transfer_clear(o, e)) { o->busy = false; return false; }
                     ++o->cursor;
@@ -561,12 +561,14 @@ bool frontend_remote_q1_skins_resume(frontend_remote_q1_skins *o, qa_error *e)
     if (!o || o->busy || o->cleanup || !current(o, e)) return false;
     if (!o->restoring) return true;
     o->busy = true; uint64_t size = 0;
-    bool ok = qa_fs_stage_open_readonly_checked(o->bindings.root, o->paths[o->cursor], o->nonce, &o->inspection, &size, e);
+    /* Resume never creates or truncates. Hash under the actual exclusive
+     * writer admission so inspection cannot race a later handle acquisition. */
+    bool ok = qa_fs_stage_open_checked(o->bindings.root, o->paths[o->cursor], o->nonce, true, &o->stage, &size, e);
     if (ok && size != o->received) ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Retained QW skin stage size changed after capture");
     qa_sha256_context hash; qa_sha256_init(&hash); uint8_t buffer[4096]; uint64_t offset = 0;
     while (ok && offset < size) {
         size_t got = 0, capacity = size - offset < sizeof(buffer) ? (size_t)(size - offset) : sizeof(buffer);
-        ok = qa_fs_stage_read(o->inspection, offset, buffer, capacity, &got, e);
+        ok = qa_fs_stage_read(o->stage, offset, buffer, capacity, &got, e);
         if (ok && got != capacity) ok = remote_q1_fail(e, QA_ERROR_IO, "Retained QW skin stage ended during resume inspection");
         if (ok) { qa_sha256_update(&hash, (qa_bytes){buffer, got}); offset += got; }
     }
@@ -574,11 +576,6 @@ bool frontend_remote_q1_skins_resume(frontend_remote_q1_skins *o, qa_error *e)
     if (ok && !qa_sha256_equal(&digest, &o->saved_hash))
         ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Retained QW skin stage bytes changed after capture");
     if (ok) ok = current(o, e);
-    if (!qa_fs_stage_close_checked(&o->inspection, true, e)) {
-        o->cleanup = o->cleanup_keep = true; o->busy = false; return false;
-    }
-    if (ok) ok = qa_fs_stage_open_checked(o->bindings.root, o->paths[o->cursor], o->nonce, true, &o->stage, &size, e);
-    if (ok && size != o->received) ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Retained QW skin stage changed during writer admission");
     if (ok) { o->hash = hash; o->restoring = false; }
     else if (!qa_fs_stage_close_checked(&o->stage, true, e)) o->cleanup = o->cleanup_keep = true;
     o->busy = false; return ok;

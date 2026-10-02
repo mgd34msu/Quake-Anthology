@@ -1,4 +1,5 @@
 #include "remote_q3_runtime.h"
+#include "remote_q3_private.h"
 #include "remote_q3_commands.h"
 #include "shared_render_controls.h"
 #include "q3_render_policy.h"
@@ -6,6 +7,8 @@
 #include "qa/audio_music_prepare.h"
 #include "capture.h"
 #include "save_private.h"
+#include "audio_identity_save.h"
+#include "qa/q3_presentation_save.h"
 #include "../application/native_q3_remote_client_settings.h"
 #include "../../presentation/q3_native/loading.h"
 #include "../../presentation/q3_native/packet_remote.h"
@@ -270,7 +273,8 @@ static bool renderer_name(const char *text,const char *name)
 {
     for(;*text;++text) { const char *a=text,*b=name;
         while(*a && *b) { unsigned char c=(unsigned char)*a++; if(c>='A' && c<='Z')c=(unsigned char)(c+32);
-            if(c!=(unsigned char)*b)break; ++b; }
+            if(c!=(unsigned char)*b)break;
+            ++b; }
         if(!*b)return true;
     }
     return false;
@@ -470,7 +474,8 @@ static bool stage(void *context,const q3n_frame *f,q3n_command_init_stage which,
     case Q3N_INIT_PARTICLES:if(!q3n_particles_load_remote(o->children.particles,f,e))return false; break;
     case Q3N_INIT_CLIENT_LOADING:if(physical<0 || !q3n_loading_client(o->loading,f,(uint32_t)physical,e))return false; break;
     case Q3N_INIT_STRING_TABLE:case Q3N_INIT_MISSION_ASSETS:case Q3N_INIT_HUD_MENU:case Q3N_INIT_TEAM_CHAT:
-        if(!o->children.mission || !q3n_mission_hud_initialize(o->children.mission,f,which,e))return false; break;
+        if(!o->children.mission || !q3n_mission_hud_initialize(o->children.mission,f,which,e))return false;
+        break;
     default:return fail(e,QA_ERROR_ARGUMENT,"Unknown actual remote CGAME constructor stage");
     }
     return cut(o,f,e);
@@ -512,7 +517,8 @@ static bool skip_actor(frontend_remote_q3_runtime *o,int32_t skip,qa_actor_id *o
     const qa_native_q3_remote_client_services *s=qa_native_q3_remote_client_services_read(o->services.client);
     bool present;
     if(!s || !s->network.source_actor(s->network.context,(uint32_t)skip,out,&present,e))return false;
-    if(!present)*out=(qa_actor_id){0}; return true;
+    if(!present)*out=(qa_actor_id){0};
+    return true;
 }
 static bool retain_trace(frontend_remote_q3_runtime *o,const qa_trace_result *hit,int32_t number,qa_error *e)
 {
@@ -982,7 +988,10 @@ bool frontend_remote_q3_runtime_initialize(void *context,const q3n_remote_frame 
     frontend_remote_q3_runtime *o=context; q3n_frame f;
     if(!o || o->initialized || !r || r->snapshots.stage!=Q3N_REMOTE_INITIALIZATION ||
        !qa_native_q3_remote_client_prepare(o->services.client,e) || !begin(o,r,&f,e))return false;
-    bool okay=q3n_server_commands_initialize(o->children.commands,&f,r->source.publication.initial_command,e) &&
+    int32_t baseline=o->parent->compiled_video?r->source.reached_command:r->source.publication.initial_command;
+    bool okay=(o->parent->compiled_video?
+        q3n_server_commands_initialize_video(o->children.commands,&f,baseline,e):
+        q3n_server_commands_initialize(o->children.commands,&f,baseline,e)) &&
         qa_native_q3_remote_client_initialized(o->services.client,e);
     if(okay)o->initialized=true;
     return end(o,okay,e);

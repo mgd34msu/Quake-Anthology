@@ -91,6 +91,10 @@ typedef struct qa_builtin_event {
     /* Q2 pickup's authored canonical item, distinct from icon and display name. */
     qa_item_id item;
     qa_vec3 origin, end, direction;
+    /* Monster muzzle pose at emission, before later Source frames can move it. */
+    qa_vec3 muzzle_angles;
+    float muzzle_scale;
+    bool has_muzzle_pose;
     float volume, attenuation, value;
     int32_t code, channel, count, frame;
     uint32_t flags;

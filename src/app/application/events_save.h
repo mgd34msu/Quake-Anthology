@@ -4,6 +4,8 @@
 #include "internal.h"
 #include "qa/application_events_save.h"
 
+enum { APPLICATION_EVENTS_SAVE_VERSION = 17 };
+
 /* The application persistence coordinator owns APPLICATION_PERSISTING for
  * the complete capture/import graph. These calls retain that outer lease. */
 bool application_events_save_capture(qa_application *, qa_buffer *, qa_error *);

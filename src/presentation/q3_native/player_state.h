@@ -18,6 +18,7 @@ typedef struct q3n_player_state_options {
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
     qa_native_q3_remote_client_service *remote_client;
+    q3n_compiled_source *compiled_source;
     uint32_t seat;
     void *context;
     void (*print)(void *, const char *);
@@ -43,6 +44,7 @@ bool q3n_player_state_create_restored(const q3n_player_state_options *, q3n_play
 /* Pure construction from the retained, received CLIENT service. The outer
  * remote owner imports its transport and service before private continuation. */
 bool q3n_player_state_create_remote(const q3n_player_state_options *, q3n_player_state **, qa_error *);
+bool q3n_player_state_create_compiled(const q3n_player_state_options *, q3n_player_state **, qa_error *);
 void q3n_player_state_destroy(q3n_player_state *);
 bool q3n_player_state_idle(const q3n_player_state *);
 const q3n_player_feedback *q3n_player_state_feedback(const q3n_player_state *);
@@ -54,6 +56,10 @@ bool q3n_player_state_transition_remote(q3n_player_state *, const q3n_frame *,
     const qa_q3_player *current, const qa_q3_player *previous,
     const q3n_player_state_context *, qa_error *);
 bool q3n_player_state_respawn_remote(q3n_player_state *, const q3n_frame *, qa_error *);
+bool q3n_player_state_transition_compiled(q3n_player_state *, const q3n_frame *,
+    const qa_q3_player *, const qa_q3_player *, const q3n_player_state_context *, qa_error *);
+bool q3n_player_state_respawn_compiled(q3n_player_state *, const q3n_frame *, qa_error *);
+bool q3n_player_state_compiled_teleport_take(q3n_player_state *, bool *, qa_error *);
 /* The returned child callback contributes this genuine teleport request to
  * the snapshot owner before prediction. Taking it clears only that request. */
 bool q3n_player_state_remote_teleport_take(q3n_player_state *, bool *, qa_error *);

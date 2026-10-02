@@ -29,8 +29,8 @@ static bool font(qa_source_save_io *io,q3n_mission_hud *o,fontInfo_t *font,unsig
     for(unsigned i=0;i<256;++i) {
         const qa_q3_glyph_record *g=&record.glyphs[i]; qa_font_glyph source;
         if(!q3nh_handle(o->options.assets,g->handle,Q3P_SHADER)||!qa_font_find_glyph(o->font_holders[slot],i,&source)||
-            source.width!=g->image_width*record.glyph_scale||source.height!=g->image_height*record.glyph_scale||
-            source.advance!=g->x_skip*record.glyph_scale||source.bearing_y!=g->top*record.glyph_scale||
+            source.width!=(float)g->image_width*record.glyph_scale||source.height!=(float)g->image_height*record.glyph_scale||
+            source.advance!=(float)g->x_skip*record.glyph_scale||source.bearing_y!=(float)g->top*record.glyph_scale||
             source.uv.x!=g->s||source.uv.y!=g->t||source.uv.z!=g->s2||source.uv.w!=g->t2||
             ((source.image!=NULL)!=(g->handle!=0)))return false;
         if(source.image) {
@@ -41,7 +41,8 @@ static bool font(qa_source_save_io *io,q3n_mission_hud *o,fontInfo_t *font,unsig
             if(!retained)return false;
         }
     }
-    if(io->direction==QA_SOURCE_SAVE_READ)q3nm_font_import(&record,font); return true;
+    if(io->direction==QA_SOURCE_SAVE_READ)q3nm_font_import(&record,font);
+    return true;
 }
 static bool assets(qa_source_save_io *io,q3n_mission_hud *o)
 {
@@ -68,11 +69,12 @@ static bool blob(qa_source_save_io *io,qa_buffer *b)
 }
 static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 {
-    const char *signature=o->options.remote_client?"Q3HU":"Q3MH";
+    const char *signature=o->options.compiled_source?"Q3HC":o->options.remote_client?"Q3HU":"Q3MH";
     uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=2,seat=o->options.seat;
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,signature,4)||!qa_source_save_u32(io,&version)||version!=2||
         !qa_source_save_u32(io,&seat)||seat!=o->options.seat||
-        !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
+        !q3nh_remote_basis_fields(io,o->options.remote_client)||
+        (o->options.compiled_source&&!q3n_compiled_source_fields(io,o->options.compiled_source)))return false;
     qa_buffer menus={0}; bool ok=true;
     if(io->direction==QA_SOURCE_SAVE_WRITE)ok=q3menu_checkpoint(o->menus,&menus,io->error);
     if(ok)ok=blob(io,&menus);
@@ -105,7 +107,8 @@ bool q3n_mission_hud_checkpoint(const q3n_mission_hud *borrowed,qa_buffer *out,q
     q3n_mission_hud *o=(q3n_mission_hud *)borrowed; o->busy=true; q3n_mission_hud copy=*o;
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,e)&&fields(&io,&copy)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); o->busy=false;
-    if(!ok&&e&&e->code==QA_OK)q3ne_fail(e,QA_ERROR_FORMAT,"Mission HUD continuation has invalid authored menu or registered media references"); return ok;
+    if(!ok&&e&&e->code==QA_OK)q3ne_fail(e,QA_ERROR_FORMAT,"Mission HUD continuation has invalid authored menu or registered media references");
+    return ok;
 }
 bool q3n_mission_hud_restore(q3n_mission_hud *o,qa_bytes bytes,qa_error *e)
 {
@@ -115,5 +118,7 @@ bool q3n_mission_hud_restore(q3n_mission_hud *o,qa_bytes bytes,qa_error *e)
     qa_source_save_dispose(&io);
     if(ok) { *o=candidate; o->menus->owner=o; o->menus->display=&o->display; o->menus->scripts.context=o; q3menu_destroy(old); }
     else if(candidate.menus!=old)q3menu_destroy(candidate.menus);
-    o->busy=false; if(!ok&&e&&e->code==QA_OK)q3ne_fail(e,QA_ERROR_FORMAT,"Saved mission HUD continuation is inconsistent with its imported owners"); return ok;
+    o->busy=false;
+    if(!ok&&e&&e->code==QA_OK)q3ne_fail(e,QA_ERROR_FORMAT,"Saved mission HUD continuation is inconsistent with its imported owners");
+    return ok;
 }

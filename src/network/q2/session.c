@@ -4,6 +4,14 @@ bool qa_network_q2_peer(const qa_network_peer *peer)
 {
     return peer && peer->occupied && peer->ops.receive == qa_network_q2_peer_ops.receive;
 }
+bool qa_network_q2_retirement_pending(const qa_network_peer *peer)
+{
+    if (!qa_network_q2_peer(peer) || !peer->state) return false;
+    const q2_session *session = peer->state;
+    if (!session->server || !session->retiring) return false;
+    const q2_server *server = &session->state.server;
+    return server->drop_reason && (!server->drop_sent || !server->drop_hook_done);
+}
 bool q2_server_hooks_valid(const qa_network_q2_server_hooks *hooks)
 {
     return hooks && hooks->player && hooks->game_state && hooks->begin && hooks->input && hooks->expand_command && hooks->command &&
@@ -87,7 +95,6 @@ bool q2_queue_event(q2_session *session, const qa_q2_server_event *event, uint8_
 static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id id, const qa_net_datagram *packet, qa_error *error)
 {
     q2_session *session = state;
-    if (session->retiring) return true;
     qa_q2_received received;
     if (!qa_q2_channel_receive(session->channel, packet->payload, packet->received_ns, &received, error)) return false;
     if (received.kind == QA_Q2_REJECTED) return true;
@@ -95,6 +102,7 @@ static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id i
     const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
     if (session->server && !qa_net_address_equal(&client->endpoint, &packet->from, true) &&
         !qa_net_connections_rebind(runtime->connections, id, &packet->from, error)) return false;
+    if (session->retiring) return true;
     if (received.kind == QA_Q2_FRAGMENT) return true;
     if (session->server) {
         session->state.server.dropped = received.dropped;
@@ -112,7 +120,13 @@ static bool flush(void *state, qa_network_runtime *runtime, qa_net_client_id id,
 {
     (void)runtime; (void)id;
     q2_session *session = state;
-    if (session->retiring) return true;
+    if (session->retiring) {
+        if (session->server && session->state.server.drop_reason) {
+            bool complete;
+            return q2_server_drop_progress(session, now, &complete, error);
+        }
+        return true;
+    }
     if (!session->server) return q2_client_send(session, now, error);
     return !qa_q2_channel_should_update(session->channel, now) || q2_send(session, (qa_bytes){0}, now, NULL, error);
 }
@@ -209,6 +223,14 @@ bool qa_network_q2_server_event(qa_network_runtime *runtime, qa_net_client_id id
 {
     q2_session *session = q2_get(runtime, id, true, error);
     return session && event && q2_queue_event(session, event, seat, reliable, error);
+}
+bool qa_network_q2_server_codec(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q2_codec **out, qa_error *error)
+{
+    q2_session *session = q2_get(runtime, id, true, error);
+    if (!session || !out)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 outbound codec has no actual server connection");
+    *out = &session->codec; return true;
 }
 bool qa_network_q2_server_bytes(qa_network_runtime *runtime, qa_net_client_id id,
     qa_bytes bytes, uint8_t seat, bool reliable, qa_error *error)

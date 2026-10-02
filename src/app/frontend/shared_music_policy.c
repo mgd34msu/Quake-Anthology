@@ -46,6 +46,7 @@ struct frontend_shared_music {
     qa_frontend *frontend;
     qa_application *application;
     const qa_launch_snapshot *candidate;
+    const qa_application_client_preparation *client;
     const qa_cvars_edit *edit;
     qa_console *root_console;
     qa_cvars *root_cvars;
@@ -556,13 +557,21 @@ static bool selection_current(const frontend_shared_music *selection) {
         selection->frontend != owner->frontend || selection->application != owner->application ||
         owner->frontend->capture || owner->frontend->source_restoring ||
         qa_cvars_edit_registry(selection->edit) != qa_application_cvars(owner->application) ||
-        !frontend_seat_callbacks_returned(owner->frontend) ||
-        (!qa_application_startup_resource_phase_associated(owner->application, selection->candidate) &&
-            !qa_application_startup_publication_consuming(owner->application, selection->candidate))) return false;
+        !frontend_seat_callbacks_returned(owner->frontend)) return false;
     qa_console *console = NULL; qa_cvars *cvars = NULL; qa_command_context command;
-    if (!qa_application_startup_root_read(owner->application, selection->candidate,
-            &console, &cvars, &command, NULL) || console != selection->root_console ||
-        cvars != selection->root_cvars || console != qa_application_console(owner->application) ||
+    if (selection->client) {
+        const qa_application_client_source *source=qa_application_client_prepare_source(selection->client);
+        if (!qa_application_client_prepare_associated(owner->application,selection->client) || !source ||
+            (!qa_application_client_prepare_phase_is(selection->client,QA_CLIENT_PREPARE_RESOURCES) &&
+             !qa_application_client_prepare_entered(selection->client,QA_CLIENT_PREPARE_CONSUMING))) return false;
+        console=source->context.console; cvars=qa_application_cvars(owner->application); command=source->context.command;
+    } else {
+        if ((!qa_application_startup_resource_phase_associated(owner->application, selection->candidate) &&
+             !qa_application_startup_publication_consuming(owner->application, selection->candidate)) ||
+            !qa_application_startup_root_read(owner->application,selection->candidate,&console,&cvars,&command,NULL)) return false;
+    }
+    if (console != selection->root_console || cvars != selection->root_cvars ||
+        (!selection->client && console != qa_application_console(owner->application)) ||
         cvars != qa_cvars_edit_registry(selection->edit)) return false;
     const qa_command_context *held = &selection->root_command;
     if (command.session != held->session || command.owner != held->owner || command.client != held->client ||
@@ -575,24 +584,31 @@ static bool selection_current(const frontend_shared_music *selection) {
     return shuffle && shuffle->value && menu && menu->value &&
         !strcmp(shuffle->value, selection->shuffle_text) && !strcmp(menu->value, selection->menu_text);
 }
-bool frontend_shared_music_prepare(qa_frontend *f, const qa_launch_snapshot *candidate, const qa_cvars_edit *edit,
+static bool prepare_shared(qa_frontend *f, const qa_launch_snapshot *candidate,
+    const qa_application_client_preparation *client, const qa_cvars_edit *edit,
     frontend_music_policy *owner, frontend_shared_music **out, qa_error *e) {
     if (!f || !out || *out || !edit || !owner || owner->frontend != f || !frontend_music_policy_idle(owner) ||
         f->capture || f->source_restoring || !frontend_seat_callbacks_returned(f) ||
         qa_cvars_edit_registry(edit) != qa_application_cvars(f->application) ||
-        !qa_application_startup_resource_phase(f->application, candidate))
+        (client ? !qa_application_client_prepare_associated(f->application,client) ||
+            !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_RESOURCES) :
+            !qa_application_startup_resource_phase(f->application, candidate)))
         return fail(e, "Music preparation requires its actual installed policy and returned canonical ENGINE candidate");
     qa_console *console = NULL; qa_cvars *cvars = NULL; qa_command_context command;
-    if (!qa_application_startup_root_read(f->application, candidate, &console, &cvars, &command, e) ||
-        console != qa_application_console(f->application) || cvars != qa_cvars_edit_registry(edit))
-        return fail(e, "Music preparation lost its actual physical ENGINE startup tuple");
+    if (client) {
+        const qa_application_client_source *source=qa_application_client_prepare_source(client);
+        if (!source) return fail(e,"Music preparation lost its actual physical CLIENT source");
+        console=source->context.console; cvars=qa_application_cvars(f->application); command=source->context.command;
+    } else if (!qa_application_startup_root_read(f->application,candidate,&console,&cvars,&command,e) ||
+        console!=qa_application_console(f->application)) return fail(e,"Music preparation lost its actual physical ENGINE startup tuple");
+    if (!console || cvars!=qa_cvars_edit_registry(edit)) return fail(e,"Music preparation lost its actual canonical ENGINE registry");
     const qa_cvar_view *shuffle = canonical(edit, "music_shuffle"), *menu = canonical(edit, "music_menu_track");
     if (!shuffle || !shuffle->value || !menu || !menu->value ||
         (strcmp(shuffle->value, "0") && strcmp(shuffle->value, "1"))) return fail(e, "Music preparation lacks its canonical authored setting rows");
     frontend_shared_music *selection = calloc(1, sizeof(*selection));
     if (!selection) return frontend_fail(e, QA_ERROR_MEMORY, "Retaining prepared music policy");
     selection->policy = owner; selection->frontend = f; selection->application = f->application;
-    selection->candidate = candidate; selection->edit = edit;
+    selection->candidate = candidate; selection->client = client; selection->edit = edit;
     selection->root_console = console; selection->root_cvars = cvars; selection->root_command = command;
     selection->shuffle_text = copy(shuffle->value, e); selection->menu_text = copy(menu->value, e);
     if (!selection->shuffle_text || !selection->menu_text || !state_copy(&owner->state, &selection->next, e)) { selection_free(selection); return false; }
@@ -609,6 +625,12 @@ bool frontend_shared_music_prepare(qa_frontend *f, const qa_launch_snapshot *can
     if (!ok) { close_streams(intro, loop); selection_free(selection); return false; }
     owner->selection = selection; *out = selection; return true;
 }
+bool frontend_shared_music_prepare(qa_frontend *f,const qa_launch_snapshot *candidate,const qa_cvars_edit *edit,
+    frontend_music_policy *owner,frontend_shared_music **out,qa_error *e)
+{ return prepare_shared(f,candidate,NULL,edit,owner,out,e); }
+bool frontend_shared_music_prepare_client(qa_frontend *f,const qa_application_client_preparation *client,
+    const qa_cvars_edit *edit,frontend_music_policy *owner,frontend_shared_music **out,qa_error *e)
+{ return client ? prepare_shared(f,NULL,client,edit,owner,out,e) : fail(e,"Music preparation requires its actual CLIENT token"); }
 bool frontend_shared_music_ready(frontend_shared_music *selection, const frontend_shared_audio *audio, qa_error *e) {
     qa_audio_engine_gains *gains = frontend_shared_audio_gains(audio);
     float gain;
@@ -712,7 +734,7 @@ static bool manual_track(frontend_music_policy *owner, const qa_command_invocati
     qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0;
     bool ok = prepare_track(owner, &next, cue, looping, numbered, call, &intro, &loop, &cd, e);
     qa_audio_music_selection *selection = NULL;
-    if (ok) ok = command_current(owner, call) && qa_audio_music_selection_prepare(owner->music,
+    if (ok) ok = (call ? command_current(owner, call) : parent_current(owner)) && qa_audio_music_selection_prepare(owner->music,
         intro ? QA_AUDIO_MUSIC_START : QA_AUDIO_MUSIC_STOP, intro, loop, cd, NULL, &selection, e) &&
         qa_audio_music_selection_ready(selection, e);
     if (ok && selection) qa_audio_music_selection_publish(&selection);
@@ -720,6 +742,15 @@ static bool manual_track(frontend_music_policy *owner, const qa_command_invocati
     else close_streams(intro, loop);
     if (ok) { state_free(&owner->state); owner->state = next; next = (music_state){0}; }
     state_free(&next); return ok;
+}
+bool frontend_music_policy_source_play(frontend_music_policy *owner,const char *cue,qa_error *e) {
+    if (!frontend_music_policy_idle(owner) || !owner->external_player || !cue || !nonempty(cue) ||
+        owner->frontend->capture || owner->frontend->source_restoring)
+        return fail(e,"Received music requires its actual returned source-owned policy");
+    owner->busy=true;
+    bool ok=manual_track(owner,NULL,cue,true,false,e);
+    owner->busy=false;
+    return ok && parent_current(owner);
 }
 bool frontend_music_policy_manual_start(const frontend_music_policy *owner, const qa_command_invocation *call, bool *out) {
     if (!owner || !out || !command_current(owner, call) || !call->argc || !call->argv) return false;
@@ -1049,7 +1080,8 @@ bool frontend_music_policy_restore_player(frontend_music_policy *owner, qa_audio
 bool frontend_music_policy_source_is(const frontend_music_policy *owner, const frontend_music_content *source) {
     return owner && owner->external_player && source && owner->source_count == 1 &&
         owner->sources[0].catalog == source->catalog && owner->sources[0].product == source->product &&
-        !owner->sources[0].fallback_product && qa_vfs_lookup_equal(owner->sources[0].files, source->files);
+        owner->sources[0].fallback_product==source->fallback_product && qa_vfs_lookup_equal(owner->sources[0].files, source->files) &&
+        (!source->fallback_product || qa_catalog_product_view_current(source->catalog,source->fallback_product,owner->sources[0].fallback_files));
 }
 bool frontend_music_policy_world_is(const frontend_music_policy *owner, qa_catalog *catalog,
     qa_product_id product, const qa_vfs *files, qa_product_id fallback_product) {

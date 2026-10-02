@@ -55,6 +55,10 @@ bool frontend_remote_q3_resources_current(const frontend_remote_q3_resources *);
 bool frontend_remote_q3_resources_metadata_read(const frontend_remote_q3 *,frontend_remote_q3_resources *,qa_error *);
 bool frontend_remote_q3_resources_metadata_current(const frontend_remote_q3_resources *);
 bool frontend_remote_q3_basis_read(const frontend_remote_q3 *,qa_native_q3_remote_client_basis *,qa_error *);
+/* The exact compiled video ticket permits structural Source observations
+ * while its graphics banks are closed or partly reconstructed. */
+bool frontend_remote_q3_resources_compiled_video_read(const frontend_remote_q3 *,frontend_remote_q3_resources *,qa_error *);
+bool frontend_remote_q3_resources_compiled_video_refresh(frontend_remote_q3 *,qa_error *);
 bool frontend_remote_q3_resources_borrow(frontend_remote_q3 *,frontend_remote_q3_resources *,qa_error *);
 void frontend_remote_q3_resources_release(frontend_remote_q3 *);
 /* Structural acquired-host children remain attached while callbacks return.

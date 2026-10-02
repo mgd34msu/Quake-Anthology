@@ -34,6 +34,10 @@ typedef struct frontend_client_source_options {
     bool (*read_script)(void *, const qa_command_context *, const char *, qa_bytes *, void **, qa_error *);
     void (*release_script)(void *, void *);
     void (*script_complete)(void *, const qa_command_context *, const char *, bool);
+    /* Retire programme bindings before physical children; release the
+     * programme context only after those children have been consumed. */
+    bool (*retire)(void *, const qa_application_client_source *, qa_error *);
+    void (*released)(void *);
 } frontend_client_source_options;
 typedef struct frontend_client_source_view {
     const frontend_client_source *owner;

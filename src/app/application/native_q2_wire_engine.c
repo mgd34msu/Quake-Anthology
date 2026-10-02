@@ -127,6 +127,30 @@ bool application_native_q2_wire_number(struct application_native_q2 *engine, qa_
     return admit(engine, actor, true, slot, out, error);
 }
 
+bool application_native_q2_wire_admit(struct application_native_q2 *engine, qa_actor_id actor,
+    uint32_t *out, qa_error *error)
+{
+    if (!engine || !engine->wire_engine || !out || !actor.registry)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 Engine event admission requires its actual namespace");
+    for (size_t i = 0; i < engine->wire_engine->reference_count; ++i)
+        if (qa_actor_id_equal(engine->wire_engine->references[i].actor, actor)) {
+            *out = engine->wire_engine->references[i].number; return true;
+        }
+    uint32_t slot = 0; bool original;
+    if (!physical_slot(engine, actor, &slot, &original, error)) return false;
+    return admit(engine, actor, original, slot, out, error);
+}
+
+void application_native_q2_wire_actor_released(qa_application *app, qa_actor_id actor)
+{
+    for (size_t i = 0; app && i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider && provider->constructed && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            provider->state.native.q2_engine)
+            application_native_q2_wire_released(provider->state.native.q2_engine, actor);
+    }
+}
+
 bool application_native_q2_wire_resource(struct application_native_q2 *engine, unsigned kind,
     const char *path, uint32_t *out, qa_error *error)
 {
@@ -165,8 +189,11 @@ bool application_native_q2_wire_prepare(struct application_native_q2 *engine, qa
         if (!row->occupied || !row->original) continue;
         qa_native_slot_binding binding;
         if (!qa_native_slot(qa_native_host_instance(host), row->source_slot, &binding, error)) return false;
-        if (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, row->actor))
-            application_native_q2_wire_released(engine, row->actor);
+        if (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, row->actor)) {
+            if (qa_actors_get(qa_session_actors(engine->provider->application->session), row->actor)) {
+                row->original = false; row->source_slot = 0;
+            } else application_native_q2_wire_released(engine, row->actor);
+        }
     }
     for (uint32_t i = 0; i < count; ++i) {
         qa_native_host_q2_entity source;
@@ -187,7 +214,6 @@ bool application_native_q2_wire_linked(struct application_native_q2 *engine,
     if (!physical_slot(engine, linked->actor, &source_slot, &original, error)) return false;
     uint32_t number;
     if (!admit(engine, linked->actor, original, source_slot, &number, error)) return false;
-    if (original) return true;
     qa_clock_state clock;
     if (!clock_read(engine, &clock, error)) return false;
     qa_q2_source_entity_motion *motion = &engine->wire_engine->rows[number].motion;
@@ -246,7 +272,8 @@ static bool fields(qa_source_save_io *io, application_native_q2_wire_engine *wir
             if (wire->rows[j].occupied && qa_actor_id_equal(row->actor, wire->rows[j].actor))
                 return application_fail(io->error, QA_ERROR_FORMAT, "Original Q2 Engine rows alias a full actor");
     }
-    if (!qa_source_save_count(io, &wire->reference_count, UINT32_MAX)) return false;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size / 12 : UINT32_MAX;
+    if (!qa_source_save_count(io, &wire->reference_count, maximum)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (wire->reference_count > SIZE_MAX / sizeof(*wire->references)) return false;
         wire->references = wire->reference_count ? calloc(wire->reference_count, sizeof(*wire->references)) : NULL;
@@ -260,6 +287,51 @@ static bool fields(qa_source_save_io *io, application_native_q2_wire_engine *wir
         for (size_t j = 0; j < i; ++j)
             if (qa_actor_id_equal(reference->actor, wire->references[j].actor))
                 return application_fail(io->error, QA_ERROR_FORMAT, "Original Q2 Engine admission provenance aliases a generation");
+    }
+    return true;
+}
+
+static bool restored_current(struct application_native_q2 *engine,
+    const application_native_q2_wire_engine *wire, qa_error *error)
+{
+    qa_native_entity_table table;
+    const qa_cvar_view *clients = qa_cvars_find(engine->cvars, "maxclients");
+    qa_clock_state clock;
+    if (!clients || clients->integer < 1 || (uint32_t)clients->integer != wire->clients ||
+        !qa_native_entity_table_get(qa_native_host_instance(engine->provider->state.native.host), &table, error) ||
+        table.capacity != wire->capacity || !clock_read(engine, &clock, error))
+        return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold namespace differs from its actual SDK policy");
+    const qa_actor_registry *actors = qa_session_actors(engine->provider->application->session);
+    for (uint32_t i = 0; i < wire->capacity; ++i) {
+        const application_native_q2_wire_row *row = &wire->rows[i];
+        const qa_q2_source_entity_motion *motion = &row->motion;
+        if (row->retired_ns > clock.frame.time_ns || (row->occupied && !qa_actors_get(actors, row->actor)) ||
+            (motion->creation_present ? (!motion->link_count || motion->creation_frame > clock.frame.number ||
+                motion->source_frame < motion->creation_frame || motion->source_frame > clock.frame.number) :
+                (motion->creation_frame || motion->link_count || motion->source_frame ||
+                    motion->origin.x || motion->origin.y || motion->origin.z ||
+                    motion->creation_origin.x || motion->creation_origin.y || motion->creation_origin.z)))
+            return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold lifetime leaves its real Source clock");
+        for (size_t j = 0; j < 8; ++j) {
+            const qa_q2_source_origin *origin = &motion->origins[j];
+            if (!qa_vec_finite(origin->origin) || (origin->present ? (!motion->creation_present ||
+                origin->source_frame < motion->creation_frame || origin->source_frame > clock.frame.number ||
+                (origin->source_frame & 7u) != j) :
+                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z)))
+                return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold ring is not a genuine link receipt");
+        }
+        if (!row->occupied) continue;
+        bool admitted = false;
+        for (size_t j = 0; j < wire->reference_count; ++j)
+            if (wire->references[j].number == i && qa_actor_id_equal(wire->references[j].actor, row->actor)) admitted = true;
+        if (!admitted) return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine row has no retained admission provenance");
+        if (row->original) {
+            qa_native_slot_binding binding;
+            if (!qa_native_slot(qa_native_host_instance(engine->provider->state.native.host), row->source_slot, &binding, error) ||
+                binding.kind == QA_NATIVE_SLOT_FREE || binding.owner != engine->provider->owner ||
+                !qa_actor_id_equal(binding.actor, row->actor))
+                return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold row lost its real SDK actor binding");
+        }
     }
     return true;
 }
@@ -290,7 +362,7 @@ bool application_native_q2_wire_restore(struct application_native_q2 *engine, qa
         ok = wire && fields(&io, wire);
         if (!wire) application_fail(error, QA_ERROR_MEMORY, "Restoring Original Q2 Engine namespace");
     }
-    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok) ok = qa_source_save_finish(&io, NULL) && (!wire || restored_current(engine, wire, error));
     qa_source_save_dispose(&io);
     if (ok) *out = wire;
     else application_native_q2_wire_destroy(&wire);

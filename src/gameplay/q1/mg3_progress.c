@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdlib.h>
 
 static float capacity(float base, uint32_t bits) {
     for (; bits; bits &= bits - 1)
@@ -21,8 +22,17 @@ static uint32_t *upgrade_bits(q1_player *player, unsigned type) {
         return NULL;
     }
 }
+static bool upgrade_current(qa_q1_game *game, qa_actor_id actor,
+    const q1_player *player, qa_error *error) {
+    if (!game->destroy_pending && !game->continuation_pending && q1_alive(game, actor) &&
+        q1_player_get(game, actor) == player) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "MG3 upgrade lost its actual player");
+    return false;
+}
 bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t flag, bool *collected,
                     float *maximum, qa_error *error) {
+    qa_actor_id actor = player->id;
+    if (!upgrade_current(g, actor, player, error)) return false;
     uint32_t *bits = upgrade_bits(player, type);
     if (!bits || flag > 8388607u) {
         qa_error_set(error, QA_ERROR_ARGUMENT, type, "invalid MG3 upgrade source value");
@@ -31,19 +41,25 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
     *collected = (*bits & flag) != 0;
     *maximum = player->max_health;
     if (!*collected) {
-        *bits |= flag;
         if (type == 0) {
+            *bits |= flag;
             *maximum = player->max_health += 10;
-            float health = q1_health(g, player->id);
+            qa_combat_state combat;
+            if (!qa_combat_read(g->services.combat, actor, &combat, error) ||
+                !upgrade_current(g, actor, player, error)) return false;
+            float health = combat.health;
             if (health > 0 && health < *maximum &&
                 !qa_combat_set_health(g->services.combat, player->id,
                                       fminf(*maximum, health + *maximum), error))
                 return false;
+            if (!upgrade_current(g, actor, player, error)) return false;
         } else {
             qa_inventory_entry entry;
             qa_error local = {0};
-            if (!qa_inventory_entry_read(g->services.inventory, player->id, g->ammo[type - 1],
-                                         &entry, &local)) {
+            bool present = qa_inventory_entry_read(g->services.inventory, actor, g->ammo[type - 1],
+                                         &entry, &local);
+            if (!upgrade_current(g, actor, player, error)) return false;
+            if (!present) {
                 if (local.code != QA_ERROR_NOT_FOUND) {
                     if (error)
                         *error = local;
@@ -54,22 +70,46 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
                                              .capacity = base[type - 1],
                                              .policy = QA_COUNT_SOURCE_FLOAT};
             }
-            *maximum = (float)entry.capacity + 10;
-            entry.count = entry.capacity = *maximum;
+            *bits |= flag;
+            double updated = entry.capacity + 10;
+            *maximum = (float)updated;
+            entry.count = entry.capacity = updated;
             if (!qa_inventory_configure(g->services.inventory, player->id, &entry, NULL, NULL,
                                         error))
                 return false;
+            if (!upgrade_current(g, actor, player, error)) return false;
         }
     }
-    for (unsigned i = 0; i < 4; ++i) {
-        qa_inventory_entry entry;
-        if (!qa_inventory_entry_read(g->services.inventory, player->id, g->ammo[i], &entry, NULL) ||
-            entry.count <= entry.capacity)
-            continue;
-        entry.count = entry.capacity;
-        if (!qa_inventory_configure(g->services.inventory, player->id, &entry, NULL, NULL, error))
-            return false;
+    size_t count = 0;
+    if (!qa_inventory_entries(g->services.inventory, actor, NULL, 0, &count, error) ||
+        !upgrade_current(g, actor, player, error)) return false;
+    if (count > SIZE_MAX / sizeof(qa_inventory_entry)) {
+        qa_error_set(error, QA_ERROR_MEMORY, actor.slot, "MG3 upgrade inventory extent overflows");
+        return false;
     }
+    qa_inventory_entry *entries = count ? malloc(count * sizeof(*entries)) : NULL;
+    if (count && !entries) {
+        qa_error_set(error, QA_ERROR_MEMORY, actor.slot, "Reading actual MG3 upgrade inventory");
+        return false;
+    }
+    size_t written = 0;
+    bool okay = qa_inventory_entries(g->services.inventory, actor, entries, count, &written, error) &&
+        upgrade_current(g, actor, player, error);
+    if (okay && written > count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "MG3 upgrade inventory changed its actual extent");
+        okay = false;
+    }
+    for (size_t i = 0; okay && i < written; ++i) {
+        qa_bytes name = qa_strings_text(qa_session_strings(g->services.session), entries[i].item);
+        if (name.size < sizeof("q1:ammo/") - 1 ||
+            memcmp(name.data, "q1:ammo/", sizeof("q1:ammo/") - 1) ||
+            entries[i].count <= entries[i].capacity) continue;
+        entries[i].count = entries[i].capacity;
+        okay = qa_inventory_configure(g->services.inventory, actor, &entries[i], NULL, NULL, error) &&
+            upgrade_current(g, actor, player, error);
+    }
+    free(entries);
+    if (!okay) return false;
     if (!q1_alive(g, player->id)) return true;
     if (player->source_client) {
         bool selected;

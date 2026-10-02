@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/q3_source_scene_bank.h"
 
 qa_scene_vec4 q3p_color(const uint8_t bytes[4])
 {
@@ -27,8 +28,15 @@ bool qa_q3_presentation_entity(qa_q3_presentation *p, const qa_q3_ref_entity *en
     if (p->options.source_state) {
         bool available = false;
         source = p->options.source_state(p->options.context, error);
-        if (!source || !qa_material_source_entity_capacity(source, &available, error)) return q3p_end(p, false);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        if (!bank) return q3p_end(p, false);
+        available = qa_q3_source_scene_bank_entity_capacity(bank);
         if (!available) return q3p_end(p, true);
+        if (entity->kind < QA_Q3_REF_MODEL || entity->kind > QA_Q3_REF_PORTAL)
+            return q3p_end(p, q3p_fail(error, QA_ERROR_FORMAT, "RE_AddRefEntityToScene: bad reType"));
+        uint32_t ordinal; bool admitted;
+        return q3p_end(p, qa_q3_source_scene_bank_entity(bank, p->options.assets, entity,
+            &ordinal, &admitted, error));
     }
     const qa_material *shader; const qa_model_skin_map *skin; const q3p_model *model;
     bool ok = entity->kind >= QA_Q3_REF_MODEL && entity->kind <= QA_Q3_REF_PORTAL;
@@ -43,17 +51,6 @@ bool qa_q3_presentation_entity(qa_q3_presentation *p, const qa_q3_ref_entity *en
     if (ok) ok = q3p_reserve((void **)&p->entities, &p->entity_capacity,
         p->entity_count + 1, sizeof(*p->entities), error);
     bool admitted = true;
-    if (ok && p->options.source_state) {
-        qa_material_context context = {.entity_color = q3p_color(entity->color),
-            .entity_texcoord = entity->shader_texcoord, .time_offset = entity->shader_time,
-            .shadow_plane = entity->shadow_plane, .non_normalized_axis = entity->non_normalized_axes,
-            .projection_shadow = (entity->flags & 256) != 0};
-        uint32_t ordinal = 0;
-        ok = source && qa_material_source_entity_append(source, &context, &ordinal, &admitted, error);
-        if (ok && admitted && p->entity_count == 0) p->source_entity_first = ordinal;
-        if (ok && admitted && ordinal != p->source_entity_first + p->entity_count)
-            ok = q3p_fail(error, QA_ERROR_ARGUMENT, "Source scene entity membership changed between additions");
-    }
     if (ok && admitted) p->entities[p->entity_count++] = *entity;
     return q3p_end(p, ok);
 }
@@ -65,6 +62,22 @@ bool qa_q3_presentation_poly(qa_q3_presentation *p, int32_t shader,
     if (!shader) {
         if (p->options.print) p->options.print(p->options.context, "^3WARNING: RE_AddPolyToScene: NULL poly shader\n");
         return q3p_end(p, true);
+    }
+    if (p->options.source_state) {
+        qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        if (!bank) return q3p_end(p, false);
+        if (!qa_q3_source_scene_bank_poly_capacity(bank, count)) return q3p_end(p, true);
+        qa_scene_fog_volume fog = {0};
+        if (count) {
+            qa_bounds bounds = {vertices[0].position, vertices[0].position};
+            for (size_t i = 1; i < count; ++i)
+                bounds = qa_bounds_union(bounds, (qa_bounds){vertices[i].position, vertices[i].position});
+            qa_scene_world_fog_for_bounds(p->world, bounds, &fog);
+        }
+        bool admitted;
+        return q3p_end(p, qa_q3_source_scene_bank_poly(bank, p->options.assets,
+            shader, vertices, count, &fog, &admitted, error));
     }
     const qa_material *material;
     bool ok = q3p_shader_get(p->options.assets, shader, &material, error);
@@ -94,10 +107,15 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
     if (!q3p_begin(p, error)) return false;
     qa_material_source_scratch *source = NULL;
     if (p->options.source_state) {
-        bool available = false;
         source = p->options.source_state(p->options.context, error);
-        if (!source || !qa_material_source_light_capacity(source, &available, error)) return q3p_end(p, false);
-        if (!available) return q3p_end(p, true);
+        qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+        if (!bank) return q3p_end(p, false);
+        if (!qa_q3_source_scene_bank_light_capacity(bank)) return q3p_end(p, true);
+        if (radius <= 0) return q3p_end(p, true);
+        qa_scene_light value = {.origin = origin, .radius = radius, .color = color,
+            .additive = additive, .family = QA_SCENE_Q3};
+        bool admitted;
+        return q3p_end(p, qa_q3_source_scene_bank_light(bank, p->options.assets, &value, &admitted, error));
     }
     if (radius <= 0) return q3p_end(p, true);
     bool ok = p->light_count < SIZE_MAX;
@@ -105,7 +123,6 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
     if (ok) ok = q3p_reserve((void **)&p->lights, &p->light_capacity,
         p->light_count + 1, sizeof(*p->lights), error);
     bool admitted = true;
-    if (ok && source) ok = qa_material_source_light_append(source, &admitted, error);
     if (ok && admitted) p->lights[p->light_count++] = (qa_scene_light){.origin = origin, .radius = radius,
         .color = color, .additive = additive, .family = QA_SCENE_Q3};
     return q3p_end(p, ok);

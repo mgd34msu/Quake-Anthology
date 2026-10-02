@@ -1,19 +1,24 @@
 /* CG playerstate transitions, id Software 1999-2005, GPL-2.0-or-later. */
 #include "player_state_internal.h"
 
+static bool q3n_player_state_transition_received(q3n_player_state *,const q3n_frame *,
+    const qa_q3_player *,const qa_q3_player *,const q3n_player_state_context *,
+    qa_q3_entity,q3n_entity *,qa_q3_entity,q3n_entity *,int32_t,qa_error *);
+
 static bool current(q3n_player_state *o,const q3n_frame *f,qa_error *e)
 {
     return o && f && !o->busy && o->options.application==f->application &&
         o->options.assets==f->assets && o->options.seat==f->seat &&
         o->product==q3n_frame_product(f) && q3n_frame_predicted_player(f) &&
-        (f->remote?o->options.remote_client==f->remote->client:
-            !o->options.remote_client && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
+        (f->compiled?o->options.compiled_source==f->compiled->source.owner:
+         f->remote?o->options.remote_client==f->remote->client && !o->options.compiled_source:
+            !o->options.remote_client && !o->options.compiled_source && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
         q3ne_current(f,e)?true:
         q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 player transition requires its exact completed source and viewing seat");
 }
 bool q3n_player_state_create(const q3n_player_state_options *options,q3n_player_state **out,qa_error *e)
 {
-    if(!options || !out || *out || !options->application || !options->source || !options->assets || options->remote_client || !options->print ||
+    if(!options || !out || *out || !options->application || !options->source || !options->assets || options->remote_client || options->compiled_source || !options->print ||
        !qa_application_native_q3_presentation_current(options->application,options->source))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 playerstate requires actual GAME, seat and registered assets");
     q3n_player_state *o=calloc(1,sizeof(*o));
@@ -25,7 +30,7 @@ bool q3n_player_state_create(const q3n_player_state_options *options,q3n_player_
 bool q3n_player_state_create_restored(const q3n_player_state_options *options,q3n_player_state **out,qa_error *e)
 {
     qa_native_q3_client_basis basis;
-    if(!options || !out || *out || !options->assets || options->remote_client || !options->print || !options->client ||
+    if(!options || !out || *out || !options->assets || options->remote_client || options->compiled_source || !options->print || !options->client ||
        !qa_native_q3_client_basis_read(options->client,&basis,e) || basis.application!=options->application || basis.seat!=options->seat)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Restored Q3 playerstate requires its actual installed source and client basis");
     q3n_player_state *o=calloc(1,sizeof(*o));
@@ -35,13 +40,24 @@ bool q3n_player_state_create_restored(const q3n_player_state_options *options,q3
 bool q3n_player_state_create_remote(const q3n_player_state_options *options,q3n_player_state **out,qa_error *e)
 {
     qa_native_q3_remote_client_basis basis;
-    if(!options || !out || *out || !options->assets || options->source || options->client || !options->print ||
+    if(!options || !out || *out || !options->assets || options->source || options->client || options->compiled_source || !options->print ||
        !options->remote_client || !qa_native_q3_remote_client_basis_read(options->remote_client,&basis,e) ||
        basis.application!=options->application || basis.client.seat!=options->seat)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Remote Q3 playerstate requires its actual retained CLIENT basis");
     q3n_player_state *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating remote native Q3 playerstate");
     o->options=*options; o->product=basis.product; *out=o; return true;
+}
+bool q3n_player_state_create_compiled(const q3n_player_state_options *options,q3n_player_state **out,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if(!options || !out || *out || !options->compiled_source || options->source || options->client || options->remote_client ||
+       !options->print || !q3n_compiled_source_read(options->compiled_source,&source,e) ||
+       source.basis.application!=options->application || source.basis.assets!=options->assets || source.basis.seat!=options->seat)
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled playerstate requires its actual CLIENT source and assets");
+    q3n_player_state *o=calloc(1,sizeof(*o));
+    if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating compiled Q3 playerstate");
+    o->options=*options; o->product=source.basis.product; *out=o; return true;
 }
 void q3n_player_state_destroy(q3n_player_state *o) { if(o && !o->busy)free(o); }
 bool q3n_player_state_idle(const q3n_player_state *o) { return o && !o->busy; }
@@ -54,7 +70,7 @@ static void remember(q3n_transition_history *h,const q3n_frame *f,const qa_q3_pl
 {
     h->viewing_actor=f->remote?(qa_actor_id){0}:f->viewing_actor;
     h->viewing_client=f->viewing_client; h->followed_actor=followed;
-    h->source_frame=f->remote?f->remote->snapshots.revision:f->source.source_frame.number;
+    h->source_frame=f->compiled?f->compiled->revision:f->remote?f->remote->snapshots.revision:f->source.source_frame.number;
     h->source_time=f->time; h->client_num=p->clientNum;
     h->damage_event=p->damageEvent; h->viewheight=p->viewheight; h->external_event=p->externalEvent;
     h->event_sequence=p->eventSequence; h->health=p->stats[0]; h->e_flags=p->eFlags;
@@ -131,7 +147,7 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
         if(!sound(f,s,6,e))return false;
     } else if(p->persistant[1]<h->persistant[1] && !sound(f,Q3N_S_HIT_TEAM,6,e))return false;
     if(p->stats[0]<q3ne_sub(h->health,1) && p->stats[0]>0 &&
-       !q3n_events_pain(f,predicted,f->remote?f->remote->predicted_state->number:p->clientNum,p->stats[0],e))return false;
+       !q3n_events_pain(f,predicted,f->compiled?f->compiled->predicted_state->number:f->remote?f->remote->predicted_state->number:p->clientNum,p->stats[0],e))return false;
     if(c->intermission_started)return true;
     bool reward=false;
     const int32_t fields[6]={14,9,10,13,11,12};
@@ -192,6 +208,7 @@ static bool player_events(q3n_player_state *o,const q3n_frame *f,const qa_q3_pla
     if(p->externalEvent && p->externalEvent!=h->external_event) {
         s.event=p->externalEvent; s.eventParm=p->externalEventParm;
         if(f->remote && !q3n_remote_frame_entity_event(f->remote,(uint32_t)p->clientNum,s.event,s.eventParm,e))return false;
+        if(f->compiled && !q3n_compiled_frame_entity_event(f->compiled,(uint32_t)p->clientNum,s.event,s.eventParm,e))return false;
         if(!q3n_events_player(f,&s,cent,e))return false;
     }
     for(unsigned offset=2;offset>0;--offset) {
@@ -202,6 +219,10 @@ static bool player_events(q3n_player_state *o,const q3n_frame *f,const qa_q3_pla
                 f->remote->predicted_state->event=predicted_s.event;
                 f->remote->predicted_state->eventParm=predicted_s.eventParm;
             }
+            if(f->compiled) {
+                f->compiled->predicted_state->event=predicted_s.event;
+                f->compiled->predicted_state->eventParm=predicted_s.eventParm;
+            }
             if(!q3n_events_player(f,&predicted_s,predicted,e))return false;
             o->predictable_events[(uint32_t)i&15u]=predicted_s.event; o->event_sequence=q3ne_plus(o->event_sequence,1);
         }
@@ -210,7 +231,7 @@ static bool player_events(q3n_player_state *o,const q3n_frame *f,const qa_q3_pla
 }
 bool q3n_player_state_transition(q3n_player_state *o,const q3n_frame *f,const q3n_player_state_context *context,qa_error *e)
 {
-    if(!context || !current(o,f,e) || f->remote)return false;
+    if(!context || !current(o,f,e) || f->remote || f->compiled)return false;
     const qa_q3_player *p=&f->local_player;
     if(p->clientNum<0 || (uint32_t)p->clientNum>=f->source.max_clients || !f->entities)
         return q3ne_fail(e,QA_ERROR_FORMAT,"Playerstate followed client is outside its actual GAME extent");
@@ -257,6 +278,19 @@ bool q3n_player_state_respawn_remote(q3n_player_state *o,const q3n_frame *f,qa_e
     if(!current(o,f,e) || !f->remote)return false;
     respawn(o,f); return q3ne_current(f,e);
 }
+bool q3n_player_state_respawn_compiled(q3n_player_state *o,const q3n_frame *f,qa_error *e)
+{
+    if(!current(o,f,e) || !f->compiled || !q3n_frame_snapshot_player(f))return false;
+    respawn(o,f); return q3ne_current(f,e);
+}
+bool q3n_player_state_compiled_teleport_take(q3n_player_state *o,bool *out,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if(!o || !out || o->busy || !o->options.compiled_source ||
+       !q3n_compiled_source_read(o->options.compiled_source,&source,e))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled teleport feedback requires its returned CLIENT callback");
+    *out=o->feedback.this_frame_teleport; o->feedback.this_frame_teleport=false; return true;
+}
 bool q3n_player_state_remote_teleport_take(q3n_player_state *o,bool *out,qa_error *e)
 {
     if(!o || !out || o->busy || !o->options.remote_client ||
@@ -277,20 +311,40 @@ bool q3n_player_state_transition_remote(q3n_player_state *o,const q3n_frame *f,
     if(!q3n_frame_entity(f,(uint32_t)p->clientNum,&actual,&cent,&published,e) || !published)return false;
     q3n_remote_entity predicted;
     if(!q3n_remote_frame_predicted(f->remote,&predicted,e))return false;
+    return q3n_player_state_transition_received(o,f,p,previous,context,actual,cent,
+        *predicted.current,predicted.presentation,f->remote->snapshots.snapshot->server_time,e);
+}
+bool q3n_player_state_transition_compiled(q3n_player_state *o,const q3n_frame *f,
+    const qa_q3_player *p,const qa_q3_player *previous,const q3n_player_state_context *context,qa_error *e)
+{
+    if(!context || !current(o,f,e) || !f->compiled || f->compiled->stage!=Q3N_COMPILED_PLAYER_TRANSITION ||
+       p!=f->compiled->transition_player || previous!=f->compiled->previous_player || !p || !previous ||
+       !f->compiled->snapshot || p->clientNum<0 || p->clientNum>=64)return false;
+    qa_q3_entity actual; q3n_entity *cent; bool published;
+    q3n_compiled_entity predicted;
+    if(!q3n_frame_entity(f,(uint32_t)p->clientNum,&actual,&cent,&published,e) || !published ||
+       !q3n_compiled_frame_predicted(f->compiled,&predicted,e))return false;
+    return q3n_player_state_transition_received(o,f,p,previous,context,actual,cent,
+        *predicted.current,predicted.presentation,f->compiled->snapshot->server_time,e);
+}
+static bool q3n_player_state_transition_received(q3n_player_state *o,const q3n_frame *f,
+    const qa_q3_player *p,const qa_q3_player *previous,const q3n_player_state_context *context,
+    qa_q3_entity actual,q3n_entity *cent,qa_q3_entity predicted_state,q3n_entity *predicted,int32_t server_time,qa_error *e)
+{
     q3n_transition_history h={0};
     remember(&h,f,p->clientNum==previous->clientNum?previous:p,(qa_actor_id){0});
     o->busy=true;
     if(p->clientNum!=previous->clientNum)o->feedback.this_frame_teleport=true;
     const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
     if(p->damageEvent!=h.damage_event && p->damageCount)
-        damage(o,f,p,snapshot,f->remote->snapshots.snapshot->server_time);
+        damage(o,f,p,snapshot,server_time);
     if(p->persistant[4]!=h.persistant[4])respawn(o,f);
     if(o->map_restart) { respawn(o,f); o->map_restart=false; }
     bool ok=true;
     if(snapshot->pmType!=5 && p->persistant[3]!=3)
-        ok=local_sounds(o,f,p,predicted.presentation,&h,context,e);
+        ok=local_sounds(o,f,p,predicted,&h,context,e);
     if(ok)ok=ammo(o,f,snapshot,e) && player_events(o,f,p,actual,cent,
-        *predicted.current,predicted.presentation,&h,e);
+        predicted_state,predicted,&h,e);
     if(ok && p->viewheight!=h.viewheight) {
         o->feedback.duck_change=(float)q3ne_sub(p->viewheight,h.viewheight); o->feedback.duck_time=f->time;
     }
@@ -306,6 +360,11 @@ bool q3n_player_state_changed_events(q3n_player_state *o,const q3n_frame *f,bool
         if(!q3n_remote_frame_predicted(f->remote,&predicted,e) ||
            (f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME &&
             f->remote->snapshots.stage!=Q3N_REMOTE_PREDICTION_CALLBACK))return false;
+        state=*predicted.current; cent=predicted.presentation;
+    } else if(f->compiled) {
+        q3n_compiled_entity predicted;
+        if(!q3n_compiled_frame_predicted(f->compiled,&predicted,e) ||
+           (f->compiled->stage!=Q3N_COMPILED_COMPLETED_FRAME && f->compiled->stage!=Q3N_COMPILED_PLAYER_TRANSITION))return false;
         state=*predicted.current; cent=predicted.presentation;
     } else {
         qa_application_native_q3_entity actual;
@@ -323,6 +382,10 @@ bool q3n_player_state_changed_events(q3n_player_state *o,const q3n_frame *f,bool
                 f->remote->predicted_state->event=scratch.event;
                 f->remote->predicted_state->eventParm=scratch.eventParm;
             }
+            if(f->compiled) {
+                f->compiled->predicted_state->event=scratch.event;
+                f->compiled->predicted_state->eventParm=scratch.eventParm;
+            }
             ok=q3n_events_player(f,&scratch,cent,e);
             if(ok) { o->predictable_events[ring]=scratch.event;
                 if(show_miss)o->options.print(o->options.context,"WARNING: changed predicted event\n"); }
@@ -333,7 +396,8 @@ bool q3n_player_state_changed_events(q3n_player_state *o,const q3n_frame *f,bool
 }
 bool q3n_player_state_prediction_finish(q3n_player_state *o,const q3n_frame *f,bool show_miss,qa_error *e)
 {
-    if(!current(o,f,e) || !f->remote || f->remote->snapshots.stage!=Q3N_REMOTE_PREDICTION_CALLBACK)return false;
+    if(!current(o,f,e) || (f->compiled?f->compiled->stage!=Q3N_COMPILED_PLAYER_TRANSITION:
+       !f->remote || f->remote->snapshots.stage!=Q3N_REMOTE_PREDICTION_CALLBACK))return false;
     const qa_q3_player *p=q3n_frame_predicted_player(f);
     if(!show_miss || o->event_sequence<=p->eventSequence)return true;
     o->busy=true; o->options.print(o->options.context,"WARNING: double event\n");

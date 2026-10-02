@@ -9,7 +9,7 @@ qa_audio_asset *q3p_sound(const qa_q3_presentation_assets *a, int32_t handle)
 bool qa_q3_register_sound(qa_q3_presentation_assets *a, const char *path, bool compressed,
                             int32_t *out, qa_error *error)
 {
-    if (!a || a->busy || !path || !out)
+    if (!a || a->busy || a->retired || !path || !out)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 sound registration");
     if (!*path || *path == '*') { *out = 0; return true; }
     q3p_name *prior = q3p_find_name(a, Q3P_SOUND, path);

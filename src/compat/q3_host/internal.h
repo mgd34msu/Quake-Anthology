@@ -7,6 +7,7 @@
 #include "qa/script.h"
 #include "qa/common_parse.h"
 #include "qa/navigation_asset.h"
+#include "qa/source_save.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -117,6 +118,8 @@ struct qa_q3_host {
     const struct q3_call *render_call;
     const struct q3_call *system_movie_call;
     bool retired, restore_pending, scripts_reporting, bots_shutdown;
+    struct q3_collision_binding *collision_scene;
+    size_t collision_holds;
 };
 
 typedef struct q3_call {
@@ -132,6 +135,9 @@ typedef struct q3_call {
     qa_native_profile native_profile;
     qa_native_host *native_host;
 } q3_call;
+
+void q3_collision_scene_close(qa_q3_host *);
+bool q3_collision_scene_services(const qa_q3_host *, qa_source_save_io *);
 
 typedef enum q3_service_result {
     Q3_UNHANDLED, Q3_COMPLETED, Q3_FAILED

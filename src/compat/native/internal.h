@@ -150,6 +150,14 @@ struct qa_native_instance {
     qa_native_write_observer *write_observers;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
+    const qa_native_region_event *active_region_event;
+    uint32_t region_callback_depth, region_call_depth;
+    qa_native_address region_invocation_entry;
+    uint32_t region_invocation_depth;
+    bool *invoke_entered;
+    qa_native_address invocation_target;
+    bool (*before_dispatch)(void *, qa_error *);
+    void *dispatch_context;
     bool checkpointing, destroying, unloading, pending_shutdown, pending_restart,
         pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed, process_observing;
     qa_error failure;
@@ -216,6 +224,7 @@ bool native_image_soname(qa_bytes, qa_bytes *, qa_error *);
 
 /* Set only at a validated source-call or encoded runner handoff boundary. */
 static inline void native_call_started(qa_native_instance *instance) {
+    if (instance && instance->invoke_entered) *instance->invoke_entered = true;
     if (instance && instance->pending_shutdown) {
         instance->pending_shutdown = false;
         instance->lifecycle = QA_NATIVE_SHUT_DOWN;
@@ -292,6 +301,7 @@ void native_direct_close(qa_native_instance *instance);
 bool native_direct_export(const qa_native_instance *instance, const char *name,
                           qa_native_address *out, qa_error *error);
 bool native_direct_read(qa_native_address address, void *out, size_t bytes, qa_error *error);
+bool native_direct_range_check(qa_native_address, size_t, uint32_t, qa_error *);
 bool native_direct_write(qa_native_address address, const void *bytes, size_t size,
                          qa_error *error);
 
@@ -310,6 +320,7 @@ bool native_runner_export(qa_native_instance *instance, const char *name, qa_nat
 bool native_runner_entry_address(qa_native_instance *, const char *, qa_native_address *, qa_error *);
 bool native_runner_read(qa_native_instance *instance, qa_native_address source, void *out,
                         size_t bytes, qa_error *error);
+bool native_runner_range_check(qa_native_instance *, qa_native_address, size_t, uint32_t, qa_error *);
 bool native_runner_write(qa_native_instance *instance, qa_native_address destination,
                          qa_bytes bytes, qa_error *error);
 bool native_runner_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
@@ -355,6 +366,9 @@ void native_original_dependencies_destroy(qa_native_instance *);
 bool native_call_binding(qa_native_instance *instance, const native_entry_binding *binding,
                          const qa_native_value *arguments, size_t count, qa_native_value *result,
                          qa_error *error);
+bool native_invoke_entry(qa_native_instance *, qa_native_address,
+                         const qa_native_signature *, const qa_native_value *, size_t,
+                         qa_native_value *, qa_error *);
 bool native_dispatch_import(qa_native_instance *instance, const native_signature_spec *spec,
                             const qa_native_value *arguments, size_t count,
                             qa_native_value *result);

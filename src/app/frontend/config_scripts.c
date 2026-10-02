@@ -21,7 +21,7 @@ typedef struct script_lease { frontend_config_files *owner; qa_resource *resourc
 static bool fail(qa_error *error,qa_status code,const char *text)
 { qa_error_set(error,code,0,"%s",text); return false; }
 static bool local(const qa_command_context *source,qa_error *error)
-{ return source && source->origin!=QA_COMMAND_REMOTE || fail(error,QA_ERROR_ARGUMENT,"Remote clients cannot use local configuration files"); }
+{ return (source && source->origin!=QA_COMMAND_REMOTE) || fail(error,QA_ERROR_ARGUMENT,"Remote clients cannot use local configuration files"); }
 static bool folded_equal(const char *a,const char *b);
 static bool fs_equal(const char *a,const char *b,void *context)
 { (void)context; return folded_equal(a,b); }
@@ -385,8 +385,10 @@ static bool folded_equal(const char *a,const char *b)
 {
     for (;;++a,++b) {
         unsigned x=(unsigned char)*a,y=(unsigned char)*b;
-        if (x>='A'&&x<='Z') x+='a'-'A'; if (y>='A'&&y<='Z') y+='a'-'A';
-        if (x!=y) return false; if (!x) return true;
+        if (x>='A'&&x<='Z') x+='a'-'A';
+        if (y>='A'&&y<='Z') y+='a'-'A';
+        if (x!=y) return false;
+        if (!x) return true;
     }
 }
 static int compare_names(const void *a,const void *b) { return strcmp(*(const char *const *)a,*(const char *const *)b); }

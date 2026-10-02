@@ -61,6 +61,9 @@ bool qa_network_q1_client_receive_pending(qa_network_runtime *, qa_net_client_id
 bool qa_network_q1_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q1_client_move_nq(qa_network_runtime *, qa_net_client_id, const qa_q1_command *, qa_error *);
 bool qa_network_q1_client_move_qw(qa_network_runtime *, qa_net_client_id, const qa_qw_command *, qa_error *);
+/* The genuine Source owns its input ordinal and native sent/ack history.
+ * Qualifies the admitted full actor/seat without generic snapshot replay. */
+bool qa_network_q1_client_submit(qa_network_runtime *, const qa_network_command *, qa_error *);
 bool qa_network_q1_client_state_read(qa_network_runtime *, qa_net_client_id,
     qa_network_q1_client_state *, qa_error *);
 const qa_nq_decoder *qa_network_q1_client_nq_decoder(qa_network_runtime *, qa_net_client_id);

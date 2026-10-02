@@ -19,7 +19,7 @@ struct frontend_remote_snapshots {
     remote_snapshot snap, next;
     frontend_remote_centity entities[QA_Q3_ENTITIES];
     q3n_entity presentations[QA_Q3_ENTITIES];
-    int32_t processed, latest, time, command_sequence;
+    int32_t constructor_message, processed, latest, time, command_sequence;
     uint64_t revision, callback_scope;
     bool has_snap, has_next, this_teleport, next_teleport, busy, in_callback, faulted;
 };
@@ -52,8 +52,8 @@ static bool source_current(const frontend_remote_snapshots *s)
 static bool history_current(const frontend_remote_snapshots *s,const q3n_remote_source_view *source)
 {
     return source->publication.has_snapshot?source->publication.latest_message>=s->latest:
-        !s->has_snap && !s->has_next && s->processed==source->publication.initial_message &&
-        s->latest==source->publication.initial_message;
+        !s->has_snap && !s->has_next && s->processed==s->constructor_message &&
+        s->latest==s->constructor_message;
 }
 static bool retained_source(const frontend_remote_snapshots *s,q3n_remote_source_view *out)
 {
@@ -63,8 +63,8 @@ static bool retained_source(const frontend_remote_snapshots *s,q3n_remote_source
         out->publication.initial_command==s->source.publication.initial_command &&
         out->reached_command==s->command_sequence && history_current(s,out);
 }
-bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *o,
-    const q3n_remote_source_view *source, frontend_remote_snapshots **out, qa_error *e)
+static bool create(const frontend_remote_snapshots_options *o,
+    const q3n_remote_source_view *source,bool video,frontend_remote_snapshots **out,qa_error *e)
 {
     if(!o || !o->frontend || !o->source || !o->reached || !o->respawn || !o->reset_player || !o->event ||
         !o->transition_player || !o->lagometer || !o->warning || !source || !out || *out ||
@@ -74,12 +74,21 @@ bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *o
         return fail(e,QA_ERROR_ARGUMENT,"Remote centities require actual Init history and native consumers");
     frontend_remote_snapshots *s=calloc(1,sizeof(*s));
     if(!s) return fail(e,QA_ERROR_MEMORY,"Allocating remote native centities");
-    s->options=*o; s->source=*source; s->processed=source->publication.initial_message;
+    s->options=*o; s->source=*source;
+    s->constructor_message=video && source->publication.has_snapshot?
+        source->publication.latest_message:source->publication.initial_message;
+    s->processed=s->constructor_message;
     for(uint32_t i=0;i<QA_Q3_ENTITIES;++i) s->entities[i].presentation=&s->presentations[i];
-    s->latest=source->publication.initial_message; s->revision=1;
+    s->latest=s->constructor_message; s->revision=1;
     s->command_sequence=source->reached_command;
     *out=s; return true;
 }
+bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *o,
+    const q3n_remote_source_view *source,frontend_remote_snapshots **out,qa_error *e)
+{ return create(o,source,false,out,e); }
+bool frontend_remote_snapshots_create_video(const frontend_remote_snapshots_options *o,
+    const q3n_remote_source_view *source,frontend_remote_snapshots **out,qa_error *e)
+{ return create(o,source,true,out,e); }
 bool frontend_remote_snapshots_idle(const frontend_remote_snapshots *s) { return !s || !s->busy; }
 q3n_entity *frontend_remote_snapshots_storage(frontend_remote_snapshots *s)
 { return s?s->presentations:NULL; }
@@ -500,21 +509,25 @@ static bool codec(qa_source_save_io *io,frontend_remote_snapshots *s)
     uint8_t magic[4]={'Q','R','S','P'};
     const qa_native_q3_remote_client_basis *source=&s->source.basis;
     if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QRSP",sizeof(magic)) ||
-        !same_u32(io,1) || !same_u32(io,(uint32_t)s->options.product) ||
+        !same_u32(io,2) || !same_u32(io,(uint32_t)s->options.product) ||
         !same_u64(io,source->connection.owner) || !same_u64(io,source->connection.generation) ||
         !same_u32(io,source->connection.slot) || !same_u64(io,source->epoch) ||
         !same_u64(io,source->restart_generation) || !same_u64(io,source->client.receiver) ||
         !same_u64(io,source->client.service_owner) || !same_u32(io,source->client.seat) ||
         !same_i32(io,s->source.publication.initial_message) || !same_i32(io,s->source.publication.initial_command) ||
         !same_i32(io,s->source.publication.executed_command) || !map_fields(io,source->map) ||
+        !qa_source_save_i32(io,&s->constructor_message) ||
+        s->constructor_message<s->source.publication.initial_message ||
+        (s->source.publication.has_snapshot?s->constructor_message>s->source.publication.latest_message:
+            s->constructor_message!=s->source.publication.initial_message) ||
         !qa_source_save_i32(io,&s->processed) || !qa_source_save_i32(io,&s->latest) ||
         !qa_source_save_i32(io,&s->time) || !qa_source_save_i32(io,&s->command_sequence) ||
         s->command_sequence<s->source.publication.initial_command ||
         s->command_sequence!=s->source.reached_command || s->command_sequence>s->source.publication.received_command ||
         !qa_source_save_u64(io,&s->revision) || !s->revision ||
-        s->processed<s->source.publication.initial_message || s->processed>s->latest ||
+        s->processed<s->constructor_message || s->processed>s->latest ||
         (s->source.publication.has_snapshot?s->latest>s->source.publication.latest_message:
-            s->latest!=s->source.publication.initial_message) ||
+            s->latest!=s->constructor_message) ||
         !qa_source_save_bool(io,&s->has_snap) || !qa_source_save_bool(io,&s->has_next) ||
         (s->has_next && !s->has_snap) || (!s->source.publication.has_snapshot && (s->has_snap || s->has_next)) ||
         !qa_source_save_bool(io,&s->this_teleport) ||

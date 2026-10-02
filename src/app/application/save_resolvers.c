@@ -58,6 +58,16 @@ static bool admission(void *opaque, qa_actor_id actor,
                             "Saved damage admission has no restored native callback owner");
 }
 
+static bool protection(void *opaque,qa_actor_id actor,qa_protection_channel channel,
+    const qa_protection_claim *claim,qa_protection_binding *out,qa_error *error)
+{
+    qa_application *app=opaque;
+    if(!claim) return application_fail(error,QA_ERROR_ARGUMENT,"Saved protection has no actual source claim");
+    application_q3_component_publication row;
+    if(!application_q3_components_event_source_read(app,claim->owner,&row,error)) return false;
+    return application_q3_mod_protection_saved_binding(application_q3_component_mod(row.game),actor,channel,claim,out,error);
+}
+
 static bool primary(void *opaque, qa_actor_id actor, uint64_t serial,
                     qa_inventory_binding *out, qa_error *error)
 {
@@ -151,7 +161,7 @@ bool application_save_resolvers(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Restored gameplay callbacks require retained application owners");
     *out = (qa_persistence_gameplay_resolvers){.context = app,
-        .combat = combat_binding, .admission = admission, .inventory_primary = primary,
+        .combat = combat_binding, .admission = admission, .protection=protection, .inventory_primary = primary,
         .inventory_group = inventory_group, .pickup_observer = pickup_observer, .pickup_rule = pickup_rule,
         .target = target};
     return true;

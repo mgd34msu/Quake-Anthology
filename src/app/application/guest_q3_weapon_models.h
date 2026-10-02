@@ -7,6 +7,7 @@
 #include "qa/session.h"
 
 typedef struct application_q3_weapon_models application_q3_weapon_models;
+struct q3g_role;
 typedef struct application_q3_weapon_models_module {
     qa_session *session;
     qa_qvm *vm;
@@ -26,6 +27,10 @@ typedef struct application_q3_weapon_models_module {
  * checked teardown. The immutable module and registry outlive this child. */
 bool application_q3_weapon_models_create(const application_q3_weapon_models_module *,
     application_q3_weapon_models **, qa_error *);
+/* Installs into the real role field after host/VM construction and before Init.
+ * The parent retains the immutable profile and matched GAME through teardown. */
+bool application_q3_weapon_models_role_create(struct q3g_role *,
+    const application_q3_weapon_models_profile *, qa_error *);
 bool application_q3_weapon_models_destroy(application_q3_weapon_models *, qa_error *);
 bool application_q3_weapon_models_idle(const application_q3_weapon_models *);
 size_t application_q3_weapon_models_descriptor_count(const application_q3_weapon_models *);
@@ -40,5 +45,8 @@ bool application_q3_weapon_models_checkpoint(const application_q3_weapon_models 
 bool application_q3_weapon_models_restore(application_q3_weapon_models *, qa_bytes,
     qa_qvm_binding *saved_binding, qa_error *);
 bool application_q3_weapon_models_qualify(application_q3_weapon_models *, qa_error *);
+bool application_q3_weapon_models_namespace(application_q3_weapon_models *,
+    const qa_qvm *actual_cgame, const qa_qvm *actual_game,
+    const qa_q3_presentation_assets *actual_assets, qa_error *);
 
 #endif

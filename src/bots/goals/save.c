@@ -31,15 +31,6 @@ static bool state_fields(qa_source_save_io *io, qa_bot_memory *memory, bot_goal_
     if(!ok) io->failed=true;
     return ok;
 }
-static bool level_fields(qa_source_save_io *io, bot_level_item *item)
-{
-    return qa_source_save_i32(io, &item->number) && qa_source_save_i32(io, &item->entity) &&
-        qa_source_save_u32(io, &item->info) && qa_source_save_u32(io, &item->flags) &&
-        qa_source_save_u32(io, &item->previous) && qa_source_save_u32(io, &item->next) &&
-        qa_source_save_f32(io, &item->weight) && qa_source_save_f32(io, &item->timeout) &&
-        qa_source_save_vec3(io, &item->origin) && qa_source_save_vec3(io, &item->goal_origin) &&
-        qa_source_save_u32(io, &item->goal_area);
-}
 static bool asset_field(qa_source_save_io *io, const qa_bot_saved_assets *assets,
                         qa_bot_saved_asset_kind kind, void **object)
 {
@@ -81,9 +72,9 @@ static void clear(qa_bot_goals *goals)
 static bool topology(const qa_bot_goals *goals, qa_error *error)
 {
     size_t capacity = goals->level_capacity;
-    if (!goals->items || !goals->states || (capacity && (!goals->level || capacity < 2 || capacity > UINT32_MAX)) ||
-        (!capacity && (goals->level || goals->level_head || goals->free_head || goals->initial_count)) ||
-        goals->initial_count < 0 || (capacity && (size_t)goals->initial_count >= capacity) ||
+    if (!goals->items || !goals->states || (capacity && (!goals->level_allocation.owner || capacity > UINT32_MAX)) ||
+        (!capacity && (goals->level_allocation.owner || goals->level_head || goals->free_head || goals->initial_count)) ||
+        goals->initial_count < 0 || (capacity && (size_t)goals->initial_count > capacity) ||
         goals->source_count > goals->source_capacity || goals->source_count > UINT32_MAX ||
         goals->source_capacity > SIZE_MAX / sizeof(*goals->source) ||
         (goals->source_capacity && (!goals->source || goals->source_capacity < 64 ||
@@ -91,22 +82,8 @@ static bool topology(const qa_bot_goals *goals, qa_error *error)
                                     !goals->source_count || (goals->source_capacity > 64 &&
                                      goals->source_count <= goals->source_capacity / 2))) ||
         goals->next_source < QA_BOT_SOURCE_GOAL_MIN - 1) goto invalid;
-    if (!bot_goal_info_topology(goals, error)) return false;
-    uint8_t *marks = capacity ? calloc(capacity, 1) : NULL;
-    if (capacity && !marks) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Validating bot level pool"); return false; }
-    bool ok = true; uint32_t previous = 0;
-    size_t item_count = qa_bot_items_read(goals->items)->count;
-    for (uint32_t id = goals->level_head; ok && id;) {
-        if (id >= capacity || marks[id] || goals->level[id].previous != previous ||
-            goals->level[id].info >= item_count) { ok = false; break; }
-        marks[id] = 1; previous = id; id = goals->level[id].next;
-    }
-    for (uint32_t id = goals->free_head; ok && id;) {
-        if (id >= capacity || marks[id]) { ok = false; break; }
-        marks[id] = 1; id = goals->level[id].next;
-    }
-    for (size_t i = 1; ok && i < capacity; ++i) if (!marks[i]) ok = false;
-    free(marks);
+    if (!bot_goal_info_topology(goals, error) || !bot_goal_level_topology(goals, error)) return false;
+    bool ok = true;
     if(!goals->memory || goals->prepared_indexes || qa_bot_memory_disposed(goals->memory) ||
        !goals->next_pointer || goals->next_pointer>UINT64_C(0x100000000)) goto invalid;
     size_t wrapper_count = 0;
@@ -227,8 +204,15 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
     if (ok) ok = qa_source_save_count(io, &goals->level_capacity, UINT32_MAX) &&
         qa_source_save_u32(io, &goals->level_head) && qa_source_save_u32(io, &goals->free_head) &&
         qa_source_save_i32(io, &goals->initial_count) && qa_source_save_i32(io, &goals->next_source);
-    if (ok && reading) ok = array(io, (void **)&goals->level, goals->level_capacity, sizeof(*goals->level), 60);
-    for (size_t i = 0; ok && i < goals->level_capacity; ++i) ok = level_fields(io, &goals->level[i]);
+    bool has_level = goals->level_allocation.owner != 0;
+    if (ok) ok = qa_source_save_bool(io, &has_level);
+    if (ok && has_level) {
+        size_t reference = 0;
+        if (!reading) ok = qa_bot_memory_reference(goals->memory, goals->level_allocation, &reference, io->error);
+        if (ok) ok = qa_source_save_count(io, &reference, SIZE_MAX);
+        if (ok && reading) ok = qa_bot_memory_resolve(goals->memory, reference, &goals->level_allocation, io->error);
+        if (!ok) io->failed = true;
+    }
     if (ok) ok = qa_source_save_u64(io, &goals->next_info) &&
         qa_source_save_u32(io, &goals->location_head) && qa_source_save_u32(io, &goals->camp_head) &&
         qa_source_save_count(io, &goals->info_count, UINT32_MAX);

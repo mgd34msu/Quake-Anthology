@@ -35,6 +35,8 @@ typedef struct frontend_remote_q3_frame_import_view {
  * before the entered draw returns. Neither scope publishes a GAME actor. */
 bool frontend_remote_q3_frame_create(frontend_remote_q3 *,
     const frontend_remote_q3_frame_callbacks *, frontend_remote_q3_frame **, qa_error *);
+bool frontend_remote_q3_frame_create_video(frontend_remote_q3 *,
+    const frontend_remote_q3_frame_callbacks *,frontend_remote_q3_frame **,qa_error *);
 bool frontend_remote_q3_frame_idle(const frontend_remote_q3_frame *);
 /* Completed Init belongs to this actual retained frame owner, independently
  * of the physical service marker and constructor allocation. */

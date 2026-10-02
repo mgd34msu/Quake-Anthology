@@ -62,6 +62,8 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     frame->source_backend = false;
     frame->source_skip_backend = false;
     frame->source_clear_draw_buffer = false;
+    frame->source_begin_frame=false;
+    frame->source_stereo_frame=0;
     qa_arena_reset(&frame->storage);
 }
 
@@ -121,14 +123,15 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
-        command->kind > QA_SCENE_COMMAND_OUTPUT_DOMAIN) {
+        command->kind > QA_SCENE_COMMAND_PREBLEND_GAMMA) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene command");
         return false;
     }
     /* The command may be borrowed from this frame; snapshot before growth. */
     qa_scene_command copied = *command;
     if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
-        copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN) &&
+        copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN ||
+        copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA) &&
         !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
     if (frame->command_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene command count overflow");
@@ -181,6 +184,13 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     frame->commands[frame->command_count++] = copied;
     return !frame->source_pending || qa_material_source_issue_emitted(frame->source_pending, frame, error);
 }
+bool qa_scene_frame_preblend_gamma(qa_scene_frame *frame, bool enabled, qa_error *error)
+{
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_PREBLEND_GAMMA,
+        .data.preblend_gamma = {.enabled = enabled}};
+    return qa_scene_frame_emit(frame, &command, error);
+}
+
 bool qa_scene_frame_output_domain(qa_scene_frame *frame, qa_scene_rect rect, bool source, qa_error *error)
 {
     if (rect.x < 0 || rect.y < 0 || !rect.width || !rect.height) {

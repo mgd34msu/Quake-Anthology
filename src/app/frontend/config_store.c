@@ -6,6 +6,7 @@
 #include "authored_bindings.h"
 #include "config_weapon_defaults.h"
 #include "remote_config.h"
+#include "neutral_config.h"
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "native_q3_client.h"
@@ -18,6 +19,9 @@
 #include "global_settings_storage.h"
 #include "save_private.h"
 #include "qa/cvars_save.h"
+#include "qa/console_cvar_observer.h"
+#include "qa/console_save.h"
+#include "qa/catalog_save.h"
 #include "qa/text.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -76,6 +80,7 @@ struct frontend_config_store {
     qa_application_startup_hooks hooks;
     frontend_config_source *sources;
     frontend_remote_configs *clients;
+    frontend_neutral_configs *neutral;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     const qa_launch_snapshot *prepared;
@@ -114,8 +119,10 @@ static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
         unsigned a=(unsigned char)*left,b=(unsigned char)*right;
-        if (a>='A' && a<='Z') a+='a'-'A'; if (b>='A' && b<='Z') b+='a'-'A';
-        if (a!=b) return false; if (!a) return true;
+        if (a>='A' && a<='Z') a+='a'-'A';
+        if (b>='A' && b<='Z') b+='a'-'A';
+        if (a!=b) return false;
+        if (!a) return true;
     }
 }
 static const qa_launch_instance *instance(const frontend_config_source *source)
@@ -197,7 +204,7 @@ static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
     const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=logical},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_MOVEMENT_Q3)
+    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lacks its actual selected seat movement source");
     *dialect=(qa_console_dialect)selected->selection.clock.kind; return true;
 }
@@ -1589,10 +1596,10 @@ static frontend_config_source *previous_source(frontend_config_store *manager,qa
         if (!movement_source || (qa_console_dialect)movement_source->selection.clock.kind!=source->movement_dialect)
             return NULL;
         for (size_t i=0;i<source->seat_count;++i) {
-            qa_console_dialect movement;
+            qa_console_dialect seat_dialect;
             if (!choices || i>=choices->seat_count || choices->seats[i].id!=source->seats[i].logical ||
-                !seat_movement(candidate,source->seats[i].logical,&movement,NULL) ||
-                movement!=source->seats[i].movement_dialect) return NULL;
+                !seat_movement(candidate,source->seats[i].logical,&seat_dialect,NULL) ||
+                seat_dialect!=source->seats[i].movement_dialect) return NULL;
         }
         return source;
     }
@@ -1761,7 +1768,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     else if (ok) ok=registry_carry(source,previous->fallback,&source->fallback,error);
     if (ok && previous->keys) {
         ok=frontend_keys_carry(manager->frontend->keys,previous->keys,source->files,cvars,&source->keys,error) &&
-            frontend_key_profile_scope(source->keys,(qa_application_console_scope){command->owner,
+            frontend_key_profile_scope(source->keys,(qa_application_console_scope){(qa_actor_owner)command->owner,
                 QA_APPLICATION_CONSOLE_Q3_GAME,0},cvars,error);
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
@@ -1846,7 +1853,7 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
         ok=f->keys && qa_application_q3_product_policy_read(application,&policy) &&
             frontend_keys_prepare(f->keys,source->files,cvars,&policy,f->options.dedicated,&source->keys,error);
         if (ok) ok=frontend_key_profile_scope(source->keys,
-            (qa_application_console_scope){.provider=command->owner,.kind=QA_APPLICATION_CONSOLE_Q3_GAME},cvars,error);
+            (qa_application_console_scope){.provider=(qa_actor_owner)command->owner,.kind=QA_APPLICATION_CONSOLE_Q3_GAME},cvars,error);
         if (!ok && (!error || error->code==QA_OK)) fail(error,QA_ERROR_ARGUMENT,"Q3 configuration needs its genuine shared key and resolved initial policy owners");
     }
     const qa_launch_binding *movement=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
@@ -1932,7 +1939,8 @@ static bool advance(void *context,void *phase,qa_console *console,bool *complete
     bool ok=frontend_startup_config_advance(source->phase,console,&done,error);
     source->running=false;
     if (source->observation_failure.code!=QA_OK) {
-        if (error) *error=source->observation_failure; return false;
+        if (error) *error=source->observation_failure;
+        return false;
     }
     if (!ok || !done) return ok;
     if (source->seat_count) frontend_authored_bindings_finish(source->seats[source->seat_index].authored);
@@ -2129,7 +2137,7 @@ static bool retire(void *context,qa_application *application,
         return fail(error,QA_ERROR_ARGUMENT,"Configuration retirement names another actual source owner");
     qa_frontend *frontend=source->manager->frontend;
     if (frontend_native_q3_count(frontend) &&
-        !frontend_native_q3_retire_source(frontend,source->command.owner,selected,error)) return false;
+        !frontend_native_q3_retire_source(frontend,(qa_actor_owner)source->command.owner,selected,error)) return false;
     return frontend_config_store_retire(context,console,error);
 }
 static bool begin_retire(void *context,qa_application *application,
@@ -2367,7 +2375,7 @@ static bool candidate_languages(void *context,qa_application *application,const 
     *out=NULL; *count=0;
     if (!manager->shared) return true;
     frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
-    return owner && frontend_shared_publication_languages(owner,out,count) ||
+    return (owner && frontend_shared_publication_languages(owner,out,count)) ||
         fail(error,QA_ERROR_ARGUMENT,"Language readiness names another retained publication");
 }
 static bool candidate_values(void *context,const qa_application *application,const qa_launch_snapshot *candidate,
@@ -2421,9 +2429,9 @@ static bool candidate_retirement_ready(void *context,const qa_application *appli
     const qa_launch_snapshot *candidate,const qa_cvars_edit *edit,qa_error *error)
 {
     frontend_config_store *manager=context;
-    return manager && manager->shared && manager->shared_application==application &&
+    return (manager && manager->shared && manager->shared_application==application &&
         manager->shared_candidate==candidate &&
-        frontend_shared_settings_retirement_ready(manager->shared,manager->frontend,application,candidate,edit) ||
+        frontend_shared_settings_retirement_ready(manager->shared,manager->frontend,application,candidate,edit)) ||
         fail(error,QA_ERROR_ARGUMENT,"Candidate retirement lacks its actual failed edit and complete physical history");
 }
 static bool advance_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,
@@ -2449,8 +2457,8 @@ static bool refresh_source(void *context,qa_application *application,const qa_la
         frontend_remote_config_view view;
         bool published=source?source->application==application && source->published && frontend_config_source_tuple(source,&held):
             frontend_remote_config_read(client,&view) && view.published && frontend_remote_config_tuple(client,&held);
-        return published && authority->descriptor && held.descriptor->storage==authority->descriptor->storage &&
-            held.console==authority->console && held.cvars==authority->cvars && same_scope(held.scope,authority->scope) ||
+        return (published && authority->descriptor && held.descriptor->storage==authority->descriptor->storage &&
+            held.console==authority->console && held.cvars==authority->cvars && same_scope(held.scope,authority->scope)) ||
             fail(error,QA_ERROR_ARGUMENT,"Shared refresh names neither its pending source nor a genuine retained publication");
     }
     if (source) source->declaration_owner=authority->declaration_owner;
@@ -2478,6 +2486,8 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
     manager->frontend=frontend;
     manager->clients=frontend_remote_configs_create(frontend,manager,error);
     if (!manager->clients) { free(manager); return NULL; }
+    manager->neutral=frontend_neutral_configs_create(frontend,manager,error);
+    if (!manager->neutral) { frontend_remote_configs_destroy(manager->clients,NULL); free(manager); return NULL; }
     manager->hooks=(qa_application_startup_hooks){.context=manager,.prepare_source=prepare,.advance_source=advance,
         .read_script=phase_read,.release_script=phase_release,.script_complete=phase_complete,
         .allow_command=allow,.prepare_candidate=prepare_candidate,.release_source=phase_destroy,.finish_candidate=finish,
@@ -2499,8 +2509,9 @@ const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_
 { return manager?&manager->hooks:NULL; }
 bool frontend_config_store_retired_ready(const frontend_config_store *manager,qa_error *error)
 {
-    return manager && !manager->running && !manager->prepared && !manager->shared && !manager->publication && !manager->key_publication.owner &&
-        !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) ||
+    return (manager && !manager->running && !manager->prepared && !manager->shared && !manager->publication && !manager->key_publication.owner &&
+        !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) &&
+        frontend_neutral_configs_empty(manager->neutral)) ||
         fail(error,QA_ERROR_ARGUMENT,"Application callback context still retains actual configuration source owners");
 }
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
@@ -2509,6 +2520,8 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
     if (manager->running || manager->prepared || manager->shared || manager->publication || manager->key_publication.owner)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration manager retains an executing or prepared candidate");
     if (!shared_program_destroy(manager,error)) return false;
+    if (!frontend_neutral_configs_destroy(manager->neutral,error)) return false;
+    manager->neutral=NULL;
     if (!frontend_remote_configs_destroy(manager->clients,error)) return false;
     manager->clients=NULL;
     while (manager->sources) {
@@ -2593,6 +2606,7 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
         }
     }
     if (!frontend_remote_configs_save(manager->clients,manager->frontend->application,error)) return false;
+    if (!frontend_neutral_configs_save(manager->neutral,error)) return false;
     if (manager->storage) {
         qa_cvars *engine=qa_application_cvars(manager->frontend->application);
         if (!manager->storage_seeded || !shared_storage_current(manager) || !qa_cvars_observer_idle(engine))
@@ -2639,7 +2653,196 @@ bool frontend_config_store_retire(frontend_config_store *manager,const qa_consol
     *at=next; return true;
 }
 void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *frontend)
-{ if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); } }
+{ if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); frontend_neutral_configs_rebind(manager->neutral,frontend,manager); } }
+
+bool frontend_config_store_neutral_options(frontend_config_store *manager,uint32_t physical,
+    qa_movement_kind movement,frontend_client_source_options *out,qa_error *error)
+{
+    if (!manager || manager->running || manager->prepared || manager->shared)
+        return fail(error,QA_ERROR_ARGUMENT,"Neutral construction requires its returned configuration manager");
+    return frontend_neutral_config_options(manager->neutral,physical,movement,out,error);
+}
+bool frontend_config_store_neutral_read(const frontend_config_store *manager,const qa_console *console,
+    frontend_neutral_config_view *out,qa_error *error)
+{
+    return manager && frontend_neutral_config_read(manager->neutral,console,out,error);
+}
+bool frontend_config_store_neutral_startup_read(const frontend_config_store *manager,
+    qa_application_client_source *out,bool *found,qa_error *error)
+{
+    return manager && frontend_neutral_config_startup_read(manager->neutral,out,found,error);
+}
+qa_application_client_preparation *frontend_config_store_client_preparation(const frontend_config_store *manager)
+{
+    qa_application_client_preparation *client=manager?frontend_shared_settings_client(manager->shared):NULL;
+    return manager && client && manager->shared_application==manager->frontend->application &&
+        !manager->shared_candidate && qa_application_client_prepare_associated(manager->shared_application,client)?client:NULL;
+}
+bool frontend_config_store_client_input_configuration(const frontend_config_store *manager,
+    const qa_application_client_preparation *preparation,uint32_t ordinal,qa_input_seat **out,qa_error *error)
+{
+    return manager && frontend_neutral_config_client_input(manager->neutral,preparation,ordinal,out,error);
+}
+bool frontend_config_store_client_view_transition(const frontend_config_store *manager,
+    const qa_application_client_preparation *preparation,frontend_view_transition *out,qa_error *error)
+{
+    const qa_frontend *f=manager?manager->frontend:NULL;
+    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
+    bool published=false;
+    qa_input_seat *input=NULL;
+    if (!f || !out || !source ||
+        !qa_application_client_prepare_phase_is(preparation,QA_CLIENT_PREPARE_RESOURCES) ||
+        !frontend_neutral_config_client_input(manager->neutral,preparation,source->context.physical_seat,&input,error) ||
+        !frontend_view_settings_parent_is(f->view_settings,f,qa_application_cvars(f->application)) ||
+        !frontend_view_settings_has_published(f->view_settings,&published))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT view transition lost its actual token and published preference owner");
+    *out=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL; return true;
+}
+static bool client_settings_current(const frontend_config_store *manager,const qa_application_client_preparation *client)
+{
+    return manager && manager->shared && manager->shared_application==manager->frontend->application &&
+        !manager->shared_candidate && frontend_shared_settings_client(manager->shared)==client &&
+        qa_application_client_prepare_associated(manager->shared_application,client);
+}
+bool frontend_config_store_client_settings_begin(frontend_config_store *manager,
+    qa_application_client_preparation *client,qa_error *error)
+{
+    if (!manager || manager->shared || manager->publication || manager->restoring || manager->running ||
+        !qa_application_client_prepare_associated(manager->frontend->application,client))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT settings already retain another canonical preparation");
+    bool ok=frontend_shared_settings_begin_client(manager->frontend,manager,manager->frontend->application,
+        client,&manager->shared,error);
+    if (manager->shared) { manager->shared_application=manager->frontend->application; manager->shared_candidate=NULL; }
+    return ok;
+}
+bool frontend_config_store_client_settings_advance(frontend_config_store *manager,
+    qa_application_client_preparation *client,bool validated,bool *complete,qa_error *error)
+{
+    return client_settings_current(manager,client)?frontend_shared_settings_advance(manager->shared,validated,complete,error):
+        fail(error,QA_ERROR_ARGUMENT,"CLIENT release lost its actual canonical settings owner");
+}
+bool frontend_config_store_client_settings_seed(frontend_config_store *manager,
+    qa_application_client_preparation *client,qa_cvar_archive *snapshot,qa_error *error)
+{
+    if (!snapshot || !client_settings_current(manager,client) || !shared_storage_current(manager) ||
+        !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CONFIGURATION))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT archive seed lost its actual configuration and retained stores");
+    qa_cvar_archive devices={0};
+    if (!frontend_shared_storage_load_devices(manager->storage,&devices,error)) return false;
+    bool ok=true;
+    for (size_t i=0;ok && i<devices.count;++i)
+        ok=archive_remember(snapshot,devices.entries[i].name,devices.entries[i].value,error);
+    qa_cvar_archive_free(&devices);
+    if (!ok || !manager->sticky_seed_pending || manager->frontend->options.dedicated) return ok;
+    frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    if (!images_output(manager,values,error)) return false;
+    const qa_cvar_archive *archive=frontend_shared_storage_archive(manager->storage);
+    for (size_t i=0;archive && i<archive->count;++i) {
+        const qa_cvar_archive_entry *row=archive->entries+i;
+        if (strcmp(row->name,"s_outputRate") && strcmp(row->name,"s_outputBits") &&
+            strcmp(row->name,"s_outputChannels") && strcmp(row->name,"volume") &&
+            strcmp(row->name,"bgmvolume") && strcmp(row->name,"music_shuffle") && strcmp(row->name,"music_menu_track")) continue;
+        if (!archive_remember(snapshot,row->name,row->value,error)) return false;
+    }
+    const frontend_shared_view_preferences *view=frontend_shared_storage_view(manager->storage);
+    if (!manager->image_fov_touched && view && view->present) {
+        char text[64];
+        if (!qa_format_ecmascript_number(view->field_of_view,text,error) || !archive_remember(snapshot,"fov",text,error)) return false;
+        qa_cvar_archive_entry row={(char *)"fov",text}; qa_cvar_archive one={.entries=&row,.count=1};
+        if (!frontend_shared_values_archive(values,&one,error)) return false;
+    }
+    return true;
+}
+bool frontend_config_store_client_settings_prepare(frontend_config_store *manager,
+    qa_application_client_preparation *client,qa_error *error)
+{
+    if (!client_settings_current(manager,client) ||
+        !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_RESOURCES))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT resources lost their actual entered preparation");
+    if (!manager->publication && !frontend_shared_publication_prepare(manager->shared,&manager->publication,error)) return false;
+    return frontend_shared_publication_ready(manager->publication,error);
+}
+bool frontend_config_store_client_settings_ready_is(const frontend_config_store *manager,
+    const qa_application_client_preparation *client)
+{
+    return client_settings_current(manager,client) && frontend_shared_publication_ready_is(manager->publication,
+        manager->shared,manager->frontend,manager->shared_application,NULL);
+}
+void frontend_config_store_client_settings_consume(frontend_config_store *manager,
+    qa_application_client_preparation *client)
+{
+    if (frontend_config_store_client_settings_ready_is(manager,client)) frontend_shared_publication_consume(manager->publication);
+}
+bool frontend_config_store_client_settings_finish(frontend_config_store *manager,
+    qa_application_client_preparation *client,bool *complete,qa_error *error)
+{
+    if (!complete || !client_settings_current(manager,client))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT cleanup lost its consumed canonical publication");
+    bool ok=frontend_shared_publication_finish(&manager->shared,&manager->publication,complete,error);
+    if (*complete && !manager->shared && !manager->publication) {
+        manager->shared_application=NULL; manager->shared_candidate=NULL; manager->sticky_seed_pending=false;
+    }
+    return ok;
+}
+bool frontend_config_store_client_settings_abort(frontend_config_store *manager,
+    qa_application_client_preparation *client,qa_error *error)
+{
+    if (!manager || !client || !qa_application_client_prepare_associated(manager->frontend->application,client))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT abort lost its actual application phase");
+    if (!manager->shared) return !manager->publication;
+    if (!client_settings_current(manager,client)) return fail(error,QA_ERROR_ARGUMENT,"CLIENT abort names another scalar owner");
+    bool complete=false;
+    if (!frontend_shared_settings_cancel_advance(manager->shared,&complete,error) || !complete) return false;
+    bool ok=frontend_shared_settings_abort(&manager->shared,error);
+    if (!manager->shared) { manager->publication=NULL; manager->shared_application=NULL; manager->shared_candidate=NULL; }
+    return ok;
+}
+bool frontend_config_store_neutral_pending_options(frontend_config_store *manager,uint32_t physical,
+    frontend_client_source_options *out,qa_error *error)
+{
+    if (!manager || manager->running || manager->prepared || manager->shared)
+        return fail(error,QA_ERROR_ARGUMENT,"Neutral construction requires its returned configuration manager");
+    return frontend_neutral_config_pending_options(manager->neutral,physical,out,error);
+}
+bool frontend_config_store_neutral_movement_adopt(frontend_config_store *manager,const qa_console *console,
+    qa_movement_kind movement,qa_error *error)
+{
+    return manager && frontend_neutral_config_movement_adopt(manager->neutral,console,movement,error);
+}
+bool frontend_config_store_neutral_options_cancel(frontend_config_store *manager,
+    frontend_client_source_options *options,qa_error *error)
+{
+    return manager && frontend_neutral_config_options_cancel(manager->neutral,options,error);
+}
+bool frontend_config_store_client_profile(const frontend_config_store *manager,qa_game_family family,
+    qa_product_id *out,qa_error *error)
+{
+    if (!manager || !out || !manager->frontend || !manager->frontend->application)
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT profile needs its retained frontend selection");
+    if (family!=QA_GAME_Q1 && family!=QA_GAME_Q2)
+        return fail(error,QA_ERROR_UNSUPPORTED,"Neutral CLIENT configuration supports genuine Q1 and Q2 profiles");
+    qa_frontend *f=manager->frontend;
+    const qa_product *product=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
+    if (!product || product->family!=family || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
+        product->availability!=QA_CONTENT_INSTALLED)
+        return fail(error,QA_ERROR_ARGUMENT,"Remote CLIENT needs an explicitly selected installed compiled profile");
+    *out=product->id; return true;
+}
+bool frontend_config_store_neutral_adopt_store(frontend_config_store *manager,const qa_launch_instance *selected,
+    frontend_config_files *files,qa_error *error)
+{
+    if (!manager || manager->shared || manager->running || manager->restoring || !selected || !files ||
+        qa_launch_instance_catalog(selected)!=frontend_config_files_catalog(files) ||
+        selected->selection.product!=frontend_config_files_product(files) ||
+        !frontend_config_files_global_current(files,
+            frontend_global_settings_storage_user_store(manager->frontend->global_settings_storage),
+            frontend_global_settings_storage_device_store(manager->frontend->global_settings_storage)))
+        return fail(error,QA_ERROR_ARGUMENT,"Neutral input store requires its actual retained product and global authorities");
+    qa_frontend *f=manager->frontend;
+    return (f->input_config || frontend_input_profile_bind_store(f,frontend_config_files_catalog(files),
+        frontend_config_files_product(files),frontend_config_files_store(files,false),error)) &&
+        shared_storage_prepare(manager,error);
+}
 
 static bool config_blob(qa_source_save_io *io,qa_bytes *bytes)
 {
@@ -2689,14 +2892,15 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
             !visitor->view(visitor->context,selected->content,error)) return false;
     }
     return frontend_remote_configs_visit(manager->clients,visitor,error) &&
+        frontend_neutral_configs_visit(manager->neutral,visitor,error) &&
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
 static bool config_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=10;
+    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=11;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,&version) && version==10 && qa_source_save_count(io,count,
+        qa_source_save_u32(io,&version) && version==11 && qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -2810,8 +3014,13 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
         bytes=(qa_bytes){clients.data,clients.size}; }
     if (ok) ok=config_blob(&io,&bytes);
     qa_buffer_free(&clients);
+    qa_buffer neutral={0};
+    if (ok) { ok=frontend_neutral_configs_checkpoint(manager->neutral,graph,&neutral,error);
+        bytes=(qa_bytes){neutral.data,neutral.size}; }
+    if (ok) ok=config_blob(&io,&bytes);
+    qa_buffer_free(&neutral);
     bool shared=manager->storage!=NULL;
-    if (ok) ok=(shared || (!count && frontend_remote_configs_empty(manager->clients))) &&
+    if (ok) ok=(shared || (!count && frontend_remote_configs_empty(manager->clients) && frontend_neutral_configs_empty(manager->neutral))) &&
         (!shared || (manager->storage_seeded && shared_storage_current(manager))) && qa_source_save_bool(&io,&shared);
     qa_buffer storage={0};
     if (ok && shared) {
@@ -2854,9 +3063,12 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     qa_bytes clients={0};
     if (ok) ok=config_blob(&io,&clients) && clients.size &&
         frontend_remote_configs_restore(manager->clients,application,graph,keys,clients,error);
+    qa_bytes neutral={0};
+    if (ok) ok=config_blob(&io,&neutral) && neutral.size &&
+        frontend_neutral_configs_restore(manager->neutral,graph,neutral,error);
     bool shared=false;
     if (ok) ok=qa_source_save_bool(&io,&shared) &&
-        (shared || (!count && frontend_remote_configs_empty(manager->clients)));
+        (shared || (!count && frontend_remote_configs_empty(manager->clients) && frontend_neutral_configs_empty(manager->neutral)));
     qa_bytes storage={0};
     if (ok && shared) {
         ok=config_blob(&io,&storage) && storage.size;
@@ -2881,7 +3093,7 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     qa_application_content_graph *graph,frontend_keys *keys,const frontend_keys_cvar_refs *refs,
     qa_bytes bytes,qa_error *error)
 {
-    if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) ||
+    if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) || !frontend_neutral_configs_empty(manager->neutral) ||
         manager->variable_carries || manager->restoring || manager->running || manager->prepared || manager->shared ||
         manager->storage || manager->restored_storage.data || manager->storage_graph)
         return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
@@ -2895,6 +3107,9 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     frontend_remote_configs_destroy(manager->clients,NULL);
     manager->clients=decoded->clients; decoded->clients=NULL;
     frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
+    frontend_neutral_configs_destroy(manager->neutral,NULL);
+    manager->neutral=decoded->neutral; decoded->neutral=NULL;
+    frontend_neutral_configs_rebind(manager->neutral,manager->frontend,manager);
     for (frontend_config_source *source=manager->sources;source;source=source->next) source->manager=manager;
     decoded->sources=NULL; free(decoded); return true;
 }
@@ -2922,16 +3137,16 @@ typedef struct restored_source_scope {
 static bool restored_resolve(void *context,const char *name,qa_actor_owner *owner,qa_error *error)
 {
     const restored_source_scope *scope=context;
-    if (!name || strcmp(name,scope->selected->selection.instance) || !scope->command->owner)
+    if (!name || strcmp(name,scope->selected->selection.instance) || !scope->command->owner || scope->command->owner>UINT32_MAX)
         return fail(error,QA_ERROR_FORMAT,"Restored key reference leaves its exact physical source instance");
-    *owner=scope->command->owner; return true;
+    *owner=(qa_actor_owner)scope->command->owner; return true;
 }
 static bool restored_qualify(void *context,const qa_application_console_scope *registry,
     const qa_cvars *cvars,qa_error *error)
 {
     const restored_source_scope *scope=context;
-    return registry && registry->provider==scope->command->owner &&
-        registry->kind==QA_APPLICATION_CONSOLE_Q3_GAME && !registry->seat && cvars==scope->cvars ||
+    return (registry && registry->provider==scope->command->owner &&
+        registry->kind==QA_APPLICATION_CONSOLE_Q3_GAME && !registry->seat && cvars==scope->cvars) ||
         fail(error,QA_ERROR_FORMAT,"Restored key registry differs from its canonical decoded GAME owner");
 }
 static bool restore_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
@@ -2980,8 +3195,8 @@ static bool restore_source(void *context,qa_application *application,const qa_la
     source->console=console; source->cvars=cvars; source->command=*command;
     source->scope=authority->scope; source->declaration_owner=authority->declaration_owner;
     if (source->keys) {
-        restored_source_scope authority={selected,command,cvars};
-        frontend_keys_cvar_refs refs={.context=&authority,.resolve=restored_resolve,.qualify=restored_qualify};
+        restored_source_scope key_scope={selected,command,cvars};
+        frontend_keys_cvar_refs refs={.context=&key_scope,.resolve=restored_resolve,.qualify=restored_qualify};
         if (!frontend_key_profile_bind(source->keys,cvars,&refs,error)) return false;
     }
     if (!install_commands(source,error)) return false;
@@ -3046,6 +3261,7 @@ bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_erro
     if (manager->sticky_seed_pending && (!frontend_shared_storage_input(manager->storage,&sticky) || !sticky.vfs))
         return fail(error,QA_ERROR_FORMAT,"Saved sticky preference seed lacks its genuine admitted product store");
     if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
+    if (!frontend_neutral_configs_finish_restore(manager->neutral,error)) return false;
     qa_buffer_free(&manager->restored_storage); manager->storage_graph=NULL;
     manager->storage_seeded=manager->storage!=NULL;
     manager->restoring=false; return true;

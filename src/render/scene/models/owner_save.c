@@ -365,10 +365,14 @@ static bool mesh_source_ready(const qa_scene_model *model, size_t index)
     const qa_model_mesh *source = &model->source->meshes[index];
     const scene_model_mesh *mesh = &model->meshes[index];
     const qa_scene_vec4 white = {1, 1, 1, 1}; const qa_scene_vec2 zero = {0};
+    if (model->source_topology && (mesh->retained.vertex_count != source->vertex_count ||
+        source->texcoord_count != source->vertex_count)) return false;
     qa_bounds bounds = model_bounds_empty();
     for (size_t i = 0; i < mesh->retained.vertex_count; ++i) {
         const qa_scene_vertex *vertex = &mesh->vertices[i];
         const qa_model_vertex *original = &source->vertices[mesh->sources[i]];
+        if (model->source_topology && (mesh->sources[i] != i ||
+            memcmp(&vertex->texcoord, source->texcoords[i].uv, sizeof(vertex->texcoord)))) return false;
         if (memcmp(&vertex->position, original->position, sizeof(original->position)) ||
             memcmp(&vertex->normal, original->normal, sizeof(original->normal)) ||
             memcmp(&vertex->lightmap, &zero, sizeof(zero)) || memcmp(&vertex->color, &white, sizeof(white))) return false;
@@ -402,7 +406,9 @@ static bool mesh(qa_source_save_io *io, qa_scene_model *model, size_t node, size
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     scene_model_mesh *value = &model->meshes[index]; const qa_model_mesh *source = &model->source->meshes[index];
     if (source->triangle_count > UINT32_MAX / 3) return false;
-    size_t corners = (size_t)source->triangle_count * 3, physical = corners ? corners : 1;
+    size_t corners = (size_t)source->triangle_count * 3;
+    size_t vertices = model->source_topology ? source->vertex_count : corners;
+    size_t physical = vertices ? vertices : 1, physical_indices = corners ? corners : 1;
     uint64_t key = UINT64_MAX; qa_scene_geometry_view view = {0};
     if ((!reading && (!value->retained.geometry || !refs->geometry_encode(refs->context, value->retained.geometry, &key, io->error))) ||
         !qa_source_save_u64(io, &key) || key == UINT64_MAX) return false;
@@ -412,11 +418,11 @@ static bool mesh(qa_source_save_io *io, qa_scene_model *model, size_t node, size
         qa_scene_geometry_retain(geometry); value->retained.geometry = geometry;
         value->vertices = (qa_scene_vertex *)view.vertices; value->indices = (uint32_t *)view.indices;
     } else if (!qa_scene_geometry_read(value->retained.geometry, &view) || view.vertices != value->vertices || view.indices != value->indices) return false;
-    if (view.vertex_count != physical || view.index_count != physical) return false;
+    if (view.vertex_count != physical || view.index_count != physical_indices) return false;
     qa_scene_mesh *retained = &value->retained; uint32_t primitive = retained->primitive;
     if (!identity_field(io,refs,QA_SCENE_MODEL_IDENTITY_MESH,node,index,&retained->identity) ||
         !qa_source_save_u64(io, &retained->revision) || retained->revision != 1 ||
-        !qa_source_save_count(io, &retained->vertex_count, corners) ||
+        !qa_source_save_count(io, &retained->vertex_count, vertices) ||
         !qa_source_save_count(io, &retained->index_count, corners) || retained->index_count != corners ||
         !qa_source_save_vec3(io, &retained->bounds.mins) || !qa_source_save_vec3(io, &retained->bounds.maxs) ||
         !qa_source_save_u32(io, &primitive) || primitive != QA_SCENE_TRIANGLES) return false;
@@ -426,8 +432,8 @@ static bool mesh(qa_source_save_io *io, qa_scene_model *model, size_t node, size
             !allocate(io, source->shader_count, sizeof(*value->shaders), (void **)&value->shaders)) return false;
     } else if (retained->vertices != view.vertices || retained->indices != view.indices || !value->sources || !value->shaders) return false;
     for (size_t i = 0; i < physical; ++i) if (!qa_source_save_u32(io, &value->sources[i]) ||
-        (i < retained->vertex_count && value->sources[i] >= source->vertex_count) ||
-        (i < corners && value->indices[i] >= retained->vertex_count)) return false;
+        (i < retained->vertex_count && value->sources[i] >= source->vertex_count)) return false;
+    for (size_t i = 0; i < corners; ++i) if (value->indices[i] >= retained->vertex_count) return false;
     size_t normals = 0;
     if (model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2) {
         if (source->frame_count && source->vertex_count > SIZE_MAX / source->frame_count) return false;
@@ -448,6 +454,9 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
     if (!model_ref(io, refs, &model->source, &model->source_lease) || !options(io, model) ||
         !refs->source_qualify(refs->context, model->source, model->resources, model->materials, &model->options, io->error) ||
         !identity_field(io,refs,QA_SCENE_MODEL_IDENTITY_MODEL,node,0,&model->identity)) return false;
+    if (schema >= 4 && !qa_source_save_bool(io, &model->source_topology)) return false;
+    if (model->source_topology && (!qa_material_library_has_source_profile(model->materials) ||
+        (model->source->format != QA_MODEL_MD3 && model->source->format != QA_MODEL_MD4))) return false;
     if (reading && (!allocate(io, model->source->mesh_count, sizeof(*model->meshes), (void **)&model->meshes) ||
         !allocate(io, model->source->skin_count, sizeof(*model->skins), (void **)&model->skins) ||
         !allocate(io, model->source->sprite_count, sizeof(*model->sprites), (void **)&model->sprites))) return false;
@@ -459,6 +468,18 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
         ok = image_slot(io, image_table, image_count, &model->skins[i]);
     for (size_t i = 0; ok && i < (model->source->sprite_count ? model->source->sprite_count : 1); ++i)
         ok = image_slot(io, image_table, image_count, &model->sprites[i]);
+    if (ok && reading) for (scene_model_image *entry = model->images; entry; entry = entry->next) {
+        bool indexed = entry->indexed_override;
+        if (model->source->format == QA_MODEL_MDL)
+            for (size_t i = 0; !indexed && i < model->source->skin_count; ++i) indexed = model->skins[i] == entry;
+        if (model->source->format == QA_MODEL_SPR)
+            for (size_t i = 0; !indexed && i < model->source->sprite_count; ++i) indexed = model->sprites[i] == entry;
+        if (!indexed) continue;
+        const qa_scene_image *images[2] = {entry->base, entry->fullbright};
+        for (unsigned i = 0; i < 2; ++i)
+            if (images[i] && images[i]->recipient_upload_pixels)
+                ((qa_scene_image *)images[i])->recipient_mipmap = model->options.mipmap && model->source->format != QA_MODEL_SPR;
+    }
     bool replacement = model->replacement_source != NULL;
     ok = ok && qa_source_save_bool(io, &replacement);
     if (ok && replacement) {
@@ -502,9 +523,9 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
 }
 static bool prefix(qa_source_save_io *io, model_inventory *inventory, qa_bytes *body)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 3;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 4;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMON", 4) || !qa_source_save_u32(io, &schema) ||
-        (schema < 1 || schema > 3) ||
+        (schema < 1 || schema > 4) ||
         !qa_source_save_count(io, &inventory->identity_count, reading ? io->input.size / 28 : SIZE_MAX) || !inventory->identity_count) return false;
     if (reading) {
         if (inventory->identity_count > SIZE_MAX / sizeof(*inventory->identities)) return false;
@@ -585,7 +606,7 @@ bool qa_scene_model_owner_checkpoint(const qa_scene_model *model, const qa_scene
 {
     if (!model || !refs_ready(refs) || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "Model capture requires qualified references and empty output");
-    model_inventory inventory = {.schema = 3}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
+    model_inventory inventory = {.schema = 4}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
     bool ok = collect(&inventory, (qa_scene_model *)model, error);
     for (size_t i=0;ok && refs->identity_encode && i<inventory.identity_count;++i) {
         qa_scene_model_saved_identity *row=inventory.identities+i;

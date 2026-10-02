@@ -7,12 +7,26 @@
 typedef enum qa_render_controls_backend {
     QA_RENDER_CONTROLS_CPU, QA_RENDER_CONTROLS_GL
 } qa_render_controls_backend;
+typedef struct qa_render_source_attributes {
+    qa_scene_vec4 color;
+    qa_scene_vec2 coordinates[2];
+    bool color_known, coordinates_known[2];
+    bool color_array, coordinate_array[2], texture_enabled[2];
+    bool actual_empty[2];
+    qa_scene_texture_environment environment[2];
+    material_source_coordinate_kind coordinate_kind[2];
+    uint32_t coordinate_bank[2];
+    uint32_t texture_unit;
+} qa_render_source_attributes;
 struct qa_render_controls {
     qa_render_controls_backend backend;
     union { qa_cpu_renderer *cpu; qa_gl_renderer *gl; } owner;
     qa_render_controls_values values;
     qa_scene_filter source_filter;
     bool source_filter_initialized;
+    uint32_t source_max_polys,source_max_polyverts;
+    bool source_limits_initialized;
+    qa_render_source_attributes attributes;
     qa_render_controls_ticket *ticket;
     qa_material_source_scratch source;
 };
@@ -40,6 +54,18 @@ bool qa_cpu_source_polygon_offset(qa_render_controls *, bool enabled, float fact
 bool qa_gl_source_polygon_offset(qa_render_controls *, bool enabled, float factor, float units, qa_error *);
 bool qa_cpu_source_cull(qa_render_controls *, qa_scene_cull, qa_error *);
 bool qa_gl_source_cull(qa_render_controls *, qa_scene_cull, qa_error *);
+bool qa_cpu_source_texture_bind(qa_render_controls *, const qa_scene_image *, qa_error *);
+bool qa_gl_source_texture_bind(qa_render_controls *, const qa_scene_image *, qa_error *);
+bool qa_gl_source_texture_select(qa_render_controls *, uint32_t, qa_error *);
+bool qa_gl_source_texture_enable(qa_render_controls *, bool, qa_error *);
+bool qa_gl_source_texture_environment(qa_render_controls *, qa_scene_texture_environment, qa_error *);
+bool qa_gl_source_client_arrays(qa_render_controls *, bool, bool, qa_error *);
+bool qa_cpu_source_stage_state(qa_render_controls *, const qa_scene_state *, qa_error *);
+bool qa_gl_source_stage_state(qa_render_controls *, const qa_scene_state *, qa_error *);
+bool qa_cpu_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
+bool qa_gl_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
+bool qa_gl_source_image_admit(qa_render_controls *,const qa_scene_image *,uint32_t,qa_error *);
+void qa_render_source_stage_state(qa_scene_state *, const qa_scene_state *);
 bool qa_gl_source_texture_filter_apply(qa_render_controls *, qa_error *);
 void qa_cpu_render_controls_close(qa_render_controls *);
 void qa_gl_render_controls_close(qa_render_controls *);
@@ -50,6 +76,12 @@ qa_render_primitive_mode qa_render_primitives_mode(int32_t, bool indexed_arrays)
 qa_scene_filter qa_render_controls_image_filter(const qa_render_controls *,const qa_scene_image *);
 void qa_render_source_state_bits(qa_scene_state *,bool depth_write,bool additive);
 void qa_render_source_direct_state(qa_scene_state *,const qa_scene_state *,const qa_scene_draw *);
+void qa_render_source_attributes_init(qa_render_source_attributes *);
+bool qa_render_source_attributes_resolve(qa_render_controls *, qa_scene_draw *, const qa_scene_image *const[2],
+    qa_render_primitive_mode, qa_error *);
+void qa_render_source_attributes_vertex(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode,
+    size_t index, const qa_scene_vertex *, qa_scene_vec4 *, qa_scene_vec2[2]);
+void qa_render_source_attributes_finish(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode);
 /* The caller supplies its already validated triangle indices. */
 bool qa_render_strip_next(const uint32_t *, size_t, size_t *, qa_render_strip *);
 uint32_t qa_render_strip_vertex(const qa_render_strip *, size_t);

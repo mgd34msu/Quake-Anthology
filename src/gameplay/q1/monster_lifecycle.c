@@ -227,7 +227,7 @@ bool q1_monster_death_report(qa_q1_game *g, q1_actor *entity, qa_actor_id killer
                                   .actor = entity->id,
                                   .other = killer,
                                   .time_ns = g->time_ns,
-                                  .count = g->killed_monsters,
+                                  .count = (int32_t)g->killed_monsters,
                                   .value = (float)g->total_monsters};
         if (!qa_builtin_emit(&g->services, &event, error))
             return false;
@@ -272,7 +272,7 @@ bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, 
                 return false;
         }
     }
-    entity->physics.flags &= ~(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
+    entity->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
     if (!q1_alive(g, entity->id) ||
         (!qa_strings_text(qa_session_strings(g->services.session), entity->target).size &&
          !qa_strings_text(qa_session_strings(g->services.session), entity->killtarget).size))

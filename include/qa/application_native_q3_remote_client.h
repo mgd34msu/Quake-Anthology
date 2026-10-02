@@ -100,6 +100,7 @@ const qa_native_q3_remote_client_services *qa_native_q3_remote_client_services_r
 const qa_native_q3_character_selection *qa_native_q3_remote_client_character(
     const qa_native_q3_remote_client_service *);
 bool qa_native_q3_remote_client_initialized(qa_native_q3_remote_client_service *, qa_error *);
+bool qa_native_q3_remote_client_video_reset(qa_native_q3_remote_client_service *,qa_error *);
 bool qa_native_q3_remote_client_userinfo_initialize(qa_native_q3_remote_client_service *, const char *, qa_error *);
 bool qa_native_q3_remote_client_register(qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_prepare(qa_native_q3_remote_client_service *, qa_error *);

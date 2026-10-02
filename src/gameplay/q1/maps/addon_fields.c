@@ -187,7 +187,7 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
         q1_actor *native = q1_entity(g, other);
         if (native)
             native->spawnflags &= ~4u;
-        if (!traits.player)
+        if (!traits.player) {
             if (q1_classnamed(g, other, "item_artifact_invulnerability") ||
                 q1_classnamed(g, other, "item_artifact_super_damage")) {
                 if (!field(g, id) || !q1_alive(g, other))
@@ -196,6 +196,7 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
                 return motion(g, other, &body, error);
             } else
                 return true;
+        }
     }
     bool living = q1_health(g, other) > 0;
     bool grenade = living ? false : q1_classnamed(g, other, "grenade");
@@ -217,7 +218,7 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
             return true;
         q1_actor *native = q1_entity(g, other);
         if (native && traits.monster)
-            native->physics.flags &= ~QA_PHYSICS_ONGROUND;
+            native->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         if (traits.player) {
             row = q1_map_addon_contact(g, other, true, error);
             if (!row)

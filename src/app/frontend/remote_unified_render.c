@@ -2,6 +2,8 @@
 #include "remote_unified_render.h"
 #include "view_settings.h"
 #include "legacy_render_policy.h"
+#include "remote_unified_render_save.h"
+#include "save_private.h"
 
 #include <float.h>
 #include <math.h>
@@ -238,6 +240,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     world.q1_styles=q1; world.q2_styles=q2; world.style_count=256;
     if (okay && children && children->world_input)
         okay=children->world_input(children->context,&world,e);
+    if (okay) view=world.view;
     if (okay && children && children->lights)
         okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
     if (okay) okay=qa_scene_frame_emit(&r->frontend->frame,&(qa_scene_command){.kind=QA_SCENE_COMMAND_VIEW,.data.view=view},e) &&
@@ -265,6 +268,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             if (okay && children && children->model)
                 okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
             if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
+            if (okay && children && children->model_after)
+                okay=children->model_after(children->context,m->actor,m->product->identity,m->path,&input,&r->frontend->frame,e);
         }
     }
     if (okay && children && children->world)
@@ -290,4 +295,162 @@ bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
     for (size_t i=0;i<r->model_count;++i) free(r->models[i].path);
     free(r->models); free(r->ammo_label); qa_buffer_free(&r->area_bits);
     qa_unified_document_destroy(r->frame); free(r); *slot=NULL; return true;
+}
+
+static bool render_blob(qa_source_save_io *io,qa_buffer *value)
+{
+    size_t size=value->size;
+    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        value->data=size?malloc(size):NULL; value->size=size;
+        if (size && !value->data) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining received render continuation bytes");
+    }
+    return qa_source_save_bytes(io,value->data,size);
+}
+static bool render_model_fields(frontend_unified_render *r,unified_render_model *m,
+    const frontend_unified_render_refs *refs,qa_source_save_io *io)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    qa_saved_actor_id actor={0}; uint64_t binding=0,material=0; uint32_t inline_model=m->media.inline_model;
+    bool is_inline=m->media.is_inline; char *content=NULL;
+    if (!reading) {
+        if (!frontend_remote_unified_wire_actor(r->replica,m->actor,&actor)) return false;
+        content=(char *)m->product->identity;
+        for (size_t i=0;i<frontend_unified_media_model_count(r->media);++i) {
+            frontend_unified_model_view row;
+            if (frontend_unified_media_model_read(r->media,i,&row) &&
+                row.scene==m->media.scene && row.world==m->media.brush_world && !is_inline) { binding=i+1; break; }
+        }
+        if ((!is_inline && !binding) ||
+            (m->input.custom_material && !frontend_scene_material_encode(refs->scene,m->input.custom_material,&material,io->error))) return false;
+    }
+    bool okay=qa_source_save_u32(io,&actor.slot) && qa_source_save_u64(io,&actor.generation) &&
+        qa_source_save_u64(io,&binding) && qa_source_save_bool(io,&is_inline) &&
+        qa_source_save_u32(io,&inline_model) && frontend_save_text(io,&content) && frontend_save_text(io,&m->path) &&
+        qa_source_save_vec3(io,&m->origin) && qa_source_save_vec3(io,&m->angles) &&
+        qa_source_save_vec3(io,&m->previous_origin) && qa_source_save_f32(io,&m->scale) &&
+        qa_source_save_bool(io,&m->visible) && qa_source_save_bool(io,&m->has_previous_origin) &&
+        qa_source_save_u32(io,&m->input.frame) && qa_source_save_u32(io,&m->input.old_frame) &&
+        qa_source_save_u32(io,&m->input.skin) && qa_source_save_u32(io,&m->input.flags) &&
+        qa_source_save_f32(io,&m->input.back_lerp) && qa_source_save_f32(io,&m->input.color.x) &&
+        qa_source_save_f32(io,&m->input.color.y) && qa_source_save_f32(io,&m->input.color.z) &&
+        qa_source_save_f32(io,&m->input.color.w) && qa_source_save_bool(io,&m->input.view_model) &&
+        qa_source_save_f64(io,&m->input.seconds) && qa_source_save_i64(io,&m->input.milliseconds) &&
+        qa_source_save_bool(io,&m->input.has_milliseconds) && qa_source_save_u64(io,&material);
+    if (okay && reading) {
+        frontend_unified_bank_view bank={0}; bool found=false;
+        for (size_t i=0;i<frontend_unified_media_bank_count(r->media);++i)
+            if (frontend_unified_media_bank_read(r->media,i,&bank) && content && !strcmp(content,bank.content)) { found=true; break; }
+        okay=found && m->path && *m->path &&
+            frontend_remote_unified_actor(r->replica,actor.slot,actor.generation,&m->actor,io->error);
+        if (okay && is_inline) {
+            okay=!binding && content && inline_model<qa_collision_model_count(frontend_remote_unified_geometry(r->replica)) &&
+                qa_executable_recipe_choices(frontend_unified_media_recipe(r->media))->world.geometry==bank.product->id;
+            m->media=(frontend_unified_model){.brush_world=frontend_unified_media_world(r->media),.inline_model=inline_model,.is_inline=true};
+            m->input.family=bank.product->family==QA_GAME_Q1?QA_SCENE_Q1:bank.product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+        } else if (okay) {
+            frontend_unified_model_view row;
+            okay=binding && binding<=frontend_unified_media_model_count(r->media) &&
+                frontend_unified_media_model_read(r->media,(size_t)binding-1,&row) &&
+                !strcmp(row.path,m->path) && row.bank<frontend_unified_media_bank_count(r->media);
+            frontend_unified_bank_view actual;
+            if (okay) okay=frontend_unified_media_bank_read(r->media,row.bank,&actual) && !strcmp(actual.content,content);
+            if (okay) { m->media=(frontend_unified_model){.resource=row.resource,.opening=row.opening,.model=row.model,.scene=row.scene,.brush_world=row.world}; m->input.family=row.family; }
+        }
+        if (okay && material) okay=frontend_scene_material_decode(refs->scene,material,&m->input.custom_material,io->error);
+        if (okay) { m->product=bank.product; m->input.material_library=bank.materials;
+            m->input.entity=m->actor.slot; m->input.source_path=m->path; }
+        if (okay) okay=isfinite(m->scale) && qa_vec_finite(m->origin) && qa_vec_finite(m->angles) &&
+            qa_vec_finite(m->previous_origin) && isfinite(m->input.back_lerp) &&
+            isfinite(m->input.color.x) && isfinite(m->input.color.y) && isfinite(m->input.color.z) &&
+            isfinite(m->input.color.w) && isfinite(m->input.seconds);
+    }
+    if (reading) free(content);
+    return okay;
+}
+static bool render_fields(frontend_unified_render *r,const frontend_unified_render_refs *refs,
+    qa_source_save_io *io,qa_buffer *hud)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint32_t version=1; qa_buffer document={0};
+    if (!reading) {
+        qa_bytes bytes=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
+        document=(qa_buffer){.data=(unsigned char *)bytes.data,.size=bytes.size};
+    }
+    bool okay=qa_source_save_u32(io,&version) && version==1 && render_blob(io,&document);
+    if (okay && reading) okay=qa_unified_document_create(QA_UNIFIED_FRAME_DOCUMENT,
+        (qa_bytes){document.data,document.size},&r->frame,io->error);
+    if (reading) qa_buffer_free(&document);
+    okay=okay && render_blob(io,&r->area_bits) && qa_source_save_vec3(io,&r->origin) &&
+        qa_source_save_vec3(io,&r->angles) && qa_source_save_vec3(io,&r->kick) &&
+        qa_source_save_f32(io,&r->height) && qa_source_save_f64(io,&r->seconds) &&
+        qa_source_save_f64(io,&r->field_of_view) && qa_source_save_bool(io,&r->explicit_fov) &&
+        qa_source_save_bool(io,&r->source_view_offset) && frontend_save_text(io,&r->ammo_label);
+    for (size_t i=0;okay && i<3;++i) okay=qa_source_save_f64(io,&r->vitals[i].value) && qa_source_save_bool(io,&r->vitals[i].warning);
+    size_t count=r->model_count;
+    if (okay) okay=qa_source_save_count(io,&count,reading?io->input.size-io->offset:SIZE_MAX);
+    if (okay && reading) {
+        if (count>SIZE_MAX/sizeof(*r->models)) return false;
+        r->models=count?calloc(count,sizeof(*r->models)):NULL;
+        okay=!count || r->models;
+    }
+    for (size_t i=0;okay && i<count;++i) { if (reading) r->model_count=i+1; okay=render_model_fields(r,r->models+i,refs,io); }
+    if (okay && reading) {
+        const qa_json_document *j=qa_unified_document_json(r->frame);
+        qa_json_id rows=qa_json_get(j,qa_unified_document_root(r->frame),"models");
+        okay=count==qa_json_size(j,rows) && qa_vec_finite(r->origin) && qa_vec_finite(r->angles) &&
+            qa_vec_finite(r->kick) && isfinite(r->height) && isfinite(r->seconds) && r->seconds>=0 &&
+            r->seconds*1e9<18446744073709551616.0 && isfinite(r->field_of_view) &&
+            (!r->explicit_fov || (r->field_of_view>0 && r->field_of_view<180));
+        for (size_t i=0;okay && i<3;++i) okay=isfinite(r->vitals[i].value);
+        for (size_t i=0;okay && i<count;++i) {
+            unified_render_model *m=r->models+i; qa_saved_actor_id wire;
+            qa_json_id row=qa_json_at(j,rows,i),actor_id=qa_json_get(j,row,"actor");
+            uint64_t slot,generation;
+            okay=frontend_remote_unified_wire_actor(r->replica,m->actor,&wire) &&
+                qa_json_u64(j,qa_json_get(j,actor_id,"slot"),&slot,io->error) && slot==wire.slot &&
+                qa_json_u64(j,qa_json_get(j,actor_id,"generation"),&generation,io->error) && generation==wire.generation &&
+                qa_json_string_equal(j,qa_json_get(j,row,"content"),m->product->identity) &&
+                qa_json_string_equal(j,qa_json_get(j,row,"path"),m->path);
+        }
+    }
+    return okay && render_blob(io,hud);
+}
+bool frontend_unified_render_checkpoint(frontend_unified_render *r,
+    const frontend_unified_render_refs *refs,qa_buffer *out,qa_error *error)
+{
+    if (!r || !refs || !refs->scene || !out || out->data || out->size || !frontend_unified_render_idle(r))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Received render capture requires its returned owner and shared dictionaries");
+    qa_buffer hud={0}; qa_source_save_io io={0};
+    bool okay=qa_hud_checkpoint(r->hud,&refs->hud,&hud,error) && qa_source_save_writer(&io,NULL,error) &&
+        render_fields(r,refs,&io,&hud) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&hud);
+    if (!okay && (!error || error->code==QA_OK))
+        frontend_unified_fail(error,QA_ERROR_FORMAT,"Received render continuation lost its actual dictionary binding");
+    return okay;
+}
+bool frontend_unified_render_restore(qa_frontend *f,frontend_remote_unified *replica,
+    frontend_unified_media *media,const frontend_unified_render_refs *refs,qa_bytes bytes,
+    frontend_unified_render **out,qa_error *error)
+{
+    if (!f || !replica || !media || !refs || !refs->scene || !out || *out ||
+        frontend_unified_media_importing(media) || !frontend_unified_media_current(media)) return false;
+    frontend_unified_render *r=calloc(1,sizeof(*r));
+    if (!r) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining detached received render owner");
+    r->frontend=f; r->replica=replica; r->media=media;
+    qa_source_save_io io={0}; qa_buffer hud={0};
+    bool okay=qa_source_save_reader(&io,NULL,bytes,error) && render_fields(r,refs,&io,&hud) && qa_source_save_finish(&io,NULL);
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
+    if (okay) okay=d && d->physical_seat<f->options.seats &&
+        qa_hud_restore((qa_bytes){hud.data,hud.size},&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,
+            .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read},&refs->hud,&r->hud,error);
+    r->vitals[0].label="Health"; r->vitals[1].label="Armor"; r->vitals[2].label=r->ammo_label;
+    qa_source_save_dispose(&io); qa_buffer_free(&hud);
+    if (!okay) {
+        (void)frontend_unified_render_destroy(&r,NULL);
+        if (!error || error->code==QA_OK)
+            frontend_unified_fail(error,QA_ERROR_FORMAT,"Received render continuation has an invalid field or dictionary binding");
+        return false;
+    }
+    *out=r; return true;
 }

@@ -1,6 +1,8 @@
+#include "renderer_materials.h"
 #include "qa/material_source_scratch.h"
 #include "q3_color_policy.h"
 #include "native_q3_client_internal.h"
+#include "native_composition.h"
 #include "config_store.h"
 #include "view_bindings.h"
 #include "shared_resource_policy.h"
@@ -661,7 +663,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
 static bool loading(void *context,const q3n_frame *f,const char *text,int32_t item,qa_error *e)
 {
     frontend_native_q3 *row=context;
-    return frontend_native_q3_cut(row,f,e) && (item>=0?q3n_loading_item(row->view.loading,f,item,e):
+    return frontend_native_q3_cut(row,f,e) && (item>=0?q3n_loading_item(row->view.loading,f,(uint32_t)item,e):
         q3n_loading_string(row->view.loading,f,text,e));
 }
 static bool initialize_stage(void *context,const q3n_frame *f,q3n_command_init_stage stage,
@@ -682,9 +684,13 @@ static bool initialize_stage(void *context,const q3n_frame *f,q3n_command_init_s
         *inline_models=(uint32_t)count; break;
     }
     case Q3N_INIT_PARTICLES:if(!q3n_particles_load(f->particles,f->application,&f->source,f->time,e))return false; break;
-    case Q3N_INIT_CLIENT_LOADING:if(!q3n_loading_client(row->view.loading,f,physical,e))return false; break;
+    case Q3N_INIT_CLIENT_LOADING:
+        if (physical<0) return frontend_fail(e,QA_ERROR_ARGUMENT,"Native loading requires its actual physical client");
+        if(!q3n_loading_client(row->view.loading,f,(uint32_t)physical,e))return false;
+        break;
     case Q3N_INIT_STRING_TABLE:case Q3N_INIT_MISSION_ASSETS:case Q3N_INIT_HUD_MENU:case Q3N_INIT_TEAM_CHAT:
-        if(!row->view.mission || !q3n_mission_hud_initialize(row->view.mission,f,stage,e))return false; break;
+        if(!row->view.mission || !q3n_mission_hud_initialize(row->view.mission,f,stage,e))return false;
+        break;
     default:return frontend_fail(e,QA_ERROR_ARGUMENT,"Unknown genuine native constructor stage");
     }
     return frontend_native_q3_cut(row,f,e);
@@ -920,40 +926,50 @@ bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_applicati
         q3n_loading_create(&loading_options,&row->view.loading,e)) &&
         (row->commands || frontend_native_q3_commands_create(row,restoring,&row->commands,e));
 }
+static bool media_close(frontend_native_q3 *row,qa_error *e)
+{
+    if(!row->owns_media)return true;
+    if(row->view.presentation && !qa_q3_presentation_destroy(row->view.presentation,e))return false;
+    row->view.presentation=NULL;
+    if(row->frontend->audio) {
+        qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
+        row->view.music_attached=false;
+        if(!qa_audio_engine_stop_owner(row->frontend->audio,row->view.identity,row->view.seat,e))return false;
+    }
+    if(row->shader_movies && row->view.movies && !row->frontend->source_restoring) {
+        frontend_material_movie_source expected={.frontend=row->frontend,.files=row->view.mounts,.images=row->view.images,
+            .materials=row->view.materials,.media=row->view.movies,.context=row,.current=shader_movies_current};
+        if(!frontend_renderer_materials_adopt_movies(row->frontend,&expected,&row->shader_movies,&row->view.movies,e))return false;
+    }
+    if(!frontend_material_movies_destroy(&row->shader_movies,e))return false;
+    qa_q3_presentation_assets_destroy(row->view.assets); row->view.assets=NULL;
+    qa_media_library_destroy(row->view.movies);
+    qa_font_library_destroy(row->view.fonts); qa_audio_bank_destroy(row->view.sounds);
+    qa_audio_music_destroy(row->view.music);
+    qa_material_library_destroy(row->view.materials); qa_scene_resources_destroy(row->view.images); qa_vfs_destroy(row->view.mounts);
+    row->view.movies=NULL; row->view.fonts=NULL; row->view.sounds=NULL;
+    row->view.music=NULL; row->view.materials=NULL; row->view.images=NULL; row->view.mounts=NULL;
+    row->owns_media=false;
+    return true;
+}
 static bool row_destroy(frontend_native_q3 *row,qa_error *e)
 {
-    if(!row_idle(row) || (row->view.core && !q3n_native_retire_ready(row->view.core,e)) ||
+    if(row->video || !row_idle(row) || (row->view.core && !q3n_native_retire_ready(row->view.core,e)) ||
         (row->view.presentation && !frontend_selected_effects_idle(row->frontend)) ||
         (row->owns_media && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,e)))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native row teardown requires inactive actual reader, children and media owners");
     if (row->frontend->music_sources &&
         !frontend_music_sources_explicit_retire(row->frontend->music_sources,row,e)) return false;
     if(row->view.presentation && !frontend_selected_effects_retire_parent(row->frontend,row->view.presentation,e))return false;
-    if(!frontend_native_q3_commands_destroy(row->commands,e))return false; row->commands=NULL;
+    if(!frontend_native_q3_commands_destroy(row->commands,e))return false;
+    row->commands=NULL;
     if(row->composition.destroy && !row->composition.destroy(row->composition.context,e))return false;
     row->composition=(frontend_native_q3_composition){0};
     q3n_loading_destroy(row->view.loading); row->view.loading=NULL;
     q3n_mission_hud_destroy(row->view.mission); row->view.mission=NULL;
     if(row->view.core) { if(!q3n_native_destroy(row->view.core,e))return false; row->view.core=NULL; row->view.client=NULL; }
     else if(row->view.client) { if(!qa_native_q3_client_service_destroy(row->view.client,e))return false; row->view.client=NULL; }
-    if(row->owns_media) {
-        if(row->view.presentation && !qa_q3_presentation_destroy(row->view.presentation,e))return false;
-        row->view.presentation=NULL;
-        if(row->frontend->audio) {
-            qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
-            row->view.music_attached=false;
-            if(!qa_audio_engine_stop_owner(row->frontend->audio,row->view.identity,row->view.seat,e))return false;
-        }
-        if (!frontend_material_movies_destroy(&row->shader_movies,e)) return false;
-        qa_q3_presentation_assets_destroy(row->view.assets); row->view.assets=NULL;
-        qa_media_library_destroy(row->view.movies);
-        qa_font_library_destroy(row->view.fonts); qa_audio_bank_destroy(row->view.sounds);
-        qa_audio_music_destroy(row->view.music);
-        qa_material_library_destroy(row->view.materials); qa_scene_resources_destroy(row->view.images); qa_vfs_destroy(row->view.mounts);
-        row->view.assets=NULL; row->view.movies=NULL; row->view.fonts=NULL; row->view.sounds=NULL;
-        row->view.music=NULL; row->view.materials=NULL; row->view.images=NULL; row->view.mounts=NULL;
-        row->owns_media=false;
-    }
+    if(!media_close(row,e))return false;
     if(row->owns_services && row->view.reader && !qa_native_q3_wire_reader_destroy(&row->view.reader,e))return false;
     if(row->owns_services && !frontend_client_registry_release(&row->view.registry,e))return false;
     row->view.cvars=NULL;
@@ -961,6 +977,45 @@ static bool row_destroy(frontend_native_q3 *row,qa_error *e)
     frontend_native_q3 **link=&row->frontend->native_q3; while(*link && *link!=row)link=&(*link)->next;
     if(*link)*link=row->next;
     free(row); return true;
+}
+bool frontend_native_q3_video_row_close(frontend_native_q3 *row,qa_error *e)
+{
+    if(!row || !row->video || !frontend_native_q3_current(row) || !row_idle(row) ||
+        (row->view.presentation && !frontend_selected_effects_idle(row->frontend)) ||
+        (row->owns_media && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,e)))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native video close retains an entered actual client or media child");
+    row->constructed=false;
+    if(row->frontend->music_sources && !frontend_music_sources_explicit_retire(row->frontend->music_sources,row,e))return false;
+    if(row->view.presentation && !frontend_selected_effects_retire_parent(row->frontend,row->view.presentation,e))return false;
+    if(!frontend_native_q3_commands_destroy(row->commands,e))return false;
+    row->commands=NULL;
+    if(row->composition.destroy && !row->composition.destroy(row->composition.context,e))return false;
+    row->composition=(frontend_native_q3_composition){0};
+    q3n_loading_destroy(row->view.loading); row->view.loading=NULL;
+    q3n_mission_hud_destroy(row->view.mission); row->view.mission=NULL;
+    if(!q3n_native_video_close(&row->view.core,e) || !qa_native_q3_client_video_reset(row->view.client,e) ||
+        !media_close(row,e))return false;
+    free(row->music_intro); free(row->music_loop); row->music_intro=row->music_loop=NULL;
+    row->music_looping=false; row->view.has_listener=false;
+    return true;
+}
+bool frontend_native_q3_video_row_reopen(frontend_native_q3 *row,qa_error *e)
+{
+    if(!row || !row->video || !frontend_native_q3_current(row) || !row_idle(row))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native video reopen requires its retained actual client");
+    if(row->constructed)return row->view.core && q3n_native_current(row->view.core);
+    if(!frontend_native_q3_video_row_close(row,e))return false;
+    qa_application_native_q3_presentation source; qa_native_q3_wire_publication publication;
+    q3n_native_options options;
+    frontend_native_q3_factory factory={.context=row->frontend,.compose=frontend_native_composition_create};
+    if(!qa_application_native_q3_presentation_read(row->frontend->application,row->view.source_owner,&source,e) ||
+        !qa_native_q3_wire_reader_publication(row->view.reader,&publication,e))return false;
+    row->owns_media=true;
+    if(!make_media(row,e) || !compose_row(row,&factory,e) || !frontend_native_q3_core_options(row,&options,e) ||
+        !q3n_native_create(&options,&row->view.core,e) || !frontend_native_q3_make_children(row,&source,false,e) ||
+        !q3n_native_initialize_video(row->view.core,publication.reached_command_sequence,e))return false;
+    row->constructed=true;
+    return frontend_native_q3_current(row);
 }
 bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_presentation *source,uint32_t seat,
     const frontend_native_q3_factory *factory,frontend_native_q3 **out,qa_error *e)

@@ -10,6 +10,9 @@ bool frontend_shared_settings_begin(qa_frontend *,frontend_config_store *,qa_app
     const qa_launch_snapshot *,const qa_application_startup_source *,frontend_shared_settings **,qa_error *);
 bool frontend_shared_settings_begin_root(qa_frontend *,frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,frontend_shared_settings **,qa_error *);
+bool frontend_shared_settings_begin_client(qa_frontend *,frontend_config_store *,qa_application *,
+    qa_application_client_preparation *,frontend_shared_settings **,qa_error *);
+qa_application_client_preparation *frontend_shared_settings_client(const frontend_shared_settings *);
 bool frontend_shared_settings_refresh(frontend_shared_settings *,
     const qa_application_startup_source *,qa_error *);
 bool frontend_shared_settings_current(const frontend_shared_settings *,const qa_frontend *,
@@ -38,4 +41,5 @@ bool frontend_shared_settings_retirement_ready(const frontend_shared_settings *,
  * is terminal. complete=true requires the shared owner slot to be consumed. */
 bool frontend_shared_settings_engine_shutdown(frontend_shared_settings **,
     const qa_application_engine_shutdown *,bool *complete,qa_error *);
+bool frontend_shared_settings_client_shutdown(frontend_shared_settings **,bool *complete,qa_error *);
 #endif

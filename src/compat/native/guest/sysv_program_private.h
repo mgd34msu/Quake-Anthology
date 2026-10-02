@@ -11,13 +11,19 @@ typedef struct program_file {
     uint64_t offset;
     uint32_t flags;
     size_t references;
-    bool closed, closing;
+    bool seekable, closed, closing;
 } program_file;
 typedef struct program_descriptor {
     int32_t number;
     size_t file;
     bool close_on_exec;
 } program_descriptor;
+typedef struct program_clock {
+    uint64_t seconds;
+    uint32_t nanoseconds;
+    int64_t baseline_seconds;
+    int32_t baseline_nanoseconds;
+} program_clock;
 struct qa_native_sysv_program {
     qa_native_sysv_program_options options;
     qa_native_guest *guest;
@@ -31,11 +37,13 @@ struct qa_native_sysv_program {
     size_t descriptor_count, descriptor_capacity;
     uint64_t stack, returned, mapping_cursor, break_base, current_break;
     qa_native_sysv_program_status status;
-    bool complete, busy, failed, disposing, provisional;
+    program_clock clocks[2];
+    bool clock_active, complete, busy, failed, disposing, provisional;
 };
 bool program_current(qa_native_sysv_program *, qa_error *);
 bool program_syscall(void *, qa_native_guest *, const qa_native_guest_syscall *,
     qa_native_guest_syscall_result *, qa_error *);
 bool program_files_close(qa_native_sysv_program *, qa_error *);
+bool program_clock_read(qa_native_sysv_program *, int32_t, int64_t *, int32_t *, qa_error *);
 
 #endif

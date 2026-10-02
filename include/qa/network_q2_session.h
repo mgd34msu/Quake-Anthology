@@ -25,14 +25,27 @@ typedef struct qa_network_q2_player {
     uint32_t source_slot;
     qa_movement_kind movement;
 } qa_network_q2_player;
+typedef enum qa_q2_download_resource_status {
+    QA_Q2_DOWNLOAD_UNHANDLED,
+    QA_Q2_DOWNLOAD_HELD,
+    QA_Q2_DOWNLOAD_MEMORY,
+    QA_Q2_DOWNLOAD_MISSING
+} qa_q2_download_resource_status;
 typedef struct qa_network_q2_download_source {
     qa_vfs *content;
     const qa_cvars *cvars;
     void *resource_context;
-    /* Successful present loans the actual view and transfers a retained
-     * resource plus its owned opening. Absent leaves both outputs empty. */
+    /* HELD loans the actual view and transfers a retained
+     * resource plus its owned opening. Optional nonempty owned wire bytes
+     * carry a Source-derived artifact; the original resource remains its
+     * immutable provenance. UNHANDLED leaves owned outputs empty and permits
+     * ordinary Source lookup. MEMORY loans the actual Source view and transfers
+     * its owned catalog bytes without a file resource or opening; optional wire
+     * bytes retain a derived artifact. MISSING loans the actual dependency view, leaves
+     * owned outputs empty and refuses that known alias without fallback. */
     bool (*resource)(void *, const char *requested, const qa_vfs **view,
-        qa_resource **retained, qa_vfs_acquisition *owned_opening, bool *present, qa_error *);
+        qa_resource **retained, qa_vfs_acquisition *owned_opening,
+        qa_buffer *source_bytes, qa_buffer *wire_bytes, qa_q2_download_resource_status *, qa_error *);
 } qa_network_q2_download_source;
 typedef struct qa_network_q2_server_hooks {
     void *context;
@@ -154,10 +167,23 @@ bool qa_network_q2_server_command(qa_network_runtime *, qa_net_client_id,
     uint8_t wire_seat, const char *, qa_error *);
 bool qa_network_q2_server_userinfo(qa_network_runtime *, qa_net_client_id,
     const char *, qa_error *);
+/* Loans the actual retained GAME-returned dictionary; no callback or change. */
+bool qa_network_q2_server_userinfo_read(qa_network_runtime *, qa_net_client_id,
+    const char **, qa_error *);
 bool qa_network_q2_server_settings(qa_network_runtime *, qa_net_client_id,
     const qa_q2_server_settings **, qa_error *);
-/* Pure immutable-holder inventory for the enclosing capture lease. All three
- * outputs are absent when no hosted download remains; nothing is reopened. */
+/* Applies the returned upcoming Source policy before the enclosing generic
+ * restart. It preserves channel ownership; restart clears signon/history and
+ * advances servercount exactly once. */
+bool qa_network_q2_server_prepare_restart(qa_network_runtime *, qa_net_client_id,
+    uint32_t source_max_clients, uint64_t source_interval_ns, qa_error *);
+/* Pure loan of the actual outbound codec, including negotiated serverdata
+ * flags. The caller must not mutate it or retain it after connection release. */
+bool qa_network_q2_server_codec(qa_network_runtime *, qa_net_client_id,
+    const qa_q2_codec **, qa_error *);
+/* Pure immutable-holder inventory for the enclosing capture lease. A memory
+ * Source artifact has a real view and absent resource/opening. All outputs are
+ * absent when no hosted download remains; nothing is reopened. */
 bool qa_network_q2_server_download(qa_network_runtime *, qa_net_client_id,
     const qa_vfs **, const qa_resource **, const qa_vfs_acquisition **, qa_error *);
 

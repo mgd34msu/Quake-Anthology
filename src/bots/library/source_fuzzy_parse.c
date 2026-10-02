@@ -52,7 +52,8 @@ static bool next(fuzzy_parser *parser,qa_script_token *token,bool *found,qa_erro
     parser->column=ok && *found?token->location.column:1;
     if(ok) return true;
     if(qa_script_source_failure(parser->source)) {*found=false;return true;}
-    if(error) *error=local;return false;
+    if(error) *error=local;
+    return false;
 }
 static bool any(fuzzy_parser *parser,qa_script_token *token,qa_error *error) {
     bool found;
@@ -195,7 +196,8 @@ static bool parse_switch(fuzzy_parser *parser,qa_script_location location,uint32
         for(size_t index=count;index;--index) if(stack[index-1].free_on_error) {
             qa_error cleanup={0};
             if(!bot_fuzzy_separator_tree_free(parser->heap,stack[index-1].first,&cleanup)) {
-                if(error) *error=cleanup;parser->language_failure=false;break;
+                if(error) *error=cleanup;
+                parser->language_failure=false;break;
             }
         }
     }
@@ -237,7 +239,8 @@ bool bot_fuzzy_parse(qa_bot_library *library,qa_script *source,bot_fuzzy_heap *h
                 if(!ok && parser.language_failure) {
                     qa_error cleanup={0};
                     if(!bot_fuzzy_pointer_free(heap,root,BOT_FUZZY_SEPARATOR,&cleanup)) {
-                        if(error) *error=cleanup;parser.language_failure=false;
+                        if(error) *error=cleanup;
+                        parser.language_failure=false;
                     }
                 }
             }

@@ -4,6 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_unified_bootstrap_domain(const qa_unified_bootstrap *b, bool *server, uint32_t *maximum,
+    qa_net_address *remote, qa_error *e)
+{
+    if (!server || !maximum || !remote || !qa_unified_bootstrap_idle(b) ||
+        !qa_unified_bootstrap_valid(b, true, e))
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Handshake domain requires its genuine idle binding");
+    *server = b->options.server; *maximum = b->options.max_clients; *remote = b->options.remote;
+    return true;
+}
+
 static bool flag(qa_net_reader *r, bool *out)
 {
     uint8_t value = qa_net_read_u8(r);

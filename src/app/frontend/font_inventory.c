@@ -8,6 +8,7 @@
 #include "remote_q3_initial.h"
 #include "network_initial_graph.h"
 #include "remote_q2_restore.h"
+#include "unified_media_inventory.h"
 #include "ui_features_private.h"
 
 typedef struct font_owner {
@@ -55,6 +56,15 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
     size_t q2=frontend_remote_q2_count(frontend);
     if(q2>SIZE_MAX-capacity) return false;
     capacity+=q2;
+    size_t unified_count=0;
+    if(!frontend_unified_media_inventory_count(frontend,&unified_count,error)) return false;
+    for(size_t i=0;i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(frontend,i,&media,error)) return false;
+        size_t banks=media?frontend_unified_media_bank_count(media):0;
+        if(banks>SIZE_MAX-capacity) return false;
+        capacity+=banks;
+    }
     if(capacity>SIZE_MAX/sizeof(font_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote font inventory exceeds address space");
     font_owner *owners=calloc(capacity,sizeof(*owners));
@@ -90,6 +100,15 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
         frontend_remote_q3_initial_view owner;
         ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.fonts;
         if(ok) ok=append(owners,count,graph,owner.fonts,owner.images,owner.mounts,5,0,owner.identity,error);
+    }
+    for(size_t i=0;ok && i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(frontend,i,&media,error);
+        for(size_t j=0;ok && media && j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank; uint64_t key;
+            ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
+                append(owners,count,graph,bank.fonts,bank.images,bank.files,7,key,0,error);
+        }
     }
     if (!ok) {
         free(owners); *count=0;
@@ -170,8 +189,8 @@ static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_
     const font_owner *owners, size_t count)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','F','O'}; uint32_t schema=5; size_t saved_count=count;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_u32(io,&schema) || schema!=5 ||
+    uint8_t magic[4]={'Q','F','F','O'}; uint32_t schema=6; size_t saved_count=count;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_u32(io,&schema) || schema!=6 ||
         !qa_source_save_count(io,&saved_count,SIZE_MAX) || saved_count!=count) return false;
     qa_application_content_graph *graph=qa_application_content_graph_read(frontend->application);
     for (size_t i=0;i<count;++i) {

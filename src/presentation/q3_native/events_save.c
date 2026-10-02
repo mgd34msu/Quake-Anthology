@@ -92,12 +92,13 @@ static bool mark(qa_source_save_io *io, q3n_events *o, q3n_stored_mark *m)
 }
 bool q3ne_codec_fields(qa_source_save_io *io, q3n_events *o)
 {
-    uint8_t magic[4]={'Q','3','E','V'}; uint32_t schema=o->remote_source?3:2,product=(uint32_t)o->options.product;
+    uint8_t magic[4]={'Q','3','E','V'}; uint32_t schema=o->options.compiled_source?4:o->remote_source?3:2,product=(uint32_t)o->options.product;
     bool standalone = o->standalone_effects;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3EV",4) || !qa_source_save_u32(io,&schema) || schema!=(o->remote_source?3u:2u) ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3EV",4) || !qa_source_save_u32(io,&schema) || schema!=(o->options.compiled_source?4u:o->remote_source?3u:2u) ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->options.product ||
        !qa_source_save_bool(io,&standalone) || standalone != o->standalone_effects ||
        !qa_source_save_u32(io,&o->seed) || !qa_source_save_u32(io,&o->smoke_seed) || !vector(io,&o->last_score_position))return false;
+    if (o->options.compiled_source && !q3n_compiled_source_fields(io,o->options.compiled_source)) return false;
     q3n_event_state *g=&o->state;
     if(!finite_value(io,&g->land_change) || !finite_value(io,&g->step_change) ||
        !qa_source_save_i32(io,&g->land_time) || !qa_source_save_i32(io,&g->step_time) ||

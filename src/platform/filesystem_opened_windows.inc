@@ -171,6 +171,21 @@ bool qa_fs_opened_file_size(qa_fs_opened_file *file, uint64_t *out, qa_error *er
     if (size.QuadPart < 0) { qa_error_set(error, QA_ERROR_IO, 0, "Negative native file size"); return false; }
     *out = (uint64_t)size.QuadPart; return true;
 }
+bool qa_fs_opened_file_posix_descriptor_read(qa_fs_opened_file *file,
+    qa_fs_posix_descriptor_status *out, qa_error *error)
+{
+    (void)file; (void)out;
+    opened_native_failure = (qa_fs_native_error){0};
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Windows opened objects do not supply POSIX descriptor status");
+    return false;
+}
+bool qa_fs_opened_file_posix_flags(qa_fs_opened_file *file, bool append, bool nonblocking, qa_error *error)
+{
+    (void)file; (void)append; (void)nonblocking;
+    opened_native_failure = (qa_fs_native_error){0};
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Windows opened objects do not supply POSIX descriptor flags");
+    return false;
+}
 bool qa_fs_opened_file_posix_status_read(qa_fs_opened_file *file, qa_fs_posix_status *out, qa_error *error)
 {
     opened_native_failure = (qa_fs_native_error){0};

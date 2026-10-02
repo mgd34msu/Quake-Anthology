@@ -1,5 +1,6 @@
 #include "remote_q2_private.h"
 #include "qa/archive.h"
+#include "qa/network_q2_materials.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -13,6 +14,11 @@ static bool prefix(const char *value, const char *expected)
 }
 static bool suffix(const char *value, const char *expected)
 { size_t a = strlen(value), b = strlen(expected); return a >= b && prefix(value + a - b, expected); }
+static bool model_image(const char *path)
+{
+    return suffix(path, ".pcx") || suffix(path, ".png") || suffix(path, ".jpg") ||
+        suffix(path, ".jpeg") || suffix(path, ".tga") || suffix(path, ".bmp") || suffix(path, ".gif");
+}
 static bool native_asset(const char *path)
 {
     for (const unsigned char *p = (const unsigned char *)path; *p; ++p)
@@ -20,7 +26,10 @@ static bool native_asset(const char *path)
             (*p >= '0' && *p <= '9') || strchr("_+./-", *p))) return false;
     return (prefix(path, "maps/") && suffix(path, ".bsp")) ||
         ((prefix(path, "models/") || prefix(path, "players/")) &&
-            (suffix(path, ".md2") || suffix(path, ".sp2") || suffix(path, ".pcx") || suffix(path, ".wav"))) ||
+            (suffix(path, ".mdl") || suffix(path, ".md2") || suffix(path, ".md3") ||
+                suffix(path, ".sp2") || model_image(path) || suffix(path, ".wav") ||
+                suffix(path, ".shader") || suffix(path, ".lmp") || suffix(path, ".wal") ||
+                suffix(path, ".roq") || suffix(path, ".cin") || suffix(path, ".ogv"))) ||
         (prefix(path, "sound/") && suffix(path, ".wav")) ||
         (prefix(path, "pics/") && suffix(path, ".pcx")) ||
         (prefix(path, "env/") && (suffix(path, ".tga") || suffix(path, ".pcx"))) ||
@@ -33,7 +42,10 @@ bool remote_q2_download_path_valid(const char *path)
     bool valid = normalized && !strcmp(normalized, path); free(normalized); return valid;
 }
 qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *row, const char *path)
-{ return row && remote_q2_download_path_valid(path) ?
+{ return row && remote_q2_download_path_valid(path) &&
+    (row->options.material_scripts || !(suffix(path, ".shader") || suffix(path, ".lmp") ||
+        suffix(path, ".roq") || suffix(path, ".cin") || suffix(path, ".ogv") ||
+        ((prefix(path, "models/") || prefix(path, "players/")) && suffix(path, ".wal")))) ?
     (prefix(path, "players/") ? row->content.base_write_root : row->content.selected_write_root) : NULL; }
 
 static bool attempted(const frontend_remote_q2 *row, const char *path)
@@ -82,6 +94,9 @@ static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa
     if (!normalized) return false;
     if (!strchr(normalized, '/') || normalized[0] == '.' || !native_asset(normalized)) {
         free(normalized); return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 download path cannot be represented by the native command");
+    }
+    if (!remote_q2_download_destination(row, normalized)) {
+        free(normalized); return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 material download lacks its actual negotiated capability and write root");
     }
     qa_resource *present = NULL; qa_error issue = {0};
     if (qa_vfs_acquire(row->content.mounts, normalized, &present, NULL, &issue)) {
@@ -132,6 +147,71 @@ static bool path_join(frontend_remote_q2 *row, const char *prefix, const char *n
     snprintf(path, a + b + c + 1, "%s%s%s", prefix, name, suffix);
     bool ok = request(row, path, waiting, error); free(path); return ok;
 }
+typedef struct material_download {
+    frontend_remote_q2 *row;
+    qa_scene_family family;
+    bool waiting;
+} material_download;
+static bool material_dependency(void *context, const qa_q2_material_dependency *dependency, qa_error *error)
+{
+    material_download *state = context;
+    if (state->waiting) return true;
+    if (dependency->kind == QA_Q2_MATERIAL_IMAGE &&
+        (!strcmp(dependency->path, "$whiteimage") || !strcmp(dependency->path, "$lightmap"))) return true;
+    if (dependency->kind != QA_Q2_MATERIAL_SKY)
+        return request(state->row, dependency->path, &state->waiting, error);
+    if (!strcmp(dependency->path, "-")) return true;
+    static const char *faces[] = {"rt", "bk", "lf", "ft", "up", "dn"};
+    static const char *q1[] = {".tga", ".lmp", ".jpg", ".png", ".jpeg", ".pcx", ".bmp", ".gif"};
+    static const char *q2[] = {".tga", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".pcx"};
+    static const char *q3[] = {".tga", ".jpg", ".png", ".jpeg", ".pcx", ".bmp", ".gif"};
+    const char *const *extensions = state->family == QA_SCENE_Q1 ? q1 : state->family == QA_SCENE_Q2 ? q2 : q3;
+    size_t count = state->family == QA_SCENE_Q1 ? 8 : 7;
+    for (size_t i = 0; i < 6 && !state->waiting; ++i) {
+        bool present = false;
+        for (size_t j = 0; j < count && !present; ++j) {
+            size_t length = strlen(dependency->path) + strlen(extensions[j]) + 4;
+            char *path = malloc(length);
+            if (!path) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual material sky dependency");
+            snprintf(path, length, "%s_%s%s", dependency->path, faces[i], extensions[j]);
+            bool ok = installed(state->row, path, &present, error);
+            free(path); if (!ok) return false;
+        }
+        if (present) continue;
+        for (size_t j = 0; j < count && !state->waiting; ++j) {
+            size_t length = strlen(dependency->path) + strlen(extensions[j]) + 4;
+            char *path = malloc(length);
+            if (!path) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining material sky transfer path");
+            snprintf(path, length, "%s_%s%s", dependency->path, faces[i], extensions[j]);
+            bool ok = request(state->row, path, &state->waiting, error);
+            free(path); if (!ok) return false;
+        }
+    }
+    return true;
+}
+static bool model_materials(frontend_remote_q2 *row, const qa_model *model, bool *waiting, qa_error *error)
+{
+    if (model->format != QA_MODEL_MD3) return true;
+    for (size_t i = 0; i < model->mesh_count && !*waiting; ++i)
+        for (size_t j = 0; j < model->meshes[i].shader_count && !*waiting; ++j) {
+            const char *name = model->meshes[i].shaders[j].name;
+            if (!*name) continue;
+            if (!request(row, name, waiting, error) || *waiting) return *waiting;
+            if (!suffix(name, ".shader")) continue;
+            if (!row->options.material_scripts)
+                return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 MD3 shader requires its negotiated full material capability");
+            qa_resource *script = NULL;
+            if (!qa_vfs_acquire(row->content.mounts, name, &script, NULL, error)) return false;
+            qa_q2_material_scope scope;
+            material_download state = {.row = row};
+            bool ok = qa_q2_material_script_scope(qa_resource_bytes(script), &scope, error);
+            if (ok) { state.family = scope.family; ok = qa_q2_material_script_dependencies(
+                qa_resource_bytes(script), material_dependency, &state, error); }
+            qa_resource_release(script); *waiting = state.waiting;
+            if (!ok) return false;
+        }
+    return true;
+}
 bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *result, qa_error *error)
 {
     *result = QA_Q2_PREPARATION_RECEIVING;
@@ -156,6 +236,7 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
             return false;
         }
         qa_model model = {0}; bool ok = qa_model_load(qa_resource_bytes(resource), &model, error);
+        if (ok) ok = model_materials(row, &model, &waiting, error);
         if (ok) for (size_t j = 0; j < model.skin_count && !waiting; ++j)
             if (*model.skins[j].name && !request(row, model.skins[j].name, &waiting, error)) { ok = false; break; }
         if (ok) for (size_t j = 0; j < model.sprite_count && !waiting; ++j)

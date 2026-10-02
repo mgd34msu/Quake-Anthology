@@ -50,6 +50,7 @@ typedef enum application_provider_kind {
 } application_provider_kind;
 
 typedef struct application_provider {
+    struct application_bots_npc *bots_npc;
     struct application_unified_q3_events *unified_q3_events;
     struct application_native_client_role *native_client_roles;
     struct application_native_q1_console *native_q1_console;
@@ -80,6 +81,7 @@ typedef struct application_provider {
     bool component_attached;
     bool policy_attached;
     bool close_pending;
+    size_t hosted_video_leases;
     bool map_bound;
     struct application_provider *next_close;
     struct application_provider *previous_live, *next_live;
@@ -220,6 +222,7 @@ typedef struct application_publication {
 } application_publication;
 
 struct qa_application {
+    struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
     struct application_startup_flow *startup_flow;
     application_publication *startup_publication;

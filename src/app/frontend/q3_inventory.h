@@ -25,6 +25,9 @@ bool frontend_q3_checkpoint(qa_frontend *, const frontend_q3_refs *, qa_buffer *
 /* Retain the actual captured owner/cache roster for role-owned private codecs.
  * This borrows the same frontend/content/dictionary leases as checkpoint. */
 bool frontend_q3_inventory_capture(qa_frontend *,const frontend_q3_refs *,frontend_q3_inventory **,qa_error *);
+/* Borrow exact empty restored owners for renderer registry references before
+ * shared audio and Q3 private payload import. No child state is decoded. */
+bool frontend_q3_inventory_restore_roster(qa_frontend *,const frontend_q3_refs *,frontend_q3_inventory **,qa_error *);
 /* Call before entering a role codec. The returned cache resolver context is
  * inventory-owned; SystemCIN resolves the actual wrapper's retained role lease. */
 bool frontend_q3_module_movie_refs(frontend_q3_inventory *,const frontend_remote_q3_module_topology *,
@@ -46,4 +49,7 @@ bool frontend_q3_prepare(qa_frontend *, const frontend_q3_refs *, qa_bytes,
  * qualified codecs; no registration or procedural renderer construction runs. */
 bool frontend_q3_restore(frontend_q3_inventory *, double wall_milliseconds, qa_error *);
 void frontend_q3_inventory_destroy(frontend_q3_inventory *);
+/* Physical unique registry ordinals belong to the retained QFQ3 roster. */
+bool frontend_q3_assets_encode(void *,const qa_q3_presentation_assets *,uint64_t *,qa_error *);
+bool frontend_q3_assets_decode(void *,uint64_t,qa_q3_presentation_assets **,qa_error *);
 #endif

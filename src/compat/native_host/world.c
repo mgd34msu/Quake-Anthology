@@ -211,6 +211,11 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
             return true;
         }
     }
+    if(host->world.reserved_source_slot) {
+        bool reserved=false;
+        if(!host->world.reserved_source_slot(host->world.binding_context,slot,&reserved,error)) return false;
+        if(reserved) { *out=(qa_actor_id){0}; return true; }
+    }
     qa_actor_id actor;
     if (!qa_session_allocate(host->world.session, host->world.owner, host->world.definition,
                              true, slot, &actor, error))

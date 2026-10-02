@@ -48,6 +48,10 @@ bool guest_host_child_source_domain(const guest_host_child *, guest_profile_cpu_
 /* Actual child PID/TID observed in its authenticated READY, distinct from any
  * source kernel's retained logical task IDs across a cold replacement. */
 bool guest_host_child_process_read(const guest_host_child *, uint64_t *, uint64_t *, qa_error *);
+/* Observe the actual authenticated child while stopped, including an entered
+ * import/syscall callback. IDs 2/3 select its process/thread CPU clocks. The
+ * source kernel owns elapsed accounting across replacement children. */
+bool guest_host_child_cpu_clock_read(guest_host_child *, int32_t, int64_t *, int32_t *, qa_error *);
 /* Called only by actual fresh source construction before its first invocation.
  * A restored source supplies its retained named CPU instead. */
 bool guest_host_child_source_initialize(guest_host_child *, qa_error *);
@@ -72,6 +76,11 @@ bool guest_host_child_write(guest_host_child *, uint64_t, qa_bytes, qa_error *);
  * physical child. The actual ABI owner restores its enclosing CPU on success. */
 bool guest_host_child_run(guest_host_child *, uint64_t, uint64_t,
     guest_host_import_fn, void *, qa_error *);
+/* entered is set only by an authenticated, admitted source stop (including
+ * its fault or actual return), before any import callback. A later failure
+ * keeps it true; construction/preflight or rejected HOST_RUN keeps it false. */
+bool guest_host_child_run_receipt(guest_host_child *, uint64_t, uint64_t,
+    guest_host_import_fn, void *, bool *entered, qa_error *);
 /* Explicit PROGRAM invocation capability. A real two-byte SYSCALL is stopped
  * before execution. On successful service return commit RAX, RCX, R11 and the
  * observed next PC; failure retains entry state. stop=true ends the entered

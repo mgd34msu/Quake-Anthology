@@ -670,6 +670,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *, q1_actor *, bool *handled, qa_error 
 bool q1_map_addon_visual_use(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_visual_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_frame(qa_q1_game *, qa_error *);
+bool q1_map_level_frame(qa_q1_game *, const qa_source_frame *, qa_error *);
 bool q1_map_frame_tick_add(qa_q1_game *, qa_actor_id, qa_error *);
 void q1_map_frame_tick_remove(qa_q1_game *, qa_actor_id);
 static inline bool q1_map_is_addon_brush(q1_map_kind kind) {

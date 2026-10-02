@@ -119,6 +119,12 @@ typedef struct qa_native_host_engine_services {
     void *owner_context;
     bool (*owner_idle)(void *);
     bool (*entity_number)(void *, qa_actor_id, uint32_t *, qa_error *);
+    /* Exact borrowed source-import transfer. Only declaration-backed owners
+     * install this pair; before commits reached source writes and after reads
+     * the canonical effects of the actual import. */
+    bool (*source_before)(void *, qa_error *);
+    bool (*source_after)(void *, qa_error *);
+    bool (*source_import)(void *,const qa_native_import_call *,qa_native_value *,bool *handled,qa_error *);
 } qa_native_host_engine_services;
 
 typedef struct qa_native_host_instance_options {
@@ -153,6 +159,7 @@ typedef struct qa_native_host_world_services {
                               qa_native_address *, bool *present, qa_error *);
     bool (*bind_actor)(void *, qa_native_host *, uint32_t, qa_actor_id, qa_error *);
     void (*release_actor)(void *, qa_native_host *, uint32_t, qa_actor_id);
+    bool (*reserved_source_slot)(void *, uint32_t, bool *, qa_error *);
 } qa_native_host_world_services;
 
 typedef struct qa_native_host_movement_services {

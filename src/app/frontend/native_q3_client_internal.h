@@ -17,7 +17,10 @@ struct frontend_native_q3 {
     bool music_looping, service_released, owns_media, owns_services, restoring;
     bool frame_active, constructed;
     size_t callbacks;
+    struct frontend_native_q3_video *video;
 };
+bool frontend_native_q3_video_row_close(frontend_native_q3 *,qa_error *);
+bool frontend_native_q3_video_row_reopen(frontend_native_q3 *,qa_error *);
 bool frontend_native_q3_current(const frontend_native_q3 *);
 bool frontend_native_q3_cut(frontend_native_q3 *,const q3n_frame *,qa_error *);
 bool frontend_native_q3_core_options(frontend_native_q3 *,q3n_native_options *,qa_error *);

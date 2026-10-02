@@ -39,7 +39,7 @@ qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_con
     const qa_launch_snapshot *,unsigned physical_ordinal);
 /* The actual new remote CGAME row has no carried same-profile input owner. */
 bool frontend_remote_configs_fresh_input(const frontend_remote_configs *,qa_application *,const qa_launch_snapshot *);
-bool frontend_remote_config_acquire(frontend_remote_config *,frontend_client_registry **,qa_error *);
+bool frontend_remote_config_acquire(const frontend_remote_config *,frontend_client_registry **,qa_error *);
 bool frontend_remote_config_reset_bindings(frontend_remote_config *,int32_t controller,qa_error *);
 bool frontend_remote_config_prepare(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,void **,qa_error *);

@@ -428,7 +428,7 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         body.origin.z += 1;
         body.velocity =
             qa_vec_add(qa_vec_scale(g->forward, jump ? 300 : -200), qa_v3(0, 0, jump ? 300 : 350));
-        entity->physics.flags &= ~QA_PHYSICS_ONGROUND;
+        entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         if (jump)
             m->source.gremlin.touch = 1;
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&

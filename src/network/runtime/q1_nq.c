@@ -4,6 +4,7 @@
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_peer_save.h"
 #include "qa/network_save.h"
+#include "q1_retirement.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,7 @@ typedef struct nq_server {
     uint64_t input_sequence;
     uint8_t stage;
     bool started, retiring, signon_active;
+    q1_retirement retirement;
 } nq_server;
 static bool queue(void *context, qa_bytes bytes, qa_error *error)
 {
@@ -63,19 +65,34 @@ static bool signon(nq_server *peer, uint8_t stage, qa_error *error)
 }
 static bool retire(nq_server *peer, const char *reason, bool notify, qa_error *error)
 {
-    if (peer->retiring) return true;
-    peer->retiring = true;
-    qa_error send_error = {0}; bool sent = true;
-    if (notify) {
-        uint8_t disconnect = QA_NQ_DISCONNECT; qa_bytes packet;
-        sent = qa_nq_channel_unreliable(peer->native.channel.nq, (qa_bytes){&disconnect, 1}, &packet, &send_error) &&
-            qa_q1_peer_send(&peer->native, packet, &send_error);
+    q1_retirement *r = &peer->retirement;
+    if (r->busy) return qa_network_fail(error, "Recursive NetQuake source retirement");
+    if (!peer->retiring) {
+        if (!q1_retirement_start(r, reason, notify, 9, error)) return false;
+        peer->retiring = true;
     }
+    if (r->marked) return true;
+    r->busy = true;
     bool previous = peer->runtime->callback; peer->runtime->callback = true;
-    bool dropped = peer->hooks.drop(peer->hooks.context, peer->id, reason, error);
+    bool ok = true;
+    if (!r->sent) {
+        if (!r->packet.size) {
+            uint8_t disconnect = QA_NQ_DISCONNECT; qa_bytes packet;
+            ok = qa_nq_channel_unreliable(peer->native.channel.nq, (qa_bytes){&disconnect, 1}, &packet, error);
+            if (ok) {
+                memcpy(r->packet.data, packet.data, packet.size); r->packet.size = packet.size;
+                r->packet_disconnect = true;
+            }
+        }
+        if (ok) ok = qa_q1_peer_send(&peer->native, (qa_bytes){r->packet.data, r->packet.size}, error);
+        if (ok) r->sent = true;
+    }
+    if (ok) {
+        ok = peer->hooks.drop(peer->hooks.context, peer->id, r->reason, error);
+        if (ok) r->marked = true;
+    }
     peer->runtime->callback = previous;
-    if (dropped && !sent && error) *error = send_error;
-    return dropped && sent;
+    r->busy = false; return ok;
 }
 static bool string_command(nq_server *peer, const char *text, qa_error *error)
 {
@@ -133,7 +150,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     uint64_t now, qa_error *error)
 {
     nq_server *peer = context; (void)runtime; (void)id;
-    if (peer->retiring) return true;
+    if (peer->retiring) return retire(peer, peer->retirement.reason, peer->retirement.notify, error);
     if (peer->first && qa_nq_channel_ready(peer->native.channel.nq)) {
         nq_pending *pending = peer->first;
         if (!qa_nq_channel_queue(peer->native.channel.nq, (qa_bytes){pending->bytes.data, pending->bytes.size}, error)) return false;
@@ -159,7 +176,8 @@ static bool rebind(void *context, const qa_net_address *address, qa_error *error
 static void close_peer(void *context)
 {
     nq_server *peer = context; if (!peer) return;
-    queue_clear(peer); qa_nq_channel_destroy(peer->native.channel.nq); free(peer);
+    queue_clear(peer); q1_retirement_clear(&peer->retirement);
+    qa_nq_channel_destroy(peer->native.channel.nq); free(peer);
 }
 static const qa_network_peer_ops ops = {.receive=receive,.flush=flush,.command=command,
     .restart=restart,.rebind=rebind,.close=close_peer};
@@ -225,6 +243,12 @@ bool qa_network_nq_server_state_read(qa_network_runtime *runtime, qa_net_client_
 
 bool qa_network_nq_peer(const qa_network_peer *peer)
 { return peer && peer->ops.receive == receive; }
+bool qa_network_nq_retirement_pending(const qa_network_peer *peer)
+{
+    if (!qa_network_nq_peer(peer)) return false;
+    const nq_server *source = peer->state;
+    return source->retiring && !source->retirement.marked;
+}
 const qa_q1_peer *qa_network_nq_server_view(qa_network_runtime *runtime, qa_net_client_id id)
 { nq_server *peer = get(runtime, id, NULL); return peer ? &peer->native : NULL; }
 bool qa_network_nq_server_policy_read(qa_network_runtime *runtime, qa_net_client_id id,
@@ -240,6 +264,12 @@ void qa_network_nq_transport_rebind(qa_network_peer *peer, qa_net_transport *tra
 }
 static bool continuation_valid(const nq_server *peer, const qa_net_client *client, qa_error *error)
 {
+    if (!q1_retirement_valid(&peer->retirement, peer->retiring, 9, error)) return false;
+    if (peer->retirement.packet.size && (peer->retirement.packet.size != 9 ||
+        !peer->retirement.packet_disconnect || peer->retirement.packet.data[8] != QA_NQ_DISCONNECT ||
+        peer->retirement.packet.data[0] != 0 || peer->retirement.packet.data[1] != 16 ||
+        peer->retirement.packet.data[2] != 0 || peer->retirement.packet.data[3] != 9))
+        return qa_network_fail(error, "Invalid retained NetQuake disconnect packet");
     if (!client || client->protocol.kind != QA_NET_NQ15 || client->protocol.revision || client->protocol.flags ||
         client->seat_count != 1 || peer->signon_active || peer->stage > 4 ||
         peer->started != (peer->stage != 0) ||
@@ -265,6 +295,7 @@ bool qa_network_nq_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
     const qa_net_client *client = qa_net_connections_get(peer->runtime->connections, peer->id);
     if (!continuation_valid(peer, client, error)) return false;
     size_t count = 0, queued = 0, extent = 80; const nq_pending *last = NULL;
+    if (!q1_retirement_extent(&peer->retirement, &extent, error)) return false;
     for (const nq_pending *pending = peer->first; pending; pending = pending->next) {
         if (!pending->bytes.size || !pending->bytes.data || pending->bytes.size > peer->policy.message_bytes ||
             pending->bytes.size > peer->policy.queued_bytes - queued || count >= peer->queued_messages ||
@@ -284,11 +315,12 @@ bool qa_network_nq_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
         qa_buffer_free(&native); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining NetQuake runtime continuation"); return false;
     }
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, extent + native.size, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 2) &&
         qa_net_write_u64(&writer, peer->policy.message_bytes) && qa_net_write_u64(&writer, peer->policy.fragment_bytes) &&
         qa_net_write_u64(&writer, peer->policy.queued_bytes) && qa_net_write_u64(&writer, peer->input_sequence) &&
         qa_net_write_u8(&writer, peer->stage) && qa_net_write_u8(&writer, peer->started) && qa_net_write_u8(&writer, peer->retiring) &&
-        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, count);
+        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, count) &&
+        q1_retirement_write(&peer->retirement, &writer);
     for (const nq_pending *pending = peer->first; ok && pending; pending = pending->next)
         ok = qa_net_write_u64(&writer, pending->bytes.size) &&
             qa_net_write_data(&writer, pending->bytes.data, pending->bytes.size);
@@ -303,7 +335,7 @@ bool qa_network_nq_restore_peer(qa_network_runtime *runtime, const qa_net_client
     if (!runtime || !client || !refs || !refs->source_nq || !owner || !bytes.data)
         return qa_network_fail(error, "NetQuake restore requires its actual candidate source bindings");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 1)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 2)
         return qa_net_reader_fail(&reader, "Invalid NetQuake runtime continuation schema");
     uint64_t message = qa_net_read_u64(&reader), fragment = qa_net_read_u64(&reader), maximum = qa_net_read_u64(&reader);
     nq_server *peer = calloc(1, sizeof(*peer));
@@ -317,7 +349,8 @@ bool qa_network_nq_restore_peer(qa_network_runtime *runtime, const qa_net_client
         maximum <= SIZE_MAX && queued <= maximum && count <= qa_net_reader_remaining(&reader) / 9;
     if (ok) {
         peer->policy = (qa_network_nq_server_policy){(size_t)message, (size_t)fragment, (size_t)maximum};
-        ok = continuation_valid(peer, client, error);
+        ok = q1_retirement_read(&peer->retirement, &reader, peer->retiring, 9, error) &&
+            continuation_valid(peer, client, error);
     }
     for (uint64_t i = 0; ok && i < count; ++i) {
         uint64_t length = qa_net_read_u64(&reader); qa_bytes payload;

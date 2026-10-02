@@ -10,6 +10,12 @@ typedef struct q3n_mission_hud_options {
     qa_native_q3_wire_reader *reader;
     qa_native_q3_remote_client_service *remote_client;
     q3n_remote_source *remote_source;
+    q3n_compiled_source *compiled_source;
+    qa_cvars *compiled_cvars;
+    qa_command_context compiled_context;
+    bool (*compiled_current)(void *, const q3n_frame *, qa_cvars *, const qa_command_context *);
+    bool (*compiled_cvar_read)(void *, const char *, qa_native_q3_client_cvar *, qa_error *);
+    bool (*compiled_console)(void *, const q3n_frame *, const char *, qa_error *);
     qa_application_q3_client_context recipient;
     qa_vfs *content;
     qa_q3_presentation_assets *assets;
@@ -25,6 +31,7 @@ bool q3n_mission_hud_create(const q3n_mission_hud_options *, q3n_mission_hud **,
 bool q3n_mission_hud_create_restored(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
 /* Empty received-CLIENT continuation; genuine Team CG_Init stages follow. */
 bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
+bool q3n_mission_hud_create_compiled(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
 void q3n_mission_hud_destroy(q3n_mission_hud *);
 bool q3n_mission_hud_idle(const q3n_mission_hud *);
 bool q3n_mission_hud_bind(q3n_mission_hud *, q3n_hud *, qa_error *);

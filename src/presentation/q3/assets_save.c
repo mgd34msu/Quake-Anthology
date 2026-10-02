@@ -7,6 +7,7 @@
 #include "qa/hash.h"
 #include "qa/binary.h"
 #include "qa/vfs_view_save.h"
+#include "qa/q3_assets_custody.h"
 
 static bool observed(const qa_q3_presentation_assets *a, qa_error *error)
 {
@@ -37,6 +38,7 @@ bool qa_q3_assets_model_holder(const qa_q3_presentation_assets *a, size_t ordina
     const q3p_model *m = a->models[ordinal]; *out = (qa_q3_asset_model_holder){0};
     if (!m) return true;
     out->present = true; out->has_lods = m->has_lods; out->owns_world = m->owns_world;
+    out->shared_parent = q3p_model_shared(a, m);
     out->provider = m->provider; out->resource = m->resource; out->world = m->world;
     out->inline_model = m->inline_model; out->lods = m->has_lods ? &m->lods : NULL;
     for (unsigned i = 0; i < 3; ++i) {
@@ -56,7 +58,8 @@ bool qa_q3_assets_skin_holder(const qa_q3_presentation_assets *a, size_t ordinal
     if (!out || !observed(a, error) || ordinal >= a->skin_count || !a->skins[ordinal])
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 skin holder ordinal is absent");
     const q3p_skin *skin = a->skins[ordinal];
-    *out = (qa_q3_asset_skin_holder){skin->provider, skin->resource, &skin->map}; return true;
+    *out = (qa_q3_asset_skin_holder){skin->provider, skin->resource, &skin->map,
+        q3p_skin_shared(a, skin)}; return true;
 }
 bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
     qa_q3_presentation_asset_options *out, qa_scene_world **world,
@@ -66,6 +69,18 @@ bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
     *out = a->options; *world = a->world; *geometry = a->geometry; return true;
 }
 
+bool qa_q3_assets_prepare_restored_map(qa_q3_presentation_assets *a,
+    qa_scene_world *world, qa_collision_geometry *geometry, qa_error *error)
+{
+    if (!a || !a->users || a->busy || a->codec_busy || a->world || a->geometry ||
+        a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
+        a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity ||
+        a->sound_count || a->sound_capacity || (!world != !geometry) ||
+        (world && !qa_scene_world_observation_ready(world)))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 cold map binding requires an actual empty registry");
+    if (!qa_q3_assets_map_hold(a, world, geometry, error)) return false;
+    a->world = world; a->geometry = geometry; return true;
+}
 static bool same_bytes(qa_bytes a, qa_bytes b)
 { return a.size == b.size && (!a.size || (a.data && b.data && !memcmp(a.data, b.data, a.size))); }
 static bool resource_owned(const qa_q3_presentation_provider *provider, const qa_resource *resource)
@@ -74,11 +89,12 @@ static bool resource_owned(const qa_q3_presentation_provider *provider, const qa
         qa_resource_id(resource)) == resource;
 }
 static bool reading(const qa_source_save_io *io) { return io->direction == QA_SOURCE_SAVE_READ; }
-static bool signature(qa_source_save_io *io)
+static bool signature(qa_source_save_io *io, uint32_t *schema)
 {
-    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 3;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "Q3AS", 4) &&
-        qa_source_save_u32(io, &version) && version == 3;
+    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 5;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3AS", 4) ||
+        !qa_source_save_u32(io, &version) || version < 3 || version > 5) return false;
+    *schema = version; return true;
 }
 static bool refs_ready(const qa_q3_asset_owner_refs *r)
 {
@@ -370,10 +386,14 @@ static bool model_fields(qa_source_save_io *io, q3p_model *m,
     }
     return true;
 }
-static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r)
+static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r, uint32_t schema)
 {
     size_t count = skin->map.count, capacity = skin->map.capacity;
-    if (!provider_fields(io, &skin->provider, r) || !resource_fields(io, &skin->resource, r) || !skin->resource ||
+    if (schema >= 4) {
+        if (!qa_source_save_bool(io, &skin->source_registration)) return false;
+    } else if (reading(io)) skin->source_registration = false;
+    if (!provider_fields(io, &skin->provider, r) || !resource_fields(io, &skin->resource, r) ||
+        (!skin->resource && !skin->source_registration) ||
         !resource_owned(&skin->provider, skin->resource) ||
         !qa_source_save_count(io, &count, reading(io) ? io->input.size / 68 : SIZE_MAX) ||
         !qa_source_save_count(io, &capacity, reading(io) ? io->input.size / 64 : SIZE_MAX) ||
@@ -399,24 +419,48 @@ static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset
             }
         }
     }
+    if (!skin->resource && count && (count != 1 || skin->map.mappings[0].surface[0])) return false;
+    if (skin->source_registration && count) {
+        if (reading(io)) {
+            skin->materials = calloc(count, sizeof(*skin->materials));
+            if (!skin->materials) return q3p_fail(io->error, QA_ERROR_MEMORY, "Restoring Source skin shader receipts");
+        }
+        if (!skin->materials) return false;
+        for (size_t i = 0; i < count; ++i) {
+            uint64_t id = 0;
+            if ((!reading(io) && (!skin->materials[i] ||
+                !r->material_encode(r->context, skin->materials[i], &id, io->error))) ||
+                !qa_source_save_u64(io, &id) ||
+                (reading(io) && (!r->material_decode(r->context, id, &skin->materials[i], io->error) ||
+                    !skin->materials[i])) || skin->materials[i]->library != skin->provider.materials) return false;
+        }
+    }
     return true;
 }
-static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
+static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
 {
     if (!allocation_fields(io, (void **)&a->models, &a->model_count, &a->model_capacity, sizeof(*a->models)) ||
         !allocation_fields(io, (void **)&a->skins, &a->skin_count, &a->skin_capacity, sizeof(*a->skins)) ||
         !allocation_fields(io, (void **)&a->shaders, &a->shader_count, &a->shader_capacity, sizeof(*a->shaders)) ||
         !allocation_fields(io, (void **)&a->sounds, &a->sound_count, &a->sound_capacity, sizeof(*a->sounds))) return false;
+    if (qa_material_library_has_source_profile(a->options.provider.materials) &&
+        (a->model_count > 1023 || a->skin_count > 1023)) return false;
     for (size_t i = 0; i < a->model_count; ++i) {
         bool present = a->models[i] != NULL;
         if (!qa_source_save_bool(io, &present)) return false;
         if (!present) continue;
-        if (reading(io)) {
+        bool shared = !reading(io) && q3p_model_shared(a, a->models[i]);
+        if (schema >= 5 && !qa_source_save_bool(io, &shared)) return false;
+        if (shared) {
+            if (!a->parent || i >= a->parent->model_count || !a->parent->models[i] ||
+                (!reading(io) && a->models[i] != a->parent->models[i])) return false;
+            if (reading(io)) a->models[i] = a->parent->models[i];
+        } else if (reading(io)) {
             a->models[i] = calloc(1, sizeof(*a->models[i]));
             if (!a->models[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 model holder");
             a->models[i]->borrowed_models = a->models[i]->borrowed_scenes = a->models[i]->borrowed_world = true;
         }
-        if (!model_fields(io, a->models[i], a, r)) return false;
+        if (!shared && !model_fields(io, a->models[i], a, r)) return false;
         for (size_t j = 0; j < i; ++j) if (a->models[j]) {
             q3p_model *prior = a->models[j], *current = a->models[i];
             if (current->owns_world && prior->owns_world && current->world == prior->world) return false;
@@ -425,11 +469,18 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
         }
     }
     for (size_t i = 0; i < a->skin_count; ++i) {
-        if (reading(io)) {
+        bool shared = !reading(io) && q3p_skin_shared(a, a->skins[i]);
+        if (schema >= 5 && !qa_source_save_bool(io, &shared)) return false;
+        if (shared) {
+            if (!a->parent || i >= a->parent->skin_count || !a->parent->skins[i] ||
+                (!reading(io) && a->skins[i] != a->parent->skins[i])) return false;
+            if (reading(io)) a->skins[i] = a->parent->skins[i];
+        } else if (reading(io)) {
             a->skins[i] = calloc(1, sizeof(*a->skins[i]));
             if (!a->skins[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 skin holder");
         }
-        if (!a->skins[i] || !skin_fields(io, a->skins[i], r)) return false;
+        if (!a->skins[i] || (!shared && !skin_fields(io, a->skins[i], r, schema)) ||
+            (a->skins[i]->source_registration && !qa_material_library_has_source_profile(a->options.provider.materials))) return false;
     }
     for (size_t i = 0; i < a->shader_count; ++i) {
         uint64_t id = 0;
@@ -494,11 +545,34 @@ static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
         seen += count;
     }
     if (seen != a->name_count) return false;
+    if (qa_material_library_has_source_profile(a->options.provider.materials)) {
+        for (size_t bucket = 0; bucket < a->name_capacity; ++bucket)
+            for (const q3p_name *entry = a->names[bucket]; entry; entry = entry->next) {
+                if ((entry->kind == Q3P_MODEL || entry->kind == Q3P_SKIN) &&
+                    (!*entry->name || strlen(entry->name) >= 64)) return false;
+                if (entry->kind != Q3P_SKIN) continue;
+                for (size_t prior_bucket = 0; prior_bucket <= bucket; ++prior_bucket)
+                    for (const q3p_name *prior = a->names[prior_bucket]; prior; prior = prior->next) {
+                        if (prior == entry) break;
+                        if (prior->kind != Q3P_SKIN) continue;
+                        size_t i = 0;
+                        while (entry->name[i] && prior->name[i]) {
+                            unsigned char x = (unsigned char)entry->name[i], y = (unsigned char)prior->name[i];
+                            if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + ('a' - 'A'));
+                            if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + ('a' - 'A'));
+                            if (x != y) break;
+                            ++i;
+                        }
+                        if (!entry->name[i] && !prior->name[i]) return false;
+                    }
+            }
+    }
     for (q3p_resource_kind kind = Q3P_MODEL; kind <= Q3P_SKIN; ++kind) {
         size_t count = kind == Q3P_MODEL ? a->model_count : kind == Q3P_SKIN ? a->skin_count :
             kind == Q3P_SHADER ? a->shader_count : a->sound_count;
         for (size_t i = 0; i < count; ++i) {
             if (kind == Q3P_MODEL && !a->models[i]) continue;
+            if (kind == Q3P_SKIN && a->skins[i]->source_registration && !a->skins[i]->map.count) continue;
             bool found = false;
             for (size_t bucket = 0; bucket < a->name_capacity && !found; ++bucket)
                 for (const q3p_name *entry = a->names[bucket]; entry; entry = entry->next)
@@ -512,10 +586,36 @@ static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
     }
     return true;
 }
+static bool parent_fields(qa_source_save_io *io, qa_q3_presentation_assets *a,
+    const qa_q3_asset_owner_refs *r, uint32_t schema)
+{
+    if (schema < 5) return !a->parent && !a->retired;
+    uint64_t key = 0;
+    if ((!reading(io) && a->parent && (!r->registry_encode ||
+        !r->registry_encode(r->context, a->parent, &key, io->error) || !key)) ||
+        !qa_source_save_u64(io, &key) || !qa_source_save_bool(io, &a->retired)) return false;
+    qa_q3_presentation_assets *parent = a->parent;
+    if (reading(io) && key && (!r->registry_decode ||
+        !r->registry_decode(r->context, key, &parent, io->error))) return false;
+    if ((key != 0) != (parent != NULL)) return false;
+    if (parent) {
+        if (!parent->users || !parent->retired || parent->codec_busy ||
+            (parent->busy && !parent->capturing) || !q3p_assets_children_idle(parent)) return false;
+        for (const qa_q3_presentation_assets *row = parent; row; row = row->parent)
+            if (row == a) return false;
+        if (reading(io)) {
+            if (a->parent || !qa_q3_assets_retain(parent, io->error)) return false;
+            a->parent = parent;
+        }
+    }
+    return true;
+}
 static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
     uint64_t services = 0; qa_q3_presentation_provider provider = a->options.provider;
-    if (!signature(io) || (!reading(io) && !r->services_encode(r->context, &a->options, &services, io->error)) ||
+    uint32_t schema = 0;
+    if (!signature(io, &schema) || !parent_fields(io, a, r, schema) ||
+        (!reading(io) && !r->services_encode(r->context, &a->options, &services, io->error)) ||
         !qa_source_save_u64(io, &services) ||
         (reading(io) && !r->services_qualify(r->context, services, &a->options, io->error)) ||
         !provider_fields(io, &provider, r) || provider.mounts != a->options.provider.mounts ||
@@ -531,7 +631,7 @@ static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *a, co
             !qa_source_save_u64(io, &geometry) || (reading(io) &&
             (!r->collision_decode(r->context, geometry, &candidate, io->error) || candidate != a->geometry))) return false;
     }
-    return handles(io, a, r) && names(io, a);
+    return handles(io, a, r, schema) && names(io, a);
 }
 static bool codec_begin(qa_q3_presentation_assets *a, bool *own_lease, qa_error *error)
 {
@@ -565,7 +665,8 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
     if (!codec_begin(a, &own_lease, error)) return false;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, session, bytes, error) && asset_fields(&io, a, r) && qa_source_save_finish(&io, NULL);
-    if (ok) for (size_t i = 0; ok && i < a->model_count; ++i) if (a->models[i]) {
+    if (ok) ok = qa_q3_assets_custody_restore(a, error);
+    if (ok) for (size_t i = 0; ok && i < a->model_count; ++i) if (a->models[i] && !q3p_model_shared(a, a->models[i])) {
         q3p_model *m = a->models[i];
         for (unsigned x = 0; ok && x < 3; ++x) {
             bool shared = false;
@@ -574,7 +675,7 @@ bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *sessio
         }
         if (ok && m->owns_world) ok = r->world_owned_ready(r->context, m->world_ordinal, i, error);
     }
-    if (ok) for (size_t i = 0; i < a->model_count; ++i) if (a->models[i]) {
+    if (ok) for (size_t i = 0; i < a->model_count; ++i) if (a->models[i] && !q3p_model_shared(a, a->models[i])) {
         q3p_model *m = a->models[i];
         for (unsigned x = 0; x < 3; ++x) {
             bool shared = false;

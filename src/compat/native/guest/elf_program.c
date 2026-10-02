@@ -6,8 +6,8 @@ struct guest_elf_program {
     guest_elf_program_images images;
     qa_native_guest *guest;
     uint64_t phdr, phent, phnum, main_entry, interpreter_base;
-    int32_t stack_tag;
-    bool complete;
+    uint64_t stack_mapping, stack_backing;
+    bool complete, stack_transferred, stack_changed;
 };
 
 static bool target_equal(const qa_native_target *a, const qa_native_target *b)
@@ -107,16 +107,47 @@ static bool stack_read(guest_elf_program *owner, bool fresh, qa_error *error)
 {
     qa_native_allocation_info allocation;
     if (!owner->view.stack_bytes || owner->view.stack % 16 ||
-        owner->view.stack_bytes % 16 || owner->view.stack > UINT64_MAX - owner->view.stack_bytes ||
-        !qa_native_guest_allocation(owner->guest, owner->view.stack, &allocation, error) ||
-        allocation.base != owner->view.stack || allocation.bytes != owner->view.stack_bytes ||
-        (!fresh && allocation.tag != owner->stack_tag))
+        owner->view.stack_bytes % 16 || owner->view.stack > UINT64_MAX - owner->view.stack_bytes)
         return guest_fail(error, QA_ERROR_ARGUMENT, owner->view.stack,
-            "ELF initial stack differs from its actual allocator ownership");
-    if (fresh) owner->stack_tag = allocation.tag;
+            "ELF initial stack has an invalid retained address extent");
     uint64_t top = owner->view.stack + owner->view.stack_bytes;
     if (owner->guest->options.image.target.pointer_bytes == 4 && top > UINT32_MAX)
         return guest_fail(error, QA_ERROR_ARGUMENT, top, "ELF initial stack exceeds its actual i386 address domain");
+    if (owner->stack_transferred) {
+        if (fresh || !owner->stack_mapping || owner->stack_mapping >= owner->guest->next_mapping ||
+            !owner->stack_backing || owner->stack_backing >= owner->guest->next_backing ||
+            owner->view.stack % QA_NATIVE_GUEST_PAGE || owner->view.stack_bytes % QA_NATIVE_GUEST_PAGE)
+            return guest_fail(error, QA_ERROR_FORMAT, owner->view.stack, "ELF kernel stack lost its original VM ownership receipt");
+        for (size_t i = 0; i < owner->guest->allocation_count; ++i) {
+            const guest_allocation *row = owner->guest->allocations + i;
+            size_t bytes = 0; uint64_t backing = 0;
+            if (!guest_allocation_storage(owner->guest, row, &backing, &bytes, error)) return false;
+            if (backing == owner->stack_backing ||
+                (row->address < top && owner->view.stack < row->address + bytes))
+                return guest_fail(error, QA_ERROR_FORMAT, row->address, "ELF kernel stack retains a conflicting allocator claim");
+        }
+        guest_backing *backing = guest_backing_at(owner->guest, owner->stack_backing);
+        if (backing && (backing->file || backing->bytes != owner->view.stack_bytes))
+            return guest_fail(error, QA_ERROR_FORMAT, owner->stack_backing, "ELF historical stack backing differs from its original extent");
+        if (owner->stack_changed) return true;
+        if (!backing) return guest_fail(error, QA_ERROR_FORMAT, owner->stack_backing, "ELF unmodified kernel stack backing is absent");
+        size_t offset = 0;
+        while (offset < owner->view.stack_bytes) {
+            qa_native_guest_mapping *row = guest_mapping(owner->guest, owner->view.stack + offset);
+            if (!row || row->base != owner->view.stack + offset || row->backing != owner->stack_backing ||
+                row->backing_offset != offset || row->bytes > owner->view.stack_bytes - offset ||
+                (!offset && row->id != owner->stack_mapping))
+                return guest_fail(error, QA_ERROR_FORMAT, owner->view.stack + offset, "ELF kernel stack fragments differ from their original backing");
+            offset += (size_t)row->bytes;
+        }
+        return true;
+    }
+    if (owner->stack_changed || owner->stack_mapping || owner->stack_backing ||
+        !qa_native_guest_allocation(owner->guest, owner->view.stack, &allocation, error) ||
+        allocation.base != owner->view.stack || allocation.bytes != owner->view.stack_bytes ||
+        (!fresh && allocation.tag != owner->view.stack_tag))
+        return guest_fail(error, QA_ERROR_ARGUMENT, owner->view.stack, "ELF initial stack differs from its actual allocator ownership");
+    if (fresh) owner->view.stack_tag = allocation.tag;
     return guest_range(owner->guest, owner->view.stack, owner->view.stack_bytes,
         fresh ? QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE : 0, error);
 }
@@ -314,7 +345,33 @@ bool guest_elf_program_prepare(const guest_elf_program_options *options,
 const guest_elf_program_view *guest_elf_program_describe(const guest_elf_program *owner)
 { return owner && owner->complete ? &owner->view : NULL; }
 
-enum { PROGRAM_RECORD = 192 };
+bool guest_elf_program_transfer_stack(guest_elf_program *owner, qa_error *error)
+{
+    if (!owner || !owner->complete || owner->stack_transferred || !qa_native_guest_idle(owner->guest) ||
+        owner->view.stack % QA_NATIVE_GUEST_PAGE || owner->view.stack_bytes % QA_NATIVE_GUEST_PAGE ||
+        !stack_read(owner, false, error))
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "ELF stack transfer requires its completed idle initial allocation");
+    guest_allocation allocation; uint64_t backing = 0;
+    if (!guest_allocation_transfer(owner->guest, owner->view.stack, &allocation, &backing, error)) return false;
+    owner->stack_mapping = allocation.mapping; owner->stack_backing = backing;
+    owner->stack_transferred = true;
+    return true;
+}
+
+bool guest_elf_program_stack_changed(guest_elf_program *owner, uint64_t base, size_t bytes, qa_error *error)
+{
+    if (!owner || !owner->complete || !owner->stack_transferred || !guest_mutable(owner->guest, error) ||
+        !bytes || base > UINT64_MAX - bytes)
+        return guest_fail(error, QA_ERROR_ARGUMENT, base, "ELF stack mutation requires actual kernel VM ownership");
+    if (base < owner->view.stack + owner->view.stack_bytes && owner->view.stack < base + bytes)
+        owner->stack_changed = true;
+    return true;
+}
+
+bool guest_elf_program_stack_owned(const guest_elf_program *owner)
+{ return owner && owner->complete && owner->stack_transferred; }
+
+enum { PROGRAM_RECORD = 208 };
 
 static bool receipt_read(const guest_elf_program *owner, qa_error *error)
 {
@@ -343,17 +400,19 @@ static void record(uint8_t data[PROGRAM_RECORD], const guest_elf_program *owner)
 {
     const guest_elf_view *program = guest_elf_describe(owner->images.program.artifact);
     const guest_elf_view *interpreter = guest_elf_describe(owner->images.interpreter.artifact);
-    memset(data, 0, PROGRAM_RECORD); memcpy(data, "QEPG", 4); qa_store_u32le(data + 4, 1);
+    memset(data, 0, PROGRAM_RECORD); memcpy(data, "QEPG", 4); qa_store_u32le(data + 4, 2);
     qa_store_u64le(data + 8, owner->view.program); qa_store_u64le(data + 16, owner->view.interpreter);
     qa_store_u64le(data + 24, owner->view.stack); qa_store_u64le(data + 32, owner->view.stack_bytes);
     qa_store_u64le(data + 40, owner->view.initial_stack); qa_store_u64le(data + 48, owner->view.entry);
     qa_store_u64le(data + 56, owner->view.argc); qa_store_u64le(data + 64, owner->view.environment_count);
     qa_store_u64le(data + 72, owner->phdr); qa_store_u64le(data + 80, owner->phent);
     qa_store_u64le(data + 88, owner->phnum); qa_store_u64le(data + 96, owner->main_entry);
-    qa_store_u64le(data + 104, owner->interpreter_base); qa_store_u32le(data + 112, (uint32_t)owner->stack_tag);
+    qa_store_u64le(data + 104, owner->interpreter_base); qa_store_u32le(data + 112, (uint32_t)owner->view.stack_tag);
     qa_store_u32le(data + 116, program->image.target.arch); data[120] = program->image.target.pointer_bytes;
+    data[121] = owner->stack_transferred; data[122] = owner->stack_changed;
     memcpy(data + 128, program->image.digest.bytes, 32);
     if (interpreter) memcpy(data + 160, interpreter->image.digest.bytes, 32);
+    qa_store_u64le(data + 192, owner->stack_mapping); qa_store_u64le(data + 200, owner->stack_backing);
 }
 
 bool guest_elf_program_checkpoint(const guest_elf_program *owner, qa_buffer *out, qa_error *error)
@@ -373,7 +432,8 @@ bool guest_elf_program_adopt(const guest_elf_program_images *images, qa_bytes en
     guest_elf_program **out, qa_error *error)
 {
     if (!images || !out || *out || !encoded.data || encoded.size != PROGRAM_RECORD ||
-        memcmp(encoded.data, "QEPG", 4) || qa_load_u32le(encoded.data + 4) != 1 ||
+        memcmp(encoded.data, "QEPG", 4) || qa_load_u32le(encoded.data + 4) != 2 ||
+        encoded.data[121] > 1 || encoded.data[122] > 1 ||
         qa_load_u64le(encoded.data + 32) > SIZE_MAX || qa_load_u64le(encoded.data + 56) > SIZE_MAX ||
         qa_load_u64le(encoded.data + 64) > SIZE_MAX)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "ELF cold startup receipt has an invalid typed extent");
@@ -385,7 +445,9 @@ bool guest_elf_program_adopt(const guest_elf_program_images *images, qa_bytes en
     owner->view.initial_stack = qa_load_u64le(encoded.data + 40);
     owner->view.argc = (size_t)qa_load_u64le(encoded.data + 56);
     owner->view.environment_count = (size_t)qa_load_u64le(encoded.data + 64);
-    owner->stack_tag = (int32_t)qa_load_u32le(encoded.data + 112);
+    owner->view.stack_tag = (int32_t)qa_load_u32le(encoded.data + 112);
+    owner->stack_transferred = encoded.data[121] != 0; owner->stack_changed = encoded.data[122] != 0;
+    owner->stack_mapping = qa_load_u64le(encoded.data + 192); owner->stack_backing = qa_load_u64le(encoded.data + 200);
     bool okay = images_read(owner, false, error) && stack_read(owner, false, error);
     if (okay) okay = receipt_read(owner, error);
     uint8_t expected[PROGRAM_RECORD];

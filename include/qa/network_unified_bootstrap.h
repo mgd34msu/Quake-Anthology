@@ -31,6 +31,8 @@ bool qa_unified_bootstrap_process(qa_unified_bootstrap *, uint64_t now_ns,
 bool qa_unified_bootstrap_client(const qa_unified_bootstrap *, qa_net_client_id *,
     qa_unified_session **borrowed_control);
 bool qa_unified_bootstrap_current_limits(qa_unified_bootstrap *, uint32_t max_clients, qa_error *);
+bool qa_unified_bootstrap_domain(const qa_unified_bootstrap *, bool *server, uint32_t *max_clients,
+    qa_net_address *remote, qa_error *);
 bool qa_unified_bootstrap_checkpoint(const qa_unified_bootstrap *, qa_buffer *, qa_error *);
 /* Restored receipt IDs are qualified against the real restored generic table
  * and actual session owner through resolve; no new peer is fabricated. */

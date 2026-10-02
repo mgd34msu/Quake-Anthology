@@ -82,6 +82,10 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role executor has an admitted source or lifecycle callback");
     if (role->native && !qa_native_host_destroy_ready(role->native))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 role executor is active");
+    if (role->weapon_models) {
+        if (!application_q3_weapon_models_destroy(role->weapon_models, error)) return false;
+        role->weapon_models = NULL;
+    }
     if (role->equipment) {
         if (!application_q3_equipment_destroy(role->equipment, error)) return false;
         role->equipment = NULL;
@@ -363,6 +367,11 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             goto failed;
         }
         if (role->image && kind == QA_QVM_CGAME) {
+            if (!application_q3_collision_profile_read(role->image, kind, shared->abi,
+                (qa_bytes){compatibility.collision_scene.data, compatibility.collision_scene.size},
+                &shared->collision_profile, error)) goto failed;
+            shared->collision_scene = compatibility.collision_scene;
+            compatibility.collision_scene = (qa_buffer){0};
             bool found = false;
             uint64_t size = 0;
             if (!qa_vfs_probe(shared->view, "cgame-presentation.json", &found, &size, error) ||
@@ -371,6 +380,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             qa_bytes declaration = found ? qa_resource_bytes(shared->body_resource) : (qa_bytes){0};
             if (!application_q3_body_profile_read(role->image, kind, shared->abi, path,
                 found ? &declaration : NULL, &shared->body_profile, error)) goto failed;
+            found = false; size = 0;
+            if (!qa_vfs_probe(shared->view, "cgame-weapon-models.json", &found, &size, error) ||
+                (found && !qa_vfs_acquire_receipt(shared->view, "cgame-weapon-models.json",
+                    &shared->weapon_models_resource, &shared->weapon_models_acquisition, error))) goto failed;
+            declaration = found ? qa_resource_bytes(shared->weapon_models_resource) : (qa_bytes){0};
+            if (!application_q3_weapon_models_profile_read(role->image, kind, shared->abi, path,
+                found ? &declaration : NULL, &shared->weapon_models_profile, error)) goto failed;
         }
         if (role->image && kind == QA_QVM_GAME && !application_q3_grapple_profile_create(role->image,
             kind, shared->abi, path, &shared->grapple_profile, error)) goto failed;
@@ -465,6 +481,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         }
     }
     role->abi = options.abi; role->client_services = options.client;
+    role->collision_services = options.collision;
     if (kind == QA_QVM_GAME) {
         qa_bot_runtime *runtime = application_bots_guest_runtime(provider->application, provider);
         if (runtime) {
@@ -484,6 +501,9 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         qa_qvm_options vm = qa_q3_host_qvm_options(role->host, QA_QVM_COMPILED_SEMANTICS);
         if (!qa_qvm_create(role->image, &vm, &role->vm, error) ||
             !qa_q3_host_attach_qvm(role->host, role->vm, error)) goto failed;
+        if (kind == QA_QVM_CGAME && !application_guest_q3_collision_bind(role, error)) goto failed;
+        if (kind == QA_QVM_CGAME && !application_q3_weapon_models_role_create(role,
+            &role->artifact->weapon_models_profile, error)) goto failed;
         if (kind == QA_QVM_CGAME && !application_q3_equipment_create(role,
             &equipment_services, &role->equipment, error)) goto failed;
         if (kind == QA_QVM_CGAME && body_services.prepare) {
@@ -627,6 +647,8 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
 
 bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
 {
+    if (role && qa_q3_host_collision_held(role->host))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CGAME Shutdown retains an actual collision scene borrower");
     if (!role || role->engine->calls || !qa_world_idle(role->engine->world) ||
         (role->vm && !qa_qvm_can_destroy(role->vm)) ||
         (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))))

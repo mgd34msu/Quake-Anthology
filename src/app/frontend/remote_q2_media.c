@@ -2,8 +2,12 @@
 #include "shared_resource_policy.h"
 #include "visual_access.h"
 #include "remote_q2_effects_bridge.h"
+#include "remote_q2_footsteps.h"
+#include "remote_q2_clientinfo.h"
 #include "qa/material.h"
 #include "qa/hash.h"
+#include "qa/scene_world_save.h"
+#include "qa/network_q2_materials.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +20,26 @@ static qa_scene_image_options image_options(qa_scene_image_usage usage)
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = usage != QA_IMAGE_USAGE_PICTURE,
         .transparent = true, .transparent_index = 255};
 }
+static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_error *error)
+{
+    if (model->format != QA_MODEL_MD3) return true;
+    for (size_t i = 0; i < model->mesh_count; ++i)
+        for (size_t j = 0; j < model->meshes[i].shader_count; ++j) {
+            const char *name = model->meshes[i].shaders[j].name;
+            size_t length = strlen(name);
+            if (length < 7 || strcmp(name + length - 7, ".shader")) continue;
+            if (!row->options.material_scripts)
+                return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model material was not explicitly negotiated");
+            qa_resource *script = NULL; qa_vfs_acquisition opening = {0};
+            if (!qa_vfs_acquire_receipt(row->content.mounts, name, &script, &opening, error)) return false;
+            qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
+            bool ok = qa_vfs_acquisition_retained(row->content.mounts, &opening, error) &&
+                qa_q2_material_script_import(row->materials, name, qa_resource_bytes(script), &options, error);
+            qa_vfs_acquisition_dispose(&opening); qa_resource_release(script);
+            if (!ok) return false;
+        }
+    return true;
+}
 bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_model **out, qa_error *error)
 {
     if (!row || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
@@ -23,17 +47,27 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     *out = NULL;
     for (remote_q2_model *m = row->models; m; m = m->next)
         if (!strcmp(m->path, path)) { *out = m; return true; }
+    for (remote_q2_missing_model *m = row->missing_models; m; m = m->next)
+        if (!strcmp(m->path, path)) return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
     remote_q2_model *m = calloc(1, sizeof(*m));
     if (!m) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 model");
     m->path = malloc(strlen(path) + 1);
     if (m->path) strcpy(m->path, path);
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
     bool ok = m->path && qa_vfs_acquire_receipt(row->content.mounts, path, &m->resource, &m->opening, error) &&
-        qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
-        qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
-        frontend_visual_model_opening_initialize(row->frontend, QA_SCENE_Q2, row->content.mounts,
+        qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) && model_materials(row, &m->decoded, error);
+    if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_SCENE_Q3;
+    if (ok) ok = qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
+        frontend_visual_model_opening_initialize(row->frontend, options.family, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
     if (!ok) {
+        if (!m->resource && m->path && error && error->code == QA_ERROR_NOT_FOUND) {
+            remote_q2_missing_model *missing = calloc(1, sizeof(*missing));
+            if (missing) {
+                missing->path = m->path; m->path = NULL;
+                missing->next = row->missing_models; row->missing_models = missing;
+            } else remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining absent Q2 model admission");
+        }
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
@@ -68,12 +102,17 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     row->effects_imported = false;
     if (row->frontend->audio && row->identity && !qa_audio_engine_stop_owner(row->frontend->audio,
         row->identity, row->options.domain.physical_seat, error)) return false;
+    remote_q2_footsteps_clear(row);
     qa_scene_world_destroy(row->world); row->world = NULL;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m);
+    }
+    while (row->missing_models) {
+        remote_q2_missing_model *m = row->missing_models; row->missing_models = m->next;
+        free(m->path); free(m);
     }
     while (row->pictures) {
         remote_q2_picture *p = row->pictures; row->pictures = p->next;
@@ -86,6 +125,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     qa_scene_resources_destroy(row->images); row->images = NULL;
     qa_resource_release(row->map); row->map = NULL;
     qa_vfs_acquisition_dispose(&row->map_opening); row->media_ready = false;
+    row->hit_marker_count = 0; row->hit_marker_frame = 0; row->hit_marker_ns = 0; row->hit_marker_set = false;
     return true;
 }
 bool remote_q2_map_validate(const frontend_remote_q2 *row, const qa_resource *resource, qa_bsp_view *bsp, qa_error *error)
@@ -110,7 +150,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
     qa_bsp_view bsp;
     if (!remote_q2_map_validate(row, row->map, &bsp, error)) return false;
-    if (!qa_collision_create(&bsp, &row->geometry, error)) return false;
+    if (!qa_collision_create(&bsp, &row->geometry, error) || !qa_collision_bind_resource(row->geometry, row->map, error)) return false;
     row->images = qa_scene_resources_create(row->content.mounts, error);
     if (!row->images || !frontend_image_policy_initialize(row->frontend, row->images, error)) return false;
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);
@@ -126,6 +166,8 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1,
         .q2_sky = frontend_remote_q2_config(row, 2)};
     if (!qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error)) return false;
+    if (!qa_scene_world_source_resource_bind(row->world, row->map, error)) return false;
+    if (!remote_q2_footsteps_prepare(row, error)) return false;
     for (size_t i = 1; i < row->layout.max_models; ++i) {
         const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + i));
         if (!*path || path[0] == '*' || path[0] == '#' || !strcmp(path, map)) continue;
@@ -152,6 +194,12 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         qa_audio_asset_release(asset);
     }
     qa_error issue = {0};
+    if (!remote_q2_clientinfo_prepare(row, error)) return false;
+    qa_error marker_issue = {0};
+    if (!remote_q2_picture_read(row, "marker", &marker_issue) && marker_issue.code != QA_OK && marker_issue.code != QA_ERROR_NOT_FOUND) {
+        if (error) *error = marker_issue;
+        return false;
+    }
     const qa_scene_image *conchars = remote_q2_picture_read(row, "conchars", &issue);
     if (conchars && !qa_font_classic_create(row->fonts, "remote-q2:conchars", conchars,
         QA_FONT_BAKED_COLOR, &row->classic, error)) return false;

@@ -32,5 +32,9 @@ bool application_q3_weapon_models_profile_qualify(const qa_qvm_image *, qa_qvm_a
 void application_q3_weapon_models_profile_free(application_q3_weapon_models_profile *);
 bool application_q3_weapon_models_profile_namespace(const application_q3_weapon_models_profile *,
     const qa_qvm_image *actual_game_image, qa_qvm_abi, const char *actual_game_path, qa_error *);
+bool application_q3_weapon_models_profile_checkpoint(const qa_qvm_image *, qa_qvm_abi,
+    const char *artifact_path, const application_q3_weapon_models_profile *, qa_buffer *, qa_error *);
+bool application_q3_weapon_models_profile_restore(const qa_qvm_image *, qa_qvm_abi,
+    const char *artifact_path, qa_bytes, application_q3_weapon_models_profile *, qa_error *);
 
 #endif

@@ -272,6 +272,15 @@ bool qa_application_network_q2_slot(qa_application_network_q2 *owner, uint32_t s
     return true;
 }
 
+bool qa_application_network_q2_material_capability(qa_application_network_q2 *owner, bool supported, qa_error *error)
+{
+    if (!application_network_q2_current(owner, error) ||
+        (owner->materials_bound && owner->materials_capability != supported))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 material capability differs from its real admitted peer claim");
+    owner->materials_bound = true; owner->materials_capability = supported;
+    return true;
+}
+
 void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
 {
     if (!owner) return;
@@ -554,7 +563,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             uint32_t ignored;
             if (event.kind == QA_BUILTIN_SOUND &&
                 !application_network_q2_resource(owner, 1, resource, &ignored, error)) return false;
-            if (event.kind == QA_BUILTIN_EFFECT && resource && !strcmp(resource, "q2:entity-event")) {
+            if (event.kind == QA_BUILTIN_Q2_ENTITY_EVENT) {
                 qa_q2_wire_binding binding;
                 if (qa_q2_wire_actor(game, event.actor, &binding, NULL)) {
                     if (event.code < 0 || event.code > 255) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source entity event exceeds its literal wire byte");

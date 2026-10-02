@@ -34,7 +34,7 @@ static bool normalized(const char *a, const char *b) {
         ++b;
     }
 }
-static bool developer_message(qa_q1_game *g, const char *text, qa_error *error) {
+bool q1_developer_message(qa_q1_game *g, const char *text, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                               .provider = g->options.provider, .time_ns = g->time_ns};
     return qa_builtin_resource(&g->services, "developer-message", &event.resource, error) &&
@@ -106,7 +106,10 @@ bool qa_q1_weapon_profile_identity(qa_q1_program program, qa_q1_weapon weapon,
     *out = (qa_q1_weapon_profile){0};
     if (!program_weapon(program, weapon))
         return false;
-    *out = (qa_q1_weapon_profile){qa_q1_weapon_identity(weapon), weapon_labels[weapon].display};
+    int ammo = q1_weapon_declared_ammo(weapon);
+    *out = (qa_q1_weapon_profile){.item=qa_q1_weapon_identity(weapon),
+        .label=weapon_labels[weapon].display,
+        .ammo=ammo<0?NULL:qa_q1_ammo_identity((qa_q1_ammo)ammo)};
     return true;
 }
 static bool supported(const qa_q1_game *g, qa_q1_weapon weapon) {
@@ -633,7 +636,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
                     *flags |= bit;
                     return true;
                 }
-            return developer_message(g, "already has all runes!\n", error);
+            return q1_developer_message(g, "already has all runes!\n", error);
         }
         double next = (float)((double)*flags * 2 + 1);
         if (next > UINT32_MAX)
@@ -662,7 +665,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
                    : power == QA_Q1_EMPATHY ? "empathy shields cheat\n" : "quad cheat\n";
         if (!q1_alive(g, actor))
             return true;
-        return rogue ? developer_message(g, text, error)
+        return rogue ? q1_developer_message(g, text, error)
                     : q1_message(g, hip ? (qa_actor_id){0} : actor, text, error);
     }
     if (hip && impulse == 205) {
@@ -733,7 +736,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
                 snprintf(text, sizeof(text), "%zu %s '%g %g %g'\n--------------------\n",
                          ordinal, classname ? classname : "", body.origin.x, body.origin.y,
                          body.origin.z);
-            ok = developer_message(g, text, error);
+            ok = q1_developer_message(g, text, error);
         }
         entities->borrowed = false;
         return ok;
@@ -751,7 +754,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
             return true;
         }
         if (*flags & QA_Q1_BLOODY_NIGHTMARE_ACTIVE) {
-            *flags &= ~QA_Q1_BLOODY_NIGHTMARE_ACTIVE;
+            *flags &= ~(uint32_t)QA_Q1_BLOODY_NIGHTMARE_ACTIVE;
             return true;
         }
         *flags |= QA_Q1_BLOODY_NIGHTMARE_ACTIVE | QA_Q1_BLOODY_NIGHTMARE_DISCOVERED;

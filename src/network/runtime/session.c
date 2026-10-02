@@ -149,6 +149,11 @@ static bool receive_pending(const qa_network_runtime *runtime) {
     }
     return false;
 }
+static bool retirement_pending(const qa_network_peer *peer)
+{
+    return qa_network_nq_retirement_pending(peer) || qa_network_qw_retirement_pending(peer) ||
+        qa_network_q2_retirement_pending(peer);
+}
 bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error) {
     if (!runtime || runtime->pumping || runtime->callback || now < runtime->now_ns)
         return qa_network_fail(error, "Invalid or recursive network pump");
@@ -173,7 +178,9 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         runtime->callback = true;
         if (target) {
             if (!target->ops.receive(target->state, runtime, target->id, &packet, error)) {
-                runtime->callback = false; retire(runtime, target, "receive failed"); ok = false; break;
+                runtime->callback = false;
+                if(!retirement_pending(target)) retire(runtime, target, "receive failed");
+                ok = false; break;
             }
         } else if (runtime->options.hooks.connectionless &&
             !runtime->options.hooks.connectionless(runtime->options.hooks.context, runtime, &packet, error)) ok = false;
@@ -185,14 +192,17 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         qa_network_peer *peer = &runtime->peers[i];
         const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
         if (!client) continue;
-        if (!qa_unified_session_peer(peer) && runtime->options.timeout_ns &&
+        if (!qa_unified_session_peer(peer) && !retirement_pending(peer) && runtime->options.timeout_ns &&
             qa_net_client_expired(client, now, runtime->options.timeout_ns)) {
             retire(runtime, peer, "connection timed out"); continue;
         }
         runtime->callback = true;
         bool sent = peer->ops.flush(peer->state, runtime, peer->id, now, error);
         runtime->callback = false;
-        if (!sent) { retire(runtime, peer, "send failed"); ok = false; }
+        if (!sent) {
+            if(!retirement_pending(peer)) retire(runtime, peer, "send failed");
+            ok = false;
+        }
     }
     runtime->pumping = false; return ok;
 }

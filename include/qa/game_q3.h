@@ -314,6 +314,8 @@ bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invo
                                 bool *handled, qa_error *);
 qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
 qa_item_id qa_q3_item_identity(const qa_q3_game *, uint32_t item_index);
+/* Immutable item declarations for this actual GAME's admitted product. */
+const qa_q3_item *qa_q3_game_items(const qa_q3_game *, size_t *count);
 bool qa_q3_bind_player(qa_q3_game *, qa_actor_id, uint32_t selections, int32_t handicap,
                        qa_error *);
 typedef struct qa_q3_player_binding {

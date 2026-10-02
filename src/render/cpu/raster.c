@@ -153,7 +153,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
   return true;
 }
 static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                      qa_error *error) {
+                      qa_render_primitive_mode mode, qa_error *error) {
   size_t count = draw->mesh.vertex_count;
   if (count > SIZE_MAX / sizeof(cpu_vertex)) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -217,14 +217,16 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                        normal[c * 3 + 1] * v->normal.y +
                        normal[c * 3 + 2] * v->normal.z;
     }
-    out->color[0] = v->color.x;
-    out->color[1] = v->color.y;
-    out->color[2] = v->color.z;
-    out->color[3] = v->color.w;
-    out->uv[0][0] = v->texcoord.x;
-    out->uv[0][1] = v->texcoord.y;
-    out->uv[1][0] = v->lightmap.x;
-    out->uv[1][1] = v->lightmap.y;
+    qa_scene_vec4 color; qa_scene_vec2 uv[2];
+    qa_render_source_attributes_vertex(&renderer->controls,draw,mode,i,v,&color,uv);
+    out->color[0] = color.x;
+    out->color[1] = color.y;
+    out->color[2] = color.z;
+    out->color[3] = color.w;
+    out->uv[0][0] = uv[0].x;
+    out->uv[0][1] = uv[0].y;
+    out->uv[1][0] = uv[1].x;
+    out->uv[1][1] = uv[1].y;
   }
   return true;
 }
@@ -743,7 +745,7 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
               qa_error *error) {
   qa_scene_draw resolved = *input;
-  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_SHADOW_FINISH) {
+  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_SHADOW_VOLUME_END) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
     return false;
   }
@@ -753,9 +755,16 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                  "CPU draw exceeds texture unit count");
     return false;
   }
-  for (size_t i = 0; i < resolved.texture_count; ++i)
-    if (resolved.retain_texture[i])
-      resolved.textures[i] = renderer->bound[i];
+  bool source_pipeline=input->source_arrays || input->source_retain_depth_range || input->source_direct!=QA_SOURCE_DIRECT_NONE;
+  for (size_t i = 0; i < resolved.texture_count; ++i) {
+    size_t unit=source_pipeline && !input->source_arrays && i==0?renderer->controls.attributes.texture_unit:i;
+    if (resolved.retain_texture[i]) resolved.textures[i] = renderer->bound[unit];
+    else if (!input->source_arrays && input->textures[i] && renderer->bound[unit]!=input->textures[i]) {
+      qa_scene_image_retain(input->textures[i]);
+      qa_scene_image_release(renderer->bound[unit]);
+      renderer->bound[unit]=input->textures[i];
+    }
+  }
   const qa_scene_draw *draw = &resolved;
   if (!draw_valid(draw, error))
     return false;
@@ -764,9 +773,6 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                  "CPU stencil draw requires stencil storage");
     return false;
   }
-  for (size_t i = 0; i < resolved.texture_count; ++i)
-    if (!mip_chain_complete(resolved.textures[i]))
-      resolved.textures[i] = NULL;
   for (size_t i = 0; i < draw->mesh.index_count; ++i)
     if (draw->mesh.indices[i] >= draw->mesh.vertex_count) {
       qa_error_set(error, QA_ERROR_ARGUMENT, i,
@@ -775,25 +781,16 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     }
   renderer->pipeline=draw->state;
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->view.clip_enabled=false;
-  if (draw->mesh.index_count && !transform(renderer, draw, error))
-    return false;
-  for (size_t i = 0; i < draw->texture_count; ++i)
-    if (!input->retain_texture[i] && input->textures[i] &&
-        renderer->bound[i] != input->textures[i]) {
-      qa_scene_image_retain(input->textures[i]);
-      qa_scene_image_release(renderer->bound[i]);
-      renderer->bound[i] = input->textures[i];
-    }
   qa_render_primitive_mode mode = draw->source_primitives && draw->mesh.primitive == QA_SCENE_TRIANGLES
       ? qa_render_primitives_mode(renderer->controls.values.primitives, false) : QA_RENDER_PRIMITIVES_INDEXED;
+  if (!qa_render_source_attributes_resolve(&renderer->controls,&resolved,renderer->bound,mode,error)) return false;
+  for (size_t i = 0; i < resolved.texture_count; ++i)
+    if (!mip_chain_complete(resolved.textures[i])) resolved.textures[i] = NULL;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
-  if (mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && draw->texture_count > 1) {
-    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-        "Q3 Source discrete multitexture targets 0 and 1 are invalid");
-    return false;
-  }
+  if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
   if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     draw_source_strips(renderer, draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
+    qa_render_source_attributes_finish(&renderer->controls,draw,mode);
     return true;
   }
   if (draw->mesh.primitive == QA_SCENE_LINES) {
@@ -810,5 +807,7 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   }
   if (draw->source_direct==QA_SOURCE_DIRECT_AXIS) renderer->pipeline.line_width=1;
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->pipeline.stencil_enabled=false;
+  if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_VOLUME_END) renderer->pipeline.color_write=true;
+  qa_render_source_attributes_finish(&renderer->controls,draw,mode);
   return true;
 }

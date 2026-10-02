@@ -57,7 +57,7 @@ bool application_qc_player_source_actor(application_provider *provider, uint32_t
 bool application_qc_source_clients_initialize(struct application_qc_state *engine, qa_error *error)
 {
     if (!classic_qw(engine)) return true;
-    qa_actor_registry *actors = qa_session_actors(engine->services.session);
+    const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     qa_actor_definition definition;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session),
         "quakec:reserved-client", &definition, error)) return false;
@@ -478,8 +478,8 @@ bool application_qc_player_command(application_provider *provider, qa_actor_id a
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
     const qa_qc_definition *angles = application_qc_field(engine, "v_angle", QA_QC_VECTOR, error);
     if (angles == NULL || !qa_qc_set_entity_vector(provider->state.qc.instance, reference, angles->offset, command->angles, error) ||
-        !application_qc_set_float(engine, reference, "button0", (command->buttons & 1u) ? 1 : 0, error) ||
-        !application_qc_set_float(engine, reference, "button2", (command->buttons & 2u) ? 1 : 0, error)) return false;
+        !application_qc_set_float(engine, reference, "button0", (command->buttons & 1u) ? 1.0f : 0.0f, error) ||
+        !application_qc_set_float(engine, reference, "button2", (command->buttons & 2u) ? 1.0f : 0.0f, error)) return false;
     bool received = false;
     for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
         const application_qc_client *client = &engine->clients[slot];

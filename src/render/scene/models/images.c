@@ -11,7 +11,11 @@ static char *copy_name(const char *name, qa_error *error) {
 }
 
 /* Embedded ../ records are resolved within the content root before VFS lookup. */
-static char *image_path(const char *name, qa_error *error) {
+char *qa_scene_model_image_path(const char *name, qa_error *error) {
+    if (!name) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model image path is absent");
+        return NULL;
+    }
     size_t length = strlen(name);
     char *out = malloc(length + 1);
     if (!out) {
@@ -58,7 +62,8 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
 
 bool scene_model_external_material(qa_scene_model *model, qa_material_library *materials,
     const char *name, const qa_material **out, qa_error *error) {
-    char *path = image_path(name, error);
+    char *path = qa_material_library_has_source_profile(materials) ? copy_name(name, error) :
+        qa_scene_model_image_path(name, error);
     if (!path) return false;
     bool ok = qa_material_register(materials, path, &model->options, false, out, error);
     free(path);
@@ -67,7 +72,8 @@ bool scene_model_external_material(qa_scene_model *model, qa_material_library *m
 
 bool scene_model_external(qa_scene_model *model, const char *name, scene_model_image **out,
                            qa_error *error) {
-    char *path = image_path(name, error);
+    char *path = qa_material_library_has_source_profile(model->materials) ? copy_name(name, error) :
+        qa_scene_model_image_path(name, error);
     if (!path) return false;
     for (scene_model_image *image = model->images; image; image = image->next)
         if (!strcmp(image->name, path)) { free(path); *out = image; return true; }
@@ -77,6 +83,9 @@ bool scene_model_external(qa_scene_model *model, const char *name, scene_model_i
     if (model->options.family == QA_SCENE_Q3) {
         if (!qa_material_register(model->materials, image->name, &model->options, false,
                                   &image->material, error)) goto fail;
+        if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
+            (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
+            image->material = qa_material_find(model->materials, "*default");
     } else {
         qa_error load_error = {0};
         qa_scene_image *base = NULL;
@@ -161,7 +170,10 @@ static bool upload_indexed(qa_scene_model *model, const char *name, const qa_ind
                                               chain.levels[i].rgba.data, chain.levels[i].rgba.size};
     bool ok = qa_scene_image_create(model->resources, name, QA_SCENE_RGBA8, levels, chain.count + 1,
         model->options.wrap, model->options.filter, (qa_scene_vec4){0}, out, error);
-    if (ok) (*out)->recipient_upload_pixels = true;
+    if (ok) {
+        (*out)->recipient_upload_pixels = true;
+        (*out)->recipient_mipmap = model->options.mipmap && !sprite;
+    }
     free(levels); qa_mip_chain_free(&chain); qa_image_free(&image);
     return ok;
 }

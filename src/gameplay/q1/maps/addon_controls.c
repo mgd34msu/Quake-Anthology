@@ -119,7 +119,7 @@ static bool set_skill(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
     const char *text = qa_strings_cstr(qa_session_strings(g->services.session), message);
     bool bloody = text && !strcmp(text, "4");
     if (!bloody)
-        *g->maps->options.server_flags &= ~QA_Q1_BLOODY_NIGHTMARE_ACTIVE;
+        *g->maps->options.server_flags &= ~(uint32_t)QA_Q1_BLOODY_NIGHTMARE_ACTIVE;
     int32_t skill = text && !strcmp(text, "0") ? 0 : text && !strcmp(text, "1") ? 1 :
                     text && !strcmp(text, "2") ? 2 : text && (!strcmp(text, "3") || bloody) ? 3 : -1;
     if (skill < 0)
@@ -136,7 +136,7 @@ static bool set_skill(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
         return false;
     if (!control(g, id))
         return true;
-    g->options.skill = skill;
+    g->options.skill = (uint8_t)skill;
     if (!g->maps->options.server_command)
         return q1_map_fail(error, "Q1 skill relay requires the server cvar owner");
     char command[16];
@@ -250,7 +250,7 @@ bool q1_map_addon_control_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 char original[40], completed[48];
                 snprintf(original, sizeof(original), "$mg3_hub_rune%u_hint", i + 1);
                 if ((flags & (1u << i)) && !strcmp(message, original)) {
-                    snprintf(completed, sizeof(completed), "%s_complete", original);
+                    snprintf(completed, sizeof(completed), "$mg3_hub_rune%u_hint_complete", i + 1);
                     if (!qa_builtin_resource(&g->services, completed, &e->message, error))
                         return false;
                     break;

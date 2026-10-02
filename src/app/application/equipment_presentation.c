@@ -4,6 +4,8 @@
 #include "guest_native_q2_equipment.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_fire.h"
+#include "guest_q3_catalog.h"
+#include "guest_q3_weapon_models.h"
 #include "native_q3_equipment.h"
 #include "equipment_gear_presentation.h"
 #include "qa/application_equipment.h"
@@ -89,6 +91,66 @@ bool qa_application_equipment_current(qa_application *app,
         provider->owner == view->provider && provider->product && provider->product->family == view->family &&
         primary && primary->constructed && primary->attached && !primary->close_pending &&
         primary->owner == view->primary && view->selected == (provider != primary);
+}
+
+bool qa_application_equipment_q3_models_read(qa_application *app,
+    const qa_application_equipment_view *view, qa_actor_owner recipient, uint32_t seat,
+    qa_application_q3_weapon_models *out, bool *present, qa_error *error)
+{
+    if (!app || !view || !out || !present || !recipient || !view->original_qvm || view->equipment_slot ||
+        view->family != QA_GAME_Q3 || !view->has_q3_source ||
+        view->source_weapon != view->q3_source.weapon || !qa_application_equipment_current(app, view))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon models require their actual selected full actor");
+    *present = false;
+    application_provider *provider = application_provider_for(app, view->actor, QA_ROLE_ARSENAL, "");
+    struct application_q3_guest *engine = q3g_engine(provider);
+    uint32_t client;
+    if (!engine || !engine->game || !engine->game->vm || engine->game->retired ||
+        !application_q3_guest_actor_client(provider, view->actor, &client))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon models lost their actual GAME client");
+    qa_q3_player current_source;
+    if (!engine->game->host || !qa_q3_host_source_player(engine->game->host, client, &current_source, error)) return false;
+    if (current_source.weapon != view->source_weapon)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon model observation changed its actual source selection");
+    q3g_role *found = NULL;
+    application_provider *receiver = NULL;
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        if (app->providers[i]->owner != recipient) continue;
+        if (receiver) return application_fail(error, QA_ERROR_FORMAT, "Original weapon models repeat their actual recipient provider");
+        receiver = app->providers[i];
+    }
+    struct application_q3_guest *receiver_engine = q3g_engine(receiver);
+    if (!receiver || !receiver_engine || !receiver->constructed || !receiver->attached || receiver->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon models lost their actual recipient provider");
+    for (q3g_role *role = receiver_engine->roles; role; role = role->next) {
+        struct application_q3_guest *source = role->client_engine ? role->client_engine : receiver_engine;
+        if (role->kind != QA_QVM_CGAME || role->seat != seat || role->retired || !role->weapon_models ||
+            source != engine || source->game != engine->game) continue;
+        if (found) return application_fail(error, QA_ERROR_FORMAT, "Original weapon models repeat the actual recipient CG seat");
+        found = role;
+    }
+    if (!found) return true;
+    if (!found->vm || !found->host || !found->initialized || !found->init_succeeded)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon registration owner has no completed CG source");
+    qa_q3_presentation_assets *assets = qa_q3_host_presentation_resources(found->host);
+    if (!assets)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon registration owner has no actual CG model registry");
+    if (!application_q3_weapon_models_namespace(found->weapon_models,
+        found->vm, engine->game->vm, assets, error)) return false;
+    qa_application_q3_weapon_models result; bool available;
+    if (!application_q3_weapon_models_read(found->weapon_models, view->source_weapon,
+            &result, &available, error)) return false;
+    uint32_t current_client;
+    if (!qa_application_equipment_current(app, view) || q3g_engine(provider) != engine ||
+        !application_q3_guest_actor_client(provider, view->actor, &current_client) || current_client != client ||
+        q3g_engine(receiver) != receiver_engine || !receiver->constructed || !receiver->attached || receiver->close_pending ||
+        found->retired || found->vm == NULL || found->host == NULL ||
+        qa_q3_host_presentation_resources(found->host) != assets)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon model read changed its actual actor or CG registry");
+    if (!application_q3_weapon_models_namespace(found->weapon_models,
+        found->vm, engine->game->vm, assets, error)) return false;
+    if (available) *out = result;
+    *present = available; return true;
 }
 
 static qa_item_id identity(qa_application *app, const char *name)
@@ -319,6 +381,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         .primary = primary->owner, .selected = provider != primary,
         .family = provider->product->family, .rate = 10};
     qa_q3_product q3_product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    bool standard_q3 = true;
     double required = 1;
     double low_threshold = 0;
     bool q1 = provider->kind == APPLICATION_PROVIDER_Q1;
@@ -384,13 +447,37 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         if (!engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot) ||
             !qa_q3_host_source_player(engine->game->host, slot, &view.q3_source, error))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Source equipment has no actual begun GAME client");
-        view.has_q3_source = true; view.q3_weapon = (qa_q3_weapon)view.q3_source.weapon;
+        view.has_q3_source = true; view.source_weapon = view.q3_source.weapon;
+        view.original_qvm = engine->game->vm != NULL;
         view.q3_time_ms = engine->milliseconds;
         if (engine->game->vm && !application_q3_guest_fire_read(provider, actor, &view.q3_fire, error)) return false;
-        view.item = q3_identity(app, view.q3_weapon, false); q3_product = engine->product;
-        view.visible = view.q3_weapon != QA_Q3_W_NONE; view.has_start_requirement = true;
+        if (view.original_qvm) {
+            const application_q3_catalog_weapon *weapons = NULL; size_t count = 0;
+            if (!engine->game->catalog || !application_q3_catalog_current(engine->game->catalog,
+                    engine->game->image, engine->game->vm, engine->game->abi))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment lost its actual GAME catalog owner");
+            if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error)) return false;
+            bool found = false;
+            for (size_t i = 0; i < count; ++i) if (weapons[i].weapon == view.source_weapon) {
+                if (found) return application_fail(error, QA_ERROR_FORMAT, "Original equipment repeats a source weapon identity");
+                view.item = weapons[i].item; view.ammo = weapons[i].ammo; view.label = weapons[i].label; found = true;
+            }
+            if (view.source_weapon && !found)
+                return application_fail(error, QA_ERROR_FORMAT, "Original equipment leaves its real source catalog");
+            view.has_weapon_status = found;
+            standard_q3 = application_q3_catalog_standard(engine->game->catalog) &&
+                view.item == q3_identity(app, (qa_q3_weapon)view.source_weapon, false);
+            if (standard_q3) {
+                view.q3_weapon = (qa_q3_weapon)view.source_weapon;
+                q3_product = engine->product;
+            }
+        } else {
+            view.q3_weapon = (qa_q3_weapon)view.source_weapon;
+            view.item = q3_identity(app, view.q3_weapon, false); q3_product = engine->product;
+        }
+        view.visible = view.source_weapon != 0; view.has_start_requirement = true;
     }
-    if (view.family == QA_GAME_Q3 && view.q3_weapon != QA_Q3_W_NONE) {
+    if (standard_q3 && view.family == QA_GAME_Q3 && view.q3_weapon != QA_Q3_W_NONE) {
         if (!qa_q3_weapon_identity_name(view.q3_weapon) ||
             (q3_product == QA_Q3_ARENA && view.q3_weapon > QA_Q3_W_GRAPPLE) || !view.item)
             return application_fail(error, QA_ERROR_FORMAT, "Selected Q3 equipment leaves its actual admitted namespace");
@@ -400,7 +487,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
                 view.view_model = items[i].model; break;
             }
     }
-    if (!item_definition(app, &view, error)) return false;
+    if (!view.original_qvm && !item_definition(app, &view, error)) return false;
     if (view.ammo) {
         if (!qa_inventory_count_read(app->inventory, actor, view.ammo, &view.ammo_count, error)) return false;
         view.finite_ammo = view.family != QA_GAME_Q3 || view.ammo_count != -1;
@@ -413,7 +500,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         view.has_ammo_to_start &= owned > 0;
     }
     view.low_ammo = view.family == QA_GAME_Q2 && view.finite_ammo && view.ammo_count <= low_threshold;
-    if (view.family == QA_GAME_Q3 && !q3_warning(app, &view, q3_product, error)) return false;
+    if (standard_q3 && view.family == QA_GAME_Q3 && !q3_warning(app, &view, q3_product, error)) return false;
     if (!qa_application_equipment_current(app, &view))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation changed its actual actor or selected arsenal");
     *out = view; return true;

@@ -30,7 +30,7 @@ static bool record_fields(qa_source_save_io *io, const application_q3_weapon_mod
     if (!qa_source_save_i32(io, &record->weapon) || !qa_source_save_u32(io, &record->row)) return false;
     for (size_t i = 0; i < APPLICATION_Q3_WEAPON_MODEL_FIELDS; ++i)
         if (!qa_source_save_i32(io, record->handles + i)) return false;
-    if (record->row >= profile->count || record->handles[APPLICATION_Q3_WEAPON_GUN] <= 0 ||
+    if (record->row >= profile->count || record->handles[APPLICATION_Q3_WEAPON_GUN] < 0 ||
         (profile->indexed && (int64_t)profile->index_base + record->row != record->weapon))
         return application_fail(io->error, QA_ERROR_FORMAT, "Saved CG weapon receipt leaves its actual table identity");
     for (size_t i = 0; i < APPLICATION_Q3_WEAPON_MODEL_FIELDS; ++i)
@@ -41,10 +41,10 @@ static bool record_fields(qa_source_save_io *io, const application_q3_weapon_mod
 bool application_q3_weapon_models_checkpoint(const application_q3_weapon_models *owner,
     qa_buffer *out, qa_error *error)
 {
-    if (!owner || !out || !application_q3_weapon_models_idle(owner) ||
-        !qa_qvm_source_returned(owner->module.vm) ||
-        !application_q3_weapon_models_qualify((application_q3_weapon_models *)owner, error))
+    if (!owner || !out || out->data || out->size || !application_q3_weapon_models_idle(owner) ||
+        !qa_qvm_source_returned(owner->module.vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG model capture needs its actual returned source and registry");
+    if (!application_q3_weapon_models_qualify((application_q3_weapon_models *)owner, error)) return false;
     qa_qvm_saved_function descriptor = {0};
     if (!application_q3_weapon_models_descriptors(owner, &descriptor,
         application_q3_weapon_models_descriptor_count(owner), error)) return false;
@@ -69,6 +69,8 @@ bool application_q3_weapon_models_restore(application_q3_weapon_models *owner, q
         qa_source_save_u64(&io, &binding) && qa_source_save_count(&io, &count, owner->module.profile->count);
     if (ok && ((binding != 0) != owner->module.profile->present || (!owner->module.profile->present && count)))
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved CG model bindings differ from their declared constructor");
+    if (ok && count > (io.input.size - io.offset) / (8 + 4 * APPLICATION_Q3_WEAPON_MODEL_FIELDS))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Truncated CG weapon model receipt inventory");
     application_q3_weapon_model_record *records = NULL;
     if (ok && count > SIZE_MAX / sizeof(*records))
         ok = application_fail(error, QA_ERROR_MEMORY, "Saved CG model receipt inventory exceeds address space");

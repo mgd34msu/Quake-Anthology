@@ -58,11 +58,14 @@ bool gl_api_load(qa_gl_renderer *renderer, qa_error *error)
     LOAD(PolygonOffset);
     LOAD(LineWidth);
     LOAD(BlendFunc);
+    LOAD(AlphaFunc);
     LOAD(CullFace);
     LOAD(FrontFace);
     LOAD(DrawBuffer);
     LOAD(ReadBuffer);
     LOAD_ALIAS(ActiveTexture, "glActiveTextureARB");
+    LOAD_ALIAS(ClientActiveTexture, "glClientActiveTextureARB");
+    LOAD(TexEnvi);
     LOAD(GenTextures);
     LOAD(DeleteTextures);
     LOAD(BindTexture);

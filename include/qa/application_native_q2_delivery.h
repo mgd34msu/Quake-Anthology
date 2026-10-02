@@ -3,6 +3,7 @@
 
 #include "qa/application.h"
 #include "qa/native.h"
+#include "qa/network.h"
 
 typedef enum qa_application_q2_delivery_kind {
     QA_APPLICATION_Q2_PVS,
@@ -15,6 +16,13 @@ typedef struct qa_application_q2_recipient {
     qa_actor_id actor;
     qa_vec3 origin;
     int32_t area, cluster;
+    /* Historical transport admission at emission, distinct from the physical
+     * actor and seat. Absence never grants a split-message recipient. */
+    qa_net_client_id connection;
+    qa_net_seat_id connection_seat;
+    uint64_t connection_epoch;
+    uint8_t remote_index;
+    bool has_connection;
 } qa_application_q2_recipient;
 
 typedef struct qa_application_q2_audience {

@@ -71,11 +71,16 @@ typedef struct qa_leaf_list {
     uint32_t last_leaf;
 } qa_leaf_list;
 typedef struct qa_collision_geometry qa_collision_geometry;
+struct qa_resource;
 
 /* Retains the BSP view and derived collision data; source bytes must outlive it.
  * One geometry serves every gameplay policy. Calls have one thread owner. */
 bool qa_collision_create(const qa_bsp_view *, qa_collision_geometry **out, qa_error *);
 void qa_collision_destroy(qa_collision_geometry *);
+bool qa_collision_retain(qa_collision_geometry *, qa_error *);
+/* Production map owners bind their actual immutable source, without lookup. */
+bool qa_collision_bind_resource(qa_collision_geometry *, struct qa_resource *, qa_error *);
+const struct qa_resource *qa_collision_resource(const qa_collision_geometry *);
 const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *);
 qa_collision_family qa_collision_geometry_family(const qa_collision_geometry *);
 uint64_t qa_collision_map_identity(const qa_collision_geometry *);

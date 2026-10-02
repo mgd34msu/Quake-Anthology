@@ -384,7 +384,7 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
         bool in_front = qa_vec_dot(qa_vec_normalize(delta), g->forward) > .3f;
         body.velocity = qa_vec_scale(qa_vec_normalize(qa_vec_add(delta, qa_v3(0, 0, 10))),
-                                     g->options.skill * 50 + (in_front ? 50 : 150));
+                                     (float)g->options.skill * 50.0f + (in_front ? 50.0f : 150.0f));
     }
     return !q1_alive(g, id) || qa_world_body_write(g->services.world, id, &body, error);
 }
@@ -473,7 +473,7 @@ bool q1_map_hip_hazard_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_MAP_TESLA:
     case Q1_MAP_GODS_WRATH:
         e->wait = e->wait ? e->wait : 2;
-        e->damage = e->damage ? e->damage : 2 + 5 * g->options.skill;
+        e->damage = e->damage ? e->damage : 2.0f + 5.0f * (float)g->options.skill;
         s->duration = s->duration ? s->duration : -1;
         s->distance = s->distance ? s->distance : 600;
         e->delay = e->delay ? e->delay : s->kind == Q1_MAP_GODS_WRATH ? 5 : -1;

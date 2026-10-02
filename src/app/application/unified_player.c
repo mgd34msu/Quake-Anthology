@@ -7,6 +7,7 @@
 #include "guest_q3_weapons.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
+#include "native_q2_inventory_scanner.h"
 #include "equipment_runtime.h"
 #include "map_players_private.h"
 #include "qa/application_equipment.h"
@@ -578,6 +579,34 @@ static bool view(application_unified_json *j, player_observation *o, qa_error *e
     return text(j, "}", e) && current(o, e);
 }
 
+static bool native_inventory_presentation(application_unified_json *j,player_observation *o,
+    const application_native_q2_inventory_presentation *p,qa_error *e)
+{
+    if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_NONE) return true;
+    application_provider *owner=NULL;
+    for(size_t i=0;i<o->app->provider_count;++i) if(o->app->providers[i]->owner==p->source) { owner=o->app->providers[i]; break; }
+    if(!text(j,",\"presentation\":{\"source\":",e)||!provider(j,owner,e)||!text(j,",\"kind\":",e)) return false;
+    if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON||p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION)
+        return string(j,p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON?"weapon":"ammunition",e)&&
+            text(j,",\"weapon\":",e)&&item(j,o,p->weapon,e)&&text(j,"}",e);
+    if(p->kind!=APPLICATION_NATIVE_INVENTORY_PRESENTATION_ITEM)
+        return application_fail(e,QA_ERROR_FORMAT,"Native inventory presentation lost its declared kind");
+    if(!string(j,"item",e)||!text(j,",\"icon\":",e)) return false;
+    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_NONE) return text(j,"null}",e);
+    if(!p->icon||!owner||!owner->product) return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its retained source metadata");
+    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_SHADER)
+        return text(j,"{\"kind\":\"shader\",\"content\":",e)&&string(j,owner->product->identity,e)&&
+            text(j,",\"name\":",e)&&string(j,p->icon,e)&&text(j,"}}",e);
+    if(p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_IMAGE&&p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE)
+        return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its actual resource kind");
+    if(!text(j,"{\"kind\":",e)||!string(j,p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_IMAGE?"image":"wad-picture",e)||
+        !text(j,",\"resource\":{\"content\":",e)||!string(j,owner->product->identity,e)||
+        !text(j,",\"path\":",e)||!string(j,p->icon,e)||!text(j,"}",e)) return false;
+    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE&&
+        (!p->lump||!text(j,",\"lump\":",e)||!string(j,p->lump,e))) return false;
+    return text(j,"}}",e);
+}
+
 static bool ui_gear(application_unified_json *j, player_observation *o,
     bool comma, size_t ordinal, qa_error *e)
 {
@@ -872,6 +901,22 @@ static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
     }
     if (o->arsenal != o->primary && !text(j, ",\"selectedArsenal\":true", e)) return false;
     if (o->primary->kind == APPLICATION_PROVIDER_NATIVE && o->primary->state.native.q2_engine) {
+        if(o->primary->state.native.q2_engine->inventory_scanner) {
+            application_native_q2_inventory_readout mixed={0};
+            if(!application_native_q2_inventory_mixed_read(o->primary,o->ui_actor,&mixed,e)||!current(o,e)) {
+                application_native_q2_inventory_readout_free(&mixed); return false;
+            }
+            bool ok=true;
+            if(mixed.present) {
+                ok=text(j,",\"nativeInventory\":{\"items\":[",e);
+                for(size_t i=0;ok&&i<mixed.count;++i) ok=(!i||text(j,",",e))&&text(j,"{\"item\":",e)&&item(j,o,mixed.rows[i].item,e)&&
+                    text(j,",\"label\":",e)&&string(j,mixed.rows[i].label,e)&&text(j,",\"count\":",e)&&number(j,mixed.rows[i].count,e)&&text(j,"}",e);
+                if(ok) ok=text(j,"],\"selected\":",e)&&item(j,o,mixed.selected,e)&&
+                    native_inventory_presentation(j,o,&mixed.selected_presentation,e)&&text(j,"}",e);
+            }
+            application_native_q2_inventory_readout_free(&mixed);
+            if(!ok) return false;
+        } else {
         application_native_q2_ui_inventory native = {0};
         if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, &native, e) || !current(o, e)) {
             application_native_q2_inventory_ui_free(&native); return false;
@@ -884,6 +929,7 @@ static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
         if (ok) ok = text(j, "],\"selected\":", e) && item(j, o, native.selected, e) && text(j, "}", e);
         application_native_q2_inventory_ui_free(&native);
         if (!ok) return false;
+        }
     }
     return text(j, "}", e) && current(o, e);
 }

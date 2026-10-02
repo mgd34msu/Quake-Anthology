@@ -5,9 +5,9 @@
 
 static bool prefix(application_q3_components *owner,qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','G','C','P'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','G','C','P'}; uint32_t version=2;
     uint64_t world=owner->options.world_source->owner;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QGCP",4)||!qa_source_save_u32(io,&version)||version!=1||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QGCP",4)||!qa_source_save_u32(io,&version)||version!=2||
         !qa_source_save_u64(io,&world)||world!=owner->options.world_source->owner||
         !qa_source_save_count(io,count,UINT32_MAX))
         return application_fail(io->error,QA_ERROR_FORMAT,"Component roster differs from its actual WORLD source");
@@ -25,7 +25,14 @@ static bool fields(qa_source_save_io *io,component_saved_row *row)
         row->game.data=malloc(size); row->game.size=size;
         if(!row->game.data) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining physical component continuation");
     }
-    return qa_source_save_bytes(io,row->game.data,size);
+    if(!qa_source_save_bytes(io,row->game.data,size)) return false;
+    size=row->scenes.size;
+    if(!qa_source_save_count(io,&size,UINT32_MAX)||!size) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) {
+        row->scenes.data=malloc(size); row->scenes.size=size;
+        if(!row->scenes.data) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining actual component viewer continuation");
+    }
+    return qa_source_save_bytes(io,row->scenes.data,size);
 }
 bool q3components_saved_read(application_q3_components *owner,qa_bytes bytes,qa_error *e)
 {
@@ -77,7 +84,8 @@ bool q3components_saved_import(component_game_row *row,qa_error *e)
         component_saved_row *saved=owner->saved+i;
         if(saved->owner!=row->publication.owner) continue;
         qa_console_save_resolvers resolver={row,identity,command_context};
-        bool ok=application_q3_component_restore(row->publication.game,(qa_bytes){saved->game.data,saved->game.size},&resolver,e);
+        bool ok=application_q3_component_restore(row->publication.game,(qa_bytes){saved->game.data,saved->game.size},&resolver,e)&&
+            q3components_scenes_saved_read(row,(qa_bytes){saved->scenes.data,saved->scenes.size},e);
         if(ok) row->initialized=true;
         return ok;
     }
@@ -95,12 +103,12 @@ bool application_q3_components_checkpoint(qa_application *app,qa_buffer *out,qa_
     bool ok=qa_source_save_writer(&io,owner->options.application->session,e)&&prefix(owner,&io,&count);
     for(size_t i=0;ok&&i<count;++i) {
         component_game_row *row=owner->rows[i];
-        if(row->scenes) { ok=application_fail(e,QA_ERROR_UNSUPPORTED,"Component capture requires its actual private renderer dictionary continuation"); break; }
         component_saved_row saved={.instance=row->publication.descriptor->selection.instance,.key=row->publication.metadata->key,
             .owner=row->publication.owner,.generation=row->publication.generation,.services=row->services,
             .program=row->publication.metadata->program_digest,.declaration=row->publication.metadata->declaration_digest};
-        ok=row->attached&&row->initialized&&application_q3_component_checkpoint(row->publication.game,&saved.game,e)&&fields(&io,&saved);
-        qa_buffer_free(&saved.game);
+        ok=row->attached&&row->initialized&&application_q3_component_checkpoint(row->publication.game,&saved.game,e)&&
+            q3components_scenes_checkpoint(row,&saved.scenes,e)&&fields(&io,&saved);
+        qa_buffer_free(&saved.game); qa_buffer_free(&saved.scenes);
     }
     if(ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;

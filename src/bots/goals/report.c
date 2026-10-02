@@ -26,7 +26,8 @@ bool bot_goal_dump_stack(qa_bot_goals *g, const bot_goal_slot *s, qa_error *e) {
         if (i>top) break;
         if (!bot_goal_record_goal_read(&s->record,i,&goal,e)) return false;
         char line[64];
-        const char *name = qa_bot_goals_name(g, goal.number);
+        const char *name;
+        if (!qa_bot_goals_name_read(g, goal.number, &name, e)) return false;
         (void)snprintf(line, sizeof(line), "%d: %.31s", i, name ? name : "");
         if (!bot_goal_log(g, line, e)) return false;
     }
@@ -53,7 +54,9 @@ bool qa_bot_goals_dump_avoid(qa_bot_goals *g, uint32_t id, qa_error *e) {
         if(!ok) break;
         const qa_bot_avoid_goal *goal = &value;
         if (!(goal->expires >= g->time)) continue;
-        const char *name = qa_bot_goals_name(g, goal->number);
+        const char *name;
+        ok = qa_bot_goals_name_read(g, goal->number, &name, e);
+        if (!ok) break;
         char remaining[64], line[160];
         ok = qa_format_fixed((float)(goal->expires - g->time), 6, remaining, sizeof(remaining), e);
         if (!ok) break;
@@ -92,12 +95,15 @@ bool qa_bot_goals_load_weights(qa_bot_goals *g, uint32_t id, qa_bot_library *lib
     qa_bot_weights_release(weights);
     if (!ok || !g->configured) return ok;
     g->busy = true;
-    const qa_bot_items_view *items = qa_bot_items_read(g->items);
+    const qa_bot_items_view *items;
+    if (!qa_bot_items_view_read(g->items, &items, e)) {g->busy=false;return false;}
     qa_bot_memory_allocation indexes;
     if(items->count>UINT32_MAX || !bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) {
         g->busy=false;return false;
     }
     for (size_t i = 0; i < items->count; ++i) {
+        if (!qa_bot_items_view_read(g->items, &items, e)) {g->busy=false;return false;}
+        if (i >= items->count) break;
         int32_t index;
         if(!qa_bot_weights_find_value(weights,items->items[i].classname,&index,e)) {g->busy=false;return false;}
         if(!bot_goal_indexes_write(g,indexes,(uint32_t)i,index,e)) {g->busy=false;return false;}

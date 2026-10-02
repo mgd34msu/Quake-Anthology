@@ -56,8 +56,8 @@ bool q1_addon_contents(qa_q1_game *g, q1_actor *entity, bool *stop, qa_error *er
     monster->addon.damage_at = g->time + (lava ? 0.2 : 1);
     qa_actor_id world = g->services.physics->world_actor;
     if (!q1_damage(g, entity->id, world, world,
-                   lava ? zombie ? 120 : 30.0f * entity->physics.water_level
-                        : 4.0f * entity->physics.water_level,
+                   lava ? zombie ? 120 : 30.0f * (float)entity->physics.water_level
+                        : 4.0f * (float)entity->physics.water_level,
                    QA_Q1_WEAPON_COUNT, error))
         return false;
     *stop = !q1_alive(g, entity->id) || (lava && zombie) || q1_health(g, entity->id) <= 0;

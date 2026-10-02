@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/application_engine_shutdown.h"
+#include "qa/application_client_prepare.h"
 
 typedef struct frontend_shared_values frontend_shared_values;
 struct frontend_input_settings;
@@ -16,6 +17,13 @@ bool frontend_shared_values_begin(qa_frontend *,frontend_config_store *,qa_appli
  * bootstrap, owns this preparation before any physical source joins. */
 bool frontend_shared_values_begin_root(qa_frontend *,frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,frontend_shared_values **,qa_error *);
+bool frontend_shared_values_begin_client(qa_frontend *,frontend_config_store *,qa_application *,
+    qa_application_client_preparation *,frontend_shared_values **,qa_error *);
+bool frontend_shared_values_client_access(const frontend_shared_values *,
+    const qa_application_client_preparation *,const qa_command_context *,
+    qa_cvars **,qa_cvars_edit **,qa_error *);
+bool frontend_shared_values_client_input_restart(frontend_shared_values *,
+    const qa_application_client_preparation *,const qa_command_context *,qa_error *);
 /* The real validated StartupFlow supplies its newly enumerated declaration
  * owner. All physical source identity remains unchanged from begin. */
 bool frontend_shared_values_refresh(frontend_shared_values *,

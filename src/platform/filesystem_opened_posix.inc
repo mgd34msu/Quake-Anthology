@@ -171,6 +171,37 @@ bool qa_fs_opened_file_posix_status_read(qa_fs_opened_file *file, qa_fs_posix_st
         .change = {(int64_t)change.tv_sec, (uint32_t)change.tv_nsec}};
     return true;
 }
+bool qa_fs_opened_file_posix_descriptor_read(qa_fs_opened_file *file,
+    qa_fs_posix_descriptor_status *out, qa_error *error)
+{
+    opened_native_failure = (qa_fs_native_error){0};
+    if (!out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing actual POSIX descriptor output"); return false; }
+    if (!qa_fs_opened_file_current(file, error)) return false;
+    int flags;
+    do { flags = fcntl(file->descriptor, F_GETFL); } while (flags < 0 && errno == EINTR);
+    if (flags < 0) return opened_fail_errno(error, "cannot read opened descriptor flags", file->path, errno);
+    off_t offset;
+    do { offset = lseek(file->descriptor, 0, SEEK_CUR); } while (offset < 0 && errno == EINTR);
+    int code = errno;
+    if (offset < 0 && code != ESPIPE)
+        return opened_fail_errno(error, "cannot observe opened descriptor position", file->path, code);
+    *out = (qa_fs_posix_descriptor_status){.flags = (uint32_t)flags,
+        .offset = offset < 0 ? 0 : (int64_t)offset, .seekable = offset >= 0};
+    return true;
+}
+bool qa_fs_opened_file_posix_flags(qa_fs_opened_file *file, bool append, bool nonblocking, qa_error *error)
+{
+    opened_native_failure = (qa_fs_native_error){0};
+    if (!qa_fs_opened_file_current(file, error)) return false;
+    int previous;
+    do { previous = fcntl(file->descriptor, F_GETFL); } while (previous < 0 && errno == EINTR);
+    if (previous < 0) return opened_fail_errno(error, "cannot read opened descriptor flags", file->path, errno);
+    int next = (previous & ~(O_APPEND | O_NONBLOCK)) | (append ? O_APPEND : 0) | (nonblocking ? O_NONBLOCK : 0);
+    if (next == previous) return true;
+    int result;
+    do { result = fcntl(file->descriptor, F_SETFL, next); } while (result < 0 && errno == EINTR);
+    return result >= 0 || opened_fail_errno(error, "cannot change opened descriptor flags", file->path, errno);
+}
 bool qa_fs_opened_file_truncate(qa_fs_opened_file *file, uint64_t bytes, qa_error *error)
 {
     opened_native_failure = (qa_fs_native_error){0};

@@ -29,7 +29,7 @@ bool application_guest_input_prepare_weapon(void *role, qa_actor_id,
     const qa_qvm_call *, application_q3_weapon_preparation *, qa_error *);
 bool application_guest_input_weapon_completed(void *role, qa_actor_id, bool reached, qa_error *);
 bool application_guest_input_weapon_slice(const qa_application *, qa_actor_id);
-bool application_guest_input_source_weapons(const qa_application *, qa_actor_id);
+bool application_guest_input_source_weapons(qa_application *, qa_actor_id);
 bool application_control_guest_weapon_step(qa_application *, qa_actor_id,
     const qa_movement_command *, const qa_q3_player *, bool reached, qa_error *);
 bool application_control_guest_equipment(qa_application *, application_provider *primary,

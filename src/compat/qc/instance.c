@@ -287,7 +287,8 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         ? qa_qc_default_entity_layout(program, options->profile) : options->entity_layout;
     uint64_t entity_bytes = (uint64_t)instance->options.entity_capacity * instance->layout.stride_bytes;
     if (program->info.global_words > UINT32_MAX / 4u
-        || program->info.function_count > SIZE_MAX / sizeof(*instance->profiles)
+        || (program->info.function_count != 0
+            && SIZE_MAX / program->info.function_count < sizeof(*instance->profiles))
         || instance->layout.field_words != program->info.entity_field_words
         || instance->layout.stride_bytes == 0
         || (instance->layout.stride_bytes & 3u) != 0
@@ -297,10 +298,14 @@ bool qa_qc_instance_create(const qa_qc_program *program,
             + (uint64_t)instance->layout.field_words * 4u > instance->layout.stride_bytes
         || entity_bytes > SIZE_MAX || entity_bytes > INT32_MAX
         || instance->options.first_dynamic_slot > instance->options.entity_capacity
-        || instance->options.entity_capacity > SIZE_MAX / sizeof(*instance->slots)
-        || instance->options.entity_capacity > SIZE_MAX / sizeof(*instance->bodies)
-        || instance->options.call_limit > SIZE_MAX / sizeof(*instance->frames)
-        || instance->options.local_word_limit > SIZE_MAX / sizeof(*instance->locals)) {
+        || (instance->options.entity_capacity != 0
+            && SIZE_MAX / instance->options.entity_capacity < sizeof(*instance->slots))
+        || (instance->options.entity_capacity != 0
+            && SIZE_MAX / instance->options.entity_capacity < sizeof(*instance->bodies))
+        || (instance->options.call_limit != 0
+            && SIZE_MAX / instance->options.call_limit < sizeof(*instance->frames))
+        || (instance->options.local_word_limit != 0
+            && SIZE_MAX / instance->options.local_word_limit < sizeof(*instance->locals))) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "invalid QuakeC entity layout or limits");
     }

@@ -3,12 +3,14 @@
 #include "remote_q1_client.h"
 #include "world_inventory.h"
 #include "qa/audio_bank_graph_save.h"
+#include "qa/audio_save.h"
 typedef struct frontend_remote_q1_restore_refs {
     qa_application_content_graph *content;
     frontend_model_inventory *models;
     frontend_world_inventory *roots;
     frontend_scene_namespace *scene;
     const qa_audio_asset_inventory *assets;
+    const qa_audio_checkpoint_refs *audio;
     uint64_t owner;
 } frontend_remote_q1_restore_refs;
 bool frontend_remote_q1_checkpoint(const frontend_remote_q1 *, const frontend_remote_q1_restore_refs *, qa_buffer *, qa_error *);

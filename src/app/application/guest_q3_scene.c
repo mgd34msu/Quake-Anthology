@@ -218,6 +218,11 @@ bool application_q3_scene_entered_context(const application_q3_scene *s,applicat
     if(!s||!out||!s->busy||!s->acquired||!q3scene_current(s)) return false;
     *out=s->context; return true;
 }
+bool application_q3_scene_retained_context(const application_q3_scene *s,application_q3_scene_context *out)
+{
+    if(!s||!out||s->busy||s->acquired||s->failed||!s->initialized) return false;
+    *out=s->context; return true;
+}
 static void release(application_q3_scene *s)
 {
     if (s->acquired) { s->acquired=false; s->options.source.release(s->options.source.context,&s->context); }
@@ -270,7 +275,9 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         if (command->sequence<0 || command->sequence>latest || !command->text) return q3scene_fail(e,QA_ERROR_FORMAT,"Component reliable sequence is invalid");
         if ((int64_t)command->sequence<=(int64_t)latest-64) continue;
         qa_command_tokens t={0};
-        if (!qa_command_tokenize(command->addressed?command->text:"",QA_CONSOLE_Q3,false,&t,e)) return false;
+        if (command->addressed&&command->arguments) {
+            if(!tokens_copy(command->arguments,&t,e)) return false;
+        } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_CONSOLE_Q3,false,&t,e)) return false;
         q3scene_command *row=s->commands+(uint32_t)command->sequence%64;
         qa_command_tokens_free(&row->tokens); *row=(q3scene_command){command->sequence,t};
     }
@@ -301,8 +308,11 @@ bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
         else ok=qa_qvm_read(s->vm,p->entities,s->defaults.data,s->defaults.size,e);
     }
     bool changed;
-    if (ok) { s->revision=s->context.game_state_revision; ok=store(s,p->command_sequence,s->context.snapshot->server_command_number,e)&&accept(s,s->context.baseline,&changed,e); }
-    if (ok) { s->restoring_scene=s->context.baseline; ok=call_list(s,&p->snapshots,e); s->restoring_scene=false; }
+    if (ok) { s->revision=s->context.game_state_revision; ok=store(s,p->command_sequence,s->context.snapshot->server_command_number,e); }
+    if (ok&&s->context.baseline) {
+        ok=accept(s,true,&changed,e);
+        if(ok) { s->restoring_scene=true; ok=call_list(s,&p->snapshots,e); s->restoring_scene=false; }
+    }
     ok=finish_output(s,ok,e);
     s->initialized=ok; s->failed=!ok; release(s); s->busy=false; return ok;
 }

@@ -178,13 +178,13 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
     const frontend_remote_q1_restore_refs *refs, saved_q1 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; uint32_t schema = 4;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !qa_source_save_u32(io, &schema) || schema != 4 ||
+    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; uint32_t schema = 6;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !qa_source_save_u32(io, &schema) || schema != 6 ||
         !domain(io, &saved->domain) || !protocol(io, &row->protocol) ||
         qa_q1_is_qw(row->protocol) != qa_q1_is_qw(saved->domain.protocol) || !qa_source_save_u64(io, &saved->domain_catalog) ||
         !qa_source_save_bool(io, &row->bound) || !qa_source_save_bool(io, &saved->loaded) ||
         !qa_source_save_bool(io, &row->retired) || !qa_source_save_bool(io, &row->has_data) ||
-        !qa_source_save_bool(io, &row->intermission) ||
+        !qa_source_save_bool(io, &row->intermission) || !qa_source_save_bool(io, &row->published) ||
         !qa_source_save_u64(io, &saved->catalog) || !qa_source_save_u64(io, &saved->mounts) ||
         !qa_source_save_u32(io, &row->content.product)) return false;
     if (reading && (saved->catalog || saved->mounts)) {
@@ -318,6 +318,7 @@ static bool retained(frontend_remote_q1 *row, const frontend_remote_q1_restore_r
         !!saved->catalog != !!saved->mounts || !!saved->map_pool != !!saved->map_resource ||
         !!row->map != !!saved->map_resource || (saved->loaded && !row->saved_world) ||
         (saved->loaded && (!row->map || !row->content.mounts)) ||
+        (row->published && (!saved->loaded || !row->has_data || !row->view_entity)) ||
         (row->content.mounts && (!content_product || content_product->family != QA_GAME_Q1 ||
             !qa_catalog_product_view_current(row->content.catalog, row->content.product, row->content.mounts))) ||
         (!row->map && (row->map_opening.mount || row->map_opening.resource_id || row->map_opening.path ||

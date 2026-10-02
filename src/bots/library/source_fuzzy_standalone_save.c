@@ -28,7 +28,8 @@ static bool allocation_fields(qa_source_save_io *io,qa_bot_memory *memory,qa_bot
     bool ok=reading || qa_bot_memory_reference(memory,*allocation,&reference,io->error);
     if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
     if(ok && reading) ok=qa_bot_memory_resolve(memory,reference,allocation,io->error);
-    if(!ok) io->failed=true;return ok;
+    if(!ok) io->failed=true;
+    return ok;
 }
 static bool pointer_fields(qa_source_save_io *io,bot_fuzzy_heap *heap)
 {

@@ -49,6 +49,9 @@ static bool geometry(frontend_remote_q1 *row,qa_error *error)
     qa_bsp_view bsp;
     if(!row->map || !qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
         !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&p->geometry,error)) return false;
+    if(!qa_collision_bind_resource(p->geometry,row->map,error)){
+        qa_collision_destroy(p->geometry);p->geometry=NULL;return false;
+    }
     qa_resource_retain(row->map); p->map=row->map; return true;
 }
 static void merge(qa_trace_result *out,qa_trace_result hit)

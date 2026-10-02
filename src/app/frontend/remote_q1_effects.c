@@ -7,8 +7,10 @@
 #include "selected_effects_particles.h"
 #include "qa/scene_save.h"
 #include "legacy_render_policy.h"
+#include "received_music.h"
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 enum { LIGHTS = 64, BEAMS = 32 };
@@ -41,6 +43,8 @@ typedef struct remote_ambient {
     bool saved_installed;
 } remote_ambient;
 struct frontend_remote_q1_effects {
+    frontend_received_music *music;
+    bool music_retiring;
     frontend_fx_particles particles;
     qa_builtin_random random;
     qa_scene_image *image;
@@ -70,6 +74,40 @@ static bool owner(frontend_remote_q1 *row, qa_error *error)
     return true;
 }
 static qa_vec3 vector(const float value[3]) { return qa_v3(value[0], value[1], value[2]); }
+static bool music_source(frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)
+{
+    if(row->frontend->source_restoring || row->frontend->capture || row->frontend->resource_inventory ||
+        (row->effects && row->effects->music_retiring))
+        return frontend_remote_q1_application_metadata_read(row,out,error);
+    return frontend_remote_q1_application_read(row,out,error);
+}
+static bool music_current(void *context,const frontend_music_origin *origin)
+{
+    frontend_remote_q1 *row=context;qa_application_client_source source;
+    return row && origin && music_source(row,&source,NULL) && source.descriptor && origin->descriptor &&
+        source.descriptor->storage==origin->descriptor->storage && source.context.receiver==origin->receiver &&
+        source.context.physical_seat==origin->physical_seat && row->content.catalog==origin->catalog &&
+        row->content.product==origin->product && row->content.mounts==origin->files;
+}
+static bool music_origin(frontend_remote_q1 *row,frontend_music_origin *out,qa_error *error)
+{
+    qa_application_client_source source;
+    if(!music_source(row,&source,error))return false;
+    *out=(frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.physical_seat=source.context.physical_seat,
+        .receiver=source.context.receiver,.descriptor=source.descriptor,.catalog=row->content.catalog,
+        .product=row->content.product,.files=row->content.mounts,.context=row,.current=music_current};
+    return true;
+}
+static bool music_track(frontend_remote_q1 *row,uint8_t track,qa_error *error)
+{
+    if(!row->frontend->audio)return true;
+    if(!owner(row,error))return false;
+    frontend_music_origin origin;
+    if(!music_origin(row,&origin,error) || (!row->effects->music &&
+        !frontend_received_music_create(row->frontend,&origin,&row->effects->music,error)))return false;
+    char cue[4];snprintf(cue,sizeof(cue),"%u",(unsigned)track);
+    return frontend_received_music_play(row->effects->music,cue,error);
+}
 static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
     qa_vec3 origin, uint32_t channel, float volume, float attenuation, bool ambient,
     bool required, qa_error *error)
@@ -188,6 +226,8 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
 {
     if (!row || !message || !remote_q1_mutable(row) || !remote_q1_live(row, error)) return false;
     switch (message->op) {
+    case QA_NQ_CDTRACK:return music_track(row,message->data.cd.track,error);
+    case QA_NQ_PAUSE:return !row->frontend->audio || frontend_music_sources_received_pause(row->frontend->music_sources,message->data.value!=0,error);
     case QA_NQ_SOUND: case QA_NQ_STATICSOUND:
         if (!message->data.sound.index || message->data.sound.index > row->sound_count)
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Unknown received Q1 sound index");
@@ -272,6 +312,9 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
     if (!row) return true;
     frontend_remote_q1_effects *fx = row->effects;
     if(fx && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,error)) return false;
+    if(fx){fx->music_retiring=true;
+        bool closed=frontend_received_music_destroy(&fx->music,error);fx->music_retiring=false;
+        if(!closed)return false;}
     if(!remote_q1_effects_audio_detach(row,error)) return false;
     if (row->frontend->audio && !qa_audio_engine_stop_owner(row->frontend->audio,
         row->options.domain.actor_owner,row->options.domain.physical_seat,error)) return false;
@@ -283,6 +326,14 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
         qa_scene_image_release(fx->image); free(fx->ambient); free(fx->trails); free(fx); row->effects = NULL;
     }
     remote_q1_hud_clear(row);
+    return true;
+}
+bool remote_q1_effects_idle(const frontend_remote_q1 *row)
+{
+    const frontend_remote_q1_effects *fx=row?row->effects:NULL;
+    if(!fx)return true;
+    if(fx->music_retiring || !frontend_received_music_idle(fx->music))return false;
+    for(size_t i=0;i<fx->ambient_count;++i)if(fx->ambient[i].mixer && !qa_audio_mixer_callbacks_idle(fx->ambient[i].mixer))return false;
     return true;
 }
 const qa_scene_image *remote_q1_effects_particle_image(const frontend_remote_q1 *row)
@@ -324,14 +375,14 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         if(entity->effects&1) frontend_fx_q1_entity(&fx->particles,&fx->random,point,seconds);
         if(entity->effects&2) { qa_vec3 forward; qa_builtin_angle_vectors(angles,&forward,NULL,NULL);
             light_at(row,entity->number,qa_vec_add(qa_vec_add(point,qa_v3(0,0,16)),qa_vec_scale(forward,18)),
-                200+(qa_builtin_random_integer(&fx->random)&31),.1,0,32,qa_v3(1,1,1),seconds); }
-        if(entity->effects&4) light_at(row,entity->number,qa_vec_add(point,qa_v3(0,0,16)),400+(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
-        if(entity->effects&8) light_at(row,entity->number,point,200+(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
+                200+(float)(qa_builtin_random_integer(&fx->random)&31),.1,0,32,qa_v3(1,1,1),seconds); }
+        if(entity->effects&4) light_at(row,entity->number,qa_vec_add(point,qa_v3(0,0,16)),400+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
+        if(entity->effects&8) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
         const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
         if(product && product->edition==QA_EDITION_RERELEASE) {
-            if(entity->effects&16) light_at(row,entity->number,point,200+(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(.25f,.25f,1),seconds);
-            if(entity->effects&32) light_at(row,entity->number,point,200+(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,.25f,.25f),seconds);
-            if(entity->effects&64) light_at(row,entity->number,point,64+(qa_builtin_random_integer(&fx->random)&31),
+            if(entity->effects&16) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(.25f,.25f,1),seconds);
+            if(entity->effects&32) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,.25f,.25f),seconds);
+            if(entity->effects&64) light_at(row,entity->number,point,64+(float)(qa_builtin_random_integer(&fx->random)&31),
                 (double)(float)(seconds+.001)-seconds,0,0,qa_v3(1,192.0f/255,120.0f/255),seconds);
         }
         uint32_t flags=model->source?(uint32_t)model->source->flags:0;
@@ -482,6 +533,7 @@ bool remote_q1_effects_fields(frontend_remote_q1 *row,qa_source_save_io *io,
     if(!present) return true;
     if(io->direction==QA_SOURCE_SAVE_READ && !owner(row,error)) return false;
     frontend_remote_q1_effects *fx=row->effects;
+    if(!frontend_received_music_fields(row->frontend,&fx->music,io,refs?refs->audio:NULL,error))return false;
     if(!frontend_fx_particles_fields(io,&fx->particles) || fx->particles.family!=QA_GAME_Q1 ||
         !qa_source_save_bytes(io,fx->random.words,sizeof(fx->random.words)) ||
         !qa_source_save_u8(io,&fx->random.front) || !qa_source_save_u8(io,&fx->random.rear) ||
@@ -600,6 +652,8 @@ bool remote_q1_effects_restore_finish(frontend_remote_q1 *row,
     frontend_remote_q1_effects *fx=row?row->effects:NULL;
     if(!fx) return true;
     if(!refs || !refs->scene || !refs->owner || !row->images || !row->sound_bank) return false;
+    if(fx->music){frontend_music_origin origin;
+        if(!music_origin(row,&origin,error) || !frontend_received_music_restore_finish(fx->music,&origin,error))return false;}
     if(fx->saved_image && !fx->image) {
         const qa_scene_image *image=NULL;
         if(!frontend_scene_image_decode(refs->scene,fx->saved_image,&image,error) || !image) return false;

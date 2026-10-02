@@ -2,6 +2,7 @@
 #define QA_RENDER_SAVE_H
 #include "qa/render_cpu.h"
 #include "qa/render_gl.h"
+typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
 typedef struct qa_render_checkpoint_refs {
     void *context;
     bool (*image_encode)(void *,const qa_scene_image *,uint64_t *,qa_error *);
@@ -14,6 +15,8 @@ typedef struct qa_render_checkpoint_refs {
     bool (*material_decode)(void *,uint64_t,const qa_material **,qa_error *);
     bool (*world_encode)(void *,const qa_scene_world *,uint64_t *,qa_error *);
     bool (*world_decode)(void *,uint64_t,const qa_scene_world **,qa_error *);
+    bool (*assets_encode)(void *,const qa_q3_presentation_assets *,uint64_t *,qa_error *);
+    bool (*assets_decode)(void *,uint64_t,qa_q3_presentation_assets **,qa_error *);
 } qa_render_checkpoint_refs;
 /* Image and geometry ordinals each follow their genuine physical retained
  * rows. The caller protects the renderer/resource lifetime throughout. */

@@ -82,6 +82,23 @@ static bool physical(frontend_remote_q1_source *owner, const frontend_remote_q1_
 }
 static bool current(void *context, const frontend_remote_q1_domain *expected, qa_error *error)
 { frontend_client_source_view view; return physical(context, expected, &view, error); }
+static bool application_read(void *context,const frontend_remote_q1_domain *expected,
+    qa_application_client_source *out,qa_error *error)
+{
+    frontend_client_source_view view;
+    if(!out || !physical(context,expected,&view,error)) return false;
+    *out=view.source; return true;
+}
+static bool application_metadata_read(void *context,const frontend_remote_q1_domain *expected,
+    qa_application_client_source *out,qa_error *error)
+{
+    frontend_remote_q1_source *owner=context; frontend_client_source_view view;
+    if(!owner || !out || !owner->retained || owner->closing || owner->frontend->application!=expected->application ||
+        !frontend_client_source_metadata_read(owner->options.physical,&view,error) || !view.ready) return false;
+    frontend_remote_q1_domain actual=domain(owner,&view.source);
+    if(!remote_q1_domain_equal(&actual,expected)) return false;
+    *out=view.source; return true;
+}
 static bool load(void *context, const frontend_remote_q1_domain *expected, const qa_nq_serverinfo *info,
     const qa_qw_serverdata *qw, frontend_remote_q1_content *out, qa_error *error)
 {
@@ -132,7 +149,8 @@ static bool create(qa_frontend *f, const frontend_remote_q1_source_options *opti
     owner->retained = true;
     frontend_remote_q1_options receiver = {.domain = domain(owner, &view.source), .context = owner,
         .current = current, .load_content = load, .service = service, .disconnected = disconnected,
-        .skin_bindings = options->skin_bindings};
+        .skin_bindings = options->skin_bindings,.application_read=application_read,
+        .application_metadata_read=application_metadata_read};
     return refs ? frontend_remote_q1_restore_prepare(f, &receiver, refs, bytes, &owner->receiver, error) :
         frontend_remote_q1_create(f, &receiver, &owner->receiver, error);
 }

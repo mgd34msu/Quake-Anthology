@@ -893,7 +893,7 @@ bool q2m_attack(q2m_context *context, q2m_attack_kind kind, float damage,
     break;
   case Q2M_ATTACK_BEAM:
     result = q2_heatbeam(&call, start, direction, damage,
-                         context->game->options.skill, error);
+                         (float)context->game->options.skill, error);
     break;
   case Q2M_ATTACK_TRACKER:
     result = q2_projectile_spawn(
@@ -3232,11 +3232,11 @@ bool q2m_world_effects(q2m_context *context, qa_error *error) {
   float damage = 0.0f;
   if (((uint32_t)contents & 8u) != 0) {
     means = Q2M_MOD_LAVA;
-    damage = 10.0f * water;
+    damage = 10.0f * (float)water;
     monster->environment_ns = q2m_after(context->game->now_ns, 0.2);
   } else if (((uint32_t)contents & 16u) != 0) {
     means = Q2M_MOD_SLIME;
-    damage = 4.0f * water;
+    damage = 4.0f * (float)water;
     monster->environment_ns = q2m_after(context->game->now_ns, 1.0);
   }
   if (means == 0)

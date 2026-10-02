@@ -63,9 +63,11 @@ struct frontend_remote_q3_modules {
     size_t saved_count;
     qa_buffer saved_bytes;
     bool attached, constructing, retiring, restoring, lower_finished;
+    struct frontend_remote_q3_modules_video *video;
 };
 
 const qa_application_q3_remote_source *frontend_remote_modules_source(const frontend_remote_q3_modules *);
+bool frontend_remote_modules_released_drain(frontend_remote_q3_modules *, qa_error *);
 remote_module_saved *frontend_remote_modules_saved(frontend_remote_q3_modules *, qa_qvm_role, uint64_t);
 void frontend_remote_modules_saved_dispose(remote_module_saved *, size_t);
 bool frontend_remote_modules_music_restore_origin(remote_module_lease *, qa_error *);

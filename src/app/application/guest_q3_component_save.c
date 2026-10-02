@@ -91,6 +91,10 @@ bool application_q3_component_finish_restore(application_q3_component *c,qa_erro
         if(!application_q3_component_source_attach(c->source,c->vm,c->host,e)||!application_q3_component_source_validate(c->source,e)) { c->restoring=true; return false; }
         c->restored_storage=true;
     }
+    if(!c->restored_baseline) {
+        if(!application_q3_component_source_restore_baseline(c->source,c->milliseconds,e)) return false;
+        c->restored_baseline=true;
+    }
     if(!c->restored_actors) {
         if(!application_q3_mod_actors_finish_restore(c->actor_semantics,e)) return false;
         c->restored_actors=true;

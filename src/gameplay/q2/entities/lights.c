@@ -121,7 +121,7 @@ bool q2_light_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
         s->delay += s->speed;
         double sample = trunc((double)s->delay), mod = fmod(sample, (double)length);
-        size_t index = (size_t)(mod < 0 ? mod + length : mod);
+        size_t index = (size_t)(mod < 0 ? mod + (double)length : mod);
         float current = ((unsigned char)pattern[index] - 97) / 25.0f,
               next = ((unsigned char)pattern[(index + 1) % length] - 97) / 25.0f,
               fraction = fmodf(s->delay, 1);

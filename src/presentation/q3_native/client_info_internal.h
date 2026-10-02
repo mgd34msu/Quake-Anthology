@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_CLIENT_INFO_INTERNAL_H
 #include "client_info.h"
 #include "remote_frame.h"
+#include "compiled_source.h"
 #include "../q3/internal.h"
 #include "qa/vfs_view_save.h"
 #include "qa/common_parse.h"
@@ -18,6 +19,7 @@ struct q3n_clients {
     qa_application *application;
     const qa_application_native_q3_presentation *cut;
     const q3n_remote_source_view *remote_cut;
+    const q3n_compiled_source_view *compiled_cut;
     uint64_t next_media_revision;
     uint64_t active_configstring_revision;
     uint64_t serverinfo_revision;

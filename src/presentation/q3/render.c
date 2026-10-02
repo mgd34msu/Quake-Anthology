@@ -2,6 +2,57 @@
 #include "qa/q3_presentation_save.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_model_save.h"
+#include "qa/q3_source_scene_bank.h"
+
+static bool source_scene_snapshot(qa_q3_presentation *p, qa_error *error)
+{
+    p->source_entity_assets = p->source_polygon_assets = NULL;
+    if (!p->options.source_state) return true;
+    qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+    qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+    qa_q3_source_scene_membership membership;
+    if (!bank || !qa_q3_source_scene_bank_membership(bank, &membership)) return false;
+    size_t entities = membership.entities - membership.first_entity;
+    size_t polygons = membership.polygons - membership.first_polygon;
+    size_t lights = membership.lights - membership.first_light;
+    if (!q3p_reserve((void **)&p->entities, &p->entity_capacity, entities, sizeof(*p->entities), error) ||
+        !q3p_reserve((void **)&p->polygons, &p->polygon_capacity, polygons, sizeof(*p->polygons), error) ||
+        !q3p_reserve((void **)&p->vertices, &p->vertex_capacity, membership.vertices, sizeof(*p->vertices), error) ||
+        !q3p_reserve((void **)&p->lights, &p->light_capacity, lights, sizeof(*p->lights), error)) return false;
+    if (entities) {
+        p->source_entity_assets = qa_arena_alloc(&p->frame->storage, entities * sizeof(*p->source_entity_assets),
+            _Alignof(qa_q3_presentation_assets *), error);
+        if (!p->source_entity_assets) return false;
+    }
+    if (polygons) {
+        p->source_polygon_assets = qa_arena_alloc(&p->frame->storage, polygons * sizeof(*p->source_polygon_assets),
+            _Alignof(qa_q3_presentation_assets *), error);
+        if (!p->source_polygon_assets) return false;
+    }
+    for (size_t i = 0; i < entities; ++i) {
+        qa_q3_source_entity_cell cell;
+        if (!qa_q3_source_scene_bank_entity_read(bank, membership.first_entity + (uint32_t)i, &cell)) return false;
+        p->entities[i] = cell.value; p->source_entity_assets[i] = cell.assets;
+    }
+    size_t vertex_count = 0;
+    for (size_t i = 0; i < polygons; ++i) {
+        qa_q3_source_polygon_cell cell; const qa_q3_poly_vertex *vertices;
+        if (!qa_q3_source_scene_bank_poly_read(bank, membership.first_polygon + (uint32_t)i, &cell, &vertices)) return false;
+        p->polygons[i] = (q3p_polygon){.shader = cell.shader, .first = vertex_count,
+            .count = cell.count, .fog = cell.fog};
+        p->source_polygon_assets[i] = cell.assets;
+        for (size_t j = 0; j < cell.count; ++j) p->vertices[vertex_count++] = (qa_scene_vertex){
+            .position = vertices[j].position, .texcoord = vertices[j].texcoord, .color = q3p_color(vertices[j].color)};
+    }
+    for (size_t i = 0; i < lights; ++i) {
+        qa_q3_source_light_cell cell;
+        if (!qa_q3_source_scene_bank_light_read(bank, membership.first_light + (uint32_t)i, &cell)) return false;
+        p->lights[i] = cell.value;
+    }
+    p->source_entity_first = membership.first_entity;
+    p->entity_count = entities; p->polygon_count = polygons; p->vertex_count = vertex_count; p->light_count = lights;
+    return true;
+}
 
 static qa_model_transform entity_transform(const qa_q3_ref_entity *entity)
 {
@@ -72,7 +123,8 @@ static bool submit_polygons(qa_q3_presentation *p, const qa_q3_scene_options *op
         const q3p_polygon *polygon = &p->polygons[i];
         if (!polygon->count) continue;
         const qa_material *material;
-        if (!q3p_shader_get(p->options.assets, polygon->shader, &material, error)) return false;
+        const qa_q3_presentation_assets *assets = p->source_polygon_assets ? p->source_polygon_assets[i] : p->options.assets;
+        if (!q3p_shader_get(assets, polygon->shader, &material, error)) return false;
         if (!material) material = q3p_default_material(p);
         if (!material) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 polygon has no default material");
         qa_scene_mesh mesh;
@@ -159,8 +211,10 @@ static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *
     qa_scene_model_input *out, qa_error *error)
 {
     const qa_material *material; const qa_model_skin_map *skin;
+    const qa_material *const *skin_materials = NULL; size_t skin_material_count = 0;
     if (!q3p_shader_get(shader_assets, entity->custom_shader, &material, error) ||
-        !q3p_skin_get(assets, entity->custom_skin, &skin, error)) return false;
+        !q3p_skin_get(assets, entity->custom_skin, &skin, error) ||
+        !q3p_skin_materials(assets, entity->custom_skin, &skin_materials, &skin_material_count, error)) return false;
     *out = (qa_scene_model_input){
         .view = weapon_view(&options->world.view,
             options->split_screen && !options->world.no_world && (entity->flags & 4)),
@@ -171,6 +225,7 @@ static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *
         .rotation = entity->rotation, .shadow_plane = entity->shadow_plane,
         .identity_light = options->world.identity_light, .seconds = options->world.seconds,
         .custom_material = material, .custom_skin = skin, .view_model = (entity->flags & 4) != 0,
+        .custom_skin_materials = skin_materials, .custom_skin_material_count = skin_material_count,
         .no_cull = options->world.no_cull, .non_normalized_axis = entity->non_normalized_axes,
         .source_order = true, .source_scratch = options->world.source_scratch, .shadow_mode = options->shadow_mode,
         .source_entity_cell = options->world.source_entity_cells && !p->submission,
@@ -234,6 +289,10 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
                 if (p->frame->commands[i].kind == QA_SCENE_COMMAND_DRAW)
                     p->frame->commands[i].data.draw.source_direct = QA_SOURCE_DIRECT_AXIS;
             qa_material_context context = effect_context(options);
+            if (source_time) {
+                context.seconds=(float)*source_time*.001f;
+                context.milliseconds=*source_time;
+            }
             context.view = view; context.entity = order; context.model = qa_scene_model_matrix(&transform);
             context.source_entity_cell = options->world.source_entity_cells && !p->submission;
             context.entity_color = q3p_color(entity->color); context.time_offset = entity->shader_time;
@@ -650,9 +709,10 @@ bool qa_q3_presentation_selected_effect(qa_q3_presentation *p,
     return submit_effect(p, assets, options, &placed, order, &source_time_ms, error);
 }
 
-bool qa_q3_presentation_selected_poly(qa_q3_presentation *p,
+static bool submit_registered_poly(qa_q3_presentation *p,
     const qa_q3_presentation_assets *assets, int32_t shader,
-    const qa_scene_vertex *vertices, size_t count, int32_t source_time_ms, const qa_q3_scene_options *options,
+    const qa_scene_vertex *vertices, size_t count,const qa_scene_fog_volume *source_fog,
+    int32_t source_time_ms, const qa_q3_scene_options *options,
     qa_scene_frame *frame, qa_error *error)
 {
     if (!selected_effect_ready(p, assets, options, frame, error)) return false;
@@ -669,8 +729,8 @@ bool qa_q3_presentation_selected_poly(qa_q3_presentation *p,
     qa_bounds bounds = {vertices[0].position, vertices[0].position};
     for (size_t i = 0; i < count; ++i)
         bounds = qa_bounds_union(bounds, (qa_bounds){vertices[i].position, vertices[i].position});
-    qa_scene_fog_volume fog = {0};
-    qa_scene_world_fog_for_bounds(p->world, bounds, &fog);
+    qa_scene_fog_volume fog = source_fog?*source_fog:(qa_scene_fog_volume){0};
+    if (!source_fog) qa_scene_world_fog_for_bounds(p->world, bounds, &fog);
     qa_scene_mesh mesh;
     if (!qa_scene_poly_geometry(frame, vertices, count, &mesh, error)) return false;
     qa_material_context context = effect_context(options);
@@ -683,6 +743,44 @@ bool qa_q3_presentation_selected_poly(qa_q3_presentation *p,
         material->sort, 1022, fog.index, 0, error);
 }
 
+bool qa_q3_presentation_selected_poly(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets,int32_t shader,const qa_scene_vertex *vertices,size_t count,
+    int32_t source_time_ms,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
+{
+    return submit_registered_poly(p,assets,shader,vertices,count,NULL,source_time_ms,options,frame,error);
+}
+static bool source_component_ready(qa_q3_presentation *p,const qa_q3_presentation_assets *assets,
+    const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
+{
+    const qa_q3_presentation_assets *primary=p?p->options.assets:NULL;
+    if (!primary || assets==primary || primary->busy!=1 || primary->capturing || primary->codec_busy ||
+        !q3p_assets_children_idle(primary) || !selected_effect_ready(p,assets,options,frame,error))
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Source component lost its primary view and actual private registry");
+    return true;
+}
+bool qa_q3_presentation_source_component_entity(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets,const qa_q3_ref_entity *entity,int32_t source_time_ms,
+    const qa_q3_scene_options *options,uint32_t order,qa_scene_frame *frame,qa_error *error)
+{
+    if (!source_component_ready(p,assets,options,frame,error)) return false;
+    if (!entity || entity->kind<QA_Q3_REF_MODEL || entity->kind>QA_Q3_REF_LIGHTNING ||
+        entity->kind==QA_Q3_REF_POLY || order>=1022)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Source component requires its genuine completed entity row");
+    if (entity->kind==QA_Q3_REF_PORTAL ||
+        ((entity->flags&4) && options->world.view.clip_enabled) ||
+        (entity->kind!=QA_Q3_REF_MODEL && (entity->flags&2) && !options->world.view.clip_enabled)) return true;
+    if (entity->kind==QA_Q3_REF_MODEL)
+        return submit_model(p,assets,assets,assets,options,entity,order,&source_time_ms,true,error);
+    return submit_effect(p,assets,options,entity,order,&source_time_ms,error);
+}
+bool qa_q3_presentation_source_component_poly(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets,int32_t shader,const qa_scene_vertex *vertices,size_t count,
+    const qa_scene_fog_volume *source_fog,int32_t source_time_ms,const qa_q3_scene_options *options,
+    qa_scene_frame *frame,qa_error *error)
+{
+    return source_fog && source_component_ready(p,assets,options,frame,error) &&
+        submit_registered_poly(p,assets,shader,vertices,count,source_fog,source_time_ms,options,frame,error);
+}
 bool qa_q3_presentation_selected_world_models(qa_q3_presentation *p,
     const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entities, size_t count,
     const qa_q3_scene_options *options, qa_scene_frame *frame, qa_error *error)
@@ -745,10 +843,10 @@ bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *p,
     return false;
 }
 
-static bool submit_queued_surfaces(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
+static bool submit_queued_surfaces(qa_q3_presentation *p, const qa_q3_scene_options *options,size_t entity_count,qa_error *error)
 {
     if (!submit_polygons(p, options, error)) return false;
-    for (size_t i = 0; !options->no_entities && i < p->entity_count; ++i) {
+    for (size_t i = 0; !options->no_entities && i < entity_count; ++i) {
         qa_q3_ref_entity entity = p->entities[i];
         if (entity.kind == QA_Q3_REF_POLY) return q3p_fail(error, QA_ERROR_FORMAT, "R_AddEntitySurfaces: Bad reType");
         if (entity.kind == QA_Q3_REF_PORTAL ||
@@ -761,10 +859,11 @@ static bool submit_queued_surfaces(qa_q3_presentation *p, const qa_q3_scene_opti
             entity.shadow_plane += options->weapon_offset.z;
         }
         uint32_t order = options->first_entity + (uint32_t)i;
+        const qa_q3_presentation_assets *assets = p->source_entity_assets ? p->source_entity_assets[i] : p->options.assets;
         if (entity.kind == QA_Q3_REF_MODEL) {
-            if (!submit_model(p, p->options.assets, p->options.assets, p->options.assets, options, &entity, order, NULL, true, error)) return false;
+            if (!submit_model(p, assets, assets, assets, options, &entity, order, NULL, true, error)) return false;
         } else if (!(entity.flags & 2) || options->world.view.clip_enabled) {
-            if (!submit_effect(p, p->options.assets, options, &entity, order, NULL, error)) return false;
+            if (!submit_effect(p, assets, options, &entity, order, NULL, error)) return false;
         }
     }
     if (p->options.submit_view) {
@@ -783,20 +882,29 @@ static bool submit_view_surfaces(qa_q3_presentation *p, const qa_q3_scene_option
         qa_scene_command command = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = options->world.view};
         if (!qa_scene_frame_emit(p->frame, &command, error)) return false;
     }
-    return submit_queued_surfaces(p, options, error);
+    return submit_queued_surfaces(p, options,p->entity_count,error);
 }
-bool qa_q3_presentation_supplement(qa_q3_presentation *p, const qa_q3_scene_options *options,
+bool qa_q3_presentation_supplement(qa_q3_presentation *p,qa_q3_source_scene_bank *bank,const qa_q3_scene_options *options,
     qa_scene_frame *frame, qa_error *error)
 {
-    if (!p || !options || !frame || p->frame!=frame || !frame->command_count ||
+    if (!p || !bank || !options || !frame || p->frame!=frame || !frame->command_count || !qa_q3_presentation_idle(p) ||
         options->world.view.seat!=p->options.seat || !qa_vec_finite(options->world.view.origin) ||
-        !options->world.view.viewport.width || !options->world.view.viewport.height ||
-        options->first_entity>1022 || p->entity_count>1022-options->first_entity)
+        !options->world.view.viewport.width || !options->world.view.viewport.height)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 supplement requires its actual unfinished parent view and registry");
+    qa_q3_scene_options admitted_options=*options;size_t admitted=0;
+    if(!qa_q3_source_scene_bank_entity_range(bank,p->options.assets,p->entities,p->entity_count,
+        &admitted_options.first_entity,&admitted,error))return false;
     if (!q3p_begin(p,error)) return false;
-    p->render_milliseconds=options->world.milliseconds;
-    bool okay=submit_queued_surfaces(p,options,error);
+    uint32_t milliseconds=(uint32_t)(uint64_t)options->world.milliseconds;
+    memcpy(&p->render_milliseconds,&milliseconds,sizeof(milliseconds));
+    bool okay=submit_queued_surfaces(p,&admitted_options,admitted,error);
     return q3p_end(p,okay);
+}
+bool qa_q3_presentation_lights_read(const qa_q3_presentation *p,const qa_scene_light **out,size_t *count,qa_error *e)
+{
+    if (!p || !out || !count || !qa_q3_presentation_idle(p))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Q3 lights require their returned actual presentation owner");
+    *out=p->lights; *count=p->light_count; return true;
 }
 
 static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
@@ -835,6 +943,8 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
 bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef, qa_error *error)
 {
     if (!refdef || !q3p_begin(p, error)) return false;
+    if (!p->frame) return q3p_end(p, q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 scene has no actual frame owner"));
+    if (!source_scene_snapshot(p, error)) return q3p_end(p, false);
     int64_t x = (int64_t)p->options.viewport.x + refdef->x;
     int64_t y = (int64_t)p->options.viewport.y + refdef->y;
     bool ok = p->frame && !p->frame->group_count && refdef->width > 0 && refdef->height > 0 &&
@@ -957,5 +1067,6 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
         if (ok) p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
     }
     if (!ok) { p->frame->command_count = first; p->frame->group_count = 0; }
+    p->source_entity_assets = p->source_polygon_assets = NULL;
     return q3p_end(p, ok);
 }

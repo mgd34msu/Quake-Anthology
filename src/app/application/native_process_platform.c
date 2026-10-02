@@ -144,16 +144,17 @@ bool qa_native_process_platform_create(const qa_native_process_platform_options 
     platform_operation_begin(owner);
     owner->id = options->id; owner->references = 1; owner->failed = true;
     for (size_t i = 0; i < 3; ++i) owner->streams[i].closed = true;
+    *out = owner;
 #if defined(_WIN32)
     LARGE_INTEGER frequency;
-    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) {
-        free(owner); return fail(error, QA_ERROR_IO, "Reading actual performance-counter frequency");
-    }
+    if (!QueryPerformanceFrequency(&frequency))
+        return platform_fail_windows(owner, GetLastError(), error, "Reading actual performance-counter frequency");
+    if (frequency.QuadPart <= 0)
+        return fail(error, QA_ERROR_IO, "Actual performance-counter frequency is invalid");
     owner->frequency = frequency.QuadPart;
 #else
     owner->frequency = INT64_C(1000000000);
 #endif
-    *out = owner;
     for (size_t i = 0; i < 3; ++i) {
         platform_stream *stream = owner->streams + i;
         stream->owner = owner; stream->id = options->standard_ids[i];
@@ -164,17 +165,22 @@ bool qa_native_process_platform_create(const qa_native_process_platform_options 
         stream->descriptor = fcntl((int)i, F_DUPFD_CLOEXEC, 3);
 #endif
         if (stream->descriptor < 0)
-            return fail(error, QA_ERROR_IO, "Duplicating actual native standard descriptor");
+            return platform_fail_errno(owner, errno, error, "Duplicating actual native standard descriptor");
         stream->closed = false;
         stream->held = malloc(sizeof(*stream->held));
         if (!stream->held) return fail(error, QA_ERROR_MEMORY, "Owning actual native standard descriptor holds");
         stream->held->references = 1;
 #if defined(_WIN32)
         if (_setmode(stream->descriptor, _O_BINARY) == -1)
-            return fail(error, QA_ERROR_IO, "Selecting byte I/O on the owned native standard descriptor");
+            return platform_fail_errno(owner, errno, error, "Selecting byte I/O on the owned native standard descriptor");
 #endif
-        if (!stream_identity(stream->descriptor, &stream->device, &stream->object))
-            return fail(error, QA_ERROR_IO, "Reading retained native standard object identity");
+        if (!stream_identity(stream->descriptor, &stream->device, &stream->object)) {
+#if defined(_WIN32)
+            return platform_fail_windows(owner, GetLastError(), error, "Reading retained native standard object identity");
+#else
+            return platform_fail_errno(owner, errno, error, "Reading retained native standard object identity");
+#endif
+        }
 #if defined(_WIN32)
         stream->durable_object = GetFileType((HANDLE)_get_osfhandle(stream->descriptor)) == FILE_TYPE_DISK;
 #else
@@ -423,6 +429,53 @@ bool qa_native_process_platform_file_status(qa_native_process_platform *owner, u
 #endif
 }
 
+bool qa_native_process_platform_descriptor_status(qa_native_process_platform *owner, uint64_t id,
+    qa_fs_posix_descriptor_status *out, qa_error *error)
+{
+    if (!out || !qa_native_process_platform_current(owner, error)) return false;
+    platform_stream *stream = NULL;
+    for (size_t i = 0; i < 3; ++i) if (owner->streams[i].id == id) stream = owner->streams + i;
+    if (!stream || stream->closed) return fail(error, QA_ERROR_NOT_FOUND, "Actual standard descriptor is closed or absent");
+#if !defined(_WIN32)
+    int flags;
+    do { flags = fcntl(stream->descriptor, F_GETFL); } while (flags < 0 && errno == EINTR);
+    if (flags < 0) return platform_fail_errno(owner, errno, error, "Reading actual standard descriptor status flags");
+    off_t offset;
+    do { offset = lseek(stream->descriptor, 0, SEEK_CUR); } while (offset < 0 && errno == EINTR);
+    int code = errno;
+    if (offset < 0 && code != ESPIPE)
+        return platform_fail_errno(owner, code, error, "Observing actual standard descriptor position");
+    *out = (qa_fs_posix_descriptor_status){.flags = (uint32_t)flags,
+        .offset = offset < 0 ? 0 : (int64_t)offset, .seekable = offset >= 0};
+    return true;
+#else
+    return fail(error, QA_ERROR_UNSUPPORTED, "Windows standard objects do not supply POSIX descriptor status");
+#endif
+}
+
+bool qa_native_process_platform_descriptor_flags(qa_native_process_platform *owner, uint64_t id,
+    bool append, bool nonblocking, qa_error *error)
+{
+    if (!qa_native_process_platform_current(owner, error)) return false;
+    platform_stream *stream = NULL;
+    for (size_t i = 0; i < 3; ++i) if (owner->streams[i].id == id) stream = owner->streams + i;
+    if (!stream || stream->closed) return fail(error, QA_ERROR_NOT_FOUND, "Actual standard descriptor is closed or absent");
+#if !defined(_WIN32)
+    int previous;
+    do { previous = fcntl(stream->descriptor, F_GETFL); } while (previous < 0 && errno == EINTR);
+    if (previous < 0) return platform_fail_errno(owner, errno, error, "Reading actual standard descriptor flags");
+    int next = (previous & ~(O_APPEND | O_NONBLOCK)) | (append ? O_APPEND : 0) | (nonblocking ? O_NONBLOCK : 0);
+    if (next == previous) return true;
+    int result;
+    do { result = fcntl(stream->descriptor, F_SETFL, next); } while (result < 0 && errno == EINTR);
+    if (result < 0) return platform_fail_errno(owner, errno, error, "Changing actual standard descriptor flags");
+    return true;
+#else
+    (void)append; (void)nonblocking;
+    return fail(error, QA_ERROR_UNSUPPORTED, "Windows standard objects do not supply POSIX descriptor flags");
+#endif
+}
+
 static bool stream_read(void *context, uint64_t offset, void *out, size_t bytes,
     size_t *done, qa_error *error)
 {
@@ -529,6 +582,54 @@ static bool windows_stream_write(void *context, qa_bytes bytes, qa_error *error)
     }
     return true;
 }
+static bool program_stream_read(void *context, uint64_t offset, void *out, size_t bytes,
+    size_t *done, qa_error *error)
+{
+    platform_stream *stream = context;
+    if (done) *done = 0;
+    platform_operation_begin(stream ? stream->owner : NULL);
+    if (!stream || !done || (!out && bytes) || stream->closed || !(stream->mode & 1))
+        return fail(error, QA_ERROR_ARGUMENT, "PROGRAM standard input requires its actual readable object");
+    qa_fs_posix_descriptor_status status;
+    if (!qa_native_process_platform_descriptor_status(stream->owner, stream->id, &status, error)) return false;
+    if (!status.seekable) return stream_read(context, offset, out, bytes, done, error);
+#if !defined(_WIN32)
+    if (offset > INT64_MAX) return fail(error, QA_ERROR_ARGUMENT, "PROGRAM standard offset exceeds its native signed domain");
+    size_t count = bytes > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes;
+    ++stream->owner->busy;
+    ssize_t result;
+    do { result = pread(stream->descriptor, out, count, (off_t)offset); } while (result < 0 && errno == EINTR);
+    int code = errno; --stream->owner->busy;
+    if (result < 0) return platform_fail_errno(stream->owner, code, error, "Reading actual positional PROGRAM standard input");
+    *done = (size_t)result; return true;
+#else
+    return fail(error, QA_ERROR_UNSUPPORTED, "PROGRAM positional standard input requires POSIX objects");
+#endif
+}
+static bool program_stream_write(void *context, uint64_t offset, qa_bytes bytes,
+    size_t *done, qa_error *error)
+{
+    platform_stream *stream = context;
+    if (done) *done = 0;
+    platform_operation_begin(stream ? stream->owner : NULL);
+    if (!stream || !done || (!bytes.data && bytes.size) || stream->closed || !(stream->mode & 2))
+        return fail(error, QA_ERROR_ARGUMENT, "PROGRAM standard output requires its actual writable object");
+    qa_fs_posix_descriptor_status status;
+    if (!qa_native_process_platform_descriptor_status(stream->owner, stream->id, &status, error)) return false;
+    if (!status.seekable) return stream_write(context, offset, bytes, done, error);
+#if !defined(_WIN32)
+    if (offset > INT64_MAX) return fail(error, QA_ERROR_ARGUMENT, "PROGRAM standard offset exceeds its native signed domain");
+    size_t count = bytes.size > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes.size;
+    ++stream->owner->busy;
+    ssize_t result;
+    do { result = pwrite(stream->descriptor, bytes.data, count, (off_t)offset); } while (result < 0 && errno == EINTR);
+    int code = errno; --stream->owner->busy;
+    if (result < 0) return platform_fail_errno(stream->owner, code, error, "Writing actual positional PROGRAM standard output");
+    *done = (size_t)result; return true;
+#else
+    return fail(error, QA_ERROR_UNSUPPORTED, "PROGRAM positional standard output requires POSIX objects");
+#endif
+}
 static bool stream_size(void *context, uint64_t *out, qa_error *error)
 {
     platform_stream *stream = context;
@@ -605,6 +706,17 @@ bool qa_native_process_platform_sysv_files(qa_native_process_platform *owner,
         .size = stream_size, .flush = stream_flush, .close = stream_close,
         .context = owner->streams + i};
     *terminal = owner->terminal;
+    return true;
+}
+bool qa_native_process_platform_program_files(qa_native_process_platform *owner,
+    qa_native_sysv_file out[3], qa_error *error)
+{
+    bool terminal;
+    if (!qa_native_process_platform_sysv_files(owner, out, &terminal, error)) return false;
+    for (size_t i = 0; i < 3; ++i) {
+        out[i].read = i ? NULL : program_stream_read;
+        out[i].write = i ? program_stream_write : NULL;
+    }
     return true;
 }
 static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner)

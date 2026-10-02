@@ -40,6 +40,8 @@ struct application_native_q2 {
     struct application_native_q2_wire_engine *wire_engine;
     application_native_process_owner process;
     struct application_native_q2_inventory *primary_inventory;
+    struct application_native_q2_inventory_rows *inventory_rows;
+    struct application_native_q2_inventory_scanner *inventory_scanner;
     struct application_native_q2_attack *source_attack;
     struct application_native_q2_combat *source_combat;
     struct application_q2_control *source_control;

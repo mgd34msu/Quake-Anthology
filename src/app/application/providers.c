@@ -18,6 +18,7 @@
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
 #include "bots_q1_rules.h"
+#include "bots_npc.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
 #include "supplies.h"
@@ -509,7 +510,11 @@ static bool construct_q1(qa_application *application,
                        .before_fire = application_q1_before_fire,
                        .attack_delay = q1_selected_attack_delay,
                        .bot_nail_speed = application_bot_q1_nail_speed,
-                       .nail_fire = application_q1_nail_fire};
+                       .nail_fire = application_q1_nail_fire,
+                       .monster_path = application_bots_npc_walk,
+                       .horde = application_bots_npc_horde,
+                       .monster_path_clone = application_bots_npc_clone,
+                       .monster_path_release = application_bots_npc_released};
     qa_builtin_services services = application_builtin_services(
         application, world, application->physics);
     services.cvar_context = provider;
@@ -1303,6 +1308,8 @@ bool application_provider_construct_qvm_restored(qa_application *application,
 static bool deconstruct_provider(application_provider *provider, qa_error *error)
 {
     if (provider == NULL) return true;
+    if (!application_bots_npc_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Monster source navigation is entered");
     if (provider->attached || provider->component_attached ||
         provider->policy_attached)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -1345,8 +1352,10 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
             ok = application_native_q1_console_destroy(provider, error);
             break;
         }
-        if (!application_native_q1_console_idle(provider) || !application_native_q1_wire_idle(provider))
+        if (!application_native_q1_console_idle(provider) || !application_native_q1_wire_idle(provider) ||
+            !application_bots_npc_idle(provider))
             return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 source console or catalog is borrowed");
+        application_bots_npc_destroy(provider);
         qa_q1_game_destroy(provider->state.q1);
         qa_q1_game_operation_end(&provider->q1_lifetime);
         provider->state.q1 = NULL;
@@ -1404,6 +1413,7 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         break;
     case APPLICATION_PROVIDER_QC:
         ok = application_qc_deconstruct(provider, error);
+        if (ok) application_bots_npc_destroy(provider);
         break;
     case APPLICATION_PROVIDER_QVM:
         ok = application_q3_guest_deconstruct(provider, error);
@@ -1451,6 +1461,8 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
 
 bool application_provider_deconstruct(application_provider *provider, qa_error *error)
 {
+    if (provider && provider->hosted_video_leases)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Provider retains an actual hosted video restart recipe");
     qa_application *app = provider ? provider->application : NULL;
     application_provider *previous = app ? app->engine_shutdown_provider : NULL;
     if (app && app->engine_shutdown) app->engine_shutdown_provider = provider;

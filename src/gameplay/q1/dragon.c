@@ -347,7 +347,7 @@ bool q1_dragon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     body.bounds = entity->state.monster.species->bounds;
-    entity->max_health = 3000 + 1000 * g->options.skill;
+    entity->max_health = 3000.0f + 1000.0f * (float)g->options.skill;
     entity->state.monster.source.dragon.pain_sequence = 1;
     entity->state.monster.source.dragon.missile = UINT16_MAX;
     entity->state.monster.next_frame = q1_frame_index("dragon_activate");
@@ -477,7 +477,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
         body.velocity = qa_vec_sub(qa_vec_scale(g->forward, 300), qa_vec_scale(g->up, 40));
         body.ground = (qa_actor_id){0};
         body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
-        entity->physics.flags &= ~QA_PHYSICS_ONGROUND;
+        entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
                q1_sound(g, entity->id, "dragon/death.wav", 2, 0, error);
     }

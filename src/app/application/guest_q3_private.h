@@ -10,6 +10,8 @@
 #include "guest_q3_combat_profile.h"
 #include "guest_q3_pickups_profile.h"
 #include "guest_q3_body.h"
+#include "guest_q3_collision_profile.h"
+#include "guest_q3_weapon_models.h"
 #include "qa/application_q3_client.h"
 #include "qa/catalog_write.h"
 #include <limits.h>
@@ -61,6 +63,11 @@ typedef struct q3g_artifact {
     qa_resource *body_resource;
     qa_vfs_acquisition body_acquisition;
     application_q3_body_profile body_profile;
+    qa_q3_host_collision_profile collision_profile;
+    qa_buffer collision_scene;
+    qa_resource *weapon_models_resource;
+    qa_vfs_acquisition weapon_models_acquisition;
+    application_q3_weapon_models_profile weapon_models_profile;
     qa_launch_instance_lease *descriptor;
     qa_vfs *view;
     qa_buffer primary, equipment_presentation;
@@ -97,6 +104,7 @@ typedef struct q3g_role {
     struct application_guest_projection *projection;
     struct application_q3_catalog *catalog;
     struct application_q3_weapons *weapons;
+    struct application_q3_weapon_models *weapon_models;
     struct application_q3_weapons_services *weapon_services;
     struct application_q3_combat *combat;
     application_q3_pickup_profile pickup_profile;
@@ -106,12 +114,15 @@ typedef struct q3g_role {
     qa_application_q3_body_services body_services;
     qa_application_q3_client_context draw_source;
     int32_t draw_arguments[3];
+    int32_t init_arguments[3];
+    uint8_t init_argument_count;
     bool draw_entry;
     char *path;
     qa_command_tokens arguments;
     qa_q3_host_common_services common;
     qa_q3_host_server_services server;
     qa_q3_host_client_services client_services;
+    qa_q3_host_collision_services collision_services;
     bool input_keys[256];
     bool initialized, retired, ready, primary, local_client, arguments_scoped;
     bool committed, activation_failed, shutdown_entry;
@@ -160,6 +171,7 @@ struct application_q3_guest {
     q3g_round round;
     unsigned calls;
     size_t client_leases;
+    size_t video_leases;
     uint64_t role_sequence;
     qa_launch_instance_lease *client_descriptor;
     const qa_launch_instance *client_candidate;
@@ -181,6 +193,7 @@ bool q3g_role_shutdown(q3g_role *, bool restart, qa_error *);
 bool q3g_role_shutdown_source(q3g_role *, bool restart, qa_error *);
 bool q3g_role_consume(q3g_role *, qa_error *);
 bool q3g_role_catalog_refresh(q3g_role *, qa_error *);
+bool application_guest_q3_collision_bind(q3g_role *, qa_error *);
 void q3g_game_aliases(struct application_q3_guest *, q3g_role *);
 bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);

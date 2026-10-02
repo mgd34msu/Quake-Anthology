@@ -339,6 +339,9 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   if (state->color_write && buffer->color) {
     for (size_t c = 0; c < 4; ++c)
       color[c] = cpu_clamp(color[c]);
+    if (renderer->preblend_gamma && renderer->gamma_enabled)
+      for (size_t c = 0; c < 3; ++c)
+        color[c] = renderer->gamma[cpu_byte(color[c])] / 255.0;
     uint8_t *destination = buffer->color + index * 4;
     double alpha = buffer->alpha ? destination[3] / 255.0 : 1;
     for (size_t c = 0; c < 4; ++c) {

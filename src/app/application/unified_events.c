@@ -5,6 +5,7 @@
 #include "unified_output.h"
 #include "qa/json.h"
 #include "guest_q3_components.h"
+#include "qa/application_native_q2_presentation.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@ bool application_unified_event_source_read(qa_application *app, qa_actor_owner o
     application_provider *provider = source_provider(app, owner);
     if (provider && provider->launch && provider->product) {
         *out = (application_unified_event_source){owner, provider->launch, provider->product,
-            provider->launch->content, provider->launch->selection.clock.kind};
+            provider->launch->content, provider->launch->selection.clock.kind, false};
         return true;
     }
     application_q3_component_publication component;
@@ -35,7 +36,7 @@ bool application_unified_event_source_read(qa_application *app, qa_actor_owner o
     if (!component.descriptor || !component.product || !component.content || !component.catalog)
         return application_fail(error, QA_ERROR_ARGUMENT, "Component Source event lost its retained content owner");
     *out = (application_unified_event_source){owner, component.descriptor, component.product,
-        component.content, QA_CLOCK_Q3, 0};
+        component.content, QA_CLOCK_Q3, true};
     return true;
 }
 
@@ -43,10 +44,10 @@ size_t application_unified_event_resource_count(const qa_application *app)
 { return app ? app->unified_event_resource_count : 0; }
 
 static bool bind_owner(qa_application *app, qa_actor_owner owner, const qa_product *product,
-    bool primary, qa_error *error)
+    bool unowned, qa_error *error)
 {
     if (!product || !product->identity || app->unified_persistent_revision == UINT64_MAX ||
-        (!primary && app->unified_event_owner_generation >= QA_UNIFIED_SAFE_INTEGER))
+        (!unowned && app->unified_event_owner_generation >= QA_UNIFIED_SAFE_INTEGER - 1))
         return application_fail(error, QA_ERROR_ARGUMENT, "Presentation activation lost its actual product or generation");
     qa_string_id content;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), product->identity, &content, error)) return false;
@@ -62,16 +63,16 @@ static bool bind_owner(qa_application *app, qa_actor_owner owner, const qa_produ
         if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Presentation Source activation");
         app->unified_event_owners = rows; app->unified_event_owner_capacity = capacity;
     }
-    uint64_t generation = primary ? 0 : app->unified_event_owner_generation + 1;
+    uint64_t generation = unowned ? 0 : app->unified_event_owner_generation + 1;
     app->unified_event_owners[index] = (application_unified_event_owner){owner, content, generation, true};
     if (index == app->unified_event_owner_count) ++app->unified_event_owner_count;
-    if (!primary) app->unified_event_owner_generation = generation;
+    if (!unowned) app->unified_event_owner_generation = generation;
     ++app->unified_persistent_revision;
     return true;
 }
 
 bool application_unified_event_owner_bind(qa_application *app, application_provider *provider,
-    bool primary, bool restoring, qa_error *error)
+    bool restoring, qa_error *error)
 {
     if (!app || !provider || provider->application != app || !provider->owner || !provider->launch ||
         source_provider(app, provider->owner) != provider)
@@ -81,7 +82,9 @@ bool application_unified_event_owner_bind(qa_application *app, application_provi
     const qa_product *product = provider->product;
     qa_catalog *catalog = qa_launch_instance_catalog(provider->launch);
     if (!product && catalog) product = qa_catalog_product(catalog, provider->launch->selection.product);
-    return bind_owner(app, provider->owner, product, primary, error);
+    /* Ordinary selected gameplay emits through the shared Source stream.
+     * Only the actual component constructor creates a PresentationOwner. */
+    return bind_owner(app, provider->owner, product, true, error);
 }
 
 bool application_unified_event_component_owner_bind(qa_application *app, qa_actor_owner owner,
@@ -89,6 +92,8 @@ bool application_unified_event_component_owner_bind(qa_application *app, qa_acto
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error)) return false;
+    if (!source.component)
+        return application_fail(error, QA_ERROR_ARGUMENT, "PresentationOwner requires its actual component Source");
     return restoring || bind_owner(app, owner, source.product, false, error);
 }
 
@@ -307,7 +312,7 @@ bool application_unified_event_payload_valid(qa_bytes bytes, bool presentation,
     bool okay = qa_json_type(json, root) == QA_JSON_OBJECT &&
         qa_json_type(json, qa_json_get(json, root, "kind")) == QA_JSON_STRING;
     if (presentation) {
-        static const char *const reserved[] = {"sequence", "seconds", "content", "recipient", "sourceEntity"};
+        static const char *const reserved[] = {"sequence", "seconds", "content", "recipient", "sourceEntity", "owner", "source"};
         for (size_t i = 0; okay && i < sizeof(reserved) / sizeof(*reserved); ++i)
             okay = qa_json_get(json, root, reserved[i]) == QA_JSON_NONE;
     } else {
@@ -434,6 +439,23 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     return true;
 }
 
+static bool persistent_current_key(qa_application *app,
+    const application_unified_persistent_event *row, qa_buffer *key, qa_error *error)
+{
+    application_unified_event_record current = row->event;
+    application_unified_json payload = {0};
+    bool remove = false, ok = true;
+    if (current.payload_checkpoint) {
+        ok = payload_actor_read(app, current.presentation, true, &payload, error) &&
+            application_unified_event_recipient(app, &current, false, &current.recipient, error);
+        current.presentation = (qa_bytes){payload.bytes.data, payload.bytes.size};
+        current.payload_checkpoint = false;
+    }
+    if (ok) ok = application_unified_persistent_key(app, &current, key, &remove, error);
+    application_unified_json_dispose(&payload);
+    return ok;
+}
+
 static bool persistent_record(qa_application *app, const application_unified_event_record *event, qa_error *error)
 {
     qa_buffer key = {0}; bool remove = false;
@@ -443,17 +465,7 @@ static bool persistent_record(qa_application *app, const application_unified_eve
     while (index < app->unified_persistent_count) {
         const application_unified_persistent_event *previous = app->unified_persistent + index;
         qa_buffer current_key = {0};
-        bool ignored = false, ok = true;
-        if (previous->event.payload_checkpoint) {
-            application_unified_event_record current = previous->event;
-            application_unified_json payload = {0};
-            ok = payload_actor_read(app, current.presentation, true, &payload, error) &&
-                application_unified_event_recipient(app, &current, false, &current.recipient, error);
-            current.presentation = (qa_bytes){payload.bytes.data, payload.bytes.size};
-            current.payload_checkpoint = false;
-            if (ok) ok = application_unified_persistent_key(app, &current, &current_key, &ignored, error);
-            application_unified_json_dispose(&payload);
-        }
+        bool ok = !previous->event.payload_checkpoint || persistent_current_key(app, previous, &current_key, error);
         const qa_buffer *candidate = previous->event.payload_checkpoint ? &current_key : &previous->key;
         bool same = ok && key.size == candidate->size && !memcmp(key.data, candidate->data, key.size);
         qa_buffer_free(&current_key);
@@ -522,31 +534,39 @@ static bool persistent_domain_equal(const qa_buffer *a, const qa_buffer *b, bool
 bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner owner,
     const qa_source_frame *clock, qa_error *error)
 {
-    if (!app || !clock || !clock->provider || clock->kind > QA_CLOCK_Q3)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
+    if (!app || !owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires its actual owner");
     application_unified_event_owner *activation = NULL;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i)
         if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active)
             activation = app->unified_event_owners + i;
     if (!activation || !activation->generation)
         return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
+    if (!clock || !clock->provider || (unsigned)clock->kind > QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
     size_t count = app->unified_persistent_count;
     size_t *winners = count ? malloc(count * sizeof(*winners)) : NULL;
-    if (count && !winners) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual presentation replacement slots");
+    qa_buffer *keys = count ? calloc(count, sizeof(*keys)) : NULL;
+    if (count && (!winners || !keys)) {
+        free(winners); free(keys);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining actual presentation replacement slots");
+    }
     size_t winner_count = 0;
     bool ok = true;
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = persistent_current_key(app, app->unified_persistent + i, keys + i, error);
     for (size_t i = 0; ok && i < count; ++i) {
         const application_unified_persistent_event *row = app->unified_persistent + i;
         if (row->event.provider == owner) continue;
         bool affected = false;
         for (size_t n = 0; ok && !affected && n < count; ++n)
             if (app->unified_persistent[n].event.provider == owner)
-                ok = persistent_domain_equal(&row->key, &app->unified_persistent[n].key, false, &affected, error);
+                ok = persistent_domain_equal(keys + i, keys + n, false, &affected, error);
         if (!affected) continue;
         size_t match = 0;
         for (; ok && match < winner_count; ++match) {
             bool same;
-            ok = persistent_domain_equal(&row->key, &app->unified_persistent[winners[match]].key, true, &same, error);
+            ok = persistent_domain_equal(keys + i, keys + winners[match], true, &same, error);
             if (ok && same) break;
         }
         if (ok) {
@@ -600,7 +620,8 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
         prepared[i].presentation_sequence = app->presentation_event_sequence++;
         app->unified_events[app->unified_event_count++] = prepared[i];
     }
-    free(prepared); free(winners); application_unified_json_dispose(&payload);
+    for (size_t i = 0; i < count; ++i) qa_buffer_free(keys + i);
+    free(keys); free(prepared); free(winners); application_unified_json_dispose(&payload);
     return ok;
 }
 
@@ -624,13 +645,21 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         .clock = source.clock, .time_ns = time_ns,
         .presentation_clock = source.clock,
         .simulation_time_ns = time_ns, .source_entity = source_entity,
-        .has_source_entity = has_source_entity, .link_presentation = link_presentation,
-        .owner_generation = source.owner_generation};
+        .has_source_entity = has_source_entity, .link_presentation = link_presentation};
+    qa_q2_edition q2_edition; bool q2_profile;
+    if (!qa_application_native_q2_source_profile_read(app,owner,&q2_edition,&q2_profile,error)) return false;
+    if (q2_profile) {
+        qa_clock_kind actual=q2_edition==QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE;
+        if (source.clock!=actual)
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 Source rules differ from its emitted clock receipt");
+        record.q2_source_profile=(uint8_t)(q2_edition==QA_Q2_CLASSIC ? 1 : 2);
+    }
     bool activated = false;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i)
         if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active) {
             const char *identity = qa_strings_cstr(qa_session_strings(app->session), app->unified_event_owners[i].content);
-            if (!identity || strcmp(identity, source.product->identity))
+            if (!identity || strcmp(identity, source.product->identity) ||
+                source.component != (app->unified_event_owners[i].generation != 0))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Source presentation activation changed its actual content");
             record.owner_generation = app->unified_event_owners[i].generation;
             activated = true;
@@ -889,7 +918,7 @@ void application_event_journal_append(qa_application *app, application_event_que
 static bool actor_property(const qa_json_document *json, qa_json_id key)
 {
     const char *names[] = {"actor", "player", "attacker", "inflictor", "originatingProjectile",
-        "target", "killer", "victim", "other", "activator", "ground", "projectile", "entity"};
+        "target", "killer", "victim", "other", "activator", "ground", "projectile", "entity", "owner"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (qa_json_string_equal(json, key, names[i])) return true;
     return false;
@@ -1014,6 +1043,12 @@ static bool presentation_write(application_unified_json *j, qa_application *app,
         application_unified_json_string(j, qa_strings_cstr(qa_session_strings(app->session), row->provider), error) &&
         application_unified_json_text(j, ",\"generation\":", error) &&
         application_unified_json_natural(j, row->owner_generation, error) && application_unified_json_text(j, "}", error);
+    if (ok && row->q2_source_profile) ok =
+        application_unified_json_text(j,",\"source\":{\"provider\":",error) &&
+        application_unified_json_string(j,qa_strings_cstr(qa_session_strings(app->session),row->provider),error) &&
+        application_unified_json_text(j,",\"profile\":",error) &&
+        application_unified_json_string(j,row->q2_source_profile==1 ? "classic" : "rerelease",error) &&
+        application_unified_json_text(j,"}",error);
     if (ok) ok = application_unified_json_text(j, ",\"sourceEntity\":", error) &&
         (row->has_source_entity ? application_unified_json_number(j, row->source_entity, error) :
             application_unified_json_text(j, "null", error)) && application_unified_json_text(j, "}", error);
@@ -1024,12 +1059,18 @@ static bool presentation_write(application_unified_json *j, qa_application *app,
 static bool simulation_write(application_unified_json *j, qa_application *app,
     const application_unified_event_record *row, qa_error *error)
 {
-    bool seconds = row->clock != QA_CLOCK_Q2_RERELEASE && row->clock != QA_CLOCK_Q3;
+    bool seconds = row->clock != QA_CLOCK_Q2_RERELEASE;
+    double time = (double)row->simulation_time_ns / (seconds ? 1e9 : 1e6);
+    if (row->clock == QA_CLOCK_Q3) {
+        uint32_t word = (uint32_t)(row->simulation_time_ns / 1000000);
+        int32_t signed_word; memcpy(&signed_word, &word, sizeof(word));
+        time = (double)signed_word / 1000;
+    }
     bool ok = application_unified_json_text(j, "{\"sequence\":", error) &&
         application_unified_json_natural(j, row->simulation_sequence, error) &&
         application_unified_json_text(j, seconds ? ",\"time\":{\"kind\":\"seconds\",\"value\":" :
             ",\"time\":{\"kind\":\"milliseconds\",\"value\":", error) &&
-        application_unified_json_number(j, (double)row->simulation_time_ns / (seconds ? 1e9 : 1e6), error) &&
+        application_unified_json_number(j, time, error) &&
         application_unified_json_text(j, "},\"audience\":", error);
     if (ok && row->simulation_recipient.registry) ok =
         application_unified_json_text(j, "{\"kind\":\"client\",\"client\":{\"slot\":", error) &&
@@ -1176,9 +1217,7 @@ static bool events_project(qa_application *app, const application_unified_source
         presentation_wire(&wire, qa_unified_document_json(presentation_value), qa_unified_document_root(presentation_value), 0, error) &&
         qa_unified_document_create(QA_UNIFIED_EVENTS_DOCUMENT, (qa_bytes){wire.bytes.data, wire.bytes.size}, &events, error) &&
         qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){simulation.bytes.data, simulation.bytes.size}, &result.simulation, error) &&
-        (initial ? qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-            (qa_bytes){(const uint8_t *)"[]", 2}, &result.world_text, error) :
-            world_text_read(app, source, &result.world_text, error));
+        (initial || world_text_read(app, source, &result.world_text, error));
     result.world_text_revision = app->unified_world_text_revision;
     if (ok && (reference_count || presentations || simulations)) {
         result.controls = calloc(2, sizeof(*result.controls));

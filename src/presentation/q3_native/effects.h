@@ -18,6 +18,7 @@ bool q3n_effect_bubbles(const q3n_frame *, qa_vec3 start, qa_vec3 end, float spa
 q3n_local_entity *q3n_effect_explosion(const q3n_frame *, const q3n_explosion *, qa_error *);
 void q3n_effect_spawn(const q3n_frame *, qa_vec3);
 void q3n_effect_bleed(const q3n_frame *, qa_vec3, int32_t physical_client);
+q3n_local_entity *q3n_effect_bleed_entity(const q3n_frame *,qa_vec3);
 q3n_local_entity *q3n_effect_gib(const q3n_frame *, qa_vec3, qa_vec3 velocity, int32_t model);
 void q3n_effect_gib_player(const q3n_frame *, qa_vec3);
 void q3n_effect_big_explode(const q3n_frame *, qa_vec3);

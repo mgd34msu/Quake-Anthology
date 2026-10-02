@@ -1,5 +1,6 @@
 #include "input_shutdown.h"
 #include "capture.h"
+#include "restart.h"
 #include "qa/input_release.h"
 
 struct frontend_input_shutdown {
@@ -20,7 +21,8 @@ static bool returned(const frontend_input_shutdown *owner,qa_error *error)
 {
     const qa_frontend *f=owner?owner->frontend:NULL;
     if (!f || f->application!=owner->application || f->seats!=owner->seats ||
-        f->options.seats!=owner->count || f->stepping || f->preparing ||
+        f->options.seats!=owner->count ||
+        (f->stepping && !frontend_restart_release_phase(f->restart,f)) || f->preparing ||
         !frontend_seat_callbacks_returned(f))
         return fail(error,"Input shutdown lost its returned actual frontend parents");
     if (f->seats) for (unsigned slot=0;slot<owner->count;++slot)
@@ -43,10 +45,13 @@ bool frontend_input_shutdown_ready(const frontend_input_shutdown *owner,
     }
     return true;
 }
+bool frontend_input_shutdown_prepared(const frontend_input_shutdown *owner)
+{ return owner && owner->prepared; }
 bool frontend_input_shutdown_prepare(qa_frontend *f,double now,
     frontend_input_shutdown **out,qa_error *error)
 {
-    if (!f || !out || *out || !f->application || f->stepping || f->preparing ||
+    if (!f || !out || *out || !f->application ||
+        (f->stepping && (!frontend_restart_release_phase(f->restart,f) || out!=&f->input_shutdown)) || f->preparing ||
         f->options.seats>QA_INPUT_LOCAL_SEATS || !isfinite(now) || now<0 ||
         !frontend_seat_callbacks_idle(f))
         return fail(error,"Input shutdown requires returned actual physical seats");

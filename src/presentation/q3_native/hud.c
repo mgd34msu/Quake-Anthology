@@ -4,7 +4,7 @@
 bool q3n_hud_create(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
 {
     if(!options || !out || *out || !options->assets || !options->source || !options->application ||
-       options->remote_client || !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command ||
+       options->remote_client || options->compiled_source || !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command ||
        !qa_application_native_q3_presentation_current(options->application,options->source) ||
        (options->source->product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order || !options->mission_timed ||
         !options->mission_text || !options->mission_center_line)))
@@ -16,7 +16,7 @@ bool q3n_hud_create(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
 bool q3n_hud_create_restored(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
 {
     qa_native_q3_client_basis basis;
-    if(!options || !out || *out || !options->assets || options->remote_client || !options->ui || !options->milliseconds || !options->load_deferred ||
+    if(!options || !out || *out || !options->assets || options->remote_client || options->compiled_source || !options->ui || !options->milliseconds || !options->load_deferred ||
        !options->client_command || !options->client || !qa_native_q3_client_basis_read(options->client,&basis,e) ||
        basis.application!=options->application || basis.seat!=options->seat ||
        (basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order || !options->mission_timed || !options->mission_text || !options->mission_center_line)))
@@ -28,7 +28,7 @@ bool q3n_hud_create_restored(const q3n_hud_options *options,q3n_hud **out,qa_err
 bool q3n_hud_create_remote(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
 {
     qa_native_q3_remote_client_basis basis;
-    if(!options || !out || *out || !options->assets || options->source || options->client || !options->ui ||
+    if(!options || !out || *out || !options->assets || options->source || options->client || options->compiled_source || !options->ui ||
        !options->milliseconds || !options->load_deferred || !options->client_command || !options->oldest_command || !options->remote_client ||
        !qa_native_q3_remote_client_basis_read(options->remote_client,&basis,e) ||
        basis.application!=options->application || basis.client.seat!=options->seat ||
@@ -38,6 +38,20 @@ bool q3n_hud_create_remote(const q3n_hud_options *options,q3n_hud **out,qa_error
     q3n_hud *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating remote native Q3 HUD");
     o->options=*options; o->product=basis.product; o->state.scoreboard_first_time=true; *out=o; return true;
+}
+bool q3n_hud_create_compiled(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
+{
+    q3n_compiled_source_view source;
+    if(!options || !out || *out || !options->compiled_source || options->source || options->client || options->remote_client ||
+       !options->ui || !options->milliseconds || !options->load_deferred || !options->client_command || !options->oldest_command ||
+       !q3n_compiled_source_read(options->compiled_source,&source,e) || source.basis.application!=options->application ||
+       source.basis.assets!=options->assets || source.basis.seat!=options->seat ||
+       (source.basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order ||
+        !options->mission_timed || !options->mission_text || !options->mission_center_line)))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled HUD requires its actual CLIENT source and drawing owners");
+    q3n_hud *o=calloc(1,sizeof(*o));
+    if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating compiled Q3 HUD");
+    o->options=*options; o->product=source.basis.product; o->state.scoreboard_first_time=true; *out=o; return true;
 }
 void q3n_hud_destroy(q3n_hud *o) { if(o && !o->busy)free(o); }
 bool q3n_hud_idle(const q3n_hud *o) { return o && !o->busy; }
@@ -54,6 +68,9 @@ bool q3n_hud_weapon_read(q3n_hud *o,const q3n_frame *f,q3n_weapon_hud *out,qa_er
 }
 static bool center_current(q3n_hud *o,const q3n_frame *f,qa_error *e)
 {
+    if(f && f->compiled)return o && o->options.compiled_source==f->compiled->source.owner &&
+        o->options.application==f->application && o->options.assets==f->assets && o->options.seat==f->seat &&
+        o->product==q3n_frame_product(f) && f->compiled->source.basis.initialized && q3ne_current(f,e);
     if(!f || !f->remote)return q3nh_current(o,f,e);
     qa_native_q3_remote_client_basis actual;
     return o && o->options.application==f->application && o->options.assets==f->assets &&
@@ -77,8 +94,9 @@ bool q3n_hud_scores_request(q3n_hud *o,const q3n_frame *f,bool *due,qa_error *e)
 {
     if(!o || o->busy || !f || !due || o->options.application!=f->application ||
        o->options.assets!=f->assets || o->options.seat!=f->seat || o->product!=q3n_frame_product(f) ||
-       (f->remote?o->options.remote_client!=f->remote->client:
-        o->options.remote_client || o->source_game!=f->source.source_game || f->time!=f->source.source_time_ms) ||
+       (f->compiled?o->options.compiled_source!=f->compiled->source.owner:
+        f->remote?o->options.remote_client!=f->remote->client || o->options.compiled_source:
+        o->options.remote_client || o->options.compiled_source || o->source_game!=f->source.source_game || f->time!=f->source.source_time_ms) ||
        !q3n_frame_current(f) || !q3ne_current(f,e))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Score request requires its idle HUD and actual entered CLIENT clock");
     *due=q3ne_plus(o->scores_request_time,2000)<f->time;
@@ -89,7 +107,8 @@ void q3n_hud_frame_sample(q3n_hud *o,int32_t offset)
 { if(o && !o->busy) { o->frame_samples[(uint32_t)o->frame_count&127u]=offset; o->frame_count=q3ne_plus(o->frame_count,1); } }
 void q3n_hud_snapshot_sample(q3n_hud *o,bool dropped,int32_t ping,int32_t flags)
 { if(o && !o->busy) { unsigned i=(uint32_t)o->snapshot_count&127u; o->snapshot_samples[i]=dropped?-1:ping;
-    if(!dropped)o->snapshot_flags[i]=flags; o->snapshot_count=q3ne_plus(o->snapshot_count,1); } }
+    if(!dropped)o->snapshot_flags[i]=flags;
+    o->snapshot_count=q3ne_plus(o->snapshot_count,1); } }
 void q3n_hud_disconnect_command(q3n_hud *o,int32_t time)
 { if(o && !o->busy) { o->oldest_command_time=time; o->has_oldest_command=true; } }
 static bool center_string(q3n_hud_draw *d)
@@ -114,7 +133,8 @@ static bool center_string(q3n_hud_draw *d)
                (float)s->center_print_char_width,(float)height,color,false,true,0))return false;
             y=(float)q3ne_int(q3ne_add(y,q3ne_mul(q3ne_mul((float)s->center_print_char_width,1.5f),d->frame->preferences.text_scale)));
         }
-        if(!*end)break; start=end+1;
+        if(!*end)break;
+        start=end+1;
     }
     return q3nh_color(d,NULL);
 }
@@ -320,7 +340,7 @@ static bool disconnect(q3n_hud_draw *d)
 {
     q3n_hud *o=d->owner;
     int32_t time=o->oldest_command_time;
-    if(d->frame->remote) {
+    if(d->frame->remote || d->frame->compiled) {
         qa_q3_usercmd command;
         if(!o->options.oldest_command || !q3nh_current(o,d->frame,d->error) ||
            !o->options.oldest_command(o->options.context,d->frame,&command,d->error) ||
@@ -415,6 +435,7 @@ bool q3n_hud_frame(q3n_hud *o,const q3n_frame *f,const q3n_hud_settings *setting
        player->source_game!=o->source_game || player->options.application!=o->options.application ||
        player->options.assets!=o->options.assets || player->options.seat!=o->options.seat ||
        player->options.remote_client!=o->options.remote_client ||
+       player->options.compiled_source!=o->options.compiled_source ||
        (f->remote && f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME))return false;
     q3n_hud_draw d={.owner=o,.frame=f,.settings=settings,.commands=commands,.player=player,.viewport=viewport,.error=e};
     if(!q3nh_preferences(&d) || !q3n_hud_weapon_read(o,f,&d.weapon_hud,e))return false;

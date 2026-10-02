@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "map_players_private.h"
 #include "native_maps.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"

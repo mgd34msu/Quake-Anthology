@@ -47,6 +47,27 @@ struct frontend_shared_publication {
 };
 static bool fail(qa_error *e,const char *text)
 { return frontend_fail(e,QA_ERROR_ARGUMENT,text); }
+static bool preparing(const frontend_shared_settings *owner)
+{
+    return owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_RESOURCES):
+        qa_application_startup_resource_phase(owner->application,owner->candidate);
+}
+static bool associated(const frontend_shared_settings *owner)
+{
+    return owner->client?(qa_application_client_prepare_associated(owner->application,owner->client) &&
+        qa_application_client_prepare_phase_is(owner->client,QA_CLIENT_PREPARE_RESOURCES)):
+        qa_application_startup_resource_phase_associated(owner->application,owner->candidate);
+}
+static bool consuming(const frontend_shared_settings *owner)
+{
+    return owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_CONSUMING):
+        qa_application_startup_publication_consuming(owner->application,owner->candidate);
+}
+static bool cleaning(const frontend_shared_settings *owner)
+{
+    return owner->client?qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_CLEANUP):
+        qa_application_startup_publication_cleanup(owner->application,owner->candidate);
+}
 static bool current(const frontend_shared_publication *ticket)
 {
     frontend_shared_settings *owner=ticket?ticket->parent:NULL;
@@ -60,8 +81,7 @@ static bool current(const frontend_shared_publication *ticket)
         frontend_seat_callbacks_returned(f) &&
         frontend_shared_values_registry(owner->values)==qa_application_cvars(owner->application) &&
         (!owner->input || (f->input_settings==owner->input && frontend_input_settings_current(owner->input,f,NULL))) &&
-        (qa_application_startup_publication_consuming(owner->application,owner->candidate) ||
-            qa_application_startup_publication_cleanup(owner->application,owner->candidate));
+        (consuming(owner) || cleaning(owner));
 }
 static void remember(frontend_shared_publication *ticket,const qa_error *error)
 {
@@ -111,7 +131,7 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     if (!owner || !out || *out || owner->publication || owner->aborting || owner->consumed ||
         owner->input || !owner->after_complete ||
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate) ||
-        !qa_application_startup_resource_phase(owner->application,owner->candidate))
+        !preparing(owner))
         return fail(e,"Final publication requires its actual validated returned scalar and release owner");
     const qa_cvars_edit *edit=frontend_shared_values_prepared(owner->values);
     if (!qa_cvars_edit_returned_is(edit,qa_application_cvars(owner->application)))
@@ -120,7 +140,7 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     if (!ticket) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining complete shared resource publication");
     ticket->parent=owner; ticket->edit=edit; owner->publication=ticket; *out=ticket;
     qa_frontend *f=owner->frontend;
-    if (!owner->candidate) {
+    if (!owner->candidate && !owner->client) {
         qa_console *console=NULL; qa_cvars *registry=NULL;
         if (!qa_application_startup_root_read(owner->application,NULL,&console,&registry,NULL,e) ||
             console!=owner->root_console || registry!=qa_cvars_edit_registry(edit) ||
@@ -138,24 +158,33 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
         !frontend_music_sources_queued(ticket->music_sources,&queued) || queued)
         return fail(e,"Final publication requires returned music requests before holding resource children");
     frontend_view_transition transition;
-    if (!frontend_config_store_view_transition(owner->manager,owner->application,
+    if (owner->client) {
+        bool published=false;
+        if (!frontend_view_settings_has_published(f->view_settings,&published))
+            return fail(e,"CLIENT view preparation lost its actual published preference history");
+        transition=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL;
+        if (!frontend_view_settings_prepare_client(f->view_settings,owner->client,edit,transition,&ticket->view,e) ||
+            !frontend_shared_resource_policy_begin_client(f,owner->client,edit,&ticket->resources,e)) return false;
+    } else if (!frontend_config_store_view_transition(owner->manager,owner->application,
         owner->candidate,&transition,e) || !frontend_view_settings_prepare(f->view_settings,
-        owner->candidate,edit,transition,&ticket->view,e)) return false;
-    if (!frontend_shared_resource_policy_begin(f,owner->candidate,edit,&ticket->resources,e)) return false;
+        owner->candidate,edit,transition,&ticket->view,e) ||
+        !frontend_shared_resource_policy_begin(f,owner->candidate,edit,&ticket->resources,e)) return false;
     ticket->audio_engine=f->audio; ticket->audio_device=f->device;
     if (!ticket->audio_engine && ticket->audio_device)
         return fail(e,"Final publication has an output device without its actual audio engine");
     for (unsigned i=0;i<2;++i) {
         ticket->policies[i]=frontend_music_sources_policy(ticket->music_sources,(frontend_music_slot)i);
-        if (ticket->policies[i] && !frontend_shared_music_prepare(f,owner->candidate,edit,
-            ticket->policies[i],ticket->music+i,e)) return false;
+        if (ticket->policies[i] && !(owner->client?
+            frontend_shared_music_prepare_client(f,owner->client,edit,ticket->policies[i],ticket->music+i,e):
+            frontend_shared_music_prepare(f,owner->candidate,edit,ticket->policies[i],ticket->music+i,e))) return false;
     }
     qa_display_settings settings; bool window=false;
     if (!frontend_shared_video_settings(f,edit,&settings,&window,e)) return false;
     qa_input_seat *configuration[QA_INPUT_LOCAL_SEATS]={0};
     for (unsigned i=0;i<f->options.seats;++i) {
-        if (!frontend_config_store_input_configuration(owner->manager,owner->application,
-            owner->candidate,i,configuration+i,e)) return false;
+        if (!(owner->client?frontend_config_store_client_input_configuration(owner->manager,
+            owner->client,i,configuration+i,e):frontend_config_store_input_configuration(owner->manager,
+            owner->application,owner->candidate,i,configuration+i,e))) return false;
     }
     bool prepared=frontend_input_settings_prepare(f,&owner->projected,configuration,
         (double)f->wall_time_ns/1000000.0,&owner->input,e);
@@ -193,7 +222,11 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
         !frontend_shared_render_controls_prepare(f,edit,&ticket->render_controls,e) ||
         !frontend_shared_ui_prepare(f,edit,&ticket->ui,e)) return false;
     for (unsigned i=0;!ticket->engine_only && i<f->options.seats;++i) {
-        ticket->recipient_present[i]=frontend_seat_launch_id_read(f,i,ticket->logical_seats+i);
+        if (owner->client) {
+            const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_client_prepare_launch(owner->client));
+            ticket->recipient_present[i]=choices && i<choices->seat_count;
+            if (ticket->recipient_present[i]) ticket->logical_seats[i]=choices->seats[i].id;
+        } else ticket->recipient_present[i]=frontend_seat_launch_id_read(f,i,ticket->logical_seats+i);
         qa_actor_id actor={0};
         ticket->actor_present[i]=ticket->recipient_present[i] &&
             qa_application_player_actor(owner->application,ticket->logical_seats[i],&actor);
@@ -228,15 +261,14 @@ bool frontend_shared_publication_ready_is(const frontend_shared_publication *tic
 {
     if (!current(ticket) || ticket->parent!=owner || owner->frontend!=f || owner->application!=app ||
         owner->candidate!=candidate || !ticket->prepared || ticket->published || owner->aborting ||
-        !(qa_application_startup_resource_phase_associated(app,candidate) ||
-            qa_application_startup_publication_consuming(app,candidate)) ||
+        !(associated(owner) || consuming(owner)) ||
         !frontend_shared_values_ready_is(owner->values)) return false;
     if (f->options.dedicated) return !f->cpu && !f->gl && !ticket->render_controls &&
         !f->audio && !f->device && !ticket->resources && !owner->input && !ticket->ui &&
         !ticket->audio && !ticket->acoustics && !ticket->view && !ticket->video && !ticket->gamma &&
         !ticket->color && !ticket->color_owner &&
         !ticket->music_sources && !ticket->music[0] && !ticket->music[1] && !ticket->language_count;
-    bool resources=qa_application_startup_publication_consuming(app,candidate)?
+    bool resources=consuming(owner)?
         frontend_shared_resource_policy_consume_ready_is(ticket->resources):
         frontend_shared_resource_policy_ready_is(ticket->resources);
     if (!resources ||
@@ -258,7 +290,7 @@ bool frontend_shared_publication_ready_is(const frontend_shared_publication *tic
         if (frontend_music_sources_policy(ticket->music_sources,(frontend_music_slot)i)!=ticket->policies[i] ||
             (ticket->policies[i] && !frontend_shared_music_ready_is(ticket->music[i]))) return false;
     if (qa_application_player_count(app)!=ticket->player_count ||
-        (qa_application_startup_resource_phase_associated(app,candidate) &&
+        (associated(owner) &&
             qa_application_launch(app)!=ticket->recipients)) return false;
     for (unsigned i=0;i<f->options.seats;++i) {
         if (ticket->engine_only) {

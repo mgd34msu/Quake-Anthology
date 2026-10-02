@@ -345,6 +345,12 @@ bool qa_native_rva(const qa_native_instance *instance, uint64_t rva, size_t byte
 bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,
                       const qa_native_signature *signature, const qa_native_value *arguments,
                       size_t argument_count, qa_native_value *result, qa_error *error);
+/* Set only at the actual admitted source dispatch boundary. The receipt stays
+ * true if entered source execution subsequently fails; ABI/preflight refusal
+ * leaves it false. The output is required and is cleared before admission. */
+bool qa_native_invoke_receipt(qa_native_instance *, qa_native_address,
+    const qa_native_signature *, const qa_native_value *, size_t,
+    qa_native_value *, bool *entered, qa_error *);
 
 /* Address operations are the only portable way for host services to inspect
  * pointer arguments. Direct backends use checked operating-system process
@@ -353,6 +359,16 @@ bool qa_native_read(const qa_native_instance *instance, qa_native_address source
                     size_t bytes, qa_error *error);
 bool qa_native_write(qa_native_instance *instance, qa_native_address destination, qa_bytes bytes,
                      qa_error *error);
+enum {
+    QA_NATIVE_MEMORY_READ = 1,
+    QA_NATIVE_MEMORY_WRITE = 2,
+    QA_NATIVE_MEMORY_EXECUTE = 4
+};
+/* Pure full-range current mapping/permission observation without trial writes.
+ * Owned guests also qualify backing/EOF. An OS VM observation does not pin a
+ * foreign mapping or promise residency/file EOF validity. */
+bool qa_native_range_check(const qa_native_instance *, qa_native_address,
+    size_t, uint32_t permissions, qa_error *);
 bool qa_native_read_string(const qa_native_instance *instance, qa_native_address source,
                            size_t maximum, qa_buffer *out, qa_error *error);
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
@@ -571,8 +587,9 @@ typedef struct qa_native_region_decision {
 /* Region callbacks run synchronously on the owning call stack. Bind before
  * initialization. Multiple bindings observe registration order; state changes
  * feed the next observer and terminal actions must agree. The callback may use
- * guest-memory reads/writes and other providers, but cannot reenter its
- * suspended instance. RETURN is admitted only for a declaration carrying an
+ * guest-memory reads/writes and other providers. Same-instance source calls
+ * require qa_native_region_invoke with this exact borrowed event; ordinary
+ * invocation stays fenced. RETURN is admitted only for a declaration carrying an
  * explicit frame exit. Binding changes requested while the instance is active
  * are rejected; the void unbind operation leaves the binding installed. */
 typedef bool (*qa_native_region_fn)(void *context, qa_native_instance *instance,
@@ -588,6 +605,18 @@ void qa_native_unbind_region(qa_native_region_binding *binding);
 /* Successful removal consumes the binding. An active/failed removal retains
  * it and its callback context so its actual owner can retry at a safe point. */
 bool qa_native_remove_region(qa_native_region_binding *binding, qa_error *error);
+/* Invoke the caller's declared whole-function entry while this exact region
+ * callback is suspended. The entry must match an actual declared region entry
+ * in the same loaded image and use its fixed ABI; it need not be this scan's
+ * entry. Nested calls retain the enclosing processor state;
+ * source memory effects remain committed. The event expires on callback return.
+ * This does not bypass region observers: callers implement their source-defined
+ * scanner bypass and restoration around the original invocation. */
+bool qa_native_region_invoke(qa_native_instance *instance,
+                             const qa_native_region_event *event, qa_native_address entry,
+                             const qa_native_signature *signature,
+                             const qa_native_value *arguments, size_t argument_count,
+                             qa_native_value *result, qa_error *error);
 
 /* Entry point for the target-built helper executable. Its stdin/stdout are the
  * framed binary transport and must not be used for logging. */

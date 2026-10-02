@@ -20,9 +20,13 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     scene_model_mesh *mesh = &model->meshes[mesh_index];
     if (source->triangle_count > UINT32_MAX / 3) goto too_large;
     size_t corners = (size_t)source->triangle_count * 3;
-    if (corners > SIZE_MAX / sizeof(*mesh->vertices) || corners > SIZE_MAX / sizeof(*mesh->indices)) goto too_large;
-    mesh->vertices = calloc(corners ? corners : 1, sizeof(*mesh->vertices));
-    mesh->sources = calloc(corners ? corners : 1, sizeof(*mesh->sources));
+    if (mesh_index == 0) model->source_topology = qa_material_library_has_source_profile(model->materials) &&
+        (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4);
+    size_t allocated_vertices = model->source_topology ? source->vertex_count : corners;
+    if (allocated_vertices > SIZE_MAX / sizeof(*mesh->vertices) ||
+        allocated_vertices > SIZE_MAX / sizeof(*mesh->sources) || corners > SIZE_MAX / sizeof(*mesh->indices)) goto too_large;
+    mesh->vertices = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->vertices));
+    mesh->sources = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->sources));
     mesh->indices = calloc(corners ? corners : 1, sizeof(*mesh->indices));
     mesh->shaders = calloc(source->shader_count ? source->shader_count : 1, sizeof(*mesh->shaders));
     if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders) goto memory;
@@ -37,12 +41,29 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     if (!table) goto memory;
     size_t vertex_count = 0;
     qa_bounds bounds = model_bounds_empty();
+    if (model->source_topology) {
+        if (source->texcoord_count != source->vertex_count) {
+            free(table); qa_error_set(error, QA_ERROR_FORMAT, mesh_index, "Source model has no physical per-vertex UV array"); return false;
+        }
+        vertex_count = source->vertex_count;
+        for (uint32_t i = 0; i < source->vertex_count; ++i) {
+            mesh->sources[i] = i;
+            mesh->vertices[i] = (qa_scene_vertex){.position = model_vec(source->vertices[i].position),
+                .normal = model_vec(source->vertices[i].normal),
+                .texcoord = {source->texcoords[i].uv[0], source->texcoords[i].uv[1]}, .color = {1, 1, 1, 1}};
+            model_bounds_add(&bounds, mesh->vertices[i].position);
+        }
+    }
     for (uint32_t triangle = 0; triangle < source->triangle_count; ++triangle) {
         const qa_model_triangle *face = &source->triangles[triangle];
         for (uint32_t corner = 0; corner < 3; ++corner) {
             uint32_t vertex = face->vertex[corner], uv = face->texcoord[corner];
             if (vertex >= source->vertex_count || uv >= source->texcoord_count) {
                 free(table); qa_error_set(error, QA_ERROR_FORMAT, triangle, "model topology index exceeds retained arrays"); return false;
+            }
+            if (model->source_topology) {
+                mesh->indices[(size_t)triangle * 3 + corner] = vertex;
+                continue;
             }
             bool seam = model->source->format == QA_MODEL_MDL && !face->front && source->texcoords[uv].on_seam;
             size_t slot = corner_hash(vertex, uv, seam, capacity - 1);
@@ -89,12 +110,13 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
         if (!ok) return false;
     }
     size_t allocated_corners = corners ? corners : 1;
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices, allocated_corners, mesh->indices, allocated_corners, error);
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices,
+        allocated_vertices ? allocated_vertices : 1, mesh->indices, allocated_corners, error);
     if (!geometry) return false;
     mesh->retained = (qa_scene_mesh){.identity = qa_scene_identity(),
         .revision = 1, .vertices = mesh->vertices, .indices = mesh->indices,
         .vertex_count = vertex_count, .index_count = corners,
-        .bounds = vertex_count ? bounds : (qa_bounds){0}, .primitive = QA_SCENE_TRIANGLES,
+        .bounds = vertex_count ? bounds : (qa_bounds){.mins = {0, 0, 0}, .maxs = {0, 0, 0}}, .primitive = QA_SCENE_TRIANGLES,
         .geometry = geometry};
     return true;
 too_large:

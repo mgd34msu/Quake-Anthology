@@ -55,12 +55,16 @@ struct application_native_q3_client_modules {
     const qa_command_tokens *command_arguments;
     uint64_t command_revision;
     size_t calls;
+    struct qa_application_native_q3_client_modules_video *video;
+    bool video_entering;
     bool attached, prepared, pure, retiring, restore_pending;
     qa_buffer saved;
 };
 
 bool native_client_modules_physical(const application_native_q3_client_modules *,
     qa_application_q3_remote_source *, qa_error *);
+bool native_client_modules_executors_idle(const application_native_q3_client_modules *);
+bool native_client_module_close_executor(native_client_module *, qa_error *);
 bool native_client_modules_policy(const qa_q3_gamestate *, bool, qa_error *);
 bool native_client_module_construct(native_client_module *, bool restoring, qa_error *);
 bool native_client_module_namespace(native_client_module *, bool restoring, qa_error *);

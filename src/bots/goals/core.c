@@ -79,11 +79,14 @@ static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weight
     if(!bot_goal_config_set(g,s,weights,e)) return false;
     if(!weights) return true;
     if(!g->configured) return true;
-    const qa_bot_items_view *items=qa_bot_items_read(g->items);
+    const qa_bot_items_view *items;
+    if(!qa_bot_items_view_read(g->items,&items,e)) return false;
     if(items->count>UINT32_MAX) return bot_goal_fail(e,"Item index count exceeds the source domain");
     qa_bot_memory_allocation indexes;
     if(!bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) return false;
     for(uint32_t i=0;i<(uint32_t)items->count;++i) {
+        if(!qa_bot_items_view_read(g->items,&items,e)) return false;
+        if(i>=items->count) break;
         int32_t index;
         if(!qa_bot_weights_find_value(weights,items->items[i].classname,&index,e) ||
            !bot_goal_indexes_write(g,indexes,i,index,e)) return false;
@@ -98,7 +101,7 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
         (!!services->entities != !!services->entities_end) ||
         (!!services->pickups != !!services->pickups_end) ||
         (services->pickups && !services->pickup) ||
-        options->maximum_states > SIZE_MAX / sizeof(bot_goal_slot))
+        SIZE_MAX / options->maximum_states < sizeof(bot_goal_slot))
         return bot_goal_fail(e, "invalid bot goal services or capacities");
     qa_bot_goals *g = calloc(1, sizeof(*g));
     if (!g || !(g->states = calloc(options->maximum_states, sizeof(*g->states)))) {
@@ -136,8 +139,24 @@ void qa_bot_goals_destroy(qa_bot_goals *g) {
 bool qa_bot_goals_shutdown(qa_bot_goals *g, qa_error *error) {
     if (!g) return true;
     if (!bot_goal_mutable(g, error)) return false;
+    g->busy = true;
+    if (g->configured && !qa_bot_items_free(g->items,error)) {
+        g->busy=false;
+        return false;
+    }
     g->configured = false;
-    if (!bot_goal_info_free(g, error)) return false;
+    g->entities = NULL;
+    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
+    free(g->source); g->source = NULL; g->source_count = g->source_capacity = 0;
+    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    bool ok = !g->level_allocation.owner || qa_bot_memory_free(g->memory, g->level_allocation, error);
+    if (ok) {
+        g->level_allocation = (qa_bot_memory_allocation){0}; g->level_capacity = 0;
+        g->level_head = g->free_head = 0; g->initial_count = 0;
+        ok = bot_goal_info_free(g, error);
+    }
+    g->busy = false;
+    if (!ok) return false;
     bot_goal_map_clear(g);
     for (uint32_t i = 0; i < g->options.maximum_states; ++i)
         if (g->states[i].used && !qa_bot_goals_free(g, i + 1, error)) return false;
@@ -149,10 +168,17 @@ bool qa_bot_goals_reconfigure(qa_bot_goals *g, qa_bot_items *items, int32_t game
     if (!items) { g->configured = false; return true; }
     if (!next_map_capacity || next_map_capacity >= QA_BOT_SOURCE_GOAL_MIN - 1000000)
         return bot_goal_fail(e, "invalid goal reconfiguration");
-    const qa_bot_items_view *view = qa_bot_items_read(items);
-    for (uint32_t i = g->level_head; i; i = g->level[i].next)
-        if (g->level[i].info >= view->count)
+    const qa_bot_items_view *view;
+    if (!qa_bot_items_view_read(items, &view, e)) return false;
+    size_t steps = 0;
+    for (uint32_t i = g->level_head; i;) {
+        bot_level_item item;
+        if (++steps > g->level_capacity) return bot_goal_fail(e, "Retained level-item list has a cycle");
+        if (!bot_goal_level_read(g, i, &item, e)) return false;
+        if (item.info >= view->count)
             return bot_goal_fail(e, "replacement item config omits retained level item");
+        i = item.next;
+    }
     qa_bot_items_retain(items);
     qa_bot_items_release(g->items);
     g->items = items;
@@ -370,9 +396,13 @@ bool qa_bot_goals_avoid_set(qa_bot_goals *g, uint32_t id, int32_t number, float 
     if (!s) return false;
     if (duration < 0) {
         if (!g->configured) return true;
-        bot_level_item *item = bot_goal_find(g, number);
-        if (!item) return true;
-        duration = bot_goal_default_avoid(&qa_bot_items_read(g->items)->items[item->info]);
+        bot_level_item item; bool found; uint32_t pointer;
+        if (!bot_goal_find(g, number, &pointer, &item, &found, e)) return false;
+        if (!found) return true;
+        const qa_bot_items_view *items;
+        if (!qa_bot_items_view_read(g->items, &items, e)) return false;
+        if (item.info >= items->count) return bot_goal_fail(e, "Avoid goal source info index exceeds its configuration");
+        duration = bot_goal_default_avoid(&items->items[item.info]);
     }
     return bot_goal_avoid(g,s,number,duration,e);
 }

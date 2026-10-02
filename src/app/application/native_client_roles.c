@@ -1,5 +1,6 @@
 #include "native_client_roles.h"
 #include "qa/application_client_save.h"
+#include "qa/application_client_prepare.h"
 #include "startup_flow.h"
 #include <limits.h>
 #include <stdio.h>
@@ -256,11 +257,21 @@ bool qa_application_client_current(qa_application *app, const qa_application_cli
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
     return r && source_equal(source, &r->source) && physical_current(r) && connection_current(r, source);
 }
+bool application_native_client_source_associated(const qa_application *app,const qa_application_client_source *source)
+{
+    application_provider *p=NULL;
+    for (application_provider *at=app?app->live_providers:NULL;at;at=at->next_live)
+        if (source && at->owner==source->context.receiver) { p=at; break; }
+    struct application_native_client_role *r=source?row_read(p,source->context.seat):NULL;
+    return p && p->application==app && p->constructed && p->attached && !p->close_pending &&
+        application_native_client_only(p) && r && !r->retiring && source_equal(source,&r->source);
+}
 bool qa_application_client_bind(qa_application *app, const qa_application_client_source *pending,
     qa_net_client_id client, qa_net_seat_id seat, uint64_t epoch, qa_application_client_source *out, qa_error *error)
 {
     struct application_native_client_role *r = pending ? row_read(provider_read(app, pending->context.receiver), pending->context.seat) : NULL;
-    if (!r || !out || r->calls || r->source.client.owner || !client.owner || !client.generation || !seat.owner || !epoch ||
+    if (!r || !out || r->calls || qa_application_client_prepare_holds(app,pending) ||
+        r->source.client.owner || !client.owner || !client.generation || !seat.owner || !epoch ||
         !qa_application_client_current(app, pending))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT bind requires its pending row and genuine attach receipt");
     qa_application_client_source bound = r->source;
@@ -274,7 +285,8 @@ bool qa_application_client_rebind(qa_application *app, const qa_application_clie
     qa_application_client_source *out, qa_error *error)
 {
     struct application_native_client_role *r = retained ? row_read(provider_read(app, retained->context.receiver), retained->context.seat) : NULL;
-    if (!r || !out || r->calls || r->retiring || !source_equal(retained, &r->source) || !descriptor ||
+    if (!r || !out || r->calls || r->retiring || qa_application_client_prepare_holds(app,retained) ||
+        !source_equal(retained, &r->source) || !descriptor ||
         !descriptor->storage || !descriptor->content || descriptor->artifact || !command || command->script ||
         command->owner != r->source.context.receiver || command->seat != r->source.context.seat ||
         command->dialect != r->source.context.command.dialect || !qa_application_command_context_active(app, command) ||
@@ -386,6 +398,8 @@ void qa_application_client_state_free(qa_application_client_state *state)
 static bool retire(struct application_native_client_role *r, qa_error *error)
 {
     if (!row_idle(r)) return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT retirement retains entered physical owners");
+    if (qa_application_client_prepare_holds(r->provider->application,&r->source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement retains its settings preparation");
     r->retiring = true;
     qa_actor_registry *actors = qa_session_actor_registry(r->provider->application->session);
     while (r->actor_count) {
@@ -408,6 +422,8 @@ bool qa_application_client_retire(qa_application *app, const qa_application_clie
     struct application_native_client_role *r = source ? row_read(provider_read(app, source->context.receiver), source->context.seat) : NULL;
     if (!r || !source_equal(source, &r->source))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT retirement lost its exact retained row");
+    if (qa_application_client_prepare_holds(app,source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement retains its settings preparation");
     return retire(r, error);
 }
 bool application_native_client_role_configuration(application_provider *p, uint32_t seat,

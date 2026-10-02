@@ -34,6 +34,7 @@ struct qa_cpu_renderer {
   float clear_depth;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
+  bool preblend_gamma;
   bool executing, presenting, capturing;
   qa_cpu_surface_ticket *surface_ticket;
   bool destroy_pending;

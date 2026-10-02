@@ -72,13 +72,13 @@ static bool capture(void *context,const char *instance,uint64_t source,
     row->complete=true; return encode(row,out,error);
 }
 static bool resolve(void *context,const char *instance,uint64_t source,qa_bytes bytes,
-    const qa_native_process_resources **out,qa_error *error)
+    const qa_native_process_resources **out,qa_bytes *lower_recipe,qa_error *error)
 {
     frontend_native_resource_context *cut=context;
     const qa_native_resource_inventory *owner=cut && cut->image?qa_save_image_native_read(cut->image):NULL;
-    if (!owner || owner->retiring || !instance || !source || !out || (bytes.size && !bytes.data))
+    if (!owner || owner->retiring || !instance || !source || !out || !lower_recipe || (bytes.size && !bytes.data))
         return fail(error,QA_ERROR_FORMAT,"Saved native provider has no actual historical capability graph");
-    *out=NULL;
+    *out=NULL; *lower_recipe=(qa_bytes){0};
     for (native_resource_row *row=owner->first;row;row=row->next) {
         if (row->source!=source || strcmp(row->instance,instance)) continue;
         qa_buffer expected={0}; bool ok=row->complete && row->resources && encode(row,&expected,error);
@@ -87,7 +87,7 @@ static bool resolve(void *context,const char *instance,uint64_t source,qa_bytes 
         if (!ok) return fail(error,QA_ERROR_FORMAT,"Saved native capsule differs from its captured provider row");
         if (!qa_native_process_resources_validate(row->resources,
             (qa_bytes){row->continuation.data,row->continuation.size},error)) return false;
-        *out=row->resources; return true;
+        *out=row->resources; *lower_recipe=(qa_bytes){row->continuation.data,row->continuation.size}; return true;
     }
     return fail(error,QA_ERROR_FORMAT,"Saved native provider leaves its retained capability graph");
 }

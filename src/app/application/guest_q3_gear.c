@@ -369,7 +369,8 @@ bool application_q3_gear_read(application_q3_gear *gear, qa_actor_id actor,
 qa_console *application_q3_gear_console(application_q3_gear *gear, qa_cvars **cvars)
 {
     if (!gear) return NULL;
-    if (cvars) *cvars = gear->cvars; return gear->console;
+    if (cvars) *cvars = gear->cvars;
+    return gear->console;
 }
 
 bool application_q3_gear_destroy(application_q3_gear *gear, qa_error *error)

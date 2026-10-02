@@ -69,7 +69,7 @@ static bool action(qa_bots *bots,bot_ai_state *state,char out[512],qa_error *err
             prefix="killing ";description=name;
         } else {
             prefix=type==BOT_LTG_DEFEND?"defending ":"getting item ";
-            description=qa_bot_goals_name(qa_bot_runtime_goals(bots->runtime),goal.number);
+            if(!qa_bot_goals_name_read(qa_bot_runtime_goals(bots->runtime),goal.number,&description,error)) return false;
         }
         break;
     case BOT_LTG_CAMP:case BOT_LTG_CAMP_ORDER:description="camping";break;
@@ -84,7 +84,9 @@ static bool action(qa_bots *bots,bot_ai_state *state,char out[512],qa_error *err
         if(!integer(bots,state,QA_BOT_SOURCE_GOALS,&handle,error) ||
            !qa_bot_goals_top(qa_bot_runtime_goals(bots->runtime),(uint32_t)handle,false,&goal,&found,error)) return false;
         if(!found) return bot_ai_fail(error,"BotSetInfoConfigString reads an uninitialized source goal when the goal stack is empty");
-        prefix="roaming ";description=qa_bot_goals_name(qa_bot_runtime_goals(bots->runtime),goal.number);break;
+        prefix="roaming ";
+        if(!qa_bot_goals_name_read(qa_bot_runtime_goals(bots->runtime),goal.number,&description,error)) return false;
+        break;
     }
     }
     snprintf(out,512,"%s%s",prefix?prefix:"",description?description:"");

@@ -7,6 +7,7 @@
 #include "qa/network_unified_bootstrap.h"
 
 typedef struct frontend_network_unified frontend_network_unified;
+struct frontend_network_unified_client_service;
 typedef struct frontend_network_unified_options {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
@@ -19,6 +20,7 @@ typedef struct frontend_network_unified_options {
     /* These are the actual CLIENT factory's owners and callbacks. The remote
      * bridge consumes them only after the genuine challenge is received. */
     frontend_remote_unified_options client;
+    struct frontend_network_unified_client_service *client_service;
     const qa_recipe_sidecar *sidecars;
     size_t sidecar_count;
 } frontend_network_unified_options;
@@ -43,6 +45,11 @@ bool frontend_network_unified_client(const frontend_network_unified *,
 bool frontend_network_unified_close(frontend_network_unified *, qa_net_client_id,
     const char *reason, qa_error *);
 bool frontend_network_unified_idle(const frontend_network_unified *);
+bool frontend_network_unified_qualified(const frontend_network_unified *, qa_network_runtime *,
+    bool complete, qa_error *);
+/* Records completion of the actual cold child graph; this is not socket or
+ * Source callback custody, which the runtime publishes separately. */
+bool frontend_network_unified_imported(const frontend_network_unified *);
 /* Detaches the actual lower peers before releasing their callback owners.
  * Actual retired Source custody uses the quiet bridge retirement witnesses. */
 bool frontend_network_unified_destroy(frontend_network_unified **, qa_error *);

@@ -73,7 +73,8 @@ bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
 }
 static bool combo_player_current(qa_q1_game *g, qa_actor_id actor,
     const q1_player *player, qa_error *error) {
-    if (g && !g->continuation_pending && player && q1_player_get(g, actor) == player &&
+    if (g && !g->destroy_pending && !g->continuation_pending && player &&
+        q1_alive(g, actor) && q1_player_get(g, actor) == player &&
         player->arsenal) return true;
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 combo lost its actual arsenal player");
     return false;

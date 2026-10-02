@@ -87,7 +87,8 @@ static bool cancel(pickup_frame *f,qa_error *e)
 {
     f->invalid=true;
     if(f->cancelled)return true;
-    if(!qa_qvm_cancel(f->call,e))return false;f->cancelled=true;return true;
+    if(!qa_qvm_cancel(f->call,e))return false;
+    f->cancelled=true;return true;
 }
 static bool from(application_q3_pickups *o,const qa_qvm_call *call,const application_q3_pickup_function *function,qa_error *e)
 {
@@ -166,7 +167,8 @@ static bool resolve(application_q3_pickups *o,const application_q3_catalog_recor
     for(size_t i=0;i<count;++i)if(weapons[i].weapon==record->tag){
         *ammo=weapons[i].ammo;
         if(record->type==o->profile->weapon_type)*item=weapons[i].item;
-        else if(record->type==o->profile->ammo_type)*item=weapons[i].ammo;break;}
+        else if(record->type==o->profile->ammo_type)*item=weapons[i].ammo;
+        break;}
     if(*item)return true;
     if(!record->class_name)return application_fail(e,QA_ERROR_FORMAT,"Original pickup record lacks its Source classname");
     size_t n=strlen(record->class_name);if(n>SIZE_MAX-4)return application_fail(e,QA_ERROR_MEMORY,"Original pickup identity overflows");
@@ -220,7 +222,8 @@ static bool touch(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e
     if(!held){free(class_name);return application_fail(e,QA_ERROR_MEMORY,"Retaining real pickup Source continuation");}
     *held=f;
     ++o->calls;bool ok=qa_pickups_run_source(application(o)->pickups,&held->offer,run_source,held,e);--o->calls;
-    if(ok)*out=held->result;frame_retire(held);return ok;
+    if(ok)*out=held->result;
+    frame_retire(held);return ok;
 }
 static bool decide(void *context,const qa_qvm_call *call,bool original,bool *taken,qa_error *e)
 {*taken=((application_q3_pickup_branch *)context)->taken;(void)call;(void)original;(void)e;return true;}
@@ -305,7 +308,8 @@ static bool targets(void *context,const qa_qvm_call *call,int32_t *out,qa_error 
 }
 bool application_q3_pickups_after_free(application_q3_pickups *o,const qa_qvm_call *call,int32_t pointer,qa_error *e)
 {
-    if(!o)return true;if(!call||call->vm!=o->role->vm)return application_fail(e,QA_ERROR_ARGUMENT,"Pickup free notification belongs to another Source executor");
+    if(!o)return true;
+    if(!call||call->vm!=o->role->vm)return application_fail(e,QA_ERROR_ARGUMENT,"Pickup free notification belongs to another Source executor");
     qa_q3_host_game_data t;uint32_t source_slot;int32_t inuse;
     if(!table(o,&t,e)||!slot(o,&t,pointer,&source_slot,e)||!word(o,(uint32_t)pointer+o->profile->fields.inuse,&inuse,e))return false;
     if(inuse)return true;
@@ -339,7 +343,8 @@ static bool quantity(void *context,const qa_inventory_entry *entry,qa_supply_qua
     if(!projection_end(f,&cleanup)){if(ok&&e)*e=cleanup;ok=false;}
     if(ok&&!evaluation.entered)ok=application_fail(e,QA_ERROR_FORMAT,"Original pickup quantity did not enter its admitted Source evaluator");
     if(ok&&!live(f))ok=application_fail(e,QA_ERROR_NOT_FOUND,"Original pickup quantity lost its held Source grant");
-    if(ok)*out=(qa_supply_quantity){.amount=result};return ok;
+    if(ok)*out=(qa_supply_quantity){.amount=result};
+    return ok;
 }
 bool application_q3_pickups_supply(application_q3_pickups *o,const qa_pickup_offer *offer,qa_supply_offer *out,qa_supply_options *options,qa_error *e)
 {
@@ -354,7 +359,8 @@ static bool bind(application_q3_pickups *o,uint32_t entry,qa_qvm_function_hook c
 {
     pickup_hook *h=o->hooks+o->count;h->owner=o;h->grant=grant;
     h->descriptor=(qa_qvm_saved_function){.instruction=entry,.host_invocations=true,.hook=callback,.context=h};
-    if(!qa_qvm_bind_function(o->role->vm,entry,true,callback,h,&h->descriptor.binding,e))return false;++o->count;return true;
+    if(!qa_qvm_bind_function(o->role->vm,entry,true,callback,h,&h->descriptor.binding,e))return false;
+    ++o->count;return true;
 }
 bool application_q3_pickups_create(q3g_role *role,const application_q3_pickup_profile *profile,application_q3_pickups **out,qa_error *e)
 {
@@ -410,7 +416,8 @@ bool application_q3_pickups_descriptors(const application_q3_pickups *o,qa_qvm_s
 {
     if(!o)return !count||application_fail(e,QA_ERROR_ARGUMENT,"Absent pickup owner has no descriptors");
     if(count!=o->count||(count&&!out)||!application_q3_pickups_idle(o))return application_fail(e,QA_ERROR_ARGUMENT,"Pickup descriptors require the actual returned owner");
-    for(size_t i=0;i<count;++i)out[i]=o->hooks[i].descriptor;return true;
+    for(size_t i=0;i<count;++i)out[i]=o->hooks[i].descriptor;
+    return true;
 }
 void application_q3_pickups_adopt(application_q3_pickups *o,const qa_qvm_binding *bindings)
 {if(o)for(size_t i=0;i<o->count;++i)o->hooks[i].descriptor.binding=bindings[i];}

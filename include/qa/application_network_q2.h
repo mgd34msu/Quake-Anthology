@@ -32,6 +32,8 @@ typedef struct qa_application_network_q2_resource_view {
     const qa_vfs *view;
     const qa_resource *resource;
     const qa_vfs_acquisition *opening;
+    bool missing;
+    qa_bytes wire_bytes;
 } qa_application_network_q2_resource_view;
 
 /* Host discovery and binding require the actual physical ENTITIES GAME. A
@@ -40,6 +42,8 @@ bool qa_application_network_q2_host_source(qa_application *, qa_net_protocol_id,
     qa_application_network_q2_host *, qa_error *);
 bool qa_application_network_q2_create(qa_application *, qa_net_protocol_id,
     int32_t server_count, qa_application_network_q2 **, qa_error *);
+/* Supplied once by the actual Network peer's negotiated Source claim. */
+bool qa_application_network_q2_material_capability(qa_application_network_q2 *, bool, qa_error *);
 void qa_application_network_q2_destroy(qa_application_network_q2 *);
 bool qa_application_network_q2_player(qa_application_network_q2 *, qa_actor_id,
     qa_network_q2_player *, qa_error *);
@@ -91,6 +95,10 @@ bool qa_application_network_q2_unicast(qa_application *, qa_actor_owner source,
     qa_actor_id, uint32_t key, bool remember, bool *duplicate, qa_error *);
 bool qa_application_network_q2_entity_number(qa_application *, qa_actor_owner source,
     qa_actor_id, uint32_t *, qa_error *);
+bool qa_application_network_q2_event_entity(qa_application_network_q2 *, qa_actor_owner emitter,
+    qa_actor_id, uint32_t *, qa_error *);
+bool qa_application_network_q2_event_resource(qa_application_network_q2 *, qa_actor_owner emitter,
+    const qa_application_protocol_resource_reference *, uint32_t *, qa_error *);
 bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,

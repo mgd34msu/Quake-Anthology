@@ -561,6 +561,10 @@ bool qa_scene_resources_restore(qa_scene_resources *owner, qa_bytes bytes, const
                     row->image->source_q3 = true;
                     row->image->source_mipmap = parent->source_mipmap && row->mipmap;
                 }
+                if (parent && parent->recipient_upload_pixels) {
+                    row->image->recipient_upload_pixels = true;
+                    row->image->recipient_mipmap = parent->recipient_mipmap && row->mipmap;
+                }
             }
     } else state_clear(&state);
     sampling_clear(&sampling); qa_source_save_dispose(&io);

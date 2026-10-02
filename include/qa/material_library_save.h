@@ -32,6 +32,18 @@ bool qa_material_library_catalog_restore(qa_scene_resources *, qa_bytes,
     const qa_material_library_checkpoint_refs *, qa_material_library **, qa_error *);
 size_t qa_material_library_catalog_resource_count(const qa_material_library *);
 const qa_resource *qa_material_library_catalog_resource_at(const qa_material_library *, size_t);
+typedef struct qa_material_script_view {
+    const char *name;
+    qa_bytes body, catalog;
+    const qa_resource *resource;
+    size_t source_offset, name_offset, name_size;
+    bool dependency_scope;
+    qa_scene_family dependency_family;
+    qa_bytes dependency_palette;
+} qa_material_script_view;
+/* Borrow the actual admitted definition; no registration, parsing or lookup
+ * of new content. The enclosing library retains its catalog source. */
+bool qa_material_library_script_read(const qa_material_library *, const char *, qa_material_script_view *);
 /* qualified_content is the imported actual catalog. The decoded records keep
  * its content owners and verify exact catalog order and bytes. Video services
  * bind only after restoration and never dispatch during import. */

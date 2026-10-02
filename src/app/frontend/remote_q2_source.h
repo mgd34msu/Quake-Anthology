@@ -17,6 +17,19 @@ typedef struct frontend_remote_q2_source_options {
     /* Actual source settings/startup owner applies its retained configuration
      * to this real CLIENT registry before the pending constructor is exposed. */
     bool (*configure)(void *, const qa_launch_instance *, qa_cvars *, qa_console *, qa_error *);
+    bool (*initialize)(void *, const qa_launch_instance *, qa_cvars *, const qa_command_context *, qa_error *);
+    bool (*install)(void *, bool restoring, qa_error *);
+    bool (*configure_step)(void *, bool *complete, qa_error *);
+    bool (*retire)(void *, qa_error *);
+    void (*released)(void *);
+    qa_cvars *(*cvar_owner)(void *, const qa_command_context *, const char *);
+    qa_cvars *(*visible_cvars)(void *, const qa_command_context *, size_t);
+    bool (*cvar_edit)(void *, const qa_command_context *, qa_cvars *, struct qa_cvars_edit **, qa_error *);
+    bool (*read_script)(void *, const qa_command_context *, const char *, qa_bytes *, void **, qa_error *);
+    void (*release_script)(void *, void *);
+    void (*script_complete)(void *, const qa_command_context *, const char *, bool);
+    bool (*allow_command)(void *, const qa_command_invocation *);
+    qa_command_fallback template_forward;
     /* The actual app row replaces only its retained CLIENT descriptor. Source
      * exposes the candidate physical tuple during this checked callback;
      * failure must leave the supplied previous app row unchanged. */
@@ -36,12 +49,18 @@ bool frontend_remote_q2_source_recipe(qa_catalog *, qa_net_protocol_id, const ch
     uint32_t logical_seat, qa_launch_q2_client_metadata *, qa_vfs **prepared, qa_error *);
 bool frontend_remote_q2_source_create(qa_frontend *, const frontend_remote_q2_source_options *,
     frontend_remote_q2_source **, qa_error *);
+bool frontend_remote_q2_source_advance(frontend_remote_q2_source *, bool *ready, qa_error *);
+bool frontend_remote_q2_source_retire(frontend_remote_q2_source *, qa_error *);
 bool frontend_remote_q2_source_read(const frontend_remote_q2_source *, frontend_remote_q2_source_view *, qa_error *);
 bool frontend_remote_q2_source_current(const frontend_remote_q2_source_view *);
 bool frontend_remote_q2_source_bind(frontend_remote_q2_source *, const frontend_remote_q2_domain *, qa_error *);
 bool frontend_remote_q2_source_pending_protocol(frontend_remote_q2_source *, qa_net_protocol_id, qa_error *);
+bool frontend_remote_q2_source_pending_capabilities(frontend_remote_q2_source *, const qa_q2_connect_request *, qa_error *);
+bool frontend_remote_q2_source_material_scripts(const qa_q2_connect_request *, bool *, qa_error *);
 bool frontend_remote_q2_source_drain(frontend_remote_q2_source *, size_t budget, size_t *, qa_error *);
 bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **, qa_error *);
+bool frontend_remote_q2_source_rebind_ready(const frontend_remote_q2_source *, qa_frontend *, qa_error *);
+void frontend_remote_q2_source_rebind(frontend_remote_q2_source *, qa_frontend *);
 /* Physical app CLIENT rows borrow this real heap owner. These qualifiers use
  * retained metadata/registry fields directly and never call app/current hooks.
  * The configure callback may use them before the receiver is constructed. */
@@ -51,6 +70,9 @@ bool frontend_remote_q2_source_owner_idle(const frontend_remote_q2_source *);
 /* Candidate import has returned its physical constructor, although receiver
  * readiness is still deferred to the real resource/lower-session joins. */
 bool frontend_remote_q2_source_owner_import_idle(const frontend_remote_q2_source *);
+/* Checked cleanup of an isolated, returned partial import constructor. */
+bool frontend_remote_q2_source_owner_retirement_idle(const frontend_remote_q2_source *);
+bool frontend_remote_q2_source_constructor_read(const frontend_remote_q2_source *, const qa_launch_instance **, qa_error *);
 bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *,
     const qa_launch_instance *, const qa_console *, const qa_cvars *, const qa_command_context *, qa_error *);
 typedef struct frontend_remote_q2_source_state {

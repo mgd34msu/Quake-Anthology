@@ -3,6 +3,7 @@
 #include "qa/network_q1_peer_save.h"
 #include "qa/network_q1_session_save.h"
 #include "qa/network_save.h"
+#include "q1_retirement.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -25,6 +26,7 @@ typedef struct qw_server {
     uint32_t input_sequence, choked;
     uint8_t delta, loss;
     bool has_delta, reply, retiring, signon_active, primed;
+    q1_retirement retirement;
 } qw_server;
 
 static const qa_net_protocol_id protocol = {.kind = QA_NET_QW28};
@@ -77,19 +79,39 @@ static bool native_send(qw_server *peer, qa_bytes packet, qa_error *error)
 }
 static bool retire(qw_server *peer, const char *reason, bool notify, qa_error *error)
 {
-    if (peer->retiring) return true;
-    peer->retiring = true;
-    qa_error send_error = {0}; bool sent = true;
-    if (notify) {
-        uint8_t disconnect = 2; qa_bytes packet;
-        sent = qa_qw_channel_transmit(peer->native.channel.qw, (qa_bytes){&disconnect, 1},
-            peer->runtime->now_ns, true, &packet, &send_error) && native_send(peer, packet, &send_error);
+    q1_retirement *r = &peer->retirement;
+    if (r->busy) return qa_network_fail(error, "Recursive QuakeWorld source retirement");
+    if (!peer->retiring) {
+        if (!q1_retirement_start(r, reason, notify, peer->policy.message_bytes + 8, error)) return false;
+        peer->retiring = true;
+    }
+    if (r->marked) return true;
+    r->busy = true;
+    bool ok = true;
+    while (ok && !r->sent) {
+        if (!r->packet.size) {
+            uint8_t disconnect = 2; qa_bytes packet;
+            ok = qa_qw_channel_transmit(peer->native.channel.qw, (qa_bytes){&disconnect, 1},
+                peer->runtime->now_ns, true, &packet, error);
+            if (ok) {
+                size_t reliable = (qa_load_u32le(packet.data) & UINT32_C(0x80000000)) ? peer->reliable_bytes : 0;
+                memcpy(r->packet.data, packet.data, packet.size); r->packet.size = packet.size;
+                r->packet_disconnect = packet.size == 8 + reliable + 1;
+            }
+        }
+        if (ok) ok = native_send(peer, (qa_bytes){r->packet.data, r->packet.size}, error);
+        if (ok) {
+            if (r->packet_disconnect) r->sent = true;
+            else r->packet.size = 0;
+        }
     }
     bool previous = peer->runtime->callback; peer->runtime->callback = true;
-    bool dropped = peer->hooks.drop(peer->hooks.context, peer->id, reason, error);
+    if (ok) {
+        ok = peer->hooks.drop(peer->hooks.context, peer->id, r->reason, error);
+        if (ok) r->marked = true;
+    }
     peer->runtime->callback = previous;
-    if (dropped && !sent && error) *error = send_error;
-    return dropped && sent;
+    r->busy = false; return ok;
 }
 static bool source_command(qw_server *peer, const char *text, qa_error *error)
 {
@@ -235,6 +257,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     uint64_t now_ns, qa_error *error)
 {
     qw_server *peer = context; (void)runtime; (void)id; (void)now_ns;
+    if (peer->retiring) return retire(peer, peer->retirement.reason, peer->retirement.notify, error);
     return qa_qw_signon_spawned(peer->signon) || send(peer, (qa_bytes){0}, NULL, error);
 }
 static bool command(void *context, const qa_network_command *value, qa_error *error)
@@ -265,7 +288,7 @@ static bool rebind(void *context, const qa_net_address *address, qa_error *error
 static void close_peer(void *context)
 {
     qw_server *peer = context; if (!peer) return;
-    queue_clear(peer); qa_qw_signon_destroy(peer->signon);
+    queue_clear(peer); q1_retirement_clear(&peer->retirement); qa_qw_signon_destroy(peer->signon);
     qa_qw_source_history_destroy(peer->frames); qa_qw_channel_destroy(peer->native.channel.qw); free(peer);
 }
 static const qa_network_peer_ops ops = {.receive=receive,.flush=flush,.command=command,
@@ -361,6 +384,12 @@ const qa_q1_peer *qa_network_qw_server_view(qa_network_runtime *runtime, qa_net_
 }
 bool qa_network_qw_peer(const qa_network_peer *peer)
 { return peer && peer->occupied && peer->ops.receive == receive; }
+bool qa_network_qw_retirement_pending(const qa_network_peer *peer)
+{
+    if (!qa_network_qw_peer(peer)) return false;
+    const qw_server *source = peer->state;
+    return source->retiring && !source->retirement.marked;
+}
 bool qa_network_qw_peer_matches(const qa_network_peer *owner, const qa_net_datagram *packet)
 {
     if (!qa_network_qw_peer(owner) || !packet || !packet->payload.data || packet->payload.size < 10) return false;
@@ -372,7 +401,18 @@ void qa_network_qw_transport_rebind(qa_network_peer *owner, qa_net_transport *tr
 { if (qa_network_qw_peer(owner)) ((qw_server *)owner->state)->native.transport = transport; }
 static bool continuation_valid(const qw_server *peer, const qa_net_client *client, qa_error *error)
 {
+    if (!q1_retirement_valid(&peer->retirement, peer->retiring, peer->policy.message_bytes + 8, error)) return false;
     qa_qw_channel_stats channel = qa_qw_channel_get_stats(peer->native.channel.qw);
+    if (peer->retirement.packet.size) {
+        const q1_retirement *r = &peer->retirement;
+        if (r->packet.size < 8) return qa_network_fail(error, "Truncated retained QuakeWorld disconnect packet");
+        uint32_t sequence = qa_load_u32le(r->packet.data);
+        size_t reliable = (sequence & UINT32_C(0x80000000)) ? peer->reliable_bytes : 0;
+        if ((sequence & INT32_MAX) >= channel.outgoing_sequence ||
+            (r->packet_disconnect ? (r->packet.size != 8 + reliable + 1 || r->packet.data[r->packet.size - 1] != 2) :
+                (reliable != peer->policy.message_bytes || r->packet.size != 8 + reliable)))
+            return qa_network_fail(error, "Invalid retained QuakeWorld disconnect packet");
+    }
     if (!client || client->protocol.kind != QA_NET_QW28 || client->protocol.flags || client->protocol.revision ||
         client->seat_count != 1 || peer->signon_active || peer->policy.message_bytes != 1450 ||
         peer->policy.queued_messages != 5 || peer->policy.bytes_per_second < 500 || peer->policy.bytes_per_second > 10000 ||
@@ -408,6 +448,7 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
     const qa_net_client *client = qa_net_connections_get(peer->runtime->connections, peer->id);
     if (!continuation_valid(peer, client, error)) return false;
     size_t count = 0, queued = 0, capacity = 128; const qw_pending *last = NULL;
+    if (!q1_retirement_extent(&peer->retirement, &capacity, error)) return false;
     for (const qw_pending *pending = peer->first; pending; pending = pending->next) {
         if (!pending->bytes.data || !pending->bytes.size || pending->bytes.size > peer->policy.message_bytes ||
             count >= peer->policy.queued_messages || capacity > SIZE_MAX - 8 - pending->bytes.size)
@@ -433,7 +474,7 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
         if (!bytes.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding QuakeWorld source continuation"); ok = false; }
         else qa_net_writer_init(&writer, bytes.data, capacity, error);
     }
-    if (ok) ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 2) &&
+    if (ok) ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 3) &&
         qa_net_write_u16(&writer, peer->policy.qport) && qa_net_write_u32(&writer, peer->policy.bytes_per_second) &&
         qa_net_write_u64(&writer, peer->policy.message_bytes) && qa_net_write_u64(&writer, peer->policy.queued_messages) &&
         qa_net_write_u32(&writer, peer->input_sequence) && qa_net_write_u32(&writer, peer->choked) &&
@@ -445,7 +486,8 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
     if (ok) ok = qa_net_write_i16(&writer, peer->last_command.forward) &&
         qa_net_write_i16(&writer, peer->last_command.side) && qa_net_write_i16(&writer, peer->last_command.up) &&
         qa_net_write_u8(&writer, peer->last_command.msec) && qa_net_write_u8(&writer, peer->last_command.impulse) &&
-        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, peer->queued_messages);
+        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, peer->queued_messages) &&
+        q1_retirement_write(&peer->retirement, &writer);
     for (const qw_pending *pending = peer->first; ok && pending; pending = pending->next) ok = write_blob(&writer, &pending->bytes);
     for (size_t i = 0; ok && i < 3; ++i) ok = write_blob(&writer, blobs[i]);
     if (ok) { bytes.size = qa_net_writer_size(&writer); *out = bytes; }
@@ -458,7 +500,7 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
     if (!runtime || !client || !refs || !refs->source_qw || !owner || !bytes.data || !runtime->options.hooks.commands)
         return qa_network_fail(error, "QuakeWorld restore lacks its actual candidate source consumers");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 2)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 3)
         return qa_net_reader_fail(&reader, "Invalid QuakeWorld source continuation schema");
     qw_server *peer = calloc(1, sizeof(*peer));
     if (!peer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring QuakeWorld source peer"); return false; }
@@ -480,6 +522,7 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
     peer->policy.message_bytes = 1450; peer->policy.queued_messages = 5;
     peer->has_delta = has_delta != 0; peer->reply = reply != 0; peer->retiring = retiring != 0;
     peer->primed = primed != 0; peer->reliable_bytes = (size_t)reliable;
+    if (ok) ok = q1_retirement_read(&peer->retirement, &reader, peer->retiring, 1458, error);
     for (uint64_t i = 0; ok && i < count; ++i) {
         qa_bytes payload = {0}; ok = read_blob(&reader, &payload) && payload.size && payload.size <= 1450;
         if (ok) {

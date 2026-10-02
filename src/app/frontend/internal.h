@@ -137,6 +137,7 @@ struct qa_frontend {
     frontend_visual_owner *visuals;
     frontend_native_q2 *native_q2;
     frontend_native_q3 *native_q3;
+    struct frontend_video_guests *video_guests;
     frontend_remote_q3 *remote_q3;
     struct frontend_remote_q3_initial *initial_resources;
     frontend_remote_q2 *remote_q2;
@@ -144,11 +145,13 @@ struct qa_frontend {
     struct frontend_remote_unified *remote_unified;
     struct frontend_client_source *client_sources;
     struct frontend_component_scene *component_scenes;
+    struct frontend_component_scene_restore *component_scene_restores;
     frontend_qc_rerelease *qc_rerelease;
     qa_native_runtime *native_runtime;
     qa_native_resource_inventory *native_resource_inventory_pending;
     qa_save_image *save_image_pending;
     struct frontend_renderer_materials *renderer_materials;
+    struct frontend_renderer_worlds *renderer_worlds;
     frontend_event_state *events;
     frontend_particle_state *particles;
     qa_application_q3_round_cut *round;

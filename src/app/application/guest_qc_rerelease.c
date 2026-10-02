@@ -1,5 +1,6 @@
 #include "guest_qc_rerelease.h"
 #include "guest_qc_bot_orders.h"
+#include "bots_npc.h"
 #include "map_players_private.h"
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
@@ -76,6 +77,17 @@ static bool target(struct application_qc_state *engine,qa_qc_instance *vm,int32_
     } else if (binding.kind!=QA_QC_SLOT_FREE || client->actor.registry)
         return application_fail(error,QA_ERROR_FORMAT,"Disconnected rerelease client differs from its reserved slot");
     *out=slot; return true;
+}
+static bool walk_path(struct application_qc_state *engine,qa_qc_instance *vm,qa_error *error)
+{
+    const qa_qc_definition *self=qa_qc_program_find_global(engine->provider->state.qc.program,"self");
+    int32_t reference; qa_actor_id actor; float distance; qa_vec3 goal;
+    if(!self||self->type!=QA_QC_ENTITY||!qa_qc_global_int(vm,self->offset,&reference,error)||
+        !qa_qc_reference_actor(vm,reference,&actor,error)||
+        !qa_qc_arg_float(vm,0,&distance,error)||!qa_qc_arg_vector(vm,1,&goal,error)) return false;
+    qa_q1_path_result result=QA_Q1_PATH_ERROR;
+    return application_bots_npc_walk(engine->provider,actor,goal,distance,&result,error)&&
+        qa_qc_return_float(vm,(float)result,error);
 }
 static bool set_color(struct application_qc_state *engine,qa_qc_instance *vm,qa_error *error)
 {
@@ -400,6 +412,7 @@ bool application_qc_rerelease_import(struct application_qc_state *engine,qa_qc_i
     case QA_QC_BUILTIN_EX_LOCALSOUND: return local_sound(engine,vm,error);
     case QA_QC_BUILTIN_EX_FINALE_FINISHED: return finale(engine,vm,error);
     case QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS: return check_player_flags(engine,vm,error);
+    case QA_QC_BUILTIN_EX_WALKPATHTOGOAL: return walk_path(engine,vm,error);
     case QA_QC_BUILTIN_EX_BOT_MOVETOPOINT: return application_qc_bot_order(engine,vm,false,error);
     case QA_QC_BUILTIN_EX_BOT_FOLLOWENTITY: return application_qc_bot_order(engine,vm,true,error);
     case QA_QC_BUILTIN_EX_PROMPT: case QA_QC_BUILTIN_EX_PROMPTCHOICE: case QA_QC_BUILTIN_EX_CLEARPROMPT:

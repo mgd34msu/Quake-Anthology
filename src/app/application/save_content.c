@@ -342,7 +342,7 @@ bool qa_application_content_claim_pool(qa_application_content_graph *g, uint64_t
     qa_resource_pool **out, qa_error *error)
 {
     if (!g || !g->pending || !out || *out || !id || id > g->pool_count || !g->pools[id - 1].owned)
-        return fail(error, QA_ERROR_STATE, "Saved content pool has no unclaimed owning reference");
+        return fail(error, QA_ERROR_ARGUMENT, "Saved content pool has no unclaimed owning reference");
     *out = g->pools[id - 1].value; g->pools[id - 1].owned = false; return true;
 }
 bool qa_application_content_claim_view(qa_application_content_graph *g, uint64_t id,
@@ -350,7 +350,7 @@ bool qa_application_content_claim_view(qa_application_content_graph *g, uint64_t
 {
     if (!g || !g->pending || !out || *out || !id || id > g->view_count ||
         g->views[id - 1].catalog || !g->views[id - 1].owned)
-        return fail(error, QA_ERROR_STATE, "Saved private VFS has no unclaimed destructor ownership");
+        return fail(error, QA_ERROR_ARGUMENT, "Saved private VFS has no unclaimed destructor ownership");
     *out = g->views[id - 1].value; g->views[id - 1].owned = false; return true;
 }
 bool qa_application_content_retain_catalog(qa_application_content_graph *g, uint64_t id,
@@ -358,12 +358,23 @@ bool qa_application_content_retain_catalog(qa_application_content_graph *g, uint
 {
     qa_catalog *catalog = qa_application_content_catalog(g, id);
     if (!g || !g->pending || !catalog || !out || *out)
-        return fail(error, QA_ERROR_STATE, "Saved content catalog has no actual retained snapshot");
+        return fail(error, QA_ERROR_ARGUMENT, "Saved content catalog has no actual retained snapshot");
     qa_catalog_retain(catalog); *out = catalog; return true;
+}
+bool qa_application_content_retain_view(qa_application_content_graph *g, uint64_t id,
+    qa_vfs **out, qa_error *error)
+{
+    qa_vfs *view = qa_application_content_view(g, id);
+    if (!g || !g->pending || !view || !out || *out)
+        return fail(error, QA_ERROR_ARGUMENT, "Saved VFS has no actual retained snapshot");
+    if (g->views[id - 1].owned) g->views[id - 1].owned = false;
+    else if (!qa_vfs_retain(view, error)) return false;
+    *out = view;
+    return true;
 }
 bool application_save_content_ready(const qa_application_content_graph *g, qa_error *error)
 {
-    if (!g || !g->pending) return fail(error, QA_ERROR_STATE, "Content graph has no isolated pending publication");
+    if (!g || !g->pending) return fail(error, QA_ERROR_ARGUMENT, "Content graph has no isolated pending publication");
     for (size_t i = 0; i < g->pool_count; ++i) if (g->pools[i].owned)
         return fail(error, QA_ERROR_FORMAT, "Saved pool was not adopted by its actual consumer owner");
     for (size_t i = 0; i < g->view_count; ++i) if (g->views[i].owned)
@@ -385,7 +396,7 @@ bool qa_application_content_retain_pool(qa_application_content_graph *g, uint64_
 {
     qa_resource_pool *pool = qa_application_content_pool(g, id);
     if (!g || !g->pending || !pool || !out || *out)
-        return fail(error, QA_ERROR_FORMAT, "Source event resource has no restored pool owner");
+        return fail(error, QA_ERROR_FORMAT, "Saved resource pool has no actual retained owner");
     if (g->pools[id - 1].owned) g->pools[id - 1].owned = false;
     else qa_resource_pool_retain(pool);
     *out = pool;

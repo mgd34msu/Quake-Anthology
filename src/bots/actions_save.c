@@ -16,7 +16,7 @@ static bool input_fields(qa_source_save_io *io, qa_bot_input *input)
 bool qa_bot_actions_capture(const qa_bot_actions *actions, qa_buffer *out, qa_error *error)
 {
     if (!actions || !out || actions->restoring || actions->capacity > INT32_MAX / 40 ||
-        actions->capacity > SIZE_MAX / sizeof(qa_bot_input) ||
+        (actions->capacity && sizeof(qa_bot_input) > SIZE_MAX / actions->capacity) ||
         (!!actions->inputs != (actions->initialized && actions->capacity != 0))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot action owner is absent, restoring or inconsistent");
         return false;
@@ -48,7 +48,7 @@ bool qa_bot_actions_restore_bytes(qa_bot_actions *actions, qa_bytes bytes, qa_er
     uint32_t capacity = 0;
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) &&
         qa_source_save_bool(&io, &initialized) && qa_source_save_u32(&io, &capacity);
-    if (ok && (capacity > INT32_MAX / 40 || capacity > SIZE_MAX / sizeof(*inputs) ||
+    if (ok && (capacity > INT32_MAX / 40 || (capacity && sizeof(*inputs) > SIZE_MAX / capacity) ||
         (initialized && capacity > (io.input.size - io.offset) / 40)))
         ok = bot_save_fail(&io, QA_ERROR_FORMAT, "Invalid or truncated bot action slots");
     if (ok && initialized && capacity) {

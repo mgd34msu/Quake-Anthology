@@ -19,24 +19,98 @@ bool frontend_legacy_render_policy_read(const qa_frontend *frontend, const qa_pr
 {
     if (!frontend || !frontend->application || !product || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy rendering requires its actual selected product");
+    const qa_cvars *registry = qa_application_cvars(frontend->application);
+    if (!frontend_legacy_render_policy_read_registry(registry, product, out, error)) return false;
+    if (out->family == QA_SCENE_Q2) {
+        float flash;
+        if (!number(registry, "gl_flashblend", &flash, error)) return false;
+        out->flashblend = flash != 0;
+    }
+    return true;
+}
+
+bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const qa_product *product,
+    frontend_legacy_render_policy *out, qa_error *error)
+{
+    if (!registry || !product || !out)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy policy requires its actual cvar owner and product");
     frontend_legacy_render_policy value = {.family = product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
         product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3, .mirror_alpha = 1};
     if (value.family != QA_SCENE_Q3) {
-        qa_cvars *registry = qa_application_cvars(frontend->application);
-        float flash, eyes, shadows, mirror, texture_sort = 0;
-        if (!number(registry, "gl_flashblend", &flash, error) ||
-            !number(registry, "gl_doubleeys", &eyes, error) ||
-            !number(registry, value.family == QA_SCENE_Q1 ? "r_shadows" : "gl_shadows", &shadows, error) ||
-            !number(registry, "r_mirroralpha", &mirror, error)) return false;
-        if (value.family == QA_SCENE_Q1 && !number(registry, "gl_texsort", &texture_sort, error)) return false;
         value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD;
+        float flash = 0, eyes = 1, shadows, mirror = 1, texture_sort = 0;
+        if (!number(registry, value.family == QA_SCENE_Q1 ? "r_shadows" : "gl_shadows", &shadows, error)) return false;
+        if (value.family == QA_SCENE_Q1 &&
+            (!number(registry, "gl_flashblend", &flash, error) ||
+             (!value.quakeworld && !number(registry, "gl_doubleeys", &eyes, error)) ||
+             !number(registry, "r_mirroralpha", &mirror, error) ||
+             !number(registry, "gl_texsort", &texture_sort, error))) return false;
         value.flashblend = flash != 0;
         value.double_eyes = value.family == QA_SCENE_Q1 && (value.quakeworld || eyes != 0);
         value.planar_shadows = shadows != 0;
         value.texture_sort = value.family == QA_SCENE_Q1 && texture_sort != 0;
         value.mirror_alpha = value.family == QA_SCENE_Q1 && !value.quakeworld ? mirror : 1;
+        float fullbright, lightmap, dynamic, polyblend, cull, clear;
+        if (!number(registry, "r_fullbright", &fullbright, error) ||
+            !number(registry, value.family == QA_SCENE_Q1 ? "r_lightmap" : "gl_lightmap", &lightmap, error) ||
+            !number(registry, value.family == QA_SCENE_Q1 ? "r_dynamic" : "gl_dynamic", &dynamic, error) ||
+            !number(registry, "gl_polyblend", &polyblend, error) ||
+            !number(registry, "gl_cull", &cull, error) || !number(registry, "gl_clear", &clear, error)) return false;
+        value.lighting = (qa_scene_legacy_policy){.present = true,
+            .fullbright = !value.quakeworld && fullbright != 0,
+            .lightmap = !value.quakeworld && lightmap != 0, .dynamic = dynamic != 0,
+            .polyblend = polyblend != 0, .cull = cull != 0, .clear = clear != 0,
+            .flares = true, .modulate = 1, .monolightmap = '0'};
+        if (value.family == QA_SCENE_Q2) {
+            float saturate;
+            const qa_cvar_view *mono = qa_cvars_find(registry, "gl_monolightmap");
+            if (!number(registry, "gl_modulate", &value.lighting.modulate, error) ||
+                !number(registry, "gl_saturatelighting", &saturate, error) || !mono || !mono->value)
+                return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 policy lost its reached lighting setting");
+            value.lighting.saturate = saturate != 0;
+            value.lighting.monolightmap = (uint8_t)mono->value[0];
+            const qa_cvar_view *flares = qa_cvars_find(registry, "cl_flares");
+            if (flares) {
+                if (!isfinite(flares->number)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 flare setting is nonfinite");
+                value.lighting.flares = flares->number != 0;
+            }
+        }
     }
     *out = value;
+    return true;
+}
+
+bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dialect,
+    uint64_t owner, qa_error *error)
+{
+    if (!registry || !owner || qa_cvars_dialect(registry) != dialect)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer requires its actual source registry");
+    bool q1 = dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
+    bool q2 = dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    if (!q1 && !q2) return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer requires a Q1/Q2 source dialect");
+    static const struct { const char *name, *value; uint32_t flags; } shared[] = {
+        {"r_fullbright", "0", 0}, {"gl_polyblend", "1", 0}, {"gl_cull", "1", 0}, {"gl_clear", "0", 0}};
+    static const struct { const char *name, *value; uint32_t flags; } quake[] = {
+        {"r_lightmap", "0", 0}, {"r_dynamic", "1", 0}, {"r_shadows", "0", 0},
+        {"r_mirroralpha", "1", 0}, {"gl_texsort", "1", 0}, {"gl_flashblend", "1", 0}};
+    static const struct { const char *name, *value; uint32_t flags; } quake2[] = {
+        {"gl_lightmap", "0", 0}, {"gl_dynamic", "1", 0}, {"gl_shadows", "0", 0},
+        {"gl_modulate", "1", QA_CVAR_ARCHIVE}, {"gl_monolightmap", "0", 0}, {"gl_saturatelighting", "0", 0}};
+    for (size_t i = 0; i < sizeof(shared) / sizeof(*shared); ++i)
+        if (!qa_cvars_register(registry, shared[i].name, shared[i].value, shared[i].flags,
+            owner, "", error)) return false;
+    if (q1) {
+        for (size_t i = 0; i < sizeof(quake) / sizeof(*quake); ++i)
+            if (!qa_cvars_register(registry, quake[i].name, quake[i].value, quake[i].flags,
+                owner, "", error)) return false;
+        if (dialect == QA_CONSOLE_Q1 && !qa_cvars_register(registry, "gl_doubleeys", "1", 0, owner, "", error)) return false;
+    } else {
+        for (size_t i = 0; i < sizeof(quake2) / sizeof(*quake2); ++i)
+            if (!qa_cvars_register(registry, quake2[i].name, quake2[i].value, quake2[i].flags,
+                owner, "", error)) return false;
+        if (dialect == QA_CONSOLE_Q2_RERELEASE &&
+            !qa_cvars_register(registry, "cl_flares", "1", 0, owner, "", error)) return false;
+    }
     return true;
 }
 
@@ -59,13 +133,19 @@ bool frontend_legacy_model_input_product(const qa_frontend *frontend, const qa_p
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy model has no real world input");
     frontend_legacy_render_policy policy;
     if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
+    if (world->legacy_policy.present) policy.lighting = world->legacy_policy;
     input->q1_double_eyes = policy.double_eyes;
+    if (policy.lighting.present) {
+        input->no_cull = input->no_cull || !policy.lighting.cull;
+        if (policy.family == QA_SCENE_Q2) input->monochrome = policy.lighting.monolightmap != '0';
+    }
     if (policy.family != QA_SCENE_Q3) {
         qa_vec3 origin = qa_v3(input->transform.origin[0], input->transform.origin[1], input->transform.origin[2]);
         for (size_t i = 0; i < world->light_count; ++i) {
             const qa_scene_light *light = &world->lights[i];
             float amount = (light->radius - qa_vec_length(qa_vec_sub(origin, light->origin))) / 256;
-            if (amount > 0) input->ambient = qa_vec_add(input->ambient, qa_vec_scale(light->color, amount));
+            if (amount > 0) input->ambient = qa_vec_add(input->ambient, qa_vec_scale(light->color,
+                amount * (policy.family == QA_SCENE_Q2 ? policy.lighting.modulate : 1)));
         }
     }
     if (policy.planar_shadows && policy.family != QA_SCENE_Q3 && !input->view_model) {
@@ -188,7 +268,8 @@ bool frontend_legacy_scene_submit(qa_frontend *frontend, uint32_t seat, qa_actor
         }
     }
     native_scene_context context = {frontend, frontend->scene_world, seat, exclude};
-    frontend_legacy_scene_services services = {&context, native_current, native_visuals, native_particles, NULL};
+    frontend_legacy_scene_services services = {.context = &context, .current = native_current,
+        .visuals = native_visuals, .particles = native_particles};
     return frontend_legacy_scene_submit_product(frontend, frontend->scene_world, product,
         &input, frame, &services, error);
 }
@@ -203,7 +284,9 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy scene requires its actual entered services");
     if (!scene_current(services, error)) return false;
     frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
+    if (!(services->policy ? services->policy(services->context, product, &policy, error) :
+        frontend_legacy_render_policy_read(frontend, product, &policy, error)) ||
+        !scene_current(services, error)) return false;
     qa_scene_world_input input = *world;
     if (policy.family == QA_SCENE_Q1 && input.q1_sky_environment) {
         float far_clip = input.q1_sky_environment->far_clip;
@@ -215,12 +298,15 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     }
     input.legacy_flashblend = policy.flashblend;
     input.legacy_texture_sort = policy.texture_sort;
+    input.legacy_policy = policy.lighting;
+    if (policy.lighting.present) input.view.clear_color = policy.lighting.clear;
     qa_scene_view reflected;
     bool mirror = false;
     if (policy.texture_sort && policy.mirror_alpha != 1 && !qa_scene_world_q1_mirror(actual_world,
         &input, frame, &input.q1_mirror, &reflected, &mirror, error)) return false;
     qa_scene_vec4 blend = {0};
     size_t first = frame->command_count;
+    size_t scene_first = first;
     if (!scene(actual_world, services, &input, &policy, frame, &blend, error)) return false;
     if (policy.mirror_alpha != 1) depth_range(frame, first, 0, .5f);
     if (mirror) {
@@ -238,7 +324,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
             policy.mirror_alpha, frame, error) ||
             !qa_scene_frame_finish(frame, &input.view, NULL, error)) return false;
     }
-    if (blend.w > 0 || services->blend) {
+    if (policy.lighting.polyblend && (blend.w > 0 || services->blend)) {
         qa_ui_preferences preferences;
         if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), world->view.seat, &preferences, error)) return false;
         if (preferences.reduced_flashes) blend = (qa_scene_vec4){0};
@@ -250,5 +336,9 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
             qa_scene_white(frontend->ui_images), world->view.viewport, world->view.viewport,
             (qa_scene_vec4){0, 0, 1, 1}, blend, error)) return false;
     }
+    if (policy.lighting.present && !policy.lighting.cull)
+        for (size_t i = scene_first; i < frame->command_count; ++i)
+            if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW)
+                frame->commands[i].data.draw.state.cull = QA_CULL_NONE;
     return scene_current(services, error);
 }

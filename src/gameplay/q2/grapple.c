@@ -403,7 +403,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
                                body.origin, normal, e);
 }
 static bool cable(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, qa_vec3 offset,
-                  qa_error *e) {
+                  bool lm, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_BEAM,
                               .family = QA_GAME_Q2,
                               .provider = g->options.owner,
@@ -411,13 +411,14 @@ static bool cable(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, 
                               .time_ns = g->now_ns,
                               .origin = start,
                               .end = end,
-                              .direction = offset};
+                              .direction = offset,
+                              .flags = lm ? 1u : 0u};
     return qa_builtin_resource(&g->services, "q2:grapple-cable", &event.resource, e) &&
            qa_builtin_emit(&g->services, &event, e);
 }
 static bool draw_lm(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, qa_error *e) {
     return qa_vec_length(qa_vec_sub(end, start)) <= 64 ||
-           cable(g, owner, start, end, qa_v3(0, 0, 0), e);
+           cable(g, owner, start, end, qa_v3(0, 0, 0), true, e);
 }
 static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_vec3 start,
                    qa_vec3 direction, bool *launched, qa_error *e) {
@@ -732,7 +733,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
             call.input.players_collide = g->grapple_options.players_collide;
             qa_vec3 start, direction;
             if (!q2_project(&call, p.angles, qa_v3(7, 2, -9), &start, &direction, e) ||
-                !cable(g, a->id, start, hook_body.origin, qa_v3(0, 0, 0), e))
+                !cable(g, a->id, start, hook_body.origin, qa_v3(0, 0, 0), false, e))
                 return false;
         }
     } else {
@@ -743,7 +744,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
             qa_vec_add(qa_vec_add(qa_vec_scale(forward, 16), qa_vec_scale(right, side)),
                        qa_v3(0, 0, p.view_height - 8));
         if (qa_vec_length(qa_vec_sub(qa_vec_add(body.origin, offset), hook_body.origin)) >= 64 &&
-            !cable(g, a->id, body.origin, hook_body.origin, offset, e))
+            !cable(g, a->id, body.origin, hook_body.origin, offset, false, e))
             return false;
     }
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, hook_id) || s->phase == QA_Q2_GRAPPLE_FLY)

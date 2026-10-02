@@ -1,44 +1,15 @@
-#include "remote_unified_prediction.h"
+#include "remote_unified_prediction_private.h"
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct prediction_command {
-    qa_unified_movement raw;
-    uint64_t sequence;
-    double time_ms;
-} prediction_command;
-typedef struct prediction_snapshot {
-    qa_movement_input input;
-    qa_vec3 angles, offset, pml;
-    qa_movement_ground ground;
-    float height;
-    int32_t water_level, water_type;
-    double time_ms;
-    int64_t sequence;
-} prediction_snapshot;
 typedef struct prediction_reader {
     const qa_unified_document *document;
     const qa_json_document *json;
     frontend_remote_unified *replica;
 } prediction_reader;
-struct frontend_remote_unified_prediction {
-    frontend_remote_unified *replica;
-    qa_executable_recipe *recipe;
-    qa_actor_registry *registry;
-    qa_collision_geometry *geometry;
-    qa_world *scene;
-    qa_unified_document *snapshot_document;
-    prediction_snapshot snapshot;
-    prediction_command commands[64];
-    size_t command_count;
-    int64_t discarded;
-    uint32_t epoch;
-    int rounding;
-    bool received, busy;
-};
 
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e, code, 0, "%s", message); return false; }
@@ -562,8 +533,56 @@ bool frontend_remote_unified_prediction_time(const frontend_remote_unified_predi
     *out=p->command_count?fmax(p->snapshot.time_ms,p->commands[p->command_count-1].time_ms):p->snapshot.time_ms;
     return true;
 }
+bool frontend_remote_unified_prediction_snapshot(const frontend_remote_unified_prediction *p,
+    frontend_unified_prediction_view *out, qa_error *e)
+{
+    if(!p || p->busy || !p->received || !out || !current(p,e)) return false;
+    const prediction_snapshot *s=&p->snapshot;
+    *out=(frontend_unified_prediction_view){.actor=s->input.actor,.state=s->input.state,
+        .view_angles=s->angles,.view_offset=s->offset,.bounds=s->input.current_bounds,
+        .view_height=s->height,.command_time_ms=s->time_ms,.sequence=s->sequence,
+        .status=FRONTEND_UNIFIED_PREDICTION_UNCHANGED};
+    return true;
+}
 bool frontend_remote_unified_prediction_idle(const frontend_remote_unified_prediction *p)
 { return p && !p->busy && (!p->scene || qa_world_idle(p->scene)); }
+static bool received_actor(const frontend_remote_unified_prediction *p,qa_actor_id actor_id)
+{
+    qa_saved_actor_id wire;
+    return qa_actors_get(p->registry,actor_id) && frontend_remote_unified_wire_actor(p->replica,actor_id,&wire) &&
+        frontend_remote_unified_actor_present(p->replica,wire.slot,wire.generation);
+}
+bool frontend_remote_unified_prediction_trace(frontend_remote_unified_prediction *p,
+    const qa_trace_query *query,qa_trace_result *out,qa_error *e)
+{
+    if (!p || !query || !out || !p->received || !p->scene ||
+        !frontend_remote_unified_prediction_idle(p) || !current(p,e) ||
+        (query->pass_actor.registry && !received_actor(p,query->pass_actor)))
+        return fail(e,QA_ERROR_ARGUMENT,"Unified trace requires its returned received world and actual actor namespace");
+    qa_trace_result result;
+    p->busy=true;
+    bool ok=qa_world_trace(p->scene,query,&result,e);
+    p->busy=false;
+    if (ok) ok=current(p,e) && (result.hit!=QA_TRACE_HIT_ACTOR || received_actor(p,result.actor));
+    if (ok) *out=result;
+    return ok;
+}
+bool frontend_remote_unified_prediction_body_read(const frontend_remote_unified_prediction *p,
+    qa_actor_id actor_id,qa_body_state *out,qa_error *e)
+{
+    qa_body_state body;
+    if (!p || !out || !p->received || !p->scene || !frontend_remote_unified_prediction_idle(p) ||
+        !current(p,e) || !received_actor(p,actor_id))
+        return fail(e,QA_ERROR_ARGUMENT,"Unified body read requires its actual received collision body");
+    if (!qa_world_body_read(p->scene,actor_id,&body,e) || !current(p,e)) return false;
+    *out=body; return true;
+}
+const qa_unified_document *frontend_remote_unified_prediction_document(
+    const frontend_remote_unified_prediction *p)
+{
+    qa_error e={0};
+    return p && !p->busy && p->received && current(p,&e)?p->snapshot_document:NULL;
+}
 bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_prediction **owned, qa_error *e)
 {
     if(!owned || !*owned) return true;

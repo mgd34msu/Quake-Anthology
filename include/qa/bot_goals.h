@@ -59,6 +59,7 @@ typedef struct qa_bot_goal_services {
     bool (*log)(void *, const char *, qa_error *);
     bool (*developer)(void *);
     bool (*debug)(void *);
+    bool (*maximum_level_items)(void *, int32_t *, qa_error *);
 } qa_bot_goal_services;
 typedef struct qa_bot_goal_options {
     uint32_t maximum_states, maximum_level_items;
@@ -137,6 +138,7 @@ bool qa_bot_goals_missing_visible(qa_bot_goals *, int32_t client, qa_vec3 eye, c
                                   bool *, qa_error *);
 bool qa_bot_goal_touching(qa_vec3 origin, const qa_bot_goal *);
 const char *qa_bot_goals_name(const qa_bot_goals *, int32_t number);
+bool qa_bot_goals_name_read(const qa_bot_goals *, int32_t number, const char **out, qa_error *);
 /* Load borrows the map's immutable entity table; repeated same-map restarts may
  * retain it. Live entity updates are obtained from services.entities. */
 bool qa_bot_goals_load_map(qa_bot_goals *, const qa_entities *, qa_bot_navigation *, qa_error *);

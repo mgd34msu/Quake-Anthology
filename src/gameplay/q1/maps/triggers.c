@@ -532,7 +532,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
         body.velocity.y = state->movedir.y * entity->speed;
         if (body.ground.registry) {
             body.velocity.z = state->height ? state->height : 200;
-            props.flags &= ~QA_PHYSICS_ONGROUND;
+            props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         }
         body.ground = (qa_actor_id){0};
         if (!qa_world_body_write(g->services.world, other, &body, error) ||

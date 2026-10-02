@@ -117,6 +117,11 @@ bool qa_native_process_resources_resolve_sysv_file(qa_native_process_resources *
     qa_native_sysv_file *, qa_error *);
 bool qa_native_process_resources_file_status(qa_native_process_resources *, uint64_t,
     qa_fs_posix_status *, qa_error *);
+bool qa_native_process_resources_descriptor_status(qa_native_process_resources *, uint64_t,
+    qa_native_sysv_program_descriptor_status *, qa_error *);
+/* Reached PROGRAM operation, never a cold decode/adoption side effect. */
+bool qa_native_process_resources_descriptor_flags(qa_native_process_resources *, uint64_t,
+    uint32_t linux_flags, qa_error *);
 bool qa_native_process_resources_linux_identity_read(qa_native_process_resources *,
     qa_native_process_linux_identity *, qa_error *);
 bool qa_native_process_resources_linux_clock_read(qa_native_process_resources *,

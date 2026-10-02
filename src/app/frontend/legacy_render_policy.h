@@ -7,11 +7,15 @@ typedef struct frontend_legacy_render_policy {
     qa_scene_family family;
     bool quakeworld, flashblend, double_eyes, planar_shadows, texture_sort;
     float mirror_alpha;
+    qa_scene_legacy_policy lighting;
 } frontend_legacy_render_policy;
 
 /* Borrow the reached canonical ENGINE values; QACV owns their continuation. */
 bool frontend_legacy_render_policy_read(const qa_frontend *, const qa_product *,
     frontend_legacy_render_policy *, qa_error *);
+bool frontend_legacy_render_policy_read_registry(const qa_cvars *, const qa_product *,
+    frontend_legacy_render_policy *, qa_error *);
+bool frontend_legacy_source_register(qa_cvars *, qa_console_dialect, uint64_t owner, qa_error *);
 bool frontend_legacy_model_input(const qa_frontend *, qa_product_id, const qa_scene_world *,
     const qa_scene_world_input *, qa_scene_model_input *, qa_error *);
 bool frontend_legacy_model_input_product(const qa_frontend *, const qa_product *, const qa_scene_world *,
@@ -22,6 +26,7 @@ typedef struct frontend_legacy_scene_services {
     bool (*visuals)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*particles)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*blend)(void *, const qa_scene_world_input *, qa_scene_vec4, qa_error *);
+    bool (*policy)(void *, const qa_product *, frontend_legacy_render_policy *, qa_error *);
 } frontend_legacy_scene_services;
 bool frontend_legacy_scene_submit_product(qa_frontend *, qa_scene_world *, const qa_product *,
     const qa_scene_world_input *, qa_scene_frame *, const frontend_legacy_scene_services *, qa_error *);

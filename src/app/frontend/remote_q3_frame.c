@@ -1,6 +1,7 @@
 #include "remote_q3_frame.h"
 #include "remote_q3_private.h"
 #include "remote_q3_runtime.h"
+#include "remote_q3_compiled_video.h"
 #include "../../presentation/q3_native/entity_save.h"
 #include "qa/network_q3_fields_save.h"
 #include <limits.h>
@@ -26,7 +27,7 @@ struct frontend_remote_q3_frame {
     q3n_remote_frame *entered;
     uint64_t scope;
     q3n_remote_frame_stage stage;
-    bool busy, building, processing, has_prediction, retiring, faulted, init_entered, init_finished, importing;
+    bool busy, building, processing, has_prediction, retiring, faulted, init_entered, init_finished, importing, video_constructor;
 };
 static bool fail(qa_error *e,const char *text)
 { return e && e->code!=QA_OK?false:frontend_fail(e,QA_ERROR_ARGUMENT,text); }
@@ -97,6 +98,7 @@ static bool current(void *context,const q3n_remote_frame *frame)
         frame->snapshots.this_frame_teleport!=owner->snapshot.this_frame_teleport ||
         frame->snapshots.next_frame_teleport!=owner->snapshot.next_frame_teleport ||
         frame->initialization_scope!=(owner->stage==Q3N_REMOTE_INITIALIZATION?owner->scope:0) ||
+        frame->video_initialization!=(owner->stage==Q3N_REMOTE_INITIALIZATION && owner->video_constructor) ||
         frame->console_scope!=(owner->stage==Q3N_REMOTE_CONSOLE?owner->scope:0) ||
         frame->awaiting_snapshot_scope!=(owner->stage==Q3N_REMOTE_AWAITING_SNAPSHOT?owner->scope:0) ||
         frame->loading_information_scope!=(owner->stage==Q3N_REMOTE_LOADING_INFORMATION?owner->scope:0) ||
@@ -104,7 +106,10 @@ static bool current(void *context,const q3n_remote_frame *frame)
         frame->transition_scope!=(owner->stage==Q3N_REMOTE_PREDICTION_CALLBACK?owner->scope:0)) return false;
     if(owner->stage==Q3N_REMOTE_INITIALIZATION)
         return frame->initialization_scope==owner->scope && !frame->transition_scope &&
-            frame->source.publication.initializing && frame->source.reached_command==frame->source.publication.initial_command &&
+            (owner->video_constructor?
+                frontend_remote_q3_compiled_video_parent_is(owner->row,owner->row->compiled_video):
+                frame->source.publication.initializing && frame->source.reached_command==frame->source.publication.initial_command) &&
+            !frame->source.basis.client.initialized &&
             !frame->prediction.owner && !frame->prediction.player;
     if(owner->stage==Q3N_REMOTE_SNAPSHOT_CALLBACK || owner->stage==Q3N_REMOTE_CONSOLE ||
         owner->stage==Q3N_REMOTE_AWAITING_SNAPSHOT || owner->stage==Q3N_REMOTE_LOADING_INFORMATION || !owner->has_prediction)
@@ -225,6 +230,7 @@ static bool enter(frontend_remote_q3_frame *owner,const q3n_remote_source_view *
         .initialization_scope=stage==Q3N_REMOTE_INITIALIZATION?owner->scope:0,
         .console_scope=stage==Q3N_REMOTE_CONSOLE?owner->scope:0,
         .awaiting_snapshot_scope=stage==Q3N_REMOTE_AWAITING_SNAPSHOT?owner->scope:0,
+        .video_initialization=stage==Q3N_REMOTE_INITIALIZATION && owner->video_constructor,
         .loading_information_scope=stage==Q3N_REMOTE_LOADING_INFORMATION?owner->scope:0,
         .loading_information_text=owner->information_text,
         .loading_information_current=stage==Q3N_REMOTE_LOADING_INFORMATION?information_current:NULL,
@@ -291,11 +297,12 @@ static frontend_remote_snapshots_options snapshot_options(frontend_remote_q3_fra
         .product=product,.context=owner,.reached=reached,.respawn=respawn,.reset_player=reset_player,
         .event=event,.transition_player=transition_player,.lagometer=lagometer,.warning=warning};
 }
-bool frontend_remote_q3_frame_create(frontend_remote_q3 *row,const frontend_remote_q3_frame_callbacks *callbacks,
-    frontend_remote_q3_frame **out,qa_error *e)
+static bool create_frame(frontend_remote_q3 *row,const frontend_remote_q3_frame_callbacks *callbacks,
+    bool video,frontend_remote_q3_frame **out,qa_error *e)
 {
     frontend_remote_q3_services_view children; q3n_remote_source_view source;
-    if(!row || row->frontend->capture || row->frontend->resource_inventory || row->frames || row->constructing || row->users || !out || *out || !callbacks || !callbacks->context ||
+    if(!row || (video && !frontend_remote_q3_compiled_video_parent_is(row,row->compiled_video)) ||
+        row->frontend->capture || row->frontend->resource_inventory || row->frames || row->constructing || row->users || !out || *out || !callbacks || !callbacks->context ||
         !callbacks->reached || !callbacks->respawn || !callbacks->reset_player || !callbacks->event ||
         !callbacks->transition_player || !callbacks->prediction_completed || !callbacks->teleport_take || !callbacks->lagometer ||
         !callbacks->warning || !callbacks->trace_number ||
@@ -304,11 +311,19 @@ bool frontend_remote_q3_frame_create(frontend_remote_q3 *row,const frontend_remo
     frontend_remote_q3_frame *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining remote CGAME player and frame continuation");
     owner->row=row; owner->source=children.source; owner->callbacks=*callbacks;
+    owner->video_constructor=video;
     owner->player.product=owner->previous.product=source.basis.product;
     row->frames=owner; *out=owner;
     frontend_remote_snapshots_options options=snapshot_options(owner,source.basis.product);
-    return frontend_remote_snapshots_create(&options,&source,&owner->snapshots,e);
+    return video?frontend_remote_snapshots_create_video(&options,&source,&owner->snapshots,e):
+        frontend_remote_snapshots_create(&options,&source,&owner->snapshots,e);
 }
+bool frontend_remote_q3_frame_create(frontend_remote_q3 *row,const frontend_remote_q3_frame_callbacks *callbacks,
+    frontend_remote_q3_frame **out,qa_error *e)
+{ return create_frame(row,callbacks,false,out,e); }
+bool frontend_remote_q3_frame_create_video(frontend_remote_q3 *row,const frontend_remote_q3_frame_callbacks *callbacks,
+    frontend_remote_q3_frame **out,qa_error *e)
+{ return create_frame(row,callbacks,true,out,e); }
 bool frontend_remote_q3_frame_destroy(frontend_remote_q3_frame **owned,qa_error *e)
 {
     if(!owned || !*owned) return true;
@@ -549,9 +564,10 @@ static bool same_player(const qa_q3_player *a,const qa_q3_player *b)
 }
 static bool fields(qa_source_save_io *io,frontend_remote_q3_frame *owner,qa_q3_product product)
 {
-    uint8_t magic[4]={'Q','R','F','G'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','R','F','G'}; uint32_t version=2;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QRFG",sizeof(magic)) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_u64(io,&owner->scope) &&
+        qa_source_save_u32(io,&version) && version==2 && qa_source_save_u64(io,&owner->scope) &&
+        qa_source_save_bool(io,&owner->video_constructor) &&
         qa_source_save_bool(io,&owner->init_entered) && qa_source_save_bool(io,&owner->init_finished) &&
         (!owner->init_finished || owner->init_entered) && qa_source_save_bool(io,&owner->has_prediction) &&
         (!owner->has_prediction || owner->init_finished) && player_fields(io,&owner->player,product) &&

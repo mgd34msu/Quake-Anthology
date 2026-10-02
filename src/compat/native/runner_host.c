@@ -922,6 +922,16 @@ static bool handle_callback(qa_native_instance *instance, const native_wire_fram
                             qa_error *error) {
     native_wire_reader reader = {.bytes = {frame->payload.data, frame->payload.size}};
     switch (frame->opcode) {
+    case NATIVE_WIRE_DISPATCH_ENTERED: {
+        uint64_t target = 0; qa_error failure = {0};
+        bool okay = native_wire_get_u64(&reader, &target, &failure) &&
+            native_wire_end(&reader, &failure);
+        if (okay && (!instance->active_depth || !instance->invocation_target ||
+            target != instance->invocation_target))
+            okay = native_fail(&failure, QA_ERROR_FORMAT, target, "native runner dispatch receipt differs from its actual invocation");
+        if (okay) native_call_started(instance);
+        return send_reply(instance->runner, frame, NULL, okay ? NULL : &failure, error);
+    }
     case NATIVE_WIRE_IMPORT:
         return handle_import(instance, frame, &reader, error);
     case NATIVE_WIRE_DESCRIBE_SYSCALL:
@@ -1520,6 +1530,20 @@ bool native_runner_export(qa_native_instance *instance, const char *name, qa_nat
 bool native_runner_entry_address(qa_native_instance *instance, const char *name,
                                  qa_native_address *out, qa_error *error) {
     return runner_address(instance, name, out, NATIVE_WIRE_ENTRY_ADDRESS, error);
+}
+
+bool native_runner_range_check(qa_native_instance *instance, qa_native_address address,
+    size_t bytes, uint32_t permissions, qa_error *error) {
+    native_wire_buffer request = {0}; qa_buffer response = {0};
+    bool received = native_wire_put_u64(&request, address, error) &&
+        native_wire_put_u64(&request, bytes, error) && native_wire_put_u32(&request, permissions, error) &&
+        runner_request(instance, NATIVE_WIRE_RANGE_CHECK,
+            (qa_bytes){request.data, request.size}, &response, error);
+    native_wire_reader reader = {.bytes = {response.data, response.size}};
+    bool allowed = false;
+    bool okay = received && native_wire_get_error(&reader, &allowed, error) && native_wire_end(&reader, error);
+    native_wire_buffer_free(&request); qa_buffer_free(&response);
+    return runner_finish_response(instance, received, okay, error) && allowed;
 }
 
 bool native_runner_read(qa_native_instance *instance, qa_native_address source, void *out,

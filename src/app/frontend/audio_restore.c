@@ -10,6 +10,7 @@
 #include "music_sources.h"
 #include "remote_q1_restore.h"
 #include "remote_q2_restore.h"
+#include "unified_media_inventory.h"
 #include "qa/persistence_content.h"
 #include "qa/binary.h"
 
@@ -108,6 +109,17 @@ static bool collect(qa_frontend *f, bank_inventory *inventory, qa_error *error)
         ok=(f->source_restoring?frontend_remote_q2_import_read(row,&owner,error):frontend_remote_q2_metadata_read(row,&owner,error)) &&
             add(inventory,graph,owner.sounds,(bank_owner){.kind=10,.ordinal=i,.identity=owner.identity},error);
     }
+    size_t unified_count=0;
+    if(ok) ok=frontend_unified_media_inventory_count(f,&unified_count,error);
+    for(size_t i=0;ok && i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(f,i,&media,error);
+        for(size_t j=0;ok && media && j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank; uint64_t key;
+            ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
+                add(inventory,graph,bank.sounds,(bank_owner){.kind=11,.ordinal=key},error);
+        }
+    }
     return ok;
 }
 static bool append(qa_audio_asset ***all, size_t *count, qa_audio_asset **part, size_t size, qa_error *error)
@@ -166,9 +178,9 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 6; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 7; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFAG", 4) ||
-        !qa_source_save_u32(io, &version) || version != 6 ||
+        !qa_source_save_u32(io, &version) || version != 7 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(bank_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         bank_owner row = inventory->rows[i];

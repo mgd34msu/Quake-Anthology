@@ -4,6 +4,8 @@
 #include "control_frame.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
+#include "native_q2_wire_engine.h"
+#include "native_q2_callbacks.h"
 #include "native_q1_composition_flags.h"
 #include "native_q1_composition_death.h"
 #include "native_q1_composition_rogue.h"
@@ -252,6 +254,9 @@ bool application_provider_actor_released(application_provider *provider,
     case APPLICATION_PROVIDER_NATIVE:
         if (provider->state.native.engine != NULL)
             return application_q3_guest_actor_released(provider, released, error);
+        if (provider->state.native.q2_engine != NULL &&
+            !application_native_q2_callbacks_release_actor(provider->state.native.q2_engine, released.id, error))
+            return false;
         if (provider->state.native.host != NULL &&
             !qa_native_host_actor_released(provider->state.native.host,
                                            released, error))
@@ -275,6 +280,7 @@ bool application_actor_released(void *opaque, qa_session *session,
 
     application_supplies_actor_released(application->supplies, released);
     application_native_q1_wire_actor_released(application, released.id);
+    application_native_q2_wire_actor_released(application, released.id);
 
     bool ok = true;
     qa_error first = {0};
@@ -607,7 +613,7 @@ static bool force_death(qa_application *application,
         !qa_damage_request_validate(request, error))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "direct death requires an active combat owner");
-    qa_actor_registry *actors = qa_session_actors(application->session);
+    const qa_actor_registry *actors = qa_session_actors(application->session);
     if (qa_actors_get(actors, request->target) == NULL)
         return true;
     application_provider *character = application_provider_for(
@@ -661,7 +667,7 @@ static bool force_death(qa_application *application,
     application->operation = APPLICATION_ADVANCING;
     qa_damage_mutation mutation = {
         .kind = QA_MUTATION_HEALTH,
-        .value.health = {.before = traits.health, .after = final_health},
+        .value.health = {.before = traits.health, .after = (float)final_health},
     };
     qa_damage_outcome outcome = {
         .request = *request,
@@ -674,7 +680,7 @@ static bool force_death(qa_application *application,
     bool ok = q2_source || (qa_combat_set_traits(application->combat, request->target,
                                     &traits, error) &&
               qa_combat_set_health(application->combat, request->target,
-                                    final_health, error));
+                                    (float)final_health, error));
     if (ok && react)
         ok = qa_combat_source_reaction(application->combat, request,
                                          &outcome.result, error);

@@ -2,6 +2,7 @@
 #include "rankings.h"
 #include "startup_flow.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/application_client_prepare.h"
 #include <stdlib.h>
 
 struct qa_application_engine_shutdown {
@@ -12,6 +13,7 @@ struct qa_application_engine_shutdown {
     const qa_launch_snapshot *candidate;
     const qa_cvars_edit *values;
     struct application_startup_flow *startup_flow;
+    qa_application_client_preparation *client;
     uint64_t registry, generation;
 };
 
@@ -64,7 +66,7 @@ bool qa_application_engine_shutdown_begin(qa_application *app,
         *out = app->engine_shutdown;
         return true;
     }
-    if (!callbacks_returned(app) || app->startup_flow ||
+    if (!callbacks_returned(app) || app->startup_flow || app->client_preparation ||
         !qa_cvars_observer_idle(app->cvars) || !application_guests_idle(app))
         return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE detach requires returned application callbacks");
     return detach(app, NULL, NULL, out, error);
@@ -97,6 +99,43 @@ const qa_launch_snapshot *qa_application_engine_shutdown_candidate(const qa_appl
     return retained(loan) && loan->startup_flow && loan->application->startup_flow == loan->startup_flow &&
         qa_application_startup_candidate(loan->application) == loan->candidate
         ? loan->candidate : NULL;
+}
+const qa_application_client_preparation *qa_application_engine_shutdown_client(const qa_application_engine_shutdown *loan)
+{
+    return retained(loan) && loan->client && loan->application->client_preparation==loan->client?
+        loan->client:NULL;
+}
+const qa_cvars_edit *qa_application_engine_shutdown_values(const qa_application_engine_shutdown *loan)
+{
+    return retained(loan) && loan->values &&
+        ((loan->client && loan->application->client_preparation==loan->client) ||
+         (loan->startup_flow && loan->application->startup_flow==loan->startup_flow))?loan->values:NULL;
+}
+bool qa_application_engine_shutdown_begin_client(qa_application *app,
+    qa_application_client_preparation *client,const qa_cvars_edit *values,void *context,
+    bool (*ready)(void *,const qa_application_client_preparation *,const qa_cvars_edit *),
+    qa_application_engine_shutdown **out,qa_error *error)
+{
+    if (!app || !values || !ready || !out || (*out && *out!=app->engine_shutdown))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT ENGINE detach requires its actual failed settings owner");
+    if (app->engine_shutdown) {
+        qa_application_engine_shutdown *loan=app->engine_shutdown;
+        if (!retained(loan) || loan->client!=client || loan->values!=values || app->client_preparation!=client)
+            return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT ENGINE detach selected another retained cancellation");
+        *out=loan; return true;
+    }
+    if (!callbacks_returned(app) || !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CLEANUP) ||
+        !qa_application_client_prepare_associated(app,client) || !qa_cvars_edit_abort_is(values,app->cvars) ||
+        !ready(context,client,values) || !qa_application_client_prepare_associated(app,client))
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT ENGINE detach requires complete retained failed input coverage");
+    if (!detach(app,NULL,values,out,error)) return false;
+    (*out)->client=client; return true;
+}
+void application_engine_shutdown_release_client(qa_application *app,const qa_application_client_preparation *client)
+{
+    qa_application_engine_shutdown *loan=app?app->engine_shutdown:NULL;
+    if (!retained(loan) || loan->client!=client || app->client_preparation!=client) return;
+    loan->client=NULL; loan->values=NULL;
 }
 
 void application_engine_shutdown_release_candidate(qa_application *app,
@@ -154,7 +193,7 @@ bool qa_application_engine_shutdown_finish(qa_application *app,
     if (app->operation != APPLICATION_IDLE || app->q3_round_active || app->frame_preparing ||
         app->configuration || app->provider_states || app->live_providers || app->pending_close ||
         app->startup_flow || app->failed_publications || app->engine_shutdown_provider || loan->candidate ||
-        loan->startup_flow || loan->values ||
+        loan->startup_flow || loan->client || app->client_preparation || loan->values ||
         !qa_console_destroy_ready(loan->console) || !qa_cvars_observer_idle(loan->cvars) ||
         !application_guests_idle(app) || !application_rankings_idle(app) ||
         !application_bots_can_destroy(app) || !qa_inventory_idle(app->inventory) ||

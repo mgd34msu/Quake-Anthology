@@ -22,6 +22,7 @@ static bool require_record(qa_combat *combat, qa_actor_id actor, qa_combat_recor
     if (!entry) { qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "actor has no current combat binding"); return false; }
     *out = entry; return true;
 }
+bool qa_combat_has(qa_combat *combat, qa_actor_id actor) { return record(combat, actor) != NULL; }
 static bool state_valid(const qa_combat_state *state, qa_error *error) {
     return state && isfinite(state->health) && isfinite(state->mass)
         ? qa_armor_validate(&state->armor, error) : qa_combat_argument(error, "invalid combat state");

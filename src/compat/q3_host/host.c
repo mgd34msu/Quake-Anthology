@@ -333,7 +333,7 @@ bool qa_q3_host_borrows_bots(const qa_q3_host *host, const qa_bot_runtime *runti
 bool qa_q3_host_destroy_ready(const qa_q3_host *host)
 {
     if (!host) return true;
-    if (host->calls || (host->options.world && !qa_world_idle(host->options.world))) return false;
+    if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world))) return false;
     if (host->game) for (size_t i = 0; i < 1022; ++i) {
         const q3_entity_slot *slot = &host->game->slots[i];
         if (slot->input_motion) return false;
@@ -452,7 +452,7 @@ void qa_q3_host_scene_world_rebind(qa_q3_host *host, qa_scene_world *destination
 bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
 {
     if (!host) return true;
-    if (host->calls || (host->options.world && !qa_world_idle(host->options.world)))
+    if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world)))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "cannot destroy a Q3 module host during active service callbacks");
     if (host->game) for (size_t i = 0; i < 1022; ++i) {
         const q3_entity_slot *slot = &host->game->slots[i];
@@ -465,6 +465,7 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     if (!q3_game_close_portals(host, error)) return false;
     if (host->options.console && !qa_console_remove_owner(host->options.console, host->options.service_owner, error)) return false;
     host->retired = true;
+    q3_collision_scene_close(host);
     if (host->options.seat && !host->options.input_owner)
         qa_input_seat_retire_catcher(host->options.seat, host->options.service_owner);
     if (host->options.cvars) qa_cvars_remove_owner(host->options.cvars, host->options.service_owner);

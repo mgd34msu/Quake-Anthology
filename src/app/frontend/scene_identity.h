@@ -118,6 +118,8 @@ bool frontend_scene_image_identity_encode(void *, uint64_t, uint64_t *, qa_error
 bool frontend_scene_image_identity_decode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_world_identity_encode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_world_identity_decode(void *, uint64_t, uint64_t *, qa_error *);
+bool frontend_scene_world_encode(void *,const qa_scene_world *,uint64_t *,qa_error *);
+bool frontend_scene_world_decode(void *,uint64_t,const qa_scene_world **,qa_error *);
 bool frontend_scene_mesh_identity_encode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_mesh_identity_decode(void *, uint64_t, uint64_t *, qa_error *);
 bool frontend_scene_light_identity_encode(void *, uint64_t, uint64_t *, qa_error *);

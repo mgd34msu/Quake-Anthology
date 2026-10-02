@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/binary.h"
+#include "qa/vfs.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -13,6 +14,8 @@ typedef struct geometry_scratch {
 } geometry_scratch;
 
 struct qa_collision_geometry {
+    size_t references;
+    qa_resource *resource;
     qa_bsp_view bsp;
     qa_collision_family family;
     qa_collision_kernel kernel;
@@ -115,6 +118,7 @@ static void flood_areas(qa_collision_geometry *geometry)
 void qa_collision_destroy(qa_collision_geometry *geometry)
 {
     if (geometry == NULL) return;
+    if (geometry->references > 1) { --geometry->references; return; }
     if (geometry->kernel.ops != NULL) geometry->kernel.ops->destroy(geometry->kernel.state);
     if (geometry->pvs != NULL)
         for (size_t i = 0; i < geometry->visibility_slots; ++i) free(geometry->pvs[i]);
@@ -137,8 +141,29 @@ void qa_collision_destroy(qa_collision_geometry *geometry)
     free(geometry->areas);
     free(geometry->area_portals);
     free(geometry->portals);
+    qa_resource_release(geometry->resource);
     free(geometry);
 }
+
+bool qa_collision_retain(qa_collision_geometry *geometry, qa_error *error)
+{
+    if (!geometry || !geometry->references || geometry->references == SIZE_MAX)
+        return geometry_fail(error, QA_ERROR_MEMORY, "Retaining actual collision geometry");
+    ++geometry->references; return true;
+}
+bool qa_collision_bind_resource(qa_collision_geometry *geometry, qa_resource *resource, qa_error *error)
+{
+    if (!geometry || !resource)
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Collision source requires its actual geometry and resource");
+    qa_bytes bytes = qa_resource_bytes(resource);
+    if (bytes.data != geometry->bsp.source.data || bytes.size != geometry->bsp.source.size ||
+        (geometry->resource && geometry->resource != resource))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Collision source differs from its genuine immutable BSP resource");
+    if (!geometry->resource) { qa_resource_retain(resource); geometry->resource = resource; }
+    return true;
+}
+const qa_resource *qa_collision_resource(const qa_collision_geometry *geometry)
+{ return geometry ? geometry->resource : NULL; }
 
 static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
 {
@@ -272,6 +297,7 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     if (!qa_bsp_validate(bsp, error)) return false;
     qa_collision_geometry *geometry = calloc(1, sizeof(*geometry));
     if (geometry == NULL) return geometry_fail(error, QA_ERROR_MEMORY, "Cannot allocate collision geometry");
+    geometry->references = 1;
     geometry->bsp = *bsp;
     geometry->family = bsp->family == QA_BSP_Q1 ? QA_COLLISION_Q1 : bsp->family == QA_BSP_Q2 ? QA_COLLISION_Q2 : QA_COLLISION_Q3;
     geometry->map_identity = UINT64_C(14695981039346656037);

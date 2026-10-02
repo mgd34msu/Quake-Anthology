@@ -2,6 +2,7 @@
 #include "capture.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_engine_shutdown.h"
+#include "qa/application_client_prepare.h"
 
 struct frontend_input_settings {
     qa_frontend *frontend;
@@ -425,9 +426,15 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
         return fail(error,"Input shutdown requires its actual detached ENGINE and returned physical parents");
     qa_console *console=NULL; qa_cvars *cvars=NULL;
     if (!qa_application_engine_shutdown_read(loan,&console,&cvars,error)) return false;
-    (void)cvars;
     if (owner->terminal) { *complete=true; return true; }
-    if (qa_application_engine_shutdown_candidate(loan)) {
+    const qa_cvars_edit *values=qa_application_engine_shutdown_values(loan);
+    const qa_application_client_preparation *client=qa_application_engine_shutdown_client(loan);
+    if (client && (!values || !qa_application_client_prepare_associated(owner->application,client) ||
+        !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_CLEANUP)))
+        return fail(error,"CLIENT input retirement lost its exact entered cancellation loan");
+    if (values) {
+        if (!qa_cvars_edit_abort_is(values,cvars))
+            return fail(error,"Input retirement lost its actual returned canonical cancellation ticket");
         for (unsigned slot=0;slot<owner->seat_count;++slot)
             if (!(owner->all_scopes&(1u<<slot)) &&
                 (!owner->release[slot] || qa_input_release_console(owner->release[slot])!=console ||

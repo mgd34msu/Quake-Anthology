@@ -1,4 +1,5 @@
 #include "session_internal.h"
+#include "channel_internal.h"
 #include "qa/network_unified_save.h"
 #include "../runtime/internal.h"
 
@@ -11,6 +12,23 @@ static bool actual_ops(const qa_network_peer_ops *ops)
         ops->command == actual.command && ops->restart == actual.restart &&
         ops->rebind == actual.rebind && ops->close == actual.close &&
         ops->receive_pending == actual.receive_pending;
+}
+uint32_t qa_unified_session_required(const qa_unified_session *s) { return s ? s->required : 0; }
+bool qa_unified_session_control_receipt(const qa_unified_session *s, uint32_t sequence,
+    const qa_unified_document *document, qa_error *e)
+{
+    if (!qa_unified_session_idle(s) || !sequence || sequence > s->required || !document ||
+        qa_unified_document_type(document) != QA_UNIFIED_CONTROL_DOCUMENT)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source control receipt lacks its real queued sequence");
+    if (sequence <= s->channel->reliable_acknowledged) return true;
+    const outgoing *queued = s->channel->reliable;
+    while (queued && queued->sequence != sequence) queued = queued->next;
+    qa_buffer wire = {0};
+    if (!qa_unified_document_encode(document, &wire, e)) return false;
+    bool okay = queued && queued->payload.size == wire.size &&
+        (!wire.size || !memcmp(queued->payload.data, wire.data, wire.size));
+    qa_buffer_free(&wire);
+    return okay || qa_unified_session_fail(e, QA_ERROR_FORMAT, "Source control receipt differs from its actual retained reliable bytes");
 }
 
 bool qa_unified_session_attachment(const qa_network_runtime *runtime, const qa_network_peer_ops *ops, const void *state, const qa_net_connect *request)

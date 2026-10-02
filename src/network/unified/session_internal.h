@@ -5,6 +5,7 @@
 typedef struct qa_unified_held {
     struct qa_unified_held *next;
     qa_unified_document *document;
+    qa_unified_document_kind kind;
     qa_buffer wire;
     size_t bytes;
     uint32_t sequence, required;

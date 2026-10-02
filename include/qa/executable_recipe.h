@@ -96,6 +96,9 @@ qa_vfs *qa_executable_recipe_mounts(const qa_executable_recipe *);
  * when subsequent model/style content was not needed by the initial offer. */
 bool qa_executable_recipe_content(qa_executable_recipe *, const char *content_identity,
     qa_vfs **, const qa_product **, qa_error *);
+/* Observes an already admitted content view. It never opens a product. */
+bool qa_executable_recipe_content_read(const qa_executable_recipe *, const char *content_identity,
+    qa_vfs **, const qa_product **);
 qa_resource *qa_executable_recipe_map(const qa_executable_recipe *);
 qa_collision_geometry *qa_executable_recipe_geometry(const qa_executable_recipe *);
 const qa_recipe_choices *qa_executable_recipe_choices(const qa_executable_recipe *);

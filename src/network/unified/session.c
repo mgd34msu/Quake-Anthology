@@ -52,11 +52,13 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     if (!held) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining production document delivery");
     qa_unified_document_kind kind = delivery->kind == QA_UNIFIED_RELIABLE ? QA_UNIFIED_CONTROL_DOCUMENT :
         s->server ? QA_UNIFIED_INPUT_DOCUMENT : QA_UNIFIED_FRAME_DOCUMENT;
+    held->kind = kind;
     held->wire.data = malloc(delivery->payload.size ? delivery->payload.size : 1);
     if (!held->wire.data) { free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
     held->wire.size = delivery->payload.size;
     if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
-    if (!qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, e)) {
+    if (!s->server && !qa_unified_document_decode(kind,
+        (qa_bytes){held->wire.data, held->wire.size}, &held->document, e)) {
         qa_buffer_free(&held->wire); free(held); return false;
     }
     held->bytes = delivery->payload.size; held->sequence = delivery->sequence; held->required = delivery->required_reliable;

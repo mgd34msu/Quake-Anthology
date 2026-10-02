@@ -5,6 +5,7 @@
 #include "qa/audio_music_engine.h"
 #include "qa/audio_save.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/application_client_prepare.h"
 
 typedef struct frontend_music_policy frontend_music_policy;
 typedef struct frontend_shared_music frontend_shared_music;
@@ -55,11 +56,14 @@ bool frontend_music_policy_random(const frontend_music_policy *, uint64_t *);
 bool frontend_music_policy_command(frontend_music_policy *, const qa_command_invocation *, qa_error *);
 bool frontend_music_policy_manual_start(const frontend_music_policy *, const qa_command_invocation *, bool *);
 bool frontend_music_policy_explicit(frontend_music_policy *, const char *intro, const char *loop, bool looping, qa_error *);
+bool frontend_music_policy_source_play(frontend_music_policy *, const char *, qa_error *);
 /* Prepare before shared audio gains; all file admission, bag/RNG selection and
  * PCM allocation occurs offside. Ready binds the exact retained gains parent.
  * No parser, RNG, source/native query or decoder runs in ready_is/publish. */
 bool frontend_shared_music_prepare(qa_frontend *, const qa_launch_snapshot *, const qa_cvars_edit *,
     frontend_music_policy *, frontend_shared_music **, qa_error *);
+bool frontend_shared_music_prepare_client(qa_frontend *, const qa_application_client_preparation *,
+    const qa_cvars_edit *, frontend_music_policy *, frontend_shared_music **, qa_error *);
 bool frontend_shared_music_ready(frontend_shared_music *, const frontend_shared_audio *, qa_error *);
 bool frontend_shared_music_ready_is(const frontend_shared_music *);
 void frontend_shared_music_publish(frontend_shared_music **);

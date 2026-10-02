@@ -72,7 +72,8 @@ bool q3mod_actors_invoke(application_q3_mod_actors *,uint32_t,const int32_t *,si
 bool q3mod_actors_invoke_started(application_q3_mod_actors *,uint32_t,const int32_t *,size_t,int32_t *,bool *,qa_error *);
 bool q3mod_actors_entry(mod_actor_row *,size_t,uint32_t *,qa_error *);
 bool q3mod_actors_source_damage(void *,qa_combat *,const qa_damage_request *,qa_damage_observer *,qa_damage_result *,qa_error *);
-bool q3mod_actors_damage_hook(application_q3_mod_actors *,const qa_qvm_call *,int32_t *,qa_error *);
+bool q3mod_actors_damage_hook(application_q3_mod_actors *,const qa_qvm_call *,
+    application_q3_mod_actor_proceed,void *,int32_t *,qa_error *);
 bool q3mod_actors_flush(application_q3_mod_actors *,mod_actor_damage_frame *,qa_error *);
 bool q3mod_actors_reaction(application_q3_mod_actors *,qa_actor_id,size_t,float,qa_error *);
 #endif

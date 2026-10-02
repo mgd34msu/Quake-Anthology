@@ -7,8 +7,10 @@ bool q3nh_current(q3n_hud *o,const q3n_frame *f,qa_error *e)
 {
     return o && f && o->options.application==f->application &&
         o->options.assets==f->assets && o->options.seat==f->seat && o->product==q3n_frame_product(f) &&
-        q3n_frame_predicted_player(f) && q3n_frame_snapshot_player(f) && (f->remote?o->options.remote_client==f->remote->client:
-            !o->options.remote_client && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
+        q3n_frame_predicted_player(f) && q3n_frame_snapshot_player(f) &&
+        (f->compiled?o->options.compiled_source==f->compiled->source.owner && f->compiled->stage==Q3N_COMPILED_COMPLETED_FRAME:
+         f->remote?o->options.remote_client==f->remote->client && !o->options.compiled_source:
+            !o->options.remote_client && !o->options.compiled_source && o->source_game==f->source.source_game && f->time==f->source.source_time_ms) &&
         q3ne_current(f,e)?true:
         q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 HUD requires the actual completed GAME and physical viewing seat");
 }

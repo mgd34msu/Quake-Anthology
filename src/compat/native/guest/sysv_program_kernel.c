@@ -82,29 +82,71 @@ static bool store(qa_native_sysv_program *owner, uint64_t address, const void *d
     if (!user_range(owner, address, bytes, QA_NATIVE_GUEST_WRITE)) { *result = -K_EFAULT; return true; }
     return qa_native_guest_write(owner->guest, address, (qa_bytes){data, bytes}, error);
 }
+static size_t user_prefix(qa_native_sysv_program *owner, uint64_t address, size_t bytes,
+    uint32_t rights)
+{
+    size_t completed = 0;
+    while (completed < bytes) {
+        qa_native_guest_mapping *mapping = guest_mapping(owner->guest, address + completed);
+        if (!mapping || (mapping->permissions & rights) != rights) break;
+        uint64_t displacement = address + completed - mapping->base;
+        size_t amount = bytes - completed;
+        if (amount > mapping->bytes - displacement) amount = (size_t)(mapping->bytes - displacement);
+        guest_backing *backing = guest_backing_at(owner->guest, mapping->backing);
+        uint64_t position = mapping->backing_offset + displacement;
+        if (backing->file) {
+            if (position >= backing->source.accessible_bytes) break;
+            if (amount > backing->source.accessible_bytes - position)
+                amount = (size_t)(backing->source.accessible_bytes - position);
+        }
+        completed += amount;
+    }
+    return completed;
+}
 static bool io(qa_native_sysv_program *owner, const uint64_t a[6], bool write,
     bool positional, int64_t *result, qa_error *error)
 {
+    if (positional && a[3] > INT64_MAX) { *result = -K_EINVAL; return true; }
     program_file *entry = file(owner, a[0]);
     if (!entry || !(entry->capability.mode & (write ? 2u : 1u))) { *result = -K_EBADF; return true; }
-    size_t count = a[2] > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (size_t)a[2];
-    if (!user_range(owner, a[1], count, write ? QA_NATIVE_GUEST_READ : QA_NATIVE_GUEST_WRITE)) { *result = -K_EFAULT; return true; }
-    if (positional && a[3] > INT64_MAX) { *result = -K_EINVAL; return true; }
+    if (positional && !entry->seekable) { *result = -K_ESPIPE; return true; }
+    if (a[1] > UINT64_C(0x0000800000000000) || a[2] > UINT64_C(0x0000800000000000) - a[1]) {
+        *result = -K_EFAULT; return true;
+    }
+    uint64_t offset = positional ? a[3] : entry->offset;
+    if (offset > INT64_MAX || a[2] > (uint64_t)INT64_MAX - offset) { *result = -K_EINVAL; return true; }
+    size_t requested = a[2] > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (size_t)a[2];
+    size_t count = user_prefix(owner, a[1], requested, write ? QA_NATIVE_GUEST_READ : QA_NATIVE_GUEST_WRITE);
+    if (requested && !count) {
+        /* Regular file EOF needs no destination copy. Observe the genuinely
+         * held object; never consume a pipe byte to probe an invalid buffer. */
+        if (!write) {
+            qa_fs_posix_status status; qa_error actual = {0};
+            if (!owner->options.services.file_status(owner->options.services.context,
+                entry->capability.capability, &status, &actual)) { *result = failure(owner, &actual); return true; }
+            if ((status.mode & UINT32_C(0170000)) == UINT32_C(0100000) &&
+                status.size >= 0 && offset >= (uint64_t)status.size) { *result = 0; return true; }
+        }
+        *result = -K_EFAULT; return true;
+    }
     uint8_t *data = count ? malloc(count) : NULL;
     if (count && !data) { *result = -K_ENOMEM; return true; }
-    uint64_t offset = positional ? a[3] : entry->offset;
-    if (offset > INT64_MAX || count > (uint64_t)INT64_MAX - offset) { free(data); *result = -K_EINVAL; return true; }
     size_t done = 0; qa_error actual = {0}; bool okay;
+    if (!owner->options.services.descriptor_flags(owner->options.services.context,
+        entry->capability.capability, entry->flags, &actual)) {
+        *result = failure(owner, &actual); free(data); return true;
+    }
     if (write) {
         okay = qa_native_guest_read(owner->guest, a[1], data, count, error);
         if (!okay) { free(data); return false; }
         if (entry->flags & 1024u) {
             if (!entry->capability.size(entry->capability.context, &offset, &actual)) { *result = failure(owner, &actual); free(data); return true; }
+            if (offset > INT64_MAX || count > (uint64_t)INT64_MAX - offset) { free(data); *result = -K_EINVAL; return true; }
         }
         okay = entry->capability.write(entry->capability.context, offset, (qa_bytes){data, count}, &done, &actual);
     } else okay = entry->capability.read(entry->capability.context, offset, data, count, &done, &actual);
     if (done > count) { free(data); return guest_fail(error, QA_ERROR_FORMAT, a[0], "Linux file capability reported impossible completion"); }
-    if (!positional) entry->offset = offset + done;
+    if (!positional && entry->seekable) entry->offset = offset + done;
     if (!write && done && !qa_native_guest_write(owner->guest, a[1], (qa_bytes){data, done}, error)) { free(data); return false; }
     *result = done || okay ? (int64_t)done : failure(owner, &actual); free(data); return true;
 }
@@ -113,7 +155,7 @@ static bool open_file(qa_native_sysv_program *owner, uint64_t path, uint64_t fla
 {
     char name[4096];
     if (!string_read(owner, path, name)) { *result = -K_EFAULT; return true; }
-    if ((flags & 3u) == 3u || flags & ~(UINT64_C(3) | 64u | 128u | 512u | 1024u | 32768u | 524288u)) {
+    if ((flags & 3u) == 3u || flags & ~(UINT64_C(3) | 64u | 128u | 512u | 1024u | 2048u | 32768u | 131072u | 524288u)) {
         *result = -K_EINVAL; return true;
     }
     /* The contained acquisition API does not yet carry a Unix create mode or
@@ -138,7 +180,21 @@ static bool open_file(qa_native_sysv_program *owner, uint64_t path, uint64_t fla
     if (!entry->capability.capability || !entry->capability.close || !entry->capability.size ||
         (entry->capability.mode & mode) != mode || ((mode & 1u) && !entry->capability.read) ||
         ((mode & 2u) && !entry->capability.write))
-        return guest_fail(error, QA_ERROR_FORMAT, number, "Linux open acquired an incomplete actual capability");
+        return guest_fail(error, QA_ERROR_FORMAT, (uint64_t)number, "Linux open acquired an incomplete actual capability");
+    qa_native_sysv_program_descriptor_status status;
+    if (!owner->options.services.descriptor_status(owner->options.services.context,
+        entry->capability.capability, &status, &actual)) {
+        *result = failure(owner, &actual); entry->references = 0;
+        qa_error cleanup = {0}; (void)close_description(entry, &cleanup); return true;
+    }
+    if (status.offset < 0 || (!status.seekable && status.offset))
+        return guest_fail(error, QA_ERROR_FORMAT, (uint64_t)number, "Linux opened descriptor has invalid actual position");
+    entry->seekable = status.seekable; entry->offset = (uint64_t)status.offset;
+    /* Native containment uses safety flags on its private descriptor. The
+     * source description retains the actual requested Linux status flags;
+     * x64's real forced O_LARGEFILE remains observed from the acquired object. */
+    entry->flags = ((uint32_t)flags & ~(UINT32_C(64) | 128u | 512u | 524288u)) |
+        (status.flags & 32768u);
     owner->descriptors[owner->descriptor_count++] = (program_descriptor){number, owner->file_count - 1, (flags & 524288u) != 0};
     *result = number; return true;
 }
@@ -162,6 +218,9 @@ static bool remove_pages(qa_native_sysv_program *owner, uint64_t base, size_t by
         uint64_t first = base > found->base ? base : found->base;
         uint64_t last = end < found->base + found->bytes ? end : found->base + found->bytes;
         if (!qa_native_guest_unmap_range(owner->guest, first, (size_t)(last - first), error)) return false;
+        if (!guest_elf_program_stack_changed(owner->startup, first, (size_t)(last - first), error)) {
+            owner->guest->failed = true; return false;
+        }
         for (size_t i = 0; i < 2; ++i)
             if (owner->memory[i] && !guest_elf_memory_program_changed(owner->memory[i], first,
                 (size_t)(last - first), error)) { owner->guest->failed = true; return false; }
@@ -299,11 +358,30 @@ static bool vector_io(qa_native_sysv_program *owner, const uint64_t a[6], bool w
     uint8_t *vectors = bytes ? malloc(bytes) : NULL;
     if (bytes && !vectors) { *result = -K_ENOMEM; return true; }
     if (bytes && !qa_native_guest_read(owner->guest, a[1], vectors, bytes, error)) { free(vectors); return false; }
+    /* Linux imports the whole iovec before touching the file. access_ok tests
+     * the user address domain here; page faults occur later during transfer.
+     * A single-vector import clamps before access_ok, while the array path
+     * qualifies original lengths before replacing them with capped lengths. */
+    for (size_t i = 0; i < count; ++i)
+        if (qa_load_u64le(vectors + i * 16 + 8) > INT64_MAX) {
+            free(vectors); *result = -K_EINVAL; return true;
+        }
+    uint64_t imported = 0;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t base = qa_load_u64le(vectors + i * 16);
+        uint64_t amount = qa_load_u64le(vectors + i * 16 + 8);
+        uint64_t available = UINT32_C(0x7ffff000) - imported;
+        if (count == 1 && amount > available) amount = available;
+        if (base > UINT64_C(0x0000800000000000) ||
+            amount > UINT64_C(0x0000800000000000) - base) {
+            free(vectors); *result = -K_EFAULT; return true;
+        }
+        if (amount > available) amount = available;
+        qa_store_u64le(vectors + i * 16 + 8, amount); imported += amount;
+    }
     uint64_t total = 0; bool okay = true; int64_t current = 0;
     for (size_t i = 0; okay && i < count && total < UINT32_C(0x7ffff000); ++i) {
         uint64_t amount = qa_load_u64le(vectors + i * 16 + 8);
-        if (amount > (uint64_t)INT64_MAX - total) { current = -K_EINVAL; break; }
-        if (amount > UINT32_C(0x7ffff000) - total) amount = UINT32_C(0x7ffff000) - total;
         uint64_t arguments[6] = {a[0], qa_load_u64le(vectors + i * 16), amount, 0, 0, 0};
         okay = io(owner, arguments, write, false, &current, error);
         if (!okay || current < 0) break;
@@ -311,6 +389,50 @@ static bool vector_io(qa_native_sysv_program *owner, const uint64_t a[6], bool w
         if ((uint64_t)current < amount) break;
     }
     free(vectors); *result = total ? (int64_t)total : current; return okay;
+}
+static bool robust_death(qa_native_sysv_program *owner, uint64_t entry, uint64_t offset,
+    bool pi, bool pending, bool *walk, qa_error *error)
+{
+    uint64_t address = entry + offset;
+    if (address % 4 || !user_range(owner, address, 4, QA_NATIVE_GUEST_READ)) {
+        *walk = false; return true;
+    }
+    uint8_t bytes[4];
+    if (!qa_native_guest_read(owner->guest, address, bytes, 4, error)) return false;
+    uint32_t value = qa_load_u32le(bytes), tid = value & UINT32_C(0x3fffffff);
+    /* This kernel owns one source task and currently has no queued futex
+     * waiters. The pending unlocked non-PI case has no user-memory effect. */
+    if ((pending && !pi && !tid) || tid != owner->status.thread_id) return true;
+    if (!user_range(owner, address, 4, QA_NATIVE_GUEST_WRITE)) { *walk = false; return true; }
+    qa_store_u32le(bytes, (value & UINT32_C(0x80000000)) | UINT32_C(0x40000000));
+    /* No source task can race the stopped kernel continuation; publish the
+     * actual OWNER_DIED word through its real committed-memory producer. */
+    return qa_native_guest_write(owner->guest, address, (qa_bytes){bytes, 4}, error);
+}
+static bool robust_exit(qa_native_sysv_program *owner, qa_error *error)
+{
+    uint64_t head = owner->status.robust_list;
+    if (!head || !user_range(owner, head, 24, QA_NATIVE_GUEST_READ)) return true;
+    uint8_t bytes[24];
+    if (!qa_native_guest_read(owner->guest, head, bytes, sizeof(bytes), error)) return false;
+    uint64_t entry = qa_load_u64le(bytes), offset = qa_load_u64le(bytes + 8);
+    uint64_t pending = qa_load_u64le(bytes + 16), pending_address = pending & ~UINT64_C(1);
+    bool walk = true;
+    for (size_t limit = 2048; (entry & ~UINT64_C(1)) != head && limit; --limit) {
+        uint64_t address = entry & ~UINT64_C(1), next = 0;
+        bool readable = user_range(owner, address, 8, QA_NATIVE_GUEST_READ);
+        if (readable) {
+            if (!qa_native_guest_read(owner->guest, address, bytes, 8, error)) return false;
+            next = qa_load_u64le(bytes);
+        }
+        if (address != pending_address &&
+            !robust_death(owner, address, offset, (entry & 1u) != 0, false, &walk, error)) return false;
+        if (!walk || !readable) return true;
+        entry = next;
+    }
+    if (pending_address)
+        return robust_death(owner, pending_address, offset, (pending & 1u) != 0, true, &walk, error);
+    return true;
 }
 bool program_syscall(void *context, qa_native_guest *guest, const qa_native_guest_syscall *request,
     qa_native_guest_syscall_result *out, qa_error *error)
@@ -348,6 +470,7 @@ bool program_syscall(void *context, qa_native_guest *guest, const qa_native_gues
     case 5: okay = stat_file(owner, a[0], a[1], &result, error); break;
     case 8: {
         program_file *entry = file(owner, a[0]); if (!entry) { result = -K_EBADF; break; }
+        if (!entry->seekable) { result = -K_ESPIPE; break; }
         uint64_t base = 0; qa_error actual = {0};
         if (a[2] == 1) base = entry->offset;
         else if (a[2] == 2) { if (!entry->capability.size(entry->capability.context, &base, &actual)) { result = failure(owner, &actual); break; } }
@@ -365,6 +488,21 @@ bool program_syscall(void *context, qa_native_guest *guest, const qa_native_gues
         if (request->number == 72 && a[1] == 1) { result = source->close_on_exec; break; }
         if (request->number == 72 && a[1] == 2) { source->close_on_exec = (a[2] & 1u) != 0; result = 0; break; }
         if (request->number == 72 && a[1] == 3) { result = owner->files[source->file].flags; break; }
+        if (request->number == 72 && a[1] == 4) {
+            program_file *entry = owner->files + source->file;
+            /* These extra modes require their actual async/direct/credential
+             * service owners. Do not report a virtual bit-only success. */
+            if (a[2] & (UINT64_C(8192) | UINT64_C(16384) | UINT64_C(262144))) {
+                result = -K_EOPNOTSUPP; break;
+            }
+            uint32_t flags = (entry->flags & ~(UINT32_C(1024) | 2048u)) |
+                ((uint32_t)a[2] & (1024u | 2048u));
+            qa_error actual = {0};
+            if (!owner->options.services.descriptor_flags(owner->options.services.context,
+                entry->capability.capability, flags, &actual)) result = failure(owner, &actual);
+            else { entry->flags = flags; result = 0; }
+            break;
+        }
         if (request->number == 72 && a[1] != 0 && a[1] != 1030) { result = -K_EINVAL; break; }
         size_t description = source->file; int32_t number = 0;
         bool exact = request->number == 33 || request->number == 292;
@@ -399,8 +537,10 @@ bool program_syscall(void *context, qa_native_guest *guest, const qa_native_gues
         if (!a[0] || a[0] < owner->break_base || a[0] > UINT64_MAX - 4095) break;
         uint64_t old = (owner->current_break + 4095) & ~UINT64_C(4095), next = (a[0] + 4095) & ~UINT64_C(4095);
         qa_error actual = {0}; bool changed = true; qa_native_guest_mapping mapping;
+        uint32_t rights = QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE;
+        if (owner->options.read_implies_execute) rights |= QA_NATIVE_GUEST_EXECUTE;
         if (next > old) changed = qa_native_guest_map(guest, old, (size_t)(next - old),
-            QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){0}, &mapping, &actual);
+            rights, (qa_bytes){0}, &mapping, &actual);
         else if (next < old) changed = remove_pages(owner, next, (size_t)(old - next), &actual);
         if (!changed && guest->failed) { if (error) *error = actual; return false; }
         if (changed) owner->current_break = a[0];
@@ -409,7 +549,8 @@ bool program_syscall(void *context, qa_native_guest *guest, const qa_native_gues
     case 39: result = (int64_t)owner->status.process_id; break;
     case 186: result = (int64_t)owner->status.thread_id; break;
     case 60: case 231: {
-        if (owner->status.clear_child_tid && user_range(owner, owner->status.clear_child_tid, 4, QA_NATIVE_GUEST_WRITE)) {
+        okay = robust_exit(owner, error);
+        if (okay && owner->status.clear_child_tid && user_range(owner, owner->status.clear_child_tid, 4, QA_NATIVE_GUEST_WRITE)) {
             uint32_t zero = 0; okay = store(owner, owner->status.clear_child_tid, &zero, 4, &result, error);
         }
         if (okay) { owner->status.exit_code = (uint32_t)a[0] & 255u; owner->status.exited = true; out->stop = true; }
@@ -448,7 +589,13 @@ bool program_syscall(void *context, qa_native_guest *guest, const qa_native_gues
         if (request->number == 96 && a[1]) { result = -K_EOPNOTSUPP; break; }
         int64_t seconds; int32_t nanos; qa_error actual = {0};
         int32_t clock = request->number == 96 ? 0 : (int32_t)a[0];
-        if (!owner->options.services.clock(owner->options.services.context, clock, &seconds, &nanos, &actual)) { result = failure(owner, &actual); break; }
+        bool observed = clock == 2 || clock == 3 ?
+            program_clock_read(owner, clock, &seconds, &nanos, &actual) :
+            owner->options.services.clock(owner->options.services.context, clock, &seconds, &nanos, &actual);
+        if (!observed) {
+            result = clock == 2 || clock == 3 ? framework_failure(&actual) : failure(owner, &actual);
+            break;
+        }
         if (nanos < 0 || nanos >= 1000000000) return guest_fail(error, QA_ERROR_FORMAT, 0, "Linux clock returned invalid nanoseconds");
         uint8_t data[16]; qa_store_u64le(data, (uint64_t)seconds); qa_store_u64le(data + 8, request->number == 96 ? (uint64_t)(nanos / 1000) : (uint64_t)nanos);
         result = 0; uint64_t address = request->number == 96 ? a[0] : a[1];

@@ -6,6 +6,13 @@ static bool text(qa_source_save_io *io, char *value, size_t capacity)
 { return qa_source_save_bytes(io, value, capacity) && memchr(value, 0, capacity) != NULL; }
 static bool reader_bound(const q3n_server_command_options *options, qa_error *e)
 {
+    if(options->compiled_source) {
+        q3n_compiled_source_view source;
+        return !options->client && !options->reader && !options->remote_client && !options->remote_source &&
+            q3n_compiled_source_read(options->compiled_source,&source,e) && source.basis.application==options->application &&
+            source.basis.content==options->content && source.basis.assets==options->assets && source.basis.product==options->product &&
+            source.basis.publication==options->publication_generation && source.basis.map_revision==options->map_revision;
+    }
     if (options->remote_client) {
         qa_native_q3_remote_client_basis basis; q3n_remote_source_view source;
         return !options->client && !options->reader && options->remote_source &&
@@ -36,6 +43,11 @@ static bool reader_bound(const q3n_server_command_options *options, qa_error *e)
 }
 static bool reached(const q3n_server_commands *o, qa_error *e)
 {
+    if(o->options.compiled_source) {
+        q3n_compiled_source_view source;
+        return !o->initialized || o->closed || (q3n_compiled_source_read(o->options.compiled_source,&source,e) &&
+            source.basis.reached_command==o->state.server_command_sequence);
+    }
     if (o->options.remote_source) {
         q3n_remote_source_view source;
         return !o->initialized || o->closed ||
@@ -49,6 +61,7 @@ static bool reached(const q3n_server_commands *o, qa_error *e)
 }
 static bool identity(qa_source_save_io *io, const q3n_server_command_options *options)
 {
+    if(options->compiled_source)return q3n_compiled_source_fields(io,options->compiled_source);
     if (options->remote_source) {
         q3n_remote_source_view source;
         if (!q3n_remote_source_read(options->remote_source, &source, io->error)) return false;
@@ -104,7 +117,7 @@ static bool fields(qa_source_save_io *io, q3n_server_commands *o)
 {
     uint8_t magic[4] = {'Q', '3', 'S', 'C'}; uint32_t version = 1, product = o->options.product;
     q3n_command_state *s = &o->state;
-    const char *expected = o->options.remote_source ? "Q3SR" : "Q3SC";
+    const char *expected = o->options.compiled_source?"Q3SU":o->options.remote_source ? "Q3SR" : "Q3SC";
     memcpy(magic, expected, 4);
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
         !qa_source_save_u32(io, &version) || version != 1 ||

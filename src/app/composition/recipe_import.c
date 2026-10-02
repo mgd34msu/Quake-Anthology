@@ -183,11 +183,21 @@ static uint64_t selected_roles(const qa_recipe_choices *c, const char *name)
     for (size_t i = 0; i < c->behavior_count; ++i) if (c->behaviors[i].enabled && !strcmp(c->behaviors[i].instance, name)) roles |= QA_ROLE_BIT(QA_ROLE_TRAJECTORY);
     return roles;
 }
-static bool interfaces_check(const qa_recipe_provider *instance, qa_error *error)
+static bool interfaces_check(const qa_recipe_provider *instance, bool admission, qa_error *error)
 {
     static const char *paths[] = {"quakec-compatibility.json", "native-compatibility.json", "qvm-compatibility.json",
         "qvm-items.json", "weapon-behaviors.json", "native-weapon-behaviors.json", "qvm-weapon-behaviors.json"};
     if (instance->selection.runtime == QA_PROGRAM_BUILTIN) return !instance->interface_count || recipe_fail(error, "Builtin source has no external program interface inventory");
+    if (!admission) {
+        for (size_t i = 0; i < instance->interface_count; ++i) {
+            bool known = false;
+            for (size_t j = 0; j < sizeof(paths) / sizeof(*paths); ++j)
+                known |= !strcmp(paths[j], instance->interfaces[i].path);
+            if (!known || !instance->interfaces[i].resource)
+                return recipe_fail(error, "Saved executable interface is not a retained authored document");
+        }
+        return true;
+    }
     size_t matched = 0;
     for (size_t i = 0; i < sizeof(paths) / sizeof(*paths); ++i) {
         const qa_resource *offered = NULL;
@@ -203,7 +213,8 @@ static bool interfaces_check(const qa_recipe_provider *instance, qa_error *error
     }
     return matched == instance->interface_count || recipe_fail(error, "Executable interface inventory contains an unknown document");
 }
-static bool execution_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, size_t index, qa_error *error)
+static bool execution_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id,
+    size_t index, bool admission, qa_error *error)
 {
     recipe_reader reader = {.json = json, .recipe = r, .error = error};
     if (!recipe_record(&reader, id, 15)) return false;
@@ -266,7 +277,7 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
             actual->entry.size != entry.size || (entry.size && memcmp(actual->entry.data, entry.data, entry.size))) return recipe_fail(error, "Installed trajectory declaration differs from offered executable");
         for (size_t j = 0; j < i; ++j) if (behavior_rows[j] == actual) return recipe_fail(error, "Repeated executable trajectory descriptor");
         if (!instance->artifact || !qa_sha256_equal(qa_resource_digest(instance->artifact), &artifact_digest)) return recipe_fail(error, "Trajectory does not belong to the held executable");
-        if (*declaration_path) {
+        if (admission && *declaration_path) {
             qa_resource *declaration_resource = NULL;
             if (!qa_vfs_acquire(instance->content, declaration_path, &declaration_resource, NULL, error)) return false;
             bool same = qa_sha256_equal(qa_resource_digest(declaration_resource), &declaration_digest); qa_resource_release(declaration_resource);
@@ -289,7 +300,7 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
     if (instance->artifact) for (size_t i = 0; i < r->resource_count; ++i) if (r->resources[i]->value.resource == instance->artifact &&
         r->resources[i]->view < r->view_count && r->views[r->resources[i]->view].files == instance->content) { instance->artifact_acquisition = &r->resources[i]->acquisition; break; }
     if (instance->artifact && !instance->artifact_acquisition) return recipe_fail(error, "Executable artifact lost its genuine source content acquisition");
-    return !reader.failed && interfaces_check(instance, error);
+    return !reader.failed && interfaces_check(instance, admission, error);
 }
 
 static bool ordering_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, qa_error *error)
@@ -417,7 +428,8 @@ static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_j
         }
     }
     if (!qa_bsp_open(qa_resource_bytes(map->resource), &r->bsp, error) || !sidecar_inventory(r, map, error) ||
-        !qa_collision_create(&r->bsp, &r->geometry, error)) return false;
+        !qa_collision_create(&r->bsp, &r->geometry, error) ||
+        !qa_collision_bind_resource(r->geometry, (qa_resource *)map->resource, error)) return false;
     if (r->bsp.family == QA_BSP_Q2) for (size_t i = 0; i < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++i) {
         char path[1040]; if (!qa_map_sidecars_material_path(&r->bsp, i, path, error)) return false;
         for (size_t j = 0; j < r->sidecar_count; ++j) if (r->sidecars[j].product == map->product && !strcmp(r->sidecars[j].path, path) && r->sidecars[j].resource)
@@ -426,7 +438,8 @@ static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_j
     }
     return true;
 }
-static bool local_identity(qa_executable_recipe *r, const qa_json_document *json, qa_json_id composition, qa_error *error)
+static bool local_identity(qa_executable_recipe *r, const qa_json_document *json, qa_json_id composition,
+    size_t views, size_t resources, qa_error *error)
 {
     qa_json_writer w = {0}; qa_buffer buffer = {0}; qa_unified_composition actual = {0};
     qa_json_writer_object(&w); qa_json_writer_key(&w, "schemaVersion"); qa_json_writer_number(&w, 1);
@@ -435,9 +448,9 @@ static bool local_identity(qa_executable_recipe *r, const qa_json_document *json
     static const char *fields[] = {"schemaVersion", "kind", "choices", "execution", "map", "ordering"}; bool ok = true;
     for (size_t i = 0; ok && i < sizeof(fields) / sizeof(*fields); ++i) { qa_json_writer_key(&w, fields[i]); ok = recipe_copy_json(&w, json, qa_json_get(json, recipe, fields[i]), error); }
     qa_json_writer_key(&w, "views"); qa_json_writer_array(&w);
-    for (size_t i = 0; ok && i < r->view_count; ++i) ok = recipe_view_write(&w, &r->views[i], error);
+    for (size_t i = 0; ok && i < views; ++i) ok = recipe_view_write(&w, &r->views[i], error);
     qa_json_writer_end(&w); qa_json_writer_key(&w, "resources"); qa_json_writer_array(&w);
-    for (size_t i = 0; ok && i < r->resource_count; ++i) ok = recipe_resource_write(&w, r, i, error);
+    for (size_t i = 0; ok && i < resources; ++i) ok = recipe_resource_write(&w, r, i, error);
     qa_json_writer_end(&w); qa_json_writer_end(&w);
     qa_json_writer_key(&w, "snapshotSchema"); qa_json_writer_string(&w, "qts:snapshot-v10"); qa_json_writer_key(&w, "actorConfigurations"); qa_json_writer_array(&w); qa_json_writer_end(&w);
     qa_json_writer_key(&w, "sidecars"); if (ok) ok = recipe_copy_json(&w, json, qa_json_get(json, composition, "sidecars"), error); qa_json_writer_end(&w);
@@ -512,16 +525,105 @@ bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *
     if (ok && count != expected) ok = recipe_fail(error, "Composition omits selected executable instances");
     if (ok) { r->provider_count = count; r->providers = calloc(count ? count : 1, sizeof(*r->providers));
         if (!r->providers) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining real executable descriptors"); ok = false; } }
-    for (size_t i = 0; ok && i < count; ++i) ok = execution_read(r, json, qa_json_at(json, execution, i), i, error);
+    for (size_t i = 0; ok && i < count; ++i) ok = execution_read(r, json, qa_json_at(json, execution, i), i, true, error);
     if (ok) ok = ordering_read(r, json, qa_json_get(json, recipe, "ordering"), error) &&
         map_read(r, json, qa_json_get(json, recipe, "map"), error) &&
-        sidecars_check(r, json, qa_json_get(json, composition, "sidecars"), error) && local_identity(r, json, composition, error);
+        sidecars_check(r, json, qa_json_get(json, composition, "sidecars"), error) &&
+        local_identity(r, json, composition, r->view_count, r->resource_count, error);
     for (size_t i = 0; ok && i < r->view_count; ++i) {
         r->views[i].admitted_policy = qa_vfs_clone(r->views[i].files, error); ok = r->views[i].admitted_policy != NULL;
     }
     if (ok) { *out = r; return true; }
     if (error && error->code == QA_OK) recipe_fail(error, "Invalid complete remote executable composition");
     qa_executable_recipe_close(r, NULL); return false;
+}
+bool recipe_metadata_restore(qa_executable_recipe *r, qa_error *error)
+{
+    qa_json_document *json = NULL;
+    if (!r || !qa_json_parse((qa_bytes){r->composition.data, r->composition.size}, &json, error)) return false;
+    qa_json_id composition = qa_json_root(json), recipe = qa_json_get(json, composition, "recipe");
+    uint32_t schema = 0;
+    bool okay = qa_json_type(json, composition) == QA_JSON_OBJECT && qa_json_size(json, composition) == 5 &&
+        unsigned_field(json, qa_json_get(json, composition, "schemaVersion"), &schema, error) && schema == 1 &&
+        qa_json_string_equal(json, qa_json_get(json, composition, "snapshotSchema"), "qts:snapshot-v10") &&
+        qa_json_type(json, qa_json_get(json, composition, "actorConfigurations")) == QA_JSON_ARRAY &&
+        !qa_json_size(json, qa_json_get(json, composition, "actorConfigurations")) &&
+        qa_json_type(json, recipe) == QA_JSON_OBJECT && qa_json_size(json, recipe) == 8 &&
+        unsigned_field(json, qa_json_get(json, recipe, "schemaVersion"), &schema, error) && schema == 1 &&
+        qa_json_string_equal(json, qa_json_get(json, recipe, "kind"), "anthology:executable") &&
+        recipe_choices_read(r, json, qa_json_get(json, recipe, "choices"), error);
+    recipe_reader reader = {.json = json, .recipe = r, .error = error}; size_t count = 0;
+    size_t retained_resources = r->resource_count, original_resources = 0;
+    if (okay) okay = array(&reader, qa_json_get(json, recipe, "resources"), &original_resources) &&
+        original_resources && original_resources <= retained_resources && r->map_index < original_resources;
+    /* Canonical descriptors can name only their original admission prefix.
+     * Later wire assets remain retained continuation rows, outside that recipe. */
+    if (okay) r->resource_count = original_resources;
+    qa_json_id execution = qa_json_get(json, recipe, "execution");
+    if (okay) okay = array(&reader, execution, &count);
+    size_t expected = r->choices.provider_count;
+    for (size_t i = 0; i < r->choices.mod_count; ++i) expected += r->choices.mods[i].enabled;
+    if (okay) okay = count == expected;
+    if (okay) {
+        r->providers = calloc(count ? count : 1, sizeof(*r->providers)); r->provider_count = count;
+        if (!r->providers) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained executable descriptors"); okay = false; }
+    }
+    for (size_t i = 0; okay && i < count; ++i)
+        okay = execution_read(r, json, qa_json_at(json, execution, i), i, false, error);
+    if (okay) okay = ordering_read(r, json, qa_json_get(json, recipe, "ordering"), error);
+    qa_json_id map = qa_json_get(json, recipe, "map"), sidecars = QA_JSON_NONE;
+    if (okay) {
+        okay = recipe_record(&reader, map, 2);
+        uint32_t index = okay ? recipe_unsigned(&reader) : UINT32_MAX;
+        sidecars = okay ? recipe_take(&reader) : QA_JSON_NONE;
+        okay = okay && !reader.failed && index == r->map_index && index < r->resource_count &&
+            array(&reader, sidecars, &count);
+    }
+    const qa_launch_resource *actual_map = okay ? &r->resources[r->map_index]->value : NULL;
+    if (okay) okay = actual_map->product == r->choices.world.geometry &&
+        !strcmp(actual_map->path, r->choices.world.map);
+    size_t sidecar_view = SIZE_MAX;
+    for (size_t i = 0; okay && i < r->view_count; ++i)
+        if (!strncmp(r->views[i].owner, "map-sidecars:", 13)) {
+            okay = sidecar_view == SIZE_MAX && r->views[i].product == actual_map->product;
+            sidecar_view = i;
+        }
+    if (okay) okay = sidecar_view != SIZE_MAX && sidecar_scope(r, sidecar_view, actual_map->product, error);
+    if (okay) {
+        r->sidecars = calloc(count ? count : 1, sizeof(*r->sidecars)); r->sidecar_count = count;
+        if (!r->sidecars) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring genuine map sidecar observations"); okay = false; }
+    }
+    for (size_t i = 0; okay && i < count; ++i) {
+        okay = recipe_record(&reader, qa_json_at(json, sidecars, i), 3);
+        if (!okay) break;
+        qa_recipe_sidecar *row = &r->sidecars[i];
+        row->product = recipe_product(&reader); row->path = recipe_text(&reader);
+        qa_json_id key = recipe_take(&reader);
+        okay = !reader.failed && row->product == actual_map->product && recipe_path(row->path, error) &&
+            (!i || strcmp(r->sidecars[i - 1].path, row->path) < 0);
+        if (okay && qa_json_type(json, key) != QA_JSON_NULL) {
+            row->resource = resource_index(&reader, key, row->product, row->path, false);
+            uint32_t index = 0;
+            okay = !reader.failed && unsigned_field(json, key, &index, error) &&
+                r->resources[index]->view == sidecar_view;
+        }
+    }
+    if (okay) okay = sidecar_inventory(r, actual_map, error) &&
+        sidecars_check(r, json, qa_json_get(json, composition, "sidecars"), error);
+    size_t views = 0, resources = 0;
+    if (okay) okay = array(&reader, qa_json_get(json, recipe, "views"), &views) && views <= r->view_count &&
+        array(&reader, qa_json_get(json, recipe, "resources"), &resources) && resources <= r->resource_count &&
+        local_identity(r, json, composition, views, resources, error);
+    for (size_t i = views; okay && i < r->view_count; ++i) {
+        const recipe_view *view = &r->views[i];
+        const qa_product *product = qa_catalog_product(r->catalog, view->product);
+        okay = !strncmp(view->owner, "content:", 8) && product &&
+            !strcmp(view->owner + 8, product->identity) && sidecar_scope(r, i, product->id, error);
+    }
+    r->resource_count = retained_resources;
+    qa_json_destroy(json);
+    if (!okay && (!error || error->code == QA_OK)) recipe_fail(error, "Saved executable metadata differs from its retained graph");
+    return okay;
 }
 bool qa_executable_recipe_current(const qa_executable_recipe *r, const qa_catalog *catalog)
 {
@@ -583,6 +685,18 @@ bool qa_executable_recipe_find_resource(const qa_executable_recipe *r, const cha
     for (size_t i = 0; i < r->resource_count; ++i) { const qa_launch_resource *resource = &r->resources[i]->value;
         if (resource->product == product->id && !strcmp(resource->path, path) && qa_resource_bytes(resource->resource).size == length && qa_sha256_equal(qa_resource_digest(resource->resource), digest))
             return qa_executable_recipe_resource(r, i, out, files, receipt); }
+    return false;
+}
+bool qa_executable_recipe_content_read(const qa_executable_recipe *r, const char *identity,
+    qa_vfs **files, const qa_product **actual_product)
+{
+    if (!r || !identity || !files || !actual_product || !qa_executable_recipe_current(r, r->catalog)) return false;
+    const qa_product *product = qa_catalog_find(r->catalog, identity);
+    if (!product || strcmp(product->identity, identity)) return false;
+    for (size_t i = 0; i < r->view_count; ++i)
+        if (r->views[i].product == product->id && !strncmp(r->views[i].owner, "content:", 8)) {
+            *files = r->views[i].files; *actual_product = product; return true;
+        }
     return false;
 }
 bool qa_executable_recipe_content(qa_executable_recipe *r, const char *identity, qa_vfs **files,

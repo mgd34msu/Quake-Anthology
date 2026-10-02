@@ -517,7 +517,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     source->event = 0;
     source->legs = source->torso = animation;
     source->ground_entity = body.ground.registry ? q3_entity_number(game, body.ground)
-                                                 : QA_Q3_SOURCE_NONE;
+                                                 : (int32_t)QA_Q3_SOURCE_NONE;
     if (!body.ground.registry) {
         source_position.type = QA_TRAJECTORY_GRAVITY;
         source_position.time_ms = game->now_ms;
@@ -621,8 +621,8 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         q3_wire_entity_source *source = q3_wire_entity(game, actor);
         if (!source)
             return q3_fail(error, "Q3 body bounce lost its source ground field");
-        source->ground_entity = trace.hit == QA_TRACE_HIT_WORLD ? QA_Q3_SOURCE_WORLD
-            : trace.hit == QA_TRACE_HIT_ACTOR ? q3_entity_number(game, trace.actor) : QA_Q3_SOURCE_NONE;
+        source->ground_entity = trace.hit == QA_TRACE_HIT_WORLD ? (int32_t)QA_Q3_SOURCE_WORLD
+            : trace.hit == QA_TRACE_HIT_ACTOR ? q3_entity_number(game, trace.actor) : (int32_t)QA_Q3_SOURCE_NONE;
     } else {
         body.origin = qa_vec_add(body.origin, normal);
         entry->state.corpse.trajectory.base = body.origin;

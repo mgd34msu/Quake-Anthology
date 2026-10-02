@@ -15,6 +15,35 @@ typedef struct frontend_unified_model {
     uint32_t inline_model;
     bool is_inline;
 } frontend_unified_model;
+typedef struct frontend_unified_bank_view {
+    const char *content;
+    qa_vfs *files;
+    const qa_product *product;
+    qa_scene_resources *images;
+    qa_material_library *materials;
+    qa_font_library *fonts;
+    qa_audio_bank *sounds;
+    qa_q3_presentation_assets *q3_assets;
+} frontend_unified_bank_view;
+typedef struct frontend_unified_model_view {
+    size_t bank;
+    const char *path;
+    qa_scene_family family;
+    const qa_scene_image_options *options;
+    const qa_resource *resource;
+    const qa_vfs_acquisition *opening;
+    const qa_model *model;
+    qa_scene_model *scene;
+    qa_scene_world *world;
+} frontend_unified_model_view;
+/* Physical list ordinals are preserved by cold import. Reads are also valid
+ * on the isolated empty-bank prefix before shared dictionaries import. */
+size_t frontend_unified_media_bank_count(const frontend_unified_media *);
+bool frontend_unified_media_bank_read(const frontend_unified_media *, size_t, frontend_unified_bank_view *);
+size_t frontend_unified_media_model_count(const frontend_unified_media *);
+bool frontend_unified_media_model_read(const frontend_unified_media *, size_t, frontend_unified_model_view *);
+qa_executable_recipe *frontend_unified_media_recipe(const frontend_unified_media *);
+bool frontend_unified_media_importing(const frontend_unified_media *);
 bool frontend_unified_media_create(qa_frontend *, qa_executable_recipe *,
     frontend_unified_media **, qa_error *);
 /* Each content row borrows the admitted product lookup policy; children are
@@ -33,6 +62,7 @@ bool frontend_unified_media_model(frontend_unified_media *, const char *content,
     frontend_unified_model *, qa_error *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);
 bool frontend_unified_media_current(const frontend_unified_media *);
+bool frontend_unified_media_idle(const frontend_unified_media *);
 bool frontend_unified_media_visit(const frontend_unified_media *,
     const qa_application_content_visitor *, qa_error *);
 bool frontend_unified_media_destroy(frontend_unified_media *, qa_error *);

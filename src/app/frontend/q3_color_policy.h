@@ -15,6 +15,9 @@ bool frontend_q3_source_color_device_read(qa_frontend *, qa_q3_color_device *, q
 bool frontend_q3_source_upload_read(void *frontend, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *, qa_error *);
 bool frontend_q3_source_output(qa_frontend *, const qa_material_library *, qa_scene_rect, qa_error *);
+/* Bracket generic QAUI/console primitives in an actual Source viewport. */
+bool frontend_q3_generic_overlay_begin(qa_frontend *, qa_scene_rect, qa_error *);
+bool frontend_q3_generic_overlay_end(qa_frontend *, qa_error *);
 bool frontend_q3_source_recipient(qa_frontend *, qa_scene_world_input *, qa_error *);
 bool frontend_q3_source_color_retire(qa_frontend *, qa_error *);
 /* Target is the real installed display or entered native surface candidate.

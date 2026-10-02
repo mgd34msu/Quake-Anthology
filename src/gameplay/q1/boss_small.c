@@ -430,7 +430,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         value.velocity = qa_v3(x, y, z);
         value.ground = (qa_actor_id){0};
         value.bounds = (qa_bounds){0};
-        e->physics.flags &= ~QA_PHYSICS_ONGROUND;
+        e->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         e->physics.solid = QA_PHYSICS_BOX;
         return qa_world_body_write(g->services.world, e->id, &value, error) &&
                q1_link(g, e, error) && q1_sound(g, e->id, "orb/orb_death.wav", 2, 1, error);

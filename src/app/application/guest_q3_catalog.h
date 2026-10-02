@@ -31,6 +31,8 @@ bool application_q3_catalog_records(application_q3_catalog *,
     const application_q3_catalog_record **, size_t *, qa_error *);
 bool application_q3_catalog_weapons(application_q3_catalog *,
     const application_q3_catalog_weapon **, size_t *, qa_error *);
+bool application_q3_catalog_ammo_label(application_q3_catalog *, qa_item_id,
+    const char **, qa_error *);
 /* True only for the actual default roster constructor, independently of
  * labels or item identities read from a declared original table. */
 bool application_q3_catalog_standard(const application_q3_catalog *);

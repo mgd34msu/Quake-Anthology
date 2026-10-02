@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/network_save.h"
 #include "qa/network_unified_session.h"
+#include "qa/network_q1_client_runtime.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -246,4 +247,20 @@ bool qa_network_snapshot_apply(qa_network_runtime *runtime, qa_net_client_id id,
         }
     }
     return true;
+}
+bool qa_network_q1_client_submit(qa_network_runtime *runtime,
+    const qa_network_command *command, qa_error *error)
+{
+    if (!runtime || !command || !command->movement.sequence || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error,"Q1 CLIENT input requires its actual idle Source command");
+    qa_network_peer *peer; qa_network_seat *seat;
+    if (!authority(runtime,command,&peer,&seat,error)) return false;
+    const qa_net_client *client=qa_net_connections_get(runtime->connections,command->client);
+    if (!client || !qa_network_q1_client_peer(peer) || peer->seat_count!=1 ||
+        command->movement.kind!=(qa_q1_is_qw(client->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE))
+        return qa_network_fail(error,"Q1 CLIENT input differs from its admitted native command profile");
+    runtime->callback=true; seat->applying=true;
+    bool ok=peer->ops.command(peer->state,command,error);
+    seat->applying=false; runtime->callback=false;
+    return ok;
 }

@@ -87,10 +87,12 @@ static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
     qa_scene_draw draw;
     qa_effect_draw(&draw, view, &mesh, white, false);
     draw.source_retain_depth_range = source_edges;
+    draw.source_retain_polygon_offset = source_edges;
     draw.model = model;
     draw.mvp = qa_scene_matrix_multiply(draw.mvp, model);
     draw.state.blend_source = QA_BLEND_ONE;
     draw.state.blend_destination = QA_BLEND_ZERO;
+    if (source_edges) draw.state.depth_write = false;
     draw.state.color_write = false;
     draw.state.stencil_enabled = true;
     draw.state.stencil_test = QA_STENCIL_ALWAYS;
@@ -102,6 +104,7 @@ static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
     if (qa_scene_frame_draw(frame, &draw, error)) {
         draw.state.stencil_depth_pass = QA_STENCIL_DECREMENT;
         draw.state.cull = view->mirror ? QA_CULL_BACK : QA_CULL_FRONT;
+        if (source_edges) draw.source_direct = QA_SOURCE_DIRECT_SHADOW_VOLUME_END;
         if (qa_scene_frame_draw(frame, &draw, error)) return true;
     }
     if (!source_edges) {

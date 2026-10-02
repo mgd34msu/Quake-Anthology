@@ -4,8 +4,12 @@ bool q3gear_reserve(application_q3_gear *gear, uint32_t slot, qa_error *error)
 {
     if (slot < gear->capacity) return true;
     uint32_t capacity = qa_actors_capacity(qa_session_actors(gear->options.host.session));
-    if (slot >= capacity || capacity > SIZE_MAX/sizeof(*gear->bindings) || capacity > SIZE_MAX/sizeof(*gear->tethers))
+    if (slot >= capacity)
         return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear actor exceeds its shared registry");
+#if SIZE_MAX <= UINT32_MAX
+    if (capacity > SIZE_MAX/sizeof(*gear->bindings) || capacity > SIZE_MAX/sizeof(*gear->tethers))
+        return q3gear_fail(error, QA_ERROR_MEMORY, "Separate QVM gear actor bindings exceed the native allocation extent");
+#endif
     q3gear_binding *bindings = calloc(capacity, sizeof(*bindings));
     q3gear_tether *tethers = calloc(capacity, sizeof(*tethers));
     if (!bindings || !tethers) { free(bindings); free(tethers); return q3gear_fail(error, QA_ERROR_MEMORY, "Growing separate QVM gear actor bindings"); }

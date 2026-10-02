@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/scene_world_save.h"
 
 void q3p_model_free(q3p_model *model)
 {
@@ -165,6 +166,7 @@ static bool decode(q3p_model *model, const char *path, qa_error *error)
         if (!qa_scene_world_create(&bsp, model->provider.images, model->provider.materials,
                                      &options, &model->world, error)) return false;
         model->owns_world = true;
+        if (!qa_scene_world_source_resource_bind(model->world, model->resource, error)) return false;
         model->bounds = (qa_bounds){first.bounds.min, first.bounds.max}; return true;
     }
     if (bytes.size >= 4 && !memcmp(bytes.data, "IDP3", 4)) {
@@ -189,19 +191,38 @@ static bool decode(q3p_model *model, const char *path, qa_error *error)
                                   &images, &model->scene[0], error);
 }
 
+static bool source_bad_model(qa_q3_presentation_assets *a, const char *path,
+    int32_t *out, qa_error *error)
+{
+    if (!q3p_reserve((void **)&a->models, &a->model_capacity,
+        a->model_count + 1, sizeof(*a->models), error) ||
+        !q3p_add_name(a, Q3P_MODEL, path, 0, false, error)) return false;
+    a->models[a->model_count++] = NULL;
+    *out = 0; return true;
+}
 bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
                             int32_t *out, qa_error *error)
 {
-    if (!a || a->busy || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model request");
+    if (!a || a->busy || a->retired || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model request");
     if (!path || !*path) { *out = 0; return true; }
+    bool source_model = qa_material_library_has_source_profile(a->options.provider.materials);
+    if (source_model && strlen(path) >= 64) {
+        if (a->options.print) a->options.print(a->options.context, "Model name exceeds MAX_QPATH\n");
+        *out = 0; return true;
+    }
     q3p_name *prior = q3p_find_name(a, Q3P_MODEL, path);
     if (prior) { *out = prior->handle; return true; }
+    if (source_model && a->model_count >= 1023) {
+        if (a->options.print) a->options.print(a->options.context, "RE_RegisterModel: R_AllocModel() failed\n");
+        *out = 0; return true;
+    }
     char *normalized = NULL;
     if (path[0] != '*') {
         qa_error local = {0};
         normalized = qa_vfs_normalize_path(path, &local);
         if (!normalized) {
             if (local.code == QA_ERROR_ARGUMENT || local.code == QA_ERROR_FORMAT) {
+                if (source_model) return source_bad_model(a, path, out, error);
                 if (!q3p_add_name(a, Q3P_MODEL, path, 0, false, error)) return false;
                 *out = 0; return true;
             }
@@ -227,7 +248,7 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
             model->provider = a->options.provider;
             ok = qa_collision_model_bounds(a->geometry, model->inline_model, &model->bounds, error);
         }
-        if (ok) for (size_t i = 0; i < a->model_count; ++i) {
+        if (ok && !source_model) for (size_t i = 0; i < a->model_count; ++i) {
             const q3p_model *existing = a->models[i];
             if (!existing) continue;
             if (existing->world == model->world && !existing->owns_world &&
@@ -242,14 +263,25 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         if (!ok && local.code == QA_ERROR_NOT_FOUND) { ok = true; q3p_model_free(model); model = NULL; }
         else if (!ok && error) *error = local;
         if (ok && model) {
-            for (size_t i = 0; i < a->model_count; ++i) {
+            for (size_t i = 0; !source_model && i < a->model_count; ++i) {
                 const q3p_model *existing = a->models[i];
                 if (!existing) continue;
                 if (existing->resource == model->resource && existing->provider.images == model->provider.images &&
                     existing->provider.materials == model->provider.materials) { handle = (int32_t)i + 1; break; }
             }
-            if (!handle) ok = decode(model, normalized, error);
+            if (!handle) {
+                qa_error decoded = {0};
+                ok = decode(model, normalized, &decoded);
+                if (!ok && source_model && (decoded.code == QA_ERROR_NOT_FOUND ||
+                    decoded.code == QA_ERROR_FORMAT || decoded.code == QA_ERROR_UNSUPPORTED)) {
+                    q3p_model_free(model); model = NULL; ok = true;
+                } else if (!ok && error) *error = decoded;
+            }
         }
+    }
+    if (ok && source_model && !model) {
+        ok = source_bad_model(a, path, out, error);
+        free(normalized); --a->busy; return ok;
     }
     if (ok && model && !handle) {
         size_t length = strlen(path);
@@ -291,6 +323,11 @@ bool qa_q3_presentation_model_bounds(const qa_q3_presentation_assets *a, int32_t
 {
     const q3p_model *model;
     if (!out || !q3p_model_get(a, handle, &model, error)) return false;
+    const qa_model *source = q3p_model_source(model, 0);
+    if (source && source->format == QA_MODEL_MD4 &&
+        qa_material_library_has_source_profile(a->options.provider.materials)) {
+        *out = (qa_bounds){0}; return true;
+    }
     *out = model ? model->bounds : (qa_bounds){0}; return true;
 }
 

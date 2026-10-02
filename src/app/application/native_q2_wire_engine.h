@@ -27,6 +27,8 @@ bool application_native_q2_wire_prepare(struct application_native_q2 *, qa_error
 bool application_native_q2_wire_linked(struct application_native_q2 *, const qa_linked_body *, qa_error *);
 void application_native_q2_wire_released(struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_wire_number(struct application_native_q2 *, qa_actor_id, uint32_t *, qa_error *);
+bool application_native_q2_wire_admit(struct application_native_q2 *, qa_actor_id, uint32_t *, qa_error *);
+void application_native_q2_wire_actor_released(qa_application *, qa_actor_id);
 bool application_native_q2_wire_resource(struct application_native_q2 *, unsigned,
     const char *, uint32_t *, qa_error *);
 bool application_native_q2_wire_capture(struct application_native_q2 *, qa_buffer *, qa_error *);

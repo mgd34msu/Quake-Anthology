@@ -6,6 +6,7 @@
 #include "qa/network_q1_peer_save.h"
 #include "qa/network_q1_session_save.h"
 #include "qa/network_q1_history_save.h"
+#include "q1_client_retirement.h"
 
 typedef struct q1_client_pending {
     struct q1_client_pending *next;
@@ -32,6 +33,7 @@ typedef struct q1_runtime_client {
     qa_nq_signon signon;
     char *name, *parameters;
     qa_qw_history history;
+    q1_client_retirement retirement;
     q1_client_pending *first, *last;
     size_t queued_bytes;
     q1_client_move *commands;
@@ -53,6 +55,7 @@ bool q1_client_queue(q1_runtime_client *, qa_bytes, qa_error *);
 void q1_client_batch_clear(q1_runtime_client *);
 void q1_client_close(void *);
 bool qa_network_q1_client_peer(const qa_network_peer *);
+bool qa_network_q1_client_retirement_pending(const qa_network_peer *);
 void qa_network_q1_client_transport_rebind(qa_network_peer *, qa_net_transport *);
 bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *, qa_buffer *, qa_error *);
 bool qa_network_q1_client_restore_peer(qa_network_runtime *, const qa_net_client *, qa_bytes,

@@ -9,6 +9,8 @@
 #include "../library/source_fuzzy_standalone_save.h"
 #include "../library/source_weapon_library_save.h"
 #include "../library/source_weapon_standalone_save.h"
+#include "../library/character_source.h"
+#include "../library/items_source.h"
 #include "source_weapon_setup.h"
 #include "../chat/source_initial_save.h"
 
@@ -23,8 +25,10 @@ struct qa_bot_saved_assets {
     qa_bot_library *library;
     qa_bot_runtime *runtime;
     bool owns_source;
+    bot_character_store *character_store;
+    bool owns_character_store;
 };
-static const uint8_t magic[8] = {'Q', 'A', 'B', 'A', 'R', 'A', 'W', 5};
+static const uint8_t magic[8] = {'Q', 'A', 'B', 'A', 'R', 'A', 'W', 6};
 
 static bool fail(qa_error *error, const char *message)
 { qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", message); return false; }
@@ -49,6 +53,7 @@ void qa_bot_saved_assets_free(qa_bot_saved_assets *set)
     case QA_BOT_SAVED_CHAT: qa_bot_chat_asset_release(set->assets[i].object); break;
     }
     if(set->owns_source) bot_fuzzy_store_dispose(set->source);
+    if(set->owns_character_store) bot_character_store_release(set->character_store);
     free(set->assets); free(set);
 }
 bool qa_bot_saved_asset_id(const qa_bot_saved_assets *set, qa_bot_saved_asset_kind kind,
@@ -189,7 +194,13 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
     }
     case QA_BOT_SAVED_CHARACTER: {
         qa_bot_character *object = reading ? NULL : asset->object;
-        ok = bot_save_character_fields(io, object, reading ? &object : NULL); if (reading) asset->object = object; break;
+        bool local = !reading && object && set->character_store && object->source == set->character_store;
+        ok = qa_source_save_bool(io, &local) && (!asset->cached || local);
+        if (ok && local) ok = bot_character_alias_fields(io, set->character_store, object,
+            set->library ? &set->library->options.scripts : NULL, reading ? &object : NULL);
+        else if (ok) ok = bot_save_character_fields(io, object, reading ? &object : NULL);
+        if (reading) asset->object = object;
+        break;
     }
     case QA_BOT_SAVED_WEAPONS: {
         qa_bot_weapons *object = reading ? NULL : asset->object;
@@ -233,7 +244,13 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
     }
     case QA_BOT_SAVED_ITEMS: {
         qa_bot_items *object = reading ? NULL : asset->object;
-        ok = bot_save_items_fields(io, object, reading ? &object : NULL); if (reading) asset->object = object; break;
+        bool local = !reading && object && set->library && object->memory == set->library->memory;
+        ok = qa_source_save_bool(io, &local) && (!asset->cached || local);
+        if (ok && local) ok = bot_items_alias_fields(io, set->library ? set->library->memory : NULL,
+            object, set->library ? &set->library->options.scripts : NULL, reading ? &object : NULL);
+        else if (ok) ok = bot_save_items_fields(io, object, reading ? &object : NULL);
+        if (reading) asset->object = object;
+        break;
     }
     case QA_BOT_SAVED_CHAT: {
         qa_bot_chat_asset *object = reading ? NULL : asset->object;
@@ -312,7 +329,10 @@ static bool source_fields(qa_source_save_io *io,qa_bot_saved_assets *set,qa_bot_
 static bool encode(qa_bot_saved_assets *set, qa_buffer *out, qa_error *error)
 {
     qa_source_save_io io = {0};
+    bool have_characters = set->character_store != NULL;
     bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) && source_fields(&io,set,NULL) &&
+        qa_source_save_bool(&io, &have_characters) &&
+        (!have_characters || bot_character_store_fields(&io, set->character_store)) &&
         qa_source_save_count(&io, &set->count, SIZE_MAX);
     for (size_t i = 0; ok && i < set->count; ++i) ok = asset_fields(&io, set, i);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -339,6 +359,7 @@ bool qa_bot_runtime_assets_capture(const qa_bot_runtime *runtime, qa_buffer *out
     if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating actual bot asset registry"); return false; }
     set->source=runtime->library->fuzzy_store;
     set->library=runtime->library;
+    set->character_store=runtime->library->character_store;
     set->runtime=(qa_bot_runtime *)runtime;
     bool ok = collect(runtime, set, error) && encode(set, out, error);
     if (!ok) { qa_bot_saved_assets_free(set); return false; }
@@ -352,8 +373,14 @@ static bool decode(qa_bytes bytes,qa_bot_library *library,qa_bot_runtime *runtim
     set->library=library;
     set->runtime=runtime;
     qa_source_save_io io = {0};
+    bool have_characters = false;
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) && source_fields(&io,set,library) &&
-        qa_source_save_count(&io, &set->count, bytes.size / 5) && set->count <= SIZE_MAX / sizeof(*set->assets);
+        qa_source_save_bool(&io, &have_characters);
+    if (ok && have_characters) {
+        ok = library && bot_character_store_create(library->memory, false, &set->character_store, error);
+        if (ok) { set->owns_character_store = true; ok = bot_character_store_fields(&io, set->character_store); }
+    }
+    if (ok) ok = qa_source_save_count(&io, &set->count, bytes.size / 5) && set->count <= SIZE_MAX / sizeof(*set->assets);
     if (ok && set->count && !(set->assets = calloc(set->count, sizeof(*set->assets))))
         ok = bot_save_fail(&io, QA_ERROR_MEMORY, "Restoring bot asset index");
     if (!set->assets) set->count = 0;
@@ -382,6 +409,8 @@ bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_b
     if(!set->source) {qa_bot_saved_assets_free(set);return fail(error,"Runtime assets omit their actual fuzzy store");}
     bot_fuzzy_store_dispose(library->fuzzy_store);
     library->fuzzy_store=set->source;set->owns_source=false;
+    bot_character_store_release(library->character_store);
+    library->character_store=set->character_store;set->owns_character_store=false;
     {
         qa_bot_weights **weights = &library->weights; qa_bot_character **characters = &library->characters;
         qa_bot_weapons **weapons = &library->weapon_configs; qa_bot_items **items = &library->item_configs;

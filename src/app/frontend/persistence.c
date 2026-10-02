@@ -53,6 +53,7 @@
 #include "network_initial_graph.h"
 #include "network_restore.h"
 #include "global_settings_storage.h"
+#include "source_renderer_runtime.h"
 #include "music_sources.h"
 #include "view_bindings.h"
 #include "view_settings.h"
@@ -71,6 +72,8 @@
 #include "native_resource_inventory.h"
 #include "qa/audio_acoustics_prepare.h"
 #include "renderer_materials.h"
+#include "renderer_worlds.h"
+#include "restart_binding.h"
 #include "config_store.h"
 #include "keys.h"
 #include "client_registry.h"
@@ -96,7 +99,7 @@ typedef enum frontend_section {
     SECTION_CHARACTER_TOPOLOGY, SECTION_EFFECTS_TOPOLOGY, SECTION_GEAR_EVENTS, SECTION_GEAR_TOPOLOGY,
     SECTION_GLOBAL_SETTINGS, SECTION_REMOTE_GRAPH, SECTION_MUSIC_SOURCES, SECTION_VIEW_SETTINGS,
     SECTION_MATERIAL_MOVIES, SECTION_Q1_SKY, SECTION_QC_MESSAGES, SECTION_SOURCE_COLOR,
-    SECTION_RENDERER_MATERIALS, SECTION_COUNT
+    SECTION_RENDERER_MATERIALS, SECTION_RESTART, SECTION_RENDERER_WORLDS, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -130,6 +133,7 @@ struct frontend_persistence {
     const frontend_scene_namespace *canonical;
     frontend_world_inventory *roots;
     frontend_q3_inventory *q3;
+    frontend_q3_inventory *renderer_q3;
     frontend_remote_q3_graph_roster *remote_graph;
     qa_audio_asset_inventory *audio;
     qa_scene_image_set *images;
@@ -234,8 +238,8 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?17:
-        expected==QA_SAVE_AUDIO?6:expected==QA_SAVE_INPUT?4:expected==QA_SAVE_MEDIA?2:1,
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?18:
+        expected==QA_SAVE_AUDIO?6:expected==QA_SAVE_INPUT?5:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
         !qa_source_save_u32(io,&version) || version!=required || !qa_source_save_u32(io,&kind) || kind!=(uint32_t)expected ||
@@ -252,11 +256,11 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
     SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY,SECTION_REMOTE_GRAPH,SECTION_VIEW_SETTINGS,
-    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS};
+    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES,
     SECTION_MUSIC_SOURCES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
-    SECTION_KEYS,SECTION_CONFIG_STORE,SECTION_CLIENT_REGISTRIES,SECTION_GLOBAL_SETTINGS};
+    SECTION_KEYS,SECTION_CONFIG_STORE,SECTION_CLIENT_REGISTRIES,SECTION_GLOBAL_SETTINGS,SECTION_RESTART};
 static const frontend_section media_sections[]={SECTION_Q3,SECTION_SOURCE,SECTION_NATIVE_RUNTIME};
 static bool owner_envelope(qa_source_save_io *io, qa_save_owner_kind kind, frontend_section_set *set)
 {
@@ -581,13 +585,33 @@ static bool renderer_mesh_capture(void *context,uint64_t identity,uint64_t revis
     return frontend_scene_geometry_encode(space,geometry,&key,error) &&
         frontend_scene_namespace_capture_renderer_mesh(space,1,ordinal,identity,error);
 }
-static qa_render_checkpoint_refs renderer_refs(frontend_scene_namespace *space)
+#define RENDER_SCENE_REFS(name,type) \
+static bool renderer_##name##_encode(void *context,const type *value,uint64_t *id,qa_error *error) \
+{ return frontend_scene_##name##_encode(((frontend_persistence *)context)->space,value,id,error); } \
+static bool renderer_##name##_decode(void *context,uint64_t id,const type **value,qa_error *error) \
+{ return frontend_scene_##name##_decode(((frontend_persistence *)context)->space,id,value,error); }
+RENDER_SCENE_REFS(image,qa_scene_image)
+RENDER_SCENE_REFS(geometry,qa_scene_geometry)
+RENDER_SCENE_REFS(material,qa_material)
+RENDER_SCENE_REFS(world,qa_scene_world)
+#undef RENDER_SCENE_REFS
+static bool renderer_mesh_encode(void *context,uint64_t value,uint64_t *id,qa_error *error)
+{ return frontend_scene_mesh_identity_encode(((frontend_persistence *)context)->space,value,id,error); }
+static bool renderer_mesh_decode(void *context,uint64_t id,uint64_t *value,qa_error *error)
+{ return frontend_scene_mesh_identity_decode(((frontend_persistence *)context)->space,id,value,error); }
+static bool renderer_assets_encode(void *context,const qa_q3_presentation_assets *assets,uint64_t *id,qa_error *error)
+{ return frontend_q3_assets_encode(((frontend_persistence *)context)->q3,assets,id,error); }
+static bool renderer_assets_decode(void *context,uint64_t id,qa_q3_presentation_assets **assets,qa_error *error)
+{ return frontend_q3_assets_decode(((frontend_persistence *)context)->renderer_q3,id,assets,error); }
+static qa_render_checkpoint_refs renderer_refs(frontend_persistence *operation)
 {
-    return (qa_render_checkpoint_refs){.context=space,
-        .image_encode=frontend_scene_image_encode,.image_decode=frontend_scene_image_decode,
-        .geometry_encode=frontend_scene_geometry_encode,.geometry_decode=frontend_scene_geometry_decode,
-        .material_encode=frontend_scene_material_encode,.material_decode=frontend_scene_material_decode,
-        .mesh_identity_encode=frontend_scene_mesh_identity_encode,.mesh_identity_decode=frontend_scene_mesh_identity_decode};
+    return (qa_render_checkpoint_refs){.context=operation,
+        .image_encode=renderer_image_encode,.image_decode=renderer_image_decode,
+        .geometry_encode=renderer_geometry_encode,.geometry_decode=renderer_geometry_decode,
+        .material_encode=renderer_material_encode,.material_decode=renderer_material_decode,
+        .world_encode=renderer_world_encode,.world_decode=renderer_world_decode,
+        .assets_encode=renderer_assets_encode,.assets_decode=renderer_assets_decode,
+        .mesh_identity_encode=renderer_mesh_encode,.mesh_identity_decode=renderer_mesh_decode};
 }
 static bool renderer_fields(qa_source_save_io *io,uint32_t expected,qa_bytes *display,qa_bytes *renderer)
 {
@@ -609,7 +633,7 @@ static bool renderer_checkpoint(frontend_persistence *operation,qa_buffer *out,q
 {
     qa_frontend *f=operation->candidate?operation->candidate:operation->active;
     qa_buffer display={0},renderer={0}; uint32_t kind=0;
-    qa_render_checkpoint_refs refs=renderer_refs(operation->space);
+    qa_render_checkpoint_refs refs=renderer_refs(operation);
     bool ok=renderer_kind(f,&kind,error);
     if (ok && kind) ok=operation->restored_from?
         qa_display_restore_checkpoint(operation->restored_from->display_guard,&display,error):
@@ -650,7 +674,7 @@ static bool renderer_restore(frontend_persistence *operation,qa_error *error)
         renderer_fields(&io,kind,&display,&renderer) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (ok && kind) ok=qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error);
-    qa_render_checkpoint_refs refs=renderer_refs(operation->space);
+    qa_render_checkpoint_refs refs=renderer_refs(operation);
     if (ok && kind==1) {
         qa_cpu_options options; qa_cpu_options_default(&options);
         options.width=f->width; options.height=f->height; options.owner=QA_FRONTEND_COMMAND_OWNER;
@@ -709,6 +733,7 @@ static void cut_destroy(frontend_persistence *operation)
     frontend_q3_source_color_defer_abort(&operation->color_ticket);
     frontend_remote_q3_graph_destroy(operation->remote_graph); operation->remote_graph=NULL;
     frontend_q3_inventory_destroy(operation->q3); operation->q3=NULL;
+    frontend_q3_inventory_destroy(operation->renderer_q3); operation->renderer_q3=NULL;
     frontend_world_inventory_destroy(operation->roots); operation->roots=NULL;
     frontend_scene_namespace_destroy(operation->space); operation->space=NULL;
     qa_scene_image_set_destroy(operation->images); operation->images=NULL;
@@ -840,11 +865,13 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_qc_messages_checkpoint(f->qc_messages,set->owned+SECTION_QC_MESSAGES,error) &&
         frontend_q3_source_color_checkpoint(f,set->owned+SECTION_SOURCE_COLOR,error) &&
         frontend_renderer_materials_checkpoint(f,set->owned+SECTION_RENDERER_MATERIALS,error) &&
+        frontend_renderer_worlds_checkpoint(f,operation->roots,set->owned+SECTION_RENDERER_WORLDS,error) &&
         capture_engine(operation,set->owned+SECTION_ENGINE,error) &&
         frontend_ui_features_checkpoint(f,operation->audio,set->owned+SECTION_UI_FEATURES,error) &&
         capture_device(operation,set->owned+SECTION_DEVICE,error) &&
         capture_platform(operation,set->owned+SECTION_PLATFORM,error) && capture_terminal(f,set->owned+SECTION_TERMINAL,error) &&
         frontend_save_commands_checkpoint(f,set->owned+SECTION_SAVE_COMMANDS,error) &&
+        frontend_restart_binding_checkpoint(f,set->owned+SECTION_RESTART,error) &&
         frontend_keys_checkpoint(f->keys,qa_application_content_graph_read(f->application),&keys,set->owned+SECTION_KEYS,error) &&
         frontend_config_store_checkpoint(f->config_store,qa_application_content_graph_read(f->application),&keys,
             set->owned+SECTION_CONFIG_STORE,error) &&
@@ -946,6 +973,7 @@ static bool prepare_services(void *context, qa_application *candidate, const qa_
         frontend_equipment_prepare_restored(f,section(&operation->sections,SECTION_EQUIPMENT_TOPOLOGY),error) &&
         frontend_native_q2_prepare_restored(f,section(&operation->sections,SECTION_NATIVE_TOPOLOGY),error) &&
         frontend_tools_prepare_restored(f,section(&operation->sections,SECTION_TOOLS),error) &&
+        frontend_restart_binding_restore(f,section(&operation->sections,SECTION_RESTART),error) &&
         frontend_commands(f,error) && frontend_network_prepare_restored(f,
             (qa_bytes){operation->external[1].data,operation->external[1].size},error);
     if (ok && f->options.dedicated) {
@@ -1000,7 +1028,8 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     qa_audio_bank_checkpoint_refs banks=frontend_audio_content_refs(content);
     qa_tools_checkpoint_refs tools; qa_llm_checkpoint_refs llm;
     qa_bytes engine={0},device={0},platform={0},terminal={0},sky={0};
-    bool ok=frontend_view_settings_restore(f->view_settings,section(set,SECTION_VIEW_SETTINGS),error) &&
+    bool ok=frontend_renderer_worlds_prepare_restored(f,section(set,SECTION_RENDERER_WORLDS),error) &&
+        frontend_view_settings_restore(f->view_settings,section(set,SECTION_VIEW_SETTINGS),error) &&
         frontend_equipment_gear_prepare_restored(f,section(set,SECTION_GEAR_TOPOLOGY),error) &&
         frontend_input_profile_restore(f,content,section(set,SECTION_INPUT_PROFILE),error) &&
         frontend_images_restore(f,section(set,SECTION_IMAGES),&operation->images,error) &&
@@ -1011,20 +1040,25 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_fonts_restore(f,operation->space,section(set,SECTION_FONTS),error) &&
         frontend_models_restore(content,section(set,SECTION_MODELS),&operation->models,error) &&
         frontend_world_inventory_restore(f,operation->models,operation->space,section(set,SECTION_ROOTS),&operation->roots,error) &&
+        frontend_renderer_worlds_attach_restored(f,operation->roots,error) &&
         frontend_roots_attach_restored(f,operation->roots,operation->models,error) &&
         frontend_source_roots_attach_restored(f,operation->roots,error) &&
         frontend_remote_roots_attach_restored(f,operation->roots,error) &&
         frontend_remote_q3_graph_prepare_modules(operation->remote_graph,error) &&
         frontend_remote_q3_graph_prepare_runtime(operation->remote_graph,error) &&
+        frontend_q3_inventory_restore_roster(f,&(frontend_q3_refs){content,operation->space,
+            operation->models,operation->roots,NULL},&operation->renderer_q3,error) &&
         music_sources_prepare(operation,error) &&
         equipment_roots_restore(operation,error) &&
         aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_restore(operation,error) &&
+        frontend_source_renderer_runtime_bind(f,error) &&
         frontend_q3_source_color_restore(f,operation->display_guard,section(set,SECTION_SOURCE_COLOR),error) &&
         frontend_source_material_bindings_restore(f,error) &&
         frontend_native_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_initial_material_bindings_restore(f,error) &&
         frontend_renderer_materials_bind_restored(f,error) &&
+        frontend_renderer_worlds_bind_restored(f,error) &&
         frontend_audio_id_restore(f,section(set,SECTION_AUDIO_IDS),error) &&
         frontend_audio_banks_restore(f,&banks,section(set,SECTION_BANKS),&operation->audio,error);
     frontend_scene_identity_scope events={operation->space,1};

@@ -2,6 +2,7 @@
 #include <limits.h>
 #include "../save_fields.h"
 #include "qa/display.h"
+#include "qa/q3_source_scene_bank.h"
 
 struct qa_cpu_surface_ticket {
   qa_cpu_renderer *renderer;
@@ -489,11 +490,18 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
     renderer->controls.source.projection_2d = false;
     renderer->controls.source.entity_count = renderer->controls.source.first_scene_entity = 0;
     renderer->controls.source.submitted_light_count = renderer->controls.source.first_scene_light = 0;
+    qa_q3_source_scene_bank_frame(renderer->controls.source.scene_bank);
   }
   return ok;
 }
 bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
-  return cpu_surface_idle(renderer,error) && cpu_present_frame(renderer,error);
+  if (!cpu_surface_idle(renderer,error)) return false;
+  qa_scene_frame frame;
+  qa_scene_frame_init(&frame,renderer->options.owner);
+  frame.source_backend=true;
+  bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
+  qa_scene_frame_destroy(&frame);
+  return ok && cpu_present_frame(renderer,error);
 }
 bool qa_cpu_read_depth(const qa_cpu_renderer *renderer, uint32_t x, uint32_t y,
                        float *out, qa_error *error) {
@@ -615,7 +623,11 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       }
       break;
     case QA_SCENE_COMMAND_DRAW:
-      if (!renderer->opacity_skip)
+      if (renderer->preblend_gamma &&
+          (command->data.draw.lighting!=QA_LIGHT_VERTEX || command->data.draw.shadow_atlas)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,i,"Generic overlay gamma requires an unlit primitive");
+        ok=false;
+      } else if (!renderer->opacity_skip)
         ok = cpu_draw(renderer, &command->data.draw, error);
       break;
     case QA_SCENE_COMMAND_TARGET:
@@ -630,6 +642,15 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         ok = false;
       } else ok = qa_output_domains_assign(&renderer->output_domains, command->data.output_domain.rect,
           QA_DRAW_BACK, command->data.output_domain.source, renderer->display.width, renderer->display.height, error);
+      if (ok) renderer->preblend_gamma=false;
+      break;
+    case QA_SCENE_COMMAND_PREBLEND_GAMMA:
+      if (renderer->current != &renderer->display || renderer->opacity_active) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, i, "Generic overlay gamma requires the actual CPU display target");
+        ok = false;
+      } else renderer->preblend_gamma = command->data.preblend_gamma.enabled &&
+          !(renderer->options.present == qa_display_present_cpu &&
+            qa_display_gamma_applied_is(renderer->options.present_context));
       break;
     case QA_SCENE_COMMAND_OPACITY_BEGIN:
       ok = begin_opacity(renderer, command->data.opacity.value, error);
@@ -743,6 +764,38 @@ bool qa_cpu_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error
   controls->owner.cpu->pipeline.cull=cull;
   return true;
 }
+bool qa_cpu_source_texture_bind(qa_render_controls *controls,const qa_scene_image *image,qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+      !controls->source.issuing || !cpu_image_valid(image,error)) {
+    if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source texture binding lost its actual CPU issue owner");
+    return false;
+  }
+  const qa_scene_image **binding=controls->owner.cpu->bound+controls->attributes.texture_unit;
+  if (*binding!=image) {
+    qa_scene_image_retain(image);
+    qa_scene_image_release(*binding);
+    *binding=image;
+  }
+  return true;
+}
+bool qa_cpu_source_stage_state(qa_render_controls *controls,const qa_scene_state *state,qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+      !controls->source.issuing || !state) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source GL_State lost its actual CPU issue owner");
+    return false;
+  }
+  qa_render_source_stage_state(&controls->owner.cpu->pipeline,state);
+  return true;
+}
+bool qa_cpu_source_view_read(qa_render_controls *controls,qa_scene_view *out,qa_error *error)
+{
+  if (!out || !qa_cpu_source_scratch_current(controls) || controls->ticket) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source view lost its actual CPU owner"); return false;
+  }
+  *out=controls->owner.cpu->view; return true;
+}
 bool qa_cpu_execute(qa_cpu_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
   if (renderer && renderer->controls.source.entered)
@@ -803,10 +856,10 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
     const qa_cpu_options *installed)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
-  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=6;
+  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=12;
   bool presenter=reading?false:renderer->options.present!=NULL;
   if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
-      !qa_source_save_u32(io,&version) || version<4 || version>6 ||
+      !qa_source_save_u32(io,&version) || version<4 || version>12 ||
       !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
       !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
       !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
@@ -836,6 +889,9 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
     qa_scene_state_default(&renderer->pipeline);
     renderer->clear_depth=1;
   }
+  if (version>=11) {
+    if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
+  } else if (reading) renderer->preblend_gamma=false;
   size_t count=0; uint64_t current=0;
   if (!reading) {
     if (renderer->current==&renderer->display) current=1;

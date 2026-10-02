@@ -348,6 +348,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
                 okay = guest_fail(error, QA_ERROR_ARGUMENT, instruction, "native guest callback depth exhausted");
                 break;
             }
+            guest_dispatch_started(guest);
             ++guest->callback_depth;
             okay = callback.invoke(callback.context, guest, callback.id, error);
             --guest->callback_depth;
@@ -364,6 +365,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
                 okay = guest_fail(error, QA_ERROR_ARGUMENT, instruction, "native instruction observer depth exhausted");
                 break;
             }
+            guest_dispatch_started(guest);
             ++guest->callback_depth;
             okay = guest->instruction_observer(guest->instruction_context, guest, instruction, error);
             --guest->callback_depth;
@@ -386,6 +388,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
                 okay = guest_fail(error, QA_ERROR_ARGUMENT, instruction, "native syscall callback depth exhausted");
                 break;
             }
+            guest_dispatch_started(guest);
             ++guest->callback_depth;
             okay = syscall(syscall_context, guest, &request, &result, error);
             --guest->callback_depth;
@@ -406,6 +409,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         frame.count = 0;
         frame.prepared = 0;
         frame.instruction = instruction;
+        guest_dispatch_started(guest);
         guest->stepping = true;
         uc_err code = uc_emu_start(guest->cpu, instruction, stop, 0, 1);
         guest->stepping = false;
@@ -432,6 +436,14 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
     free(frame.writes);
     if (!okay) guest->failed = true;
     return okay;
+}
+
+void guest_dispatch_started(qa_native_guest *guest)
+{
+    void (*started)(void *) = guest->dispatch_started;
+    void *context = guest->dispatch_context;
+    guest->dispatch_started = NULL; guest->dispatch_context = NULL;
+    if (started) started(context);
 }
 
 bool qa_native_guest_run(qa_native_guest *guest, uint64_t start, uint64_t stop,

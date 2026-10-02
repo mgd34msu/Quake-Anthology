@@ -193,6 +193,8 @@ typedef struct qa_q1_host {
     bool (*horde)(void *);
     bool (*monster_path)(void *, qa_actor_id, qa_vec3 goal, float distance, qa_q1_path_result *,
                          qa_error *);
+    bool (*monster_path_clone)(void *,qa_actor_id source,qa_actor_id target,qa_error *);
+    void (*monster_path_release)(void *,qa_actor_id);
     bool (*weapon_changed)(void *, qa_actor_id, qa_item_id acquired, qa_error *);
     bool (*console_cheat)(void *, qa_actor_id, const char *name, bool *enabled, qa_error *);
     bool (*console_suicide)(void *, qa_actor_id, qa_error *);
@@ -499,9 +501,11 @@ qa_item_id qa_q1_weapon_item(const qa_q1_game *, qa_q1_weapon);
 const char *qa_q1_weapon_identity(qa_q1_weapon);
 typedef struct qa_q1_weapon_profile {
     const char *item, *label;
+    const char *ammo;
 } qa_q1_weapon_profile;
 /* Borrowed native source identities; no game or inventory admission occurs. */
 bool qa_q1_weapon_profile_identity(qa_q1_program, qa_q1_weapon, qa_q1_weapon_profile *);
+const char *qa_q1_ammo_identity(qa_q1_ammo);
 bool qa_q1_weapon_source(qa_q1_program, uint32_t source_value, qa_q1_weapon *);
 qa_item_id qa_q1_ammo_item(const qa_q1_game *, qa_q1_ammo);
 

@@ -2,6 +2,7 @@
 #include "library_save_private.h"
 #include "qa/material_save.h"
 #include "qa/source_save.h"
+#include "source_scratch_private.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@ struct qa_material_order {
     uint64_t ordinal;
     bool dirty;
     qa_material_order_image_policy *image_policy;
+    qa_material_source_scratch *source_queue;
 };
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -97,7 +99,25 @@ bool qa_material_order_publish(qa_material_order_entry *entry, qa_error *error)
 {
     if (!entry || !qa_material_order_idle(entry->owner) || !isfinite(entry->material->sort))
         return fail(error, QA_ERROR_FORMAT, "material sort priority is not finite");
-    entry->published = true; entry->owner->dirty = true; return true;
+    bool inserted = !entry->published;
+    entry->published = true; entry->owner->dirty = true;
+    if (entry->owner->source_queue) {
+        if (!qa_material_order_prepare(entry->owner, error)) return false;
+        if (inserted) material_source_sort_inserted(entry->owner->source_queue, entry->rank);
+    }
+    return true;
+}
+bool material_source_order_attach(qa_material_order *order, qa_material_source_scratch *source, qa_error *error)
+{
+    if (!order || !source || (order->source_queue && order->source_queue != source))
+        return fail(error, QA_ERROR_ARGUMENT, "Source queue requires its actual renderer material order");
+    if (!qa_material_order_prepare(order, error)) return false;
+    order->source_queue = source; source->queued_order = order; return true;
+}
+void material_source_order_detach(qa_material_order *order, qa_material_source_scratch *source)
+{
+    if (order && order->source_queue == source) order->source_queue = NULL;
+    if (source && source->queued_order == order) source->queued_order = NULL;
 }
 
 void qa_material_order_remove(qa_material_order_entry *entry)
@@ -149,6 +169,15 @@ bool qa_material_order_rank(const qa_material_order *order, const qa_material *m
         !entry->published || entry->material != material)
         return fail(error, QA_ERROR_ARGUMENT, "source material belongs to another renderer or unpublished order");
     *rank = entry->rank; return true;
+}
+const qa_material *qa_material_order_sorted_at(const qa_material_order *order, uint32_t rank)
+{
+    if (!order || order->dirty) return NULL;
+    for (size_t i = 0; i < order->count; ++i) {
+        const qa_material_order_entry *entry = order->entries[i];
+        if (entry->published && entry->rank == rank) return entry->material;
+    }
+    return NULL;
 }
 
 static int registration_compare(const void *left, const void *right)

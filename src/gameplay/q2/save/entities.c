@@ -72,6 +72,11 @@ bool q2_save_entity(q2_save_io *io, qa_q2_entity_checkpoint *s) {
     Q2R(activator); Q2R(owner); Q2R(enemy); Q2R(goal); Q2R(collision_owner);
     Q2R(master); Q2R(next); Q2R(destination); Q2R(turret_breach); return true;
 }
+static bool campaign_level(q2_save_io *io, qa_q2_campaign_level *s) {
+    Q2N(map); Q2N(name); Q2U(visit_order); Q2U(total_secrets); Q2U(found_secrets);
+    Q2U(total_monsters); Q2U(killed_monsters); Q2S(f64, time_seconds);
+    return true;
+}
 bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
     Q2U(version); Q2R(poi); Q2R(poi_dynamic); Q2N(poi_image); Q2N(story);
     Q2I(poi_stage); Q2I(steam_id); Q2I(total_secrets); Q2I(found_secrets);
@@ -86,5 +91,13 @@ bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
     if (!q2_save_count(io, &s->wind_count, 9, sizeof(*s->wind), &wind)) return false;
     s->wind = wind;
     for (size_t i = 0; i < s->wind_count; ++i) { Q2R(wind[i].actor); Q2T(wind[i].until_ns); }
+    Q2U(total_monsters); Q2U(killed_monsters); Q2U(level_count);
+    if (s->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT) return q2_save_fail(io, "Too many Q2 campaign levels");
+    for (uint32_t i = 0; i < s->level_count; ++i)
+        if (!campaign_level(io, s->levels + i)) return false;
+    void *visited = s->visited_maps;
+    if (!q2_save_count(io, &s->visited_count, 4, sizeof(*s->visited_maps), &visited)) return false;
+    s->visited_maps = visited;
+    for (size_t i = 0; i < s->visited_count; ++i) Q2N(visited_maps[i]);
     return true;
 }

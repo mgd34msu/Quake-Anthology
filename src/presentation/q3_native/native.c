@@ -56,16 +56,28 @@ bool q3n_native_destroy(q3n_native *o,qa_error *e)
     if(!qa_native_q3_client_service_destroy(o->options.client,e)) { o->faulted=true; return false; }
     free(o); return true;
 }
-bool q3n_native_current(const q3n_native *o)
+static bool structure_current(const q3n_native *o);
+bool q3n_native_video_close(q3n_native **slot,qa_error *e)
+{
+    if(!slot)return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native video close requires its retained core slot");
+    q3n_native *o=*slot;
+    if(!o)return true;
+    if(!q3n_native_retire_ready(o,e) || !structure_current(o))return false;
+    q3nn_free_children(o);
+    free(o); *slot=NULL; return true;
+}
+static bool structure_current(const q3n_native *o)
 {
     const qa_native_q3_client_services *services=o?qa_native_q3_client_services_read(o->options.client):NULL;
-    return services && services->wire_reader==o->options.reader && !o->faulted &&
+    return services && services->wire_reader==o->options.reader &&
         qa_native_q3_wire_reader_current(o->options.reader) &&
         services->client.session==o->session &&
         services->client.source_owner==o->source_owner && services->map_revision==o->map_revision &&
         services->client.seat==o->seat && services->client.source_client==o->physical_client &&
         qa_actor_id_equal(services->client.source_actor,o->viewing_actor);
 }
+bool q3n_native_current(const q3n_native *o)
+{ return o && !o->faulted && structure_current(o); }
 bool q3nn_source(q3n_native *o,qa_application_native_q3_presentation *source,qa_error *e)
 {
     if(!q3n_native_current(o) || !qa_application_native_q3_presentation_read(o->options.application,o->source_owner,source,e))
@@ -185,7 +197,7 @@ bool q3n_native_command_frame(q3n_native *o,q3n_frame *out,qa_error *e)
     *out=frame_base(o,&source); out->local_player=player; out->has_local_player=true;
     return true;
 }
-bool q3n_native_initialize(q3n_native *o,int32_t baseline,qa_error *e)
+static bool initialize(q3n_native *o,int32_t baseline,bool video,qa_error *e)
 {
     if(!o || o->initialized || !q3n_native_idle(o))return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native CGAME Init requires an unused idle constructor");
     qa_application_native_q3_presentation source;
@@ -193,11 +205,16 @@ bool q3n_native_initialize(q3n_native *o,int32_t baseline,qa_error *e)
     o->busy=true;
     q3n_frame f=frame_base(o,&source);
     bool ok=qa_native_q3_client_prepare(o->options.client,e) &&
-        q3n_server_commands_initialize(o->commands,&f,baseline,e) &&
+        (video?q3n_server_commands_initialize_video(o->commands,&f,baseline,e):
+            q3n_server_commands_initialize(o->commands,&f,baseline,e)) &&
         qa_native_q3_client_initialized(o->options.client,e);
     if(ok)o->initialized=true; else o->faulted=true;
     o->busy=false; return ok;
 }
+bool q3n_native_initialize(q3n_native *o,int32_t baseline,qa_error *e)
+{ return initialize(o,baseline,false,e); }
+bool q3n_native_initialize_video(q3n_native *o,int32_t baseline,qa_error *e)
+{ return initialize(o,baseline,true,e); }
 bool q3n_native_reload_client(q3n_native *o,uint32_t physical,const q3n_client_settings *settings,qa_error *e)
 {
     qa_application_native_q3_presentation source;

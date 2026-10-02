@@ -938,7 +938,7 @@ static bool weapons_capable(const application_guest_input *input)
         application_q3_weapons_descriptor_count(input->weapons) == 6;
 }
 
-bool application_guest_input_source_weapons(const qa_application *app, qa_actor_id actor)
+bool application_guest_input_source_weapons(qa_application *app, qa_actor_id actor)
 {
     application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     struct application_q3_guest *engine = primary ? q3g_engine(primary) : NULL;

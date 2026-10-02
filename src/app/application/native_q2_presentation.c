@@ -3,6 +3,38 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
 
+bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_owner owner,
+    qa_q2_edition *out, bool *found, qa_error *error)
+{
+    if (!app || !owner || !out || !found || app->destroy_requested)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile requires its actual emitting owner");
+    application_provider *provider=NULL;
+    for (application_provider *p=app->live_providers;p;p=p->next_live)
+        if (p->owner==owner) { provider=p; break; }
+    *found=false;
+    if (!provider || !provider->product || provider->product->family!=QA_GAME_Q2) return true;
+    if (provider->application!=app || !provider->constructed || provider->close_pending)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile names an unavailable GAME owner");
+    qa_q2_edition edition;
+    if (provider->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_combat_rules rules;
+        if (!provider->state.q2 || !qa_q2_combat_rules_read(provider->state.q2,&rules) ||
+            rules.owner!=owner || (rules.edition!=QA_Q2_CLASSIC && rules.edition!=QA_Q2_RERELEASE))
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its compiled GAME rules");
+        edition=rules.edition;
+    } else if (provider->kind==APPLICATION_PROVIDER_NATIVE) {
+        const struct application_native_q2 *engine=provider->state.native.q2_engine;
+        if (!engine || engine->provider!=provider)
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its original GAME owner");
+        if (engine->profile==QA_NATIVE_Q2_CGAME_API2023) return true;
+        if (engine->profile!=QA_NATIVE_Q2_GAME_API3 && engine->profile!=QA_NATIVE_Q2_GAME_API2023)
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile has an unsupported original GAME ABI");
+        edition=engine->profile==QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+    } else return true;
+    *out=edition; *found=true;
+    return true;
+}
+
 static bool ready(const qa_application *app, bool retained)
 {
     return app && app->session && app->world && !app->destroy_requested &&

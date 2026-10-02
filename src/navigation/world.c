@@ -25,6 +25,12 @@ invalid:
     return false;
 }
 bool nav_services_valid(const qa_navigation_services *s, bool prediction, qa_error *e) {
+    if (s && ((s->traversal_begin != NULL || s->traversal_admit != NULL ||
+               s->traversal_end != NULL) &&
+              (!s->traversal_begin || !s->traversal_admit || !s->traversal_end))) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Navigation source traversal needs paired ownership callbacks");
+        return false;
+    }
     if (s == NULL || s->world == NULL || (prediction && s->movement_input == NULL)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                      "Navigation requires shared world and selected movement services");
@@ -36,7 +42,7 @@ bool nav_trace(const qa_navigation_services *s, const qa_nav_profile *p, qa_acto
                qa_vec3 start, qa_vec3 end, bool geometry, qa_trace_result *out, qa_error *e) {
     qa_trace_query q = {
         .start = start, .end = end, .shape = p->shape, .policy = p->policy, .pass_actor = actor};
-    if (geometry) {
+    if (geometry || s->topology_geometry_only) {
         q.target.inline_model = true;
         q.target.model = 0;
         return qa_collision_trace(qa_world_geometry(s->world), &q, out, e);
@@ -53,6 +59,7 @@ bool nav_clear(const qa_navigation_services *s, const qa_nav_profile *p, qa_acto
 }
 bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_actor_id actor,
                   qa_vec3 point, bool geometry, uint32_t *out, qa_error *e) {
+    geometry = geometry || s->topology_geometry_only;
     qa_point_query q = {.point = point, .policy = p->policy, .pass_actor = actor};
     qa_point_contents sample;
     if (geometry) {

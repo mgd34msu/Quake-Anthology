@@ -95,6 +95,10 @@ bool qa_inventory_item_action(qa_inventory *, qa_actor_id, qa_item_id, qa_item_a
 /* Returned definition labels are borrowed until the group closes or its actor
  * retires. Use source_items for an owned checkpoint snapshot. */
 bool qa_inventory_item_definitions(qa_inventory *, qa_actor_id, qa_item_definition *, size_t, size_t *, qa_error *);
+/* Pure observation of this exact owner's admitted definition. Labels remain
+ * borrowed until that group closes. No source reader or storage mutation runs. */
+bool qa_inventory_source_definition_read(const qa_inventory *, qa_actor_id,
+    qa_actor_owner, qa_item_id, qa_item_definition *, qa_error *);
 bool qa_inventory_give(qa_inventory *, qa_actor_id, qa_item_id, double, double *given, qa_error *);
 bool qa_inventory_consume(qa_inventory *, qa_actor_id, qa_item_id, double, bool *consumed, qa_error *);
 bool qa_inventory_configure(qa_inventory *, qa_actor_id, const qa_inventory_entry *, qa_inventory_committed_fn, void *, qa_error *);

@@ -17,11 +17,19 @@ void q3n_animation_dispose(q3n_animation_holder *holder)
     qa_vfs_acquisition_dispose(&holder->receipt);
     *holder = (q3n_animation_holder){0};
 }
+static bool compiled_current(const q3n_clients *o,const q3n_compiled_source_view *v,qa_error *e)
+{
+    return v && o->options.compiled_source==v->owner && !o->options.reader && !o->options.remote_source &&
+        o->options.content==v->basis.content && o->options.assets==v->basis.assets &&
+        o->options.product==v->basis.product && q3n_compiled_source_current(v) ? true :
+        q3n_client_fail(e,QA_ERROR_ARGUMENT,"Compiled client media lost its real reached source owner");
+}
 static bool source_current(const q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, qa_error *error)
 {
     qa_native_q3_wire_basis basis;
-    if (owner->options.remote_source)
+    if (owner->compiled_cut) return compiled_current(owner,owner->compiled_cut,error);
+    if (owner->options.remote_source || owner->options.compiled_source)
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Local client media cannot borrow a remote source");
     if (!qa_application_native_q3_presentation_current(app, cut) ||
         !qa_native_q3_wire_reader_basis(owner->options.reader, &basis, error))
@@ -35,7 +43,7 @@ static bool source_current(const q3n_clients *owner, qa_application *app,
 }
 static bool remote_current(const q3n_clients *owner, const q3n_remote_source_view *cut, qa_error *error)
 {
-    return cut && owner->options.remote_source == cut->owner && !owner->options.reader &&
+    return cut && owner->options.remote_source == cut->owner && !owner->options.reader && !owner->options.compiled_source &&
         cut->basis.product == owner->options.product && cut->basis.content == owner->options.content &&
         q3n_remote_source_current(cut) ? true :
         q3n_client_fail(error, QA_ERROR_ARGUMENT, "Remote client media lost its actual reached CLIENT source");
@@ -43,13 +51,15 @@ static bool remote_current(const q3n_clients *owner, const q3n_remote_source_vie
 static bool source_string(const q3n_clients *owner, uint32_t index,
     const char **text, uint64_t *revision, qa_error *error)
 {
+    if (owner->options.compiled_source)
+        return q3n_compiled_source_configstring(owner->options.compiled_source,index,text,revision,error);
     return owner->options.remote_source ?
         q3n_remote_source_configstring(owner->options.remote_source, index, text, revision, error) :
         qa_native_q3_wire_reader_configstring(owner->options.reader, index, text, revision, error);
 }
 static bool current(q3n_clients *owner, qa_error *error)
 {
-    if (!owner->cut && !owner->remote_cut) return true;
+    if (!owner->cut && !owner->remote_cut && !owner->compiled_cut) return true;
     if (!(owner->remote_cut ? remote_current(owner, owner->remote_cut, error) :
         source_current(owner, owner->application, owner->cut, error))) return false;
     const char *text; uint64_t revision;
@@ -495,13 +505,20 @@ static bool new_info(q3n_clients *owner, uint32_t index, const char *info, uint6
     }
     q3n_animation_dispose(&holder); return ok;
 }
-static bool create(const q3n_client_options *options, bool remote, q3n_clients **out, qa_error *error)
+static bool create(const q3n_client_options *options, unsigned domain, q3n_clients **out, qa_error *error)
 {
     if (!options || !options->content || !options->assets || !out || *out ||
-        (remote ? (!options->remote_source || options->reader) : (!options->reader || options->remote_source)) ||
+        (domain==2 ? (!options->compiled_source || options->reader || options->remote_source) :
+            domain==1 ? (!options->remote_source || options->reader || options->compiled_source) :
+            (!options->reader || options->remote_source || options->compiled_source)) ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Invalid native Q3 client media services");
-    if (remote) {
+    if (domain==2) {
+        q3n_compiled_source_view v;
+        if (!q3n_compiled_source_read(options->compiled_source,&v,error) ||
+            v.basis.content!=options->content || v.basis.assets!=options->assets || v.basis.product!=options->product)
+            return q3n_client_fail(error,QA_ERROR_ARGUMENT,"Compiled client media has another content owner");
+    } else if (domain==1) {
         q3n_remote_source_view source;
         if (!q3n_remote_source_read(options->remote_source, &source, error) ||
             source.basis.content != options->content || source.basis.product != options->product)
@@ -514,9 +531,11 @@ static bool create(const q3n_client_options *options, bool remote, q3n_clients *
     *out = owner; return true;
 }
 bool q3n_clients_create(const q3n_client_options *options, q3n_clients **out, qa_error *error)
-{ return create(options, false, out, error); }
+{ return create(options, 0, out, error); }
 bool q3n_clients_create_remote(const q3n_client_options *options, q3n_clients **out, qa_error *error)
-{ return create(options, true, out, error); }
+{ return create(options, 1, out, error); }
+bool q3n_clients_create_compiled(const q3n_client_options *options,q3n_clients **out,qa_error *error)
+{ return create(options,2,out,error); }
 bool q3n_clients_idle(const q3n_clients *owner) { return owner && !owner->busy; }
 qa_q3_presentation_assets *q3n_clients_assets(const q3n_clients *owner)
 { return owner ? owner->options.assets : NULL; }
@@ -525,7 +544,7 @@ bool q3n_clients_runtime_bound(const q3n_clients *owner, const q3n_client_option
     return q3n_clients_idle(owner) && source &&
         owner->options.content == source->content && owner->options.assets == source->assets &&
         owner->options.product == source->product && owner->options.reader == source->reader &&
-        owner->options.remote_source == source->remote_source ? true :
+        owner->options.remote_source == source->remote_source && owner->options.compiled_source==source->compiled_source ? true :
         q3n_client_fail(error, QA_ERROR_ARGUMENT, "Runtime requires its returned constructor-owned client media");
 }
 bool q3n_clients_runtime_dispose(q3n_clients *owner, const q3n_client_options *source, qa_error *error)
@@ -562,7 +581,7 @@ const q3n_client_info *q3n_clients_get(const q3n_clients *owner, uint32_t index)
 static bool begin(q3n_clients *owner, qa_application *app, const qa_application_native_q3_presentation *cut,
     const q3n_remote_source_view *remote, const q3n_client_settings *settings, qa_error *error)
 {
-    if (!q3n_clients_idle(owner) || (!remote && (!app || !cut)) || !settings ||
+    if (!q3n_clients_idle(owner) || (!remote && !owner->compiled_cut && (!app || !cut)) || !settings ||
         !memchr(settings->model, 0, 64) || !memchr(settings->head_model, 0, 64) ||
         !memchr(settings->red_team_name, 0, 64) || !memchr(settings->blue_team_name, 0, 64))
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client media requires its current physical source");
@@ -663,7 +682,7 @@ bool q3n_clients_reload(q3n_clients *owner, qa_application *app,
 static bool reset(q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, const q3n_remote_source_view *remote, qa_error *error)
 {
-    if (!q3n_clients_idle(owner) || (!remote && (!app || !cut)) || !qa_q3_assets_idle(owner->options.assets))
+    if (!q3n_clients_idle(owner) || (!remote && !owner->compiled_cut && (!app || !cut)) || !qa_q3_assets_idle(owner->options.assets))
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client reset requires its idle genuine media owner");
     if (!(remote ? remote_current(owner, remote, error) : source_current(owner, app, cut, error))) return false;
     owner->busy = true; uint64_t revisions[64]; bool ok = true;
@@ -735,8 +754,8 @@ static bool dynamic_write(q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, const q3n_remote_source_view *remote, uint32_t index,
     uint64_t configstring_revision, uint64_t media_revision, const q3n_client_dynamic *value, qa_error *error)
 {
-    if (!q3n_clients_idle(owner) || !value || index >= 64 || (!remote && (!app || !cut)) ||
-        (!remote && cut->product != owner->options.product) || !owner->clients[index].observed ||
+    if (!q3n_clients_idle(owner) || !value || index >= 64 || (!remote && !owner->compiled_cut && (!app || !cut)) ||
+        (!remote && !owner->compiled_cut && cut->product != owner->options.product) || !owner->clients[index].observed ||
         owner->clients[index].configstring_revision != configstring_revision ||
         owner->clients[index].media_revision != media_revision)
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 dynamic client state requires its exact observed physical row");
@@ -783,6 +802,35 @@ bool q3n_clients_remote_dynamic_write(q3n_clients *owner, const q3n_remote_sourc
     uint32_t index, uint64_t config_revision, uint64_t media_revision,
     const q3n_client_dynamic *value, qa_error *error)
 { return dynamic_write(owner, NULL, NULL, source, index, config_revision, media_revision, value, error); }
+bool q3n_clients_compiled_current(const q3n_clients *o,const q3n_compiled_source_view *v,qa_error *e)
+{ return q3n_clients_idle(o) && compiled_current(o,v,e); }
+static bool compiled_enter(q3n_clients *o,const q3n_compiled_source_view *v,qa_error *e)
+{
+    if (!q3n_clients_idle(o) || o->compiled_cut || !compiled_current(o,v,e))
+        return q3n_client_fail(e,QA_ERROR_ARGUMENT,"Compiled client operation requires its returned real source");
+    o->compiled_cut=v; return true;
+}
+static bool compiled_leave(q3n_clients *o,bool result)
+{ o->compiled_cut=NULL; return result; }
+bool q3n_clients_compiled_sync(q3n_clients *o,const q3n_compiled_source_view *v,const q3n_client_settings *s,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,sync(o,NULL,NULL,NULL,s,false,e)); }
+bool q3n_clients_compiled_register_one(q3n_clients *o,const q3n_compiled_source_view *v,const q3n_client_settings *s,uint32_t n,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,register_one(o,NULL,NULL,NULL,s,n,e)); }
+bool q3n_clients_compiled_reload(q3n_clients *o,const q3n_compiled_source_view *v,const q3n_client_settings *s,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,sync(o,NULL,NULL,NULL,s,true,e)); }
+bool q3n_clients_compiled_reset(q3n_clients *o,const q3n_compiled_source_view *v,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,reset(o,NULL,NULL,NULL,e)); }
+bool q3n_clients_compiled_load_deferred(q3n_clients *o,const q3n_compiled_source_view *v,const q3n_client_settings *s,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,load_deferred(o,NULL,NULL,NULL,s,e)); }
+bool q3n_clients_compiled_dynamic_write(q3n_clients *o,const q3n_compiled_source_view *v,uint32_t n,
+    uint64_t config,uint64_t media,const q3n_client_dynamic *value,qa_error *e)
+{ return compiled_enter(o,v,e) && compiled_leave(o,dynamic_write(o,NULL,NULL,NULL,n,config,media,value,e)); }
+bool q3n_clients_compiled_initialize(q3n_clients *o,const q3n_compiled_source_view *v,const q3n_client_settings *s,qa_error *e)
+{
+    if (!v || v->basis.client_number<0) return q3n_client_fail(e,QA_ERROR_ARGUMENT,"Compiled initialization requires its actual physical viewing client");
+    return q3n_clients_compiled_register_one(o,v,s,(uint32_t)v->basis.client_number,e) &&
+        q3n_clients_compiled_sync(o,v,s,e) && compiled_current(o,v,e);
+}
 bool q3n_clients_animation_holder(const q3n_clients *owner, uint32_t index,
     const qa_resource **resource, const qa_vfs_acquisition **receipt, qa_error *error)
 {

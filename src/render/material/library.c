@@ -66,12 +66,18 @@ qa_material_library *qa_material_library_create_detached(qa_scene_resources *res
     return library;
 }
 
-static bool catalog_add(qa_material_library *library, qa_bytes bytes, qa_resource *resource, qa_error *error)
+static bool catalog_add(qa_material_library *library, qa_bytes bytes, qa_resource *resource,
+    const qa_scene_image_options *scope, qa_error *error)
 {
     qa_material_catalog_source *source = calloc(1, sizeof(*source));
     if (!source) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining shader catalog source");
         return false;
+    }
+    if (scope) {
+        source->dependency_scope = true; source->dependency_family = scope->family;
+        source->dependency_has_palette = scope->palette_rgb.size != 0;
+        if (source->dependency_has_palette) memcpy(source->dependency_palette, scope->palette_rgb.data, 768);
     }
     if (resource) {
         source->resource = resource;
@@ -95,6 +101,22 @@ static bool catalog_add(qa_material_library *library, qa_bytes bytes, qa_resourc
     bool ok = qa_material_script_catalog(library, source->bytes, error);
     library->catalog_current = NULL;
     return ok;
+}
+
+static qa_scene_image_options script_options(const qa_material_script *script,
+    const qa_scene_image_options *original)
+{
+    qa_scene_image_options options = *original;
+    if (script && script->source->dependency_scope) {
+        const qa_material_catalog_source *source = script->source;
+        options.family = source->dependency_family;
+        options.palette_rgb = source->dependency_has_palette ?
+            (qa_bytes){source->dependency_palette, sizeof(source->dependency_palette)} : (qa_bytes){0};
+        /* Foreign authored pixels keep their decoder family. The actual
+         * Source recipient maps their completed immutable image at draw. */
+        if (options.family != QA_SCENE_Q3) options.source_q3 = false;
+    }
+    return options;
 }
 
 char *qa_material_string(const char *value, qa_error *error)
@@ -153,6 +175,37 @@ static qa_scene_image_options default_options(void)
     return (qa_scene_image_options){ .family = QA_SCENE_Q3,
         .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap = true, .transparent_index = -1 };
+}
+
+bool qa_material_library_script_read(const qa_material_library *library, const char *name,
+    qa_material_script_view *out)
+{
+    if (!library || !library->catalog_ready || !name || !out) return false;
+    size_t length = strcspn(name, ".");
+    if (!length || length >= 1024) return false;
+    char key[1024];
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        key[i] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+    }
+    key[length] = 0;
+    for (const qa_material_script *script = library->scripts[qa_material_hash(key)]; script; script = script->next) {
+        if (strcmp(script->name, key)) continue;
+        if (!script->source || script->source_offset > script->source->bytes.size ||
+            script->size > script->source->bytes.size - script->source_offset ||
+            script->name_offset > script->source->bytes.size ||
+            script->name_size > script->source->bytes.size - script->name_offset) return false;
+        *out = (qa_material_script_view){.name = script->name,
+            .body = {script->text, script->size}, .catalog = script->source->bytes,
+            .resource = script->source->resource, .source_offset = script->source_offset,
+            .name_offset = script->name_offset, .name_size = script->name_size,
+            .dependency_scope = script->source->dependency_scope,
+            .dependency_family = script->source->dependency_family,
+            .dependency_palette = script->source->dependency_has_palette ?
+                (qa_bytes){script->source->dependency_palette, sizeof(script->source->dependency_palette)} : (qa_bytes){0}};
+        return true;
+    }
+    return false;
 }
 
 void qa_material_stage_init(qa_material_stage *stage)
@@ -549,10 +602,6 @@ static bool source_variant_image(void *opaque, const qa_scene_image *source,
         upload.mipmap = upload.mipmap && request.options.mipmap;
     return qa_scene_image_source_q3_variant(mapper->resources, source, &upload, out, error);
 }
-static bool policy_variant_image(void *opaque, const qa_scene_image *source,
-    qa_scene_image **out, qa_error *error)
-{ return qa_scene_resource_policy_image(opaque, source, out, error); }
-
 bool qa_material_source_q3_variant(qa_material_library *library, const qa_material *source,
     const qa_q3_image_upload_options *upload, const qa_material **out, qa_error *error)
 {
@@ -689,6 +738,8 @@ typedef struct material_policy_record {
     qa_material_record *record;
     qa_material material;
     const qa_scene_image *base;
+    qa_scene_image_options options;
+    qa_q3_image_upload_options variant_upload;
 } material_policy_record;
 struct qa_scene_material_image_policy {
     qa_material_library *owner;
@@ -793,13 +844,30 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
     qa_material_library staging = *library;
     staging.resources = destination; staging.generated = ticket->generated;
     staging.profile = ticket->profile;
+    qa_q3_image_upload_options restart_upload = {0};
+    bool source_restart = qa_scene_resource_policy_source_restart_read(resources, &restart_upload);
     for (size_t i = 0; i < ticket->count; ++i) {
         qa_material_record *current = library->ordered[i]; material_policy_record *prepared = &ticket->records[i];
         prepared->record = current;
+        prepared->options = current->options;
+        prepared->variant_upload = current->source_variant_upload;
+        if (source_restart && prepared->options.source_q3) {
+            bool mipmap = prepared->options.source_upload.mipmap;
+            bool picmip = prepared->options.source_upload.allow_picmip;
+            prepared->options.source_upload = restart_upload;
+            prepared->options.source_upload.mipmap = mipmap;
+            prepared->options.source_upload.allow_picmip = picmip;
+        }
+        if (source_restart && current->source_variant_parent) {
+            prepared->variant_upload = restart_upload;
+            prepared->variant_upload.mipmap = current->source_variant_upload.mipmap;
+            prepared->variant_upload.allow_picmip = current->source_variant_upload.allow_picmip;
+        }
         if (current->material.revision == UINT64_MAX) {
             material_policy_dispose(ticket);
             qa_error_set(error, QA_ERROR_MEMORY, i, "Material image revisions exhausted"); return false;
         }
+        if (current->source_variant_parent) continue;
         if (current->base_image) {
             const qa_scene_image *base = NULL;
             for (size_t w = 0; !base && w < world_count; ++w)
@@ -814,7 +882,7 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
                 prepared->base = image;
             }
         }
-        qa_material_record pending = {.options = current->options, .kind = current->kind,
+        qa_material_record pending = {.options = prepared->options, .kind = current->kind,
             .world_identity = current->world_identity, .lightmap_index = current->lightmap_index,
             .base_name = current->base_name, .base_image = prepared->base};
         pending.material.name = qa_material_string(current->material.name, error);
@@ -828,18 +896,15 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
         const qa_material_generated *generated = ticket->generated;
         while (generated && strcmp(generated->name, current->material.name)) generated = generated->next;
         const char *request = current->material.name;
+        qa_scene_image_options dependency_options = script_options(script, &prepared->options);
         if (current->material.stage_count) {
             const qa_material_stage *stage = &current->material.stages[current->material.stage_count - 1];
             if (stage->image_count && stage->image_names && stage->image_names[0]) request = stage->image_names[0];
         }
-        bool ok;
-        if (current->source_variant_parent) {
-            qa_material_clear(&pending.material);
-            ok = material_copy_images(&current->material, &pending.material, policy_variant_image, resources, error);
-        } else ok = script && !generated && current->kind != QA_MATERIAL_DEFAULT &&
+        bool ok = script && !generated && current->kind != QA_MATERIAL_DEFAULT &&
             current->kind != QA_MATERIAL_STENCIL_SHADOW
             ? qa_material_script_register(&staging, &pending.material, (qa_bytes){script->text, script->size},
-                &current->options, current->lightmap_index, current->base_name, prepared->base, error)
+                &dependency_options, current->lightmap_index, current->base_name, prepared->base, error)
             : implicit(&staging, &pending, request, error);
         if (!ok) { qa_material_clear(&pending.material); material_policy_dispose(ticket); return false; }
         if (library->source_profile && pending.material.lightmap_index >= 0) {
@@ -860,6 +925,32 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
         pending.material.source_remap = current->material.source_remap;
         pending.material.library = library;
         prepared->material = pending.material;
+    }
+    for (size_t i = 0; i < ticket->count; ++i) {
+        material_policy_record *prepared = ticket->records + i;
+        qa_material_record *current = prepared->record;
+        if (!current->source_variant_parent) continue;
+        const qa_material *parent = NULL;
+        for (size_t j = 0; j < ticket->count; ++j)
+            if (ticket->records[j].record == current->source_variant_parent)
+                parent = &ticket->records[j].material;
+        if (!parent) {
+            material_policy_dispose(ticket);
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "Prepared recipient shader lost its actual parent"); return false;
+        }
+        source_variant_mapper mapper = {.resources = destination, .upload = prepared->variant_upload};
+        if (parent->no_mipmaps) mapper.upload.mipmap = false;
+        if (parent->no_picmip) mapper.upload.allow_picmip = false;
+        if (!material_copy_images(parent, &prepared->material, source_variant_image, &mapper, error)) {
+            material_policy_dispose(ticket); return false;
+        }
+        prepared->material.identity = current->material.identity;
+        prepared->material.revision = current->material.revision + 1;
+        prepared->material.registration = current->material.registration;
+        prepared->material.sorted_index = current->material.sorted_index;
+        prepared->material.order_entry = current->material.order_entry;
+        prepared->material.remapped = NULL;
+        prepared->material.library = library;
     }
     for (size_t i = 0; i < ticket->count; ++i) {
         material_policy_record *prepared = &ticket->records[i];
@@ -1008,7 +1099,16 @@ void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *tick
         prepared->record->material = prepared->material; prepared->material = material;
         const qa_scene_image *base = prepared->record->base_image;
         prepared->record->base_image = prepared->base; prepared->base = base;
+        qa_scene_image_options options = prepared->record->options;
+        prepared->record->options = prepared->options; prepared->options = options;
+        qa_q3_image_upload_options upload = prepared->record->source_variant_upload;
+        prepared->record->source_variant_upload = prepared->variant_upload; prepared->variant_upload = upload;
         qa_material_order_changed(prepared->record->material.order_entry);
+    }
+    for (size_t i = 0; i < ticket->count; ++i) {
+        qa_material_record *record = ticket->records[i].record;
+        if (record->source_variant_parent)
+            record->source_variant_revision = record->source_variant_parent->material.revision;
     }
     qa_material_generated *prepared = ticket->generated;
     for (qa_material_generated *current = library->generated; current; current = current->next, prepared = prepared->next) {
@@ -1198,12 +1298,13 @@ static bool register_material(qa_material_library *library, const char *name,
     while (script && strcmp(script->name, key)) script = script->next;
     const qa_material_generated *generated = library->generated;
     while (generated != NULL && strcmp(generated->name, key) != 0) generated = generated->next;
+    qa_scene_image_options dependency_options = script_options(script, &options);
     qa_material_record *previous_record = library->registration_record;
     record->admission_parent = previous_record;
     library->registration_record = record;
     bool compiled = script && generated == NULL && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW
         ? qa_material_script_register(library, &record->material,
-              (qa_bytes){script->text, script->size}, &options, lightmap_index,
+              (qa_bytes){script->text, script->size}, &dependency_options, lightmap_index,
               record->base_name, record->base_image, error)
         : implicit(library, record, name, error);
     if (!compiled) { library->registration_record = previous_record; record_free(record); return false; }
@@ -1574,7 +1675,19 @@ bool qa_material_library_parse(qa_material_library *library, qa_bytes source,
         return false;
     }
     if (!mutation_begin(library, error)) return false;
-    return mutation_end(library, catalog_add(library, source, NULL, error));
+    return mutation_end(library, catalog_add(library, source, NULL, NULL, error));
+}
+
+bool qa_material_library_parse_scoped(qa_material_library *library, qa_bytes source,
+    const qa_scene_image_options *scope, qa_error *error)
+{
+    if (!library || !scope || (source.size && !source.data) || scope->family > QA_SCENE_Q3 ||
+        scope->family < QA_SCENE_Q1 || (scope->palette_rgb.size &&
+            (scope->palette_rgb.size != 768 || !scope->palette_rgb.data))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Shader dependency scope requires its actual family and RGB palette"); return false;
+    }
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, catalog_add(library, source, NULL, scope, error));
 }
 
 static int script_compare(const void *left, const void *right)
@@ -1609,7 +1722,7 @@ static bool load_scripts(qa_material_library *library, qa_vfs *vfs,
         qa_resource *resource = NULL;
         bool ok = qa_vfs_acquire(vfs, path, &resource, NULL, error);
         free(path);
-        if (ok) ok = catalog_add(library, qa_resource_bytes(resource), resource, error);
+        if (ok) ok = catalog_add(library, qa_resource_bytes(resource), resource, NULL, error);
         qa_resource_release(resource);
         if (!ok) { qa_vfs_listing_free(&listing); return false; }
     }

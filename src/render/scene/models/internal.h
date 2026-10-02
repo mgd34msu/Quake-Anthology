@@ -39,6 +39,7 @@ struct qa_scene_model {
     qa_scene_model_content_lease source_lease, replacement_source_lease, animation_lease;
     qa_scene_resources *resources;
     qa_material_library *materials;
+    bool source_topology;
     qa_scene_image_options options;
     uint8_t palette[768], translation[256];
     uint64_t identity;

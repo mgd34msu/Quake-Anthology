@@ -1895,10 +1895,6 @@ bool qa_fs_stage_open_checked(qa_fs_root *root, const char *target, uint64_t non
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
     return stage_open(root, target, nonce, resume, false, true, out, initial, error);
 }
-bool qa_fs_stage_open_readonly_checked(qa_fs_root *root, const char *target, uint64_t nonce,
-    qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, true, true, true, out, initial, error);
-}
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
     if (!stage || stage->closing || !out) return stage_argument(error, "Missing stage size output");
     LARGE_INTEGER size;

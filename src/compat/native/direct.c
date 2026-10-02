@@ -4,6 +4,7 @@
 #include "internal.h"
 
 #include <errno.h>
+#include <ctype.h>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -619,6 +620,81 @@ bool native_direct_export(const qa_native_instance *instance, const char *name,
     *out = (qa_native_address)(uintptr_t)symbol;
 #endif
     return true;
+}
+
+bool native_direct_range_check(qa_native_address address, size_t bytes,
+    uint32_t permissions, qa_error *error) {
+    if (!permissions || permissions > 7 || (!address && bytes) || !native_u64_fits_size(address) ||
+        bytes > UINTPTR_MAX - (uintptr_t)address)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native VM range has invalid bounds or permissions");
+    if (!bytes) return true;
+    uint64_t cursor = address, end = address + bytes;
+#if defined(_WIN32)
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery((const void *)(uintptr_t)cursor, &region, sizeof(region)) != sizeof(region))
+            return windows_error(error, QA_ERROR_ARGUMENT, "observing native VM permissions");
+        uint64_t base = (uint64_t)(uintptr_t)region.BaseAddress;
+        if (region.State != MEM_COMMIT || (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
+            !region.RegionSize || base > cursor || region.RegionSize > UINT64_MAX - base ||
+            base + region.RegionSize <= cursor)
+            return native_fail(error, QA_ERROR_ARGUMENT, (size_t)cursor, "native VM range contains unavailable pages");
+        uint32_t rights = 0;
+        switch (region.Protect & 255u) {
+        case PAGE_READONLY: rights = QA_NATIVE_MEMORY_READ; break;
+        case PAGE_READWRITE: case PAGE_WRITECOPY:
+            rights = QA_NATIVE_MEMORY_READ | QA_NATIVE_MEMORY_WRITE; break;
+        case PAGE_EXECUTE: rights = QA_NATIVE_MEMORY_EXECUTE; break;
+        case PAGE_EXECUTE_READ: rights = QA_NATIVE_MEMORY_READ | QA_NATIVE_MEMORY_EXECUTE; break;
+        case PAGE_EXECUTE_READWRITE: case PAGE_EXECUTE_WRITECOPY: rights = 7; break;
+        default: break;
+        }
+        if ((rights & permissions) != permissions)
+            return native_fail(error, QA_ERROR_ARGUMENT, (size_t)cursor, "native VM permissions refuse the requested access");
+        cursor = base + region.RegionSize;
+    }
+    return true;
+#elif defined(__linux__)
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (!maps) return posix_error(error, QA_ERROR_IO, "opening actual native VM inventory");
+    char *line = NULL; size_t capacity = 0; bool okay = true;
+    while (cursor < end && getline(&line, &capacity, maps) >= 0) {
+        char *next = NULL;
+        errno = 0;
+        unsigned long long first = strtoull(line, &next, 16);
+        if (!isxdigit((unsigned char)line[0]) || errno == ERANGE || *next != '-') {
+            okay = native_fail(error, QA_ERROR_FORMAT, 0, "actual native VM inventory has an invalid base"); break;
+        }
+        char *limit = next + 1; errno = 0;
+        unsigned long long last = strtoull(limit, &next, 16);
+        bool width_bad = false;
+#if UINTPTR_MAX < ULLONG_MAX
+        width_bad = first > UINTPTR_MAX || last > UINTPTR_MAX;
+#endif
+        if (!isxdigit((unsigned char)limit[0]) || errno == ERANGE || *next != ' ' || first >= last ||
+            width_bad || strlen(next) < 5) {
+            okay = native_fail(error, QA_ERROR_FORMAT, 0, "actual native VM inventory has an invalid extent"); break;
+        }
+        if (last <= cursor) continue;
+        if (first > cursor) { okay = native_fail(error, QA_ERROR_ARGUMENT, (size_t)cursor,
+            "native VM range contains an unmapped hole"); break; }
+        uint32_t rights = (next[1] == 'r' ? (uint32_t)QA_NATIVE_MEMORY_READ : 0u) |
+            (next[2] == 'w' ? (uint32_t)QA_NATIVE_MEMORY_WRITE : 0u) |
+            (next[3] == 'x' ? (uint32_t)QA_NATIVE_MEMORY_EXECUTE : 0u);
+        if ((rights & permissions) != permissions) { okay = native_fail(error, QA_ERROR_ARGUMENT,
+            (size_t)cursor, "native VM permissions refuse the requested access"); break; }
+        cursor = (uint64_t)last;
+    }
+    if (okay && ferror(maps)) okay = posix_error(error, QA_ERROR_IO, "reading actual native VM inventory");
+    if (okay && cursor < end) okay = native_fail(error, QA_ERROR_ARGUMENT, (size_t)cursor,
+        "native VM range extends beyond mapped storage");
+    free(line);
+    if (fclose(maps) && okay) okay = posix_error(error, QA_ERROR_IO, "closing native VM inventory");
+    return okay;
+#else
+    (void)cursor; (void)end;
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native direct VM admission is unavailable on this platform");
+#endif
 }
 
 bool native_direct_read(qa_native_address address, void *out, size_t bytes, qa_error *error) {

@@ -10,6 +10,9 @@
 #include "shared_storage.h"
 #include "global_settings_storage.h"
 #include "qa/cvars_save.h"
+#include "qa/console_save.h"
+#include "qa/console_cvar_observer.h"
+#include "qa/catalog_save.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -71,8 +74,10 @@ static bool equal(const char *a,const char *b)
 {
     for (;;++a,++b) {
         unsigned x=(unsigned char)*a,y=(unsigned char)*b;
-        if (x>='A' && x<='Z') x+='a'-'A'; if (y>='A' && y<='Z') y+='a'-'A';
-        if (x!=y) return false; if (!x) return true;
+        if (x>='A' && x<='Z') x+='a'-'A';
+        if (y>='A' && y<='Z') y+='a'-'A';
+        if (x!=y) return false;
+        if (!x) return true;
     }
 }
 static const qa_launch_instance *descriptor(const frontend_remote_config *row)
@@ -246,7 +251,7 @@ bool frontend_remote_configs_fresh_input(const frontend_remote_configs *owner,qa
             row->scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME) return true;
     return false;
 }
-bool frontend_remote_config_acquire(frontend_remote_config *row,frontend_client_registry **out,qa_error *error)
+bool frontend_remote_config_acquire(const frontend_remote_config *row,frontend_client_registry **out,qa_error *error)
 {
     if (!row || !row->configured || !row->released || row->running || row->retargeting || !row->registry ||
         frontend_client_registry_cvars(row->registry)!=row->cvars)
@@ -358,10 +363,10 @@ static bool install_commands(frontend_remote_config *row,qa_error *error)
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
     remote_input *input=context;
-    return input && command && ordinal==input->physical_seat && command->origin==QA_COMMAND_SEAT &&
+    return (input && command && ordinal==input->physical_seat && command->origin==QA_COMMAND_SEAT &&
         command->owner==input->source_command.owner && command->session==input->source_command.session &&
         command->seat==input->logical_seat && command->dialect==QA_CONSOLE_Q3 &&
-        qa_application_command_context_active(input->application,command) ||
+        qa_application_command_context_active(input->application,command)) ||
         fail(error,QA_ERROR_ARGUMENT,"CLIENT input left its actual authored and physical seat");
 }
 static bool script_read(void *context,frontend_script_scope scope,const char *name,const qa_command_context *command,
@@ -520,7 +525,7 @@ static frontend_remote_config *previous(const frontend_remote_configs *owner,qa_
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
-        if (movement && movement->selection.clock.kind==row->movement) return row;
+        if (movement && (qa_movement_kind)movement->selection.clock.kind==row->movement) return row;
     }
     return NULL;
 }
@@ -578,9 +583,9 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const qa_launch_binding *movement=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_MOVEMENT_Q3)
+    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT input lacks its actual selected movement source");
-    row->movement=selected->selection.clock.kind;
+    row->movement=(qa_movement_kind)selected->selection.clock.kind;
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *game=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     qa_console *game_console=NULL; qa_cvars *game_cvars=NULL; qa_command_context game_command;
@@ -821,10 +826,10 @@ bool frontend_remote_config_preinit(frontend_remote_configs *owner,qa_applicatio
 {
     frontend_remote_config *row=source?frontend_remote_config_find(owner,source->console):NULL;
     const qa_launch_instance *held=descriptor(row);
-    return row && row->application==application && row->candidate==candidate &&
+    return (row && row->application==application && row->candidate==candidate &&
         source->descriptor && held->storage==source->descriptor->storage && scope_equal(row->scope,source->scope) &&
         row->cvars==source->cvars && row->configured && row->released && !row->running &&
-        active(row,&source->command) || fail(error,QA_ERROR_ARGUMENT,"CLIENT Init requires its completed retained preparation");
+        active(row,&source->command)) || fail(error,QA_ERROR_ARGUMENT,"CLIENT Init requires its completed retained preparation");
 }
 static bool destroy_row(frontend_remote_config *row,qa_error *error)
 {
@@ -946,9 +951,9 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     const qa_launch_binding *movement=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=target->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_MOVEMENT_Q3)
+    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks its selected movement source");
-    row->movement=selected->selection.clock.kind;
+    row->movement=(qa_movement_kind)selected->selection.clock.kind;
     if (!row->registry && !frontend_config_source_acquire_seat_registry(game,row->scope.seat,&row->registry,error)) return false;
     row->cvars=frontend_client_registry_cvars(row->registry);
     frontend_key_profile *profile=frontend_config_source_keys(game);
@@ -1218,7 +1223,7 @@ static bool resolve_key(void *context,const char *name,qa_actor_owner *owner,qa_
 static bool qualify_key(void *context,const qa_application_console_scope *scope,const qa_cvars *cvars,qa_error *error)
 {
     const qa_application_startup_source *source=((restored_key_scope *)context)->source;
-    return scope_equal(*scope,source->scope) && cvars==source->cvars ||
+    return (scope_equal(*scope,source->scope) && cvars==source->cvars) ||
         fail(error,QA_ERROR_FORMAT,"CLIENT key registry differs from its canonical decoded owner");
 }
 bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_application *application,
@@ -1232,8 +1237,8 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
     if (!row || row->application!=application || row->scope.kind!=source->scope.kind ||
         !qa_sha256_equal(&row->saved_identity,&source->descriptor->identity))
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT configuration differs from its physical receiver");
-    if (!row->imported) return row->console==source->console && row->cvars==source->cvars &&
-        descriptor(row)->storage==source->descriptor->storage ||
+    if (!row->imported) return (row->console==source->console && row->cvars==source->cvars &&
+        descriptor(row)->storage==source->descriptor->storage) ||
         fail(error,QA_ERROR_FORMAT,"Restored CLIENT alias changed its canonical physical registry");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
     qa_movement_kind movement=QA_MOVEMENT_Q3;
@@ -1241,7 +1246,7 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *movement_source=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
     if (!choices || row->physical_seat>=choices->seat_count || choices->seats[row->physical_seat].id!=row->scope.seat ||
-        !movement_source || (movement=movement_source->selection.clock.kind)!=row->movement)
+        !movement_source || (movement=(qa_movement_kind)movement_source->selection.clock.kind)!=row->movement)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its real physical seat or movement selection");
     const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(source->descriptor),source->descriptor->selection.product);
     const qa_product *saved=qa_catalog_product(frontend_config_files_catalog(row->files),frontend_config_files_product(row->files));

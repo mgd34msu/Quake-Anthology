@@ -4,6 +4,7 @@
 #include "qa/console_cvars_prepare.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_engine_shutdown.h"
+#include "qa/application_client_prepare.h"
 
 typedef struct frontend_view_settings frontend_view_settings;
 typedef struct frontend_view_preparation frontend_view_preparation;
@@ -33,6 +34,9 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *,qa_console_dialec
  * receipt. Preparation retains the actual previous and candidate scalar. */
 bool frontend_view_settings_prepare(frontend_view_settings *,const qa_launch_snapshot *,
     const qa_cvars_edit *,frontend_view_transition,frontend_view_preparation **,qa_error *);
+bool frontend_view_settings_prepare_client(frontend_view_settings *,
+    const qa_application_client_preparation *,const qa_cvars_edit *,frontend_view_transition,
+    frontend_view_preparation **,qa_error *);
 bool frontend_view_settings_ready_is(const frontend_view_preparation *);
 void frontend_view_settings_publish(frontend_view_preparation *);
 /* Apply only after scalar publication and native/resource lease release.

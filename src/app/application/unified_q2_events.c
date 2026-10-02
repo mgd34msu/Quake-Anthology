@@ -19,6 +19,7 @@ typedef struct q2_projection {
     const qa_application_q2_protocol_delivery *delivery;
     const qa_q2_server_record *record;
     uint64_t time_ns;
+    size_t ordinal, record_ordinal;
 } q2_projection;
 
 static bool text(application_unified_json *j, const char *s, qa_error *e)
@@ -67,7 +68,7 @@ static bool reference_actor(const q2_projection *p, uint32_t slot, qa_actor_id *
 /* Read the admitted public GAME prefix while the actual import is executing.
  * Idle snapshot APIs cannot be used at this append-time boundary. */
 static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *actor_out,
-    qa_vec3 *origin, qa_vec3 *angles, bool *present, qa_error *e)
+    qa_vec3 *origin, qa_vec3 *angles, float *scale, bool *present, qa_error *e)
 {
     *present = false; *actor_out = (qa_actor_id){0};
     bool captured = reference_actor(p, slot, actor_out);
@@ -95,6 +96,7 @@ static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *ac
     qa_native_host_q2_entity actual;
     if (!qa_native_host_q2_wire_entity_import(p->provider->state.native.host, slot, &actual, e)) return false;
     *origin = vec(actual.state.origin); *angles = vec(actual.state.angles);
+    if (scale) *scale = p->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 1.0f : actual.state.scale;
     if (!qa_vec_finite(*origin) || !qa_vec_finite(*angles))
         return application_fail(e, QA_ERROR_FORMAT, "Q2 service entity has nonfinite Source coordinates");
     if (!qa_actor_id_equal(binding.actor, actual.binding.actor) || binding.owner != actual.binding.owner ||
@@ -107,12 +109,25 @@ static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *ac
 static bool source_actor(const q2_projection *p, uint32_t slot, qa_actor_id *out, qa_error *e)
 {
     qa_vec3 origin, angles; bool present;
-    return source_entity(p, slot, out, &origin, &angles, &present, e);
+    return source_entity(p, slot, out, &origin, &angles, NULL, &present, e);
+}
+
+static const qa_application_protocol_resource_reference *resource_receipt(const q2_projection *p,
+    qa_native_host_resource_kind kind, uint32_t index)
+{
+    for (size_t i = 0; i < p->message->resource_count; ++i) {
+        const qa_application_protocol_resource_reference *receipt = p->message->resources + i;
+        if (receipt->record_ordinal == p->record_ordinal && receipt->kind == kind && receipt->source_index == index)
+            return receipt;
+    }
+    return NULL;
 }
 
 static const char *resource_path(const q2_projection *p, qa_native_host_resource_kind kind,
     uint32_t index, qa_error *e)
 {
+    const qa_application_protocol_resource_reference *receipt = resource_receipt(p, kind, index);
+    if (receipt) return receipt->name;
     uint32_t base = p->engine->resource_base[kind];
     if (index >= p->engine->resource_limit[kind] || base + index >= p->engine->configstring_count ||
         !p->engine->configstrings[base + index]) {
@@ -128,7 +143,11 @@ static bool simulation_sound(q2_projection *p, application_unified_json *j,
     const qa_q2_kex_sound *sound, qa_actor_id source, qa_vec3 origin, const char *path, qa_error *e)
 {
     char id[81]; bool found;
-    if (!application_unified_event_resource_lookup(p->provider->application, p->provider->owner,
+    const qa_application_protocol_resource_reference *receipt = resource_receipt(p, QA_NATIVE_HOST_SOUND, sound->index);
+    if (receipt) {
+        found = receipt->resource_key[0] != 0;
+        memcpy(id, receipt->resource_key, sizeof(id));
+    } else if (!application_unified_event_resource_lookup(p->provider->application, p->provider->owner,
         path, id, &found, e)) return false;
     if (!found) return true;
     return text(j, "{\"kind\":\"sound\"", e) &&
@@ -286,8 +305,8 @@ static bool fog(q2_projection *p, application_unified_json *j, uint32_t slot,
 static bool muzzle(q2_projection *p, const qa_q2_server_event *event,
     application_unified_json *presentation, application_unified_json *simulation, qa_error *e)
 {
-    qa_actor_id a; qa_vec3 origin, angles; bool present;
-    if (!source_entity(p, event->data.muzzle.entity, &a, &origin, &angles, &present, e)) return false;
+    qa_actor_id a; qa_vec3 origin, angles; float scale = 1; bool present;
+    if (!source_entity(p, event->data.muzzle.entity, &a, &origin, &angles, &scale, &present, e)) return false;
     if (!a.registry || (event->data.muzzle.monster && !present)) return true;
     if (event->data.muzzle.monster) {
         bool classic = p->engine->profile == QA_NATIVE_Q2_GAME_API3;
@@ -297,12 +316,13 @@ static bool muzzle(q2_projection *p, const qa_q2_server_event *event,
         if (event->data.muzzle.flash >= count)
             return application_fail(e, QA_ERROR_FORMAT, "Q2 monster muzzle exceeds its authentic Source offset table");
         qa_vec3 forward, right; qa_builtin_angle_vectors(angles, &forward, &right, NULL);
-        qa_vec3 offset = offsets[event->data.muzzle.flash];
+        qa_vec3 offset = qa_vec_scale(offsets[event->data.muzzle.flash], scale == 0 ? 1 : scale);
         origin = qa_vec_add(origin, qa_vec_add(qa_vec_scale(forward, offset.x), qa_vec_scale(right, offset.y)));
         origin.z += offset.z;
         if (!text(presentation, "{\"kind\":\"q2\",\"event\":{\"kind\":\"monster-muzzleflash\"", e) ||
             !actor(presentation, ",\"actor\":", a, e) || !number(presentation, ",\"flash\":", event->data.muzzle.flash, e) ||
             !vector(presentation, ",\"origin\":", origin, e) || !vector(presentation, ",\"direction\":", forward, e) ||
+            !vector(presentation, ",\"angles\":", angles, e) || !number(presentation, ",\"scale\":", scale, e) ||
             !text(presentation, "}}", e)) return false;
     } else if (!text(presentation, "{\"kind\":\"q2-weapon\",\"event\":{\"kind\":\"muzzleflash\"", e) ||
         !actor(presentation, ",\"actor\":", a, e) || !number(presentation, ",\"flash\":", event->data.muzzle.flash, e) ||
@@ -411,14 +431,15 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         qa_actor_id a = {0}; qa_vec3 origin = {0}, angles; bool present;
         const char *path = resource_path(p, QA_NATIVE_HOST_SOUND, sound->index, e);
         ok = path != NULL;
-        if (ok && (sound->flags & 8u)) ok = source_entity(p, sound->entity, &a, &origin, &angles, &present, e);
+        if (ok && (sound->flags & 8u)) ok = source_entity(p, sound->entity, &a, &origin, &angles, NULL, &present, e);
         if (sound->has_position) origin = vec(sound->position);
         source = sound->entity; has_source = (sound->flags & 8u) != 0;
         if (ok) ok = text(&presentation, "{\"kind\":\"q2\",\"event\":{\"kind\":\"sound\"", e) &&
             actor(&presentation, ",\"actor\":", a, e) && vector(&presentation, ",\"origin\":", origin, e) &&
             string(&presentation, ",\"path\":", path, e) && number(&presentation, ",\"channel\":", sound->channel, e) &&
             number(&presentation, ",\"volume\":", sound->volume, e) && number(&presentation, ",\"attenuation\":", sound->attenuation, e) &&
-            text(&presentation, ",\"reliable\":false,\"loop\":\"once\"}}", e) &&
+            boolean(&presentation, ",\"reliable\":", p->message->reliable, e) &&
+            text(&presentation, ",\"loop\":\"once\"}}", e) &&
             simulation_sound(p, &simulation, sound, a, origin, path, e);
         break;
     }
@@ -473,20 +494,16 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
 {
     q2_projection *p = opaque;
     p->record = record;
+    p->record_ordinal = p->ordinal++;
     if (record->event.kind == QA_Q2_SVC_SEAT) return true;
     if (p->delivery && p->delivery->original) {
         const qa_application_q2_audience *audience = &p->delivery->audience;
         if (!audience->captured) return true;
         for (size_t i = 0; i < audience->count; ++i) {
-            qa_actor_id target = audience->recipients[i].actor;
-            if (record->seat) {
-                qa_application_network_q2_recipient_view group; bool present;
-                if (!qa_application_network_q2_recipient(p->provider->application, p->provider->owner,
-                    target, &group, &present, e)) return false;
-                if (!present)
-                    return application_fail(e, QA_ERROR_ARGUMENT, "Selected Q2 service has no actual connection group");
-                if (record->seat != group.remote_index + 1u) continue;
-            }
+            const qa_application_q2_recipient *recipient = audience->recipients + i;
+            qa_actor_id target = recipient->actor;
+            if (record->seat && (!recipient->has_connection ||
+                record->seat != recipient->remote_index + 1u)) continue;
             if (!emit_to(p, record, target, e)) return false;
         }
         return true;

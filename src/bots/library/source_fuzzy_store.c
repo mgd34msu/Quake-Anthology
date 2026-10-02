@@ -180,7 +180,8 @@ static bool read_config(bot_fuzzy_store *store,const char *path,size_t available
             if(reload) {
                 qa_error cleanup={0};
                 if(!bot_fuzzy_config_free(&record,&cleanup)) {
-                    if(error) *error=cleanup;free(canonical);return false;
+                    if(error) *error=cleanup;
+                    free(canonical);return false;
                 }
             }
             close_reader(store,reader);

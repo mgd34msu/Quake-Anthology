@@ -3,6 +3,7 @@
 #include "qa/application.h"
 #include "qa/qc.h"
 #include "qa/network_q1_nq.h"
+#include "qa/inventory.h"
 
 typedef struct qa_application_qc_animation {
     qa_actor_id actor;
@@ -85,4 +86,12 @@ bool qa_application_qc_selected_player_ui_read(qa_application *,qa_actor_id,qa_l
 bool qa_application_qc_message_player_ui_current(qa_application *,const qa_application_qc_player_ui *);
 bool qa_application_qc_message_player_ui_binding(qa_application *,const qa_application_qc_player_ui *,
     size_t,qa_application_qc_weapon_ui_binding *,qa_error *);
+/* Full weapon catalog metadata belongs to this actual selected/source owner.
+ * Custom profiles require its admitted item definition; SDK programs use their
+ * genuine weapon profile. No foreign inventory definition supplies a fallback. */
+bool qa_application_qc_message_player_ui_definition(qa_application *,const qa_application_qc_player_ui *,
+    size_t,qa_item_definition *,qa_error *);
+/* Writes the actual selected QC client's declared impulse. An unavailable or
+ * unowned weapon returns accepted=false without staging a Source command. */
+bool qa_application_qc_weapon_request(qa_application *,qa_actor_id,qa_item_id,bool *accepted,qa_error *);
 #endif

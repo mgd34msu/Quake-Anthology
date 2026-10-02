@@ -43,5 +43,10 @@ bool qa_application_native_q2_presentation_retained_selected(qa_application *,
     qa_application_native_q2_presentation *, bool *found, qa_error *);
 bool qa_application_native_q2_presentation_current(qa_application *,
     const qa_application_native_q2_presentation *);
+/* Reads the emitting GAME's actual compiled rules or original API profile,
+ * including during its source callback. This grants no transport dialect or
+ * PresentationOwner. Other source families leave edition unchanged. */
+bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_owner,
+    qa_q2_edition *edition, bool *found, qa_error *);
 
 #endif

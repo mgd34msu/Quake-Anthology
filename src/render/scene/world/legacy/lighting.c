@@ -273,14 +273,17 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
 {
     qaw_legacy *light = surface->legacy;
     if (!light->lightmapped) return true;
+    if (input->legacy_policy.present && !input->legacy_policy.dynamic && light->light_cache_valid) return true;
     bool q1 = world->bsp.family == QA_BSP_Q1;
     qa_material_context baked = *context;
     if (input->legacy_flashblend || (!q1 && input->shadow_lights != NULL)) baked.light_count = 0;
     context = &baked;
-    float modulate = q1 ? 1 : world->options.q2_light_modulate;
+    float modulate = q1 ? 1 : input->legacy_policy.present ? input->legacy_policy.modulate : world->options.q2_light_modulate;
+    uint8_t mono = !q1 && input->legacy_policy.present ? input->legacy_policy.monolightmap : '0';
     if (!isfinite(modulate)) return light_error(error, QA_ERROR_ARGUMENT, surface->source_index, "nonfinite light modulation");
     bool changed = !light->light_cache_valid || light->light_cache_dynamic || context->light_count != 0;
     if (!changed && light->cached_styles[0] != modulate) changed = true;
+    if (!changed && light->light_cache_monolightmap != mono) changed = true;
     for (size_t i = 0; i < light->style_count; ++i) {
         qa_vec3 style = face_style(world, input, light->styles[i]);
         if (!qa_vec_finite(style)) return light_error(error, QA_ERROR_ARGUMENT, light->styles[i], "nonfinite lightstyle");
@@ -344,6 +347,27 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
                 light->encoded_pixels[pixel * 4 + channel] = value;
             }
             light->encoded_pixels[pixel * 4 + 3] = (uint8_t)fminf(255, truncf(maximum * scale));
+            if (mono != '0') {
+                uint8_t *encoded = light->encoded_pixels + pixel * 4;
+                uint8_t *direct = light->light_pixels + pixel * 4;
+                uint8_t brightness = encoded[3];
+                if (mono == 'L' || mono == 'I') {
+                    /* The original GL_LUMINANCE/GL_INTENSITY upload expands
+                     * its red source component to all sampled RGB lanes. */
+                    encoded[0] = encoded[1] = encoded[2] = brightness;
+                    direct[0] = direct[1] = direct[2] = brightness;
+                    encoded[3] = mono == 'I' ? brightness : 255;
+                } else if (mono == 'C') {
+                    uint8_t alpha = (uint8_t)(255 - ((unsigned)encoded[0] + encoded[1] + encoded[2]) / 3);
+                    for (size_t channel = 0; channel < 3; ++channel)
+                        encoded[channel] = (uint8_t)(encoded[channel] * (float)alpha / 255);
+                    encoded[3] = alpha;
+                } else {
+                    encoded[0] = encoded[1] = encoded[2] = 0;
+                    encoded[3] = (uint8_t)(255 - brightness);
+                    direct[0] = direct[1] = direct[2] = brightness;
+                }
+            }
         }
         light->light_pixels[pixel * 4 + 3] = 255;
     }
@@ -372,6 +396,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
         light->cached_styles[i * 3 + 3] = style.z;
     }
     light->light_cache_dynamic = context->light_count != 0;
+    light->light_cache_monolightmap = mono;
     light->light_cache_valid = true;
     return true;
 }
@@ -447,7 +472,8 @@ static bool sample_surface(const qa_scene_world *world, const qaw_surface *surfa
                        (float)(light_u32(sum[2]) >> 8) / 255);
     } else {
         *color = qa_v3((float)(sum[0] / 255), (float)(sum[1] / 255), (float)(sum[2] / 255));
-        *color = qa_vec_scale(*color, world->options.q2_light_modulate);
+        *color = qa_vec_scale(*color, input && input->legacy_policy.present ?
+            input->legacy_policy.modulate : world->options.q2_light_modulate);
     }
     return true;
 }
@@ -557,7 +583,8 @@ static bool sample_grid(const qa_scene_world *world,const qa_scene_world_input *
     float fx = point.x - (float)base[0], fy = point.y - (float)base[1], fz = point.z - (float)base[2];
     qa_vec3 bottom = grid_interpolate(grid_interpolate(corners[0], corners[1], fx), grid_interpolate(corners[2], corners[3], fx), fy);
     qa_vec3 top = grid_interpolate(grid_interpolate(corners[4], corners[5], fx), grid_interpolate(corners[6], corners[7], fx), fy);
-    qa_vec3 result = qa_vec_scale(grid_interpolate(bottom, top, fz), world->options.q2_light_modulate);
+    qa_vec3 result = qa_vec_scale(grid_interpolate(bottom, top, fz),
+        input && input->legacy_policy.present ? input->legacy_policy.modulate : world->options.q2_light_modulate);
     *color = qa_vec_scale(qa_v3(fmaxf(0, result.x), fmaxf(0, result.y), fmaxf(0, result.z)), 1.0f / 255);
     return true;
 }

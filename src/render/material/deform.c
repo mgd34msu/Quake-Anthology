@@ -124,9 +124,11 @@ static void stamp_quad(deform_mesh *geometry, size_t start, qa_vec3 center,
 }
 
 static bool autosprite(deform_mesh *geometry, const qa_material_context *context,
-                       qa_error *error)
+                       qa_scene_frame *frame, qa_error *error)
 {
-    if (!require_quads(geometry, "autosprite", error)) return false;
+    if (!geometry->retained && !require_quads(geometry, "autosprite", error)) return false;
+    size_t count = geometry->mesh.vertex_count;
+    if (geometry->retained) geometry->retained->vertex_count = geometry->retained->index_count = 0;
     qa_vec3 left_direction = local_direction(context, context->view.axis[1]);
     qa_vec3 up_direction = local_direction(context, context->view.axis[2]);
     qa_vec3 normal = qa_vec_sub(qa_v3(0, 0, 0), context->view.axis[0]);
@@ -135,7 +137,10 @@ static bool autosprite(deform_mesh *geometry, const qa_material_context *context
         float length = qa_vec_length(model_axis(context, 0));
         axis_scale = length == 0.0f ? 0.0f : 1.0f / length;
     }
-    for (size_t start = 0; start < geometry->mesh.vertex_count; start += 4) {
+    for (size_t start = 0; start < count; start += 4) {
+        if (start > QA_SOURCE_TESS_VERTICES - 4 && geometry->retained) {
+            qa_error_set(error, QA_ERROR_FORMAT, start, "Source autosprite read exceeds its physical cells"); return false;
+        }
         qa_scene_vertex first = geometry->vertices[start];
         qa_vec3 first_pair = qa_vec_add(first.position, geometry->vertices[start + 1].position);
         qa_vec3 second_pair = qa_vec_add(geometry->vertices[start + 2].position,
@@ -147,7 +152,21 @@ static bool autosprite(deform_mesh *geometry, const qa_material_context *context
                                    context->mirror ? -radius : radius), axis_scale);
         qa_vec3 up = qa_vec_scale(qa_vec_scale(up_direction, radius), axis_scale);
         /* RB_AddQuadStamp retains the global view normal in entity-local geometry. */
-        stamp_quad(geometry, start, center, left, up, normal, first.color, 0, 0, 1);
+        size_t destination = start;
+        if (geometry->retained) {
+            if (geometry->retained->vertex_count + 4 >= QA_SOURCE_TESS_VERTICES ||
+                geometry->retained->index_count + 6 >= QA_SOURCE_TESS_INDEXES)
+                if (!material_source_deform_overflow(geometry->retained, context, frame, error)) return false;
+            destination = geometry->retained->vertex_count;
+        }
+        stamp_quad(geometry, destination, center, left, up, normal, first.color, 0, 0, 1);
+        if (geometry->retained) {
+            geometry->retained->vertex_count += 4; geometry->retained->index_count += 6;
+        }
+    }
+    if (geometry->retained) {
+        geometry->mesh.vertex_count = geometry->retained->vertex_count;
+        geometry->mesh.index_count = geometry->retained->index_count;
     }
     return true;
 }
@@ -156,9 +175,12 @@ static bool autosprite2(deform_mesh *geometry, const qa_material_context *contex
                         qa_error *error)
 {
     static const unsigned edges[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
-    if (!require_quads(geometry, "autosprite2", error)) return false;
+    if (!geometry->retained && !require_quads(geometry, "autosprite2", error)) return false;
     qa_vec3 forward = local_direction(context, context->view.axis[0]);
     for (size_t start = 0; start < geometry->mesh.vertex_count; start += 4) {
+        if (geometry->retained && (start > QA_SOURCE_TESS_VERTICES - 4 || start / 4u * 6u + 5 >= QA_SOURCE_TESS_INDEXES)) {
+            qa_error_set(error, QA_ERROR_FORMAT, start, "Source autosprite2 read exceeds its physical cells"); return false;
+        }
         unsigned selected[2] = {0, 0};
         float lengths[2] = {999999.0f, 999999.0f};
         for (unsigned edge = 0; edge < 6; ++edge) {
@@ -426,7 +448,7 @@ bool qa_material_deform_mesh(const qa_material *material, const qa_scene_mesh *s
             if (!bulge_deform(&geometry, deform, context, error)) return false;
             break;
         case QA_DEFORM_AUTOSPRITE:
-            if (!autosprite(&geometry, context, error)) return false;
+            if (!autosprite(&geometry, context, frame, error)) return false;
             break;
         case QA_DEFORM_AUTOSPRITE2:
             if (!autosprite2(&geometry, context, error)) return false;

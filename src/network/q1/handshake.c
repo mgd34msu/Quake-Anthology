@@ -559,6 +559,14 @@ bool qa_qw_connect_create(uint16_t qport, const char *userinfo, qa_qw_connect_cl
 void qa_qw_connect_destroy(qa_qw_connect_client *client) {
     if (client) { free(client->userinfo); free(client->owned_reason); free(client); }
 }
+bool qa_qw_connect_userinfo(qa_qw_connect_client *client, const char *userinfo, qa_error *error) {
+    if (!client || !userinfo || strlen(userinfo) > 65500 || strpbrk(userinfo, "\"\r\n"))
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeWorld connect userinfo update");
+    if (!strcmp(client->userinfo, userinfo)) return true;
+    char *copy = copy_text(userinfo, error);
+    if (!copy) return false;
+    free(client->userinfo); client->userinfo = copy; return true;
+}
 qa_q1_connect_state qa_qw_connect_state(const qa_qw_connect_client *client) {
     return client ? client->state : (qa_q1_connect_state){.phase = QA_Q1_CONNECT_REJECTED, .reason = "Missing connection"};
 }

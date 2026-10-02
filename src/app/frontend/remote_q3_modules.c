@@ -1,4 +1,5 @@
 #include "remote_q3_modules_private.h"
+#include "remote_q3_video_media.h"
 #include "equipment_source.h"
 #include "network_browser.h"
 #include "system_cinematic.h"
@@ -67,11 +68,17 @@ static bool basis_current(const frontend_remote_q3_modules *owner, const qa_appl
     if (!owner || owner->retiring || !attached(owner)) return false;
     if (owner->kind == REMOTE_MODULE_INITIAL) {
         frontend_remote_q3_initial_view view;
-        return !gamestate && frontend_remote_q3_initial_read(owner->basis.initial.owner, &view, error) &&
+        uint64_t generation; bool complete;
+        return !gamestate && (owner->video ?
+            frontend_remote_q3_initial_video_read(owner->basis.initial.owner, owner, &view, &generation, &complete, error) :
+            frontend_remote_q3_initial_read(owner->basis.initial.owner, &view, error)) &&
             same_source(source, &view.attempt.source);
     }
     frontend_remote_q3_resources resources;
-    return frontend_remote_q3_resources_read(owner->basis.decoded.row, &resources, error) &&
+    uint64_t generation; bool complete;
+    return (owner->video ?
+        frontend_remote_q3_resources_video_read(owner->basis.decoded.row, owner, &resources, &generation, &complete, error) :
+        frontend_remote_q3_resources_read(owner->basis.decoded.row, &resources, error)) &&
         same_source(source, &resources.domain.source) && gamestate == resources.domain.gamestate;
 }
 static bool current(void *context, const qa_application_q3_remote_source *source,
@@ -672,6 +679,17 @@ static bool dispose_lease(remote_module_lease *lease, qa_error *error)
     qa_catalog_write_resolver_destroy(lease->write_resolver); lease->write_resolver = NULL;
     return true;
 }
+bool frontend_remote_modules_released_drain(frontend_remote_q3_modules *owner, qa_error *error)
+{
+    for (remote_module_lease **link = &owner->leases; *link;) {
+        remote_module_lease *previous = *link;
+        if (!previous->released) { link = &previous->next; continue; }
+        if (!dispose_lease(previous, error)) return false;
+        *link = previous->next; free(previous);
+    }
+    return true;
+}
+
 static bool prepare(void *context, const qa_application_native_q3_module_preparation *request, qa_error *error)
 {
     frontend_remote_q3_modules *owner = context;
@@ -683,12 +701,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         (owner->restoring && (!saved || saved->prepared)) ||
         (owner->kind == REMOTE_MODULE_INITIAL && request->role != QA_QVM_UI) ||
         !current(owner, request->source, gamestate, error)) return false;
-    for (remote_module_lease **link = &owner->leases; *link;) {
-        remote_module_lease *previous = *link;
-        if (!previous->released) { link = &previous->next; continue; }
-        if (!dispose_lease(previous, error)) return false;
-        *link = previous->next; free(previous);
-    }
+    if (!frontend_remote_modules_released_drain(owner, error)) return false;
     remote_module_lease *lease = calloc(1, sizeof(*lease));
     if (!lease) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining acquired remote host lease");
     lease->owner = owner; lease->role = request->role; lease->service_owner = request->service_owner;
@@ -973,7 +986,8 @@ bool frontend_remote_q3_modules_role_current(const frontend_remote_q3_module_top
 bool frontend_remote_q3_modules_idle(const frontend_remote_q3_modules *owner)
 {
     if (!owner) return true;
-    if (owner->constructing || (owner->modules && !qa_application_native_q3_client_modules_idle(owner->modules))) return false;
+    if (owner->video || owner->constructing ||
+        (owner->modules && !qa_application_native_q3_client_modules_idle(owner->modules))) return false;
     for (const remote_module_lease *lease = owner->leases; lease; lease = lease->next)
         if (lease->callbacks || lease->render_definition || !frontend_equipment_source_idle(lease->equipment) ||
             (lease->presentation && !qa_q3_presentation_idle(lease->presentation))) return false;

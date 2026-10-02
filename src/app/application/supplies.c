@@ -1112,6 +1112,22 @@ void application_supplies_actor_released(application_supplies *owner, qa_actor_r
         else cursor = &entry->next;
     }
 }
+bool application_supplies_ammo_destination(application_supplies *owner,
+    application_provider *source, qa_actor_id actor, qa_item_id item, bool *found,
+    qa_error *error) {
+    if (!owner || !source || !item || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Ammo destination requires its actual supply association");
+    application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair || !supply_current(pair, actor, error))
+        return pair ? false : application_fail(error, QA_ERROR_ARGUMENT, "Ammo destination lost its admitted supply pair");
+    bool present = false;
+    for (size_t i = 0; i < pair->profile.ammo_count; ++i)
+        for (size_t j = 0; j < pair->profile.ammo[i].count; ++j)
+            if (pair->profile.ammo[i].destinations[j] == item) present = true;
+    *found = present;
+    return true;
+}
 bool application_supplies_for(application_supplies *owner, application_provider *source,
     qa_actor_id actor, qa_supply **out, qa_error *error) {
     if (!owner || !source || !out)

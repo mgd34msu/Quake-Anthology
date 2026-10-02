@@ -18,6 +18,7 @@ typedef struct q3n_view_options {
     qa_q3_presentation_assets *assets;
     qa_native_q3_client_service *client;
     qa_native_q3_remote_client_service *remote_client;
+    q3n_compiled_source *compiled_source;
     uint32_t seat;
     void *context;
     bool (*set_view_size)(void *, int32_t, qa_error *);
@@ -35,6 +36,7 @@ typedef struct q3n_view_state {
 bool q3n_view_create(const q3n_view_options *, q3n_view **, qa_error *);
 bool q3n_view_create_restored(const q3n_view_options *, q3n_view **, qa_error *);
 bool q3n_view_create_remote(const q3n_view_options *, q3n_view **, qa_error *);
+bool q3n_view_create_compiled(const q3n_view_options *, q3n_view **, qa_error *);
 void q3n_view_destroy(q3n_view *);
 bool q3n_view_idle(const q3n_view *);
 const q3n_view_state *q3n_view_read(const q3n_view *);

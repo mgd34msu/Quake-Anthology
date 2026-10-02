@@ -45,10 +45,18 @@ bool qa_native_process_platform_linux_clock_read(qa_native_process_platform *,
     int32_t, int64_t *, int32_t *, qa_error *);
 bool qa_native_process_platform_file_status(qa_native_process_platform *, uint64_t,
     qa_fs_posix_status *, qa_error *);
+bool qa_native_process_platform_descriptor_status(qa_native_process_platform *, uint64_t,
+    qa_fs_posix_descriptor_status *, qa_error *);
+bool qa_native_process_platform_descriptor_flags(qa_native_process_platform *, uint64_t,
+    bool append, bool nonblocking, qa_error *);
 bool qa_native_process_platform_windows_streams(qa_native_process_platform *,
     qa_native_windows_stream[3], qa_error *);
 bool qa_native_process_platform_sysv_files(qa_native_process_platform *,
     qa_native_sysv_file[3], bool *terminal, qa_error *);
+/* PROGRAM uses positional access for genuinely seekable standard objects.
+ * Library/CRT standard streams retain their sequential native callbacks. */
+bool qa_native_process_platform_program_files(qa_native_process_platform *,
+    qa_native_sysv_file[3], qa_error *);
 /* Detached continuations borrow this retained external owner. Validate actual
  * identities before adoption; no descriptor duplication or clock/entropy/I/O
  * occurs on this path. */

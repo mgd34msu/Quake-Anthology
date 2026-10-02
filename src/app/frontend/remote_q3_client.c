@@ -1,7 +1,12 @@
+#include "renderer_materials.h"
 #include "q3_color_policy.h"
 #include "remote_q3_private.h"
 #include "remote_q3_services.h"
 #include "remote_q3_modules.h"
+#include "remote_q3_modules_video.h"
+#include "remote_q3_video_media.h"
+#include "remote_q3_compiled_video.h"
+#include "qa/media_library_prepare.h"
 #include "remote_q3_frame.h"
 #include "remote_q3_runtime.h"
 #include "remote_q3_transport.h"
@@ -11,6 +16,7 @@
 #include "q3_render_policy.h"
 #include "material_movie_bindings.h"
 #include "network_restore.h"
+#include "network_q3_restart.h"
 #include "remote_q3_graph.h"
 #include "source_restore.h"
 #include "capture.h"
@@ -149,6 +155,7 @@ bool frontend_remote_q3_resources_prepare_restored(qa_frontend *f,const frontend
     if(ok && bsp.family!=QA_BSP_Q3)
         ok=frontend_fail(error,QA_ERROR_FORMAT,"Restored remote resources require their saved Q3 BSP");
     if(ok) ok=qa_collision_create(&bsp,&v->geometry,error) &&
+        qa_collision_bind_resource(v->geometry,row->map,error) &&
         frontend_remote_q3_graph_geometry_restore(v->geometry,portals,error);
     qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
         .sounds=v->sounds,.movies=v->movies,.context=row,.model_initialize=model_initialize};
@@ -195,6 +202,7 @@ bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_c
     row->constructing=false; row->resources_ready=ok;
     return ok;
 }
+static bool build_media(frontend_remote_q3 *row,qa_error *error);
 static bool build_resources(frontend_remote_q3 *row,frontend_remote_config *configuration,qa_error *error)
 {
     qa_frontend *f=row->frontend;
@@ -209,6 +217,13 @@ static bool build_resources(frontend_remote_q3 *row,frontend_remote_config *conf
     row->map=(qa_resource *)domain->map; qa_resource_retain(row->map);
     frontend_remote_q3_resources *v=&row->resources;
     v->mounts=qa_vfs_clone(domain->content,error);
+    return v->mounts && build_media(row,error);
+}
+static bool build_media(frontend_remote_q3 *row,qa_error *error)
+{
+    qa_frontend *f=row->frontend;
+    frontend_remote_q3_resources *v=&row->resources;
+    const frontend_network_client_domain *domain=&v->domain;
     if (!frontend_q3_source_color_ensure(f,error)) return false;
     v->images=v->mounts?qa_scene_resources_create(v->mounts,error):NULL;
     if(v->images && !frontend_image_policy_initialize(f,v->images,error))return false;
@@ -236,11 +251,62 @@ static bool build_resources(frontend_remote_q3 *row,frontend_remote_config *conf
     qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
         .sounds=v->sounds,.movies=v->movies,.context=row,.model_initialize=model_initialize};
     if (!frontend_q3_world_policy_initialize(f,&options,error)) return false;
-    if(!qa_collision_create(&bsp,&v->geometry,error) ||
+    if((!v->geometry && !qa_collision_create(&bsp,&v->geometry,error)) ||
+        !qa_collision_bind_resource(v->geometry,row->map,error) ||
         !qa_scene_world_create(&bsp,v->images,v->materials,&options,&v->world,error) ||
+        !qa_scene_world_source_resource_bind(v->world,row->map,error) ||
         !qa_q3_presentation_assets_create(&assets,&v->assets,error)) return false;
     if(!frontend_network_client_domain_current(f,domain))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote constructor callbacks changed their actual CLIENT domain");
+    return true;
+}
+bool frontend_remote_q3_resources_video_refresh(frontend_remote_q3 *row,
+    frontend_remote_q3_modules *modules,uint64_t *generation,qa_error *error)
+{
+    if (!row || !generation || !linked(row) || row->application!=row->frontend->application ||
+        row->modules!=modules || row->runtime || row->services || row->frames ||
+        row->constructing || row->retiring || row->importing || row->users ||
+        row->frontend->capture || row->frontend->resource_inventory ||
+        row->video_generation==UINT64_MAX ||
+        !frontend_remote_q3_modules_video_media_ready(modules,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote media refresh requires its exact closed acquired CG owner");
+    frontend_remote_q3_resources *v=&row->resources;
+    if ((v->assets && !qa_q3_assets_idle(v->assets)) ||
+        (v->images && !qa_scene_resources_idle(v->images)) ||
+        (v->materials && !qa_material_library_idle(v->materials)) ||
+        (v->fonts && !qa_font_library_idle(v->fonts)) ||
+        (v->movies && !qa_media_library_idle(v->movies)) ||
+        (v->world && !qa_scene_world_idle(v->world)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote video media retains a real renderer borrower");
+    if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
+    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
+    qa_scene_world_destroy(v->world); v->world=NULL;
+    qa_media_library_destroy(v->movies); v->movies=NULL;
+    qa_font_library_destroy(v->fonts); v->fonts=NULL;
+    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
+    qa_material_library_destroy(v->materials); v->materials=NULL;
+    qa_scene_resources_destroy(v->images); v->images=NULL;
+    row->resources_ready=false; row->constructing=true;
+    bool okay=build_media(row,error);
+    row->constructing=false; row->resources_ready=okay;
+    if (!okay) return false;
+    *generation=++row->video_generation;
+    return true;
+}
+bool frontend_remote_q3_resources_video_read(const frontend_remote_q3 *row,
+    const frontend_remote_q3_modules *modules,frontend_remote_q3_resources *out,
+    uint64_t *generation,bool *complete,qa_error *error)
+{
+    if (!row || !modules || !out || !generation || !complete || !linked(row) ||
+        row->modules!=modules || frontend_remote_q3_modules_parent(modules)!=row ||
+        row->application!=row->frontend->application || row->constructing || row->retiring || row->importing ||
+        row->resources.descriptor!=qa_launch_instance_lease_view(row->descriptor) ||
+        row->resources.map!=row->map || !row->map || !row->resources.mounts ||
+        frontend_client_registry_cvars(row->resources.registry)!=row->resources.domain.source.receiver.cvars ||
+        qa_resource_pool_find(qa_vfs_resources(row->resources.mounts),qa_resource_id(row->map))!=row->map ||
+        !frontend_network_client_domain_current(row->frontend,&row->resources.domain))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Video media lost its retained physical CLIENT graph");
+    *out=row->resources; *generation=row->video_generation; *complete=row->resources_ready;
     return true;
 }
 bool frontend_remote_q3_resources_read(const frontend_remote_q3 *row,frontend_remote_q3_resources *out,qa_error *error)
@@ -256,6 +322,52 @@ bool frontend_remote_q3_resources_read(const frontend_remote_q3 *row,frontend_re
         frontend_client_registry_cvars(row->resources.registry)!=domain.source.receiver.cvars)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote resource receipt differs from its retained physical CLIENT");
     *out=row->resources; out->domain=domain; return true;
+}
+bool frontend_remote_q3_resources_compiled_video_read(const frontend_remote_q3 *row,
+    frontend_remote_q3_resources *out,qa_error *error)
+{
+    frontend_network_client_domain domain;
+    if(!row || !out || !linked(row) ||
+        !frontend_remote_q3_compiled_video_parent_is(row,row->compiled_video) ||
+        row->application!=row->frontend->application || row->retiring || row->importing ||
+        row->frontend->capture || row->frontend->resource_inventory || row->frontend->source_restoring ||
+        !frontend_network_client_domain_read(row->frontend,&domain,error))return false;
+    const frontend_remote_q3_resources *v=&row->resources;
+    if(!same_domain(&v->domain,&domain) || !row->descriptor ||
+        v->descriptor!=qa_launch_instance_lease_view(row->descriptor) ||
+        v->descriptor->storage!=domain.source.descriptor->storage || !v->mounts ||
+        !row->map || v->map!=row->map || !v->geometry ||
+        qa_collision_resource(v->geometry)!=row->map ||
+        qa_resource_pool_find(qa_vfs_resources(v->mounts),qa_resource_id(row->map))!=row->map ||
+        v->physical_seat>=row->frontend->options.seats ||
+        v->input!=row->frontend->seats[v->physical_seat].input ||
+        frontend_client_registry_cvars(v->registry)!=domain.source.receiver.cvars)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Compiled video lost its retained Source map or CLIENT namespace");
+    *out=*v; out->domain=domain; return true;
+}
+bool frontend_remote_q3_resources_compiled_video_refresh(frontend_remote_q3 *row,qa_error *error)
+{
+    frontend_remote_q3_resources resources;
+    if(!frontend_remote_q3_resources_compiled_video_read(row,&resources,error) || row->constructing ||
+        row->video_generation==UINT64_MAX || !frontend_remote_q3_compiled_video_media_ready(row,error))return false;
+    frontend_remote_q3_resources *v=&row->resources;
+    if((v->assets && !qa_q3_assets_idle(v->assets)) || (v->images && !qa_scene_resources_idle(v->images)) ||
+        (v->materials && !qa_material_library_idle(v->materials)) || (v->fonts && !qa_font_library_idle(v->fonts)) ||
+        (v->movies && !qa_media_library_idle(v->movies)) || (v->world && !qa_scene_world_idle(v->world)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Compiled video media retains an actual renderer borrower");
+    if(!frontend_material_movies_destroy(&row->shader_movies,error))return false;
+    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
+    qa_scene_world_destroy(v->world); v->world=NULL;
+    qa_media_library_destroy(v->movies); v->movies=NULL;
+    qa_font_library_destroy(v->fonts); v->fonts=NULL;
+    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
+    qa_material_library_destroy(v->materials); v->materials=NULL;
+    qa_scene_resources_destroy(v->images); v->images=NULL;
+    row->resources_ready=false; row->constructing=true;
+    bool okay=build_media(row,error);
+    row->constructing=false; row->resources_ready=okay;
+    if(okay)++row->video_generation;
+    return okay;
 }
 static bool resources_fields_current(const frontend_remote_q3_resources *v)
 {
@@ -347,7 +459,9 @@ bool frontend_remote_q3_resources_metadata_read(const frontend_remote_q3 *row,
 bool frontend_remote_q3_basis_read(const frontend_remote_q3 *row,qa_native_q3_remote_client_basis *out,qa_error *error)
 {
     frontend_remote_q3_resources v;
-    if(!out || !frontend_remote_q3_resources_read(row,&v,error)) return false;
+    if(!out || !(row && row->compiled_video?
+        frontend_remote_q3_resources_compiled_video_read(row,&v,error):
+        frontend_remote_q3_resources_read(row,&v,error))) return false;
     uint64_t publication; qa_q3_product product;
     if(!qa_native_q3_remote_client_publication_read(row->application,&v.domain.source,&publication,error) ||
         !qa_native_q3_remote_client_product_read(row->application,&v.domain.source,&product,error)) return false;
@@ -360,7 +474,9 @@ bool frontend_remote_q3_basis_read(const frontend_remote_q3 *row,qa_native_q3_re
         .map=v.map,.geometry=v.geometry,.gamestate=v.domain.gamestate,
         .physical_client=(uint32_t)v.domain.initial.client_number,.initial_message=v.domain.initial.server_message,
         .initial_command=v.domain.initial.last_executed_server_command};
-    if(!frontend_remote_q3_resources_current(&v))
+    frontend_remote_q3_resources actual;
+    if(row->compiled_video?!frontend_remote_q3_resources_compiled_video_read(row,&actual,error):
+        !frontend_remote_q3_resources_current(&v))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote basis changed during its pure observation");
     *out=basis; return true;
 }
@@ -473,7 +589,7 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
 {
     if(!owned || !*owned) return true;
     frontend_remote_q3 *row=*owned;
-    if(!linked(row) || row->frontend->capture || row->frontend->resource_inventory || !resources_idle(row))
+    if(!linked(row) || row->compiled_video || row->frontend->capture || row->frontend->resource_inventory || !resources_idle(row))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote resources retain an actual constructor or renderer borrower");
     row->retiring=true;
     if(!frontend_remote_q3_modules_destroy(&row->modules,error) ||
@@ -483,6 +599,11 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
         !frontend_remote_q3_services_destroy(&row->services,error) ||
         !frontend_client_registry_release(&row->resources.registry,error)) return false;
     frontend_remote_q3_resources *v=&row->resources;
+    if (row->shader_movies && row->resources.movies && !row->frontend->source_restoring) {
+        frontend_material_movie_source expected={.frontend=row->frontend,.files=row->resources.mounts,.images=row->resources.images,
+            .materials=row->resources.materials,.media=row->resources.movies,.context=row,.current=shader_movies_current};
+        if (!frontend_renderer_materials_adopt_movies(row->frontend,&expected,&row->shader_movies,&row->resources.movies,error)) return false;
+    }
     if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); qa_scene_world_destroy(v->world);
     qa_collision_destroy(v->geometry); qa_resource_release(row->map);

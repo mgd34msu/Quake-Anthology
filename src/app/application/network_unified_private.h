@@ -32,13 +32,17 @@ struct application_unified_server {
     application_unified_component_publisher *components;
     application_unified_output_capture *pending_capture;
     application_unified_source offered;
+    qa_unified_session_player admitted_player;
+    qa_buffer admitted_arsenal;
     qa_sha256_digest composition;
     qa_unified_document *offer;
     application_unified_output pending;
     size_t control_cursor;
+    uint32_t pending_first, pending_last;
     uint64_t frame_before, published_frame;
     uint64_t events_after, pending_events_through;
     int64_t acknowledged;
-    bool bound, admitted, player_attached, preparing_frame, entered, closed;
+    bool bound, admitted, player_attached, admitted_receipt, preparing_frame, entered, closed;
+    bool restore_pending;
 };
 #endif

@@ -6,6 +6,7 @@ typedef struct message_delivery {
     qa_frontend *frontend;
     qa_application_protocol_event message;
     qa_application_q2_protocol_delivery delivery;
+    qa_application_q2_recipient *selected;
 } message_delivery;
 
 static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *error)
@@ -15,8 +16,26 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
      * native import owners. Their wire records do not publish those effects
      * a second time through this temporary-entity consumer. */
     if (record->event.kind!=QA_Q2_SVC_TEMP_ENTITY) return true;
+    qa_application_q2_audience audience=context->delivery.audience;
+    if (record->seat) {
+        if (!context->selected && audience.count) {
+            if (audience.count>SIZE_MAX/sizeof(*context->selected))
+                return frontend_fail(error,QA_ERROR_MEMORY,"Q2 selected audience extent overflows");
+            context->selected=malloc(audience.count*sizeof(*context->selected));
+            if (!context->selected)
+                return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q2 selected effect audience");
+        }
+        size_t count=0;
+        for (size_t i=0;i<audience.count;++i) {
+            const qa_application_q2_recipient *recipient=audience.recipients+i;
+            if (recipient->has_connection && record->seat==recipient->remote_index+1u)
+                context->selected[count++]=*recipient;
+        }
+        audience.recipients=context->selected; audience.count=count;
+        if (!count) return true;
+    }
     return frontend_particle_q2_temporary(context->frontend,&context->message,
-        &context->delivery.audience,&record->event.data.temporary,error);
+        &audience,&record->event.data.temporary,error);
 }
 
 bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
@@ -47,6 +66,7 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
             ok=qa_q2_messages_read(reader,context.message.payload,receive,&context,error);
         }
         qa_q2_messages_destroy(reader);
+        free(context.selected);
         if (!ok) return false;
         if (generation!=qa_application_protocol_events_generation(frontend->application) ||
             count!=qa_application_protocol_event_count(frontend->application))

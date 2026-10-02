@@ -62,21 +62,24 @@ bool qa_bot_source_record_i32(const qa_bot_source_memory *memory,qa_bot_source_r
     if(!value) return false;
     uint32_t bits=0;if(write) memcpy(&bits,value,4);
     if(!word(memory,record,offset,&bits,write,error)) return false;
-    if(!write) memcpy(value,&bits,4);return true;
+    if(!write) memcpy(value,&bits,4);
+    return true;
 }
 bool qa_bot_source_record_f32(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
     float *value,bool write,qa_error *error) {
     if(!value) return false;
     uint32_t bits=0;if(write) memcpy(&bits,value,4);
     if(!word(memory,record,offset,&bits,write,error)) return false;
-    if(!write) memcpy(value,&bits,4);return true;
+    if(!write) memcpy(value,&bits,4);
+    return true;
 }
 bool qa_bot_source_record_bool(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
     bool *value,bool write,qa_error *error) {
     if(!value) return false;
     int32_t bits=write && *value?1:0;
     if(!qa_bot_source_record_i32(memory,record,offset,&bits,write,error)) return false;
-    if(!write) *value=bits!=0;return true;
+    if(!write) *value=bits!=0;
+    return true;
 }
 bool qa_bot_source_record_vec3(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
     qa_vec3 *value,bool write,qa_error *error) {

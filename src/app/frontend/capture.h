@@ -1,6 +1,8 @@
 #ifndef QA_FRONTEND_CAPTURE_H
 #define QA_FRONTEND_CAPTURE_H
 #include "internal.h"
+#include "qa/application_client_prepare.h"
+#include "video_guests.h"
 
 typedef struct frontend_resource_inventory frontend_resource_inventory;
 /* Owns metadata and the frontend's structural roster fence, not child capture
@@ -12,6 +14,10 @@ typedef struct frontend_resource_inventory frontend_resource_inventory;
  * This grants no source dispatch, capture, publication or destruction authority. */
 bool frontend_resource_inventory_collect(qa_frontend *, qa_application *, const qa_launch_snapshot *,
     frontend_resource_inventory **, qa_error *);
+bool frontend_resource_inventory_collect_client(qa_frontend *,const qa_application_client_preparation *,
+    frontend_resource_inventory **,qa_error *);
+bool frontend_resource_inventory_collect_video(qa_frontend *,const frontend_video_guests *,
+    frontend_resource_inventory **,qa_error *);
 /* Requalifies the installed parent tuple and the complete physical roster.
  * Actual child preparation/capture holds do not invalidate this observation. */
 bool frontend_resource_inventory_current(const frontend_resource_inventory *);

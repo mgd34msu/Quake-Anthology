@@ -3,13 +3,15 @@
 #include "native_q3_client.h"
 #include "network_initial_graph.h"
 #include "root_resources.h"
+#include "renderer_materials.h"
 #include "qa/media_library_save.h"
+#include "qa/media_resource.h"
 #include "qa/persistence_content.h"
 #include "qa/source_save.h"
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum movie_kind { MOVIE_SOURCE,MOVIE_NATIVE,MOVIE_REMOTE,MOVIE_INITIAL,MOVIE_VISUAL,MOVIE_FRONTEND } movie_kind;
+typedef enum movie_kind { MOVIE_SOURCE,MOVIE_NATIVE,MOVIE_REMOTE,MOVIE_INITIAL,MOVIE_VISUAL,MOVIE_FRONTEND,MOVIE_RENDERER } movie_kind;
 typedef struct movie_row {
     movie_kind kind;
     size_t ordinal;
@@ -44,6 +46,7 @@ static bool source_read(qa_frontend *f,movie_kind kind,size_t ordinal,
     case MOVIE_INITIAL: return frontend_remote_q3_initial_movie_source_read(frontend_remote_q3_initial_at(f,ordinal),out,error);
     case MOVIE_VISUAL: return frontend_visual_movie_source_read(f,ordinal,out,error);
     case MOVIE_FRONTEND: return !ordinal && frontend_root_movie_source_read(f,out,error);
+    case MOVIE_RENDERER: return !ordinal && frontend_renderer_materials_movie_source_read(f,out,error);
     }
     return false;
 }
@@ -51,17 +54,20 @@ static void rows_free(movie_row *rows,size_t count)
 { for(size_t i=0;rows && i<count;++i) free(rows[i].resources); free(rows); }
 static bool collect(qa_frontend *f,movie_row **out,size_t *count,qa_error *error)
 {
+    frontend_renderer_materials_view retained; bool present=false;
+    if(!frontend_renderer_materials_read(f,&retained,&present,error)) return false;
     size_t counts[]={frontend_source_group_count(f),frontend_native_q3_count(f),
-        frontend_remote_q3_count(f),frontend_remote_q3_initial_count(f),frontend_visual_owner_count(f),f->root_resources?1:0};
+        frontend_remote_q3_count(f),frontend_remote_q3_initial_count(f),frontend_visual_owner_count(f),
+        f->root_resources?1:0,present && retained.media?1:0};
     size_t total=0;
-    for(size_t i=0;i<6;++i) {
+    for(size_t i=0;i<7;++i) {
         if(counts[i]>SIZE_MAX/sizeof(movie_row)-total) return false;
         total+=counts[i];
     }
     movie_row *rows=total?calloc(total,sizeof(*rows)):NULL;
     if(total && !rows) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual shader-movie provider rows");
     size_t at=0;
-    for(size_t kind=0;kind<6;++kind) for(size_t i=0;i<counts[kind];++i) {
+    for(size_t kind=0;kind<7;++kind) for(size_t i=0;i<counts[kind];++i) {
         movie_row *row=rows+at; row->kind=(movie_kind)kind; row->ordinal=i;
         if(!source_read(f,row->kind,i,&row->source,error)) { rows_free(rows,total); return false; }
         if(row->kind==MOVIE_SOURCE && f->options.dedicated && !row->source.images &&
@@ -142,10 +148,11 @@ static frontend_material_movies_refs movie_refs(movie_scope *scope)
 static bool resource_fields(qa_source_save_io *io,movie_scope *scope)
 {
     movie_row *row=scope->row; bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    size_t count=reading?0:((row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND)?qa_media_library_record_count(row->source.media):0);
+    bool private_cache=row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND || row->kind==MOVIE_RENDERER;
+    size_t count=reading?0:(private_cache?qa_media_library_record_count(row->source.media):0);
     if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(*row->resources)) ||
         (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/16)) ||
-        (row->kind!=MOVIE_VISUAL && row->kind!=MOVIE_FRONTEND && count)) return false;
+        (!private_cache && count)) return false;
     row->resources=count?calloc(count,sizeof(*row->resources)):NULL; row->resource_count=count;
     if(count && !row->resources) return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining actual visual movie resources");
     for(size_t i=0;i<count;++i) {
@@ -168,15 +175,16 @@ static bool restore_owner(qa_frontend *f,movie_row *row,const frontend_material_
     case MOVIE_INITIAL: return frontend_remote_q3_initial_movies_restore(frontend_remote_q3_initial_at(f,row->ordinal),refs,row->state,error);
     case MOVIE_VISUAL: return frontend_visual_movies_restore(f,row->ordinal,refs,row->state,error);
     case MOVIE_FRONTEND: return !row->ordinal && frontend_root_movies_restore(f,refs,row->state,error);
+    case MOVIE_RENDERER: return !row->ordinal && frontend_renderer_materials_movies_restore(f,refs,row->state,error);
     }
     return false;
 }
 static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace *space,
     const qa_scene_frame_checkpoint_refs *frames,movie_row *rows,size_t count)
 {
-    uint8_t magic[4]={'Q','F','V','M'}; uint32_t version=2; size_t saved=count;
+    uint8_t magic[4]={'Q','F','V','M'}; uint32_t version=3; size_t saved=count;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVM",4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_count(io,&saved,count) || saved!=count) return false;
+        !qa_source_save_u32(io,&version) || version!=3 || !qa_source_save_count(io,&saved,count) || saved!=count) return false;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     for(size_t i=0;i<count;++i) {
         movie_row *row=rows+i; uint32_t kind=row->kind; uint64_t ordinal=row->ordinal;
@@ -190,13 +198,13 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace
         frontend_material_movies_refs refs=movie_refs(&scope);
         if(!reading) {
             okay=frontend_material_movies_library_owner(row->source.materials,&row->owner,io->error) &&
-                ((row->kind!=MOVIE_VISUAL && row->kind!=MOVIE_FRONTEND) ||
+                ((row->kind!=MOVIE_VISUAL && row->kind!=MOVIE_FRONTEND && row->kind!=MOVIE_RENDERER) ||
                     qa_media_library_checkpoint(row->source.media,&library,&cache,io->error)) &&
                 frontend_material_movies_checkpoint(row->owner,&refs,&state,io->error);
             row->cache=(qa_bytes){cache.data,cache.size}; row->state=(qa_bytes){state.data,state.size};
         }
         okay=okay && blob(io,&row->cache) &&
-            ((row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND)==(row->cache.size!=0)) &&
+            ((row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND || row->kind==MOVIE_RENDERER)==(row->cache.size!=0)) &&
             blob(io,&row->state) && row->state.size;
         qa_buffer_free(&cache); qa_buffer_free(&state);
         if(!okay) return false;
@@ -224,7 +232,8 @@ bool frontend_material_movie_inventory_restore(qa_frontend *f,frontend_scene_nam
         movie_row *row=rows+i; movie_scope scope={qa_application_content_graph_read(f->application),space,frames,row};
         qa_media_library_checkpoint_refs library={&scope,resource_encode,resource_decode,image_encode,image_decode};
         frontend_material_movies_refs refs=movie_refs(&scope);
-        if(row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND) okay=!qa_media_library_record_count(row->source.media) &&
+        if(row->kind==MOVIE_VISUAL || row->kind==MOVIE_FRONTEND || row->kind==MOVIE_RENDERER)
+            okay=!qa_media_library_record_count(row->source.media) &&
             qa_media_library_restore(row->source.media,row->cache,&library,error);
         if(okay) okay=restore_owner(f,row,&refs,error) &&
             frontend_material_movies_library_owner(row->source.materials,&row->owner,error) &&

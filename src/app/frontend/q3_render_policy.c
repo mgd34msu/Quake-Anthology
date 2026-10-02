@@ -1,6 +1,7 @@
 #include "q3_render_policy.h"
 #include "shared_resource_policy.h"
 #include "q3_color_policy.h"
+#include "qa/material_library_save.h"
 
 static bool source_cluster_clear(void *context, qa_error *error)
 {
@@ -105,6 +106,7 @@ bool frontend_q3_material_profile_initialize(qa_frontend *f, qa_material_library
     qa_material_profile profile;
     return frontend_q3_source_color_ensure(f, error) &&
         frontend_q3_texture_mode_initialize(f,error) &&
+        frontend_q3_scene_limits_initialize(f,error) &&
         frontend_resource_policy_admission_edit(f, &edit, error) &&
         frontend_q3_material_profile_read(f, edit, &profile, error) &&
         qa_material_library_set_source_profile(library, &profile, error) &&
@@ -124,6 +126,21 @@ bool frontend_q3_texture_mode_initialize(qa_frontend *f,qa_error *error)
     static const char *const names[]={"r_textureMode"};
     return frontend_resource_policy_admission_edit(f,&edit,error) &&
         records(f,edit,names,1,&row,error) && texture_mode_apply(f,controls,row,error);
+}
+bool frontend_q3_scene_limits_initialize(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->application || (f->cpu && f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene allocation lost its actual physical frontend");
+    if (!f->cpu && !f->gl) return true;
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+    uint32_t max_polys,max_polyverts; bool initialized;
+    if (!qa_render_controls_source_scene_limits_read(controls,&max_polys,&max_polyverts,&initialized,error)) return false;
+    if (initialized) return true;
+    const qa_cvars_edit *edit=NULL;
+    static const char *const names[]={"r_maxpolys","r_maxpolyverts"};
+    const qa_cvar_view *rows[2];
+    return frontend_resource_policy_admission_edit(f,&edit,error) && records(f,edit,names,2,rows,error) &&
+        qa_render_controls_source_scene_limits_initialize(controls,rows[0]->integer,rows[1]->integer,error);
 }
 bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
 {
@@ -145,11 +162,50 @@ bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
     return (row && !row->modified) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame lost its modification acknowledgment");
 }
+bool frontend_q3_source_begin_frame(qa_frontend *f,int32_t stereo_frame,qa_error *error)
+{
+    if (!f || !f->application || stereo_frame<0 || stereo_frame>2 || (f->cpu && f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source BeginFrame lost its actual frontend and eye request");
+    if (f->frame.source_begin_frame && f->frame.source_stereo_frame==stereo_frame) return true;
+    const qa_gl_capabilities *caps=f->gl?qa_gl_capabilities_get(f->gl):NULL;
+    bool stereo=caps && caps->stereo;
+    if (stereo ? stereo_frame==0 : stereo_frame!=0)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source BeginFrame eye differs from its actual stereo visual");
+    if (!frontend_q3_texture_mode_begin_frame(f,error)) return false;
+    static const char *const names[]={"r_drawBuffer"};
+    const qa_cvar_view *row;
+    if (!records(f,NULL,names,1,&row,error)) return false;
+    const unsigned char *a=(const unsigned char *)row->value,*b=(const unsigned char *)"GL_FRONT";
+    while (*a && *b) {
+        unsigned char c=*a;
+        if (c>='a' && c<='z') c-='a'-'A';
+        if (c!=*b) break;
+        ++a; ++b;
+    }
+    qa_scene_draw_buffer buffer=stereo ? stereo_frame==1?QA_DRAW_BACK_LEFT:QA_DRAW_BACK_RIGHT :
+        !*a && !*b?QA_DRAW_FRONT:QA_DRAW_BACK;
+    qa_scene_command command={.kind=QA_SCENE_COMMAND_DRAW_BUFFER,.data.draw_buffer={.buffer=buffer}};
+    if (!qa_scene_frame_emit(&f->frame,&command,error)) return false;
+    f->frame.source_backend=true;
+    f->frame.source_begin_frame=true;
+    f->frame.source_stereo_frame=stereo_frame;
+    return true;
+}
+bool frontend_q3_source_image_admit(void *context,const qa_scene_image *image,uint32_t unit,qa_error *error)
+{
+    qa_frontend *f=context;
+    if (!f || !f->application || (f->cpu && f->gl) || (!f->cpu && !f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source image admission lost its actual renderer recipient");
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+    return qa_render_controls_source_image_admit(controls,image,unit,error);
+}
 bool frontend_q3_material_source_bind(qa_frontend *f, qa_material_library *library, qa_error *error)
 {
     if (!f || !f->application || !qa_material_library_has_source_profile(library))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source material producers require their actual tagged owner");
-    return qa_material_library_set_source_ui_fullscreen(library, frontend_q3_material_ui_fullscreen_read, f, error) &&
+    qa_scene_resources *bank=qa_material_library_resource_owner(library);
+    return qa_scene_resources_set_source_image_admit(bank,frontend_q3_source_image_admit,f,error) &&
+        qa_material_library_set_source_ui_fullscreen(library, frontend_q3_material_ui_fullscreen_read, f, error) &&
         qa_material_library_set_source_upload(library, frontend_q3_source_upload_read, f, error);
 }
 bool frontend_q3_material_ui_fullscreen_read(void *context, bool *out, qa_error *error)
@@ -268,13 +324,14 @@ bool frontend_q3_frame_policy_read(qa_frontend *f, qa_error *error)
 bool frontend_q3_world_policy_read(qa_frontend *f, const qa_cvars_edit *edit,
     qa_scene_world_options *out, qa_error *error)
 {
-    static const char *const names[] = {"r_subdivisions", "r_mapOverBrightBits"};
-    const qa_cvar_view *rows[2];
-    if (!out || !records(f, edit, names, 2, rows, error)) return false;
+    static const char *const names[] = {"r_subdivisions", "r_mapOverBrightBits", "r_fullbright"};
+    const qa_cvar_view *rows[3];
+    if (!out || !records(f, edit, names, 3, rows, error)) return false;
     qa_q3_color_lighting lighting;
     if (!frontend_q3_source_color_lighting_read(f, edit, &lighting, error) ||
         !qa_q3_color_map_shift(rows[1]->integer, &lighting, &out->q3_overbright, error)) return false;
     out->subdivisions = (float)rows[0]->number;
+    out->source_fullbright=rows[2]->integer!=0;
     return true;
 }
 bool frontend_q3_world_policy_initialize(qa_frontend *f, qa_scene_world_options *options,

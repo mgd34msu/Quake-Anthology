@@ -215,6 +215,30 @@ bool application_q3_component_source_publish(application_q3_component_source *s,
     } else { publication_free(&s->current); s->current=p; }
     ++s->revision; s->time_ms=time; s->dirty=false; return true;
 }
+bool application_q3_component_source_restore_baseline(application_q3_component_source *s,int32_t time,qa_error *e)
+{
+    if(!s||!s->options.scene) return true;
+    if(!application_q3_component_source_publish(s,time,false,e)) return false;
+    const component_source_publication *source=&s->current;
+    component_source_publication copy=*source;
+    copy.game_state=NULL; copy.entities=NULL; copy.clients=NULL; copy.commands=NULL; copy.command_count=0;
+    copy.game_state=malloc(sizeof(*copy.game_state));
+    copy.entities=source->entity_count?malloc(source->entity_count*sizeof(*copy.entities)):NULL;
+    copy.clients=source->client_count?malloc(source->client_count*sizeof(*copy.clients)):NULL;
+    copy.commands=source->command_count?calloc(source->command_count,sizeof(*copy.commands)):NULL;
+    if(!copy.game_state||(source->entity_count&&!copy.entities)||(source->client_count&&!copy.clients)||
+        (source->command_count&&!copy.commands)) {
+        publication_free(&copy); return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining imported Source scene baseline");
+    }
+    *copy.game_state=*source->game_state;
+    if(source->entity_count) memcpy(copy.entities,source->entities,source->entity_count*sizeof(*copy.entities));
+    if(source->client_count) memcpy(copy.clients,source->clients,source->client_count*sizeof(*copy.clients));
+    for(size_t i=0;i<source->command_count;++i) {
+        copy.commands[i]=source->commands[i]; copy.commands[i].text=NULL; ++copy.command_count;
+        if(!copy_text(source->commands[i].text,&copy.commands[i].text,e)) { publication_free(&copy); return false; }
+    }
+    publication_free(&s->baseline); s->baseline=copy; return true;
+}
 static bool view_acquire(void *context,bool baseline,application_q3_scene_context *out,qa_error *e)
 {
     application_q3_component_view *view=context; application_q3_component_source *s=view->source;
@@ -242,8 +266,8 @@ static bool view_acquire(void *context,bool baseline,application_q3_scene_contex
     if(ok&&((p->entity_count&&!b->actors)||(p->command_count&&!b->commands))) ok=q3scene_fail(e,QA_ERROR_MEMORY,"Retaining component snapshot source bindings");
     if(!ok) { free(b->actors); free(b->commands); free(b); return false; }
     for(size_t i=0;i<p->entity_count;++i) b->actors[i]=p->entities[i].actor;
-    for(size_t i=0;i<p->command_count;++i) b->commands[i]=(application_q3_scene_command){p->commands[i].sequence,p->commands[i].text,
-        !p->commands[i].recipient.registry||qa_actor_id_equal(p->commands[i].recipient,view->viewer)};
+    for(size_t i=0;i<p->command_count;++i) b->commands[i]=(application_q3_scene_command){.sequence=p->commands[i].sequence,.text=p->commands[i].text,
+        .addressed=!p->commands[i].recipient.registry||qa_actor_id_equal(p->commands[i].recipient,view->viewer)};
     b->snapshot=(qa_q3_snapshot){.valid=true,.server_time=p->time_ms,.server_command_number=p->command_sequence,
         .player=client->state,.area_bytes=b->visible.area_bytes,.entity_count=b->visible.count,.entities=b->visible.entities};
     memcpy(b->snapshot.area_mask,b->visible.area_mask,32);

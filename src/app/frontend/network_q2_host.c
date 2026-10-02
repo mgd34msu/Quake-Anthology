@@ -2,6 +2,8 @@
 #include "qa/application_network.h"
 #include "qa/network_q3.h"
 #include "qa/network_local.h"
+#include "remote_q2_source.h"
+#include "network_q2_events.h"
 #include <stdio.h>
 
 typedef struct q2_host_peer {
@@ -15,7 +17,12 @@ typedef struct q2_host_peer {
     char userinfo[8193],reason[1024];
     char **configs;
     size_t config_count;
+    uint64_t event_generation;
+    size_t event_cursor;
+    qa_buffer event_packet;
+    bool event_pending,event_reliable;
     bool reserved,committed,retiring;
+    bool material_scripts;
 } q2_host_peer;
 typedef struct q2_local_peer {
     frontend_network_q2_host *host;
@@ -220,18 +227,24 @@ static bool source_download(void *context,qa_net_client_id id,qa_network_q2_down
 { q2_host_peer *peer=context; return peer->source_hooks.download_source(peer->source_hooks.context,id,out,error); }
 static bool source_drop(void *context,qa_net_client_id id,const char *reason,qa_error *error)
 { q2_host_peer *peer=context; return peer->source_hooks.drop(peer->source_hooks.context,id,reason,error); }
-static bool abort_claim(void *context,const qa_q2_server_admission *claim,qa_error *error)
+static bool retire_source(frontend_network_q2_host *host,q2_host_peer *peer,qa_error *error)
 {
-    frontend_network_q2_host *host=context; q2_host_peer *peer=claim?claim->source_claim:NULL;
-    if(!peer) return true;
-    if(peer->host!=host) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 cleanup names another Source claim");
     if(peer->committed) for(size_t i=0;i<peer->admission.connection.seat_count;++i) {
         qa_actor_id actor;
         if(qa_application_remote_player_actor(host->options.frontend->application,peer->client,peer->bindings[i].seat,&actor) &&
             !qa_application_remote_player_detach(host->options.frontend->application,peer->client,peer->bindings[i].seat,error)) return false;
     }
+    return true;
+}
+static bool abort_claim(void *context,const qa_q2_server_admission *claim,qa_error *error)
+{
+    frontend_network_q2_host *host=context; q2_host_peer *peer=claim?claim->source_claim:NULL;
+    if(!peer) return true;
+    if(peer->host!=host) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 cleanup names another Source claim");
+    if(!retire_source(host,peer,error)) return false;
     qa_q2_unicast_remove_client(host->unicast,peer->client);
-    configs_free(peer); qa_application_network_q2_destroy(peer->source); *peer=(q2_host_peer){.host=host}; return true;
+    configs_free(peer); qa_buffer_free(&peer->event_packet);
+    qa_application_network_q2_destroy(peer->source); *peer=(q2_host_peer){.host=host}; return true;
 }
 static bool prepare(void *context,const qa_net_address *address,const qa_q2_connect_request *request,
     qa_q2_server_admission *out,bool *allowed,char reason[1024],qa_error *error)
@@ -265,6 +278,8 @@ static bool prepare(void *context,const qa_net_address *address,const qa_q2_conn
     }
     if(count!=seats) { snprintf(reason,1024,"Server is full."); return true; }
     if(!qa_application_network_q2_create(host->options.frontend->application,request->protocol,1,&peer->source,error)) return false;
+    if(!frontend_remote_q2_source_material_scripts(request,&peer->material_scripts,error) ||
+        !qa_application_network_q2_material_capability(peer->source,peer->material_scripts,error)) return false;
     qa_application_network_q2_bindings bindings={.runtime=host->options.runtime,.context=peer,
         .input=input,.drop=drop,.recipient_context=host,.recipient=recipient,.unicast=unicast};
     if(!qa_application_network_q2_hooks(peer->source,&bindings,&peer->source_hooks,error)) return false;
@@ -286,6 +301,8 @@ static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_c
     frontend_network_q2_host *host=context; q2_host_peer *peer=claim?claim->source_claim:NULL;
     if(!peer || peer->host!=host || !peer->reserved || peer->committed || !current(host,error)) return false;
     peer->client=id; peer->committed=true;
+    peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
+    peer->event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
     for(size_t i=0;i<peer->admission.connection.seat_count;++i) {
         char name[256];
         if(!qa_q3_info_value(peer->userinfo,"name",name,sizeof(name),error)) return false;
@@ -387,6 +404,7 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *host,uint64_t now,q
     for(size_t i=0;i<host->capacity;++i) {
         q2_host_peer *peer=&host->peers[i];
         if(!peer->retiring) continue;
+        if(!retire_source(host,peer,error)) return false;
         if(qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client) &&
             !qa_network_detach(host->options.runtime,peer->client,peer->reason,error)) return false;
         qa_q2_server_admission claim=peer->admission;
@@ -395,6 +413,67 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *host,uint64_t now,q
     ++host->calls;
     bool ok=qa_network_q2_bootstrap_continue(host->bootstrap,now,error) && qa_network_q2_bootstrap_tick(host->bootstrap,now,error);
     --host->calls; return ok;
+}
+static bool publish_configs(q2_host_peer *peer,qa_error *error)
+{
+    qa_q2_game_state state;
+    if(!peer->configs || !peer->source_hooks.game_state(peer->source_hooks.context,peer->client,&state,error)) return false;
+    const char **values=calloc(peer->config_count,sizeof(*values));
+    if(!values) return frontend_fail(error,QA_ERROR_MEMORY,"Observing actual Q2 configstring changes");
+    bool ok=true;
+    for(size_t c=0;ok && c<state.config_count;++c) {
+        uint16_t index=state.configs[c].index;
+        ok=index<peer->config_count && !values[index];
+        if(ok) values[index]=state.configs[c].value;
+    }
+    for(size_t c=0;ok && c<peer->config_count;++c) {
+        const char *next=values[c]?values[c]:"",*old=peer->configs[c]?peer->configs[c]:"";
+        if(!strcmp(next,old)) continue;
+        char *copy=NULL;
+        if(!config_copy(&copy,next,error)) { ok=false; break; }
+        qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,next}};
+        ok=qa_network_q2_server_event(peer->host->options.runtime,peer->client,&event,0,true,error);
+        if(ok) { free(peer->configs[c]); peer->configs[c]=copy; } else free(copy);
+    }
+    free(values); return ok;
+}
+static bool publish_event_packet(q2_host_peer *peer,qa_error *error)
+{
+    if(!publish_configs(peer,error) ||
+        !qa_network_q2_server_bytes(peer->host->options.runtime,peer->client,
+            (qa_bytes){peer->event_packet.data,peer->event_packet.size},0,peer->event_reliable,error)) return false;
+    qa_buffer_free(&peer->event_packet); peer->event_pending=false; ++peer->event_cursor;
+    return true;
+}
+static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t capacity,qa_error *error)
+{
+    qa_application *app=peer->host->options.frontend->application;
+    if(peer->event_pending && !publish_event_packet(peer,error)) return false;
+    uint64_t generation=qa_application_protocol_events_generation(app);
+    size_t count=qa_application_protocol_event_count(app);
+    if(peer->event_generation!=generation) {
+        peer->event_generation=generation; peer->event_cursor=0;
+    }
+    if(peer->event_cursor>count)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 event cursor exceeds its retained Source generation");
+    const qa_q2_codec *codec;
+    if(!qa_network_q2_server_codec(peer->host->options.runtime,peer->client,&codec,error)) return false;
+    while(peer->event_cursor<count) {
+        qa_application_protocol_event event;
+        qa_application_q2_protocol_delivery delivery;
+        if(!qa_application_protocol_event_at(app,peer->event_cursor,&event) ||
+            !qa_application_protocol_q2_delivery_at(app,peer->event_cursor,&delivery))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 Source event disappeared before publication");
+        if(event.signon || !delivery.original) { ++peer->event_cursor; continue; }
+        if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
+            &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
+            capacity,&peer->event_packet,error)) return false;
+        if(!peer->event_packet.size) { ++peer->event_cursor; continue; }
+        peer->event_reliable=event.reliable; peer->event_pending=true;
+        if(!publish_event_packet(peer,error)) return false;
+    }
+    return generation==qa_application_protocol_events_generation(app) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 publication replaced its retained Source event generation");
 }
 bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t now,qa_error *error)
 {
@@ -406,30 +485,11 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t no
         qa_network_q2_state transport;
         if(!qa_network_q2_state_read(host->options.runtime,peer->client,&transport,error)) return false;
         if(transport.retiring) continue;
+        if(!publish_events(peer,client,transport.channel.capacity,error)) return false;
         qa_q2_wire_frame frame; const qa_q2_source_motion *motion;
         if(!qa_application_network_q2_client_frame(peer->source,peer->client,&frame,error) ||
-            !qa_application_network_q2_motion(peer->source,&motion,error)) return false;
-        qa_q2_game_state state;
-        if(!peer->configs || !peer->source_hooks.game_state(peer->source_hooks.context,peer->client,&state,error)) return false;
-        const char **values=calloc(peer->config_count,sizeof(*values));
-        if(!values) return frontend_fail(error,QA_ERROR_MEMORY,"Observing actual Q2 configstring changes");
-        bool ok=true;
-        for(size_t c=0;ok && c<state.config_count;++c) {
-            uint16_t index=state.configs[c].index;
-            ok=index<peer->config_count && !values[index];
-            if(ok) values[index]=state.configs[c].value;
-        }
-        for(size_t c=0;ok && c<peer->config_count;++c) {
-            const char *next=values[c]?values[c]:"",*old=peer->configs[c]?peer->configs[c]:"";
-            if(!strcmp(next,old)) continue;
-            char *copy=NULL;
-            if(!config_copy(&copy,next,error)) { ok=false; break; }
-            qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,next}};
-            ok=qa_network_q2_server_event(host->options.runtime,peer->client,&event,0,true,error);
-            if(ok) { free(peer->configs[c]); peer->configs[c]=copy; } else free(copy);
-        }
-        free(values);
-        if(!ok || !qa_network_q2_server_frame(host->options.runtime,peer->client,&frame,motion,now,error) || !current(host,error)) return false;
+            !qa_application_network_q2_motion(peer->source,&motion,error) || !publish_configs(peer,error) ||
+            !qa_network_q2_server_frame(host->options.runtime,peer->client,&frame,motion,now,error) || !current(host,error)) return false;
     }
     return true;
 }
@@ -441,6 +501,34 @@ void frontend_network_q2_host_disconnected(frontend_network_q2_host *host,qa_net
 }
 bool frontend_network_q2_host_idle(const frontend_network_q2_host *host)
 { return !host || !host->calls; }
+static bool publisher_content_visit(const qa_application_network_q2 *publisher,
+    const qa_application_content_visitor *visitor,qa_error *error)
+{
+    for(size_t i=0;i<qa_application_network_q2_resource_count(publisher);++i) {
+        qa_application_network_q2_resource_view held;
+        if(!qa_application_network_q2_resource_read(publisher,i,&held,error) ||
+            !visitor->pool(visitor->context,qa_vfs_resources(held.view),error) ||
+            !visitor->view(visitor->context,held.view,error)) return false;
+    }
+    return true;
+}
+bool frontend_network_q2_host_content_visit(const frontend_network_q2_host *host,
+    const qa_application_content_visitor *visitor,qa_error *error)
+{
+    if(!host) return true;
+    if(host->calls || !host->options.current(host->options.context,host) || !visitor ||
+        !visitor->pool || !visitor->view || !publisher_content_visit(host->discovery,visitor,error)) return false;
+    for(size_t i=0;i<host->capacity;++i) {
+        const q2_host_peer *peer=&host->peers[i];
+        if(!publisher_content_visit(peer->source,visitor,error)) return false;
+        if(!peer->committed || !qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client)) continue;
+        const qa_vfs *view=NULL; const qa_resource *resource=NULL; const qa_vfs_acquisition *opening=NULL;
+        if(!qa_network_q2_server_download(host->options.runtime,peer->client,&view,&resource,&opening,error)) return false;
+        if(view && ((resource?(!opening || !qa_vfs_acquisition_retained(view,opening,error)):opening!=NULL) ||
+            !visitor->pool(visitor->context,qa_vfs_resources(view),error) || !visitor->view(visitor->context,view,error))) return false;
+    }
+    return host->options.current(host->options.context,host);
+}
 bool frontend_network_q2_host_local_hooks(frontend_network_q2_host *host,const qa_net_client *client,
     qa_network_local_hooks *out,qa_error *error)
 {
@@ -466,6 +554,7 @@ bool frontend_network_q2_host_destroy(frontend_network_q2_host **owned,qa_error 
     }
     for(size_t i=0;host->peers && i<host->capacity;++i) if(host->peers[i].reserved) {
         q2_host_peer *peer=&host->peers[i];
+        if(!retire_source(host,peer,error)) return false;
         if(peer->committed && qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client) &&
             !qa_network_detach(host->options.runtime,peer->client,"Q2 HOST closed",error)) return false;
         qa_q2_server_admission claim=peer->admission;

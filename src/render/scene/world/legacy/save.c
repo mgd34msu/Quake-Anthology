@@ -13,6 +13,7 @@
 typedef struct light_state {
     qa_scene_image *encoded, *direct;
     bool valid, dynamic;
+    uint8_t monolightmap;
     float *styles;
     uint8_t *pixels, *encoded_pixels;
 } light_state;
@@ -142,11 +143,11 @@ static bool allocate(qa_source_save_io *io, void **out, size_t count, size_t str
 static bool fields(qa_source_save_io *io, const qa_scene_world *world,
     const qa_scene_world_image_refs *refs, lighting_state *saved)
 {
-    uint8_t magic[4]={'Q','W','L','S'}; uint32_t schema=2;
+    uint8_t magic[4]={'Q','W','L','S'}; uint32_t schema=3;
     bool reading=io->direction==QA_SOURCE_SAVE_READ, q1=world->bsp.family==QA_BSP_Q1;
     const qawl_world *data=world->legacy_data;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWLS",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=2 || !qualify(io,world)) return false;
+        !qa_source_save_u32(io,&schema) || schema!=3 || !qualify(io,world)) return false;
     if (!reading) saved->style_count=data->style_count;
     if (!qa_source_save_count(io,&saved->style_count,reading?io->input.size/(q1?4:12):SIZE_MAX)) return false;
     if (reading) {
@@ -184,10 +185,12 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world,
         if (!light) continue;
         light_state original={.encoded=surface->lightmap,.direct=light->direct_lightmap,
             .valid=light->light_cache_valid,.dynamic=light->light_cache_dynamic,
+            .monolightmap=light->light_cache_monolightmap,
             .styles=light->cached_styles,.pixels=light->light_pixels,.encoded_pixels=light->encoded_pixels};
         light_state *state=reading?&saved->lights[i]:&original;
         if (!image(io,world,refs,&state->encoded) || !image(io,world,refs,&state->direct)) return false;
         FIELD(bool,state,valid); FIELD(bool,state,dynamic);
+        FIELD(u8,state,monolightmap);
         if (!light->lightmapped) {
             if (state->encoded || state->direct || state->valid || state->dynamic) return false;
             continue;
@@ -239,6 +242,8 @@ static void publish(qa_scene_world *world, lighting_state *saved)
         qa_scene_image **destinations[]={&texture->image,&texture->fullbright,&texture->sky[0],&texture->sky[1]};
         for (size_t j=0;j<4;++j) {
             qa_scene_image_release(*destinations[j]); *destinations[j]=saved->textures[i*4+j]; saved->textures[i*4+j]=NULL;
+            if (j < 2 && *destinations[j] && (*destinations[j])->recipient_upload_pixels)
+                (*destinations[j])->recipient_mipmap = world->options.images.mipmap;
         }
     }
     for (size_t i=0;i<6;++i) { qa_scene_image_release(data->sky[i]); data->sky[i]=saved->sky[i]; saved->sky[i]=NULL; }
@@ -252,6 +257,7 @@ static void publish(qa_scene_world *world, lighting_state *saved)
         light->cached_styles=state->styles; light->light_pixels=state->pixels; light->encoded_pixels=state->encoded_pixels;
         state->styles=NULL; state->pixels=state->encoded_pixels=NULL;
         light->light_cache_valid=state->valid; light->light_cache_dynamic=state->dynamic;
+        light->light_cache_monolightmap=state->monolightmap;
         /* Accumulation is operation scratch, zeroed before every update. */
     }
 }

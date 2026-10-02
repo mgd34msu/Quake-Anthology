@@ -10,6 +10,8 @@
 #include "startup_flow.h"
 #include "qa/console_cvar_observer.h"
 #include "native_q2_publication.h"
+#include "native_q2_inventory_scanner.h"
+#include "native_q2_inventory_rows.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
 
@@ -33,6 +35,8 @@ bool application_native_q2_idle(const application_provider *provider)
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
         application_native_q2_callbacks_idle(engine->callbacks) &&
+        application_native_q2_inventory_scanner_returned(engine->inventory_scanner) &&
+        application_native_q2_inventory_rows_idle(engine->inventory_rows) &&
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
@@ -75,6 +79,7 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
     application_native_q2_wire_released(engine, actor.id);
     application_native_q2_attack_released(engine, actor.id);
     application_native_q2_combat_released(engine, actor.id);
+    application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor.id);
     qa_error error = {0};
     if (engine->provider->state.native.host &&
         !qa_native_host_actor_released(engine->provider->state.native.host, actor, &error))
@@ -235,6 +240,16 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         if (!application_startup_source_carry(provider, &source, &carried, error)) return false;
     }
     uint32_t clients = choices->seat_count ? (uint32_t)choices->seat_count : 1;
+    if(engine->callbacks) {
+        const qa_json_document *d=application_native_q2_callbacks_document(engine->callbacks);
+        qa_json_id declared=qa_json_get(d,qa_json_root(d),"clients");
+        if(declared!=QA_JSON_NONE) {
+            uint64_t maximum;
+            if(!qa_json_u64(d,qa_json_get(d,declared,"maximum"),&maximum,error)||!maximum||maximum>256||maximum<clients)
+                return application_fail(error,QA_ERROR_FORMAT,"Native callback clients cannot contain the actual retained seats");
+            clients=(uint32_t)maximum;
+        }
+    }
     char maximum[16], skill[32];
     snprintf(maximum, sizeof(maximum), "%u", clients);
     snprintf(skill, sizeof(skill), "%d", choices->world.skill);
@@ -264,6 +279,11 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
                 : qa_cvars_register(engine->cvars, (char *)name.data, (char *)value.data, 0, provider->owner, NULL, error);
             qa_buffer_free(&name); qa_buffer_free(&value);
             if (!ok) return false;
+        }
+        if(qa_json_get(d,root,"clients")!=QA_JSON_NONE) {
+            const qa_cvar_view *maximum=qa_cvars_find(engine->cvars,"maxclients");
+            if(!maximum||maximum->number!=(double)clients)
+                return application_fail(error,QA_ERROR_FORMAT,"Native callback client capacity differs from actual maxclients");
         }
     }
     for (size_t i = 0; i < choices->seat_count; ++i) {
@@ -353,7 +373,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             &engine->application, &engine->application_context, error)) return false;
     qa_native_host_instance_options instance = {.declaration = engine->declaration,
         .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
-            engine->source_control != NULL,
+            engine->source_control != NULL || engine->primary_inventory != NULL,
         .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
@@ -405,7 +425,8 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
                 .inventory = provider->application->inventory, .targets = provider->application->targets,
                 .owner = provider->owner, .definition = engine->definition, .world_actor = engine->world_actor,
                 .binding_context = engine, .project_actor = application_native_q2_project,
-                .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind},
+                .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind,
+                .reserved_source_slot = engine->callbacks ? application_native_q2_callbacks_reserved_slot : NULL},
             .services = {.engine = application_native_q2_services(engine),
                 .movement = application_native_q2_movement_services(engine),
                 .application = engine->application, .application_context = engine->application_context},
@@ -421,6 +442,13 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
             qa_error_set(&engine->activation_error, QA_ERROR_UNSUPPORTED, 0,
                 "Native Q2 source owner activation failed");
         if (error) *error = engine->activation_error;
+    }
+    if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
+        ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
+        if(ok) {
+            application_native_q2_inventory_scanner_options options=application_native_q2_inventory_rows_options(engine->inventory_rows);
+            ok=application_native_q2_inventory_scanner_create(engine,&options,&engine->inventory_scanner,error);
+        }
     }
     return ok;
 }
@@ -463,12 +491,11 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (!application_native_q2_combat_load(engine, error)) return false;
     application_native_q2_wire_destroy(&engine->wire_engine);
     ++engine->calls;
-    bool ok = true;
-    if (!engine->initialized) {
+    bool ok = application_native_q2_callbacks_validate(engine, error);
+    if (ok && !engine->initialized) {
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         if (ok) engine->initialized = true;
     }
-    if (ok) ok = application_native_q2_callbacks_validate(engine, error);
     if (ok && !engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
     if (ok) ok = application_native_q2_attack_activate(engine, error);
     if (ok) ok = application_native_q2_combat_activate(engine, error);
@@ -490,6 +517,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
     qa_buffer_free(&declared_entities);
+    if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
     if (ok && engine->callbacks && provider->application->operation != APPLICATION_PERSISTING) {
         bool accepted;
         application_native_callback_value values[] = {
@@ -503,7 +531,10 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (ok) {
         engine->map_ready = provider->map_bound = true;
         qa_cvars_set_server_active(engine->cvars, true);
-        ok = application_native_q2_publication_activate(engine->publication, error);
+        if(engine->inventory_rows) ok=application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)&&
+            application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error);
+        if(ok) ok = application_native_q2_callbacks_register(engine,error) &&
+            application_native_q2_publication_activate(engine->publication, error);
     }
     return ok;
 }
@@ -547,9 +578,11 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
             free(engine->configstrings[i]); engine->configstrings[i] = NULL;
         }
     }
+    if(!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
     if (!application_q2_control_suspend(engine, error)) return false;
+    if (!application_native_q2_callbacks_suspend(engine, error)) return false;
     if (!application_native_q2_publication_retire(engine->publication, error)) return false;
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
@@ -563,6 +596,10 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
     if (!application_native_q2_combat_suspend(engine, error)) return false;
+    if(!application_native_q2_inventory_scanner_destroy(engine->inventory_scanner,error)) return false;
+    engine->inventory_scanner=NULL;
+    if(!application_native_q2_inventory_rows_destroy(engine->inventory_rows,error)) return false;
+    engine->inventory_rows=NULL;
     if (!application_native_q2_inventory_close(engine, error)) return false;
     bool terminal = provider->state.native.host && qa_native_terminal(qa_native_host_instance(provider->state.native.host));
     if (terminal && !qa_native_host_terminal_retired(provider->state.native.host))

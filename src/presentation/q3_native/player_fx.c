@@ -9,6 +9,7 @@ typedef struct player_fx {
     const q3n_frame *frame;
     const qa_application_native_q3_entity *observation;
     const q3n_remote_entity *remote;
+    const q3n_compiled_entity *compiled;
     const qa_q3_entity *state;
     q3n_entity *cent;
     q3n_client_info client;
@@ -16,6 +17,7 @@ typedef struct player_fx {
     const q3n_player_fx_settings *settings;
     const q3n_player_fx_backend *backend;
     const q3n_player_fx_remote_backend *remote_backend;
+    const q3n_player_fx_compiled_backend *compiled_backend;
 } player_fx;
 static bool powered(const player_fx *p, uint32_t bit)
 { return ((uint32_t)p->state->powerups & (UINT32_C(1)<<bit))!=0; }
@@ -23,6 +25,13 @@ static bool current(const player_fx *p, qa_error *e)
 {
     const q3n_frame *f=p->frame;
     if(!q3ne_current(f,e))return false;
+    if(p->compiled) {
+        const q3n_client_info *ci=q3n_clients_get(f->clients,p->client.physical_client);
+        return p->compiled->frame==f->compiled && q3n_compiled_entity_current(p->compiled) &&
+            p->compiled->presentation==p->cent && p->state==p->compiled->current && ci && ci->info_valid &&
+            ci->configstring_revision==p->client.configstring_revision && ci->media_revision==p->client.media_revision?true:
+            q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled player effects have a superseded actor or media row");
+    }
     if(p->remote) {
         const q3n_client_info *ci=q3n_clients_get(f->clients,p->client.physical_client);
         return p->remote->frame==f->remote && q3n_remote_entity_current(p->remote) &&
@@ -50,10 +59,12 @@ static qa_q3_ref_entity reference(qa_q3_ref_kind kind,int32_t handle)
 static bool emit(player_fx *p,const qa_q3_ref_entity *r,qa_error *e)
 { return qa_q3_presentation_entity(p->frame->presentation,r,e) && current(p,e); }
 static bool world_trace(player_fx *p,qa_vec3 start,qa_vec3 end,qa_bounds bounds,uint32_t mask,qa_trace_result *out,qa_error *e)
-{ return (p->remote?p->remote_backend->world_trace(p->remote_backend->context,p->frame,start,end,bounds,mask,out,e):
+{ return (p->compiled?p->compiled_backend->world_trace(p->compiled_backend->context,p->frame,start,end,bounds,mask,out,e):
+    p->remote?p->remote_backend->world_trace(p->remote_backend->context,p->frame,start,end,bounds,mask,out,e):
     p->backend->world_trace(p->backend->context,p->frame,start,end,bounds,mask,out,e)) && current(p,e); }
 static bool contents(player_fx *p,qa_vec3 point,uint32_t *out,qa_error *e)
-{ return (p->remote?p->remote_backend->world_point_contents(p->remote_backend->context,p->frame,point,out,e):
+{ return (p->compiled?p->compiled_backend->world_point_contents(p->compiled_backend->context,p->frame,point,out,e):
+    p->remote?p->remote_backend->world_point_contents(p->remote_backend->context,p->frame,point,out,e):
     p->backend->world_point_contents(p->backend->context,p->frame,point,out,e)) && current(p,e); }
 static bool sprite(player_fx *p,int32_t shader,qa_error *e)
 {
@@ -112,7 +123,8 @@ static bool splash(player_fx *p,qa_error *e)
 static bool body_pass(player_fx *p,uint32_t part,qa_q3_ref_entity *r,bool base,qa_error *e)
 {
     bool consumed=false;
-    bool ok=p->remote?p->remote_backend->body_submit(p->remote_backend->context,p->frame,p->remote,part,r,base,&consumed,e):
+    bool ok=p->compiled?p->compiled_backend->body_submit(p->compiled_backend->context,p->frame,p->compiled,part,r,base,&consumed,e):
+        p->remote?p->remote_backend->body_submit(p->remote_backend->context,p->frame,p->remote,part,r,base,&consumed,e):
         p->backend->body_submit(p->backend->context,p->frame,p->observation,part,r,base,&consumed,e);
     if(!ok || !current(p,e))return false;
     return consumed || emit(p,r,e);
@@ -134,7 +146,9 @@ static bool body_powerups(player_fx *p,uint32_t part,qa_q3_ref_entity *r,bool hi
 static bool write_dynamic(player_fx *p,const q3n_client_dynamic *dynamic,qa_error *e)
 {
     if(!current(p,e))return false;
-    bool ok=p->remote?q3n_clients_remote_dynamic_write(p->frame->clients,&p->frame->remote->source,
+    bool ok=p->compiled?q3n_clients_compiled_dynamic_write(p->frame->clients,&p->frame->compiled->source,
+        p->client.physical_client,p->client.configstring_revision,p->client.media_revision,dynamic,e):
+        p->remote?q3n_clients_remote_dynamic_write(p->frame->clients,&p->frame->remote->source,
         p->client.physical_client,p->client.configstring_revision,p->client.media_revision,dynamic,e):
         q3n_clients_dynamic_write(p->frame->clients,p->frame->application,&p->frame->source,
         p->client.physical_client,p->client.configstring_revision,p->client.media_revision,dynamic,e);
@@ -161,7 +175,9 @@ static bool breath(player_fx *p,const qa_q3_ref_entity *head,qa_error *e)
         .shader=p->media->graphics[Q3N_G_SHOTGUN_SMOKE]};
     q3n_effect_smoke(f,&smoke);
     q3n_client_dynamic dynamic=ci->dynamic; dynamic.breath_puff_time=q3ne_plus(f->time,2000);
-    bool ok=p->remote?q3n_clients_remote_dynamic_write(f->clients,&f->remote->source,ci->physical_client,
+    bool ok=p->compiled?q3n_clients_compiled_dynamic_write(f->clients,&f->compiled->source,ci->physical_client,
+        ci->configstring_revision,ci->media_revision,&dynamic,e):
+        p->remote?q3n_clients_remote_dynamic_write(f->clients,&f->remote->source,ci->physical_client,
         ci->configstring_revision,ci->media_revision,&dynamic,e):
         q3n_clients_dynamic_write(f->clients,f->application,&f->source,ci->physical_client,
         ci->configstring_revision,ci->media_revision,&dynamic,e);
@@ -365,7 +381,8 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
 static bool submit(player_fx *p,q3n_player_body *body,qa_error *e)
 {
     bool hidden=false;
-    bool ok=p->remote?p->remote_backend->body_hidden(p->remote_backend->context,p->frame,p->remote,&hidden,e):
+    bool ok=p->compiled?p->compiled_backend->body_hidden(p->compiled_backend->context,p->frame,p->compiled,&hidden,e):
+        p->remote?p->remote_backend->body_hidden(p->remote_backend->context,p->frame,p->remote,&hidden,e):
         p->backend->body_hidden(p->backend->context,p->frame,p->observation,&hidden,e);
     if(!ok || !current(p,e))return false;
     float plane=0; bool visible=false;
@@ -382,7 +399,8 @@ static bool submit(player_fx *p,q3n_player_body *body,qa_error *e)
     if(body->count<3)return true;
     if(!body_powerups(p,2,&body->parts[2],hidden,e))return false;
     if(!hidden && q3n_frame_product(p->frame)==QA_Q3_TEAM_ARENA && (!breath(p,&body->parts[2],e) || !dust(p,e)))return false;
-    ok=p->remote?p->remote_backend->player_weapon(p->remote_backend->context,p->frame,p->remote,&body->parts[1],p->client.team,e):
+    ok=p->compiled?p->compiled_backend->player_weapon(p->compiled_backend->context,p->frame,p->compiled,&body->parts[1],p->client.team,e):
+        p->remote?p->remote_backend->player_weapon(p->remote_backend->context,p->frame,p->remote,&body->parts[1],p->client.team,e):
         p->backend->player_weapon(p->backend->context,p->frame,p->observation,p->cent,&body->parts[1],p->client.team,e);
     if(!ok || !current(p,e))return false;
     return powerups(p,&body->parts[1],e);
@@ -391,7 +409,7 @@ bool q3n_player_fx_submit(const q3n_frame *f,const qa_application_native_q3_enti
     q3n_entity *cent,const q3n_client_info *client,q3n_player_body *body,
     const q3n_player_fx_settings *settings,const q3n_player_fx_backend *backend,qa_error *e)
 {
-    if(!f || f->remote || !actual || !actual->present || !cent || !client || !body || body->count>3 || !settings ||
+    if(!f || f->remote || f->compiled || !actual || !actual->present || !cent || !client || !body || body->count>3 || !settings ||
         !backend || !backend->world_trace || !backend->world_point_contents || !backend->body_hidden ||
         !backend->body_submit || !backend->player_weapon || actual->state.clientNum<0 || actual->state.clientNum>=64 ||
         client->physical_client!=(uint32_t)actual->state.clientNum)
@@ -405,6 +423,24 @@ bool q3n_player_fx_submit(const q3n_frame *f,const qa_application_native_q3_enti
     bool ok=submit(&p,body,e);
     if(own_lease)f->events->busy=false;
     return ok;
+}
+bool q3n_player_fx_submit_compiled(const q3n_frame *f,const q3n_compiled_entity *actual,
+    const q3n_client_info *client,q3n_player_body *body,const q3n_player_fx_settings *settings,
+    const q3n_player_fx_compiled_backend *backend,qa_error *e)
+{
+    if(!f || !f->compiled || !actual || actual->frame!=f->compiled || !actual->current || !actual->presentation ||
+       (!actual->predicted && (!actual->published || !actual->current_valid)) || !client || !body || body->count>3 ||
+       !settings || !backend || !backend->world_trace || !backend->world_point_contents || !backend->body_hidden ||
+       !backend->body_submit || !backend->player_weapon || actual->current->clientNum<0 || actual->current->clientNum>=64 ||
+       client->physical_client!=(uint32_t)actual->current->clientNum)
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled player effects require their actual cache, body and callbacks");
+    if(!body->count || !client->info_valid)return true;
+    if(!q3n_frame_snapshot_player(f))return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled CG_Player requires its actual snapshot player");
+    player_fx p={.frame=f,.compiled=actual,.state=actual->current,.cent=actual->presentation,.client=*client,
+        .media=q3n_media_read(f->media),.settings=settings,.compiled_backend=backend};
+    if(!current(&p,e))return false;
+    bool own_lease=!f->events->busy; if(own_lease)f->events->busy=true;
+    bool okay=submit(&p,body,e); if(own_lease)f->events->busy=false; return okay;
 }
 bool q3n_player_fx_submit_remote(const q3n_frame *f,const q3n_remote_entity *actual,
     const q3n_client_info *client,q3n_player_body *body,const q3n_player_fx_settings *settings,

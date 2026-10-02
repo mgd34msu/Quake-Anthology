@@ -1,7 +1,10 @@
 #include "native_q3_client.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/application_native_q3_cvars.h"
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 #define A QA_CVAR_ARCHIVE
 #define C QA_CVAR_CHEAT
@@ -123,6 +126,87 @@ _Static_assert(sizeof(native_client_definitions)/sizeof(*native_client_definitio
 #undef R
 #undef U
 #undef S
+
+size_t qa_native_q3_cvar_definition_count(qa_q3_product product)
+{
+    if(product!=QA_Q3_ARENA && product!=QA_Q3_TEAM_ARENA)return 0;
+    size_t count=0;
+    for(size_t i=0;i<native_client_definition_count;++i)
+        if(!native_client_definitions[i].missionpack || product==QA_Q3_TEAM_ARENA)++count;
+    return count;
+}
+bool qa_native_q3_cvar_definition_at(qa_q3_product product,size_t ordinal,qa_native_q3_cvar_definition *out)
+{
+    if(!out || (product!=QA_Q3_ARENA && product!=QA_Q3_TEAM_ARENA))return false;
+    for(size_t i=0;i<native_client_definition_count;++i) {
+        const native_client_definition *definition=&native_client_definitions[i];
+        if(definition->missionpack && product!=QA_Q3_TEAM_ARENA)continue;
+        if(ordinal--)continue;
+        *out=(qa_native_q3_cvar_definition){definition->symbol,definition->name,
+            product==QA_Q3_TEAM_ARENA && !strcmp(definition->symbol,"cg_deferPlayers")?"0":definition->value,
+            definition->flags}; return true;
+    }
+    return false;
+}
+
+bool qa_native_q3_client_defaults(const qa_launch_instance *descriptor, qa_cvars *registry,
+    const qa_command_context *command, const char *configured_model, qa_error *error)
+{
+    qa_catalog *catalog = descriptor ? qa_launch_instance_catalog(descriptor) : NULL;
+    const qa_product *product = catalog ? qa_catalog_product(catalog, descriptor->selection.product) : NULL;
+    if (!descriptor || !descriptor->storage || !descriptor->content || !product ||
+        product->family != QA_GAME_Q3 || !registry || qa_cvars_dialect(registry) != QA_CONSOLE_Q3 ||
+        !command || !command->session || !command->owner || command->origin != QA_COMMAND_SEAT ||
+        command->dialect != QA_CONSOLE_Q3)
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Q3 defaults require their actual catalog CLIENT and seat registry");
+    qa_native_q3_character_declaration defaults;
+    if (!configured_model) {
+        if (!qa_native_q3_character_default_declaration(QA_GAME_Q3, &defaults, error)) return false;
+        configured_model = defaults.model;
+    }
+    if (!*configured_model)
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Q3 CLIENT model declaration is empty");
+    size_t length = strlen(configured_model);
+    if (length > SIZE_MAX - 9)
+        return native_client_fail(error, QA_ERROR_MEMORY, "Q3 CLIENT model declaration exceeds storage");
+    char *model = malloc(length + 9);
+    if (!model) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 CLIENT model declaration");
+    memcpy(model, configured_model, length); memcpy(model + length, "/default", 9);
+    static const struct { const char *name, *value; uint32_t flags; } prefix[] = {
+        {"cl_timeNudge", "0", QA_CVAR_TEMPORARY},
+        {"rate", "25000", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"cl_maxpackets", "30", QA_CVAR_ARCHIVE},
+        {"cl_packetdup", "1", QA_CVAR_ARCHIVE},
+        {"snaps", "20", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}
+    }, suffix[] = {
+        {"color1", "4", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"color2", "5", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"sex", "male", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"cl_anonymous", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"cg_predictItems", "1", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"teamtask", "0", QA_CVAR_USERINFO}, {"password", "", QA_CVAR_USERINFO},
+        {"handicap", "100", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+        {"cl_maxPing", "800", QA_CVAR_ARCHIVE},
+        {"cl_serverStatusResendTime", "750", 0}, {"sv_master1", "master.quake3arena.com", 0}
+    };
+    const char *description = "Q3 CLIENT baseline";
+    bool ok = true;
+    for (size_t i = 0; ok && i < sizeof(prefix) / sizeof(*prefix); ++i)
+        ok = qa_cvars_register(registry, prefix[i].name, prefix[i].value, prefix[i].flags,
+            command->owner, description, error);
+    char name[64];
+    if (!command->seat) memcpy(name, "Player", 7);
+    else snprintf(name, sizeof(name), "Player %" PRIu64, (uint64_t)command->seat + 1);
+    const uint32_t identity = QA_CVAR_ARCHIVE | QA_CVAR_USERINFO;
+    if (ok) ok = qa_cvars_register(registry, "name", name, identity, command->owner, description, error);
+    static const char *const names[] = {"model", "headmodel", "team_model", "team_headmodel"};
+    for (size_t i = 0; ok && i < sizeof(names) / sizeof(*names); ++i)
+        ok = qa_cvars_register(registry, names[i], model, identity, command->owner, description, error);
+    for (size_t i = 0; ok && i < sizeof(suffix) / sizeof(*suffix); ++i)
+        ok = qa_cvars_register(registry, suffix[i].name, suffix[i].value, suffix[i].flags,
+            command->owner, description, error);
+    free(model); return ok;
+}
 
 static size_t symbol_index(const qa_native_q3_client_service *service,const char *symbol)
 {

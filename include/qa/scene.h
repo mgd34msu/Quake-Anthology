@@ -60,9 +60,10 @@ typedef struct qa_scene_image {
     size_t animation_count;
     size_t references;
     bool source_q3, source_mipmap;
+    uint32_t source_texture_unit;
     /* Original decoded embedded model/BSP pixels may admit a recipient upload;
      * dynamic cinematic and generated control surfaces retain their identity. */
-    bool recipient_upload_pixels;
+    bool recipient_upload_pixels, recipient_mipmap;
 } qa_scene_image;
 /* The entered renderer recipient maps a reached immutable version into its
  * own upload domain. It preserves the original material and model identity. */
@@ -98,6 +99,12 @@ void qa_scene_resources_destroy(qa_scene_resources *);
 bool qa_scene_resources_retain(qa_scene_resources *, qa_error *);
 qa_scene_resources *qa_scene_image_owner(const qa_scene_image *);
 qa_scene_resources *qa_scene_image_resource_owner(const qa_scene_image *);
+typedef bool (*qa_scene_source_image_admit_fn)(void *, const qa_scene_image *, uint32_t, qa_error *);
+/* Bind the actual Source renderer before fresh registrations. Cold binding
+ * preserves uploaded images and never dispatches their admission again. */
+bool qa_scene_resources_set_source_image_admit(qa_scene_resources *, qa_scene_source_image_admit_fn, void *, qa_error *);
+bool qa_scene_resources_source_image_admit_is(const qa_scene_resources *, qa_scene_source_image_admit_fn, const void *);
+bool qa_scene_image_source_admit(qa_scene_resources *, qa_scene_image *, uint32_t, qa_error *);
 /* Actual retained parent banks for cross-bank recipient image recipes.
  * Repeated parents are returned once per image edge; no admission or hold. */
 size_t qa_scene_resources_parent_count(const qa_scene_resources *);
@@ -120,6 +127,12 @@ typedef struct qa_scene_resource_policy qa_scene_resource_policy;
  * Publication keeps the resource service and existing image names alive. */
 bool qa_scene_resource_policy_prepare(qa_scene_resources *,
     const qa_scene_image_policy policies[3], qa_scene_resource_policy **, qa_error *);
+/* An actual renderer replacement reuploads admitted Source recipes using the
+ * new physical renderer profile, retaining each request's mipmap/picmip flags. */
+bool qa_scene_resource_policy_prepare_source_restart(qa_scene_resources *,
+    const qa_q3_image_upload_options *, qa_scene_resource_policy **, qa_error *);
+bool qa_scene_resource_policy_source_restart_read(const qa_scene_resource_policy *,
+    qa_q3_image_upload_options *);
 qa_scene_resources *qa_scene_resource_policy_destination(const qa_scene_resource_policy *);
 qa_scene_resources *qa_scene_resource_policy_source(const qa_scene_resource_policy *);
 bool qa_scene_resource_policy_dependencies(qa_scene_resource_policy *,
@@ -243,6 +256,9 @@ bool qa_scene_image_load(qa_scene_resources *, const char *, const qa_scene_imag
  * cache retains this admission rule through policy preparation and restore. */
 bool qa_scene_image_load_exact(qa_scene_resources *, const char *, const qa_scene_image_options *,
                               qa_scene_image **, qa_error *);
+/* Normalize an authored external model image path within its content root.
+ * The caller owns the result. This is the same admission used by model images. */
+char *qa_scene_model_image_path(const char *, qa_error *);
 bool qa_scene_resources_source_q3_initialize(qa_scene_resources *, const qa_q3_image_upload_options *, qa_error *);
 const qa_scene_image *qa_scene_source_q3_white(const qa_scene_resources *);
 const qa_scene_image *qa_scene_source_q3_missing(const qa_scene_resources *);
@@ -365,7 +381,7 @@ typedef enum qa_scene_light_pass { QA_LIGHT_PASS_TEXTURE, QA_LIGHT_PASS_LIGHTMAP
     QA_LIGHT_PASS_MATERIAL_LIGHTMAP, QA_LIGHT_PASS_MODEL } qa_scene_light_pass;
 typedef enum qa_scene_source_direct {
     QA_SOURCE_DIRECT_NONE, QA_SOURCE_DIRECT_BEAM, QA_SOURCE_DIRECT_AXIS, QA_SOURCE_DIRECT_SKY,
-    QA_SOURCE_DIRECT_SHADOW_FINISH
+    QA_SOURCE_DIRECT_SHADOW_FINISH, QA_SOURCE_DIRECT_SHADOW_VOLUME_END
 } qa_scene_source_direct;
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
@@ -391,6 +407,8 @@ typedef struct qa_scene_draw {
     qa_scene_source_direct source_direct;
     bool source_retain_depth_range;
     bool source_retain_polygon_offset;
+    bool source_stage_state;
+    bool source_arrays;
     /* Packed Q3 shader/entity/fog/light order or caller's ordered sequence. */
     uint64_t sort_key;
     uint32_t entity, fog_index, light_mask;
@@ -411,7 +429,8 @@ typedef enum qa_scene_command_kind {
     QA_SCENE_COMMAND_VIEW, QA_SCENE_COMMAND_DRAW, QA_SCENE_COMMAND_TARGET,
     QA_SCENE_COMMAND_OPACITY_BEGIN, QA_SCENE_COMMAND_OPACITY_END,
     QA_SCENE_COMMAND_FOG, QA_SCENE_COMMAND_DRAW_BUFFER, QA_SCENE_COMMAND_SWAP,
-    QA_SCENE_COMMAND_IMAGE, QA_SCENE_COMMAND_OUTPUT_DOMAIN
+    QA_SCENE_COMMAND_IMAGE, QA_SCENE_COMMAND_OUTPUT_DOMAIN,
+    QA_SCENE_COMMAND_PREBLEND_GAMMA
 } qa_scene_command_kind;
 typedef struct qa_scene_command {
     qa_scene_command_kind kind;
@@ -428,6 +447,9 @@ typedef struct qa_scene_command {
         /* An actual renderer recipient chooses this region's upload/output
          * domain. Source RGB already owns software gamma in its image upload. */
         struct { qa_scene_rect rect; bool source; } output_domain;
+        /* Generic overlay RGB enters a Source software-color viewport before
+         * blending. Alpha and the viewport's output domain remain unchanged. */
+        struct { bool enabled; } preblend_gamma;
     } data;
 } qa_scene_command;
 typedef enum qa_scene_group_kind { QA_SCENE_GROUP_COMPILED, QA_SCENE_GROUP_SOURCE,
@@ -446,6 +468,8 @@ typedef struct qa_scene_frame {
     qa_material_source_scratch *source_pending;
     uint64_t sequence, owner;
     bool source_backend, source_skip_backend, source_clear_draw_buffer;
+    bool source_begin_frame;
+    int32_t source_stereo_frame;
     /* Borrowed renderer registration owner. Libraries and their material
      * records outlive preparation of every pending source group. */
     qa_material_order *material_order;
@@ -469,6 +493,7 @@ void qa_scene_frame_reset(qa_scene_frame *, uint64_t sequence);
 void qa_scene_frame_destroy(qa_scene_frame *);
 bool qa_scene_frame_emit(qa_scene_frame *, const qa_scene_command *, qa_error *);
 bool qa_scene_frame_output_domain(qa_scene_frame *, qa_scene_rect, bool source, qa_error *);
+bool qa_scene_frame_preblend_gamma(qa_scene_frame *, bool enabled, qa_error *);
 bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
 /* Pin borrowed retained geometry, including intermediate shadow-caster data,
  * until reset. No command is emitted. NULL geometry needs no reference. */
@@ -510,6 +535,7 @@ typedef struct qa_scene_world_options {
     qa_scene_image_options images;
     float subdivisions, q1_water_alpha, q2_light_modulate;
     uint32_t q3_overbright;
+    bool source_fullbright;
     const char *q2_sky;
     qa_bytes external_lit;
     qa_bytes external_entities;
@@ -532,6 +558,11 @@ typedef struct qa_scene_q1_sky_environment {
 typedef enum qa_scene_legacy_world_phase {
     QA_LEGACY_WORLD_ALL, QA_LEGACY_WORLD_OPAQUE, QA_LEGACY_WORLD_WATER
 } qa_scene_legacy_world_phase;
+typedef struct qa_scene_legacy_policy {
+    bool present, fullbright, lightmap, dynamic, saturate, polyblend, cull, clear, flares;
+    float modulate;
+    uint8_t monolightmap;
+} qa_scene_legacy_policy;
 typedef struct qa_scene_world_input {
     qa_scene_view view;
     double seconds;
@@ -595,6 +626,7 @@ typedef struct qa_scene_world_input {
     /* Reached legacy controls, independent of Q3 Source policies. */
     bool legacy_flashblend;
     bool legacy_texture_sort;
+    qa_scene_legacy_policy legacy_policy;
     qa_scene_legacy_world_phase legacy_phase;
     const qa_scene_q1_mirror *q1_mirror;
     const qa_scene_q1_sky_environment *q1_sky_environment;
@@ -656,6 +688,9 @@ typedef struct qa_scene_fog_volume {
     bool has_surface;
     qa_scene_plane surface;
 } qa_scene_fog_volume;
+/* Reads the reached, decomposed Original Q3 fog ordinal. Zero has no fog. */
+bool qa_scene_world_source_fog_read(const qa_scene_world *, uint32_t,
+                                  qa_scene_fog_volume *, qa_error *);
 /* Returns the first source fog containing the sphere. A miss clears out. */
 bool qa_scene_world_fog_for_sphere(const qa_scene_world *, qa_vec3, float,
                                   qa_scene_fog_volume *out);
@@ -695,6 +730,8 @@ struct qa_scene_model_input {
     size_t pose_count;
     const qa_material *custom_material;
     const qa_model_skin_map *custom_skin;
+    const qa_material *const *custom_skin_materials;
+    size_t custom_skin_material_count;
     /* Per-input MDL skin; uploaded cache entries own the indexed pixels. */
     const qa_scene_model_indexed_skin *indexed_skin;
     /* Borrowed registration owner for Q3 surface, default and shadow materials.

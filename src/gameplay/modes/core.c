@@ -608,6 +608,21 @@ bool qa_modes_player_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     *out = view;
     return true;
 }
+bool qa_modes_player_read_optional(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_mode_player_view *out, bool *found, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || !out || !found || !mode_live(m, actor))
+        return mode_fail(e, "Optional match read requires its live mode and full actor");
+    if (!mode_member_get(m, v, actor)) {
+        *found = false;
+        return true;
+    }
+    qa_mode_player_view value;
+    if (!qa_modes_player_read(m, id, actor, &value, e)) return false;
+    *out = value;
+    *found = true;
+    return true;
+}
 bool qa_modes_ctf_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                        qa_mode_ctf_view *out, qa_error *e) {
     mode_instance *v = mode_get(m, id);

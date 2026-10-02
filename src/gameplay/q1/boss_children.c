@@ -154,7 +154,7 @@ static bool eye_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *
             return false;
         if (!q1_alive(g, e->id))
             return true;
-        e->physics.flags &= ~(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
+        e->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
         e->state.boss_child.enemy = attacker;
         if (!q1_boss_targets(g, e, attacker, e->target, error))
             return false;

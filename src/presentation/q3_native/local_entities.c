@@ -6,6 +6,7 @@ void q3ne_local_reset(q3n_events *o)
     memset(o->locals,0,sizeof(o->locals)); o->local_head=o->local_tail=-1;
     o->local_free=0; o->local_count=0;
     for(int32_t i=0;i<Q3N_LOCAL_CAPACITY;++i) {
+        if(o->options.local_allocated)o->options.local_allocated(o->options.context,i);
         o->locals[i].prev=-1; o->locals[i].next=i+1==Q3N_LOCAL_CAPACITY?-1:i+1;
     }
 }
@@ -20,6 +21,7 @@ q3n_local_entity *q3n_local_allocate(q3n_events *o, q3n_local_type type, qa_q3_r
 {
     if(o->local_free==-1)q3ne_local_free(o,o->local_tail);
     int32_t i=o->local_free; q3n_local_slot *s=&o->locals[i]; o->local_free=s->next;
+    if(o->options.local_allocated)o->options.local_allocated(o->options.context,i);
     memset(&s->value,0,sizeof(s->value)); s->value.type=type; s->value.ref.kind=kind;
     s->active=s->present=true; s->prev=-1; s->next=o->local_head;
     if(o->local_head!=-1)o->locals[o->local_head].prev=i; else o->local_tail=i;
@@ -27,6 +29,7 @@ q3n_local_entity *q3n_local_allocate(q3n_events *o, q3n_local_type type, qa_q3_r
 }
 static bool entity(const q3n_frame *f, const qa_q3_ref_entity *ref, qa_error *error)
 {
+    if(f->effect_entity_visible && !f->effect_entity_visible(f->effect_output_context,ref))return q3ne_current(f,error);
     if ((f->effects_source || f->unified_effects) && f->effect_entity_output) {
         float radius = 0;
         /* ApplicationEffects captures the exact activeLocal.ref identity.
@@ -136,7 +139,8 @@ static bool score_plum(const q3n_frame *f, int32_t index, qa_error *error)
     float c=q3ne_remaining(v,f->time); int32_t score=q3ne_int(v->radius);
     const uint8_t colors[6][4]={{255,17,17,255},{255,0,255,255},{0,0,255,255},{255,255,0,255},{0,255,0,255},{255,255,255,255}};
     memcpy(r->color,colors[score<0?0:score>=50?1:score>=20?2:score>=10?3:score>=2?4:5],4);
-    if(c<0.25f)r->color[3]=q3ne_byte(q3ne_mul(1020,c)); r->radius=4;
+    if(c<0.25f)r->color[3]=q3ne_byte(q3ne_mul(1020,c));
+    r->radius=4;
     qa_vec3 origin=q3ne_array(v->pos.base); origin.z=q3ne_add(origin.z,q3ne_add(110,-q3ne_mul(c,100)));
     qa_vec3 dir=q3ne_normalize(q3ne_cross(q3ne_difference(f->refdef.origin,origin),qa_v3(0,0,1)));
     float phase=q3ne_mul(q3ne_mul(c,2),3.14159274101257324219f);
@@ -232,7 +236,8 @@ bool q3n_local_submit(const q3n_frame *f, qa_error *error)
                 v->ref.axis[0].x=xy; v->ref.axis[1].y=xy; v->ref.axis[2].z=z;
             }
             if(t>5000) { v->end_time=0; qa_vec3 origin=v->ref.origin; q3n_effect_gib_player(f,origin); }
-            else ok=entity(f,&v->ref,error); break;
+            else ok=entity(f,&v->ref,error);
+            break;
         }
         }
         if(!ok) { f->events->busy=false; return false; }

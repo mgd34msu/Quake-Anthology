@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../entities/internal.h"
 
 static bool info_value(const char *info, const char *key, char *out, size_t capacity) {
     size_t wanted = strlen(key);
@@ -361,6 +362,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
     if (!q2_actor_live(g, id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE) {
+        if (!q2_campaign_enter(g, e)) return false;
         if (s->auto_shield >= 0)
             s->auto_shield_enabled = true;
         s->spawned = true;

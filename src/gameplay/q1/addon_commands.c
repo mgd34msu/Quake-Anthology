@@ -81,7 +81,7 @@ bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
-                              .count = g->killed_monsters,
+                              .count = (int32_t)g->killed_monsters,
                               .time_ns = g->time_ns};
     return qa_builtin_resource(&g->services, "monster-count", &event.resource, error) &&
            qa_builtin_emit(&g->services, &event, error);

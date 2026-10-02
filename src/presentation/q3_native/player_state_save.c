@@ -2,13 +2,14 @@
 
 static bool fields(qa_source_save_io *io,q3n_player_state *o)
 {
-    const char *signature=o->options.remote_client?"Q3PR":"Q3PS";
+    const char *signature=o->options.compiled_source?"Q3PC":o->options.remote_client?"Q3PR":"Q3PS";
     uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&version) || version!=1 ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
-       !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
+       !q3nh_remote_basis_fields(io,o->options.remote_client) ||
+       (o->options.compiled_source && !q3n_compiled_source_fields(io,o->options.compiled_source)))return false;
     q3n_transition_history *h=&o->history;
-    if(!o->options.remote_client) {
+    if(!o->options.remote_client && !o->options.compiled_source) {
         if(!qa_source_save_bool(io,&h->valid) || !qa_source_save_actor(io,&h->viewing_actor) ||
            !qa_source_save_actor(io,&h->followed_actor) || !qa_source_save_u32(io,&h->viewing_client) || h->viewing_client>=64 ||
            !qa_source_save_u64(io,&h->source_frame) || !qa_source_save_i32(io,&h->source_time) ||
@@ -41,7 +42,7 @@ static bool fields(qa_source_save_io *io,q3n_player_state *o)
     if(!qa_source_save_i32(io,&o->event_sequence))return false;
     for(unsigned i=0;i<16;++i)if(!qa_source_save_i32(io,&o->predictable_events[i]))return false;
     return qa_source_save_bool(io,&o->map_restart) &&
-        (o->options.remote_client || !h->valid || (h->viewing_actor.registry && h->followed_actor.registry));
+        (o->options.remote_client || o->options.compiled_source || !h->valid || (h->viewing_actor.registry && h->followed_actor.registry));
 }
 bool q3n_player_state_checkpoint(const q3n_player_state *borrowed,qa_buffer *out,qa_error *e)
 {

@@ -62,8 +62,8 @@ static bool vector(qa_script *s, qa_vec3 *out, qa_error *e) {
     }
     return true;
 }
-bool bot_structure(qa_script *s, void *out, const bot_field *fields, size_t field_count,
-                   qa_error *e) {
+bool bot_structure_source(qa_script *s, void *out, const bot_field *fields, size_t field_count,
+                          void *context, bool (*written)(void *, qa_error *), qa_error *e) {
     if (!qa_script_expect(s, "{", e))
         return false;
     for (;;) {
@@ -100,5 +100,10 @@ bool bot_structure(qa_script *s, void *out, const bot_field *fields, size_t fiel
                 memcpy(target, &number, sizeof(number));
             }
         }
+        if (written && !written(context, e)) return false;
     }
+}
+bool bot_structure(qa_script *s, void *out, const bot_field *fields, size_t field_count,
+                   qa_error *e) {
+    return bot_structure_source(s, out, fields, field_count, NULL, NULL, e);
 }

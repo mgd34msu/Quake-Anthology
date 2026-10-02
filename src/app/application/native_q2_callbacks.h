@@ -26,6 +26,8 @@ typedef struct application_native_callback_inputs {
  * checked disposal. Calls resolve source addresses anew after original restore. */
 bool application_native_q2_callbacks_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_validate(struct application_native_q2 *, qa_error *);
+bool application_native_q2_callbacks_register(struct application_native_q2 *, qa_error *);
+bool application_native_q2_callbacks_suspend(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_run(struct application_native_q2 *, const char *section,
     const application_native_callback_inputs *, bool *accepted, qa_error *);
 bool application_native_q2_callbacks_call(application_native_q2_callbacks *, qa_json_id,
@@ -38,5 +40,15 @@ bool application_native_q2_callbacks_idle(const application_native_q2_callbacks 
 bool application_native_q2_callbacks_current(const application_native_q2_callbacks *);
 bool application_native_q2_callbacks_close(struct application_native_q2 *, qa_error *);
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *);
+bool application_native_q2_callbacks_source_before(void *, qa_error *);
+bool application_native_q2_callbacks_source_after(void *, qa_error *);
+bool application_native_q2_callbacks_release_actor(struct application_native_q2 *, qa_actor_id, qa_error *);
+bool application_native_q2_callbacks_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
+bool application_native_q2_callbacks_restore(struct application_native_q2 *, qa_bytes, qa_error *);
+bool application_native_q2_callbacks_finish_restore(struct application_native_q2 *, qa_error *);
+bool application_native_q2_callbacks_arrays_validate(struct application_native_q2 *, qa_error *);
+bool application_native_q2_callbacks_reserved_slot(void *,uint32_t,bool *,qa_error *);
+bool application_native_q2_callbacks_userinfo_validate(struct application_native_q2 *,const char *,qa_error *);
+bool application_native_q2_callbacks_import(void *,const qa_native_import_call *,qa_native_value *,bool *,qa_error *);
 
 #endif

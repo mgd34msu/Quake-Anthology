@@ -7,6 +7,10 @@
 #include "qa/network_unified.h"
 
 typedef struct application_q3_components application_q3_components;
+/* MEDIA creates the actual private registry owners before dictionary import.
+ * Finish runs after those registries are restored; neither phase replays Init. */
+bool application_q3_components_scenes_restore_prepare(qa_application *,qa_error *);
+bool application_q3_components_scenes_restore_finish(qa_application *,qa_error *);
 typedef struct application_q3_component_publication_lease application_q3_component_publication_lease;
 typedef struct application_q3_components_options {
     application_q3_components *previous;
@@ -46,6 +50,7 @@ typedef struct application_q3_component_publication {
 /* The actual launch selection creates this roster before any Init. Every
  * entry owns a separate physical GAME executor and admitted SOURCE clock. */
 bool application_q3_components_create(const application_q3_components_options *,application_q3_components **,qa_error *);
+bool application_q3_component_identity_create(const qa_catalog_mod *,const qa_product *,const char *,qa_unified_document **,qa_error *);
 bool application_q3_components_prepare(application_q3_components *,qa_error *);
 bool application_q3_components_commit(application_q3_components *,qa_error *);
 bool application_q3_components_initialize(application_q3_components *,qa_error *);
@@ -60,6 +65,8 @@ bool application_q3_components_at(qa_application *,size_t,application_q3_compone
 size_t application_q3_components_publication_count(const application_q3_components *);
 bool application_q3_components_publication_at(application_q3_components *,size_t,application_q3_component_publication *,qa_error *);
 bool application_q3_components_event_source_read(const qa_application *,qa_actor_owner,application_q3_component_publication *,qa_error *);
+bool application_q3_components_checkpoint_publication_read(const qa_application *,qa_actor_owner,
+    application_q3_component_publication *,bool *,qa_error *);
 bool application_q3_components_publication_borrow(application_q3_components *,size_t,
     qa_actor_id,const qa_vec3 *origin,const qa_vec3 axis[3],int32_t time_ms,int32_t frame_ms,
     application_q3_component_publication_lease **,application_q3_scene_context *,qa_error *);

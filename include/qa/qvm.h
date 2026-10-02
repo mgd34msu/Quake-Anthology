@@ -47,7 +47,7 @@ bool qa_qvm_qualify_source_span(const qa_qvm_image *, uint32_t offset, size_t le
 typedef struct qa_qvm_compatibility {
     qa_qvm_abi abi;
     bool declared;
-    qa_buffer primary, equipment_presentation; /* Owned JSON values, if declared. */
+    qa_buffer primary, equipment_presentation, collision_scene; /* Owned JSON values, if declared. */
 } qa_qvm_compatibility;
 bool qa_qvm_compatibility_parse(qa_bytes json, const char *artifact_path,
                                  const qa_sha256_digest *, qa_qvm_role,

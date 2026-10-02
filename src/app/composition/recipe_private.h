@@ -78,5 +78,7 @@ bool recipe_resource_add_from(qa_executable_recipe *, qa_product_id, const char 
 bool recipe_view_write(qa_json_writer *, const recipe_view *, qa_error *);
 bool recipe_resource_write(qa_json_writer *, const qa_executable_recipe *, size_t, qa_error *);
 bool recipe_view_add(qa_executable_recipe *, const char *, const qa_catalog *, qa_vfs *, bool, size_t *, qa_error *);
+/* Import retained metadata only, after genuine views/resources/BSP exist. */
+bool recipe_metadata_restore(qa_executable_recipe *, qa_error *);
 
 #endif

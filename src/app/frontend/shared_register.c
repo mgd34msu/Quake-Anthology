@@ -23,6 +23,15 @@ static const shared_declaration declarations[]={
     {"con_scale","0","Console text size",QA_CVAR_ARCHIVE,ANY},
     {"r_gamma","1","Display brightness, 0.5 through 3",QA_CVAR_ARCHIVE,GAMMA},
     {"r_shadows","0","Shared model shadows; zero disables",QA_CVAR_ARCHIVE,FINITE},
+    {"cl_shadowlights","1","Quake II rerelease shadow lights",0,ANY},
+    {"cl_rerelease_effects","1","Quake II rerelease effects",0,ANY},
+    {"cl_dlight_hacks","0","Quake II dynamic light compatibility mode",0,ANY},
+    {"cl_muzzlelight_time","100","Quake II muzzle light duration",0,ANY},
+    {"cl_muzzleflashes","1","Quake II muzzle flash models",0,ANY},
+    {"cl_disable_particles","0","Quake II disabled particle recipe mask",0,ANY},
+    {"cl_disable_explosions","0","Quake II disabled explosion recipe mask",0,ANY},
+    {"cl_hit_markers","2","Quake II hit marker mode",0,ANY},
+    {"scr_hit_marker_time","500","Quake II hit marker duration",0,ANY},
     {"r_primitives","0","Renderer primitive submission mode",QA_CVAR_ARCHIVE,ANY},
     {"r_allowExtensions","1","Enable renderer extensions at initialization",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
     {"r_ext_compiled_vertex_array","1","Enable compiled vertex arrays at initialization",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
@@ -67,6 +76,11 @@ static const shared_declaration declarations[]={
     {"r_colorMipLevels","0","Source mipmap color diagnostics",QA_CVAR_LATCH,ANY},
     {"r_picmip","1","Source texture mip level",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
     {"r_textureMode","GL_LINEAR_MIPMAP_NEAREST","Source texture sampling filter",QA_CVAR_ARCHIVE,ANY},
+    {"r_fullbright","0","Source full bright lighting",QA_CVAR_LATCH|QA_CVAR_CHEAT,ANY},
+    {"r_drawBuffer","GL_BACK","Source framebuffer selection",QA_CVAR_CHEAT,ANY},
+    {"r_stereo","0","Source stereo rendering",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_maxpolys","600","Source submitted polygon capacity",0,ANY},
+    {"r_maxpolyverts","3000","Source submitted polygon vertex capacity",0,ANY},
     {"r_norefresh","0","Disable source scene refresh",QA_CVAR_CHEAT,ANY},
     {"r_showcluster","0","Source visibility cluster diagnostic",QA_CVAR_CHEAT,ANY},
     {"r_skipBackEnd","0","Skip source backend drawing",QA_CVAR_CHEAT,ANY},
@@ -84,6 +98,17 @@ static const shared_declaration declarations[]={
     {"gl_flashblend","0","Legacy source dynamic light blending",0,ANY},
     {"gl_doubleeys","1","Quake eye model scale",0,ANY},
     {"gl_shadows","0","Quake II source model shadows",0,ANY},
+    {"r_lightmap","0","Quake lightmap diagnostic",0,ANY},
+    {"r_dynamic","1","Quake dynamic lightmaps",0,ANY},
+    {"gl_lightmap","0","Quake II lightmap diagnostic",0,ANY},
+    {"gl_dynamic","1","Quake II dynamic lightmaps",0,ANY},
+    {"gl_modulate","1","Quake II light modulation",QA_CVAR_ARCHIVE,ANY},
+    {"gl_monolightmap","0","Quake II lightmap encoding",0,ANY},
+    {"gl_saturatelighting","0","Quake II additive lightmaps",0,ANY},
+    {"gl_polyblend","1","Legacy fullscreen blend",0,ANY},
+    {"gl_cull","1","Legacy triangle face culling",0,ANY},
+    {"gl_clear","0","Legacy color buffer clear",0,ANY},
+    {"cl_flares","1","Quake II rerelease flare entities",0,ANY},
     {"r_mirroralpha","1","Quake mirror opacity",0,ANY},
     {"gl_texsort","1","Quake texture sorted world drawing",0,ANY},
     {"gl_farclip","65536","Quake sky and world far clip distance",QA_CVAR_ARCHIVE,ANY},
@@ -181,7 +206,7 @@ bool frontend_shared_q3_renderer_initialize(qa_frontend *f,qa_error *error)
     if (!qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer registration requires its returned canonical owner");
     const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
-        "r_vertexLight","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
+        "r_vertexLight","r_fullbright","r_stereo","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
     for (size_t i=0;i<sizeof(latched)/sizeof(latched[0]);++i) {
         const qa_cvar_view *setting=qa_cvars_find(registry,latched[i]);
         if (!setting || setting->console_created)

@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_Q1_CLIENT_H
 #define QA_FRONTEND_REMOTE_Q1_CLIENT_H
 #include "qa/frontend.h"
+#include "qa/application_client.h"
 #include "qa/network_runtime.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_qw.h"
@@ -47,6 +48,8 @@ typedef struct frontend_remote_q1_options {
     bool (*service)(void *, const frontend_remote_q1_domain *,
         qa_net_protocol_id decoded_protocol, const qa_nq_message *, double seconds, uint64_t sequence, qa_error *);
     bool (*disconnected)(void *, const frontend_remote_q1_domain *, const char *, qa_error *);
+    bool (*application_read)(void *, const frontend_remote_q1_domain *, qa_application_client_source *, qa_error *);
+    bool (*application_metadata_read)(void *, const frontend_remote_q1_domain *, qa_application_client_source *, qa_error *);
     const struct frontend_remote_q1_skin_bindings *skin_bindings;
 } frontend_remote_q1_options;
 typedef struct frontend_remote_q1_client_row {
@@ -73,6 +76,7 @@ typedef struct frontend_remote_q1_view {
     qa_material_library *materials;
     qa_scene_world *world;
     qa_net_protocol_id protocol;
+    bool published;
 } frontend_remote_q1_view;
 typedef struct frontend_remote_q1_entity_view {
     qa_actor_id actor;
@@ -132,6 +136,12 @@ bool frontend_remote_q1_media_read(const frontend_remote_q1 *, frontend_remote_q
 size_t frontend_remote_q1_model_count(const frontend_remote_q1 *);
 bool frontend_remote_q1_model_at(const frontend_remote_q1 *, size_t, frontend_remote_q1_model_view *, qa_error *);
 bool frontend_remote_q1_player_read(frontend_remote_q1 *, frontend_remote_q1_player_view *, bool *present, qa_error *);
+/* Borrows the genuine enclosing physical CLIENT descriptor and namespace.
+ * Reached content remains the independently retained row.content recipe. */
+bool frontend_remote_q1_application_read(const frontend_remote_q1 *,qa_application_client_source *,qa_error *);
+/* Existing retained topology only, including capture/import/retirement.
+ * This does not admit a live command or prove Network currentness. */
+bool frontend_remote_q1_application_metadata_read(const frontend_remote_q1 *,qa_application_client_source *,qa_error *);
 bool frontend_remote_q1_draw(frontend_remote_q1 *, const qa_scene_view *,
     qa_audio_listener *, bool *rendered, qa_error *);
 bool frontend_remote_q1_destroy(frontend_remote_q1 **, qa_error *);

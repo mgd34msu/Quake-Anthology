@@ -44,6 +44,9 @@ bool qa_network_nq_restore_peer(qa_network_runtime *, const qa_net_client *, qa_
     const struct qa_network_checkpoint_refs *, qa_network_peer *, qa_error *);
 void qa_network_nq_transport_rebind(qa_network_peer *, qa_net_transport *);
 bool qa_network_qw_peer(const qa_network_peer *);
+bool qa_network_nq_retirement_pending(const qa_network_peer *);
+bool qa_network_qw_retirement_pending(const qa_network_peer *);
+bool qa_network_q2_retirement_pending(const qa_network_peer *);
 bool qa_network_qw_peer_matches(const qa_network_peer *, const qa_net_datagram *);
 struct qa_network_q1_client_policy;
 struct qa_network_q1_client_hooks;

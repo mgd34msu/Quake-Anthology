@@ -643,7 +643,7 @@ static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *in
             const qa_vfs *files = qa_application_content_view(inventory->graph, holder->view);
             if (!resource || !files || qa_vfs_resources(files) != qa_application_content_pool(inventory->graph, holder->pool)) return false;
             qa_resource_retain((qa_resource *)resource);
-            holder->source = (frontend_model_source){&holder->owned, resource, files};
+            holder->source = (frontend_model_source){.model=&holder->owned,.resource=resource,.files=files};
         }
         uint64_t parent_key=holder->parent;
         if (!digest_fields(io, holder->source.resource) || !qa_source_save_u64(io,&parent_key) || parent_key>i) return false;

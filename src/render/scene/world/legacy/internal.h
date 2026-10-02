@@ -35,6 +35,7 @@ struct qaw_legacy {
     size_t style_count;
     float *cached_styles;
     bool light_cache_valid, light_cache_dynamic;
+    uint8_t light_cache_monolightmap;
     uint8_t *light_pixels;
     uint8_t *encoded_pixels;
     qa_scene_image *direct_lightmap;

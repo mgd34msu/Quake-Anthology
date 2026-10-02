@@ -33,6 +33,11 @@ struct qa_bot_weight_workspace {
 struct qa_bot_character {
     atomic_uint references;
     qa_arena arena;
+    struct bot_character_store *source;
+    qa_bot_memory_allocation allocation;
+    qa_script *reader;
+    struct bot_character_reader *script_host;
+    bool ready, active, retired;
     qa_bot_character_view view;
     struct qa_bot_character *next;
 };
@@ -48,8 +53,15 @@ struct qa_bot_weapons {
 struct qa_bot_items {
     atomic_uint references;
     qa_arena arena;
+    qa_bot_memory *memory;
+    qa_bot_memory_allocation allocation;
+    qa_script *reader;
+    struct bot_character_reader *script_host;
+    bool ready, active;
     qa_bot_items_view view;
     qa_bot_item_info *items;
+    uint32_t *members;
+    size_t member_count, member_capacity, projection_capacity;
     struct qa_bot_items *next;
 };
 struct qa_bot_weapon_selector {
@@ -62,11 +74,13 @@ struct qa_bot_weapon_selector {
 struct qa_bot_library {
     qa_bot_library_options options;
     qa_bot_memory *memory;
+    bool character_loading, item_loading;
     qa_bot_log *log;
     struct bot_fuzzy_store *fuzzy_store;
     qa_arena arena;
     qa_bot_weights *weights;
     qa_bot_character *characters, *last_character;
+    struct bot_character_store *character_store;
     qa_bot_weapons *weapon_configs;
     qa_bot_items *item_configs;
     struct qa_bot_chat_asset *chat_assets;
@@ -95,6 +109,8 @@ typedef struct bot_field {
     bot_field_kind kind;
 } bot_field;
 bool bot_structure(qa_script *, void *, const bot_field *, size_t, qa_error *);
+bool bot_structure_source(qa_script *, void *, const bot_field *, size_t, void *,
+                          bool (*)(void *, qa_error *), qa_error *);
 bool bot_read_string(qa_script *, char *, size_t, qa_error *);
 void bot_chat_assets_close(qa_bot_library *);
 #endif

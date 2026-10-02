@@ -4,6 +4,7 @@
 #include "qa/console_cvars_prepare.h"
 
 typedef struct qa_application_engine_shutdown qa_application_engine_shutdown;
+struct qa_application_client_preparation;
 /* Final returned-driver boundary. Detach the actual ENGINE slots while all
  * application, world, source and frontend callback parents remain retained.
  * A repeated call returns the same application-owned shutdown loan. */
@@ -15,6 +16,13 @@ bool qa_application_engine_shutdown_begin(qa_application *, qa_application_engin
  * candidate is admitted only by the actual retained ENGINE-only bootstrap. */
 bool qa_application_engine_shutdown_begin_candidate(qa_application *, const qa_launch_snapshot *,
     const qa_cvars_edit *, qa_application_engine_shutdown **, qa_error *);
+bool qa_application_engine_shutdown_begin_client(qa_application *,
+    struct qa_application_client_preparation *,const qa_cvars_edit *,void *context,
+    bool (*ready)(void *,const struct qa_application_client_preparation *,const qa_cvars_edit *),
+    qa_application_engine_shutdown **,qa_error *);
+const struct qa_application_client_preparation *qa_application_engine_shutdown_client(
+    const qa_application_engine_shutdown *);
+const qa_cvars_edit *qa_application_engine_shutdown_values(const qa_application_engine_shutdown *);
 /* Retained only until that actual candidate's checked cancellation succeeds. */
 const qa_launch_snapshot *qa_application_engine_shutdown_candidate(const qa_application_engine_shutdown *);
 bool qa_application_engine_shutdown_read(const qa_application_engine_shutdown *,

@@ -55,7 +55,7 @@ struct frontend_remote_q1 {
     uint8_t pending_impulse;
     qa_vec3 view_angles;
     qa_q1_clientdata data;
-    bool bound, loaded, retired, has_data, importing, intermission;
+    bool bound, loaded, retired, has_data, importing, intermission, published;
     uint64_t saved_world, saved_sky[6];
     unsigned busy;
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;
@@ -91,6 +91,7 @@ bool remote_q1_actor_read(frontend_remote_q1 *, uint32_t, qa_actor_id *, qa_erro
 void remote_q1_clear(frontend_remote_q1 *);
 void remote_q1_media_clear(frontend_remote_q1 *);
 void remote_q1_time_advance(frontend_remote_q1 *, double, uint64_t);
+void remote_q1_publication_update(frontend_remote_q1 *);
 bool remote_q1_media_prepare(frontend_remote_q1 *, qa_error *);
 bool remote_q1_sky_load(frontend_remote_q1 *, qa_error *);
 bool remote_q1_model_read(frontend_remote_q1 *, const frontend_remote_q1_entity_view *, remote_q1_model **, qa_error *);

@@ -2,19 +2,20 @@
 
 static bool fields(qa_source_save_io *io,q3n_view *o)
 {
-    const char *signature=o->options.remote_client?"Q3VR":"Q3VW";
+    const char *signature=o->options.compiled_source?"Q3VC":o->options.remote_client?"Q3VR":"Q3VW";
     uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&version) || version!=1 ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
        !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
+    if (o->options.compiled_source && !q3n_compiled_source_fields(io,o->options.compiled_source)) return false;
     q3n_view_state *v=&o->state;
     if(!qa_source_save_i32(io,&v->bob_cycle) || v->bob_cycle<0 || v->bob_cycle>1 ||
        !qa_source_save_i32(io,&v->next_orbit_time) || !qa_source_save_i32(io,&v->zoom_time) ||
-       (!o->options.remote_client && !qa_source_save_i32(io,&v->predicted_error_time)) || !q3nh_float(io,&v->bob_fraction_sin) ||
+       (!o->options.remote_client && !o->options.compiled_source && !qa_source_save_i32(io,&v->predicted_error_time)) || !q3nh_float(io,&v->bob_fraction_sin) ||
        v->bob_fraction_sin<0 || v->bob_fraction_sin>1 || !q3nh_float(io,&v->xy_speed) || v->xy_speed<0 ||
        !q3nh_float(io,&v->zoom_sensitivity) || !q3nh_vector(io,&v->kick_angles) ||
-       !q3nh_vector(io,&v->kick_origin) || (!o->options.remote_client && !q3nh_vector(io,&v->predicted_error)) ||
-       !qa_source_save_bool(io,&v->zoomed) || (!o->options.remote_client && !qa_source_save_bool(io,&v->hyperspace)) ||
+       !q3nh_vector(io,&v->kick_origin) || (!o->options.remote_client && !o->options.compiled_source && !q3nh_vector(io,&v->predicted_error)) ||
+       !qa_source_save_bool(io,&v->zoomed) || (!o->options.remote_client && !o->options.compiled_source && !qa_source_save_bool(io,&v->hyperspace)) ||
        !qa_source_save_bool(io,&v->test_gun) || !qa_source_save_bytes(io,o->test_model_name,sizeof(o->test_model_name)) ||
        !memchr(o->test_model_name,0,sizeof(o->test_model_name)))return false;
     qa_q3_ref_entity *r=&o->test_model;

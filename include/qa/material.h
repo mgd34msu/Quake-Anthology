@@ -10,6 +10,7 @@ qa_material_order *qa_material_order_create(qa_error *);
 void qa_material_order_destroy(qa_material_order *);
 bool qa_material_order_prepare(qa_material_order *, qa_error *);
 bool qa_material_order_rank(const qa_material_order *, const qa_material *, uint32_t *, qa_error *);
+const qa_material *qa_material_order_sorted_at(const qa_material_order *, uint32_t);
 /* Physical membership, including an unpublished record; never prepares sort. */
 bool qa_material_order_has_record(const qa_material_order *, const qa_material *);
 /* Published renderer-wide registrations; array lives in scratch, materials
@@ -195,6 +196,9 @@ bool qa_material_library_retain(qa_material_library *, qa_error *);
 bool qa_material_retain(const qa_material *, qa_error *);
 void qa_material_release(const qa_material *);
 bool qa_material_library_parse(qa_material_library *, qa_bytes, const qa_scene_image_options *, qa_error *);
+/* Own the authored shader dependency decoder family and palette separately
+ * from the eventual renderer recipient. Only these scope fields are copied. */
+bool qa_material_library_parse_scoped(qa_material_library *, qa_bytes, const qa_scene_image_options *, qa_error *);
 bool qa_material_library_load_scripts(qa_material_library *, qa_vfs *, const qa_scene_image_options *, qa_error *);
 const qa_material *qa_material_find(const qa_material_library *, const char *);
 bool qa_material_has_authored(const qa_material_library *, const char *);

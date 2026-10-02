@@ -205,7 +205,9 @@ bool qa_q3_presentation_render(qa_q3_presentation *, const qa_q3_refdef *, qa_er
 /* The caller already owns this unfinished view and its world submission.
  * Submit retained Q3 refs through their real registry without starting or
  * finishing another view, redrawing the world, or presenting a surface. */
-bool qa_q3_presentation_supplement(qa_q3_presentation *, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+struct qa_q3_source_scene_bank;
+bool qa_q3_presentation_supplement(qa_q3_presentation *,struct qa_q3_source_scene_bank *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
+bool qa_q3_presentation_lights_read(const qa_q3_presentation *, const qa_scene_light **, size_t *, qa_error *);
 /* Only the actual submit_view callback may submit a retained selected model.
  * The scene, decoded source and transform remain owned by its content owner. */
 bool qa_q3_presentation_selected_model(qa_q3_presentation *, qa_scene_model *,
@@ -250,6 +252,14 @@ bool qa_q3_presentation_body_material_equal(qa_q3_presentation *,
 bool qa_q3_presentation_source_body_material_equal(qa_q3_presentation *,
     const qa_q3_presentation_assets *material_assets, const qa_q3_ref_entity *,
     const qa_q3_ref_entity *, bool *, qa_error *);
+/* Completed component outputs resolve only in their actual idle registry and
+ * enter the primary's active view without replaying a component RenderScene. */
+bool qa_q3_presentation_source_component_entity(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *, int32_t source_time_ms,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_source_component_poly(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, int32_t shader, const qa_scene_vertex *, size_t count,
+    const qa_scene_fog_volume *, int32_t source_time_ms, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 /* Captured selected output uses its own model/shader namespace and actual
  * source material clock during the primary submit_view lease. Lights must be
  * added before RenderScene. Default model zero retains selected materials. */

@@ -239,13 +239,11 @@ bool qa_q1_level_defer_exit(qa_q1_level *level, double until, qa_error *error) {
 bool qa_q1_level_check_limits(qa_q1_level *level, double seconds, const float *scores, size_t count,
                               float minutes, float frags, qa_string_id changelevel, bool *out,
                               qa_error *error) {
-    if (!out || !isfinite(seconds) || !isfinite(minutes) || !isfinite(frags) ||
+    if (!out || !isfinite(seconds) ||
         (count && !scores) || (changelevel && !valid_map(level, changelevel)))
         return fail(error, "Invalid Q1 match limit input");
     bool reached = minutes != 0 && seconds >= (double)minutes * 60;
     for (size_t i = 0; i < count; ++i) {
-        if (!isfinite(scores[i]))
-            return fail(error, "Nonfinite Q1 match score");
         if (frags != 0 && scores[i] >= frags)
             reached = true;
     }

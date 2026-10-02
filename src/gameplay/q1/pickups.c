@@ -1000,6 +1000,65 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     *accepted = outcome == QA_PICKUP_ACCEPTED;
     return true;
 }
+static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
+    q1_player *player, qa_error *error) {
+    q1_pickup *item = &entity->state.pickup;
+    static const char *const labels[] = {"$mg3_qc_upgrade_health", "$mg3_qc_upgrade_shell",
+        "$mg3_qc_upgrade_nail", "$mg3_qc_upgrade_rocket", "$mg3_qc_upgrade_cell"};
+    if (item->upgrade >= sizeof(labels) / sizeof(*labels)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot, "MG3 upgrade lacks its actual source type");
+        return false;
+    }
+    bool collected;
+    float maximum;
+    if (!q1_mg3_upgrade(g, player, item->upgrade, item->upgrade_flag,
+        &collected, &maximum, error)) return false;
+    item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .original_ran = true};
+    if (!touch_live(&touch)) return true;
+    qa_string_id label;
+    if (!qa_builtin_resource(&g->services, labels[item->upgrade], &label, error)) return false;
+    if (!touch_live(&touch)) return true;
+    qa_builtin_message_arg arguments[] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = label},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = maximum}};
+    if (!q1_message_args(g, recipient, collected ? "$mg3_qc_upgrade_fail" :
+        "$mg3_qc_upgrade_success", arguments, collected ? 1 : 2, error)) return false;
+    return !touch_live(&touch) || item_complete(&touch, NULL, true, error);
+}
+
+bool q1_mg3_debug_upgrade(qa_q1_game *g, qa_actor_id recipient, unsigned type,
+    uint32_t flag, qa_error *error) {
+    static const char *const classnames[] = {"item_upgrade_health", "item_upgrade_shells",
+        "item_upgrade_nails", "item_upgrade_rockets", "item_upgrade_cells"};
+    q1_player *player = q1_player_get(g, recipient);
+    if (g->options.program != QA_Q1_MG3 || !player || !q1_alive(g, recipient) ||
+        type >= sizeof(classnames) / sizeof(*classnames)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, recipient.slot, "MG3 debug upgrade lacks its actual player/type");
+        return false;
+    }
+    q1_actor *entity;
+    if (!q1_create(g, classnames[type], Q1_PICKUP, (qa_actor_id){0}, &entity, error)) return false;
+    qa_actor_id created = entity->id;
+    if (g->destroy_pending || q1_player_get(g, recipient) != player || !q1_alive(g, recipient) ||
+        q1_entity(g, created) != entity || !q1_alive(g, created)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, recipient.slot, "MG3 upgrade creation retired its player");
+        return false;
+    }
+    entity->state.pickup.kind = Q1_ITEM_MG3_UPGRADE;
+    entity->state.pickup.upgrade = (uint8_t)type;
+    entity->state.pickup.upgrade_flag = flag;
+    qa_string_id sound;
+    if (!qa_builtin_resource(&g->services, type == 0 ? "player/tornoff2.wav" :
+        "weapons/lock4.wav", &sound, error)) return false;
+    if (g->destroy_pending || q1_player_get(g, recipient) != player || !q1_alive(g, recipient) ||
+        q1_entity(g, created) != entity || !q1_alive(g, created)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, recipient.slot, "MG3 upgrade resource admission retired its source binding");
+        return false;
+    }
+    entity->state.pickup.sound = sound;
+    return mg3_upgrade_touch(g, entity, recipient, player, error);
+}
+
 bool q1_pickup_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, qa_error *error) {
     if (entity->state.pickup.external)
         return true;
@@ -1014,13 +1073,7 @@ bool q1_pickup_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, qa_
         if (!player || entity->physics.solid != QA_PHYSICS_TRIGGER)
             return true;
         if (item->kind == Q1_ITEM_MG3_UPGRADE) {
-            bool collected;
-            float maximum;
-            if (!q1_mg3_upgrade(g, player, item->upgrade, item->upgrade_flag, &collected, &maximum,
-                                error) ||
-                !q1_message(g, recipient,
-                            collected ? "$mg3_qc_upgrade_fail" : "$mg3_qc_upgrade_success", error))
-                return false;
+            return mg3_upgrade_touch(g, entity, recipient, player, error);
         } else {
             player->mg3_progress.bloody |= item->weapon == QA_Q1_SHOTGUN ? 1u : 2u;
             double given;

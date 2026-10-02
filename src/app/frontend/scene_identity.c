@@ -7,6 +7,8 @@
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "renderer_materials.h"
+#include "renderer_worlds.h"
+#include "unified_media_inventory.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_geometry_save.h"
 #include "qa/source_save.h"
@@ -176,6 +178,19 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
     if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
     if(ok && present) ok=images_owner(space,f,retained.images,&scratch,error);
     if(ok && present) ok=images_owner(space,f,retained.lightmap_images,&scratch,error);
+    frontend_renderer_worlds_view world; bool has_world=false;
+    if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
+    if(ok && has_world && world.private_heaps) ok=images_owner(space,f,world.images,&scratch,error);
+    size_t unified_count=0;
+    if(ok) ok=frontend_unified_media_inventory_count(f,&unified_count,error);
+    for(size_t i=0;ok && i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(f,i,&media,error);
+        for(size_t j=0;ok && media && j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank;
+            ok=frontend_unified_media_bank_read(media,j,&bank) && images_owner(space,f,bank.images,&scratch,error);
+        }
+    }
     qa_arena_destroy(&scratch);
     if (ok) space->images_captured = true;
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual scene image owner graph is incomplete");
@@ -285,7 +300,7 @@ static bool frame_references(frontend_scene_namespace *space, const qa_scene_fra
         !frontend_scene_material_encode(space, frame->groups[i].material, &key, error)) return false;
     for (size_t i = 0; i < frame->command_count; ++i) {
         const qa_scene_command *command = &frame->commands[i];
-        if (command->kind > QA_SCENE_COMMAND_IMAGE)
+        if (command->kind > QA_SCENE_COMMAND_PREBLEND_GAMMA)
             return fail(error, QA_ERROR_FORMAT, "Scene command has an unknown kind");
         if (command->kind == QA_SCENE_COMMAND_TARGET && !frame_image(space, command->data.target.image, error)) return false;
         if (command->kind == QA_SCENE_COMMAND_IMAGE && !frame_image(space, command->data.image, error)) return false;
@@ -360,6 +375,7 @@ POINTER_RESOLVERS(image, qa_scene_image, SCENE_IMAGE)
 POINTER_RESOLVERS(geometry, qa_scene_geometry, SCENE_GEOMETRY)
 POINTER_RESOLVERS(material, qa_material, SCENE_MATERIAL)
 POINTER_RESOLVERS(frame, qa_scene_frame, SCENE_FRAME)
+POINTER_RESOLVERS(world, qa_scene_world, SCENE_WORLD)
 #undef POINTER_RESOLVERS
 bool frontend_scene_material_mutable_decode(void *context, uint64_t key, qa_material **out, qa_error *error)
 {
@@ -519,6 +535,10 @@ static bool world_rows(frontend_scene_namespace *space, uint64_t owner, const qa
 {
     if (!graph_number(space, capture, SCENE_WORLD, SCENE_WORLD_OWNER, owner, 0, 0,
         qa_scene_world_identity(world), error)) return false;
+    scene_row *root=position(space,SCENE_WORLD,SCENE_WORLD_OWNER,owner,0,0);
+    if(!root || (root->pointer && root->pointer!=world))
+        return fail(error,QA_ERROR_FORMAT,"World namespace differs from its actual retained root");
+    root->pointer=world;
     for (size_t i = 0; i < qa_scene_world_model_count(world); ++i)
         if (!graph_number(space, capture, SCENE_MODEL, SCENE_WORLD_OWNER, owner, 0, i,
             qa_scene_world_model_identity_at(world, i), error)) return false;

@@ -4,8 +4,11 @@
 #include "remote_q3_client.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
+#include "renderer_worlds.h"
+#include "unified_media_inventory.h"
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
+#include "qa/scene_world_save.h"
 #include "qa/material_library_save.h"
 
 struct frontend_scene_inventory {
@@ -84,6 +87,26 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
 {
     qa_frontend *f=inventory->frontend;
     if (f->scene_world && !world_bind(inventory,f->scene_world,f->map_resource,f->mounts,error)) return false;
+    frontend_renderer_worlds_view retained; bool present=false;
+    if(!frontend_renderer_worlds_read(f,&retained,&present,error) || (present && retained.world &&
+        !world_bind(inventory,retained.world,retained.resource,retained.files,error))) return false;
+    size_t unified_count=0;
+    if(!frontend_unified_media_inventory_count(f,&unified_count,error)) return false;
+    for(size_t i=0;i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(f,i,&media,error)) return false;
+        if(!media) continue;
+        qa_scene_world *world=frontend_unified_media_world(media);
+        if(world && !world_bind(inventory,world,qa_executable_recipe_map(frontend_unified_media_recipe(media)),
+            qa_scene_resources_files(qa_scene_world_resource_owner(world)),error)) return false;
+        for(size_t j=0;j<frontend_unified_media_model_count(media);++j) {
+            frontend_unified_model_view model; frontend_unified_bank_view bank;
+            if(!frontend_unified_media_model_read(media,j,&model) ||
+                !frontend_unified_media_bank_read(media,model.bank,&bank) ||
+                (model.world?!world_bind(inventory,model.world,model.resource,bank.files,error):
+                    !model_add(rows,(frontend_model_source){.model=model.model,.resource=model.resource,.files=bank.files},error))) return false;
+        }
+    }
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
         if (!frontend_source_group_read(f,i,&group) ||
@@ -104,7 +127,7 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
             frontend_remote_q1_model_view model;
             if(!frontend_remote_q1_model_at(owner,j,&model,error) ||
                 (model.world?!world_bind(inventory,model.world,model.resource,media.mounts,error):
-                    !model_add(rows,(frontend_model_source){model.model,model.resource,media.mounts},error))) return false;
+                    !model_add(rows,(frontend_model_source){.model=model.model,.resource=model.resource,.files=media.mounts},error))) return false;
         }
     }
     for(size_t i=0;i<frontend_remote_q2_count(f);++i) {
@@ -114,7 +137,7 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
         for(size_t j=0;j<frontend_remote_q2_model_count(owner);++j) {
             frontend_remote_q2_model_view model;
             if(!frontend_remote_q2_model_at(owner,j,&model,error) ||
-                !model_add(rows,(frontend_model_source){model.model,model.resource,media.content.mounts},error)) return false;
+                !model_add(rows,(frontend_model_source){.model=model.model,.resource=model.resource,.files=media.content.mounts},error)) return false;
         }
     }
     for (size_t i=0;i<frontend_visual_owner_count(f);++i) {
@@ -123,7 +146,7 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
         for (size_t j=0;j<frontend_visual_model_count(f,i);++j) {
             frontend_visual_model_view model;
             if (!frontend_visual_model_read(f,i,j,&model) ||
-                !model_add(rows,(frontend_model_source){model.model,model.resource,owner.mounts},error)) return false;
+                !model_add(rows,(frontend_model_source){.model=model.model,.resource=model.resource,.files=owner.mounts},error)) return false;
         }
     }
     for (size_t i=0;i<frontend_equipment_media_count(f);++i) {
@@ -145,7 +168,7 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
             if (!model.present) continue;
             if (model.owns_world && !world_bind(inventory,model.world,model.resource,model.provider.mounts,error)) return false;
             for (unsigned k=0;k<3;++k) if (model.sources[k] &&
-                !model_add(rows,(frontend_model_source){model.sources[k],lod_resource(&model,k),model.provider.mounts},error)) return false;
+                !model_add(rows,(frontend_model_source){.model=model.sources[k],.resource=lod_resource(&model,k),.files=model.provider.mounts},error)) return false;
         }
     }
     for (size_t i=0;i<inventory->world_count;++i) {

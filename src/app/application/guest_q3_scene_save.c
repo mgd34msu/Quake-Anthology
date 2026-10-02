@@ -14,6 +14,23 @@ static bool blob(qa_source_save_io *io, qa_buffer *b, size_t maximum)
     return qa_source_save_bytes(io,b->data,n);
 }
 typedef struct record_writer { qa_buffer bytes; } record_writer;
+static bool actor_reference(qa_source_save_io *io,application_q3_scene *s,qa_actor_id *value)
+{
+    if(!s->options.actor_encode&&!s->options.actor_decode) return qa_source_save_actor(io,value);
+    if(!s->options.actor_encode||!s->options.actor_decode)
+        return q3scene_fail(io->error,QA_ERROR_ARGUMENT,"Component actor codec requires both real identity directions");
+    bool present=io->direction==QA_SOURCE_SAVE_WRITE&&value->registry;
+    qa_saved_actor_id saved={0};
+    if(present&&!s->options.actor_encode(s->options.actor_codec_context,*value,&saved,io->error)) return false;
+    if(!qa_source_save_bool(io,&present)||!qa_source_save_u32(io,&saved.slot)||!qa_source_save_u64(io,&saved.generation)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) {
+        if(!present) {
+            if(saved.slot||saved.generation) return q3scene_fail(io->error,QA_ERROR_FORMAT,"Absent component actor contains wire provenance");
+            *value=(qa_actor_id){0};
+        } else if(!s->options.actor_decode(s->options.actor_codec_context,saved,value,io->error)) return false;
+    }
+    return true;
+}
 static bool record_write(void *context,size_t at,qa_bytes value,qa_error *e)
 {
     record_writer *w=context;
@@ -88,15 +105,17 @@ static bool tokens(qa_source_save_io *io,qa_command_tokens *t)
 }
 static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_qvm_binding *event)
 {
-    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=1;
+    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=2;
     qa_sha256_digest declaration=s->options.profile->declaration_digest;
-    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=1||
+    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=2||
         !qa_source_save_bytes(io,declaration.bytes,32)||!qa_sha256_equal(&declaration,&s->options.profile->declaration_digest)||
         !qa_source_save_u64(io,event)||!*event||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||
         !qa_source_save_u64(io,&s->context.generation)||!qa_source_save_i64(io,&s->revision)||s->revision<0||
         !qa_source_save_i64(io,&s->scene_revision)||s->scene_revision<0||
         !qa_source_save_i32(io,&s->context.time_ms)||s->context.time_ms<0||
         !qa_source_save_i32(io,&s->context.frame_ms)||s->context.frame_ms<0||
+        !qa_source_save_bool(io,&s->context.baseline)||!qa_source_save_bool(io,&s->context.has_weapon_presented)||
+        !qa_source_save_bool(io,&s->context.weapon_presented)||
         !qa_source_save_i32(io,&s->context.client_number)||s->context.client_number<0||
         (uint32_t)s->context.client_number>=s->options.profile->capacity||
         !qa_source_save_vec3(io,&s->context.origin)||!qa_vec_finite(s->context.origin)) return false;
@@ -106,7 +125,7 @@ static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,q
         (s->hud_present&&(!s->frame_present||s->hud_frame>s->frame))||!game_state(io,s)||
         !blob(io,&s->defaults,(size_t)s->options.profile->stride*s->options.profile->capacity)||
         s->defaults.size!=(size_t)s->options.profile->stride*s->options.profile->capacity) return false;
-    for(size_t i=0;i<s->options.profile->capacity;++i) if(!qa_source_save_actor(io,s->players+i)) return false;
+    for(size_t i=0;i<s->options.profile->capacity;++i) if(!actor_reference(io,s,s->players+i)) return false;
     if(!qa_source_save_count(io,&s->actor_count,s->options.profile->capacity)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         s->actors=s->actor_count?calloc(s->actor_count,sizeof(*s->actors)):NULL;
@@ -115,18 +134,18 @@ static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,q
     for(size_t i=0;i<s->actor_count;++i) {
         application_q3_scene_actor *r=s->actors+i;
         if(!qa_source_save_u32(io,&r->slot)||r->slot>=s->options.profile->capacity||
-            !qa_source_save_actor(io,&r->actor)||!r->actor.registry||!qa_source_save_bool(io,&r->owned)||
+            !actor_reference(io,s,&r->actor)||!r->actor.registry||!qa_source_save_bool(io,&r->owned)||
             !qa_actor_id_equal(s->players[r->slot],r->actor)) return false;
         for(size_t j=0;j<i;++j) if(s->actors[j].slot==r->slot) return q3scene_fail(io->error,QA_ERROR_FORMAT,"Component actor map repeats a source slot");
     }
-    if(!qa_source_save_i32(io,&s->snapshot_number)||s->snapshot_number<1) return false;
+    if(!qa_source_save_i32(io,&s->snapshot_number)||s->snapshot_number<0) return false;
     for(size_t i=0;i<32;++i) {
         q3scene_snapshot *r=s->snapshots+i;
         if(!qa_source_save_i32(io,&r->number)||r->number<0||r->number>s->snapshot_number||
             (r->number&&((int64_t)r->number<=(int64_t)s->snapshot_number-32||(uint32_t)r->number%32!=i))) return false;
         if(r->number&&!snapshot(io,s,r)) return false;
     }
-    if(s->snapshots[(uint32_t)s->snapshot_number%32].number!=s->snapshot_number) return false;
+    if(s->snapshot_number&&s->snapshots[(uint32_t)s->snapshot_number%32].number!=s->snapshot_number) return false;
     for(size_t i=0;i<64;++i) {
         q3scene_command *r=s->commands+i;
         int32_t latest=s->snapshots[(uint32_t)s->snapshot_number%32].value.server_command_number;
@@ -163,7 +182,7 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
     }
     if(ok) {
         s->context.revision=s->scene_revision; s->context.game_state_revision=s->revision;
-        s->context.game_state=s->game_state; s->context.snapshot=&s->snapshots[(uint32_t)s->snapshot_number%32].value;
+        s->context.game_state=s->game_state; s->context.snapshot=s->snapshot_number?&s->snapshots[(uint32_t)s->snapshot_number%32].value:NULL;
         s->context.actors=s->actors; s->context.actor_count=s->actor_count;
         s->initialized=true;
     } else s->failed=true;

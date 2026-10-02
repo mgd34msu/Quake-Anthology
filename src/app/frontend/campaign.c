@@ -1,4 +1,5 @@
 #include "campaign.h"
+#include "capture.h"
 #include "campaign_ui.h"
 #include "campaign_cinematic.h"
 #include "qa/settings.h"
@@ -325,7 +326,8 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
         }
         if (!ok && mutated) campaign_restore_values(f,view,before);
     }
-    for (size_t i=0;i<8;++i) free(before[i]); free(round);
+    for (size_t i=0;i<8;++i) free(before[i]);
+    free(round);
     if (!ok) return false;
     owner->base_game=game; owner->base_result=result; memcpy(owner->players,players,sizeof(players));
     owner->player_count=player_count; owner->player_client=player; owner->result=true;

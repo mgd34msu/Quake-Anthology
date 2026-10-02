@@ -233,7 +233,8 @@ static bool weapon(replay_context *context, const qa_movement_command *command,
     if (player->environment.health <= 0) { p->weapon = 0; return true; }
     if (use && !(p->pmFlags & 1024)) {
         int32_t tag = item_tag(p->product, p->stats[1]);
-        if (tag != 2 || player->environment.health < p->stats[stat_max_health(p->product)] + 25.0f) {
+        if (tag != 2 || (double)player->environment.health <
+            (double)p->stats[stat_max_health(p->product)] + 25.0) {
             p->pmFlags |= 1024; event(player, 24 + tag); p->stats[1] = 0;
         }
         return true;

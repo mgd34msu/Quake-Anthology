@@ -2,7 +2,9 @@
 #include "shared_resource_policy.h"
 #include "shared_register.h"
 #include "shared_render_controls.h"
+#include "q3_render_policy.h"
 #include "qa/display_settings.h"
+#include "qa/material_library_save.h"
 #include "qa/source_save.h"
 #include <limits.h>
 #include <math.h>
@@ -195,11 +197,41 @@ bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipma
 bool frontend_q3_source_output(qa_frontend *f,const qa_material_library *materials,
     qa_scene_rect rect,qa_error *error)
 {
-    if (!f || !qa_material_library_source_upload_is(materials,frontend_q3_source_upload_read,f))
+    if (!f || !qa_material_library_source_upload_is(materials,frontend_q3_source_upload_read,f) ||
+        !qa_scene_resources_source_image_admit_is(qa_material_library_resource_owner(materials),
+            frontend_q3_source_image_admit,f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source output lost its actual color-upload owner");
     if (!frontend_q3_source_color_ensure(f,error)) return false;
     if (!profile_device_current(f->source_color,f->display,&f->source_color->upload,error)) return false;
-    return qa_scene_frame_output_domain(&f->frame,rect,true,error);
+    return frontend_q3_source_begin_frame(f,0,error) &&
+        qa_scene_frame_output_domain(&f->frame,rect,true,error);
+}
+
+bool frontend_q3_generic_overlay_begin(qa_frontend *f,qa_scene_rect rect,qa_error *error)
+{
+    if (!f || !rect.width || !rect.height)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Generic overlay requires its actual entered viewport");
+    bool source=false;
+    for (size_t i=f->frame.command_count;i;--i) {
+        const qa_scene_command *command=f->frame.commands+i-1;
+        if (command->kind!=QA_SCENE_COMMAND_OUTPUT_DOMAIN) continue;
+        qa_scene_rect actual=command->data.output_domain.rect;
+        if (actual.x==rect.x && actual.y==rect.y && actual.width==rect.width && actual.height==rect.height) {
+            source=command->data.output_domain.source; break;
+        }
+    }
+    bool preblend=false;
+    if (source) {
+        if (!f->source_color || !current(f->source_color,error) ||
+            !profile_device_current(f->source_color,f->display,&f->source_color->upload,error)) return false;
+        preblend=!f->source_color->upload.color.device.hardware_gamma;
+    }
+    return qa_scene_frame_preblend_gamma(&f->frame,preblend,error);
+}
+
+bool frontend_q3_generic_overlay_end(qa_frontend *f,qa_error *error)
+{
+    return f && qa_scene_frame_preblend_gamma(&f->frame,false,error);
 }
 
 static bool recipient_image(void *context, const qa_scene_image *source,
@@ -214,6 +246,7 @@ static bool recipient_image(void *context, const qa_scene_image *source,
     if (!bank)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source recipient image lost its real retained bank");
     if (source->kind == QA_SCENE_DEPTH32F) { *out = source; return true; }
+    if (!qa_scene_resources_set_source_image_admit(bank,frontend_q3_source_image_admit,f,error)) return false;
     qa_scene_image_request request;
     if (qa_scene_image_request_read(bank, source, &request)) {
         upload.mipmap = upload.mipmap && request.options.mipmap;

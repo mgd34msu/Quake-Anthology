@@ -106,7 +106,8 @@ bool application_q3_component_records_idle(const application_q3_component_record
 { return r&&!r->frame&&!r->refreshing; }
 bool application_q3_component_records_destroy(application_q3_component_records **slot,qa_error *e)
 {
-    if(!slot||!*slot) return true; application_q3_component_records *r=*slot;
+    if(!slot||!*slot) return true;
+    application_q3_component_records *r=*slot;
     if(!application_q3_component_records_idle(r)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component actor projection has a real source call");
     for(size_t i=0;r->records&&i<r->record_count;++i) { component_record *record=r->records+i; for(size_t j=0;record->fields&&j<record->field_count;++j) free(record->fields[j].teams); free(record->fields); qa_buffer_free(&record->defaults); }
     free(r->records); free(r->actors); free(r); *slot=NULL; return true;
@@ -119,7 +120,8 @@ bool application_q3_component_records_defaults(application_q3_component_records 
         component_record *record=r->records+i; size_t bytes=(size_t)record->stride*record->capacity;
         if(!record->defaults.data) record->defaults.data=malloc(bytes);
         if(!record->defaults.data) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining reached component record defaults");
-        if(!qa_qvm_read(r->options.vm,record->address,record->defaults.data,bytes,e)) return false; record->defaults.size=bytes;
+        if(!qa_qvm_read(r->options.vm,record->address,record->defaults.data,bytes,e)) return false;
+        record->defaults.size=bytes;
     }
     r->defaults_ready=true; return true;
 }
@@ -214,7 +216,8 @@ bool application_q3_component_records_pointer(void *context,qa_actor_id actor,co
     if(!row) {
         uint32_t slot=r->client_maximum;
         for(;;++slot) { bool used=false; for(size_t i=0;i<r->actor_count;++i) if(r->actors[i].slot==slot) used=true; if(!used) break; }
-        if(!application_q3_component_records_bind(r,actor,slot,false,false,e)) return false; row=q3records_actor(r,actor);
+        if(!application_q3_component_records_bind(r,actor,slot,false,false,e)) return false;
+        row=q3records_actor(r,actor);
     }
     if(row->retired||!q3records_live(r,actor)) return q3records_fail(e,QA_ERROR_NOT_FOUND,"Component projection actor is retired");
     if(!row->projected) { uint32_t slot=row->slot; bool client=row->client; if(!application_q3_component_records_bind(r,actor,slot,false,client,e)) return false; row=q3records_actor(r,actor); }

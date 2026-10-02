@@ -9,7 +9,7 @@
 
 typedef struct function_inventory {
     qa_qvm_saved_function *descriptors;
-    size_t input_count, weapons_count, combat_count, pickups_count, equipment_count, body_count, count;
+    size_t input_count, weapons_count, combat_count, pickups_count, equipment_count, body_count, models_count, count;
 } function_inventory;
 
 static bool inventory(q3g_role *role, function_inventory *out, qa_error *error)
@@ -22,13 +22,15 @@ static bool inventory(q3g_role *role, function_inventory *out, qa_error *error)
     value.combat_count = application_q3_combat_descriptor_count(role->combat);
     value.pickups_count = application_q3_pickups_descriptor_count(role->pickups);
     value.body_count = application_q3_body_descriptor_count(role->body);
+    value.models_count = application_q3_weapon_models_descriptor_count(role->weapon_models);
     if (value.weapons_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count ||
         value.combat_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count ||
         value.pickups_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count - value.combat_count ||
         value.equipment_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count - value.combat_count - value.pickups_count ||
-        value.body_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count - value.combat_count - value.pickups_count - value.equipment_count)
+        value.body_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count - value.combat_count - value.pickups_count - value.equipment_count ||
+        value.models_count > SIZE_MAX / sizeof(*value.descriptors) - value.input_count - value.weapons_count - value.combat_count - value.pickups_count - value.equipment_count - value.body_count)
         return application_fail(error, QA_ERROR_MEMORY, "Complete source callback inventory exceeds address space");
-    value.count = value.input_count + value.weapons_count + value.combat_count + value.pickups_count + value.equipment_count + value.body_count;
+    value.count = value.input_count + value.weapons_count + value.combat_count + value.pickups_count + value.equipment_count + value.body_count + value.models_count;
     value.descriptors = value.count ? calloc(value.count, sizeof(*value.descriptors)) : NULL;
     if (value.count && !value.descriptors)
         return application_fail(error, QA_ERROR_MEMORY, "Retaining complete actual source callback descriptors");
@@ -37,12 +39,14 @@ static bool inventory(q3g_role *role, function_inventory *out, qa_error *error)
     qa_qvm_saved_function *combat = value.combat_count ? value.descriptors + value.input_count + value.weapons_count : NULL;
     qa_qvm_saved_function *pickups = value.pickups_count ? value.descriptors + value.input_count + value.weapons_count + value.combat_count : NULL;
     qa_qvm_saved_function *equipment = value.equipment_count ? value.descriptors + value.input_count + value.weapons_count + value.combat_count + value.pickups_count : NULL;
-    qa_qvm_saved_function *body = value.body_count ? value.descriptors + value.count - value.body_count : NULL;
+    qa_qvm_saved_function *body = value.body_count ? value.descriptors + value.count - value.body_count - value.models_count : NULL;
+    qa_qvm_saved_function *models = value.models_count ? value.descriptors + value.count - value.models_count : NULL;
     if (!application_q3_weapons_descriptors(role->weapons, weapons, value.weapons_count, error) ||
         !application_q3_combat_descriptors(role->combat, combat, value.combat_count, error) ||
         (role->pickups && !application_q3_pickups_descriptors(role->pickups, pickups, value.pickups_count, error)) ||
         !application_q3_equipment_descriptors(role->equipment, equipment, value.equipment_count, error) ||
-        !application_q3_body_descriptors(role->body, body, value.body_count, error)) {
+        !application_q3_body_descriptors(role->body, body, value.body_count, error) ||
+        !application_q3_weapon_models_descriptors(role->weapon_models, models, value.models_count, error)) {
         free(value.descriptors); return false;
     }
     *out = value;
@@ -53,9 +57,9 @@ static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[8] = {'Q','A','G','3','F','N',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','F','N',0,0};
-    uint32_t version = 5;
+    uint32_t version = 6;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version)) return false;
-    return (!memcmp(magic, expected, sizeof(magic)) && version == 5) ||
+    return (!memcmp(magic, expected, sizeof(magic)) && version == 6) ||
         application_fail(io->error, QA_ERROR_FORMAT, "Invalid composed Q3 callback continuation");
 }
 
@@ -88,7 +92,7 @@ static bool state_fields(qa_source_save_io *io, application_q3_equipment_saved *
 bool application_guest_q3_functions_checkpoint(q3g_role *role, qa_buffer *out, qa_error *error)
 {
     function_inventory functions = {0};
-    qa_buffer input = {0}, weapons = {0}, requests = {0}, pickups = {0}, body = {0};
+    qa_buffer input = {0}, weapons = {0}, requests = {0}, pickups = {0}, body = {0}, models = {0};
     application_q3_equipment_saved state = {0};
     uint64_t combat_sequence = 0;
     if (!out || !inventory(role, &functions, error)) return false;
@@ -99,14 +103,16 @@ bool application_guest_q3_functions_checkpoint(q3g_role *role, qa_buffer *out, q
         (!role->pickups || application_q3_pickups_checkpoint(role->pickups, &pickups, error)) &&
         application_q3_combat_sequence_read(role->combat, &combat_sequence, error) &&
         application_q3_body_checkpoint(role->body, &body, error) &&
+        (!role->weapon_models || application_q3_weapon_models_checkpoint(role->weapon_models, &models, error)) &&
         application_q3_equipment_state_read(role->equipment, &state, error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, role->engine->provider->application->session, error) && signature(&io);
     qa_bytes input_bytes = {input.data, input.size}, weapons_bytes = {weapons.data, weapons.size},
-        request_bytes = {requests.data, requests.size}, pickup_bytes = {pickups.data, pickups.size}, body_bytes = {body.data, body.size};
+        request_bytes = {requests.data, requests.size}, pickup_bytes = {pickups.data, pickups.size}, body_bytes = {body.data, body.size},
+        model_bytes = {models.data, models.size};
     bool present = role->equipment != NULL;
     size_t count = functions.equipment_count;
-    if (ok) ok = child(&io, &input_bytes) && child(&io, &weapons_bytes) && child(&io, &request_bytes) && child(&io, &pickup_bytes) && child(&io, &body_bytes) &&
+    if (ok) ok = child(&io, &input_bytes) && child(&io, &weapons_bytes) && child(&io, &request_bytes) && child(&io, &pickup_bytes) && child(&io, &body_bytes) && child(&io, &model_bytes) &&
         qa_source_save_count(&io, &functions.combat_count, 3) && qa_source_save_u64(&io, &combat_sequence);
     for (size_t i = 0; ok && i < functions.combat_count; ++i)
         ok = qa_source_save_u64(&io, &functions.descriptors[functions.input_count + functions.weapons_count + i].binding);
@@ -118,7 +124,7 @@ bool application_guest_q3_functions_checkpoint(q3g_role *role, qa_buffer *out, q
         ok = qa_source_save_u64(&io, &functions.descriptors[functions.input_count + functions.weapons_count + functions.combat_count + functions.pickups_count + i].binding);
     if (ok) ok = state_fields(&io, &state) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
-    qa_buffer_free(&input); qa_buffer_free(&weapons); qa_buffer_free(&requests); qa_buffer_free(&pickups); qa_buffer_free(&body); free(functions.descriptors);
+    qa_buffer_free(&input); qa_buffer_free(&weapons); qa_buffer_free(&requests); qa_buffer_free(&pickups); qa_buffer_free(&body); qa_buffer_free(&models); free(functions.descriptors);
     return ok;
 }
 
@@ -130,10 +136,10 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         return application_fail(error, QA_ERROR_ARGUMENT, "Composed source import requires its isolated uninitialized executor");
     }
     qa_source_save_io io = {0};
-    qa_bytes input_bytes = {0}, weapons_bytes = {0}, request_bytes = {0}, pickup_bytes = {0}, body_bytes = {0};
+    qa_bytes input_bytes = {0}, weapons_bytes = {0}, request_bytes = {0}, pickup_bytes = {0}, body_bytes = {0}, model_bytes = {0};
     application_q3_body_saved body = {0};
     bool ok = qa_source_save_reader(&io, role->engine->provider->application->session, bytes, error) && signature(&io) &&
-        child(&io, &input_bytes) && child(&io, &weapons_bytes) && child(&io, &request_bytes) && child(&io, &pickup_bytes) && child(&io, &body_bytes) &&
+        child(&io, &input_bytes) && child(&io, &weapons_bytes) && child(&io, &request_bytes) && child(&io, &pickup_bytes) && child(&io, &body_bytes) && child(&io, &model_bytes) &&
         application_q3_body_saved_read(role->body ? &role->artifact->body_profile : NULL, body_bytes, &body, error);
     if (ok && role->body) {
         ok = application_q3_body_destroy(role->body, error);
@@ -160,7 +166,13 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         application_q3_weapons_prepare_restore(role->weapons, weapons_bytes, &weapons, error);
     if (ok && body.count != functions.body_count)
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved body hooks differ from their actual enabled constructor");
-    if (ok && body.count) memcpy(bindings + functions.count - body.count, body.bindings, body.count * sizeof(*bindings));
+    if (ok && body.count) memcpy(bindings + functions.count - body.count - functions.models_count, body.bindings, body.count * sizeof(*bindings));
+    if (ok && (model_bytes.size != 0) != (role->weapon_models != NULL))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Saved weapon model owner differs from its real CG declaration");
+    qa_qvm_binding model_binding = 0;
+    if (ok && role->weapon_models)
+        ok = application_q3_weapon_models_restore(role->weapon_models, model_bytes, &model_binding, error);
+    if (ok && functions.models_count) bindings[functions.count - functions.models_count] = model_binding;
     if (ok && input.binding_count != functions.input_count)
         ok = application_fail(error, QA_ERROR_FORMAT, "Composed input identities differ from their actual constructor");
     if (ok && functions.input_count)
@@ -215,7 +227,8 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         application_q3_equipment_adopt(role->equipment,
             functions.equipment_count ? bindings + functions.input_count + functions.weapons_count + functions.combat_count + functions.pickups_count : NULL);
         application_q3_equipment_state_adopt(role->equipment, &state);
-        application_q3_body_adopt(role->body, functions.body_count ? bindings + functions.count - functions.body_count : NULL);
+        application_q3_body_adopt(role->body, functions.body_count ? bindings + functions.count - functions.body_count - functions.models_count : NULL);
+        application_q3_weapon_models_adopt(role->weapon_models, functions.models_count ? bindings + functions.count - functions.models_count : NULL);
     }
     qa_source_save_dispose(&io);
     application_q3_body_saved_free(&body);

@@ -1,5 +1,6 @@
 #include "session_internal.h"
 #include "frames_internal.h"
+#include "channel_internal.h"
 #include <errno.h>
 #include <stdio.h>
 #include <limits.h>
@@ -270,28 +271,58 @@ bool qa_network_q2_server_frame(qa_network_runtime *runtime, qa_net_client_id id
     qa_q2_frame_free(&wire);
     return ok;
 }
+bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, qa_error *error)
+{
+    q2_server *server = &session->state.server;
+    *complete = false;
+    if (!server->drop_queued) {
+        size_t length = strlen(server->drop_reason);
+        if (length > SIZE_MAX - 2) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect text extent overflows");
+        char *text = malloc(length + 2);
+        uint8_t *bytes = malloc(session->channel->capacity);
+        if (!text || !bytes) { free(text); free(bytes); return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server disconnect packet"); }
+        memcpy(text, server->drop_reason, length); text[length] = '\n'; text[length + 1] = 0;
+        qa_q2_server_event print = {.kind = QA_Q2_SVC_PRINT, .data.print = {.level = 2, .text = text}};
+        qa_q2_server_event disconnect = {.kind = QA_Q2_SVC_DISCONNECT};
+        qa_net_writer writer; qa_net_writer_init(&writer, bytes, session->channel->capacity, error);
+        bool ok = qa_q2_server_event_write(&session->codec, &writer, &print) &&
+            qa_q2_server_event_write(&session->codec, &writer, &disconnect) &&
+            q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, 0, true, error);
+        free(text); free(bytes);
+        if (!ok) return false;
+        server->drop_queued = true;
+    }
+    if (!server->drop_sent) {
+        if (!q2_send(session, (qa_bytes){0}, now, NULL, error)) return false;
+        if (session->channel->queued_size || session->channel->sending_size) return true;
+        server->drop_sent = true;
+    }
+    if (!server->drop_hook_done) {
+        if (!server->hooks.drop(server->hooks.context, session->id, server->drop_reason, error)) return false;
+        server->drop_hook_done = true;
+    }
+    *complete = true; return true;
+}
 bool qa_network_q2_server_drop(qa_network_runtime *runtime, qa_net_client_id id,
     const char *reason, uint64_t now, qa_error *error)
 {
-    q2_session *session = q2_get(runtime, id, true, error);
-    if (!session) return false;
-    if (!reason) reason = "server disconnected";
-    size_t length = strlen(reason);
-    char *text = length <= SIZE_MAX - 2 ? malloc(length + 2) : NULL;
-    bool ok = text != NULL;
-    if (ok) {
-        memcpy(text, reason, length); text[length] = '\n'; text[length + 1] = 0;
-        qa_q2_server_event print = {.kind = QA_Q2_SVC_PRINT, .data.print = {.level = 2, .text = text}};
-        ok = q2_queue_event(session, &print, 0, true, error);
-    } else q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server disconnect reason");
-    free(text);
-    qa_q2_server_event disconnect = {.kind = QA_Q2_SVC_DISCONNECT};
-    if (ok) ok = q2_queue_event(session, &disconnect, 0, true, error) && q2_send(session, (qa_bytes){0}, now, NULL, error);
-    session->retiring = true; session->active = false;
-    q2_download_close(&session->state.server);
-    qa_error cleanup_error = {0};
-    bool dropped = session->state.server.hooks.drop(session->state.server.hooks.context, id, reason, ok ? error : &cleanup_error);
-    return ok && dropped;
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    if (!qa_network_q2_peer(peer) || !((q2_session *)peer->state)->server)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect lost its exact hosted channel");
+    q2_session *session = peer->state; q2_server *server = &session->state.server;
+    if (session->retiring && !server->drop_reason) return true;
+    if (!server->drop_reason) {
+        if (!reason) reason = "server disconnected";
+        size_t length = strlen(reason);
+        if (length == SIZE_MAX) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect reason extent overflows");
+        server->drop_reason = malloc(length + 1);
+        if (!server->drop_reason) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 disconnect source reason");
+        memcpy(server->drop_reason, reason, length + 1);
+        session->retiring = true; session->active = false; q2_download_close(server);
+    }
+    bool complete;
+    if (!q2_server_drop_progress(session, now, &complete, error)) return false;
+    return complete || q2_fail(error, QA_ERROR_IO, "Q2 disconnect retains its native reliable continuation");
 }
 bool q2_server_restart(q2_session *session, qa_error *error)
 {
@@ -310,4 +341,5 @@ void q2_server_clear(q2_server *server)
 {
     q2_download_close(server); q2_game_state_free(&server->signon);
     qa_q2_frame_history_destroy(server->frames); qa_buffer_free(&server->datagram);
+    free(server->drop_reason);
 }

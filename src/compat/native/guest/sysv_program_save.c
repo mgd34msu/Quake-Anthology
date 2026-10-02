@@ -29,7 +29,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 static bool fields(qa_source_save_io *io, qa_native_sysv_program *owner)
 {
-    uint8_t magic[5] = {'Q','S','P','G',1}; const uint8_t expected[5] = {'Q','S','P','G',1};
+    uint8_t magic[5] = {'Q','S','P','G',3}; const uint8_t expected[5] = {'Q','S','P','G',3};
     qa_native_sysv_program_options *o = &owner->options; uint32_t backend = o->guest.backend;
     bool opener = o->services.open_file != NULL;
     if (!qa_source_save_bytes(io, magic, 5) || memcmp(magic, expected, 5) ||
@@ -50,6 +50,11 @@ static bool fields(qa_source_save_io *io, qa_native_sysv_program *owner)
     for (size_t i = 0; i < sizeof(words) / sizeof(*words); ++i)
         if (!qa_source_save_u64(io, words[i])) return false;
     if (!qa_source_save_u32(io, &owner->status.exit_code) || !qa_source_save_bool(io, &owner->status.exited)) return false;
+    for (size_t i = 0; i < 2; ++i)
+        if (!qa_source_save_u64(io, &owner->clocks[i].seconds) ||
+            !qa_source_save_u32(io, &owner->clocks[i].nanoseconds) ||
+            owner->clocks[i].seconds > INT64_MAX || owner->clocks[i].nanoseconds >= 1000000000)
+            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "saved source CPU clock has invalid named fields");
     if (!o->guest.allocation_base || o->guest.allocation_base % 4096 || !o->guest.maximum_backing_bytes ||
         !o->stack_bytes || o->stack_bytes % 4096 || o->anonymous_permissions > 7 || !o->services.id ||
         (backend == QA_NATIVE_GUEST_HOST_X86_64 ? o->instruction_budget != 0 : !o->instruction_budget) ||
@@ -78,8 +83,10 @@ static bool files(qa_source_save_io *io, qa_native_sysv_program *owner)
         if (!qa_source_save_u64(io, &entry->capability.capability) ||
             !qa_source_save_u32(io, &entry->capability.mode) || !qa_source_save_u64(io, &entry->offset) ||
             !qa_source_save_u32(io, &entry->flags) || !qa_source_save_count(io, &entry->references, SIZE_MAX) ||
-            !qa_source_save_bool(io, &entry->closed) || !qa_source_save_bool(io, &entry->closing)) return false;
+            !qa_source_save_bool(io, &entry->seekable) || !qa_source_save_bool(io, &entry->closed) ||
+            !qa_source_save_bool(io, &entry->closing)) return false;
         if (!entry->capability.capability || entry->capability.mode > 3 || entry->offset > INT64_MAX ||
+            (!entry->seekable && entry->offset) ||
             (entry->closed && (!entry->closing || entry->references)) || (entry->closing && entry->references))
             return guest_fail(io->error, QA_ERROR_FORMAT, i, "Linux saved open-description fields are invalid");
         for (size_t j = 0; j < i; ++j)
@@ -115,9 +122,10 @@ static bool files(qa_source_save_io *io, qa_native_sysv_program *owner)
 }
 static bool storage(qa_native_sysv_program *owner, qa_error *error)
 {
-    qa_native_allocation_info stack;
-    return qa_native_guest_allocation(owner->guest, owner->stack, &stack, error) &&
-        ((stack.base == owner->stack && stack.bytes == owner->options.stack_bytes && stack.tag == INT32_C(0x4b535441) &&
+    const guest_elf_program_view *stack = guest_elf_program_describe(owner->startup);
+    return ((stack && guest_elf_program_stack_owned(owner->startup) &&
+          stack->stack == owner->stack && stack->stack_bytes == owner->options.stack_bytes &&
+          stack->stack_tag == INT32_C(0x4b535441) &&
           !owner->returned &&
           qa_native_guest_execution(owner->guest) == owner->options.guest.backend) ||
          guest_fail(error, QA_ERROR_FORMAT, owner->stack, "Linux kernel stack/stop lost their actual lower owner"));
@@ -161,7 +169,9 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
 {
     if (!out || *out || !bindings || !bindings->maximum_backing_bytes || !bindings->maximum_image_bytes ||
         !bindings->services.id || !bindings->services.current || !bindings->services.resolve_file ||
-        !bindings->services.file_status || !bindings->services.identity || !bindings->services.entropy ||
+        !bindings->services.file_status || !bindings->services.descriptor_status ||
+        !bindings->services.descriptor_flags ||
+        !bindings->services.identity || !bindings->services.entropy ||
         !bindings->services.clock || !bindings->services.native_error)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux restore requires actual retained kernel services and empty output");
     qa_native_sysv_program *owner = calloc(1, sizeof(*owner));

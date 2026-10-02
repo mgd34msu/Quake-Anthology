@@ -7,6 +7,7 @@ typedef struct frontend_remote_q1_effects frontend_remote_q1_effects;
 typedef struct frontend_remote_q1_restore_refs frontend_remote_q1_restore_refs;
 bool remote_q1_effects_service(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
 bool remote_q1_effects_clear(frontend_remote_q1 *, qa_error *);
+bool remote_q1_effects_idle(const frontend_remote_q1 *);
 bool remote_q1_effects_audio_detach(frontend_remote_q1 *,qa_error *);
 bool remote_q1_effects_scene(frontend_remote_q1 *, double,
     const qa_scene_light **, size_t *, qa_error *);

@@ -48,7 +48,7 @@ struct application_q3_component {
     qa_string_id definition;
     int32_t milliseconds;
     bool initialized,restoring,closing,busy,has_source,draining,scene;
-    bool restored_storage,restored_actors,restored_mod,restored_callbacks;
+    bool restored_storage,restored_baseline,restored_actors,restored_mod,restored_callbacks;
 };
 bool q3component_storage(void *,qa_error *);
 bool q3component_current(void *,qa_error *);

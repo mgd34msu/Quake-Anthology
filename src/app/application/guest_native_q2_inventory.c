@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "native_q2_inventory_source.h"
 #include "qa/json.h"
 #include <math.h>
 
@@ -336,6 +337,48 @@ static bool source_client_address(struct application_native_q2 *engine, uint32_t
 static bool client_address(application_native_q2_client *client, qa_native_address *out, qa_error *error)
 {
     return source_client_address(client->inventory_engine, client->inventory_slot, client->actor, out, error);
+}
+bool application_native_q2_inventory_source_read(struct application_native_q2 *engine,
+    qa_actor_id actor, application_native_q2_inventory_source *out, qa_error *error)
+{
+    if (!engine || !out || !engine->primary_inventory || !engine->map_ready ||
+        engine->shutting_down || !engine->provider->state.native.host)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native inventory source requires its retained map and declaration");
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i) {
+        const application_native_q2_client *client = &engine->clients[i];
+        if (!client->reserved || !client->connected || client->disconnect_started ||
+            !qa_actor_id_equal(client->actor, actor)) continue;
+        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native inventory actor repeats a source client slot");
+        slot = i;
+    }
+    if (!slot || !resolve(engine, error))
+        return slot ? false : application_fail(error, QA_ERROR_NOT_FOUND, "Native inventory source client is absent");
+    struct application_native_q2_inventory *p = engine->primary_inventory;
+    qa_json_id declaration = qa_json_get(p->document, qa_json_root(p->document), "inventory");
+    application_native_q2_inventory_source value = {.actor = actor, .slot = slot,
+        .inventory_offset = p->inventory_offset, .count = p->source_count, .client_bytes = p->client_bytes};
+    int64_t empty;
+    if (!word(p->document, declaration, "cursor", &value.cursor_offset, error) ||
+        !qa_json_i64(p->document, qa_json_get(p->document, declaration, "empty"), &empty, error) ||
+        empty < INT32_MIN || empty > INT32_MAX || value.cursor_offset > p->client_bytes ||
+        p->client_bytes - value.cursor_offset < 4)
+        return application_fail(error, QA_ERROR_FORMAT, "Native inventory cursor leaves its actual client record");
+    value.empty = (int32_t)empty;
+    if (!source_client_address(engine, slot, actor, &value.client, error) ||
+        !qa_native_entity_address(qa_native_host_instance(engine->provider->state.native.host), slot, &value.entity, error)) return false;
+    *out = value;
+    return true;
+}
+bool application_native_q2_inventory_source_current(struct application_native_q2 *engine,
+    const application_native_q2_inventory_source *source, qa_error *error)
+{
+    application_native_q2_inventory_source actual;
+    if (!source || !application_native_q2_inventory_source_read(engine, source->actor, &actual, error)) return false;
+    return actual.slot == source->slot && actual.entity == source->entity && actual.client == source->client &&
+        actual.inventory_offset == source->inventory_offset && actual.count == source->count &&
+        actual.cursor_offset == source->cursor_offset && actual.client_bytes == source->client_bytes && actual.empty == source->empty
+        ? true : application_fail(error, QA_ERROR_ARGUMENT, "Native inventory source receipt changed its physical client or layout");
 }
 static size_t inventory_count(void *opaque)
 {

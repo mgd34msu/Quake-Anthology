@@ -76,7 +76,7 @@ bool qa_q3_client_session_read(const qa_q3_game *game, qa_actor_id actor,
 bool qa_q3_client_session_slot_write(qa_q3_game *game, uint32_t slot, uint32_t mask,
                                      const qa_q3_client_session *value, qa_error *error) {
     if (!game || !value || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS ||
-        (mask & ~QA_Q3_CLIENT_SESSION_ALL))
+        (mask & ~(uint32_t)QA_Q3_CLIENT_SESSION_ALL))
         return q3_fail(error, "Q3 session mutation exceeds its source clients");
     qa_q3_client_session *session = &game->clients[slot].session;
     if (mask & QA_Q3_CLIENT_SESSION_TEAM) session->team = value->team;

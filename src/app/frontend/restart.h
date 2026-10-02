@@ -22,7 +22,8 @@ typedef struct frontend_restart_options {
     bool (*prepare_video)(void *,void **ticket,qa_error *);
     bool (*validate_video)(void *,void *ticket,qa_error *);
     bool (*reopen_video)(void *,void *ticket,qa_error *);
-    void (*release_video)(void *,void *ticket);
+    bool (*finish_video)(void *,void **ticket,qa_error *);
+    bool (*abort_video)(void *,void **ticket,qa_error *);
 } frontend_restart_options;
 frontend_restart *frontend_restart_create(const frontend_restart_options *,qa_error *);
 bool frontend_restart_destroy(frontend_restart *,qa_error *);
@@ -30,7 +31,12 @@ bool frontend_restart_register(frontend_restart *,qa_console *,qa_error *);
 /* Call only after callbacks/source frames and native presentation have
  * returned. Resource preparation finishes before window publication. */
 bool frontend_restart_drain(frontend_restart *,qa_error *);
+/* The frame calls at its returned input/console boundary before Source time
+ * or presentation, preserving the frontend's frame reentry guard. */
+bool frontend_restart_drain_frame(frontend_restart *,qa_error *);
 bool frontend_restart_idle(const frontend_restart *);
+/* Exact entered controller bracket for its retained ALL release child. */
+bool frontend_restart_release_phase(const frontend_restart *,const qa_frontend *);
 bool frontend_restart_checkpoint(const frontend_restart *,qa_buffer *,qa_error *);
 bool frontend_restart_restore(frontend_restart *,qa_bytes,qa_error *);
 void frontend_restart_rebind(frontend_restart *,qa_frontend *,void *callback_context);

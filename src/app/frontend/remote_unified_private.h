@@ -31,7 +31,9 @@ struct frontend_remote_unified {
     qa_actor_id player;
     uint32_t epoch, source_entity;
     uint64_t frame_number;
+    bool frame_obsolete;
     bool bound, preparing, prepared, admitted, retired, busy, consumers_live, transport_restarted;
+    bool restore_pending;
 };
 bool frontend_unified_fail(qa_error *, qa_status, const char *);
 bool frontend_unified_clone(const qa_unified_document *, qa_unified_document **, qa_error *);

@@ -404,6 +404,30 @@ bool application_q3_catalog_weapons(application_q3_catalog *c,
 }
 bool application_q3_catalog_standard(const application_q3_catalog *c)
 { return c && !c->table; }
+bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id item,
+    const char **out, qa_error *e)
+{
+    if (!c || !item || !out || !application_q3_catalog_current(c, c->image, c->vm, c->abi))
+        return fail(e, QA_ERROR_ARGUMENT, "Ammo label requires its actual retained GAME catalog");
+    const application_q3_catalog_record *records;
+    size_t count;
+    int32_t ammo_type;
+    if (c->source_count) {
+        if (!application_q3_catalog_records(c, &records, &count, e)) return false;
+        /* source_count is installed only with the qualified SDK item layout. */
+        ammo_type = 2;
+    } else if (c->table) {
+        if ((c->live || !c->record_count) && !refresh(c, false, false, e)) return false;
+        records = c->records; count = c->record_count; ammo_type = c->ammo_type;
+    } else return fail(e, QA_ERROR_NOT_FOUND, "GAME catalog has no retained Source ammo records");
+    for (size_t i = 0; i < count; ++i) {
+        if (records[i].type != ammo_type) continue;
+        qa_item_id actual;
+        if (!item_id(c, records + i, false, &actual, e)) return false;
+        if (actual == item) { *out = records[i].pickup_name; return true; }
+    }
+    return fail(e, QA_ERROR_NOT_FOUND, "Ammo item is absent from the actual Source catalog");
+}
 bool application_q3_catalog_inventory_read(void *context, q3g_role *role,
     const guest_inventory_weapon **out, size_t *count, qa_error *e)
 {

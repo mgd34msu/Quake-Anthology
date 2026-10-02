@@ -47,8 +47,30 @@ static bool identity(const qa_application_q3_client_context *a,
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
         a->native_source == b->native_source;
 }
+static bool compiled_identity(const qa_command_context *a,const qa_command_context *b)
+{
+    return a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
+        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct && a->console_text==b->console_text &&
+        a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
+        ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
+}
 bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
+    if(o && o->options.compiled_source) {
+        q3n_loading_media media;
+        const q3n_compiled_source_basis *b=f && f->compiled?&f->compiled->source.basis:NULL;
+        if(!b || o->closed || o->options.client || o->options.reader || o->options.remote_client || o->options.remote_source ||
+           f->compiled->source.owner!=o->options.compiled_source || f->application!=o->options.application ||
+           b->content!=o->options.content || b->product!=o->options.product ||
+           b->publication!=o->options.publication_generation || b->map_revision!=o->options.map_revision ||
+           f->assets!=o->options.assets || f->presentation!=o->options.presentation || f->media!=o->options.media ||
+           f->clients!=o->options.clients || f->events!=o->options.events || !q3n_frame_current(f) ||
+           !q3n_media_loading_read(o->options.media,&media,e) || media.compiled_source!=o->options.compiled_source ||
+           media.assets!=o->options.assets || !q3n_clients_compiled_current(o->options.clients,&f->compiled->source,e) ||
+           !o->options.compiled_current(o->options.context,f,o->options.compiled_cvars,&o->options.compiled_context))
+            return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled commands lost their actual CLIENT dictionary or console domain");
+        return true;
+    }
     if (o && o->options.remote_client) {
         qa_native_q3_remote_client_basis basis;
         q3n_remote_source_view source;
@@ -80,7 +102,7 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     qa_native_q3_wire_basis wire;
     qa_native_q3_wire_publication publication;
     const qa_native_q3_client_services *services = o ? qa_native_q3_client_services_read(o->options.client) : NULL;
-    if (!o || !f || f->remote || o->closed || f->application != o->options.application ||
+    if (!o || !f || f->remote || f->compiled || o->closed || f->application != o->options.application ||
         f->source.product != o->options.product || f->source.content != o->options.content ||
         f->source.publication_generation != o->options.publication_generation ||
         f->source.map_revision != o->options.map_revision ||
@@ -111,7 +133,8 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 }
 bool q3nc_cvar(q3n_server_commands *o, const char *symbol,
     qa_native_q3_client_cvar *out, qa_error *e)
-{ return o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client, symbol, out, e) :
+{ return o->options.compiled_source?o->options.compiled_cvar_read(o->options.context,symbol,out,e):
+    o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client, symbol, out, e) :
     qa_native_q3_client_cvar_read(o->options.client, symbol, out, e); }
 static bool recipient_read(q3n_server_commands *o, qa_application_q3_client_context *out, qa_error *e)
 {
@@ -129,7 +152,7 @@ static bool integer_cvar(q3n_server_commands *o, const char *symbol, int32_t *ou
 static bool set(q3n_server_commands *o, const q3n_frame *f, const char *name, const char *value, qa_error *e)
 {
     return q3nc_current(o, f, e) &&
-        qa_cvars_set(o->options.recipient.cvars, name, value, true, e) && q3nc_current(o, f, e);
+        qa_cvars_set(o->options.compiled_source?o->options.compiled_cvars:o->options.recipient.cvars, name, value, true, e) && q3nc_current(o, f, e);
 }
 static bool set_number(q3n_server_commands *o, const q3n_frame *f, const char *name, int32_t value, qa_error *e)
 { char text[16]; snprintf(text, sizeof(text), "%d", value); return set(o, f, name, text, e); }
@@ -148,15 +171,19 @@ bool q3nc_message(q3n_server_commands *o, const q3n_frame *f, q3n_command_messag
     const char *text, int32_t sender, const char *command, qa_error *e)
 {
     qa_application_q3_client_context recipient;
-    if (!q3nc_current(o, f, e) || !recipient_read(o, &recipient, e)) return false;
-    q3n_command_message message = {.kind = kind, .frame = f, .recipient = &recipient,
+    if (!q3nc_current(o, f, e) || (!f->compiled && !recipient_read(o, &recipient, e))) return false;
+    q3n_command_message message = {.kind = kind, .frame = f, .recipient = f->compiled?NULL:&recipient,
+        .command_context=f->compiled?&o->options.compiled_context:NULL,
         .text = text, .voice_command = command, .sender_client = sender};
     if (f->remote && sender >= 0 && sender < f->remote->source.max_clients) {
         const qa_native_q3_remote_client_services *services = qa_native_q3_remote_client_services_read(o->options.remote_client);
         if (!services || !services->network.source_actor ||
             !services->network.source_actor(services->network.context, (uint32_t)sender,
                 &message.sender_actor, &message.sender_present, e) || !q3nc_current(o, f, e)) return false;
-    } else if (!f->remote && sender >= 0 && (uint32_t)sender < f->source.max_clients) {
+    } else if(f->compiled && sender>=0 && sender<q3n_frame_max_clients(f)) {
+        if(!q3n_compiled_source_client_actor(f->compiled->source.owner,(uint32_t)sender,
+            &message.sender_actor,&message.sender_present,e) || !q3nc_current(o,f,e))return false;
+    } else if (!f->remote && !f->compiled && sender >= 0 && (uint32_t)sender < f->source.max_clients) {
         qa_application_native_q3_client client;
         if (!qa_application_native_q3_presentation_client(f->application, &f->source,
             (uint32_t)sender, &client, e)) return false;
@@ -169,6 +196,8 @@ static bool center(q3n_server_commands *o, const q3n_frame *f, const char *text,
     int32_t y, int32_t width, qa_error *e)
 {
     qa_application_q3_client_context recipient;
+    if(f->compiled)return q3nc_current(o,f,e) && o->options.compiled_center_print(o->options.context,f,
+        &o->options.compiled_context,text,y,width,e) && q3nc_current(o,f,e);
     return q3nc_current(o, f, e) && recipient_read(o, &recipient, e) &&
         o->options.center_print(o->options.context, f, &recipient,
         text, y, width, e) && q3nc_current(o, f, e);
@@ -179,22 +208,28 @@ const q3n_command_state *q3n_server_commands_state(const q3n_server_commands *o)
 static q3n_client_options client_source(const q3n_server_command_options *options)
 {
     return (q3n_client_options){.content = options->content, .assets = options->assets,
-        .product = options->product, .reader = options->reader, .remote_source = options->remote_source};
+        .product = options->product, .reader = options->reader, .remote_source = options->remote_source,
+        .compiled_source=options->compiled_source};
 }
-static bool create(const q3n_server_command_options *options, bool remote,
+static bool create(const q3n_server_command_options *options, unsigned domain,
     q3n_server_commands **out, qa_error *e)
 {
     const qa_native_q3_client_services *services = options ? qa_native_q3_client_services_read(options->client) : NULL;
-    if (!options || !out || *out || !options->application ||
+    bool compiled=domain==2,remote=domain==1;
+    if (!options || !out || *out ||
+        (compiled?(!options->compiled_source || options->client || options->reader || options->remote_client || options->remote_source ||
+            !options->compiled_cvars || !options->compiled_context.owner || !options->compiled_current || !options->compiled_cvar_read ||
+            !options->compiled_register || !options->compiled_console || !options->compiled_center_print):
+         options->compiled_source || !options->application ||
         (remote ? (!options->remote_client || !options->remote_source || options->client || options->reader ||
             options->recipient.source_owner || options->recipient.source_cvars || options->read_command) :
             (!options->client || !options->reader || options->remote_client || options->remote_source ||
             !services || services->wire_reader != options->reader || !options->recipient.native_source ||
-            !options->recipient.source_owner || !options->read_command)) ||
-        !options->recipient.receiver || !options->recipient.service_owner ||
+            !options->recipient.source_owner || !options->read_command))) ||
+        (!compiled && (!options->recipient.receiver || !options->recipient.service_owner)) ||
         !options->content || !options->assets || !options->presentation || !options->clients ||
-        !options->media || !options->events || !options->current ||
-        !options->receipt_current || !options->message || !options->center_print ||
+        !options->media || !options->events || (!compiled && !options->current) ||
+        !options->receipt_current || !options->message || (!compiled && !options->center_print) ||
         !options->client_settings || !options->loading || !options->initialize_stage ||
         !options->clear_particles || !options->memory_remaining ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA) ||
@@ -202,6 +237,19 @@ static bool create(const q3n_server_command_options *options, bool remote,
         return q3nc_fail(e, QA_ERROR_ARGUMENT, "Native commands require actual retained CGAME services and frontend producers");
     q3n_client_options clients = client_source(options);
     if (!q3n_clients_runtime_bound(options->clients, &clients, e)) return false;
+    if(compiled) {
+        q3n_compiled_source_view source; q3n_loading_media media;
+        if(!q3n_compiled_source_read(options->compiled_source,&source,e) ||
+           source.basis.application!=options->application || source.basis.content!=options->content ||
+           source.basis.assets!=options->assets || source.basis.product!=options->product ||
+           source.basis.publication!=options->publication_generation || source.basis.map_revision!=options->map_revision ||
+           options->compiled_context.owner!=source.basis.receiver ||
+           options->compiled_context.registry!=source.basis.viewer.registry ||
+           options->compiled_context.generation!=source.basis.publication ||
+           !qa_actor_id_equal(options->compiled_context.actor,source.basis.viewer) ||
+           !q3n_media_loading_read(options->media,&media,e) || media.compiled_source!=options->compiled_source)
+            return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled command constructor has another real source or media owner");
+    }
     if (remote) {
         qa_native_q3_remote_client_basis basis; q3n_remote_source_view source;
         q3n_loading_media media;
@@ -230,6 +278,8 @@ bool q3n_server_commands_create(const q3n_server_command_options *options,
 bool q3n_server_commands_create_remote(const q3n_server_command_options *options,
     q3n_server_commands **out, qa_error *e)
 { return create(options, true, out, e); }
+bool q3n_server_commands_create_compiled(const q3n_server_command_options *options,q3n_server_commands **out,qa_error *e)
+{ return create(options,2,out,e); }
 void q3n_server_commands_destroy(q3n_server_commands *o) { if (q3n_server_commands_idle(o)) free(o); }
 static bool begin(q3n_server_commands *o, const q3n_frame *f, bool initialized, qa_error *e)
 {
@@ -237,7 +287,10 @@ static bool begin(q3n_server_commands *o, const q3n_frame *f, bool initialized, 
     if (!q3n_server_commands_idle(o) || (initialized && !o->initialized) || !q3nc_current(o, f, e))
         return q3nc_fail(e, QA_ERROR_ARGUMENT, "Native command call requires its idle current constructor state");
     if (initialized) {
-        if (o->options.remote_source) {
+        if(o->options.compiled_source) {
+            if(f->compiled->source.basis.reached_command!=o->state.server_command_sequence)
+                return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled commands differ from their reached dictionary cursor");
+        } else if (o->options.remote_source) {
             q3n_remote_source_view source;
             if (!q3n_remote_source_read(o->options.remote_source, &source, e) ||
                 source.reached_command != o->state.server_command_sequence)
@@ -400,25 +453,30 @@ static bool register_client(q3n_server_commands *o, const q3n_frame *f,
 {
     return o->options.initialize_stage(o->options.context, f, Q3N_INIT_CLIENT_LOADING,
         o->state.mapname, (int32_t)number, inline_models, e) && q3nc_current(o, f, e) &&
-        (f->remote ? q3n_clients_remote_register_one(o->options.clients, &f->remote->source, client_settings, number, e) :
+        (f->compiled?q3n_clients_compiled_register_one(o->options.clients,&f->compiled->source,client_settings,number,e):
+         f->remote ? q3n_clients_remote_register_one(o->options.clients, &f->remote->source, client_settings, number, e) :
             q3n_clients_register_one(o->options.clients, f->application, &f->source, client_settings, number, e)) &&
         q3nc_current(o, f, e);
 }
-bool q3n_server_commands_initialize(q3n_server_commands *o, const q3n_frame *f,
-    int32_t sequence, qa_error *e)
+static bool initialize(q3n_server_commands *o, const q3n_frame *f,
+    int32_t sequence, bool video, qa_error *e)
 {
     if (sequence < 0 || !begin(o, f, false, e)) return false;
     if (o->initialized) return end(o, q3nc_fail(e, QA_ERROR_ARGUMENT, "CGAME constructor has already completed"));
     qa_native_q3_wire_publication publication;
-    if (f->remote) {
+    if(f->compiled) {
+        if(f->compiled->stage!=Q3N_COMPILED_INITIALIZATION || (!video && f->compiled->source.basis.initial_command!=sequence) ||
+           f->compiled->source.basis.reached_command!=sequence || f->compiled->source.basis.initialized)
+            return end(o,q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled CG_Init requires its authentic unreached baseline"));
+    } else if (f->remote) {
         q3n_remote_source_view source;
         if (!q3n_remote_source_read(o->options.remote_source, &source, e)) return end(o, false);
-        if (source.basis.initial_command != sequence || source.reached_command != sequence ||
-            !source.publication.initializing)
+        if ((!video && source.basis.initial_command != sequence) || source.reached_command != sequence ||
+            (video?!f->remote->video_initialization:!source.publication.initializing) || source.basis.client.initialized)
             return end(o, q3nc_fail(e, QA_ERROR_ARGUMENT, "Remote CGAME constructor requires its actual Init gamestate receipt"));
     } else {
         if (!qa_native_q3_wire_reader_publication(o->options.reader, &publication, e)) return end(o, false);
-        if (!publication.has_gamestate || publication.initial_command_sequence != sequence ||
+        if (!publication.has_gamestate || (!video && publication.initial_command_sequence != sequence) ||
             publication.reached_command_sequence != sequence)
             return end(o, q3nc_fail(e, QA_ERROR_ARGUMENT, "CGAME constructor requires its real unreached gamestate baseline"));
     }
@@ -426,7 +484,8 @@ bool q3n_server_commands_initialize(q3n_server_commands *o, const q3n_frame *f,
     uint32_t inline_models = 0;
     bool mission = o->options.product == QA_Q3_TEAM_ARENA;
     bool ok = q3n_media_loading_graphics(o->options.media, e) && q3nc_current(o, f, e) &&
-        (o->options.remote_client ? qa_native_q3_remote_client_register(o->options.remote_client, e) :
+        (o->options.compiled_source?o->options.compiled_register(o->options.context,f,e):
+         o->options.remote_client ? qa_native_q3_remote_client_register(o->options.remote_client, e) :
             qa_native_q3_client_register(o->options.client, e)) && q3nc_current(o, f, e) &&
         stage(o, f, Q3N_INIT_CONSOLE_COMMANDS, &inline_models, e);
     if (ok) {
@@ -444,9 +503,10 @@ bool q3n_server_commands_initialize(q3n_server_commands *o, const q3n_frame *f,
         loading(o, f, "collision map", -1, e) && stage(o, f, Q3N_INIT_COLLISION_MAP, &inline_models, e);
     if (ok && mission) ok = stage(o, f, Q3N_INIT_STRING_TABLE, &inline_models, e);
     load_context callbacks = {o, f};
-    q3n_media_load load = {.application = f->application, .source = f->remote ? NULL : &f->source,
+    q3n_media_load load = {.application = f->application, .source = f->remote || f->compiled ? NULL : &f->source,
         .reader = o->options.reader,
         .remote = f->remote ? &f->remote->source : NULL,
+        .compiled=f->compiled?&f->compiled->source:NULL,
         .context = &callbacks, .loading = media_loading, .game_type = o->state.game_type, .inline_models = inline_models};
     int32_t build;
     if (ok) ok = integer_cvar(o, "cg_buildScript", &build, e);
@@ -467,7 +527,8 @@ bool q3n_server_commands_initialize(q3n_server_commands *o, const q3n_frame *f,
         free(text);
     }
     if (ok) ok =
-        (f->remote ? q3n_clients_remote_sync(o->options.clients, &f->remote->source, &client_settings, e) :
+        (f->compiled?q3n_clients_compiled_sync(o->options.clients,&f->compiled->source,&client_settings,e):
+         f->remote ? q3n_clients_remote_sync(o->options.clients, &f->remote->source, &client_settings, e) :
             q3n_clients_sync(o->options.clients, f->application, &f->source, &client_settings, e)) && q3nc_current(o, f, e);
     if (ok) spectators(o);
     if (ok && mission) ok = stage(o, f, Q3N_INIT_MISSION_ASSETS, &inline_models, e) &&
@@ -481,6 +542,10 @@ bool q3n_server_commands_initialize(q3n_server_commands *o, const q3n_frame *f,
     if (ok) o->initialized = true;
     return end(o, ok);
 }
+bool q3n_server_commands_initialize(q3n_server_commands *o,const q3n_frame *f,int32_t sequence,qa_error *e)
+{ return initialize(o,f,sequence,false,e); }
+bool q3n_server_commands_initialize_video(q3n_server_commands *o,const q3n_frame *f,int32_t sequence,qa_error *e)
+{ return initialize(o,f,sequence,true,e); }
 bool q3nc_team_chat(q3n_server_commands *o, const q3n_frame *f, const char *input, qa_error *e)
 {
     int32_t height, duration;
@@ -522,7 +587,9 @@ static int32_t arg_int(const qa_command_tokens *tokens, size_t index) { return q
 static bool dynamic(q3n_server_commands *o, const q3n_frame *f, uint32_t number,
     const q3n_client_info *ci, const q3n_client_dynamic *value, qa_error *e)
 {
-    return (f->remote ? q3n_clients_remote_dynamic_write(o->options.clients, &f->remote->source,
+    return (f->compiled?q3n_clients_compiled_dynamic_write(o->options.clients,&f->compiled->source,
+        number,ci->configstring_revision,ci->media_revision,value,e):
+        f->remote ? q3n_clients_remote_dynamic_write(o->options.clients, &f->remote->source,
         number, ci->configstring_revision, ci->media_revision, value, e) :
         q3n_clients_dynamic_write(o->options.clients, f->application, &f->source,
         number, ci->configstring_revision, ci->media_revision, value, e)) && q3nc_current(o, f, e);
@@ -604,12 +671,14 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
                 if (ok && o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e);
             } else if (index < 18) { s->team_vote_yes[slot] = q3nc_integer(text); s->team_vote_modified[slot] = true; }
             else { s->team_vote_no[slot] = q3nc_integer(text); s->team_vote_modified[slot] = true; }
-        } else if (index >= 32 && index < 544) ok = f->remote ?
+        } else if (index >= 32 && index < 544) ok = f->compiled?
+            q3n_media_compiled_configstring_changed(o->options.media,&f->compiled->source,(uint32_t)index,e):f->remote ?
             q3n_media_remote_configstring_changed(o->options.media, &f->remote->source, (uint32_t)index, e) :
             q3n_media_configstring_changed(o->options.media, o->options.reader, (uint32_t)index, e);
         else if (index >= 544 && index < 608) {
             q3n_client_settings value;
-            ok = settings(o, f, false, &value, e) && (f->remote ?
+            ok = settings(o, f, false, &value, e) && (f->compiled?
+                q3n_clients_compiled_register_one(o->options.clients,&f->compiled->source,&value,(uint32_t)index-544u,e):f->remote ?
                 q3n_clients_remote_register_one(o->options.clients, &f->remote->source, &value, (uint32_t)index - 544u, e) :
                 q3n_clients_register_one(o->options.clients, f->application, &f->source, &value, (uint32_t)index - 544u, e));
             if (ok) spectators(o);
@@ -637,7 +706,8 @@ static bool restart(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
                 !q3nc_cvar(o, "cg_recordSPDemoName", &demo, e)) return false;
             if (record && demo.value[0]) {
                 char text[320]; snprintf(text, sizeof(text), "set g_synchronousclients 1 ; record %s \n", demo.value);
-                if (!(o->options.remote_client ? qa_native_q3_remote_client_console(o->options.remote_client, text, e) :
+                if (!(o->options.compiled_source?o->options.compiled_console(o->options.context,f,text,e):
+                    o->options.remote_client ? qa_native_q3_remote_client_console(o->options.remote_client, text, e) :
                     qa_native_q3_client_console(o->options.client, text, e)) || !q3nc_current(o, f, e)) return false;
             }
         }
@@ -657,7 +727,8 @@ static bool deferred(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
     q3n_client_settings value;
     return settings(o, f, false, &value, e) &&
-        (f->remote ? q3n_clients_remote_load_deferred(o->options.clients, &f->remote->source, &value, e) :
+        (f->compiled?q3n_clients_compiled_load_deferred(o->options.clients,&f->compiled->source,&value,e):
+         f->remote ? q3n_clients_remote_load_deferred(o->options.clients, &f->remote->source, &value, e) :
             q3n_clients_load_deferred(o->options.clients, f->application, &f->source, &value, e)) && q3nc_current(o, f, e);
 }
 static bool dispatch(q3n_server_commands *o, const q3n_frame *f, const qa_command_tokens *args, qa_error *e)
@@ -711,6 +782,12 @@ static bool dispatch(q3n_server_commands *o, const q3n_frame *f, const qa_comman
 }
 static bool receipt(q3n_server_commands *o, const q3n_frame *f, const q3n_server_command_receipt *r, int32_t sequence, qa_error *e)
 {
+    if(o->options.compiled_source)return f && f->compiled && r && !r->wire.reader && !r->remote.tokens &&
+        r->compiled_source==o->options.compiled_source && r->sequence==sequence &&
+        r->publication_generation==o->options.publication_generation && r->map_revision==o->options.map_revision &&
+        compiled_identity(&r->compiled_context,&o->options.compiled_context) && (!r->present || r->arguments) &&
+        f->compiled->source.basis.reached_command==sequence &&
+        o->options.receipt_current(o->options.context,f,r) && q3nc_current(o,f,e);
     if (o->options.remote_source) {
         return f && f->remote && !r->wire.reader && !r->arguments &&
             r->remote.sequence == sequence && r->sequence == sequence &&
@@ -761,7 +838,7 @@ static bool copy_arguments(const qa_command_tokens *source, qa_command_tokens *o
 }
 bool q3n_server_commands_execute(q3n_server_commands *o, const q3n_frame *f, int32_t latest, qa_error *e)
 {
-    if (o && o->options.remote_source)
+    if (o && (o->options.remote_source || o->options.compiled_source))
         return q3nc_fail(e, QA_ERROR_ARGUMENT, "Remote CGAME dispatch requires the already reached Network receipt");
     if (latest < 0 || !begin(o, f, true, e)) return false;
     bool ok = true;
@@ -774,6 +851,19 @@ bool q3n_server_commands_execute(q3n_server_commands *o, const q3n_frame *f, int
         qa_command_tokens_free(&owned);
     }
     return end(o, ok);
+}
+bool q3n_server_commands_compiled_dispatch(q3n_server_commands *o,const q3n_frame *f,
+    const q3n_server_command_receipt *actual,qa_error *e)
+{
+    if(!q3n_server_commands_idle(o) || !o->options.compiled_source || !o->initialized || !actual ||
+       o->state.server_command_sequence==INT32_MAX || actual->sequence!=o->state.server_command_sequence+1 ||
+       !receipt(o,f,actual,actual->sequence,e))
+        return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled dispatch requires its actual next reached command");
+    o->busy=true; o->state.server_command_sequence=actual->sequence;
+    qa_command_tokens owned={0}; bool okay=true;
+    if(actual->present)okay=copy_arguments(actual->arguments,&owned,e) && dispatch(o,f,&owned,e);
+    if(okay)okay=receipt(o,f,actual,actual->sequence,e);
+    qa_command_tokens_free(&owned); return end(o,okay);
 }
 bool q3n_server_commands_remote_dispatch(q3n_server_commands *o, const q3n_frame *f,
     const q3n_server_command_receipt *actual, qa_error *e)

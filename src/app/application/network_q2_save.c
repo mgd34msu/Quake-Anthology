@@ -8,9 +8,10 @@ static bool header_write(qa_application_network_q2 *owner, qa_net_writer *writer
     const char *name = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     if (!name || !source->launch->selection.instance)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire continuation lost its actual source names");
-    return qa_net_write_data(writer, "QAQ2WIRE", 8) && qa_net_write_u32(writer, 3) &&
+    return qa_net_write_data(writer, "QAQ2WIRE", 8) && qa_net_write_u32(writer, 4) &&
         qa_net_write_u32(writer, owner->host.protocol.kind) && qa_net_write_u32(writer, owner->host.protocol.revision) &&
         qa_net_write_u32(writer, owner->host.protocol.flags) && qa_net_write_i32(writer, owner->server_count) &&
+        qa_net_write_u8(writer, owner->materials_bound ? 1 : 0) && qa_net_write_u8(writer, owner->materials_capability ? 1 : 0) &&
         qa_net_write_u32(writer, source->kind) && qa_net_write_u32(writer, source->edition) &&
         qa_net_write_u32(writer, owner->host.client_slots) && qa_net_write_u32(writer, owner->host.entity_slots) &&
         qa_net_write_u64(writer, source->clock.frame_number) && qa_net_write_u64(writer, source->server_time_ns) &&
@@ -108,7 +109,9 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     if (!qa_net_read_data(reader, magic, sizeof(magic))) return false;
     version = qa_net_read_u32(reader); kind = qa_net_read_u32(reader);
     revision = qa_net_read_u32(reader); flags = qa_net_read_u32(reader);
-    server_count = qa_net_read_i32(reader); source_kind = qa_net_read_u32(reader);
+    server_count = qa_net_read_i32(reader);
+    uint8_t materials_bound = qa_net_read_u8(reader), materials_capability = qa_net_read_u8(reader);
+    source_kind = qa_net_read_u32(reader);
     edition = qa_net_read_u32(reader); clients = qa_net_read_u32(reader); entities = qa_net_read_u32(reader);
     frame = qa_net_read_u64(reader); time = qa_net_read_u64(reader); interval = qa_net_read_u64(reader);
     policy.kind = (qa_clock_kind)qa_net_read_u32(reader);
@@ -121,7 +124,9 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     qa_sha256(qa_resource_bytes(owner->app->map_resource), &actual_map);
     const char *name = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     const qa_application_native_q2_presentation *source = &owner->host.source;
-    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || version != 3 ||
+    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || version != 4 ||
+        materials_bound > 1 || materials_capability > 1 || (!materials_bound && materials_capability) ||
+        owner->materials_bound != (materials_bound != 0) || owner->materials_capability != (materials_capability != 0) ||
         kind != (uint32_t)owner->host.protocol.kind || revision != owner->host.protocol.revision || flags != owner->host.protocol.flags ||
         server_count != owner->server_count || source_kind != (uint32_t)source->kind || edition != (uint32_t)source->edition ||
         clients != owner->host.client_slots || entities != owner->host.entity_slots ||
@@ -144,6 +149,7 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire import requires an empty real restored Source publisher");
     qa_application_network_q2 *candidate = NULL;
     if (!qa_application_network_q2_create(owner->app, owner->host.protocol, owner->server_count, &candidate, error)) return false;
+    candidate->materials_bound = owner->materials_bound; candidate->materials_capability = owner->materials_capability;
     qa_net_reader reader;
     qa_net_reader_init(&reader, bytes, error);
     bool ok = header_read(candidate, &reader, error);

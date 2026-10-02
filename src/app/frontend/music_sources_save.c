@@ -40,13 +40,17 @@ static bool origin_fields(qa_source_save_io *io, frontend_music_sources *owner) 
     uint32_t kind = origin->kind;
     qa_strings *strings = qa_session_strings(qa_application_session(owner->application));
     const qa_launch_instance *descriptor = !reading ? qa_launch_instance_lease_view(owner->origin_metadata) : NULL;
-    const qa_product *product = descriptor ? qa_catalog_product(origin->catalog, origin->product) : NULL;
+    const qa_product *product = !reading ? qa_catalog_product(origin->catalog, origin->product) : NULL;
     char *receiver = reading ? NULL : (char *)qa_strings_cstr(strings, origin->receiver);
-    char *instance = reading ? NULL : descriptor ? (char *)descriptor->selection.instance : NULL;
+    char *instance = reading ? NULL : descriptor ? (char *)descriptor->selection.instance :
+        origin->recipe_provider ? (char *)origin->recipe_provider->selection.instance : (char *)origin->recipe_content;
     char *key = reading ? NULL : product ? (char *)product->key : NULL;
-    qa_sha256_digest identity = reading ? (qa_sha256_digest){0} : descriptor ? descriptor->identity : (qa_sha256_digest){0};
+    const qa_sha256_digest *recipe_identity = !reading && owner->origin_recipe ? qa_executable_recipe_digest(origin->recipe) : NULL;
+    qa_sha256_digest identity = reading ? (qa_sha256_digest){0} : descriptor ? descriptor->identity :
+        recipe_identity ? *recipe_identity : (qa_sha256_digest){0};
     bool ok = (reading || (owner->origin_bound && origin->current(origin->context, origin))) &&
         qa_source_save_u32(io, &kind) && kind <= FRONTEND_MUSIC_COMPONENT &&
+        qa_source_save_bool(io, &owner->origin_recipe) && (!owner->origin_recipe || kind == FRONTEND_MUSIC_COMPONENT || kind == FRONTEND_MUSIC_REMOTE) &&
         qa_source_save_u32(io, &origin->physical_seat) && origin->physical_seat < owner->frontend->options.seats &&
         frontend_save_text(io, &receiver) && receiver && *receiver &&
         frontend_save_text(io, &instance) && instance && *instance &&
@@ -103,9 +107,9 @@ static bool command_fields(qa_source_save_io *io, frontend_music_command *comman
 static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, const qa_audio_checkpoint_refs *refs,
     frontend_music_sources *owner) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','M','S'}; uint32_t version = 2;
+    uint8_t magic[4] = {'Q','F','M','S'}; uint32_t version = 3;
     bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFMS", 4) &&
-        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u64(io, &owner->seed);
+        qa_source_save_u32(io, &version) && version == 3 && qa_source_save_u64(io, &owner->seed);
     uint64_t catalog = reading ? 0 : qa_application_content_catalog_id(graph, owner->menu_catalog);
     const qa_product *selected = !reading && owner->menu_product ? qa_catalog_product(owner->menu_catalog, owner->menu_product) : NULL;
     char *key = selected ? (char *)selected->key : NULL;

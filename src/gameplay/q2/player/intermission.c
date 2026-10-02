@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "feedback.h"
+#include "../entities/internal.h"
 
 bool qa_q2_players_in_intermission(const qa_q2_game *g) {
     return g && g->player_runtime && g->player_runtime->intermission;
@@ -177,10 +178,9 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
     bool rr = g->options.edition == QA_Q2_RERELEASE, end_unit = strchr(map, '*') != NULL;
     if (!prepare_intermission(g, end_unit, e))
         return false;
+    if (rr) q2_campaign_update(g);
     if (rr && end_unit && !(flags & 16) &&
-        !q2_map_event(
-            g, &(qa_q2_map_event){.kind = QA_Q2_MAP_END_UNIT, .resource = map_id, .flags = flags},
-            e))
+        !q2_campaign_end_unit(g, (qa_actor_id){0}, q2_deadline(p->intermission_ns, 5 * Q2_NS), e))
         return false;
     if (!g->options.deathmatch && (!end_unit || (rr && (flags & 16) && (flags & 64)))) {
         p->exit = true;
@@ -290,6 +290,7 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
     }
     p->intermission_flags &= ~8u;
     const char *destination = qa_strings_cstr(qa_session_strings(g->services.session), map);
+    if (destination && strchr(destination, '*')) q2_campaign_leave(g);
     return q2_map_transition(g, (qa_actor_id){0}, has_landmark ? landmark.player : (qa_actor_id){0},
                              map, has_landmark ? &landmark : NULL,
                              destination && strchr(destination, '*'), e);

@@ -35,7 +35,7 @@ bool q3mod_actors_state(void *context,qa_combat_state *out,qa_error *e)
     qa_combat_state value={.health=(float)health,.mass=(float)o->mass,.can_take_damage=damageable!=0,
         .invulnerable=((uint32_t)flags&o->godmode)!=0,.no_knockback=((uint32_t)flags&o->no_knockback)!=0};
     if((double)value.health!=health) return q3mod_fail(e,QA_ERROR_UNSUPPORTED,"Source health exceeds exact canonical binary32 representation");
-    if(c) value.armor.regular=(qa_regular_armor){.kind=QA_ARMOR_Q3,.points=(float)armor,.protection=(float)o->protection};
+    if(c) value.armor.regular=(qa_regular_armor){.kind=QA_ARMOR_Q3,.points=(float)armor,.protection.q3_protection=(float)o->protection};
     if(c&&(double)value.armor.regular.points!=armor) return q3mod_fail(e,QA_ERROR_UNSUPPORTED,"Source armor exceeds exact canonical representation");
     if(o->mass_kind!=MOD_ACTOR_MASS_CONSTANT) {
         int32_t raw; if(!q3mod_actors_word(o,r->pointer+o->mass_field,&raw,e)) return false;

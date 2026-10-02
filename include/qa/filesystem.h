@@ -165,6 +165,11 @@ typedef struct qa_fs_posix_status {
     int64_t size, block_size, blocks;
     qa_fs_timestamp access, modification, change;
 } qa_fs_posix_status;
+typedef struct qa_fs_posix_descriptor_status {
+    uint32_t flags;
+    int64_t offset;
+    bool seekable;
+} qa_fs_posix_descriptor_status;
 typedef struct qa_fs_native_error {
     uint32_t platform, code; /* POSIX errno (1), Win32 (2), Windows CRT errno (3). */
     bool available;
@@ -188,6 +193,12 @@ bool qa_fs_opened_file_write(qa_fs_opened_file *, uint64_t, qa_bytes,
     size_t *completed, qa_error *);
 bool qa_fs_opened_file_size(qa_fs_opened_file *, uint64_t *, qa_error *);
 bool qa_fs_opened_file_posix_status_read(qa_fs_opened_file *, qa_fs_posix_status *, qa_error *);
+/* Actual fcntl(F_GETFL) and nonmutating lseek(SEEK_CUR). ESPIPE is a
+ * successful nonseekable observation; other native failures retain errno. */
+bool qa_fs_opened_file_posix_descriptor_read(qa_fs_opened_file *, qa_fs_posix_descriptor_status *, qa_error *);
+/* Mutate only actual APPEND/NONBLOCK status bits on the held open description.
+ * Access, containment and all other native flags remain unchanged. */
+bool qa_fs_opened_file_posix_flags(qa_fs_opened_file *, bool append, bool nonblocking, qa_error *);
 bool qa_fs_opened_file_truncate(qa_fs_opened_file *, uint64_t, qa_error *);
 bool qa_fs_opened_file_flush(qa_fs_opened_file *, qa_error *);
 /* Linux close consumes its descriptor even on a reported error. Windows close
@@ -269,8 +280,6 @@ bool qa_fs_stage_open_readonly(qa_fs_root *, const char *target, uint64_t nonce,
  * owner there on failure. The caller must retire it with checked close. */
 bool qa_fs_stage_open_checked(qa_fs_root *, const char *target, uint64_t nonce,
                                bool resume, qa_fs_stage **, uint64_t *initial_size, qa_error *);
-bool qa_fs_stage_open_readonly_checked(qa_fs_root *, const char *target, uint64_t nonce,
-                                        qa_fs_stage **, uint64_t *initial_size, qa_error *);
 bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
 bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
                        size_t *read, qa_error *);

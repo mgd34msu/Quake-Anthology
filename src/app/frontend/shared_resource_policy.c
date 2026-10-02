@@ -6,6 +6,9 @@
 #include "material_movies_prepare.h"
 #include "shared_settings.h"
 #include "q3_render_policy.h"
+#include "q3_color_policy.h"
+#include "shared_render_controls.h"
+#include "video_guests.h"
 #include "q1_sky.h"
 #include "remote_q1_sky_policy.h"
 #include "remote_q2_policy.h"
@@ -178,6 +181,13 @@ struct frontend_shared_resource_policy {
     qa_application *application;
     qa_cvars *registry;
     const qa_cvars_edit *edit;
+    const qa_application_client_preparation *client;
+    const frontend_video_guests *video;
+    qa_display *display;
+    qa_cpu_renderer *cpu;
+    qa_gl_renderer *gl;
+    frontend_q3_color *color;
+    qa_q3_image_upload_options restart_upload;
     frontend_resource_inventory *inventory;
     qa_scene_resource_policy **banks;
     qa_material_order_image_policy **orders;
@@ -196,18 +206,26 @@ struct frontend_shared_resource_policy {
     frontend_q1_sky_policy *sky;
     policy_scalar scalars[sizeof(policy_names) / sizeof(policy_names[0])];
     size_t scalar_count;
-    bool begun, source_profile, children_entered, children_prepared, sealed, published;
+    bool begun, source_profile, source_restart, children_entered, children_prepared, sealed, published;
 };
 static bool scalar_current(const frontend_shared_resource_policy *ticket, bool sealed)
 {
     if (!ticket || ticket->frontend->application != ticket->application ||
         ticket->frontend->q1_sky != ticket->sky_owner ||
-        qa_cvars_edit_registry(ticket->edit) != ticket->registry ||
-        !(sealed ? qa_cvars_edit_ready_is(ticket->edit) :
-            qa_cvars_edit_returned_is(ticket->edit, ticket->registry))) return false;
+        (ticket->client && !qa_application_client_prepare_associated(ticket->application, ticket->client)) ||
+        (ticket->video ? (!frontend_video_guests_parent_is(ticket->frontend, ticket->video) ||
+            qa_application_cvars(ticket->application) != ticket->registry ||
+            ticket->frontend->display != ticket->display || ticket->frontend->cpu != ticket->cpu ||
+            ticket->frontend->gl != ticket->gl || ticket->frontend->source_color != ticket->color) :
+            (qa_cvars_edit_registry(ticket->edit) != ticket->registry ||
+            !(sealed ? qa_cvars_edit_ready_is(ticket->edit) :
+                qa_cvars_edit_returned_is(ticket->edit, ticket->registry))))) return false;
     for (size_t i = 0; i < ticket->scalar_count; ++i) {
-        const qa_cvar_view *row = i < BASE_POLICY_VALUES ? qa_cvars_edit_find(ticket->edit, policy_names[i]) :
-            qa_cvars_edit_canonical_record(ticket->edit, policy_names[i]);
+        const qa_cvar_view *row = ticket->video ?
+            (i < BASE_POLICY_VALUES ? qa_cvars_find(ticket->registry, policy_names[i]) :
+                frontend_render_control_record(ticket->registry, policy_names[i])) :
+            (i < BASE_POLICY_VALUES ? qa_cvars_edit_find(ticket->edit, policy_names[i]) :
+                qa_cvars_edit_canonical_record(ticket->edit, policy_names[i]));
         uint32_t number = 0;
         if (!row || !ticket->scalars[i].value) return false;
         memcpy(&number, &row->number, sizeof(number));
@@ -329,17 +347,22 @@ static bool policy_allocate(frontend_shared_resource_policy *ticket, qa_error *e
         return frontend_fail(error, QA_ERROR_MEMORY, "Retaining the complete prepared resource roster");
     return true;
 }
-bool frontend_shared_resource_policy_begin(qa_frontend *f, const qa_launch_snapshot *candidate,
-    const qa_cvars_edit *edit, frontend_shared_resource_policy **out, qa_error *error)
+static bool policy_begin(qa_frontend *f, const qa_launch_snapshot *candidate,
+    const qa_application_client_preparation *client, const qa_cvars_edit *edit,
+    frontend_shared_resource_policy **out, qa_error *error)
 {
     if (!f || !f->application || !out || *out || !edit ||
         qa_cvars_edit_registry(edit) != qa_application_cvars(f->application) ||
         !qa_cvars_edit_returned_is(edit, qa_application_cvars(f->application)))
         return policy_fail(error, "Resource preparation requires its actual canonical ENGINE ticket");
+    if (client && (candidate || !qa_application_client_prepare_associated(f->application, client) ||
+        !qa_application_client_prepare_entered(client, QA_CLIENT_PREPARE_RESOURCES)))
+        return policy_fail(error, "CLIENT resource preparation requires its genuine entered resource token");
     frontend_shared_resource_policy *ticket = calloc(1, sizeof(*ticket));
     if (!ticket) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining shared resource preparation");
     ticket->frontend = f; ticket->application = f->application;
     ticket->registry = qa_cvars_edit_registry(edit); ticket->edit = edit;
+    ticket->client = client;
     ticket->sky_owner = f->q1_sky;
     ticket->scalar_count = BASE_POLICY_VALUES;
     *out = ticket;
@@ -354,8 +377,8 @@ bool frontend_shared_resource_policy_begin(qa_frontend *f, const qa_launch_snaps
         memcpy(ticket->scalars[i].value, row->value, size);
         memcpy(&ticket->scalars[i].number, &row->number, sizeof(row->number));
     }
-    if (ok) ok = frontend_resource_inventory_collect(f, f->application, candidate, &ticket->inventory, error) &&
-        policy_allocate(ticket, error);
+    if (ok) ok = (client ? frontend_resource_inventory_collect_client(f, client, &ticket->inventory, error) :
+        frontend_resource_inventory_collect(f, f->application, candidate, &ticket->inventory, error)) && policy_allocate(ticket, error);
     for (size_t i = 0; ok && i < ticket->material_count; ++i)
         if (qa_material_library_has_source_profile(frontend_resource_inventory_library_at(ticket->inventory, i)))
             ticket->source_profile = true;
@@ -378,6 +401,56 @@ bool frontend_shared_resource_policy_begin(qa_frontend *f, const qa_launch_snaps
     }
     return ok;
 }
+bool frontend_shared_resource_policy_begin(qa_frontend *f, const qa_launch_snapshot *candidate,
+    const qa_cvars_edit *edit, frontend_shared_resource_policy **out, qa_error *error)
+{ return policy_begin(f, candidate, NULL, edit, out, error); }
+bool frontend_shared_resource_policy_begin_client(qa_frontend *f, const qa_application_client_preparation *client,
+    const qa_cvars_edit *edit, frontend_shared_resource_policy **out, qa_error *error)
+{
+    if (!client) return policy_fail(error, "CLIENT resource preparation requires its actual token");
+    return policy_begin(f, NULL, client, edit, out, error);
+}
+bool frontend_shared_resource_policy_restart_prepare(qa_frontend *f, const frontend_video_guests *video,
+    frontend_shared_resource_policy **out, qa_error *error)
+{
+    if (!f || !f->application || !out || *out || !frontend_video_guests_parent_is(f, video) ||
+        frontend_config_store_shared_pending(f->config_store))
+        return policy_fail(error, "Source restart refresh requires its real video ticket and committed ENGINE values");
+    frontend_shared_resource_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining renderer restart resources");
+    ticket->frontend = f; ticket->application = f->application;
+    ticket->registry = qa_application_cvars(f->application); ticket->sky_owner = f->q1_sky;
+    ticket->video = video; ticket->display = f->display; ticket->cpu = f->cpu; ticket->gl = f->gl;
+    ticket->color = f->source_color; ticket->scalar_count = BASE_POLICY_VALUES;
+    *out = ticket;
+    bool ok = frontend_resource_inventory_collect_video(f, video, &ticket->inventory, error) && policy_allocate(ticket, error);
+    for (size_t i = 0; ok && i < ticket->material_count; ++i)
+        if (qa_material_library_has_source_profile(frontend_resource_inventory_library_at(ticket->inventory, i)))
+            ticket->source_profile = true;
+    for (size_t i = 0; ok && i < ticket->bank_count; ++i)
+        if (qa_scene_source_q3_white(frontend_resource_inventory_images_at(ticket->inventory, i)))
+            ticket->source_restart = true;
+    ticket->source_restart = ticket->source_restart || ticket->source_profile || f->source_color != NULL;
+    if (ok && ticket->source_restart)
+        ok = frontend_q3_source_upload_read(f, true, true, &ticket->restart_upload, error);
+    if (ticket->source_profile) ticket->scalar_count = sizeof(policy_names) / sizeof(policy_names[0]);
+    for (size_t i = 0; ok && i < ticket->scalar_count; ++i) {
+        const qa_cvar_view *row = i < BASE_POLICY_VALUES ? qa_cvars_find(ticket->registry, policy_names[i]) :
+            frontend_render_control_record(ticket->registry, policy_names[i]);
+        if (!row || !row->value) { ok = policy_fail(error, "Source restart lost its real canonical resource policy"); break; }
+        size_t size = strlen(row->value) + 1;
+        ticket->scalars[i].value = malloc(size);
+        if (!ticket->scalars[i].value) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Retaining restart ENGINE rows"); break; }
+        memcpy(ticket->scalars[i].value, row->value, size);
+        memcpy(&ticket->scalars[i].number, &row->number, sizeof(row->number));
+    }
+    if (ok) { ticket->begun = true; ok = frontend_shared_resource_policy_prepare_children(ticket, error); }
+    if (!ok) {
+        qa_error cleanup = {0};
+        if (!policy_cleanup(out, false, &cleanup) && error) *error = cleanup;
+    }
+    return ok;
+}
 bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_policy *ticket, qa_error *error)
 {
     if (!ticket || !ticket->begun || ticket->children_entered || ticket->published ||
@@ -388,8 +461,8 @@ bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_p
     const qa_cvars_edit *edit = ticket->edit;
     qa_scene_image_policy images[3]; frontend_model_policy models;
     qa_material_profile profile = {0};
-    bool ok = frontend_image_policy_edit_read(edit, images, error) &&
-        frontend_model_policy_edit_read(edit, &models, error) &&
+    bool ok = (ticket->video ? frontend_image_policy_read(f, images, error) : frontend_image_policy_edit_read(edit, images, error)) &&
+        (ticket->video ? frontend_model_policy_read(f, &models, error) : frontend_model_policy_edit_read(edit, &models, error)) &&
         (!ticket->source_profile || frontend_q3_material_profile_read(f, edit, &profile, error));
     for (size_t i = 0; ok && i < ticket->asset_count; ++i) {
         ticket->assets[i] = frontend_resource_inventory_assets_at(ticket->inventory, i);
@@ -400,8 +473,11 @@ bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_p
         ok = qa_material_order_image_policy_prepare((qa_material_order *)frontend_resource_inventory_order_at(ticket->inventory, i),
             &ticket->orders[i], error);
     for (size_t i = 0; ok && i < ticket->bank_count; ++i)
-        ok = qa_scene_resource_policy_prepare((qa_scene_resources *)frontend_resource_inventory_images_at(ticket->inventory, i),
-            images, &ticket->banks[i], error);
+        ok = ticket->video && ticket->source_restart ?
+            qa_scene_resource_policy_prepare_source_restart((qa_scene_resources *)frontend_resource_inventory_images_at(ticket->inventory, i),
+                &ticket->restart_upload, &ticket->banks[i], error) :
+            qa_scene_resource_policy_prepare((qa_scene_resources *)frontend_resource_inventory_images_at(ticket->inventory, i),
+                images, &ticket->banks[i], error);
     for (size_t i = 0; ok && i < ticket->bank_count; ++i)
         ok = qa_scene_resource_policy_dependencies(ticket->banks[i], ticket->banks, ticket->bank_count, error);
     for (size_t i = 0; ok && i < ticket->font_count; ++i) {

@@ -736,21 +736,43 @@ bool qa_native_rva(const qa_native_instance *instance, uint64_t rva, size_t byte
 bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,
                       const qa_native_signature *signature, const qa_native_value *arguments,
                       size_t argument_count, qa_native_value *result, qa_error *error) {
+    bool entered = false;
+    return qa_native_invoke_receipt(instance, entry, signature, arguments,
+        argument_count, result, &entered, error);
+}
+
+bool qa_native_invoke_receipt(qa_native_instance *instance, qa_native_address entry,
+    const qa_native_signature *signature, const qa_native_value *arguments,
+    size_t argument_count, qa_native_value *result, bool *entered, qa_error *error) {
+    if (!entered) return native_fail(error, QA_ERROR_ARGUMENT, 0, "native invocation requires its entered receipt");
+    *entered = false;
     if (!instance || !entry || !signature || instance->lifecycle != QA_NATIVE_INITIALIZED ||
         instance->checkpointing || instance->destroying ||
-        (instance->region_depth && (instance->backend != QA_NATIVE_BACKEND_RUNNER ||
-                                   instance->region_service_depth != instance->region_depth)) ||
+        instance->region_depth ||
         instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance and declared entry are required");
+    bool *previous = instance->invoke_entered;
+    instance->invoke_entered = entered;
+    bool okay = native_invoke_entry(instance, entry, signature, arguments, argument_count, result, error);
+    instance->invoke_entered = previous;
+    return okay;
+}
+
+bool native_invoke_entry(qa_native_instance *instance, qa_native_address entry,
+                         const qa_native_signature *signature, const qa_native_value *arguments,
+                         size_t argument_count, qa_native_value *result, qa_error *error) {
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
         qa_native_instance *previous = native_active_instance;
+        qa_native_address previous_target = instance->invocation_target;
+        instance->invocation_target = entry;
         native_active_instance = instance;
         ++instance->active_depth;
         bool ok = native_runner_invoke(instance, entry, signature, arguments, argument_count,
                                        result, error);
         --instance->active_depth;
         native_active_instance = previous;
+        instance->invocation_target = previous_target;
         return ok;
     }
     native_entry_binding binding = {

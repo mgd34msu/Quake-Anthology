@@ -46,6 +46,8 @@ typedef struct frontend_remote_snapshots_view {
  * Construction uses the actual CG_Init tuple, before consuming its history. */
 bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *,
     const q3n_remote_source_view *, frontend_remote_snapshots **, qa_error *);
+bool frontend_remote_snapshots_create_video(const frontend_remote_snapshots_options *,
+    const q3n_remote_source_view *,frontend_remote_snapshots **,qa_error *);
 bool frontend_remote_snapshots_destroy(frontend_remote_snapshots *, qa_error *);
 bool frontend_remote_snapshots_idle(const frontend_remote_snapshots *);
 /* Actual contiguous native cache. The enclosing row retains this owner through

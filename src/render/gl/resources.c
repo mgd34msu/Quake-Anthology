@@ -151,13 +151,14 @@ bool qa_gl_source_texture_filter_apply(qa_render_controls *controls,qa_error *er
     }
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
-    renderer->gl.ActiveTexture(GL_TEXTURE0);
-    for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
-        if (entry->image->source_q3 && entry->image->source_mipmap) {
-            renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
+    for (uint32_t i=0;i<renderer->source_image_count;++i) {
+        gl_texture_entry *entry=renderer->source_images[i];
+        if (entry->image->source_mipmap) {
+            if (!gl_source_texture_bind(renderer,entry->image,error)) return false;
             texture_filter(renderer,controls->source_filter);
             if (!gl_check(renderer,"Source texture-mode image",error)) return false;
         }
+    }
     return true;
 }
 
@@ -167,9 +168,14 @@ static bool texture_upload(qa_gl_renderer *renderer,
 {
     if (!image_valid(renderer, image, error)) return false;
     gl_api *gl = &renderer->gl;
+    GLint active=0,binding=0;
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active);
+    gl->ActiveTexture(GL_TEXTURE0);
+    gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&binding);
     GLuint texture = 0;
     gl->GenTextures(1, &texture);
     if (texture == 0) {
+        gl->ActiveTexture((GLenum)active);
         qa_error_set(error, QA_ERROR_MEMORY, 0,
                      "OpenGL could not allocate a texture");
         return false;
@@ -193,12 +199,58 @@ static bool texture_upload(qa_gl_renderer *renderer,
                        (GLsizei)level->height, 0, format, type, level->pixels);
     }
     texture_parameters(renderer, image);
-    if (!gl_check(renderer, "OpenGL texture upload", error)) {
+    bool ok=gl_check(renderer, "OpenGL texture upload", error);
+    gl->BindTexture(GL_TEXTURE_2D,(GLuint)binding);
+    gl->ActiveTexture((GLenum)active);
+    if (!ok) {
         gl->DeleteTextures(1, &texture);
         return false;
     }
     *out = texture;
     return true;
+}
+bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image,qa_error *error)
+{
+    uint32_t unit=renderer->controls.attributes.texture_unit;
+    renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
+    if (renderer->bound[unit]==image) return gl_check(renderer,"Source cached texture binding",error);
+    gl_texture_entry *texture=NULL;
+    if (image && !gl_texture_get(renderer,image,&texture,error)) return false;
+    renderer->gl.BindTexture(GL_TEXTURE_2D,texture?texture->name:0);
+    qa_scene_image_retain(image); qa_scene_image_release(renderer->bound[unit]); renderer->bound[unit]=image;
+    renderer->controls.attributes.actual_empty[unit]=image==NULL;
+    return gl_check(renderer,"Source texture binding",error);
+}
+bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image *image,uint32_t unit,qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || !image || !image->source_q3 || unit>1) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image admission lost its actual OpenGL recipient"); return false;
+    }
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    gl_texture_entry *entry=NULL;
+    if (!gl_texture_get(renderer,image,&entry,error)) return false;
+    if (entry->source_admitted) return true;
+    if (renderer->source_image_count>=GL_SOURCE_IMAGES_QA) {
+        qa_error_set(error,QA_ERROR_FORMAT,0,"MAX_DRAWIMAGES hit in actual Source image admission"); return false;
+    }
+    qa_scene_resources *owner=qa_scene_image_resource_owner(image);
+    if (!owner || !qa_scene_resources_retain(owner,error)) {
+        if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image lost its actual bank owner");
+        return false;
+    }
+    entry->source_owner=owner; entry->source_ordinal=renderer->source_image_count;
+    entry->source_admitted=true; renderer->source_images[renderer->source_image_count++]=entry;
+    controls->attributes.texture_unit=unit;
+    renderer->gl.ActiveTexture(GL_TEXTURE0+unit); renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
+    if (!gl_source_texture_bind(renderer,image,error)) return false;
+    renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+    controls->attributes.actual_empty[unit]=true;
+    if (unit==1) {
+        renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.ClientActiveTexture(GL_TEXTURE0);
+        controls->attributes.texture_unit=0;
+    }
+    return gl_check(renderer,"Source completed image admission",error);
 }
 
 bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
@@ -273,7 +325,7 @@ void gl_textures_prune(qa_gl_renderer *renderer)
                 (renderer->bound[unit] != NULL &&
                  renderer->bound[unit]->identity == entry->image->identity &&
                  renderer->bound[unit]->revision == entry->image->revision);
-        if (!current && entry->image->references == 1) {
+        if (!entry->source_admitted && !current && entry->image->references == 1) {
             *link = entry->next;
             renderer->gl.DeleteTextures(1, &entry->name);
             qa_scene_image_release(entry->image);
@@ -498,6 +550,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
         renderer->textures = entry->next;
         renderer->gl.DeleteTextures(1, &entry->name);
         qa_scene_image_release(entry->image);
+        qa_scene_resources_destroy(entry->source_owner);
         free(entry);
     }
     while (renderer->meshes != NULL) {

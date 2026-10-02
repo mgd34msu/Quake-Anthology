@@ -22,6 +22,7 @@ struct frontend_view_settings {
 struct frontend_view_preparation {
     frontend_view_settings *parent;
     const qa_launch_snapshot *candidate;
+    const qa_application_client_preparation *client;
     const qa_cvars_edit *edit;
     char *value,*previous;
     double number;
@@ -177,14 +178,17 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
         .back=numbers[3],.up=numbers[4],.right=numbers[5]};
     return true;
 }
-bool frontend_view_settings_prepare(frontend_view_settings *owner,const qa_launch_snapshot *candidate,
+static bool prepare(frontend_view_settings *owner,const qa_launch_snapshot *candidate,
+    const qa_application_client_preparation *client,
     const qa_cvars_edit *edit,frontend_view_transition transition,frontend_view_preparation **out,qa_error *e)
 {
     if (!current(owner) || owner->preparation || owner->notifying || !out || *out ||
         (unsigned)transition>FRONTEND_VIEW_BORROWED ||
         (transition==FRONTEND_VIEW_INITIAL && owner->published) ||
         (transition==FRONTEND_VIEW_REPLACEMENT && !owner->published) ||
-        !qa_application_startup_resource_phase(owner->application,candidate) ||
+        !(client?(qa_application_client_prepare_associated(owner->application,client) &&
+            qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_RESOURCES)):
+            qa_application_startup_resource_phase(owner->application,candidate)) ||
         !qa_cvars_edit_returned_is(edit,owner->registry))
         return fail(e,"View preparation requires its real publication transition and canonical ticket");
     const qa_cvar_view *row=qa_cvars_edit_canonical_record(edit,"fov"),*previous=record(owner);
@@ -194,7 +198,7 @@ bool frontend_view_settings_prepare(frontend_view_settings *owner,const qa_launc
     if (!decimal(row->value,&number,e)) return false;
     frontend_view_preparation *held=calloc(1,sizeof(*held));
     if (!held) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining candidate view preference");
-    held->parent=owner; held->candidate=candidate; held->edit=edit; held->transition=transition;
+    held->parent=owner; held->candidate=candidate; held->client=client; held->edit=edit; held->transition=transition;
     held->value=copy(row->value,e); held->previous=copy(previous->value,e);
     if (!held->value || !held->previous) { free(held->value); free(held->previous); free(held); return false; }
     held->number=number; held->modification_count=row->modification_count;
@@ -205,14 +209,27 @@ bool frontend_view_settings_prepare(frontend_view_settings *owner,const qa_launc
         owner->explicit_override || held->notify;
     owner->preparation=held; *out=held; return true;
 }
+bool frontend_view_settings_prepare(frontend_view_settings *owner,const qa_launch_snapshot *candidate,
+    const qa_cvars_edit *edit,frontend_view_transition transition,frontend_view_preparation **out,qa_error *e)
+{ return prepare(owner,candidate,NULL,edit,transition,out,e); }
+bool frontend_view_settings_prepare_client(frontend_view_settings *owner,
+    const qa_application_client_preparation *client,const qa_cvars_edit *edit,
+    frontend_view_transition transition,frontend_view_preparation **out,qa_error *e)
+{
+    if (!client) return fail(e,"CLIENT view preparation requires its actual physical token");
+    return prepare(owner,NULL,client,edit,transition,out,e);
+}
 bool frontend_view_settings_ready_is(const frontend_view_preparation *held)
 {
     frontend_view_settings *owner=held?held->parent:NULL;
     if (!current(owner) || owner->preparation!=held || held->published || owner->notifying ||
         owner->explicit_override!=held->previous_explicit || owner->published!=held->previous_published ||
         !qa_cvars_edit_ready_is(held->edit) || qa_cvars_edit_registry(held->edit)!=owner->registry ||
-        !(qa_application_startup_resource_phase_associated(owner->application,held->candidate) ||
-            qa_application_startup_publication_consuming(owner->application,held->candidate))) return false;
+        !(held->client?(qa_application_client_prepare_associated(owner->application,held->client) &&
+            (qa_application_client_prepare_phase_is(held->client,QA_CLIENT_PREPARE_RESOURCES) ||
+                qa_application_client_prepare_entered(held->client,QA_CLIENT_PREPARE_CONSUMING))):
+            (qa_application_startup_resource_phase_associated(owner->application,held->candidate) ||
+                qa_application_startup_publication_consuming(owner->application,held->candidate)))) return false;
     const qa_cvar_view *row=qa_cvars_edit_canonical_record(held->edit,"fov"),*previous=record(owner);
     return row && previous && row->handle==owner->handle &&
         row->modification_count==held->modification_count && !strcmp(row->value,held->value) &&

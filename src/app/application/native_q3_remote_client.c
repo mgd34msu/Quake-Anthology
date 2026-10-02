@@ -291,6 +291,20 @@ bool qa_native_q3_remote_client_initialized(qa_native_q3_remote_client_service *
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native CGAME Init completion lost its registered physical service");
     service->services.basis.client.initialized = true; return true;
 }
+bool qa_native_q3_remote_client_video_reset(qa_native_q3_remote_client_service *service,qa_error *error)
+{
+    if(!service || !qa_native_q3_remote_client_idle(service) || service->cache_revision==UINT64_MAX ||
+        !qa_native_q3_remote_client_current(service) ||
+        !application_native_q3_remote_role_video_reset(service->provider,
+            service->services.basis.client.seat,service,error))
+        return native_client_fail(error,QA_ERROR_ARGUMENT,"Remote CG video reset requires its returned actual service/cache");
+    service->services.basis.client.initialized=false;
+    service->registered=false; service->overlay_initial=true;
+    service->force_model_count=service->overlay_count=0; service->local_server=0;
+    memset(service->cache,0,sizeof(service->cache)); ++service->cache_revision;
+    free(service->system_info); service->system_info=NULL;
+    return qa_native_q3_remote_client_current(service);
+}
 size_t native_remote_client_symbol(const qa_native_q3_remote_client_service *service, const char *symbol)
 {
     for (size_t i = 0; symbol && i < native_client_definition_count; ++i)

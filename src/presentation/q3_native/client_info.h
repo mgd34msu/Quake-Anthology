@@ -8,6 +8,8 @@
 typedef struct q3n_clients q3n_clients;
 typedef struct q3n_remote_source q3n_remote_source;
 typedef struct q3n_remote_source_view q3n_remote_source_view;
+typedef struct q3n_compiled_source q3n_compiled_source;
+typedef struct q3n_compiled_source_view q3n_compiled_source_view;
 typedef struct q3n_client_settings {
     bool force_model, defer_players, build_script, loading;
     char model[64], head_model[64], red_team_name[64], blue_team_name[64];
@@ -35,11 +37,22 @@ typedef struct q3n_client_options {
     qa_q3_product product;
     qa_native_q3_wire_reader *reader;
     q3n_remote_source *remote_source;
+    q3n_compiled_source *compiled_source;
     void *context;
     void (*print)(void *, const char *);
 } q3n_client_options;
 bool q3n_clients_create(const q3n_client_options *, q3n_clients **, qa_error *);
 bool q3n_clients_create_remote(const q3n_client_options *, q3n_clients **, qa_error *);
+bool q3n_clients_create_compiled(const q3n_client_options *, q3n_clients **, qa_error *);
+bool q3n_clients_compiled_current(const q3n_clients *, const q3n_compiled_source_view *, qa_error *);
+bool q3n_clients_compiled_sync(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, qa_error *);
+bool q3n_clients_compiled_register_one(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, uint32_t, qa_error *);
+bool q3n_clients_compiled_initialize(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, qa_error *);
+bool q3n_clients_compiled_reload(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, qa_error *);
+bool q3n_clients_compiled_reset(q3n_clients *, const q3n_compiled_source_view *, qa_error *);
+bool q3n_clients_compiled_load_deferred(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, qa_error *);
+bool q3n_clients_compiled_dynamic_write(q3n_clients *, const q3n_compiled_source_view *, uint32_t,
+    uint64_t, uint64_t, const q3n_client_dynamic *, qa_error *);
 void q3n_clients_destroy(q3n_clients *);
 bool q3n_clients_idle(const q3n_clients *);
 qa_q3_presentation_assets *q3n_clients_assets(const q3n_clients *);

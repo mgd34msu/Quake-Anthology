@@ -15,6 +15,7 @@
 
 #define GL_MAX_LIGHTS_QA 8
 #define GL_DRAW_BUFFER_COUNT_QA 4
+#define GL_SOURCE_IMAGES_QA 1024
 
 typedef struct gl_api {
     const GLubyte *(APIENTRY *GetString)(GLenum);
@@ -41,11 +42,14 @@ typedef struct gl_api {
     void (APIENTRY *PolygonOffset)(GLfloat, GLfloat);
     void (APIENTRY *LineWidth)(GLfloat);
     void (APIENTRY *BlendFunc)(GLenum, GLenum);
+    void (APIENTRY *AlphaFunc)(GLenum, GLclampf);
     void (APIENTRY *CullFace)(GLenum);
     void (APIENTRY *FrontFace)(GLenum);
     void (APIENTRY *DrawBuffer)(GLenum);
     void (APIENTRY *ReadBuffer)(GLenum);
     void (APIENTRY *ActiveTexture)(GLenum);
+    void (APIENTRY *ClientActiveTexture)(GLenum);
+    void (APIENTRY *TexEnvi)(GLenum, GLenum, GLint);
     void (APIENTRY *GenTextures)(GLsizei, GLuint *);
     void (APIENTRY *DeleteTextures)(GLsizei, const GLuint *);
     void (APIENTRY *BindTexture)(GLenum, GLuint);
@@ -130,6 +134,7 @@ typedef struct gl_stage_uniforms {
     GLint mvp, model, normal_matrix;
     GLint clip_enabled, clip_plane;
     GLint primary, secondary, secondary_mode, alpha_mode;
+    GLint preblend_gamma, preblend_table;
     GLint fog_mode, fog_color, fog_amount;
     GLint lighting_mode, luminance_alpha, light_count;
     GLint shadow_map, shadow_texel, shadow_near;
@@ -164,6 +169,9 @@ typedef struct gl_programs {
 typedef struct gl_texture_entry {
     const qa_scene_image *image;
     GLuint name;
+    qa_scene_resources *source_owner;
+    uint32_t source_ordinal;
+    bool source_admitted;
     struct gl_texture_entry *next;
 } gl_texture_entry;
 
@@ -207,6 +215,8 @@ struct qa_gl_renderer {
     qa_gl_capabilities capabilities;
     gl_programs programs;
     gl_texture_entry *textures;
+    gl_texture_entry *source_images[GL_SOURCE_IMAGES_QA];
+    uint32_t source_image_count;
     gl_mesh_entry *meshes;
     gl_stream_buffers stream;
     gl_output_target output;
@@ -216,12 +226,14 @@ struct qa_gl_renderer {
     const qa_scene_image *bound[2];
     qa_scene_view view;
     qa_scene_state pipeline;
+    qa_scene_vertex source_vertices[QA_SOURCE_TESS_VERTICES];
     qa_scene_draw_buffer draw_buffer;
     float gamma;
     qa_output_domains output_domains;
     uint64_t sequence;
     uint32_t presented_width, presented_height;
     bool overdraw, closed, presented, executing, capturing, preparing, detached;
+    bool preblend_gamma;
     qa_gl_surface_ticket *surface_ticket;
     bool destroy_pending;
     gl_restore_storage *restore;
@@ -240,6 +252,7 @@ void gl_draw_quad(qa_gl_renderer *renderer);
 
 bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
                     gl_texture_entry **out, qa_error *error);
+bool gl_source_texture_bind(qa_gl_renderer *,const qa_scene_image *,qa_error *);
 bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error);
 bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,
                      qa_error *error);

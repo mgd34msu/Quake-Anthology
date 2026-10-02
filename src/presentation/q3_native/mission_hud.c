@@ -9,10 +9,20 @@ void q3nm_result(bool result)
     if(!result || (o->frame&&!q3nm_current(o,o->frame,context->error)))context->failed=true; }
 bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
 {
+    if(o&&o->options.compiled_source) {
+        if(!f||!f->compiled||f->remote||f->compiled->source.owner!=o->options.compiled_source||
+           f->compiled->source.basis.product!=QA_Q3_TEAM_ARENA||
+           f->compiled->source.basis.content!=o->options.content||f->application!=o->options.application||
+           f->assets!=o->options.assets||f->presentation!=o->options.presentation||f->seat!=o->options.seat||
+           !q3n_frame_current(f)||!o->options.compiled_current(o->options.context,f,
+                o->options.compiled_cvars,&o->options.compiled_context))
+            return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD left its actual compiled CLIENT source and command domain");
+        return true;
+    }
     if(o&&o->options.remote_client) {
         const qa_application_q3_client_context *expected=&o->options.recipient;
         const qa_application_q3_client_context *actual=f&&f->remote?&f->remote->source.basis.client:NULL;
-        if(!f||!f->remote||!actual||f->application!=o->options.application||
+        if(!f||!f->remote||f->compiled||!actual||f->application!=o->options.application||
            f->remote->client!=o->options.remote_client||f->remote->source.owner!=o->options.remote_source||
            f->remote->source.basis.product!=QA_Q3_TEAM_ARENA||f->remote->source.basis.content!=o->options.content||
            f->assets!=o->options.assets||f->presentation!=o->options.presentation||f->seat!=o->options.seat||
@@ -28,7 +38,7 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
         return true;
     }
     qa_application_q3_client_context context;
-    if (!o || !f || f->remote || f->application != o->options.application || f->source.source_game != o->source_game ||
+    if (!o || !f || f->remote || f->compiled || f->application != o->options.application || f->source.source_game != o->source_game ||
         f->source.product != QA_Q3_TEAM_ARENA || f->source.publication_generation != o->publication_generation ||
         f->source.map_revision != o->map_revision || f->assets != o->options.assets || f->presentation != o->options.presentation || f->seat != o->options.seat ||
         f->viewing_client != o->options.recipient.source_client ||
@@ -46,14 +56,28 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
     return true;
 }
 bool q3nm_cvar(q3n_mission_hud *o,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
-{ return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,name,out,e):
-    qa_native_q3_client_cvar_read(o->options.client,name,out,e); }
+{
+    if(o->options.compiled_source)return q3nm_current(o,o->frame,e)&&
+        o->options.compiled_cvar_read(o->options.context,name,out,e)&&q3nm_current(o,o->frame,e);
+    return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,name,out,e):
+        qa_native_q3_client_cvar_read(o->options.client,name,out,e);
+}
 bool q3nm_integer_set(q3n_mission_hud *o,const char *name,int32_t value,qa_error *e)
-{ return o->options.remote_client?qa_native_q3_remote_client_cvar_integer(o->options.remote_client,name,value,e):
-    qa_native_q3_client_cvar_integer(o->options.client,name,value,e); }
+{
+    if(o->options.compiled_source) { char text[32]; snprintf(text,sizeof(text),"%d",value);
+        return q3nm_current(o,o->frame,e)&&qa_cvars_set(o->options.compiled_cvars,name,text,true,e)&&q3nm_current(o,o->frame,e); }
+    return o->options.remote_client?qa_native_q3_remote_client_cvar_integer(o->options.remote_client,name,value,e):
+        qa_native_q3_client_cvar_integer(o->options.client,name,value,e);
+}
 bool q3nm_console(q3n_mission_hud *o,const char *text,qa_error *e)
-{ return o->options.remote_client?qa_native_q3_remote_client_console(o->options.remote_client,text,e):
-    qa_native_q3_client_console(o->options.client,text,e); }
+{
+    if(o->options.compiled_source)return q3nm_current(o,o->frame,e)&&
+        o->options.compiled_console(o->options.context,o->frame,text,e)&&q3nm_current(o,o->frame,e);
+    return o->options.remote_client?qa_native_q3_remote_client_console(o->options.remote_client,text,e):
+        qa_native_q3_client_console(o->options.client,text,e);
+}
+qa_cvars *q3nm_registry(const q3n_mission_hud *o)
+{ return o->options.compiled_source?o->options.compiled_cvars:o->options.recipient.cvars; }
 const qa_q3_player *q3nm_player(const q3n_mission_hud *o)
 { return q3n_frame_snapshot_player(o->frame); }
 const qa_q3_player *q3nm_require_player(q3n_mission_hud *o)
@@ -65,7 +89,7 @@ float q3nm_number(q3n_mission_hud *o, const char *symbol)
 { qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.number; }
 bool q3nm_set(q3n_mission_hud *o, const char *name, const char *value)
 { return !o->menus->failed && q3nm_current(o,o->frame,o->menus->error) &&
-    qa_cvars_set(o->options.recipient.cvars, name, value, true, o->menus->error) && q3nm_current(o, o->frame, o->menus->error); }
+    qa_cvars_set(q3nm_registry(o), name, value, true, o->menus->error) && q3nm_current(o, o->frame, o->menus->error); }
 bool q3nm_begin(q3n_mission_hud *o, const q3n_frame *f, qa_error *e, q3menu_context **previous)
 {
     if (!o || o->busy || !o->hud || !q3nm_current(o, f, e)) return false;
@@ -132,7 +156,7 @@ static void render(const refdef_t *source)
     q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return; qa_q3_refdef r={.x=source->x,.y=source->y,.width=source->width,.height=source->height,
         .fov_x=source->fov_x,.fov_y=source->fov_y,.time=source->time,.flags=source->rdflags};
     if(o->frame->preferences.hud_scale!=1) { qa_scene_rect_f mapped=q3nh_rect(&o->draw,(qa_scene_rect_f){
-        source->x/o->display.xscale,source->y/o->display.yscale,source->width/o->display.xscale,source->height/o->display.yscale});
+        (float)source->x/o->display.xscale,(float)source->y/o->display.yscale,(float)source->width/o->display.xscale,(float)source->height/o->display.yscale});
         r.x=(int32_t)mapped.x; r.y=(int32_t)mapped.y; r.width=(int32_t)mapped.width; r.height=(int32_t)mapped.height; }
     for(unsigned i=0;i<3;++i)r.axis[i]=q3ne_array(source->viewaxis[i]);
     q3nm_result(qa_q3_presentation_render(o->frame->presentation,&r,o->menus->error));
@@ -167,7 +191,7 @@ static void font(const char *path,int point_size,fontInfo_t *out)
     q3nm_result(ok);
 }
 static void get_cvar(const char *name,char *out,int capacity)
-{ q3n_mission_hud *o=q3nm_active(); const qa_cvar_view *v=qa_cvars_find(o->options.recipient.cvars,name); q3menu_strncpyz(out,v?v->value:"",capacity); }
+{ q3n_mission_hud *o=q3nm_active(); const qa_cvar_view *v=qa_cvars_find(q3nm_registry(o),name); q3menu_strncpyz(out,v?v->value:"",capacity); }
 static float cvar(const char *name) { char text[128]; double n=0; get_cvar(name,text,sizeof(text)); q3nm_result(qa_parse_atof(text,&n,q3menu_active()->error)); return (float)n; }
 static void set_cvar(const char *name,const char *value) { q3nm_result(q3nm_set(q3nm_active(),name,value)); }
 static void script(char **text) { (void)text; }
@@ -183,7 +207,8 @@ static qa_scene_rect_f movie_rect(q3n_mission_hud *o,float x,float y,float w,flo
 { float scale=o->draw.scene?o->frame->preferences.hud_scale:1;
     return (qa_scene_rect_f){320+(x-320)*scale,240+(y-240)*scale,w*scale,h*scale}; }
 static int movie(const char *path,float x,float y,float w,float h) { q3n_mission_hud *o=q3nm_active(); int hnd=-1;
-    if(!o->menus->failed)q3nm_result(qa_q3_presentation_movie_play(o->frame->presentation,path,movie_rect(o,x,y,w,h),2,&hnd,o->menus->error)); return hnd; }
+    if(!o->menus->failed)q3nm_result(qa_q3_presentation_movie_play(o->frame->presentation,path,movie_rect(o,x,y,w,h),2,&hnd,o->menus->error));
+    return hnd; }
 static void movie_stop(int h) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed&&h>=0)q3nm_result(qa_q3_presentation_movie_stop(o->frame->presentation,h,false,o->menus->error)); }
 static void movie_draw(int h,float x,float y,float w,float height) { q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return;
     qa_q3_presentation_movie_extents(o->frame->presentation,h,movie_rect(o,x,y,w,height)); q3nm_result(qa_q3_presentation_movie_draw(o->frame->presentation,h,o->menus->error)); }
@@ -201,10 +226,12 @@ static const char *feeder_text(float feeder,int index,int column,int *image)
     switch(column) {
     case 0: { const q3n_media_view *m=q3n_media_read(o->frame->media); int pw=(ci->dynamic.powerups&(1<<9))?9:(ci->dynamic.powerups&(1<<7))?7:(ci->dynamic.powerups&(1<<8))?8:-1;
         if(pw>=0) { size_t count; const qa_q3_item *items=qa_q3_items(QA_Q3_TEAM_ARENA,&count); for(size_t i=0;i<count;++i)if(items[i].kind==QA_Q3_ITEM_TEAM&&items[i].tag==pw) { *image=m->items[i].icon; break; } }
-        else if(ci->bot_skill>0&&ci->bot_skill<=5)*image=m->bot_skill_shaders[ci->bot_skill-1]; else if(ci->handicap<100)return q3menu_format("%d",ci->handicap); break; }
+        else if(ci->bot_skill>0&&ci->bot_skill<=5)*image=m->bot_skill_shaders[ci->bot_skill-1]; else if(ci->handicap<100)return q3menu_format("%d",ci->handicap);
+        break; }
     case 1: if(team!=-1)*image=q3nm_status(o,ci->team_task); break;
     case 2: { const qa_q3_player *p=q3nm_require_player(o); if(!p)return "";
-        if((uint32_t)p->stats[6]&(1u<<((unsigned)s->client&31u)))return "Ready"; if(team==-1) { if(o->commands->game_type==1)return q3menu_format("%d/%d",ci->wins,ci->losses); if(ci->team==3)return "Spectator"; } else if(ci->team_leader)return "Leader"; break; }
+        if((uint32_t)p->stats[6]&(1u<<((unsigned)s->client&31u)))return "Ready";
+        if(team==-1) { if(o->commands->game_type==1)return q3menu_format("%d/%d",ci->wins,ci->losses); if(ci->team==3)return "Spectator"; } else if(ci->team_leader)return "Leader"; break; }
     case 3:return ci->name; case 4:return q3menu_format("%d",ci->dynamic.score); case 5:return q3menu_format("%4d",s->time); case 6:return s->ping==-1?"connecting":q3menu_format("%4d",s->ping); }
     return "";
 }
@@ -240,7 +267,7 @@ static bool create(const q3n_mission_hud_options *options,const qa_native_q3_cli
 {
     const qa_native_q3_client_services *services=options?qa_native_q3_client_services_read(options->client):NULL;
     qa_native_q3_wire_basis wire={0};
-    if(!options||options->remote_client||options->remote_source||!out||*out||!basis||basis->product!=QA_Q3_TEAM_ARENA||basis->application!=options->application||
+    if(!options||options->remote_client||options->remote_source||options->compiled_source||!out||*out||!basis||basis->product!=QA_Q3_TEAM_ARENA||basis->application!=options->application||
         basis->seat!=options->seat||basis->receiver!=options->recipient.receiver||basis->source_owner!=options->recipient.source_owner||
         basis->physical_client!=options->recipient.source_client||!qa_actor_id_equal(basis->viewing_actor,options->recipient.source_actor)||!options->client||
         options->content!=basis->content||!options->assets||!options->presentation||!options->fonts||!options->milliseconds||!options->print||!options->key_catcher||
@@ -294,7 +321,7 @@ bool q3n_mission_hud_create_restored(const q3n_mission_hud_options *options,q3n_
 bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *options,q3n_mission_hud **out,qa_error *e)
 {
     q3n_remote_source_view view;
-    if(!options||!out||*out||options->source||options->client||options->reader||!options->remote_client||!options->remote_source||
+    if(!options||!out||*out||options->source||options->client||options->reader||options->compiled_source||!options->remote_client||!options->remote_source||
        !q3n_remote_source_read(options->remote_source,&view,e)||!q3n_remote_source_current(&view)||
        q3n_remote_source_client(options->remote_source)!=options->remote_client||view.basis.product!=QA_Q3_TEAM_ARENA||
        view.basis.application!=options->application||view.basis.content!=options->content||
@@ -313,10 +340,28 @@ bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *options,q3n_mi
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Remote Mission HUD requires its actual private CLIENT/menu/font resource tuple");
     return allocate(options,NULL,out,e);
 }
+bool q3n_mission_hud_create_compiled(const q3n_mission_hud_options *options,q3n_mission_hud **out,qa_error *e)
+{
+    q3n_compiled_source_view view;
+    if(!options||!out||*out||options->source||options->client||options->reader||options->remote_client||options->remote_source||
+       !options->compiled_source||!options->compiled_cvars||!options->compiled_current||!options->compiled_cvar_read||
+       !options->compiled_console||!options->context||!q3n_compiled_source_read(options->compiled_source,&view,e)||
+       view.basis.product!=QA_Q3_TEAM_ARENA||view.basis.application!=options->application||view.basis.content!=options->content||
+       view.basis.seat!=options->seat||view.basis.assets!=options->assets||!options->presentation||!options->fonts||
+       !options->milliseconds||!options->print||!options->key_catcher||options->presentation->options.assets!=options->assets||
+       options->compiled_context.registry!=view.basis.viewer.registry||options->compiled_context.owner!=view.basis.receiver||
+       options->compiled_context.generation!=view.basis.publication||!qa_actor_id_equal(options->compiled_context.actor,view.basis.viewer)||
+       qa_font_library_content(options->fonts)!=options->assets->options.provider.mounts||
+       qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images||!q3n_compiled_source_current(&view))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled Mission HUD requires its actual CLIENT command and menu/font resource tuple");
+    return allocate(options,NULL,out,e);
+}
 bool q3n_mission_hud_bind(q3n_mission_hud *o,q3n_hud *hud,qa_error *e)
 { if(!o||o->busy||!hud||hud->options.application!=o->options.application||hud->options.assets!=o->options.assets||
     hud->options.client!=o->options.client||hud->options.remote_client!=o->options.remote_client||
+    hud->options.compiled_source!=o->options.compiled_source||
     hud->options.seat!=o->options.seat||hud->source_game!=o->source_game||hud->product!=QA_Q3_TEAM_ARENA)
-    return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD binding requires its actual native HUD owner"); o->hud=hud; return true; }
+    return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD binding requires its actual native HUD owner");
+  o->hud=hud; return true; }
 void q3n_mission_hud_destroy(q3n_mission_hud *o) { if(o&&!o->busy) { q3menu_destroy(o->menus); free(o); } }
 bool q3n_mission_hud_idle(const q3n_mission_hud *o) { return o&&!o->busy; }

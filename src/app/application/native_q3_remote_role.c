@@ -423,6 +423,15 @@ bool application_native_q3_remote_role_initialized(application_provider *provide
         return application_fail(error, QA_ERROR_ARGUMENT, "Native remote Init completion lost its actual service attachment");
     row->initialized = true; return true;
 }
+bool application_native_q3_remote_role_video_reset(application_provider *provider,uint32_t seat,
+    qa_native_q3_remote_client_service *service,qa_error *error)
+{
+    struct application_native_q3_remote_role *row=find(provider,seat);
+    if(!row || row->retiring || row->calls || row->module_calls || row->modules ||
+        !service || row->service!=service || !qa_native_q3_remote_client_idle(service))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Remote CG video reset requires its actual returned compiled service");
+    row->initialized=false; return true;
+}
 bool application_native_q3_remote_role_detach_ready(application_provider *provider, uint32_t seat,
     const qa_native_q3_remote_client_service *service, qa_error *error)
 {

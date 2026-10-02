@@ -18,7 +18,9 @@ struct frontend_remote_q3 {
     frontend_remote_q3_transport *transport;
     frontend_remote_q3_frame *frames;
     frontend_remote_q3_runtime *runtime;
+    struct frontend_remote_q3_compiled_video *compiled_video;
     size_t users;
+    uint64_t video_generation;
     bool resources_ready, constructing, retiring, importing;
 };
 

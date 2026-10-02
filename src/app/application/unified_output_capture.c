@@ -1,4 +1,4 @@
-#include "unified_output_capture.h"
+#include "unified_output_capture_private.h"
 #include "unified_output_json.h"
 #include "unified_presentations.h"
 #include "unified_prediction.h"
@@ -6,22 +6,6 @@
 #include "internal.h"
 
 #include <stdlib.h>
-
-struct application_unified_output_capture {
-    qa_application *application;
-    application_unified_source source;
-    qa_net_client_id recipient;
-    qa_unified_session_player player;
-    application_unified_output_external external;
-    bool has_external;
-    uint64_t actors_revision;
-    application_unified_presentations visuals;
-    application_unified_events events;
-    application_unified_component_capture *components;
-    bool sealed;
-    qa_unified_document *prediction, *player_values, *presentation, *frame_events;
-    application_unified_output output;
-};
 
 bool application_unified_output_capture_current(const application_unified_output_capture *v)
 {
@@ -31,6 +15,7 @@ bool application_unified_output_capture_current(const application_unified_output
         !application_unified_player_current(v->application, v->recipient, &v->player) ||
         qa_actors_revision(qa_session_actors(v->source.session)) != v->actors_revision ||
         !application_unified_presentations_current(v->application, &v->visuals) ||
+        !application_unified_q3_sources_current(v->q3_sources) ||
         !application_unified_events_current(&v->events) ||
         (v->components && !application_unified_components_current(v->components))) return false;
     if (v->has_external && !v->external.current(v->external.context, v->application,
@@ -42,6 +27,7 @@ bool application_unified_output_capture_current(const application_unified_output
         application_unified_player_current(v->application, v->recipient, &v->player) &&
         qa_actors_revision(qa_session_actors(v->source.session)) == v->actors_revision &&
         application_unified_presentations_current(v->application, &v->visuals) &&
+        application_unified_q3_sources_current(v->q3_sources) &&
         application_unified_events_current(&v->events);
 }
 
@@ -65,6 +51,8 @@ static bool presentation(application_unified_output_capture *v, qa_error *e)
         application_unified_json_document(&j, v->visuals.characters, e) &&
         application_unified_json_text(&j, ",\"worldText\":", e) &&
         application_unified_json_document(&j, v->events.world_text, e) &&
+        application_unified_json_text(&j, ",\"compiledQ3Sources\":", e) &&
+        application_unified_json_document(&j, application_unified_q3_sources_value(v->q3_sources), e) &&
         application_unified_json_text(&j, ",\"player\":", e) &&
         application_unified_json_document(&j, v->player_values, e);
     const qa_unified_document *components = v->components ?
@@ -108,6 +96,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
         application_unified_player_values(app, source, recipient, player,
             external ? external->player : NULL, &v->player_values, e) &&
         application_unified_presentations_build(app, source, recipient, player, &v->visuals, e) &&
+        application_unified_q3_sources_build(app, source, recipient, player, &v->q3_sources, e) &&
         application_unified_events_read(app, source, recipient, player, epoch, after, &v->events, e);
     if (ok && publisher) ok = application_unified_components_prepare(publisher, source, player,
         epoch, v->player_values, &v->components, e);
@@ -171,6 +160,7 @@ void application_unified_output_capture_dispose(application_unified_output_captu
     qa_unified_document_destroy(v->prediction); qa_unified_document_destroy(v->player_values);
     qa_unified_document_destroy(v->presentation); qa_unified_document_destroy(v->frame_events);
     application_unified_presentations_dispose(&v->visuals);
+    application_unified_q3_sources_dispose(v->q3_sources);
     application_unified_events_dispose(&v->events);
     application_unified_components_dispose(v->components);
     free(v);

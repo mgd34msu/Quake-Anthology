@@ -29,5 +29,10 @@ bool frontend_remote_q3_services_read(const frontend_remote_q3 *,
 bool frontend_remote_q3_services_bind(frontend_remote_q3 *, qa_error *);
 bool frontend_remote_q3_services_idle(const frontend_remote_q3_services *);
 bool frontend_remote_q3_services_destroy(frontend_remote_q3_services **, qa_error *);
+/* Returned compiled video scope retains the true client and Source reader
+ * while reconstructing only registered presentation children. */
+bool frontend_remote_q3_services_video_read(const frontend_remote_q3 *,frontend_remote_q3_services_view *,qa_error *);
+bool frontend_remote_q3_services_video_close(frontend_remote_q3 *,qa_error *);
+bool frontend_remote_q3_services_video_reopen(frontend_remote_q3 *,qa_error *);
 
 #endif

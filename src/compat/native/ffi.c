@@ -368,6 +368,9 @@ bool native_ffi_call(qa_native_instance *instance, qa_native_address address,
         uintptr_t integer;
         void (*function)(void);
     } target = {.integer = (uintptr_t)address};
+    if (instance->before_dispatch && !instance->before_dispatch(instance->dispatch_context, error)) {
+        free(aggregate_result); return false;
+    }
     native_call_started(instance);
     ffi_call(&prepared->cif, target.function, result_storage, values);
     bool ok = read_result(signature, prepared, &scalar_result, aggregate_result, result, error);

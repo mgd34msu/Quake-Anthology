@@ -67,7 +67,7 @@ bool application_q3_mod_actors_touch(application_q3_mod_actors *o,const qa_touch
     uint32_t entry; if(!q3mod_actors_entry(row,MOD_ACTOR_TOUCH,&entry,e)) return false;
     *handled=true; if(!entry) return true;
     touch_run run={o,row,contact,entry}; ++o->depth;
-    bool ok=qa_qvm_source_scratch_run(o->options.vm,o->options.profile->image,56,touch_scratch,&run,e);
+    bool ok=qa_qvm_source_scratch_run_reserved(o->options.vm,o->options.profile->image,56,65536,touch_scratch,&run,e);
     --o->depth; return ok;
 }
 static bool match(application_q3_mod_actors *o,const qa_qvm_call *call,mod_actor_row **actor,size_t *selected,qa_error *e)
@@ -98,23 +98,66 @@ bool application_q3_mod_actors_match(application_q3_mod_actors *o,const qa_qvm_c
     if(!match(o,call,&row,&k,e)) return false;
     *found=row!=NULL; return true;
 }
-typedef struct source_reaction { application_q3_mod_actors *owner; const qa_qvm_call *call; } source_reaction;
+typedef struct source_reaction {
+    application_q3_mod_actors *owner;
+    const qa_qvm_call *call;
+    size_t kind;
+    application_q3_mod_actor_request original;
+    application_q3_mod_actor_proceed body;
+    void *context;
+} source_reaction;
 static bool proceed(void *context,const application_q3_mod_actor_request *request,bool *result,qa_error *e)
 {
-    source_reaction *source=context; int32_t raw;
-    if(!qa_actors_get(qa_session_actors(source->owner->options.session),request->self)) { *result=false; return true; }
-    if(!qa_qvm_proceed(source->call,&raw,e)) return false;
-    *result=true; return true;
+    source_reaction *source=context;
+    application_q3_mod_actors *o=source->owner;
+    const mod_actor_call *layout=o->calls+source->kind;
+    if(!qa_actors_get(qa_session_actors(o->options.session),request->self)||
+        (source->kind==MOD_ACTOR_TOUCH&&!qa_actors_get(qa_session_actors(o->options.session),request->source.touch.other))) {
+        *result=false; return true;
+    }
+    qa_actor_id original[3]={source->original.self},effective[3]={request->self};
+    size_t actors=2,count=2;
+    if(source->kind==MOD_ACTOR_USE) {
+        original[1]=source->original.source.use.other; original[2]=source->original.source.use.activator;
+        effective[1]=request->source.use.other; effective[2]=request->source.use.activator;
+        actors=count=3;
+    } else if(source->kind==MOD_ACTOR_TOUCH) {
+        original[1]=source->original.source.touch.other; effective[1]=request->source.touch.other;
+    } else if(source->kind==MOD_ACTOR_PAIN) {
+        original[1]=source->original.source.pain.attacker; effective[1]=request->source.pain.attacker; count=3;
+    } else {
+        original[1]=source->original.source.die.inflictor; original[2]=source->original.source.die.attacker;
+        effective[1]=request->source.die.inflictor; effective[2]=request->source.die.attacker;
+        actors=3; count=4;
+    }
+    int32_t saved[4],words[4];
+    for(size_t i=0;i<count;++i) if(!qa_qvm_call_argument(source->call,layout->roles[i],saved+i,e)) return false;
+    memcpy(words,saved,count*sizeof(*words));
+    for(size_t i=0;i<actors;++i) if(!qa_actor_id_equal(original[i],effective[i])&&!pointer(o,effective[i],words+i,e)) return false;
+    if(source->kind==MOD_ACTOR_PAIN&&!q3mod_scalar_word(request->source.pain.damage,MOD_INT32,words+2,e)) return false;
+    if(source->kind==MOD_ACTOR_DIE&&!q3mod_scalar_word(request->source.die.damage,MOD_INT32,words+3,e)) return false;
+    size_t changed=0; bool ok=true;
+    for(size_t i=0;ok&&i<count;++i) { ++changed; ok=qa_qvm_call_set_argument(source->call,layout->roles[i],words[i],e); }
+    int32_t raw; if(ok) ok=source->body(source->context,source->call,&raw,e);
+    qa_error first=e?*e:(qa_error){0};
+    for(size_t i=0;i<changed;++i) {
+        qa_error cleanup={0};
+        if(!qa_qvm_call_set_argument(source->call,layout->roles[i],saved[i],&cleanup)) { if(ok) first=cleanup; ok=false; }
+    }
+    if(!ok&&e) *e=first;
+    if(ok) *result=true;
+    return ok;
 }
 static bool source_actor(application_q3_mod_actors *o,const qa_qvm_call *call,uint32_t position,qa_actor_id *actor,qa_error *e)
 { int32_t word; return qa_qvm_call_argument(call,position,&word,e)&&o->options.actor(o->options.context,word,actor,e); }
-bool application_q3_mod_actors_hook(application_q3_mod_actors *o,const qa_qvm_call *call,int32_t *result,qa_error *e)
+bool application_q3_mod_actors_hook_run(application_q3_mod_actors *o,const qa_qvm_call *call,
+    application_q3_mod_actor_proceed body,void *context,int32_t *result,qa_error *e)
 {
-    if(!call||!result||!q3mod_actors_current(o,e)||call->vm!=o->options.vm) return false;
-    if(o->combat&&call->instruction==o->damage_entry) return q3mod_actors_damage_hook(o,call,result,e);
+    if(!call||!result||!body||!q3mod_actors_current(o,e)||call->vm!=o->options.vm) return false;
+    if(o->combat&&call->instruction==o->damage_entry) return q3mod_actors_damage_hook(o,call,body,context,result,e);
     mod_actor_row *row; size_t k;
     if(!match(o,call,&row,&k,e)) return false;
-    if(!row) return qa_qvm_proceed(call,result,e);
+    if(!row) return body(context,call,result,e);
     const mod_actor_call *layout=o->calls+k;
     application_q3_mod_actor_request request={.self=row->actor}; application_q3_mod_operation operation;
     if(k==MOD_ACTOR_USE) {
@@ -123,7 +166,11 @@ bool application_q3_mod_actors_hook(application_q3_mod_actors *o,const qa_qvm_ca
     } else if(k==MOD_ACTOR_TOUCH) {
         operation=Q3_MOD_TOUCH;
         if(!source_actor(o,call,layout->roles[1],&request.source.touch.other,e)) return false;
-        if(!request.source.touch.other.registry) return qa_qvm_proceed(call,result,e);
+        if(!request.source.touch.other.registry) return body(context,call,result,e);
+        int32_t trace; uint8_t plane[16];
+        if(!qa_qvm_call_argument(call,layout->roles[2],&trace,e)) return false;
+        if(trace<0) return q3mod_fail(e,QA_ERROR_FORMAT,"Source touch trace leaves its actual plane storage");
+        if(trace&&!qa_qvm_read(o->options.vm,(uint32_t)trace+24,plane,sizeof(plane),e)) return false;
     } else {
         int32_t amount;
         if(!qa_qvm_call_argument(call,layout->roles[k==MOD_ACTOR_PAIN?2:3],&amount,e)) return false;
@@ -147,9 +194,13 @@ bool application_q3_mod_actors_hook(application_q3_mod_actors *o,const qa_qvm_ca
             if(!source_actor(o,call,layout->roles[1],&request.source.die.inflictor,e)||!source_actor(o,call,layout->roles[2],&request.source.die.attacker,e)) return false;
         }
     }
-    source_reaction source={o,call}; bool disposition=false; ++o->depth;
+    source_reaction source={.owner=o,.call=call,.kind=k,.original=request,.body=body,.context=context}; bool disposition=false; ++o->depth;
     bool ok=application_q3_mod_actor_dispatch(o->options.operations,operation,&request,proceed,&source,&disposition,e);
     --o->depth;
     if(ok) *result=0;
     return ok;
 }
+static bool original(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
+{ (void)context; return qa_qvm_proceed(call,result,e); }
+bool application_q3_mod_actors_hook(application_q3_mod_actors *o,const qa_qvm_call *call,int32_t *result,qa_error *e)
+{ return application_q3_mod_actors_hook_run(o,call,original,NULL,result,e); }

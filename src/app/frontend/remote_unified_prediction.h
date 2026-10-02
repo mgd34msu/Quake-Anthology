@@ -31,8 +31,18 @@ bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction
     const qa_unified_input *, double command_time_ms, qa_error *);
 bool frontend_remote_unified_prediction_read(frontend_remote_unified_prediction *,
     frontend_unified_prediction_view *, qa_error *);
+/* Authoritative input baseline, without replaying unacknowledged commands. */
+bool frontend_remote_unified_prediction_snapshot(const frontend_remote_unified_prediction *,
+    frontend_unified_prediction_view *, qa_error *);
+const qa_unified_document *frontend_remote_unified_prediction_document(
+    const frontend_remote_unified_prediction *);
 bool frontend_remote_unified_prediction_time(const frontend_remote_unified_prediction *,
     double *command_time_ms, qa_error *);
+/* Queries the received collision-only world; neither call replays input. */
+bool frontend_remote_unified_prediction_trace(frontend_remote_unified_prediction *,
+    const qa_trace_query *, qa_trace_result *, qa_error *);
+bool frontend_remote_unified_prediction_body_read(const frontend_remote_unified_prediction *,
+    qa_actor_id, qa_body_state *, qa_error *);
 bool frontend_remote_unified_prediction_idle(const frontend_remote_unified_prediction *);
 bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_prediction **, qa_error *);
 

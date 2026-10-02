@@ -1,3 +1,4 @@
+#include "renderer_materials.h"
 #include "component_scene.h"
 #include "shared_resource_policy.h"
 #include "q3_render_policy.h"
@@ -11,6 +12,8 @@
 #include "qa/material_source_scratch.h"
 #include "qa/render_controls.h"
 #include "qa/binary.h"
+#include "qa/q3_presentation_save.h"
+#include "qa/application_q3_components.h"
 #include <limits.h>
 #include <stdio.h>
 typedef struct component_scene_packet {
@@ -20,6 +23,44 @@ typedef struct component_scene_packet {
     qa_scene_light *world_lights,*projected_lights;
     const char *texts[8];
 } component_scene_packet;
+struct frontend_component_scene_restore {
+    struct frontend_component_scene_restore *next;
+    uint64_t identity;
+    qa_vfs *files;
+    qa_q3_presentation_options policy;
+};
+static void constructor_policy(qa_q3_presentation_options *out,const qa_q3_presentation_options *in)
+{
+    out->viewport=in->viewport; out->near_clip=in->near_clip; out->far_clip=in->far_clip;
+    out->identity_light=in->identity_light; out->lod_scale=in->lod_scale; out->lod_bias=in->lod_bias;
+    out->shadow_mode=in->shadow_mode; out->rail_core_width=in->rail_core_width;
+    out->rail_ring_width=in->rail_ring_width; out->rail_segment_length=in->rail_segment_length;
+}
+bool frontend_component_scene_restore_prepare(qa_frontend *f,uint64_t identity,qa_vfs **claimed,
+    const qa_q3_presentation_options *policy,qa_error *e)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory || !claimed || !*claimed || !policy ||
+        identity<=QA_FRONTEND_COMMAND_OWNER || identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id ||
+        frontend_source_identity_used(f,identity))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component import prefix lost its genuine graph view or physical identity");
+    for (const struct frontend_component_scene_restore *row=f->component_scene_restores;row;row=row->next)
+        if (row->identity==identity) return frontend_fail(e,QA_ERROR_FORMAT,"Duplicate component private graph prefix");
+    struct frontend_component_scene_restore *row=calloc(1,sizeof(*row));
+    if (!row) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining component private graph prefix");
+    row->identity=identity; row->files=*claimed; *claimed=NULL; constructor_policy(&row->policy,policy);
+    row->next=f->component_scene_restores; f->component_scene_restores=row; return true;
+}
+bool frontend_component_scene_restores_destroy(qa_frontend *f,qa_error *e)
+{
+    if (!f) return true;
+    if (f->capture || f->resource_inventory)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph prefixes retain an actual inventory borrower");
+    while (f->component_scene_restores) {
+        struct frontend_component_scene_restore *row=f->component_scene_restores;
+        f->component_scene_restores=row->next; qa_vfs_destroy(row->files); free(row);
+    }
+    return true;
+}
 
 struct frontend_component_scene {
     struct frontend_component_scene *next;
@@ -37,13 +78,14 @@ struct frontend_component_scene {
     qa_q3_presentation *presentation;
     qa_cvars *cvars;
     qa_command_context command;
+    qa_q3_presentation_options restored_policy;
     qa_audio_music *music;
     char *music_intro,*music_loop;
     qa_scene_frame frame;
     component_scene_packet *packets,*last_packet;
     size_t packet_count;
     uint64_t identity,sequence;
-    bool host_borrow,ready,begun,music_looping,music_pending;
+    bool host_borrow,ready,begun,music_looping,music_pending,has_restore_policy;
 };
 static bool retained(const struct frontend_component_scene *owner)
 {
@@ -52,6 +94,20 @@ static bool retained(const struct frontend_component_scene *owner)
     for (const struct frontend_component_scene *row=owner->frontend->component_scenes;row;row=row->next)
         if (row==owner) return true;
     return false;
+}
+static bool structural_retained(const struct frontend_component_scene *owner)
+{
+    if (!owner || !owner->frontend || owner->request.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL) return false;
+    bool linked=false;
+    for (const struct frontend_component_scene *row=owner->frontend->component_scenes;row;row=row->next)
+        if (row==owner) linked=true;
+    qa_application_q3_component_scene_association view;
+    const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
+    return linked && descriptor && qa_application_q3_component_scene_association_read(owner->frontend->application,owner->identity,&view) &&
+        view.frontend_owner==owner && view.frontend_identity==owner->identity && view.owner==owner->request.owner &&
+        view.service_owner==owner->request.service_owner && view.generation==owner->request.generation &&
+        view.physical_seat==owner->request.physical_seat && qa_actor_id_equal(view.viewer,owner->request.viewer) &&
+        view.assets==owner->assets && view.descriptor && view.descriptor->storage==descriptor->storage;
 }
 static bool publication(struct frontend_component_scene *owner,application_q3_scene_context *view,qa_error *e)
 {
@@ -96,7 +152,8 @@ static uint64_t audio_bus(void *context) { return ((struct frontend_component_sc
 static qa_audio_family music_family(const struct frontend_component_scene *owner)
 {
     const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
-    const qa_product *product=descriptor?qa_catalog_product(owner->request.catalog,descriptor->selection.product):NULL;
+    qa_product_id id=descriptor?descriptor->selection.product:owner->request.recipe_provider->selection.product;
+    const qa_product *product=qa_catalog_product(owner->request.catalog,id);
     return product && product->family==QA_GAME_Q1?QA_AUDIO_Q1:
         product && product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
 }
@@ -120,11 +177,18 @@ static bool music_current(void *context,const frontend_music_origin *origin)
 {
     struct frontend_component_scene *owner=context;
     const qa_launch_instance *descriptor=owner?qa_launch_instance_lease_view(owner->descriptor):NULL;
-    return origin && descriptor && music_published(owner) && origin->kind==FRONTEND_MUSIC_COMPONENT &&
+    bool declaration=owner && (owner->request.origin==APPLICATION_Q3_COMPONENT_SCENE_LOCAL ?
+        descriptor && origin && origin->descriptor && origin->descriptor->storage==descriptor->storage &&
+            !origin->recipe && !origin->recipe_provider :
+        origin && !origin->descriptor && origin->recipe==owner->request.recipe &&
+            origin->recipe_provider==owner->request.recipe_provider &&
+            qa_executable_recipe_current(owner->request.recipe,owner->request.catalog));
+    qa_product_id product=descriptor?descriptor->selection.product:
+        owner && owner->request.recipe_provider?owner->request.recipe_provider->selection.product:0;
+    return declaration && music_published(owner) && origin->kind==FRONTEND_MUSIC_COMPONENT &&
         origin->context==owner && origin->receiver==owner->request.owner && origin->bus==owner->identity &&
-        origin->physical_seat==owner->request.physical_seat && origin->descriptor &&
-        origin->descriptor->storage==descriptor->storage && origin->catalog==owner->request.catalog &&
-        origin->product==descriptor->selection.product && origin->files==owner->files && origin->music==owner->music &&
+        origin->physical_seat==owner->request.physical_seat && origin->catalog==owner->request.catalog &&
+        origin->product==product && origin->files==owner->files && origin->music==owner->music &&
         (!qa_audio_engine_bus_music(owner->frontend->audio,owner->identity) ||
          qa_audio_engine_bus_music(owner->frontend->audio,owner->identity)==owner->music);
 }
@@ -133,7 +197,9 @@ static frontend_music_origin music_origin(struct frontend_component_scene *owner
     const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
     return (frontend_music_origin){.kind=FRONTEND_MUSIC_COMPONENT,.receiver=owner->request.owner,
         .bus=owner->identity,.physical_seat=owner->request.physical_seat,.descriptor=descriptor,
-        .catalog=owner->request.catalog,.product=descriptor->selection.product,.files=owner->files,
+        .recipe=owner->request.recipe,.recipe_provider=owner->request.recipe_provider,
+        .catalog=owner->request.catalog,.product=descriptor?descriptor->selection.product:
+            owner->request.recipe_provider->selection.product,.files=owner->files,
         .music=owner->music,.context=owner,.current=music_current,.stop=music_stop};
 }
 static bool music_publish(struct frontend_component_scene *owner,qa_error *e)
@@ -347,6 +413,11 @@ static bool destroy(void **slot,qa_error *e)
     qa_audio_music_release(owner->music); owner->music=NULL;
     if (owner->presentation && !qa_q3_presentation_destroy(owner->presentation,e)) return false;
     owner->presentation=NULL;
+    if (owner->movies && owner->media && !owner->frontend->source_restoring) {
+        frontend_material_movie_source expected={.frontend=owner->frontend,.files=owner->files,.images=owner->images,
+            .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
+        if (!frontend_renderer_materials_adopt_movies(owner->frontend,&expected,&owner->movies,&owner->media,e)) return false;
+    }
     if (!frontend_material_movies_destroy(&owner->movies,e)) return false;
     packets_clear(owner);
     qa_scene_frame_destroy(&owner->frame);
@@ -407,17 +478,27 @@ size_t frontend_component_scene_count(const qa_frontend *f)
     for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next) ++count;
     return count;
 }
-bool frontend_component_scene_read(const qa_frontend *f,size_t ordinal,frontend_component_scene_view *out,qa_error *e)
+bool frontend_component_scene_metadata_read(const qa_frontend *f,size_t ordinal,frontend_component_scene_view *out,qa_error *e)
 {
     const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
     while (owner && ordinal--) owner=owner->next;
-    if (!out || !owner || !owner->ready || !retained(owner) || !idle(owner) || owner->frontend!=f)
+    qa_q3_presentation_binding binding;
+    if (!out || !owner || !owner->ready ||
+        !((f->resource_inventory || f->capture)?structural_retained(owner):retained(owner)) ||
+        owner->frame.source_pending || owner->frontend!=f ||
+        !qa_q3_presentation_binding_read(owner->presentation,&binding,e))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph read requires its genuine returned private renderer");
+    if (binding.options.assets!=owner->assets || binding.options.context!=owner ||
+        (binding.frame && binding.frame!=&owner->frame) || binding.world || binding.geometry ||
+        !binding.options.source_scene_membership || binding.options.scene_completed!=scene_completed ||
+        binding.options.prepare_view!=prepare_view || binding.options.prepare_picture!=prepare_picture)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component metadata differs from its installed private renderer");
     qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,owner->identity);
     if (attached && attached!=owner->music)
         return frontend_fail(e,QA_ERROR_FORMAT,"Component graph music differs from its actual bus player");
     *out=(frontend_component_scene_view){.identity=owner->identity,.sequence=owner->sequence,
-        .packet_count=owner->packet_count,
+        .packet_count=owner->packet_count,.origin=owner->request.origin,
+        .recipe=owner->request.recipe,.recipe_provider=owner->request.recipe_provider,
         .generation=owner->request.generation,.service_owner=owner->request.service_owner,
         .receiver=owner->request.owner,.physical_seat=owner->request.physical_seat,.viewer=owner->request.viewer,
         .descriptor=qa_launch_instance_lease_view(owner->descriptor),.catalog=owner->request.catalog,
@@ -427,6 +508,48 @@ bool frontend_component_scene_read(const qa_frontend *f,size_t ordinal,frontend_
         .music_intro=owner->music_intro,.music_loop=owner->music_loop,.begun=owner->begun,
         .music_attached=attached!=NULL,.music_looping=owner->music_looping,.music_pending=owner->music_pending};
     return true;
+}
+bool frontend_component_scene_read(const qa_frontend *f,size_t ordinal,frontend_component_scene_view *out,qa_error *e)
+{
+    const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
+    size_t index=ordinal;
+    while (owner && index--) owner=owner->next;
+    if (!owner || !idle(owner)) return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph retains active private children");
+    return frontend_component_scene_metadata_read(f,ordinal,out,e);
+}
+bool frontend_component_scene_metadata_current(const qa_frontend *f,const frontend_component_scene_view *view,qa_error *e)
+{
+    if (!view) return false;
+    size_t ordinal=0;
+    for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next,++ordinal) {
+        if (row->identity!=view->identity) continue;
+        frontend_component_scene_view actual;
+        if (!structural_retained(row)) return false;
+        return frontend_component_scene_metadata_read(f,ordinal,&actual,e) &&
+            actual.sequence==view->sequence && actual.generation==view->generation &&
+            actual.service_owner==view->service_owner && actual.receiver==view->receiver &&
+            actual.physical_seat==view->physical_seat && qa_actor_id_equal(actual.viewer,view->viewer) &&
+            actual.origin==view->origin && actual.descriptor==view->descriptor && actual.recipe==view->recipe &&
+            actual.recipe_provider==view->recipe_provider && actual.catalog==view->catalog && actual.files==view->files &&
+            actual.images==view->images && actual.materials==view->materials && actual.fonts==view->fonts &&
+            actual.sounds==view->sounds && actual.media==view->media && actual.movies==view->movies &&
+            actual.assets==view->assets && actual.presentation==view->presentation && actual.frame==view->frame &&
+            actual.music==view->music && actual.music_intro==view->music_intro && actual.music_loop==view->music_loop &&
+            actual.music_attached==view->music_attached &&
+            actual.music_looping==view->music_looping && actual.music_pending==view->music_pending &&
+            actual.begun==view->begun && actual.packet_count==view->packet_count;
+    }
+    return frontend_fail(e,QA_ERROR_ARGUMENT,"Component metadata leaves its actual private roster");
+}
+bool frontend_component_scene_packet_count(const qa_frontend *f,uint64_t identity,uint64_t sequence,size_t *out,qa_error *e)
+{
+    for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next)
+        if (row->identity==identity) {
+            if (!out || !retained(row) || !idle(row) || !row->begun || row->sequence!=sequence)
+                return frontend_fail(e,QA_ERROR_ARGUMENT,"Component packet count lost its returned Draw receipt");
+            *out=row->packet_count; return true;
+        }
+    return frontend_fail(e,QA_ERROR_ARGUMENT,"Component packet count leaves its actual renderer roster");
 }
 bool frontend_component_scene_packet_read(const qa_frontend *f,uint64_t identity,uint64_t sequence,
     size_t ordinal,frontend_component_scene_packet *out,qa_error *e)
@@ -443,13 +566,29 @@ bool frontend_component_scene_packet_read(const qa_frontend *f,uint64_t identity
 bool frontend_component_scene_prepare(void *context,const application_q3_component_scene_preparation *request,qa_error *e)
 {
     qa_frontend *f=context;
-    if (!f || !request || !request->host || !request->assets || !request->frontend || !request->descriptor ||
+    if (!f || !request || !request->host || !request->assets || !request->frontend ||
         !request->catalog || !request->content || !request->retained || !request->retained(request->context) ||
         !request->publication_read || !request->source.current || !request->source.actor ||
         request->physical_seat>=f->options.seats || f->options.dedicated || f->capture || f->resource_inventory ||
         request->restoring!=f->source_restoring || request->host->role!=QA_QVM_CGAME ||
         request->host->mounts!=request->content || !request->host->cvars || !request->host->console)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component renderer needs its actual private CGAME constructor receipt");
+    if (request->origin==APPLICATION_Q3_COMPONENT_SCENE_LOCAL) {
+        if (!request->descriptor || request->recipe || request->recipe_provider)
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Local component renderer needs its actual launch declaration");
+    } else if (request->origin==APPLICATION_Q3_COMPONENT_SCENE_REMOTE) {
+        if (request->descriptor || !request->recipe || !request->recipe_provider ||
+            !qa_executable_recipe_current(request->recipe,request->catalog))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Remote component renderer needs its actual held recipe");
+        bool found=false;
+        for (size_t i=0;i<qa_executable_recipe_provider_count(request->recipe);++i)
+            if (qa_executable_recipe_provider(request->recipe,i)==request->recipe_provider) found=true;
+        if (!found || request->recipe_provider->content!=request->content ||
+            !request->artifact || !request->acquisition ||
+            request->acquisition->resource_id!=qa_resource_id(request->artifact) ||
+            !qa_vfs_acquisition_retained(request->content,request->acquisition,e))
+            return frontend_fail(e,QA_ERROR_FORMAT,"Remote component renderer differs from its admitted recipe provider");
+    } else return frontend_fail(e,QA_ERROR_FORMAT,"Unknown component renderer origin");
     struct frontend_component_scene *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Allocating component private renderer");
     owner->frontend=f; owner->request=*request; owner->cvars=request->host->cvars; owner->command=request->host->command_context;
@@ -471,8 +610,17 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     *request->frontend=(application_q3_component_scene_frontend){.owner=owner,.idle=idle,.destroy=destroy,.identity_read=identity_read,.begin=begin,.finish=finish,.completed=completed};
     qa_scene_frame_init(&owner->frame,owner->identity);
     if (!qa_scene_frame_material_order(&owner->frame,f->order,e) ||
-        !qa_launch_instance_retain_metadata(request->descriptor,&owner->descriptor,e)) return false;
-    owner->files=qa_vfs_clone(request->content,e);
+        (request->descriptor && !qa_launch_instance_retain_metadata(request->descriptor,&owner->descriptor,e))) return false;
+    struct frontend_component_scene_restore *saved=NULL;
+    if (request->restoring) {
+        struct frontend_component_scene_restore **link=&f->component_scene_restores;
+        while (*link && (*link)->identity!=owner->identity) link=&(*link)->next;
+        saved=*link;
+        if (!saved) return frontend_fail(e,QA_ERROR_FORMAT,"Restored component renderer has no claimed private graph prefix");
+        owner->files=saved->files; saved->files=NULL; *link=saved->next;
+        constructor_policy(&owner->restored_policy,&saved->policy); owner->has_restore_policy=true;
+        free(saved); saved=NULL;
+    } else owner->files=qa_vfs_clone(request->content,e);
     if (!request->restoring && !frontend_q3_source_color_ensure(f,e)) return false;
     owner->images=owner->files?(request->restoring?qa_scene_resources_create_detached(owner->files,e):qa_scene_resources_create(owner->files,e)):NULL;
     if (owner->images && !request->restoring && !frontend_image_policy_initialize(f,owner->images,e)) return false;
@@ -499,6 +647,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         .context=owner,.audio_actor=audio_actor,.music=music,.frame_number=frame_number,.milliseconds=source_time,.audio_bus=audio_bus,
         .prepare_view=prepare_view,.prepare_picture=prepare_picture,.scene_completed=scene_completed,.remap=remap,.print=print,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=f};
+    if (owner->has_restore_policy) constructor_policy(&options,&owner->restored_policy);
     if (!request->restoring && !frontend_q3_renderer_options_read(f,&options,e)) return false;
     if (!qa_q3_presentation_create(&options,&owner->presentation,e)) return false;
     owner->ready=true; owner->host_borrow=true;

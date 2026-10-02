@@ -179,7 +179,16 @@ bool native_runner_region_event(qa_native_instance *instance, const qa_native_re
         qa_native_region_decision next = {
             .action = QA_NATIVE_REGION_CONTINUE, .replace_state = false, .state = current.state};
         ++instance->callback_depth;
+        const qa_native_region_event *previous_event = instance->active_region_event;
+        uint32_t previous_callback = instance->region_callback_depth;
+        uint32_t previous_call = instance->region_call_depth;
+        instance->active_region_event = &current;
+        instance->region_callback_depth = instance->callback_depth;
+        instance->region_call_depth = instance->active_depth;
         bool ok = binding->callback(binding->context, instance, &current, &next, error);
+        instance->active_region_event = previous_event;
+        instance->region_callback_depth = previous_callback;
+        instance->region_call_depth = previous_call;
         --instance->callback_depth;
         if (!ok)
             return false;
@@ -206,6 +215,59 @@ bool native_runner_region_event(qa_native_instance *instance, const qa_native_re
     }
     *decision = combined;
     return true;
+}
+
+bool qa_native_region_invoke(qa_native_instance *instance,
+    const qa_native_region_event *event, qa_native_address entry,
+    const qa_native_signature *signature, const qa_native_value *arguments,
+    size_t argument_count, qa_native_value *result, qa_error *error) {
+    if (!instance || !event || event != instance->active_region_event ||
+        native_active_instance != instance || !instance->region_depth ||
+        instance->callback_depth != instance->region_callback_depth ||
+        instance->active_depth != instance->region_call_depth || !instance->active_depth ||
+        instance->write_depth || instance->checkpointing || instance->destroying ||
+        instance->unloading || instance->failed || instance->lifecycle != QA_NATIVE_INITIALIZED ||
+        !signature || signature->variadic ||
+        signature->abi != instance->module->info.image.target.abi ||
+        argument_count != signature->parameter_count || (argument_count && !arguments) ||
+        entry < instance->image_base || entry - instance->image_base >= instance->image_bytes)
+        return native_fail(error, QA_ERROR_ARGUMENT, entry,
+            "nested source invocation requires its exact current region event and same-image fixed ABI");
+    bool declared = false;
+    uint64_t rva = entry - instance->image_base;
+    for (size_t i = 0; i < instance->region_count; ++i)
+        if (instance->regions[i].definition.entry_rva == rva) { declared = true; break; }
+    if (!declared)
+        return native_fail(error, QA_ERROR_ARGUMENT, entry,
+            "nested source entry lacks its actual whole-function declaration");
+    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
+        if (instance->region_service_depth != instance->region_depth)
+            return native_fail(error, QA_ERROR_UNSUPPORTED, entry,
+                "nested source invocation requires the runner application suspension");
+    } else if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest &&
+        qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
+        bool executable = false;
+        for (size_t i = 0; i < qa_native_guest_mapping_count(instance->guest); ++i) {
+            qa_native_guest_mapping mapping;
+            if (!qa_native_guest_mapping_at(instance->guest, i, &mapping, error)) return false;
+            if (entry >= mapping.base && entry - mapping.base < mapping.bytes &&
+                (mapping.permissions & QA_NATIVE_GUEST_EXECUTE)) { executable = true; break; }
+        }
+        if (!executable)
+            return native_fail(error, QA_ERROR_ARGUMENT, entry,
+                "nested source entry is outside actual executable guest storage");
+    } else return native_fail(error, QA_ERROR_UNSUPPORTED, entry,
+        "nested source invocation has no actual suspended execution owner");
+    if (instance->active_depth == UINT32_MAX)
+        return native_fail(error, QA_ERROR_ARGUMENT, entry, "nested source invocation depth exhausted");
+    qa_native_address previous_entry = instance->region_invocation_entry;
+    uint32_t previous_depth = instance->region_invocation_depth;
+    instance->region_invocation_entry = entry;
+    instance->region_invocation_depth = instance->active_depth + 1;
+    bool okay = native_invoke_entry(instance, entry, signature, arguments, argument_count, result, error);
+    instance->region_invocation_entry = previous_entry;
+    instance->region_invocation_depth = previous_depth;
+    return okay;
 }
 
 bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *out,

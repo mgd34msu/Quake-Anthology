@@ -160,6 +160,14 @@ bool qa_physics_monster_step(qa_physics *, qa_actor_id, qa_vec3 displacement,
 bool qa_physics_walk_move(qa_physics *, qa_actor_id, float yaw, float distance,
                           float elapsed_seconds, bool commit, bool relink,
                           bool *moved, qa_error *);
+/* Q1 source walk geometry over an explicitly retained monster state. The
+ * actor remains the real live full identity used for collision exclusion and
+ * enemy observation. Only the returned records change: no source write,
+ * linking, triggers, random calls or clock advancement occur. Outputs may
+ * alias the input records and can feed the next segment of the same route. */
+bool qa_physics_monster_walk_detached(qa_physics *, qa_actor_id,
+    const qa_body_state *, const qa_physics_properties *, float yaw, float distance,
+    qa_body_state *, qa_physics_properties *, bool *moved, qa_error *);
 bool qa_physics_change_yaw(qa_physics *, qa_actor_id, float elapsed_seconds,
                            qa_error *);
 bool qa_physics_step_direction(qa_physics *, qa_actor_id, float yaw, float distance,

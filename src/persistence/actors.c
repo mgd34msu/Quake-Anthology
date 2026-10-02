@@ -5,7 +5,8 @@
 bool qa_save_actors_encode(const qa_actor_checkpoint *value, qa_buffer *out, qa_error *error)
 {
     if (!value || !out || !value->capacity || value->count > value->capacity ||
-        (value->count && !value->slots) || value->count > (SIZE_MAX - 16u) / ACTOR_RECORD_BYTES)
+        (value->count && !value->slots) ||
+        (value->count && (SIZE_MAX - 16u) / value->count < ACTOR_RECORD_BYTES))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid actor checkpoint encoding");
     size_t size = 16u + (size_t)value->count * ACTOR_RECORD_BYTES;
     qa_buffer buffer = {malloc(size), size};

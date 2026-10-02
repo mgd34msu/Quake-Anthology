@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_inventory_scanner.h"
 #include "control_frame.h"
 #include <math.h>
 
@@ -180,8 +181,8 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     client->protocol_fog_actor = actor;
     client->userinfo_present = false; client->userinfo[0] = 0;
     if (engine->callbacks) {
-        size_t bytes=strlen(userinfo),capacity=engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
-        if(bytes>=capacity) return application_fail(error,QA_ERROR_ARGUMENT,"Declared native userinfo exceeds its real API extent");
+        size_t bytes=strlen(userinfo);
+        if(!application_native_q2_callbacks_userinfo_validate(engine,userinfo,error)||bytes>=sizeof(client->userinfo)) return false;
         memcpy(client->userinfo,userinfo,bytes+1); client->userinfo_present=true;
         bool ok=qa_native_host_client_retained_set(provider->state.native.host,slot,true,error)&&
             declared_client(engine,slot,"clients.admit",(qa_bytes){0},accepted,error);
@@ -255,8 +256,8 @@ bool application_native_q2_client_userinfo(application_provider *provider, uint3
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 userinfo requires its returned physical client call");
     qa_actor_id actor = engine->clients[slot].actor;
     if(engine->callbacks) {
-        size_t bytes=strlen(userinfo),capacity=engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
-        if(bytes>=capacity) return application_fail(error,QA_ERROR_ARGUMENT,"Declared native userinfo exceeds its API buffer");
+        size_t bytes=strlen(userinfo);
+        if(!application_native_q2_callbacks_userinfo_validate(engine,userinfo,error)||bytes>=sizeof(engine->clients[slot].userinfo)) return false;
         memcpy(engine->clients[slot].userinfo,userinfo,bytes+1); engine->clients[slot].userinfo_present=true;
         bool accepted;
         return declared_client(engine,slot,"clients.userinfo",(qa_bytes){0},&accepted,error);
@@ -295,8 +296,12 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
             ++engine->calls;
             if(engine->callbacks) {
                 bool accepted;
-                ok=declared_client(engine,slot,"clients.disconnect",(qa_bytes){0},&accepted,&first)&&
-                    qa_native_host_client_retained_set(provider->state.native.host,slot,false,&first);
+                ok=declared_client(engine,slot,"clients.disconnect",(qa_bytes){0},&accepted,&first);
+                qa_error release_error = {0};
+                if (!qa_native_host_client_retained_set(provider->state.native.host,slot,false,&release_error)) {
+                    if (ok) first = release_error;
+                    ok = false;
+                }
             } else ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
             --engine->calls;
             engine->disconnect_client = 0;
@@ -305,8 +310,10 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     if (!qa_actor_id_equal(client->actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect replaced its entered Source generation");
     client->connected = client->begun = false;
+    application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor);
     qa_error current = {0};
-    if (!application_native_q2_combat_detach(engine, actor, &current) ||
+    if (!application_native_q2_callbacks_release_actor(engine,actor,&current) ||
+        !application_native_q2_combat_detach(engine, actor, &current) ||
         !application_native_q2_inventory_detach(engine, slot, &current)) {
         if (error) *error = ok ? current : first;
         return false;
@@ -405,11 +412,19 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
     uint32_t prior_client = engine->current_client;
     engine->arguments = tokens; engine->current_client = slot;
     ++engine->calls;
-    bool ok = qa_native_host_client_command(provider->state.native.host, slot, error);
+    bool ok;
+    bool declared_handled=true;
+    if(engine->callbacks) {
+        const qa_json_document *d=application_native_q2_callbacks_document(engine->callbacks);
+        qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients");
+        declared_handled=qa_json_size(d,qa_json_get(d,clients,"command"))!=0;
+        bool accepted;
+        ok=declared_client(engine,slot,"clients.command",(qa_bytes){0},&accepted,error);
+    } else ok = qa_native_host_client_command(provider->state.native.host, slot, error);
     --engine->calls;
     engine->current_client = prior_client;
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
-    if (ok) *handled = true;
+    if (ok) *handled = declared_handled;
     return ok;
 }
 
@@ -434,10 +449,18 @@ bool application_native_q2_console_command(application_provider *provider, qa_ac
     if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens, error)) return false;
     qa_command_tokens prior = engine->arguments; engine->arguments = tokens;
     ++engine->calls;
-    bool ok = slot ? qa_native_host_client_command(provider->state.native.host, slot, error) :
+    bool ok;
+    bool declared_handled=true;
+    if(slot&&engine->callbacks) {
+        const qa_json_document *d=application_native_q2_callbacks_document(engine->callbacks);
+        qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients");
+        declared_handled=qa_json_size(d,qa_json_get(d,clients,"command"))!=0;
+        bool accepted;
+        ok=declared_client(engine,slot,"clients.command",(qa_bytes){0},&accepted,error);
+    } else ok = slot ? qa_native_host_client_command(provider->state.native.host, slot, error) :
         qa_native_host_server_command(provider->state.native.host, error);
     --engine->calls;
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
-    if (ok) *handled = true;
+    if (ok) *handled = declared_handled;
     return ok;
 }

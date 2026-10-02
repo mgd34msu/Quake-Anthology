@@ -21,7 +21,11 @@ typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_REMOTE_Q2,
     FRONTEND_SCENE_OWNER_REMOTE_Q2_MAP,
     FRONTEND_SCENE_OWNER_REMOTE_Q1,
-    FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP
+    FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP,
+    FRONTEND_SCENE_OWNER_RENDERER,
+    FRONTEND_SCENE_OWNER_UNIFIED_MAP,
+    FRONTEND_SCENE_OWNER_UNIFIED_MODEL,
+    FRONTEND_SCENE_OWNER_UNIFIED_Q3
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;
@@ -49,6 +53,13 @@ typedef struct frontend_scene_root_view {
     frontend_scene_owner owner;
     const char *visual_path;
 } frontend_scene_root_view;
+typedef struct frontend_scene_heap { uint32_t kind; uint64_t ordinal,view; } frontend_scene_heap;
+/* Borrow actual paired banks already owned by frontend producers. Retained
+ * renderer private heaps are deliberately excluded from this lookup. */
+bool frontend_scene_heap_find(const qa_frontend *,const qa_vfs *,qa_scene_resources *,
+    qa_material_library *,frontend_scene_heap *,bool *,qa_error *);
+bool frontend_scene_heap_read(const qa_frontend *,frontend_scene_heap,const qa_vfs **,
+    qa_scene_resources **,qa_material_library **);
 
 /* The real frontend/content capture remains held through all component codecs.
  * The shared namespace must already contain images, libraries, roots and the

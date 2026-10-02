@@ -4,6 +4,7 @@
 #include "entity.h"
 #include "media.h"
 #include "remote_frame.h"
+#include "compiled_frame.h"
 #include "qa/ui_preferences.h"
 #include "qa/application_selected_effects.h"
 
@@ -26,6 +27,7 @@ typedef struct q3n_frame {
     /* Mutually exclusive with local GAME and standalone selected EFFECTS.
      * Remote rows and clocks borrow the actual Network/cache receipt. */
     const q3n_remote_frame *remote;
+    const q3n_compiled_frame *compiled;
     /* A standalone selected effect borrows its independent native producer.
      * It has no primary GAME snapshot, physical client or invented player S. */
     const qa_application_selected_effects *effects_source;
@@ -33,6 +35,7 @@ typedef struct q3n_frame {
     const qa_application_effect_event *effect_event;
     void *effect_output_context;
     bool (*effect_entity_output)(void *, const qa_q3_ref_entity *, float cull_radius, qa_error *);
+    bool (*effect_entity_visible)(void *,const qa_q3_ref_entity *);
     bool (*effect_sound_output)(void *, const struct q3n_frame *, qa_audio_asset *,
         const qa_vec3 *fixed_origin, int32_t channel, qa_error *);
     bool (*effect_pose_current)(void *);

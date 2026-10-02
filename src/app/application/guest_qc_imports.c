@@ -88,7 +88,9 @@ static bool eye_cluster(struct application_qc_state *engine, int32_t reference,
     if (!vector_field(engine, reference, "origin", &origin, error) ||
         !vector_field(engine, reference, "view_ofs", &offset, error) ||
         !qa_collision_point_leaf(qa_world_geometry(engine->world), qa_vec_add(origin, offset), &leaf, error)) return false;
-    *out = leaf.cluster; return true;
+    if (leaf.cluster < INT32_MIN || leaf.cluster > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC eye cluster exceeds its source index");
+    *out = (int32_t)leaf.cluster; return true;
 }
 static bool check_client_reference(struct application_qc_state *engine, uint32_t slot,
     int32_t *reference, bool *alive, qa_error *error)
@@ -235,7 +237,7 @@ static bool debug_entity(struct application_qc_state *engine, qa_qc_instance *vm
         if (!value) continue;
         char number[64], line[256]; float scalar;
         memcpy(&scalar, &value, sizeof(scalar));
-        if (!qa_format_fixed(def->type == QA_QC_FLOAT ? scalar : value, 6, number, sizeof(number), error)) return false;
+        if (!qa_format_fixed(def->type == QA_QC_FLOAT ? (double)scalar : (double)value, 6, number, sizeof(number), error)) return false;
         snprintf(line, sizeof(line), "%s: %s\n", def->name, number);
         if (!emit_text(engine, (qa_actor_id){0}, line, 1, error)) return false;
     }

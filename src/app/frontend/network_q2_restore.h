@@ -13,6 +13,10 @@ bool frontend_network_q2_checkpoint(qa_frontend *,const frontend_remote_q2_resto
  * Graph recipes and observer actor references belong to the enclosing import. */
 bool frontend_network_q2_prepare_import(qa_frontend *,qa_network_runtime *,
     const frontend_network_q2_client_recipe *,const frontend_network_q2_client_restore *,qa_error *);
+/* Borrow genuine Graph claims until the CONNECTIONS prefix consumes them.
+ * Canonical identity/epoch are supplied by that actual runtime decoder. */
+bool frontend_network_q2_stage_recipe(qa_frontend *,const frontend_network_q2_client_recipe *,
+    const frontend_network_q2_client_restore *,qa_error *);
 bool frontend_network_q2_import_read(const qa_frontend *,frontend_remote_q2_source_view *,qa_error *);
 bool frontend_network_q2_finish_import(qa_frontend *,const frontend_remote_q2_restore_refs *,qa_error *);
 #endif

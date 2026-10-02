@@ -1,6 +1,7 @@
 #include "remote_q2_source.h"
 #include "remote_q2_private.h"
 #include "client_registry.h"
+#include "legacy_render_policy.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvar_observer.h"
 #include <stdlib.h>
@@ -20,7 +21,7 @@ struct frontend_remote_q2_source {
     frontend_remote_q2_domain domain;
     size_t references;
     unsigned calls;
-    bool closing, configured, commands_verified;
+    bool closing, configured, ready, commands_verified, template_retired;
 };
 static bool profile_protocol(const qa_product *profile, qa_net_protocol_id protocol, qa_error *error)
 {
@@ -90,6 +91,23 @@ bool frontend_remote_q2_source_owner_import_idle(const frontend_remote_q2_source
             source->options.metadata.seat) &&
         (!source->receiver || (!source->receiver->busy && !source->receiver->image_policy));
 }
+bool frontend_remote_q2_source_constructor_read(const frontend_remote_q2_source *source,
+    const qa_launch_instance **out, qa_error *error)
+{
+    const qa_launch_instance *descriptor = source ? qa_launch_instance_lease_view(source->constructor_metadata) : NULL;
+    if (!source || !out || source->closing || source->frontend->application != source->domain.application || !descriptor)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT has no held actual constructor descriptor");
+    *out = descriptor; return true;
+}
+bool frontend_remote_q2_source_owner_retirement_idle(const frontend_remote_q2_source *source)
+{
+    return source && source->frontend->source_restoring && !source->frontend->capture &&
+        !source->frontend->resource_inventory && !source->closing && !source->calls &&
+        source->frontend->application == source->domain.application && qa_console_idle(source->console) &&
+        (!source->domain.cvars || qa_cvars_observer_idle(source->domain.cvars)) &&
+        (!source->pending_cvars || qa_cvars_observer_idle(source->pending_cvars)) &&
+        (!source->receiver || (!source->receiver->busy && !source->receiver->image_policy));
+}
 bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *source,
     const qa_launch_instance *descriptor, const qa_console *console, const qa_cvars *registry,
     const qa_command_context *context, qa_error *error)
@@ -115,7 +133,8 @@ static bool current(void *context, const frontend_remote_q2_domain *domain, qa_e
         !remote_q2_domain_equal(&source->domain, domain) || !source->registry ||
         source->domain.cvars != frontend_client_registry_cvars(source->registry) ||
         !frontend_client_registry_matches(source->registry, qa_launch_instance_lease_view(source->constructor_metadata),
-            source->options.metadata.seat)) return false;
+            source->options.metadata.seat) || (source->receiver &&
+            source->receiver->options.material_scripts != source->options.client.material_scripts)) return false;
     return source->options.client.current(source->options.client.context, domain, error);
 }
 static bool active(void *context, const qa_command_context *command)
@@ -138,14 +157,37 @@ static void print(void *context, const qa_command_context *command, const char *
 static void cvar_print(void *context, const char *text)
 { frontend_remote_q2_source *source = context; print(source, &source->domain.command_context, text); }
 static qa_cvars *cvars(void *context, const qa_command_context *command, const char *name)
-{ (void)name; frontend_remote_q2_source *source = context; return active(source, command) ? source->domain.cvars : NULL; }
+{
+    frontend_remote_q2_source *source = context;
+    if (!active(source, command)) return NULL;
+    if (!source->options.cvar_owner) return source->domain.cvars;
+    ++source->calls; qa_cvars *owner = source->options.cvar_owner(source->options.client.context, command, name); --source->calls;
+    return owner;
+}
 static qa_cvars *visible(void *context, const qa_command_context *command, size_t ordinal)
-{ return ordinal ? NULL : cvars(context, command, ""); }
+{
+    frontend_remote_q2_source *source = context;
+    if (!active(source, command)) return NULL;
+    if (!source->options.visible_cvars) return ordinal ? NULL : source->domain.cvars;
+    ++source->calls; qa_cvars *owner = source->options.visible_cvars(source->options.client.context, command, ordinal); --source->calls;
+    return owner;
+}
+static bool edit(void *context, const qa_command_context *command, qa_cvars *heap, struct qa_cvars_edit **out, qa_error *error)
+{
+    frontend_remote_q2_source *source = context;
+    if (!active(source, command) || !source->options.cvar_edit) return false;
+    ++source->calls; bool ok = source->options.cvar_edit(source->options.client.context, command, heap, out, error); --source->calls;
+    return ok;
+}
 static bool script(void *context, const qa_command_context *command, const char *path,
     qa_bytes *out, void **lease, qa_error *error)
 {
     frontend_remote_q2_source *source = context;
     if (!active(source, command) || !out || !lease) return false;
+    if (source->options.read_script) {
+        ++source->calls; bool ok = source->options.read_script(source->options.client.context, command, path, out, lease, error); --source->calls;
+        return ok;
+    }
     const qa_vfs *files = source->receiver && source->receiver->selected ? source->receiver->content.mounts :
         qa_launch_instance_lease_view(source->metadata)->content;
     qa_resource *resource = NULL;
@@ -153,7 +195,24 @@ static bool script(void *context, const qa_command_context *command, const char 
     *out = qa_resource_bytes(resource); *lease = resource; return true;
 }
 static void script_release(void *context, void *lease)
-{ (void)context; qa_resource_release(lease); }
+{
+    frontend_remote_q2_source *source = context;
+    if (!source->options.release_script) { qa_resource_release(lease); return; }
+    ++source->calls; source->options.release_script(source->options.client.context, lease); --source->calls;
+}
+static void script_complete(void *context, const qa_command_context *command, const char *path, bool ok)
+{
+    frontend_remote_q2_source *source = context;
+    if (!tuple(source, command) || !source->options.script_complete) return;
+    ++source->calls; source->options.script_complete(source->options.client.context, command, path, ok); --source->calls;
+}
+static bool allow(void *context, const qa_command_invocation *invocation)
+{
+    frontend_remote_q2_source *source = context;
+    if (!active(source, &invocation->context)) return false;
+    ++source->calls; bool ok = source->options.allow_command(source->options.client.context, invocation); --source->calls;
+    return ok;
+}
 static qa_command_result command(void *context, const qa_command_invocation *invocation, qa_error *error)
 {
     frontend_remote_q2_source *source = context;
@@ -165,6 +224,11 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
 static qa_command_result forward(void *context, const qa_command_invocation *invocation, qa_error *error)
 {
     frontend_remote_q2_source *source = context;
+    if (!active(source, &invocation->context)) return QA_COMMAND_UNHANDLED;
+    if (source->options.template_forward) {
+        ++source->calls; qa_command_result result = source->options.template_forward(source->options.client.context, invocation, error); --source->calls;
+        if (result != QA_COMMAND_UNHANDLED) return result;
+    }
     if (!active(source, &invocation->context) || !source->receiver || !source->receiver->bound || !invocation->argc)
         return QA_COMMAND_UNHANDLED;
     uint32_t remote_index;
@@ -228,19 +292,28 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
         {"password", "", QA_CVAR_USERINFO}, {"spectator", "0", QA_CVAR_USERINFO},
         {"gender", "male", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}, {"gender_auto", "1", QA_CVAR_ARCHIVE},
         {"cl_predict", "1", 0}, {"cl_gun", "1", 0}, {"cl_blend", "1", 0}, {"cl_lights", "1", 0},
-        {"cl_particles", "1", 0}, {"cl_entities", "1", 0}, {"cl_footsteps", "1", 0}, {"cl_noskins", "0", 0}
+        {"cl_particles", "1", 0}, {"cl_entities", "1", 0}, {"cl_footsteps", "1", 0}, {"cl_noskins", "0", 0},
+        {"cl_vwep", "1", QA_CVAR_ARCHIVE}, {"cl_hit_markers", "2", 0}, {"scr_hit_marker_time", "500", 0},
+        {"ch_alpha", "1", 0}, {"ch_scale", "1", 0}, {"ch_x", "0", 0}, {"ch_y", "0", 0},
+        {"cl_muzzlelight_time", "100", 0}, {"cl_rerelease_effects", "1", 0}, {"cl_dlight_hacks", "0", 0},
+        {"cl_muzzleflashes", "1", 0}, {"cl_disable_particles", "0", 0}, {"cl_disable_explosions", "0", 0}
     };
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
         if (!qa_cvars_register(source->domain.cvars, values[i].name, values[i].value, values[i].flags,
             source->domain.command_context.owner, "", error)) return false;
-    return qa_input_settings_register(source->domain.cvars,
+    if (!qa_cvars_register(source->domain.cvars, "crosshair",
+        source->domain.command_context.dialect == QA_CONSOLE_Q2_RERELEASE ? "3" : "0", QA_CVAR_ARCHIVE,
+        source->domain.command_context.owner, "", error)) return false;
+    return frontend_legacy_source_register(source->domain.cvars,
+        source->domain.command_context.dialect, source->domain.command_context.owner, error) &&
+        qa_input_settings_register(source->domain.cvars,
         source->domain.command_context.dialect == QA_CONSOLE_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC, error);
 }
 bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_source_options *options,
     frontend_remote_q2_source **out, qa_error *error)
 {
     if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->print || !options->prepare_namespace || !options->configure ||
-        !options->admit_content || !options->client.current ||
+        !options->admit_content || !options->client.current || !!options->read_script != !!options->release_script ||
         !options->client.download_allowed || !options->client.download_nonce || !options->client.records || !options->client.disconnected ||
         options->client.domain.application != f->application || options->client.domain.console || options->client.domain.cvars ||
         options->client.domain.catalog != options->metadata.catalog || options->client.domain.product != options->metadata.profile ||
@@ -273,12 +346,19 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
     qa_cvar_options variables = {.dialect = dialect, .user = source, .print = cvar_print};
     source->pending_cvars = qa_cvars_create(&variables, error); source->domain.cvars = source->pending_cvars;
     if (!source->pending_cvars || !defaults(source, error)) return false;
+    if (options->initialize) {
+        ++source->calls; bool initialized = options->initialize(options->client.context,
+            qa_launch_instance_lease_view(source->metadata), source->domain.cvars, &source->domain.command_context, error); --source->calls;
+        if (!initialized) return false;
+    }
     frontend_client_registry_context callback = {source, retain, release};
     if (!frontend_client_registry_create(f, qa_launch_instance_lease_view(source->metadata), options->metadata.seat,
         &source->pending_cvars, &callback, &source->registry, error)) return false;
     source->domain.cvars = frontend_client_registry_cvars(source->registry);
     qa_console_options console = {.context = source->domain.command_context, .cvars = source->domain.cvars, .user = source,
         .print = print, .cvar_owner = cvars, .visible_cvars = visible, .capture_context = capture, .context_active = active,
+        .cvar_edit = options->cvar_edit ? edit : NULL, .script_complete = options->script_complete ? script_complete : NULL,
+        .allow_command = options->allow_command ? allow : NULL,
         .read_script = script, .release_script = script_release, .source_command = command, .forward = forward};
     source->console = qa_console_create(&console, error); source->domain.console = source->console;
     if (!source->console) return false;
@@ -288,16 +368,54 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
     --source->calls;
     if (!configured) return false;
     source->configured = true;
+    if (options->install) {
+        ++source->calls; bool installed = options->install(options->client.context, false, error); --source->calls;
+        if (!installed) return false;
+    }
+    bool ready = false;
+    return frontend_remote_q2_source_advance(source, &ready, error);
+}
+bool frontend_remote_q2_source_advance(frontend_remote_q2_source *source, bool *ready, qa_error *error)
+{
+    if (!source || !ready || !source->configured || source->closing || source->template_retired ||
+        !frontend_remote_q2_source_owner_idle(source) || source->frontend->capture ||
+        source->frontend->resource_inventory || source->frontend->source_restoring) return false;
+    *ready = source->ready;
+    if (*ready) return true;
+    if (source->receiver) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver construction failed and retains checked cleanup");
+    bool complete = true;
+    if (source->options.configure_step) {
+        complete = false; ++source->calls;
+        bool ok = source->options.configure_step(source->options.client.context, &complete, error); --source->calls;
+        if (!ok || !current(source, &source->domain, error)) return false;
+    }
+    if (!complete) return true;
+    const frontend_remote_q2_source_options *options = &source->options;
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
+        .material_scripts = options->client.material_scripts,
         .download_allowed = allowed, .download_nonce = nonce, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL,
         .content_admit = content_admit,
         .select_content = options->client.select_content ? select_content : NULL};
-    return frontend_remote_q2_create(f, &child, &source->receiver, error);
+    bool ok = frontend_remote_q2_create(source->frontend, &child, &source->receiver, error);
+    if (ok) source->ready = *ready = true;
+    return ok;
+}
+bool frontend_remote_q2_source_retire(frontend_remote_q2_source *source, qa_error *error)
+{
+    if (!source || source->template_retired) return true;
+    bool returned = source->frontend->source_restoring ? frontend_remote_q2_source_owner_retirement_idle(source) :
+        frontend_remote_q2_source_owner_idle(source);
+    if (!returned || source->frontend->capture || source->frontend->resource_inventory || source->closing) return false;
+    if (source->options.retire) {
+        ++source->calls; bool ok = source->options.retire(source->options.client.context, error); --source->calls;
+        if (!ok) return false;
+    }
+    source->template_retired = true; return true;
 }
 bool frontend_remote_q2_source_read(const frontend_remote_q2_source *source, frontend_remote_q2_source_view *out, qa_error *error)
 {
-    if (!source || !out || !source->configured || source->closing || !source->metadata || !source->receiver || !source->registry)
+    if (!source || !out || !source->configured || !source->ready || source->closing || source->template_retired || !source->metadata || !source->receiver || !source->registry)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source observation requires its completed pending constructor");
     *out = (frontend_remote_q2_source_view){source, qa_launch_instance_lease_view(source->metadata),
         source->receiver, source->domain, source->receiver->bound}; return true;
@@ -332,6 +450,40 @@ bool frontend_remote_q2_source_bind(frontend_remote_q2_source *source, const fro
     if (!frontend_remote_q2_bind(source->receiver, actual, error)) { source->domain = previous; return false; }
     return true;
 }
+bool frontend_remote_q2_source_pending_capabilities(frontend_remote_q2_source *source,
+    const qa_q2_connect_request *request, qa_error *error)
+{
+    if (!source || !request || !source->ready || source->calls || source->closing || source->template_retired ||
+        source->frontend->capture || source->frontend->resource_inventory || !source->receiver ||
+        source->receiver->bound || source->receiver->busy || source->receiver->importing ||
+        request->protocol.kind != source->domain.protocol.kind || request->protocol.revision != source->domain.protocol.revision ||
+        request->protocol.flags != source->domain.protocol.flags || !current(source, &source->domain, error)) return false;
+    bool enabled = false;
+    if (!frontend_remote_q2_source_material_scripts(request, &enabled, error)) return false;
+    source->options.client.material_scripts = enabled;
+    source->receiver->options.material_scripts = enabled;
+    return true;
+}
+bool frontend_remote_q2_source_material_scripts(const qa_q2_connect_request *request,
+    bool *out, qa_error *error)
+{
+    if (!request || !out) return false;
+    const char *at = request->userinfo; bool found = false, enabled = false;
+    if (!memchr(at, 0, sizeof(request->userinfo))) return false;
+    while (*at) {
+        if (*at++ != '\\') return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 capability USERINFO is not complete key/value data");
+        const char *key = at; while (*at && *at != '\\') ++at;
+        size_t key_size = (size_t)(at - key);
+        if (!*at++) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 capability USERINFO has no value");
+        const char *value = at; while (*at && *at != '\\') ++at;
+        if (key_size == 12 && !memcmp(key, "qa_materials", 12)) {
+            if (found) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 capability USERINFO repeats its material declaration");
+            found = true; enabled = at - value == 1 && *value == '1';
+        }
+    }
+    *out = enabled;
+    return true;
+}
 bool frontend_remote_q2_source_drain(frontend_remote_q2_source *source, size_t budget, size_t *executed, qa_error *error)
 {
     if (!source || !source->configured || source->closing || source->calls || !source->console ||
@@ -343,6 +495,7 @@ bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **owned, qa_err
 {
     frontend_remote_q2_source *source = owned ? *owned : NULL;
     if (!source) return true;
+    if (!frontend_remote_q2_source_retire(source, error)) return false;
     if (source->frontend->capture || source->frontend->resource_inventory || source->calls || source->references != (source->registry ? 2u : 1u) || !qa_console_destroy_ready(source->console) ||
         !frontend_client_registry_release_ready(source->registry, error)) return false;
     source->closing = true;
@@ -355,7 +508,25 @@ bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **owned, qa_err
     qa_launch_instance_lease_release(source->metadata); source->metadata = NULL;
     qa_launch_instance_lease_release(source->constructor_metadata); source->constructor_metadata = NULL;
     if (source->references != 1) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source callback holders remain retained");
-    free(source); *owned = NULL; return true;
+    void (*released)(void *) = source->options.released; void *context = source->options.client.context;
+    free(source); *owned = NULL;
+    if (released) released(context);
+    return true;
+}
+bool frontend_remote_q2_source_rebind_ready(const frontend_remote_q2_source *source, qa_frontend *f, qa_error *error)
+{
+    if (!source || !f || source->closing || !source->configured || !source->receiver ||
+        !frontend_remote_q2_source_owner_idle(source) || source->frontend->capture || source->frontend->resource_inventory ||
+        f->capture || f->resource_inventory || f->application != source->domain.application ||
+        source->frontend->application != source->domain.application || source->domain.physical_seat >= f->options.seats ||
+        !f->seats || f->seats[source->domain.physical_seat].input != source->frontend->seats[source->domain.physical_seat].input)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 physical handoff changed its actual CLIENT heap or physical input");
+    return frontend_remote_q2_rebind_ready(source->receiver, f, &source->receiver->options, error);
+}
+void frontend_remote_q2_source_rebind(frontend_remote_q2_source *source, qa_frontend *f)
+{
+    if (!source || !f) return;
+    frontend_remote_q2_rebind(source->receiver, f, &source->receiver->options); source->frontend = f;
 }
 bool frontend_remote_q2_source_capture(const frontend_remote_q2_source *source,
     frontend_remote_q2_source_state *out, qa_error *error)
@@ -402,7 +573,7 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         !options || !saved || !out || *out || !saved->constructor || !saved->constructor->catalog || !saved->constructor->content ||
         !saved->physical_admit || !saved->console_resolvers || !saved->receiver_refs ||
         !saved->console.data || !saved->console.size || !saved->receiver.data || !saved->receiver.size ||
-        !options->print || !options->admit_content || !options->client.current ||
+        !options->print || !options->admit_content || !options->client.current || !!options->read_script != !!options->release_script ||
         !options->client.download_allowed || !options->client.download_nonce || !options->client.records ||
         !options->client.disconnected || domain->application != f->application || !domain->runtime ||
         (domain->client.owner ? (!domain->client.generation || !domain->epoch || !domain->seat.owner) :
@@ -449,9 +620,21 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
     source->domain.cvars = frontend_client_registry_cvars(source->registry);
     qa_console_options console = {.context = source->domain.command_context, .cvars = source->domain.cvars, .user = source,
         .print = print, .cvar_owner = cvars, .visible_cvars = visible, .capture_context = capture, .context_active = active,
+        .cvar_edit = options->cvar_edit ? edit : NULL, .script_complete = options->script_complete ? script_complete : NULL,
+        .allow_command = options->allow_command ? allow : NULL,
         .read_script = script, .release_script = script_release, .source_command = command, .forward = forward};
     source->console = qa_console_create(&console, error); source->domain.console = source->console;
     if (!source->console) return false;
+    ++source->calls;
+    bool admitted = saved->physical_admit(options->client.context, qa_launch_instance_lease_view(source->metadata),
+        source->domain.cvars, source->console, error);
+    --source->calls;
+    if (!admitted) return false;
+    source->configured = true;
+    if (options->install) {
+        ++source->calls; bool installed = options->install(options->client.context, true, error); --source->calls;
+        if (!installed) return false;
+    }
     source->imported_commands.data = malloc(saved->console.size);
     if (!source->imported_commands.data) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 console import receipt");
     source->imported_commands.size = saved->console.size;
@@ -460,18 +643,15 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         saved->console_resolvers, saved->console, error) ||
         !qa_console_save_capture(source->console, qa_application_session(domain->application),
             &source->imported_current, error)) return false;
-    ++source->calls;
-    bool admitted = saved->physical_admit(options->client.context, qa_launch_instance_lease_view(source->metadata),
-        source->domain.cvars, source->console, error);
-    --source->calls;
-    if (!admitted) return false;
-    source->configured = true;
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
+        .material_scripts = options->client.material_scripts,
         .download_allowed = allowed, .download_nonce = nonce, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL, .content_admit = content_admit,
         .select_content = options->client.select_content ? select_content : NULL};
-    return frontend_remote_q2_restore_prepare(f, &child, saved->receiver_refs, saved->receiver,
+    bool restored = frontend_remote_q2_restore_prepare(f, &child, saved->receiver_refs, saved->receiver,
         &source->receiver, error);
+    if (restored) source->ready = true;
+    return restored;
 }
 static bool console_scope(const frontend_remote_q2_source *source, qa_application *app,
     const qa_application_console_scope *scope, const qa_console *console)

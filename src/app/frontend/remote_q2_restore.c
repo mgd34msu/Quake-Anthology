@@ -5,7 +5,9 @@
 #include "qa/input_command_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
+#include "qa/archive.h"
 #include "remote_q2_effects_bridge.h"
+#include "remote_q2_footsteps.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -14,7 +16,7 @@ typedef struct saved_q2 {
     uint64_t domain_catalog, catalog, mounts, map_pool, map_resource;
     bool bound, selected, ready, retired, images, materials, fonts, sounds;
     frontend_remote_q2_domain domain;
-    qa_buffer input, stage, geometry;
+    qa_buffer input, stage, geometry, footsteps;
 } saved_q2;
 typedef struct effects_refs {
     const frontend_remote_q2 *row;
@@ -83,7 +85,8 @@ static bool geometry_restore(frontend_remote_q2 *row, const qa_buffer *bytes, qa
     bool ok = qa_source_save_reader(&io, NULL, (qa_bytes){bytes->data, bytes->size}, error) &&
         geometry_fields(&io, &state) && qa_source_save_finish(&io, NULL) &&
         qa_bsp_open(qa_resource_bytes(row->map), &bsp, error) && bsp.family == QA_BSP_Q2 &&
-        qa_collision_create(&bsp, &row->geometry, error) && qa_collision_restore_portals(row->geometry, &state, error);
+        qa_collision_create(&bsp, &row->geometry, error) && qa_collision_bind_resource(row->geometry, row->map, error) &&
+        qa_collision_restore_portals(row->geometry, &state, error);
     qa_source_save_dispose(&io); qa_collision_portal_checkpoint_free(&state); return ok;
 }
 static bool blob(qa_source_save_io *io, qa_buffer *value)
@@ -148,15 +151,27 @@ static bool retained(frontend_remote_q2 *row, const frontend_remote_q2_restore_r
             qa_resource_pool_find(qa_vfs_resources(row->content.mounts), qa_resource_id(m->resource)) != m->resource ||
             m->opening.resource_id != qa_resource_id(m->resource) || !m->opening.path || strcmp(m->path, m->opening.path) ||
             !qa_vfs_acquisition_retained(row->content.mounts, &m->opening, error)) return false;
+    for (remote_q2_missing_model *missing = row->missing_models; missing; missing = missing->next) {
+        if (!missing->path || !*missing->path || !saved->selected) return false;
+        char *normalized = qa_archive_normalize_path(missing->path, error);
+        bool valid = normalized && !strcmp(normalized, missing->path); free(normalized);
+        if (!valid) return false;
+        for (remote_q2_model *m = row->models; m; m = m->next)
+            if (!strcmp(m->path, missing->path)) return false;
+        for (remote_q2_missing_model *prior = row->missing_models; prior != missing; prior = prior->next)
+            if (!strcmp(prior->path, missing->path)) return false;
+    }
     return true;
 }
 static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 3;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 7;
+    bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 3 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 7 || !domain(io, &saved->domain) ||
+        !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
         !qa_source_save_bool(io, &saved->ready) || !qa_source_save_bool(io, &saved->retired) ||
@@ -180,13 +195,20 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         !qa_source_save_i32(io, &row->prediction_plane.type) || !qa_source_save_u8(io, &row->prediction_plane.signbits) ||
         !qa_source_save_f32(io, &row->fraction) || !isfinite(row->fraction) || row->fraction < 0 || row->fraction > 1 ||
         !qa_source_save_f32(io, &row->frame_ms) || !isfinite(row->frame_ms) || row->frame_ms <= 0 ||
+        !qa_source_save_f64(io, &row->sample_frame_seconds) || !isfinite(row->sample_frame_seconds) || row->sample_frame_seconds < 0 ||
         !qa_source_save_f32(io, &row->height_previous) || !qa_source_save_f32(io, &row->height_current) ||
         !qa_source_save_f64(io, &row->height_changed_ms) || !qa_source_save_bool(io, &row->height_set) ||
+        !qa_source_save_bool(io, &row->gun_set) || !qa_source_save_u32(io, &row->gun_frame) ||
+        !qa_source_save_u32(io, &row->gun_previous_frame) || !qa_source_save_i32(io, &row->gun_server_frame) ||
+        !qa_source_save_bool(io, &row->hit_marker_set) || !qa_source_save_u32(io, &row->hit_marker_count) ||
+        !qa_source_save_i32(io, &row->hit_marker_frame) || !qa_source_save_u64(io, &row->hit_marker_ns) ||
+        (!row->hit_marker_set && (row->hit_marker_count || row->hit_marker_ns || row->hit_marker_frame)) ||
         !qa_q2_save_serverdata(io, &row->data) || !qa_q2_save_frame(io, &row->frame) || !qa_q2_save_frame(io, &row->previous) ||
         !qa_source_save_u64(io, &saved->map_pool) || !qa_source_save_u64(io, &saved->map_resource) ||
         !opening(io, &row->map_opening, refs, saved->mounts, row->content.mounts) || !qa_source_save_u64(io, &row->saved_world) ||
         !qa_source_save_u64(io, &row->saved_classic) || !qa_source_save_u64(io, &row->saved_white) ||
-        !blob(io, &saved->geometry) || !blob(io, &saved->input) || !blob(io, &row->saved_effects)) return false;
+        !blob(io, &saved->geometry) || !blob(io, &saved->input) || !blob(io, &row->saved_effects) ||
+        !blob(io, &saved->footsteps)) return false;
     if (row->content_admitted && !saved->selected) return false;
     uint32_t ground = row->prediction_ground.hit;
     if (!qa_source_save_u32(io, &ground) || ground > QA_TRACE_HIT_ACTOR ||
@@ -251,6 +273,15 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         }
         link = &m->next;
     }
+    count = 0; for (remote_q2_missing_model *m = row->missing_models; m; m = m->next) ++count;
+    maximum = reading ? (io->input.size - io->offset) / 9 : SIZE_MAX;
+    if (!qa_source_save_count(io, &count, maximum)) return false;
+    remote_q2_missing_model **missing = &row->missing_models;
+    for (size_t i = 0; i < count; ++i) {
+        if (reading) { *missing = calloc(1, sizeof(**missing)); if (!*missing) return false; }
+        if (!frontend_save_text(io, &(*missing)->path) || !(*missing)->path || !*(*missing)->path) return false;
+        missing = &(*missing)->next;
+    }
     count = 0; for (remote_q2_picture *p = row->pictures; p; p = p->next) ++count;
     maximum = reading ? (io->input.size - io->offset) / 9 : SIZE_MAX;
     if (!qa_source_save_count(io, &count, maximum)) return false;
@@ -300,7 +331,8 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
         frontend_font_encode(row->frontend, row->classic, &captured.saved_classic, error) &&
         frontend_scene_image_encode(refs->scene, row->white, &captured.saved_white, error) &&
         qa_input_command_checkpoint(&row->input, &saved.input, error) && geometry_checkpoint(row->geometry, &saved.geometry, error) &&
-        (!row->effects || frontend_remote_q2_effects_checkpoint(row->effects, &effects, &captured.saved_effects, error));
+        (!row->effects || frontend_remote_q2_effects_checkpoint(row->effects, &effects, &captured.saved_effects, error)) &&
+        remote_q2_footsteps_checkpoint(row, refs->content, &saved.footsteps, error);
     if (ok && row->download_stage) {
         saved.stage.size = (size_t)row->download_bytes;
         saved.stage.data = saved.stage.size ? malloc(saved.stage.size) : NULL;
@@ -313,6 +345,7 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
         fields(&io, &captured, refs, &saved) && retained(&captured, refs, &saved, error) && qa_source_save_finish(&io, out);
     --row->busy; qa_source_save_dispose(&io); qa_buffer_free(&saved.input); qa_buffer_free(&saved.stage); qa_buffer_free(&saved.geometry);
     qa_buffer_free(&captured.saved_effects);
+    qa_buffer_free(&saved.footsteps);
     return ok;
 }
 bool frontend_remote_q2_import_read(const frontend_remote_q2 *row, frontend_remote_q2_view *out, qa_error *error)
@@ -366,6 +399,8 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
         (!saved.ready || row->geometry);
     row->bound = saved.bound; row->selected = saved.selected; row->retired = saved.retired;
     row->restore_media_ready = saved.ready;
+    if (ok) ok = (!(saved.ready && row->layout.max_models == 8192) || saved.footsteps.size) &&
+        remote_q2_footsteps_restore(row, refs->content, (qa_bytes){saved.footsteps.data, saved.footsteps.size}, error);
     if (ok && saved.images) { row->images = qa_scene_resources_create_detached(row->content.mounts, error); ok = row->images != NULL; }
     if (ok && saved.materials) { row->materials = qa_material_library_create_detached(row->images, error); ok = row->materials != NULL; }
     if (ok && saved.fonts) { row->fonts = qa_font_library_create(row->content.mounts, row->images, error); ok = row->fonts != NULL; }
@@ -383,6 +418,7 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
             row->download_stage && row->download_nonce;
     }
     qa_buffer_free(&saved.input); qa_buffer_free(&saved.stage); qa_buffer_free(&saved.geometry);
+    qa_buffer_free(&saved.footsteps);
     if (!ok && (!error || error->code == QA_OK)) remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 cold receiver leaves its actual saved owner graph");
     return ok;
 }
@@ -453,6 +489,7 @@ bool frontend_remote_q2_restore_finish(frontend_remote_q2 *row,
         !frontend_scene_image_decode(refs->scene, row->saved_white, &white, error)) return false;
     if (row->white && row->white != white) return false;
     if (white && !row->white) { qa_scene_image_retain(white); row->white = white; }
+    if (!remote_q2_footsteps_current(row, error)) return false;
     if (row->saved_effects.size && !row->effects_imported) {
         frontend_remote_q2_effects_source source;
         effects_refs context = {row, refs}; frontend_remote_q2_effects_refs effects = effect_refs(&context);

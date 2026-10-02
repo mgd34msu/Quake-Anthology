@@ -218,19 +218,24 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     }
     if (!image(io,frame,&value->shadow_atlas)) return false;
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
-    FIELD(bool,value,source_primitives);
+    if (schema>=3) { FIELD(bool,value,source_primitives); }
     if (schema>=5) {
-        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_SHADOW_FINISH);
+        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_SHADOW_VOLUME_END);
         FIELD(bool,value,source_retain_depth_range);
     }
-    if (schema>=6) FIELD(bool,value,source_retain_polygon_offset);
+    if (schema>=6) {
+        FIELD(bool,value,source_retain_polygon_offset);
+        FIELD(bool,value,source_stage_state);
+    }
+    if (schema>=8) { FIELD(bool,value,source_arrays); }
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
 static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
     uint32_t schema,qa_scene_command *value)
 {
-    ENUM(qa_scene_command_kind,value,kind,QA_SCENE_COMMAND_OUTPUT_DOMAIN);
+    ENUM(qa_scene_command_kind,value,kind,QA_SCENE_COMMAND_PREBLEND_GAMMA);
     if (schema<4 && value->kind==QA_SCENE_COMMAND_OUTPUT_DOMAIN) return false;
+    if (schema<9 && value->kind==QA_SCENE_COMMAND_PREBLEND_GAMMA) return false;
     switch (value->kind) {
     case QA_SCENE_COMMAND_VIEW: return view(io,&value->data.view);
     case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,schema,&value->data.draw);
@@ -243,6 +248,7 @@ static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene
         ENUM(qa_scene_draw_buffer,&value->data.draw_buffer,buffer,QA_DRAW_BACK_RIGHT);
         return qa_source_save_bool(io,&value->data.draw_buffer.clear);
     case QA_SCENE_COMMAND_IMAGE: return image(io,frame,&value->data.image) && value->data.image;
+    case QA_SCENE_COMMAND_PREBLEND_GAMMA: return qa_source_save_bool(io,&value->data.preblend_gamma.enabled);
     case QA_SCENE_COMMAND_OUTPUT_DOMAIN:
         FIELD(i32,&value->data.output_domain.rect,x); FIELD(i32,&value->data.output_domain.rect,y);
         FIELD(u32,&value->data.output_domain.rect,width); FIELD(u32,&value->data.output_domain.rect,height);
@@ -283,9 +289,9 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=6;
+    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=9;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
-        (schema<2 || schema>6)) return false;
+        (schema<2 || schema>9)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
     if (schema>=3) {
         FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);
@@ -293,6 +299,11 @@ static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualif
         if (!frame->source_backend && (frame->source_skip_backend || frame->source_clear_draw_buffer)) return false;
     } else {
         frame->source_backend=false; frame->source_skip_backend=false; frame->source_clear_draw_buffer=false;
+    }
+    if (schema>=7) {
+        FIELD(bool,frame,source_begin_frame); FIELD(i32,frame,source_stereo_frame);
+        if (frame->source_stereo_frame<0 || frame->source_stereo_frame>2 ||
+            (frame->source_begin_frame ? !frame->source_backend : frame->source_stereo_frame!=0)) return false;
     }
     if (frame->owner!=qualified_owner || !owners(io,frame,refs)) return false;
     bool reading=io->direction==QA_SOURCE_SAVE_READ; size_t count=frame->command_count;

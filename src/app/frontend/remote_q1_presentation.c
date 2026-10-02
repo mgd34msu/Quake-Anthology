@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "legacy_render_policy.h"
 #include "remote_q1_effects.h"
+#include "remote_q1_skins.h"
 #include "view_settings.h"
 #include "qa/material.h"
 #include <math.h>
@@ -64,6 +65,21 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         .skin = entity->entity.skin, .entity = entity->entity.number, .seconds = world->seconds,
         .view_model = entity->view_weapon, .player = entity->has_colors,
         .material_library = row->materials, .source_path = model->path, .identity_light = 1};
+    qa_scene_model_indexed_skin indexed = {0};
+    if (row->skins && !strcmp(model->path, "progs/player.mdl") &&
+        entity->entity.number >= 1 && entity->entity.number <= 32) {
+        const qa_actor_record *actor = qa_actors_get(row->options.domain.actors, entity->actor);
+        if (!actor || actor->owner != row->options.domain.actor_owner || !actor->has_source ||
+            actor->source_slot != entity->entity.number)
+            return remote_q1_fail(error, QA_ERROR_ARGUMENT, "QW skin lost its actual received player actor");
+        frontend_remote_q1_skin skin; bool present;
+        if (!frontend_remote_q1_skins_at(row->skins, actor->source_slot - 1, &skin, &present, error)) return false;
+        if (present) {
+            indexed = (qa_scene_model_indexed_skin){.name = skin.name, .width = skin.width,
+                .height = skin.height, .indices = skin.indices};
+            input.indexed_skin = &indexed;
+        }
+    }
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     return frontend_legacy_model_input_product(row->frontend,product,row->world,world,&input,error) &&
         remote_q1_model_lighting(row, world, &input, error) &&
@@ -144,7 +160,7 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     for (unsigned i = 0; i < 256; ++i) {
         const char *pattern = frontend_remote_q1_light_style(row, i); size_t count = strlen(pattern);
         double ordinal = fmod(floor(seconds * 10), (double)(count ? count : 1));
-        if (ordinal < 0) ordinal += count;
+        if (ordinal < 0) ordinal += (double)count;
         styles[i] = count ? (float)((unsigned char)pattern[(size_t)ordinal] - 97) * 22 : 256;
     }
     qa_scene_world_input world = {.view = *view, .seconds = seconds,

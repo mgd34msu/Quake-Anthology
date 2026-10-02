@@ -37,6 +37,11 @@ bool application_q3_mod_actors_release(application_q3_mod_actors *,qa_actor_id,q
  * function-pointer fields and the literal target word; hook proceeds once. */
 bool application_q3_mod_actors_match(application_q3_mod_actors *,const qa_qvm_call *,bool *,qa_error *);
 bool application_q3_mod_actors_hook(application_q3_mod_actors *,const qa_qvm_call *,int32_t *,qa_error *);
+typedef bool (*application_q3_mod_actor_proceed)(void *,const qa_qvm_call *,int32_t *,qa_error *);
+/* Compose the actual actor operation around another declared source body in
+ * the same physical call. The continuation and context are callback-only. */
+bool application_q3_mod_actors_hook_run(application_q3_mod_actors *,const qa_qvm_call *,
+    application_q3_mod_actor_proceed,void *,int32_t *,qa_error *);
 /* The physical function composer enters this before any effectful middleware
  * and clears it on every return. The literal call is borrowed only while its
  * actual lower hook is active, never saved or retained after that boundary. */

@@ -111,11 +111,11 @@ const qa_q2_wire_frame *qa_q2_frame_history_get(const qa_q2_frame_history *h, in
 }
 
 const qa_q2_wire_frame *qa_q2_frame_history_latest(const qa_q2_frame_history *h) {
-    const qa_q2_wire_frame *last = NULL;
-    if (h) for (size_t i = 0; i < h->capacity; ++i)
-        if (h->present[i] && h->frames[i].valid && (!last || h->frames[i].server_frame > last->server_frame))
-            last = &h->frames[i];
-    return last;
+    if (h) for (size_t i = 0, slot = h->next; i < h->capacity; ++i) {
+        slot = slot ? slot - 1 : h->capacity - 1;
+        if (h->present[slot] && h->frames[slot].valid) return &h->frames[slot];
+    }
+    return NULL;
 }
 
 const qa_q2_wire_frame *qa_q2_frame_history_store_owned(qa_q2_frame_history *h, qa_q2_wire_frame *frame) {

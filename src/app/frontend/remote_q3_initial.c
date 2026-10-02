@@ -1,5 +1,9 @@
+#include "renderer_materials.h"
 #include "q3_color_policy.h"
 #include "remote_q3_initial.h"
+#include "remote_q3_modules_video.h"
+#include "remote_q3_video_media.h"
+#include "qa/media_library_prepare.h"
 #include "remote_config.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
@@ -23,6 +27,7 @@ struct frontend_remote_q3_initial {
     frontend_material_movies *shader_movies;
     frontend_remote_q3_initial_view view;
     size_t users,children,transport_callbacks;
+    uint64_t video_generation;
     bool constructing,ready,retiring,transport_released,importing;
 };
 size_t frontend_remote_q3_initial_count(const qa_frontend *f)
@@ -125,6 +130,7 @@ bool frontend_remote_q3_initial_movies_restore(frontend_remote_q3_initial *owner
         frontend_material_movies_restore(&view,refs,bytes,&owner->shader_movies,error) :
         frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Initial candidate");
 }
+static bool build_media(frontend_remote_q3_initial *owner,qa_error *error);
 static bool build(frontend_remote_q3_initial *owner,qa_error *error)
 {
     qa_frontend *f=owner->frontend;
@@ -139,6 +145,12 @@ static bool build(frontend_remote_q3_initial *owner,qa_error *error)
     if(frontend_client_registry_cvars(v->registry)!=attempt->source.receiver.cvars)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI acquired a different physical CLIENT heap");
     v->mounts=qa_vfs_clone(v->descriptor->content,error);
+    return v->mounts && build_media(owner,error);
+}
+static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
+{
+    qa_frontend *f=owner->frontend;
+    frontend_remote_q3_initial_view *v=&owner->view;
     if (!frontend_q3_source_color_ensure(f,error)) return false;
     v->images=v->mounts?qa_scene_resources_create(v->mounts,error):NULL;
     if(v->images && !frontend_image_policy_initialize(f,v->images,error))return false;
@@ -165,6 +177,55 @@ static bool build(frontend_remote_q3_initial *owner,qa_error *error)
         !frontend_network_client_attempt_current(f,&v->attempt))
         return error && error->code!=QA_OK?false:
             frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI media acquisition changed its actual attempt");
+    return true;
+}
+bool frontend_remote_q3_initial_video_refresh(frontend_remote_q3_initial *owner,
+    frontend_remote_q3_modules *modules,uint64_t *generation,qa_error *error)
+{
+    if (!owner || !generation || owner->frontend->application!=owner->application ||
+        frontend_remote_q3_modules_initial_parent(modules)!=owner || owner->constructing ||
+        owner->retiring || owner->importing || owner->users || owner->transport_callbacks ||
+        owner->frontend->capture || owner->frontend->resource_inventory ||
+        owner->video_generation==UINT64_MAX ||
+        !frontend_remote_q3_modules_video_media_ready(modules,error) ||
+        !frontend_network_client_attempt_current(owner->frontend,&owner->view.attempt))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial media refresh requires its actual closed UI ticket and attempt");
+    frontend_remote_q3_initial_view *v=&owner->view;
+    if ((v->assets && !qa_q3_assets_idle(v->assets)) ||
+        (v->images && !qa_scene_resources_idle(v->images)) ||
+        (v->materials && !qa_material_library_idle(v->materials)) ||
+        (v->fonts && !qa_font_library_idle(v->fonts)) ||
+        (v->movies && !qa_media_library_idle(v->movies)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial video media retains an actual renderer borrower");
+    if (!frontend_material_movies_destroy(&owner->shader_movies,error)) return false;
+    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
+    qa_media_library_destroy(v->movies); v->movies=NULL;
+    qa_font_library_destroy(v->fonts); v->fonts=NULL;
+    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
+    qa_material_library_destroy(v->materials); v->materials=NULL;
+    qa_scene_resources_destroy(v->images); v->images=NULL;
+    owner->ready=false; owner->constructing=true;
+    bool okay=build_media(owner,error);
+    owner->constructing=false; owner->ready=okay;
+    if (!okay) return false;
+    *generation=++owner->video_generation;
+    return true;
+}
+bool frontend_remote_q3_initial_video_read(const frontend_remote_q3_initial *owner,
+    const frontend_remote_q3_modules *modules,frontend_remote_q3_initial_view *out,
+    uint64_t *generation,bool *complete,qa_error *error)
+{
+    bool linked=false;
+    for (const frontend_remote_q3_initial *row=owner && owner->frontend?owner->frontend->initial_resources:NULL;
+        row;row=row->next) if (row==owner) linked=true;
+    if (!linked || !modules || !out || !generation || !complete ||
+        frontend_remote_q3_modules_initial_parent(modules)!=owner || owner->constructing ||
+        owner->retiring || owner->importing || owner->application!=owner->frontend->application ||
+        owner->view.descriptor!=qa_launch_instance_lease_view(owner->descriptor) ||
+        !owner->view.mounts || frontend_client_registry_cvars(owner->view.registry)!=owner->view.attempt.source.receiver.cvars ||
+        !frontend_network_client_attempt_current(owner->frontend,&owner->view.attempt))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial video media lost its actual retained CLIENT attempt");
+    *out=owner->view; *generation=owner->video_generation; *complete=owner->ready;
     return true;
 }
 bool frontend_remote_q3_initial_create(qa_frontend *f,const frontend_network_client_attempt *attempt,
@@ -445,6 +506,11 @@ bool frontend_remote_q3_initial_destroy(frontend_remote_q3_initial **out,qa_erro
     if(!qa_native_q3_remote_client_transport_destroy(&owner->transport,error)) return false;
     frontend_remote_q3_initial_view *v=&owner->view;
     if(!frontend_client_registry_release(&v->registry,error)) return false;
+    if (owner->shader_movies && owner->view.movies && !owner->frontend->source_restoring) {
+        frontend_material_movie_source expected={.frontend=owner->frontend,.files=owner->view.mounts,.images=owner->view.images,
+            .materials=owner->view.materials,.media=owner->view.movies,.context=owner,.current=shader_movies_current};
+        if (!frontend_renderer_materials_adopt_movies(owner->frontend,&expected,&owner->shader_movies,&owner->view.movies,error)) return false;
+    }
     if (!frontend_material_movies_destroy(&owner->shader_movies,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); qa_media_library_destroy(v->movies);
     qa_font_library_destroy(v->fonts); qa_audio_bank_destroy(v->sounds);

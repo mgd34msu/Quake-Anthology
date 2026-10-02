@@ -34,8 +34,8 @@ typedef struct qa_network_checkpoint_refs {
         qa_network_qw_server_hooks *, qa_qw_download_admission *, qa_error *);
     bool (*client_q3_policy)(void *, const qa_net_client *, qa_network_q3_client_policy *, qa_error *);
     qa_network_q2_checkpoint_refs q2;
-    bool (*source_unified)(void *, const qa_net_client *, qa_unified_session_hooks *, qa_error *);
-    bool (*source_q1_client)(void *,const qa_net_client *,qa_network_q1_client_policy *,
+    bool (*source_unified)(void *, qa_network_runtime *, const qa_net_client *, qa_unified_session_hooks *, qa_error *);
+    bool (*source_q1_client)(void *,qa_network_runtime *,const qa_net_client *,qa_network_q1_client_policy *,
         qa_network_q1_client_hooks *,qa_error *);
     bool (*source_local)(void *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 } qa_network_checkpoint_refs;
@@ -43,7 +43,8 @@ typedef struct qa_network_checkpoint_refs {
 /* Transport is an explicitly prepared candidate binding. Source callback
  * descriptors must borrow the candidate, never the active application.
  * Unsupported installed dialect owners fail capture; no absent record is
- * fabricated. Transport transfers only after successful restore. */
+ * fabricated. Once allocation succeeds, out retains the candidate and its
+ * transport even on failure, so physical Source children can retire first. */
 bool qa_network_connections_checkpoint(const qa_network_runtime *, const qa_network_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_network_connections_restore(qa_bytes, qa_net_transport *, const qa_network_options *,
     const qa_network_checkpoint_refs *, qa_network_runtime **, qa_error *);

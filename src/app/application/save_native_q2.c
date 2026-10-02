@@ -84,6 +84,7 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
         qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
         qa_collision_create(&map, &app->geometry, error) &&
+        qa_collision_bind_resource(app->geometry, app->map_resource, error) &&
         qa_map_sidecars_apply_materials(app->map_sidecars, app->geometry, error) &&
         qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks, &world, error);
     if (!ok) return false;
@@ -105,7 +106,7 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     app->provider_count = 1;
     app->routing_providers = app->providers;
     app->routing_provider_count = 1;
-    if (!application_unified_event_owner_bind(app, scratch->source, true, false, error) ||
+    if (!application_unified_event_owner_bind(app, scratch->source, false, error) ||
         !application_provider_construct(app, scratch->source, app->world,
         target->product_catalog, target->product, qa_launch_snapshot_choices(snapshot), error)) return false;
     if (!qa_session_add(app->session, &scratch->source->component, error)) return false;

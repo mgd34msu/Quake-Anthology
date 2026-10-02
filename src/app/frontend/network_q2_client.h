@@ -25,6 +25,9 @@ bool frontend_network_q2_client_receive(frontend_network_q2_client *,
     const qa_net_datagram *, bool *, qa_error *);
 bool frontend_network_q2_client_tick(frontend_network_q2_client *, uint64_t, qa_error *);
 bool frontend_network_q2_client_idle(const frontend_network_q2_client *);
+bool frontend_network_q2_client_owns_input(const frontend_network_q2_client *,uint32_t physical_seat);
+bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_client *,
+    const qa_application_client_source *);
 bool frontend_network_q2_client_admit(frontend_network_q2_client *,
     const qa_net_connect *, bool *recognized, qa_error *);
 void frontend_network_q2_client_disconnected(frontend_network_q2_client *, qa_net_client_id);
@@ -36,6 +39,10 @@ bool frontend_network_q2_client_commands_capture(frontend_network_q2_client *,qa
 bool frontend_network_q2_client_commands_restore(frontend_network_q2_client *,qa_application *,
     const qa_application_console_scope *,qa_console *,qa_bytes,qa_error *);
 bool frontend_network_q2_client_finish_restore(frontend_network_q2_client *,qa_error *);
+bool frontend_network_q2_client_publication_ready(const frontend_network_q2_client *,qa_error *);
+void frontend_network_q2_client_publish(frontend_network_q2_client *);
+bool frontend_network_q2_client_qualified(const frontend_network_q2_client *,const qa_network_runtime *,
+    bool complete,qa_error *);
 typedef struct frontend_network_q2_client_state {
     qa_net_address remote;
     qa_net_protocol_id protocol;
@@ -66,4 +73,6 @@ bool frontend_network_q2_client_restore_hooks(frontend_network_q2_client *,qa_ne
     const qa_net_client *,qa_network_q2_client_policy *,qa_network_q2_client_hooks *,qa_error *);
 bool frontend_network_q2_client_source_read(const frontend_network_q2_client *,
     frontend_remote_q2_source_view *,qa_error *);
+bool frontend_network_q2_client_content_visit(const frontend_network_q2_client *,
+    const qa_application_content_visitor *,qa_error *);
 #endif

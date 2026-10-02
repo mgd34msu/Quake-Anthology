@@ -55,11 +55,11 @@ typedef struct application_qc_input_binding {
 typedef struct application_qc_cvar { char *name, *value; } application_qc_cvar;
 typedef struct application_qc_weapon_value {
     float value;
-    qa_item_id item;
+    qa_item_id item, ammo;
     char *label;
-    uint32_t bit;
+    uint32_t bit, via;
     int32_t impulse;
-    bool ui_declared;
+    bool ui_declared, ammo_declared;
 } application_qc_weapon_value;
 typedef struct application_qc_client_output_value {
     double value;

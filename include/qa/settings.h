@@ -89,6 +89,9 @@ qa_restart_controls *qa_restart_create(qa_cvars *, const qa_restart_service serv
 bool qa_restart_destroy(qa_restart_controls *, qa_error *);
 bool qa_restart_request(qa_restart_controls *, qa_restart_kind, qa_error *);
 bool qa_restart_drain(qa_restart_controls *, qa_error *);
+/* One queued service; its enclosing owner can finish a retained continuation
+ * before entering the next actual device request. */
+bool qa_restart_drain_one(qa_restart_controls *,qa_error *);
 bool qa_restart_register(qa_restart_controls *, qa_console *, uint64_t owner, qa_error *);
 bool qa_restart_pending(const qa_restart_controls *,qa_restart_kind);
 bool qa_restart_checkpoint(const qa_restart_controls *,qa_buffer *,qa_error *);

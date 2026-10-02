@@ -2,6 +2,12 @@
 #include "qa/game_q3_save.h"
 #include <ctype.h>
 
+const qa_q3_item *qa_q3_game_items(const qa_q3_game *game, size_t *count) {
+    if (!count) return NULL;
+    if (!game) { *count = 0; return NULL; }
+    return qa_q3_items(game->options.product, count);
+}
+
 static bool invoke_source(void *opaque, qa_item_id item, qa_item_action action, qa_error *error) {
     q3_inventory_owner *owner = opaque;
     qa_q3_game *game = owner->game;
@@ -58,11 +64,11 @@ bool q3_inventory_holdable_changed(qa_q3_game *game, qa_actor_id actor,
     const qa_q3_item *items = qa_q3_items(game->options.product, &count);
     for (size_t i = 1; i < count; ++i)
         if (items[i].kind == QA_Q3_ITEM_HOLDABLE &&
-            (items[i].tag == before || items[i].tag == after)) {
+            (items[i].tag == (int32_t)before || items[i].tag == (int32_t)after)) {
             qa_inventory_entry old = {.item = game->item_ids[i], .capacity = 1,
-                .count = items[i].tag == before ? 1 : 0, .policy = QA_COUNT_SOURCE_INT32};
+                .count = items[i].tag == (int32_t)before ? 1 : 0, .policy = QA_COUNT_SOURCE_INT32};
             qa_inventory_entry next = old;
-            next.count = items[i].tag == after ? 1 : 0;
+            next.count = items[i].tag == (int32_t)after ? 1 : 0;
             changes[used++] = (qa_inventory_change){.actor = actor, .had_before = true,
                                                    .before = old, .after = next};
         }
@@ -101,8 +107,8 @@ static bool equipment_read(void *opaque, size_t ordinal, qa_inventory_entry *out
     q3_actor *actor = q3_actor_get(owner->game, owner->actor);
     if (!item || !actor || actor->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "missing Q3 equipment inventory owner");
-    int32_t selected = item->kind == QA_Q3_ITEM_HOLDABLE ? actor->state.player.holdable
-                                                       : actor->state.player.persistent;
+    int32_t selected = item->kind == QA_Q3_ITEM_HOLDABLE ? (int32_t)actor->state.player.holdable
+                                                       : (int32_t)actor->state.player.persistent;
     *out = (qa_inventory_entry){.item = owner->game->item_ids[index], .capacity = 1,
                                 .count = selected == item->tag ? 1 : 0,
                                 .policy = QA_COUNT_SOURCE_INT32};
@@ -120,13 +126,13 @@ static bool equipment_write(void *opaque, const qa_inventory_entry *entry, qa_er
         if (item && owner->game->item_ids[index] == entry->item) {
             qa_q3_player_state *player = &actor->state.player;
             if (item->kind == QA_Q3_ITEM_PERSISTENT)
-                return entry->count == (player->persistent == item->tag ? 1 : 0) ||
+                return entry->count == ((int32_t)player->persistent == item->tag ? 1 : 0) ||
                     q3_fail(error, "Q3 persistent item changes require their actual pickup owner");
-            if (entry->count && player->holdable != QA_Q3_H_NONE && player->holdable != item->tag)
+            if (entry->count && player->holdable != QA_Q3_H_NONE && (int32_t)player->holdable != item->tag)
                 return q3_fail(error, "Q3 already holds another holdable");
             if (entry->count)
                 player->holdable = (qa_q3_holdable)item->tag;
-            else if (player->holdable == item->tag)
+            else if ((int32_t)player->holdable == item->tag)
                 player->holdable = QA_Q3_H_NONE;
             if (player->holdable == QA_Q3_H_KAMIKAZE)
                 player->flags |= 0x200u;

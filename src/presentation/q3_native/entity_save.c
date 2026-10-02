@@ -17,9 +17,10 @@ static bool pose(qa_source_save_io *io,q3n_pose_frame *p)
     return lerp(io,&p->animation) && scalar(io,&p->yaw_angle) && scalar(io,&p->pitch_angle) &&
         qa_source_save_bool(io,&p->yawing) && qa_source_save_bool(io,&p->pitching);
 }
-bool q3n_entity_codec(qa_source_save_io *io,q3n_entity *s)
+bool q3n_entity_codec_ref(qa_source_save_io *io,q3n_entity *s,void *context,
+    bool (*actor_fields)(void *,qa_source_save_io *,qa_actor_id *))
 {
-    return io && s && qa_source_save_actor(io,&s->actor) && qa_source_save_u32(io,&s->physical) &&
+    return io && s && actor_fields && actor_fields(context,io,&s->actor) && qa_source_save_u32(io,&s->physical) &&
         qa_source_save_u64(io,&s->client_media_revision) && qa_source_save_bool(io,&s->valid) &&
         qa_source_save_bool(io,&s->event_only_fired) && qa_source_save_bool(io,&s->teleport_bit) &&
         qa_source_save_bool(io,&s->loop_stopped) && qa_source_save_i32(io,&s->previous_event) &&
@@ -32,3 +33,7 @@ bool q3n_entity_codec(qa_source_save_io *io,q3n_entity *s)
         qa_source_save_bool(io,&s->barrel_spinning) && qa_source_save_bool(io,&s->lightning_firing) &&
         qa_source_save_bool(io,&s->railgun_flash) && vector(io,&s->rail_impact);
 }
+static bool actor_fields(void *context,qa_source_save_io *io,qa_actor_id *actor)
+{ (void)context; return qa_source_save_actor(io,actor); }
+bool q3n_entity_codec(qa_source_save_io *io,q3n_entity *s)
+{ return q3n_entity_codec_ref(io,s,NULL,actor_fields); }

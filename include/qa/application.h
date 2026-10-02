@@ -133,6 +133,16 @@ typedef struct qa_application_protocol_reference {
     qa_actor_id actor;
     bool packed_sound;
 } qa_application_protocol_reference;
+typedef struct qa_application_protocol_resource_reference {
+    /* Ordinal in this packet's decoded record stream, not a journal event ID. */
+    size_t record_ordinal;
+    qa_native_host_resource_kind kind;
+    uint32_t source_index;
+    const char *name;
+    /* Prior real Source precache registration. Empty retains an unresolved
+     * Source spelling, including sexed sounds and known missing resources. */
+    char resource_key[81];
+} qa_application_protocol_resource_reference;
 typedef struct qa_application_protocol_event {
     qa_actor_owner provider;
     qa_clock_kind dialect;
@@ -142,6 +152,8 @@ typedef struct qa_application_protocol_event {
     qa_bytes payload;
     const qa_application_protocol_reference *references;
     size_t reference_count;
+    const qa_application_protocol_resource_reference *resources;
+    size_t resource_count;
     int32_t destination;
     bool reliable, multicast, signon;
 } qa_application_protocol_event;

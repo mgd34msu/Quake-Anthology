@@ -42,7 +42,8 @@ bool application_qc_bot_order(struct application_qc_state *engine,qa_qc_instance
     qa_bot_view admitted; qa_error admission={0};
     if (!qa_bots_read(bots->population,actor,&admitted,&admission)) {
         if (admission.code==QA_ERROR_ARGUMENT) return qa_qc_return_float(vm,0,error);
-        if (error) *error=admission; return false;
+        if (error) *error=admission;
+        return false;
     }
     qa_bot_order_status status=QA_BOT_ORDER_ERROR;
     bool ok=follow?qa_bots_follow(bots->population,actor,target,&status,error):

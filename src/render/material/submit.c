@@ -1,10 +1,33 @@
 #include "internal.h"
 #include "source_scratch_private.h"
 #include "qa/scene_effects.h"
+#include "qa/q3_source_scene_bank.h"
 #include <math.h>
 #include <stdalign.h>
 #include <string.h>
 static bool source_issue(qa_material_source_scratch *, qa_scene_frame *, bool, qa_error *);
+static void source_sort_fix_rows(material_source_submission *row, uint32_t inserted)
+{
+    for (; row; row = row->next) {
+        uint32_t packed = row->packed_sort, shader = (packed >> 17) & 16383u;
+        if (shader >= inserted) row->packed_sort = ((shader + 1) << 17) |
+            ((packed >> 7) & 1023u) | (((packed >> 2) & 31u) << 2) | (packed & 3u);
+    }
+}
+void material_source_sort_inserted(qa_material_source_scratch *source, uint32_t inserted)
+{
+    for (material_source_operation *operation = source->operations; operation; operation = operation->next)
+        if (!operation->pictures) source_sort_fix_rows(operation->head, inserted);
+}
+static bool source_sort_capture(material_source_submission *row, qa_scene_frame *frame, qa_error *error)
+{
+    uint32_t rank;
+    if (!qa_material_order_prepare(frame->material_order, error) ||
+        !qa_material_order_rank(frame->material_order, row->original, &rank, error)) return false;
+    row->packed_sort = (rank << 17) | (row->context.entity << 7) |
+        (row->context.fog_index << 2) | (row->context.source_dlighted ? 1u : 0u);
+    return true;
+}
 static bool stencil_material(const qa_material *material)
 {
     qa_material_registration_kind kind;
@@ -152,6 +175,7 @@ static qa_scene_draw initial_draw(const qa_material *material, const qa_material
     draw.source_primitives = context->source_primitives;
     draw.source_retain_depth_range = context->source_scratch != NULL;
     draw.source_retain_polygon_offset = context->source_scratch != NULL;
+    draw.source_stage_state = context->source_scratch != NULL;
     draw.sort_key = ((uint64_t)original->sorted_index << 17) | ((uint64_t)context->entity << 7) |
                     ((uint64_t)context->fog_index << 2) |
                     ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
@@ -242,7 +266,8 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     qa_material_source_scratch *source = context->source_scratch;
     if (source) {
         bool lightmapped = iterator == QA_MATERIAL_LIGHTMAPPED, vertex_lit = iterator == QA_MATERIAL_VERTEX_LIT;
-        if (!lightmapped && !source_colors(stage, geometry, context, time, vertex_lit, error)) return false;
+        if (!lightmapped && (!vertex_lit || !source->issuing) &&
+            !source_colors(stage, geometry, context, time, vertex_lit, error)) return false;
         if (!lightmapped && !vertex_lit && stage->tcgen != QA_TC_BAD) {
             if (!source_coordinates(stage, geometry, context, time, 0, error)) return false;
             if (second && second->tcgen != QA_TC_BAD && !source_coordinates(second, geometry, context, time, 1, error)) return false;
@@ -269,13 +294,35 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     }
     if (context->source_depth_hack) { draw.state.depth_near = 0; draw.state.depth_far = .3f; }
     if (context->source_sky_depth) draw.state.depth_near = draw.state.depth_far = context->source_diagnostics.show_sky ? 0 : 1;
+    if (source && source->issuing) {
+        if (second_binding && !material_source_stage_state(source, &state, error)) return false;
+        if (second_binding && !material_source_texture_select(source, 0, error)) return false;
+        if (!material_source_client_coordinate_pointer(source,
+            iterator == QA_MATERIAL_GENERIC || iterator == QA_MATERIAL_SKY ? MATERIAL_SOURCE_COORDINATES_STAGE : MATERIAL_SOURCE_COORDINATES_TESS,
+            first_binding == stage ? 0 : 1, error)) return false;
+    }
     if (!texture(material, first_binding, context, time, &draw.textures[0], error)) return false;
     draw.retain_texture[0] = first_binding->retain_texture;
     draw.texture_count = 1;
+    if (source && source->issuing && !draw.retain_texture[0]) {
+        if (context->source_diagnostics.no_bind) draw.textures[0] = material->dlight_image;
+        if (!material_source_texture_bind(source, draw.textures[0], error)) return false;
+    }
     if (second_binding != NULL) {
+        if (source && source->issuing && (!material_source_texture_select(source, 1, error) ||
+            !material_source_texture_enable(source, true, error) ||
+            !material_source_client_arrays(source, true, true, error) ||
+            !material_source_texture_environment(source, environment, error) ||
+            !material_source_client_coordinate_pointer(source,
+                iterator == QA_MATERIAL_LIGHTMAPPED ? MATERIAL_SOURCE_COORDINATES_TESS : MATERIAL_SOURCE_COORDINATES_STAGE,
+                second_binding == stage ? 0 : 1, error))) return false;
         if (!texture(material, second_binding, context, time, &draw.textures[1], error)) return false;
         draw.retain_texture[1] = second_binding->retain_texture;
         draw.texture_count = 2;
+        if (source && source->issuing && !draw.retain_texture[1]) {
+            if (context->source_diagnostics.no_bind) draw.textures[1] = material->dlight_image;
+            if (!material_source_texture_bind(source, draw.textures[1], error)) return false;
+        }
     }
     if (source && (!material_source_current(source, error) || stage->invalid_blend ||
         (second && second->invalid_blend))) {
@@ -283,6 +330,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Material blend function has an uninitialized source factor");
         return false;
     }
+    if (source && source->issuing && !second_binding && !material_source_stage_state(source, &state, error)) return false;
     if (source && context->source_diagnostics.no_bind) {
         for (size_t i = 0; i < draw.texture_count; ++i)
             if (!draw.retain_texture[i]) draw.textures[i] = material->dlight_image;
@@ -323,7 +371,10 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         previous_colors[i] = vertices[i].color;
     }
     draw.mesh.vertices = vertices;
-    return qa_scene_frame_draw(frame, &draw, error);
+    draw.source_arrays = source != NULL;
+    if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+    return !source || !source->issuing || !second_binding ||
+        (material_source_texture_enable(source, false, error) && material_source_texture_select(source, 0, error));
 }
 static float dlight_byte(float component)
 {
@@ -395,6 +446,13 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
             draw.fog = context->fog;
             draw.fog.effect = QA_FOG_NO_EFFECT;
         }
+        if (context->source_scratch && context->source_scratch->issuing) {
+            if (!material_source_client_arrays(context->source_scratch, true, true, error) ||
+                !material_source_client_coordinate_pointer(context->source_scratch, MATERIAL_SOURCE_COORDINATES_DRAW, 0, error) ||
+                !material_source_texture_bind(context->source_scratch, draw.textures[0], error) ||
+                !material_source_stage_state(context->source_scratch, &draw.state, error)) return false;
+            draw.source_arrays = true;
+        }
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     }
     return true;
@@ -410,6 +468,9 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
     draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
     draw.state.depth_test = equal ? QA_DEPTH_EQUAL : QA_DEPTH_LEQUAL;
     draw.state.depth_write = false;
+    if (volume && context->source_scratch && context->source_scratch->issuing &&
+        (!material_source_client_arrays(context->source_scratch, true, true, error) ||
+        !material_source_client_coordinate_pointer(context->source_scratch, MATERIAL_SOURCE_COORDINATES_STAGE, 0, error))) return false;
     qa_scene_vertex *vertices = frame_array(frame, geometry->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
     if (vertices == NULL) return false;
     if (volume) {
@@ -439,6 +500,11 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
         }
     }
     draw.mesh.vertices = vertices;
+    if (volume && context->source_scratch && context->source_scratch->issuing) {
+        if (!material_source_texture_bind(context->source_scratch, draw.textures[0], error) ||
+            !material_source_stage_state(context->source_scratch, &draw.state, error)) return false;
+        draw.source_arrays = true;
+    }
     return qa_scene_frame_draw(frame, &draw, error);
 }
 static bool emit_fog(const qa_material *material, const qa_material *original,
@@ -493,6 +559,20 @@ static bool execute_material(const qa_material *material, const qa_material *ori
     size_t passes; qa_material_iterator iterator;
     bool collapsed = material_plan(material, context->fragment_lighting, &collapsed_environment, &collapsed_state, &passes, &iterator);
     bool fast_iterator = iterator == QA_MATERIAL_VERTEX_LIT || iterator == QA_MATERIAL_LIGHTMAPPED;
+    qa_material_source_scratch *source = context->source_scratch;
+    if (source && source->issuing) {
+        if (iterator == QA_MATERIAL_VERTEX_LIT && material->stage_count &&
+            !source_colors(material->stages, geometry, context, time, true, error)) return false;
+        if (!material_source_cull(source, material_cull(material, context), error)) return false;
+        if (!fast_iterator && material->polygon_offset && !material_source_polygon_offset(source, true,
+            context->source_diagnostics.polygon_offset_factor, context->source_diagnostics.polygon_offset_units, error)) return false;
+        if (!fast_iterator && (passes > 1 || collapsed) && !material_source_client_arrays(source, false, false, error)) return false;
+        if (!material_source_client_arrays(source, true, true, error)) return false;
+        if (iterator == QA_MATERIAL_LIGHTMAPPED) {
+            qa_scene_state state; qa_scene_state_default(&state);
+            if (!material_source_stage_state(source, &state, error) || !material_source_texture_select(source, 0, error)) return false;
+        }
+    }
     for (size_t i = 0; i < material->stage_count; ++i) {
         const qa_material_stage *stage = &material->stages[i];
         if (!active_stage(stage)) { if (context->source_scratch) break; continue; }
@@ -533,6 +613,13 @@ static void source_entity_read(qa_material_source_scratch *source, const qa_mate
     source->entity_is_cell = context->source_entity_cell && context->entity < 1022;
     if (source->entity_is_cell) {
         source->entity_cell = context->entity;
+        if (source->scene_bank) {
+            qa_q3_source_entity_cell raw;
+            if (qa_q3_source_scene_bank_entity_read(source->scene_bank, context->entity, &raw))
+                qa_q3_source_scene_bank_entity_lighting(source->scene_bank, context->entity,
+                    context->ambient, context->directed, context->light_direction, context->ambient_alpha,
+                    raw.axis_length, raw.need_lights);
+        }
         material_source_entity *cell = source->entities + context->entity;
         cell->ambient = context->ambient; cell->directed = context->directed;
         cell->light_direction = context->light_direction; cell->ambient_alpha = context->ambient_alpha;
@@ -549,12 +636,68 @@ static void source_entity_apply(const qa_material_source_scratch *source, qa_mat
     context->time_offset = entity->time_offset; context->shadow_plane = entity->shadow_plane;
     context->entity = source->entity.number; context->non_normalized_axis = entity->non_normalized_axis;
     context->projection_shadow = entity->projection_shadow;
+    if (source->entity_is_cell && source->scene_bank) {
+        qa_q3_source_entity_cell cell;
+        if (qa_q3_source_scene_bank_entity_read(source->scene_bank, source->entity_cell, &cell)) {
+            context->entity_color = (qa_scene_vec4){cell.value.color[0] / 255.f, cell.value.color[1] / 255.f,
+                cell.value.color[2] / 255.f, cell.value.color[3] / 255.f};
+            context->entity_texcoord = cell.value.shader_texcoord;
+            context->time_offset = cell.value.shader_time;
+            context->shadow_plane = cell.value.shadow_plane;
+            context->non_normalized_axis = cell.value.non_normalized_axes;
+            context->projection_shadow = true;
+            context->ambient = cell.ambient; context->directed = cell.directed;
+            context->light_direction = cell.light_direction; context->ambient_alpha = cell.ambient_alpha;
+        }
+    }
     context->local_view_origin = source->local_view_origin;
     context->fog_index = source->fog_index; context->fog = source->fog;
     context->fog_tc_scale = source->fog_tc_scale; context->fog_has_surface = source->fog_has_surface;
     context->fog_surface = source->fog_surface; context->fog_volume_color = source->fog_volume_color;
     context->lightmap = source->lightmap;
     context->lights = source->lights; context->light_count = source->light_count;
+}
+static bool source_decoded_entity(qa_material_source_scratch *source, qa_material_context *context,
+    uint32_t incoming, qa_error *error)
+{
+    if (context->entity == incoming) return true;
+    qa_scene_matrix_identity(&context->model);
+    context->local_view_origin = source->view_origin;
+    if (context->entity == 1022) {
+        context->entity_color = (qa_scene_vec4){1, 1, 1, 1};
+        context->entity_texcoord = (qa_scene_vec2){0}; context->time_offset = 0;
+        context->source_entity_cell = context->source_depth_hack = false;
+        context->non_normalized_axis = context->projection_shadow = false;
+        return true;
+    }
+    qa_q3_source_entity_cell cell;
+    if (!source->scene_bank || !qa_q3_source_scene_bank_entity_read(source->scene_bank, context->entity, &cell)) {
+        qa_error_set(error, QA_ERROR_FORMAT, context->entity, "Source packed sort selects no physical entity cell"); return false;
+    }
+    const qa_q3_ref_entity *entity = &cell.value;
+    context->entity_color = (qa_scene_vec4){entity->color[0] / 255.f, entity->color[1] / 255.f,
+        entity->color[2] / 255.f, entity->color[3] / 255.f};
+    context->entity_texcoord = entity->shader_texcoord; context->time_offset = entity->shader_time;
+    context->shadow_plane = entity->shadow_plane; context->non_normalized_axis = entity->non_normalized_axes;
+    context->projection_shadow = true; context->source_depth_hack = (entity->flags & 8) != 0;
+    context->source_entity_cell = true;
+    context->ambient = cell.ambient; context->directed = cell.directed;
+    context->light_direction = cell.light_direction; context->ambient_alpha = cell.ambient_alpha;
+    if (entity->kind == QA_Q3_REF_MODEL) {
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            context->model.m[axis * 4] = entity->axis[axis].x;
+            context->model.m[axis * 4 + 1] = entity->axis[axis].y;
+            context->model.m[axis * 4 + 2] = entity->axis[axis].z;
+        }
+        context->model.m[12] = entity->origin.x; context->model.m[13] = entity->origin.y;
+        context->model.m[14] = entity->origin.z;
+        qa_vec3 delta = qa_vec_sub(source->view_origin, entity->origin);
+        float scale = 1;
+        if (entity->non_normalized_axes) { float length = qa_vec_length(entity->axis[0]); scale = length ? 1 / length : 0; }
+        context->local_view_origin = qa_v3(qa_vec_dot(delta, entity->axis[0]) * scale,
+            qa_vec_dot(delta, entity->axis[1]) * scale, qa_vec_dot(delta, entity->axis[2]) * scale);
+    }
+    return true;
 }
 static bool source_begin_surface(qa_material_source_scratch *source,
     const material_source_submission *row, qa_error *error)
@@ -575,6 +718,7 @@ static bool source_begin_surface(qa_material_source_scratch *source,
         shader_seconds(row->original, material, &row->context);
     if (material->clamp_time && seconds >= material->clamp_time) seconds = material->clamp_time;
     source->shader_time = (float)seconds;
+    source->identity_light = row->context.identity_light;
     return true;
 }
 static bool source_restart_surface(qa_material_source_scratch *source,
@@ -670,7 +814,8 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         } else for (size_t i = 0; i < mesh->vertex_count; ++i) {
             qa_scene_vertex previous = source->vertices[i], vertex = mesh->vertices[i];
             switch (context->source_writer) {
-            case QA_SOURCE_WRITE_MODEL: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
+            case QA_SOURCE_WRITE_MODEL: /* fall through */
+            case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
             case QA_SOURCE_WRITE_PICTURE: /* fall through */
             case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
             case QA_SOURCE_WRITE_RAIL:
@@ -717,12 +862,11 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         ok = indices != NULL;
         if (ok) { memcpy(indices, geometry.indices, geometry.index_count * sizeof(*indices)); geometry.indices = indices; }
     }
-    bool offset = ok && !skipped && geometry.vertex_count && geometry.index_count && material->polygon_offset;
-    if (ok && !skipped && geometry.vertex_count && geometry.index_count && source->issuing)
-        ok = material_source_cull(source, material_cull(material, context), error);
-    if (offset && source->issuing)
-        ok = material_source_polygon_offset(source, true, context->source_diagnostics.polygon_offset_factor,
-            context->source_diagnostics.polygon_offset_units, error);
+    qa_scene_texture_environment plan_environment; qa_scene_state plan_state;
+    size_t plan_passes; qa_material_iterator plan_iterator;
+    (void)material_plan(material, context->fragment_lighting, &plan_environment, &plan_state, &plan_passes, &plan_iterator);
+    bool offset = ok && !skipped && geometry.vertex_count && geometry.index_count && material->polygon_offset &&
+        plan_iterator != QA_MATERIAL_VERTEX_LIT && plan_iterator != QA_MATERIAL_LIGHTMAPPED;
     if (ok && !skipped && geometry.vertex_count && geometry.index_count) {
         ok = execute_material(material, original, &geometry, context, time, frame, error);
         if (ok && offset && source->issuing)
@@ -749,6 +893,9 @@ bool qa_material_source_scene_begin(qa_material_source_scratch *source, qa_scene
         if (frame->source_pending) { material_source_leave(source); qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Frame already owns pending Source work"); return false; }
     }
     source->submitting = false; source->collecting = true; source->frame = frame;
+    if (!material_source_order_attach(frame->material_order, source, error)) {
+        source->collecting = false; material_source_leave(source); return false;
+    }
     source->pictures = false; frame->source_pending = source;
     source->head = source->tail = NULL; source->submission_count = 0;
     source->sky = (qa_material_context){0};
@@ -773,6 +920,16 @@ bool qa_material_source_scene_view(qa_material_source_scratch *source, const qa_
     }
     source->view.light_count = count;
     if (count) memcpy(source->view.lights, lights, count * sizeof(*lights));
+    if (input->render_text_count > 8 || (input->render_text_count && !input->render_texts)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view has no actual bounded refdef text rows"); return false;
+    }
+    for (size_t i = 0; i < input->render_text_count; ++i) {
+        const char *text = input->render_texts[i];
+        if (!text) continue;
+        size_t n = 0;
+        while (n < 32 && text[n]) { source->view.texts[i][n] = text[n]; ++n; }
+        source->view.texts[i][n] = 0;
+    }
     return true;
 }
 bool qa_material_source_scene_sky(qa_material_source_scratch *source, const qa_material_context *context, qa_error *error)
@@ -865,7 +1022,7 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         }
         row->context.texts = texts;
     }
-    if (!qa_material_retain(original, error)) return false;
+    if (!source_sort_capture(row, frame, error) || !qa_material_retain(original, error)) return false;
     if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
         qa_material_release(original); return false;
     }
@@ -881,7 +1038,8 @@ static void source_append(qa_material_source_scratch *source, const material_sou
     for (size_t i = 0; i < row->mesh.vertex_count; ++i) {
         qa_scene_vertex previous = source->vertices[base + i], vertex = row->mesh.vertices[i];
         switch (row->context.source_writer) {
-        case QA_SOURCE_WRITE_MODEL: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
+        case QA_SOURCE_WRITE_MODEL: /* fall through */
+        case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
         case QA_SOURCE_WRITE_PICTURE: /* fall through */
         case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
         case QA_SOURCE_WRITE_RAIL:
@@ -897,8 +1055,9 @@ static void source_append(qa_material_source_scratch *source, const material_sou
         }
         source->vertices[base + i] = vertex;
     }
+    size_t index_base = row->context.source_writer == QA_SOURCE_WRITE_MODEL_MD4 ? source->index_count : base;
     for (size_t i = 0; i < row->mesh.index_count; ++i)
-        source->indices[source->index_count + i] = (uint32_t)base + row->mesh.indices[i];
+        source->indices[source->index_count + i] = (uint32_t)index_base + row->mesh.indices[i];
     source->vertex_count += row->mesh.vertex_count; source->index_count += row->mesh.index_count;
 }
 bool qa_material_source_commands(const qa_material *material, const qa_material_context *context,
@@ -920,7 +1079,7 @@ bool qa_material_source_commands(const qa_material *material, const qa_material_
         if (!row->commands) return false;
         memcpy(row->commands, frame->commands + first, row->command_count * sizeof(*row->commands));
     }
-    if (!qa_material_retain(material, error)) return false;
+    if (!source_sort_capture(row, frame, error) || !qa_material_retain(material, error)) return false;
     if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
         qa_material_release(material); return false;
     }
@@ -936,6 +1095,9 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
     const qa_material *material = source->material;
     if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source EndSurface has no retained shader"); return false; }
     qa_material_context context = row->context; context.source_writer = QA_SOURCE_WRITE_FULL;
+    const char *texts[8];
+    for (size_t i = 0; i < 8; ++i) texts[i] = source->texts[i];
+    context.texts = texts; context.text_count = 8;
     context.light_mask = light_mask;
     source_entity_apply(source, &context);
     float time = source->shader_time;
@@ -986,6 +1148,53 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
     return qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
         row->original->sort, context.entity, context.fog_index, context.source_dlighted ? 1 : 0, error);
 }
+bool material_source_deform_overflow(qa_material_source_scratch *source, const qa_material_context *context,
+    qa_scene_frame *frame, qa_error *error)
+{
+    if (!source || !context || source->frame != frame || !source->submitting || !source->issuing ||
+        !source->dispatching || !source->material || !material_source_current(source, error)) return false;
+    material_source_submission row = {.original = source->material, .context = *context,
+        .mesh = {.vertices = source->vertices, .indices = source->indices,
+            .vertex_count = source->vertex_count, .index_count = source->index_count,
+            .primitive = QA_SCENE_TRIANGLES}};
+    source->submitting = false;
+    bool ok = source_flush(source, &row, source->light_mask, frame, error);
+    if (ok) ok = source_restart_surface(source, &row, error);
+    source->submitting = true;
+    return ok;
+}
+static bool source_flush_pending(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
+{
+    if (!source->index_count) return true;
+    if (!source->material || !source->runtime_diagnostics) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source pending surface has no actual runtime owner"); return false;
+    }
+    material_source_submission row = {.original = source->material,
+        .mesh = {.primitive = QA_SCENE_TRIANGLES},
+        .context = {.source_scratch = source, .source_primitives = true,
+            .identity_light = source->identity_light, .source_white = source->material->dlight_image,
+            .video_frame = source->runtime_video_frame, .video_context = source->runtime_video_context,
+            .milliseconds = source->picture_milliseconds,
+            .seconds = (float)source->picture_milliseconds * .001f}};
+    if (!source->runtime_diagnostics(source->runtime_diagnostics_context, &row.context.source_diagnostics, error) ||
+        !material_source_current(source, error) || !material_source_view_read(source, &row.context.view, error)) return false;
+    row.context.source_picture = source->projection_2d;
+    if (row.context.source_picture) {
+        qa_scene_rect viewport = row.context.view.viewport;
+        if (!viewport.width || !viewport.height) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source pending picture lost its actual viewport"); return false;
+        }
+        row.context.source_picture_projection = (qa_scene_matrix){.m = {
+            2.f / (float)viewport.width, 0, 0, 0, 0, -2.f / (float)viewport.height, 0, 0,
+            0, 0, -2, 0, -1.f - 2.f * (float)viewport.x / (float)viewport.width,
+            1.f + 2.f * (float)viewport.y / (float)viewport.height, -1, 1}};
+    }
+    bool dispatching = source->dispatching;
+    source->dispatching = true;
+    bool ok = source_flush(source, &row, source->light_mask, frame, error);
+    source->dispatching = dispatching;
+    return ok;
+}
 static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_frame *frame,
     bool submit, qa_error *error)
 {
@@ -996,26 +1205,25 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
     bool ok = !submit || material_source_current(source, error);
     size_t count = source->submission_count;
     material_source_submission **rows = NULL;
+    material_source_submission *decoded_rows = NULL;
+    size_t decoded_count = 0;
     qa_scene_group *groups = NULL, **ordered = NULL;
     if (ok && submit && count) {
         rows = frame_array(frame, count, sizeof(*rows), alignof(material_source_submission *), error);
         groups = frame_array(frame, count, sizeof(*groups), alignof(qa_scene_group), error);
         ordered = frame_array(frame, count, sizeof(*ordered), alignof(qa_scene_group *), error);
         ok = rows && groups && ordered && qa_material_order_prepare(frame->material_order, error);
+        if (ok && !source->pictures) {
+            decoded_rows = frame_array(frame, count, sizeof(*decoded_rows), alignof(material_source_submission), error);
+            ok = decoded_rows != NULL;
+        }
         material_source_submission *row = source->head;
         for (size_t i = 0; ok && i < count; ++i, row = row->next) {
-            uint32_t rank;
-            ok = qa_material_order_rank(frame->material_order, row->original, &rank, error);
-            if (ok && (rank >= 16384 || row->context.entity > 1022 || row->context.fog_index > 31)) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source batch sort fields exceed their actual widths"); ok = false;
-            }
             if (ok) {
                 rows[i] = row; ordered[i] = groups + i;
-                groups[i] = (qa_scene_group){.ordinal = i, .source_sort = (rank << 17) |
-                    (row->context.entity << 7) | (row->context.fog_index << 2) | (row->context.source_dlighted ? 1 : 0)};
+                groups[i] = (qa_scene_group){.ordinal = i, .source_sort = row->packed_sort};
             }
         }
-        if (ok && !source->pictures) ok = material_source_sort(ordered, count, error);
     }
     source->collecting = false; source->dispatching = true;
     const material_source_submission *batch = NULL;
@@ -1024,7 +1232,32 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
     bool old_depth_range = false;
     for (size_t i = 0; ok && submit && i < count; ++i) {
         material_source_submission *row = rows[ordered[i]->ordinal];
-        uint32_t next_key = ordered[i]->source_sort;
+        uint32_t next_key = row->packed_sort;
+        if (!source->pictures) {
+            material_source_submission *decoded = decoded_rows + decoded_count;
+            uint32_t shader = (next_key >> 17) & 16383u;
+            const qa_material *sorted_material = qa_material_order_sorted_at(frame->material_order, shader);
+            if (!sorted_material) {
+                qa_error_set(error, QA_ERROR_FORMAT, shader, "Source packed sort selects an absent registered shader");
+                ok = false; break;
+            }
+            qa_scene_fog_volume fog;
+            if (!qa_scene_world_source_fog_read(source->world, (next_key >> 2) & 31u, &fog, error) ||
+                !qa_material_retain(sorted_material, error)) { ok = false; break; }
+            *decoded = *row;
+            decoded->original = sorted_material;
+            decoded->context.entity = (next_key >> 7) & 1023u;
+            decoded->context.fog_index = fog.index;
+            decoded->context.fog = fog.fog;
+            decoded->context.fog_volume_color = fog.fog.color;
+            decoded->context.fog_tc_scale = fog.tc_scale;
+            decoded->context.fog_has_surface = fog.has_surface;
+            decoded->context.fog_surface = fog.surface;
+            row = decoded; ++decoded_count;
+            if (!source_decoded_entity(source, &row->context, rows[ordered[i]->ordinal]->context.entity, error)) {
+                ok = false; break;
+            }
+        }
         bool same_entity = !batch || row->context.entity == batch->context.entity;
         bool transition = source->pictures ? row->original != source->material :
             ((key & ~UINT32_C(0x1ff80)) != (next_key & ~UINT32_C(0x1ff80)) ||
@@ -1034,7 +1267,7 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
         }
         if (!ok) break;
         if (row->context.source_entity_cell && (row->context.entity >= 1022 ||
-            row->context.entity >= source->entity_count)) {
+            (!source->scene_bank && row->context.entity >= source->entity_count))) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source surface lost its actual admitted entity cell");
             ok = false; break;
         }
@@ -1154,9 +1387,10 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
             }
         }
     }
-    if (ok && submit) ok = source_flush(source, batch, light_mask, frame, error);
+    if (ok && submit && !source->pictures) ok = source_flush(source, batch, light_mask, frame, error);
     if (ok && submit && source->issuing && !source->pictures && old_depth_range)
         ok = material_source_depth_range(source, 0, 1, error);
+    for (size_t i = 0; i < decoded_count; ++i) qa_material_release(decoded_rows[i].original);
     source->head = source->tail = NULL; source->submission_count = 0;
     source->sky = (qa_material_context){0};
     source->pictures = false;
@@ -1173,6 +1407,22 @@ bool qa_material_source_scene_end(qa_material_source_scratch *source, qa_scene_f
         return false;
     }
     if (!submit) return source_issue(source, frame, false, error);
+    if (!source->pictures && source->submission_count > 1) {
+        size_t count = source->submission_count;
+        material_source_submission **rows = frame_array(frame, count, sizeof(*rows), alignof(material_source_submission *), error);
+        qa_scene_group *groups = frame_array(frame, count, sizeof(*groups), alignof(qa_scene_group), error);
+        qa_scene_group **ordered = frame_array(frame, count, sizeof(*ordered), alignof(qa_scene_group *), error);
+        if (!rows || !groups || !ordered) return false;
+        material_source_submission *row = source->head;
+        for (size_t i = 0; i < count; ++i, row = row->next) {
+            rows[i] = row; groups[i] = (qa_scene_group){.ordinal = i, .source_sort = row->packed_sort};
+            ordered[i] = groups + i;
+        }
+        if (!material_source_sort(ordered, count, error)) return false;
+        source->head = rows[ordered[0]->ordinal]; source->tail = rows[ordered[count - 1]->ordinal];
+        for (size_t i = 0; i < count; ++i)
+            rows[ordered[i]->ordinal]->next = i + 1 < count ? rows[ordered[i + 1]->ordinal] : NULL;
+    }
     material_source_operation *operation = frame_array(frame, 1, sizeof(*operation),
         alignof(material_source_operation), error);
     if (!operation) return false;
@@ -1221,10 +1471,6 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
         }
         for (material_source_operation *operation = source->operations; ok && operation; operation = operation->next)
             if (operation->view.valid) {
-                if (operation->view.world && !qa_scene_world_retain(operation->view.world, error)) { ok = false; break; }
-                qa_scene_world_release(source->world);
-                source->world = operation->view.world;
-                source->far_clip = operation->view.far_clip;
                 material_source_view *policy = &operation->view;
                 if (policy->command_offset >= count || commands[policy->command_offset].kind != QA_SCENE_COMMAND_VIEW) {
                     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view lost its actual reached command"); ok = false; break;
@@ -1246,7 +1492,19 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
             if (operation->command_offset < copied || operation->command_offset > count) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source operation lost its actual command position"); ok = false; break;
             }
+            while (ok && copied < operation->command_offset) {
+                if (commands[copied].kind == QA_SCENE_COMMAND_SWAP ||
+                    (operation->view.valid && copied == operation->view.command_offset))
+                    ok = source_flush_pending(source, frame, error);
+                if (ok) ok = qa_scene_frame_emit(frame, commands + copied++, error);
+            }
+            if (!ok) break;
             if (operation->view.valid) {
+                if (operation->view.world && !qa_scene_world_retain(operation->view.world, error)) { ok = false; break; }
+                qa_scene_world_release(source->world);
+                source->world = operation->view.world;
+                source->far_clip = operation->view.far_clip;
+                memcpy(source->texts, operation->view.texts, sizeof(source->texts));
                 source->projection_2d = false;
                 source->view_origin = operation->view.view.origin;
                 memcpy(source->view_axis, operation->view.view.axis, sizeof(source->view_axis));
@@ -1258,9 +1516,6 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
                 if (source->light_count) memcpy(source->lights, operation->view.lights,
                     source->light_count * sizeof(*source->lights));
             }
-            while (ok && copied < operation->command_offset)
-                ok = qa_scene_frame_emit(frame, commands + copied++, error);
-            if (!ok) break;
             source->head = operation->head; source->tail = operation->tail;
             source->submission_count = operation->count; source->pictures = operation->pictures;
             if (operation->pictures && operation->head) {
@@ -1283,7 +1538,10 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
             source->collecting = true;
             ok = source_dispatch_scene(source, frame, true, error);
         }
-        while (ok && copied < count) ok = qa_scene_frame_emit(frame, commands + copied++, error);
+        while (ok && copied < count) {
+            if (commands[copied].kind == QA_SCENE_COMMAND_SWAP) ok = source_flush_pending(source, frame, error);
+            if (ok) ok = qa_scene_frame_emit(frame, commands + copied++, error);
+        }
     }
     if (source->issue_started) {
         qa_error finish = {0};
@@ -1310,6 +1568,32 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
     source->issued_count = 0; source->issue_started = false;
     source->collecting = source->pictures = source->dispatching = source->issuing = false;
     frame->source_pending = NULL;
+    material_source_order_detach(source->queued_order, source);
+    material_source_leave(source);
+    return ok;
+}
+bool qa_material_source_swap_end(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
+{
+    if (!source || !frame) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source flush requires its actual renderer frame"); return false;
+    }
+    if (source->entered && !qa_material_source_frame_end(source, frame, true, error)) return false;
+    if (frame->source_skip_backend || !source->index_count) return true;
+    if (!material_source_enter(source, error)) return false;
+    source->frame = frame; frame->source_pending = source;
+    source->submitting = false;
+    source->dispatching = source->issuing = true;
+    source->issued_count = 0; source->issue_started = false;
+    bool ok = source_flush_pending(source, frame, error);
+    if (source->issue_started) {
+        qa_error cleanup = {0};
+        bool finished = material_source_execute_prefix(source, frame, true, ok ? error : &cleanup);
+        if (ok && !finished) ok = false;
+        frame->command_count = frame->group_count = 0;
+    }
+    source->frame = NULL; frame->source_pending = NULL;
+    source->dispatching = source->issuing = false;
+    source->issued_count = 0; source->issue_started = false;
     material_source_leave(source);
     return ok;
 }
@@ -1337,7 +1621,7 @@ bool qa_material_submit(const qa_material *original, const qa_scene_mesh *mesh,
     if ((mesh->vertex_count == 0 || mesh->index_count == 0) &&
         !(context->source_scratch && context->source_writer == QA_SOURCE_WRITE_CLOUD)) return true;
     if (!context->source_scratch && frame->source_pending &&
-        !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
+        !qa_material_source_swap_end(frame->source_pending, frame, error)) return false;
     const qa_material *material = original;
     if (material->remapped != NULL) material = material->remapped;
     if ((material->surface_flags & 128u) != 0) return true;

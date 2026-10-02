@@ -138,7 +138,9 @@ bool qa_bot_character_load(qa_bot_library *, const char *, float, qa_bot_charact
 void qa_bot_character_retain(qa_bot_character *);
 void qa_bot_character_release(qa_bot_character *);
 const qa_bot_character_view *qa_bot_character_read(const qa_bot_character *);
+bool qa_bot_character_view_read(const qa_bot_character *, const qa_bot_character_view **, qa_error *);
 bool qa_bot_character_restore(const qa_bot_character_view *, qa_bot_character **, qa_error *);
+bool qa_bot_character_free(qa_bot_character *, qa_error *);
 /* Saved float values include IEEE results produced by skill interpolation. */
 bool qa_bot_character_float(const qa_bot_character *, uint32_t, float *, qa_error *);
 bool qa_bot_character_integer(const qa_bot_character *, uint32_t, int32_t *, qa_error *);
@@ -233,6 +235,8 @@ bool qa_bot_items_load(qa_bot_library *, const char *, size_t maximum, qa_bot_it
 void qa_bot_items_retain(qa_bot_items *);
 void qa_bot_items_release(qa_bot_items *);
 const qa_bot_items_view *qa_bot_items_read(const qa_bot_items *);
+bool qa_bot_items_view_read(const qa_bot_items *, const qa_bot_items_view **, qa_error *);
 bool qa_bot_items_restore(const qa_bot_items_view *, qa_bot_items **, qa_error *);
+bool qa_bot_items_free(qa_bot_items *, qa_error *);
 
 #endif

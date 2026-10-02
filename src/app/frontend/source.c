@@ -1,5 +1,9 @@
+#include "renderer_materials.h"
+#include "source_acoustics.h"
+#include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
 #include "qa/application_q3_components.h"
+#include "component_scene.h"
 #include "remote_q1_effects.h"
 #include "q1_sky.h"
 #include "internal.h"
@@ -15,6 +19,7 @@
 #include "campaign_cinematic.h"
 #include "qc_rerelease_events.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_assets_custody.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/font_save.h"
@@ -140,6 +145,7 @@ static bool render_enter(void *,const qa_q3_host *,const qa_qvm_call *,
 static void render_leave(void *,void *,bool);
 static void body_scene_clear(frontend_source_lease *);
 static bool body_scene_prepare(frontend_source_lease *,qa_q3_scene_options *,qa_error *);
+static void body_scene_completed(frontend_source_lease *);
 static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
@@ -854,6 +860,7 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
     (void)vertices; (void)vertex_count; (void)lights; (void)light_count;
     if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene completion lost its actual reached render scope");
+    body_scene_completed(scope->lease);
     scene_cleared(source); return true;
 }
 static void float_word(uint8_t *out, float value)
@@ -1008,7 +1015,13 @@ static bool source_free(frontend_source *source)
         if (!qa_audio_engine_stop_owner(frontend->audio, source->identity, source->seat, &error))
             fprintf(stderr, "source audio retirement: %s\n", error.message);
     }
+    if (source->shader_movies && source->movies && !source->frontend->source_restoring) {
+        frontend_material_movie_source expected={.frontend=source->frontend,.files=source->mounts,.images=source->images,
+            .materials=source->materials,.media=source->movies,.context=source,.current=shader_movies_current};
+        if (!frontend_renderer_materials_adopt_movies(source->frontend,&expected,&source->shader_movies,&source->movies,&error)) return false;
+    }
     if (!frontend_material_movies_destroy(&source->shader_movies,&error)) return false;
+    if (source->assets && !qa_q3_assets_services_retire(source->assets,&error)) return false;
     qa_q3_presentation_assets_destroy(source->assets); source->assets=NULL;
     qa_scene_world_destroy(source->world);
     qa_collision_destroy(source->geometry);
@@ -1260,13 +1273,15 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
     if (bsp.family!=QA_BSP_Q3)
         return frontend_fail(error,QA_ERROR_FORMAT,"Private Q3 receiver requires its actual Q3 collision map");
     source->map_resource=(qa_resource *)map; qa_resource_retain(source->map_resource);
-    if (!qa_collision_create(&bsp,&source->geometry,error)) return false;
+    if (!qa_collision_create(&bsp,&source->geometry,error) ||
+        !qa_collision_bind_resource(source->geometry,source->map_resource,error)) return false;
     if (!world) return true;
     qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
     if (!frontend_q3_world_policy_initialize(source->frontend,&options,error)) return false;
     return qa_scene_world_create(&bsp,source->images,source->materials,&options,&source->world,error) &&
+        qa_scene_world_source_resource_bind(source->world,source->map_resource,error) &&
         frontend_material_remaps(source->frontend,source->materials,error);
 }
 static qa_collision_geometry *source_map_geometry(void *context)
@@ -1480,7 +1495,9 @@ struct source_body_draw {
     size_t count;
     source_body_ref *refs;
     size_t ref_count;
-    uint32_t first_order;
+    uint32_t first_order,component_order;
+    qa_scene_light *lights,*projected_lights;
+    bool components_submitted;
 };
 static bool body_current(void *context,const qa_application_q3_body_draw *view)
 {
@@ -1575,13 +1592,15 @@ static void body_release(void *context,qa_application_q3_body_draw *view)
     if (!draw) return;
     for (size_t i=draw->count;i;--i) qa_application_q3_component_bodies_return(&draw->components[i-1].lease);
     if (lease->body_draw==draw) lease->body_draw=NULL;
-    free(draw->components); free(draw->refs); free(draw); view->token=NULL;
+    free(draw->components); free(draw->refs); free(draw->lights); free(draw->projected_lights); free(draw); view->token=NULL;
     time_leave(lease);
 }
 static void body_scene_clear(frontend_source_lease *lease)
 {
     if (lease->body_draw) lease->body_draw->ref_count=0;
 }
+static void body_scene_completed(frontend_source_lease *lease)
+{ if (lease->body_draw) lease->body_draw->components_submitted=true; }
 static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
 {
     source_body_draw *draw=lease->body_draw;
@@ -1590,7 +1609,50 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
     if (!body_current(lease,&view) || options->first_entity>=1022 || draw->ref_count>1022-options->first_entity)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene order left its actual Draw inventory");
     draw->first_order=options->first_entity; options->first_entity+=(uint32_t)draw->ref_count;
-    return true;
+    draw->component_order=options->first_entity;
+    size_t entities=0,lights=0;
+    if (!draw->components_submitted) for (size_t i=0;i<draw->count;++i) {
+        const qa_application_q3_component_draw *child=&draw->components[i].draw;
+        size_t packets;
+        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) return false;
+        for (size_t j=0;j<packets;++j) {
+            frontend_component_scene_packet packet;
+            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) return false;
+            if (packet.entity_count>SIZE_MAX-entities || packet.light_count>SIZE_MAX-lights)
+                return frontend_fail(error,QA_ERROR_MEMORY,"Component scene extent overflow");
+            entities+=packet.entity_count; lights+=packet.light_count;
+        }
+    }
+    if (entities>1022-options->first_entity || lights>SIZE_MAX-options->world.light_count ||
+        lights+options->world.light_count>SIZE_MAX/sizeof(*draw->lights))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Component scene leaves primary submission limits");
+    options->first_entity+=(uint32_t)entities;
+    if (!lights) return true;
+    size_t count=options->world.light_count+lights;
+    qa_scene_light *merged=malloc(count*sizeof(*merged));
+    qa_scene_light *projected=malloc(32*sizeof(*projected));
+    if (!merged || !projected) { free(merged); free(projected); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining component light submission"); }
+    size_t used=options->world.light_count;
+    if (used) memcpy(merged,options->world.lights,used*sizeof(*merged));
+    size_t projected_count=options->world.projected_light_count;
+    if (projected_count>32) { free(merged); free(projected); return frontend_fail(error,QA_ERROR_FORMAT,"Primary projected lights exceed Source limit"); }
+    if (projected_count) memcpy(projected,options->world.projected_lights,projected_count*sizeof(*projected));
+    for (size_t i=0;i<draw->count;++i) {
+        const qa_application_q3_component_draw *child=&draw->components[i].draw;
+        size_t packets;
+        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) { free(merged); free(projected); return false; }
+        for (size_t j=0;j<packets;++j) {
+            frontend_component_scene_packet packet;
+            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) { free(merged); free(projected); return false; }
+            if (packet.light_count) memcpy(merged+used,packet.lights,packet.light_count*sizeof(*merged));
+            used+=packet.light_count;
+            for (size_t k=0;k<packet.light_count && projected_count<32;++k) projected[projected_count++]=packet.lights[k];
+        }
+    }
+    free(draw->lights); free(draw->projected_lights); draw->lights=merged; draw->projected_lights=projected;
+    options->world.lights=merged; options->world.light_count=count;
+    options->world.projected_lights=projected; options->world.projected_light_count=projected_count;
+    return body_current(lease,&view);
 }
 static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
 {
@@ -1653,6 +1715,28 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                     if (!seen && !qa_q3_presentation_source_body_pass(lease->source->presentation,&primary->ref,
                         draw->components[j].bodies.assets,part->passes+n,draw->components[j].bodies.time_ms,
                         options,order,frame,error)) return false;
+                }
+            }
+        }
+    }
+    if (!draw->components_submitted) {
+        uint32_t order=draw->component_order;
+        for (size_t i=0;i<draw->count;++i) {
+            const source_body_component *child=draw->components+i;
+            size_t packets;
+            if (!frontend_component_scene_packet_count(lease->source->frontend,child->draw.frontend_identity,child->draw.sequence,&packets,error)) return false;
+            for (size_t j=0;j<packets;++j) {
+                frontend_component_scene_packet packet;
+                if (!frontend_component_scene_packet_read(lease->source->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error)) return false;
+                for (size_t k=0;k<packet.entity_count;++k,++order)
+                    if (!qa_q3_presentation_source_component_entity(lease->source->presentation,child->draw.assets,
+                        packet.entities+k,child->bodies.time_ms,options,order,frame,error)) return false;
+                for (size_t k=0;k<packet.polygon_count;++k) {
+                    const qa_q3_scene_polygon *polygon=packet.polygons+k;
+                    if (polygon->first>packet.vertex_count || polygon->count>packet.vertex_count-polygon->first)
+                        return frontend_fail(error,QA_ERROR_FORMAT,"Component polygon leaves its retained vertices");
+                    if (!qa_q3_presentation_source_component_poly(lease->source->presentation,child->draw.assets,
+                        polygon->shader,packet.vertices+polygon->first,polygon->count,&polygon->fog,child->bodies.time_ms,options,frame,error)) return false;
                 }
             }
         }
@@ -1910,7 +1994,11 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
     source_worlds_bind(frontend,NULL,false);
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (source->private_map) continue;
-        if (!qa_q3_presentation_retire_world(source->presentation, error)) return false;
+        qa_q3_presentation_assets *next=NULL;
+        if (!qa_q3_presentation_retire_world_retained(source->presentation,&next,error)) return false;
+        qa_q3_presentation_assets *previous=source->assets;
+        source->assets=next;
+        qa_q3_assets_release(previous);
         if (source->music_attached) {
             qa_audio_engine_remove_music(frontend->audio, source->identity);
             source->music_attached = false;
@@ -2203,6 +2291,58 @@ bool frontend_source_acoustics_shared(const qa_frontend *f,bool *out,qa_error *e
             if (lease->source!=source || lease->released || lease->time_busy || lease->body_draw)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic source roster retains its actual Draw borrower");
         if (source->private_map) *out=false;
+    }
+    return true;
+}
+bool frontend_source_acoustics_private_current(const qa_frontend *f,uint32_t physical,
+    const qa_q3_host_collision_view *view)
+{
+    if (!f || !view || physical>=f->options.seats || !f->application) return false;
+    for (const frontend_source *source=f->sources;source;source=source->next) {
+        if (!source->constructed || source->frontend!=f || source->application!=f->application ||
+            source->seat!=physical || !source->private_map || source->geometry!=view->geometry ||
+            source->map_resource!=view->map_resource || source->owner!=view->receiver) continue;
+        for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if (!lease->released && lease->source==source && lease->role==QA_QVM_CGAME &&
+                lease->service_owner==view->service_owner && view->frontend_lifetime==lease)
+                return true;
+    }
+    return false;
+}
+bool frontend_source_acoustics_private_hold(qa_frontend *f,uint32_t physical,
+    qa_q3_host_collision_scene **out,bool *private_scene,qa_error *error)
+{
+    if (!f || !f->application || physical>=f->options.seats || !out || *out || !private_scene)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private acoustics requires its actual physical Source seat");
+    *private_scene=false;
+    const frontend_source *selected=NULL;
+    const frontend_source_lease *role=NULL;
+    bool requires_private=false;
+    for (const frontend_source *source=f->sources;source;source=source->next) {
+        if (source->seat!=physical || !source->private_map) continue;
+        requires_private=true;
+        for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
+            if (lease->role!=QA_QVM_CGAME || lease->released) continue;
+            if (selected || !source->constructed || source->frontend!=f ||
+                source->application!=f->application || lease->source!=source ||
+                source->role_operations || lease->time_busy || lease->body_draw)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Private acoustics retains an ambiguous or entered Source role");
+            selected=source; role=lease;
+        }
+    }
+    if (!selected) return !requires_private || frontend_fail(error,QA_ERROR_UNSUPPORTED,
+        "Private Source seat has no completed CG acoustic receiver");
+    *private_scene=true;
+    bool present=false;
+    if (!qa_application_q3_collision_scene_hold(f->application,selected->owner,
+        selected->launch_seat,role->service_owner,out,&present,error)) return false;
+    if (!present) return frontend_fail(error,QA_ERROR_UNSUPPORTED,
+        "Private Source CGAME has no declared collision scene");
+    qa_q3_host_collision_view view;
+    if (!qa_q3_host_collision_read(*out,&view,&present,error) ||
+        !frontend_source_acoustics_private_current(f,physical,&view)) {
+        qa_q3_host_collision_release(*out); *out=NULL;
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private acoustic hold changed its actual Source map or role");
     }
     return true;
 }

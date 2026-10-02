@@ -163,7 +163,8 @@ bool q1_map_rogue_plat_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         } else if (entity->spawnflags & 4) {
             float floors = state->counter_value;
             motion->rogue.floor = entity->spawnflags & 8 ? floors - 1 : 0;
-            motion->rogue.target_floor = motion->rogue.last_use = 0;
+            motion->rogue.target_floor = 0;
+            motion->rogue.last_use = 0;
             if (entity->spawnflags & 8)
                 motion->pos2.z = body.origin.z - state->height * (floors - 1);
             else {

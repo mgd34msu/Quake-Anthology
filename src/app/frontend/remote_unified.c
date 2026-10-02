@@ -310,8 +310,13 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
     if (!qa_json_u64(json,qa_json_get(json,qa_json_get(json,snapshot,"frame"),"frame"),&number,error)) return false;
     if (owner->frame && number <= owner->frame_number) { *ready = true; return true; }
     if (!owner->metadata && !stage_metadata(owner, error)) return false;
-    return owner->options.consumers.frame(owner->options.consumers.context, owner,
-        owner->prepared_frame, owner->prediction, ready, error) && frontend_remote_unified_current(owner, error);
+    frontend_unified_frame_preparation state=FRONTEND_UNIFIED_FRAME_WAIT;
+    if (!owner->options.consumers.frame(owner->options.consumers.context, owner,
+        owner->prepared_frame, owner->prediction, &state, error) || !frontend_remote_unified_current(owner,error)) return false;
+    if (state>FRONTEND_UNIFIED_FRAME_OBSOLETE)
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified frame consumer returned an unknown preparation disposition");
+    owner->frame_obsolete=state==FRONTEND_UNIFIED_FRAME_OBSOLETE;
+    *ready=state!=FRONTEND_UNIFIED_FRAME_WAIT; return true;
 }
 
 static bool prepare(void *context, qa_net_client_id client, const qa_unified_document *document,
@@ -440,6 +445,12 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
     if (!qa_json_u64(json, qa_json_get(json, qa_json_get(json, snapshot, "frame"), "frame"), &number, error) ||
         !qa_json_i64(json, qa_json_get(json, root, "acknowledgedInput"), &acknowledged, error)) return false;
     owner->busy = true; bool okay = true;
+    if (owner->frame_obsolete) {
+        qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame=NULL;
+        qa_unified_document_destroy(owner->prediction); owner->prediction=NULL;
+        free(owner->metadata); owner->metadata=NULL; owner->metadata_count=0;
+        owner->frame_obsolete=false; commit->applied=false; owner->busy=false; return true;
+    }
     if (!owner->frame || number > owner->frame_number) {
         okay = metadata_apply(owner, error);
         if (okay && !owner->options.consumers.publish(owner->options.consumers.context, owner, owner->prepared_frame, error)) {
@@ -566,13 +577,24 @@ bool frontend_remote_unified_idle(const qa_frontend *frontend)
         if (owner->busy || !owner->options.consumers.idle(owner->options.consumers.context, owner)) return false;
     return true;
 }
+size_t frontend_remote_unified_count(const qa_frontend *frontend)
+{
+    size_t count=0;
+    if (frontend) for (const frontend_remote_unified *owner=frontend->remote_unified;owner;owner=owner->next) ++count;
+    return count;
+}
+frontend_remote_unified *frontend_remote_unified_at(const qa_frontend *frontend,size_t index)
+{
+    if (frontend) for (frontend_remote_unified *owner=frontend->remote_unified;owner;owner=owner->next)
+        if (!index--) return owner;
+    return NULL;
+}
 bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *error)
 {
     if (!slot || !*slot) return true;
     frontend_remote_unified *owner = *slot;
     if (!linked(owner) || owner->busy || owner->frontend->resource_inventory || owner->session ||
-        (owner->bound && !owner->retired) ||
-        !owner->options.consumers.idle(owner->options.consumers.context, owner))
+        (owner->bound && !owner->retired))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified cleanup requires its actually retired returned session");
     if (owner->consumers_live && !owner->options.consumers.close(owner->options.consumers.context, owner, error)) return false;
     owner->consumers_live = false;

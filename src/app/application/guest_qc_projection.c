@@ -78,7 +78,7 @@ bool application_qc_project_body_store(struct application_qc_state *engine, qa_q
     static const char *names[] = {"origin", "angles", "velocity"};
     for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         const qa_qc_definition *def = qa_qc_program_find_field(engine->provider->state.qc.program, names[i]);
-        if (def == NULL || def->type != QA_QC_VECTOR || def->offset >= event->word + event->count || def->offset + 3 <= event->word) continue;
+        if (def == NULL || def->type != QA_QC_VECTOR || def->offset >= event->word + event->count || (uint32_t)def->offset + 3u <= event->word) continue;
         qa_body_state body;
         if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
         qa_vec3 *vector = i == 0 ? &body.origin : i == 1 ? &body.angles : &body.velocity;

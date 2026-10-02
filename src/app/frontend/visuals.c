@@ -15,6 +15,7 @@
 #include "legacy_render_policy.h"
 #include "material_movies.h"
 #include "material_movies_save.h"
+#include "renderer_materials.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "qa/media_library_save.h"
@@ -432,6 +433,13 @@ void frontend_visuals_destroy(qa_frontend *frontend)
     if (!frontend_visuals_idle(frontend)) return;
     while (frontend->visuals) {
         frontend_visual_owner *owner = frontend->visuals;
+        if (owner->shader_movies && owner->media && !frontend->source_restoring) {
+            frontend_material_movie_source expected = {.frontend = frontend, .files = owner->mounts,
+                .images = owner->images, .materials = owner->materials, .media = owner->media,
+                .context = owner, .current = visual_movie_current};
+            if (!frontend_renderer_materials_adopt_movies(frontend, &expected,
+                &owner->shader_movies, &owner->media, NULL)) return;
+        }
         if (!frontend_material_movies_destroy(&owner->shader_movies, NULL)) return;
         frontend->visuals = owner->next;
         while (owner->models) {
@@ -1119,6 +1127,7 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
     frontend_visual_owner *owner = NULL;
     if (view->family != QA_GAME_Q2 || !view->q2_flare.image || !*view->q2_flare.image)
         return frontend_fail(error, QA_ERROR_FORMAT, "Q2 flare requires its genuine image receipt");
+    if (world->legacy_policy.present && !world->legacy_policy.flares) return true;
     if (!visual_owner(frontend, view, &owner, error)) return false;
     qa_scene_image_options sampling = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
@@ -1193,8 +1202,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 .entity = actor.slot, .identity_light = world->identity_light, .seconds = world->seconds,
                 .ambient = {1, 1, 1}, .fog = world->fog, .source_path = path,
                 .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
-            qa_scene_world_sample_light(frontend->scene_world, view.body.origin,
-                &input.ambient, &input.directed, &input.light_direction);
+            if (!qa_scene_world_sample_light_input(frontend->scene_world, world, view.body.origin,
+                &input.ambient, &input.directed, &input.light_direction, error)) return false;
             if (!frontend_legacy_model_input(frontend, view.content, frontend->scene_world, world, &input, error)) return false;
             if (!qa_scene_model_submit(model->scene, &input, frame, error)) return false;
         }

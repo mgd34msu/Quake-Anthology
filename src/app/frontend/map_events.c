@@ -9,6 +9,7 @@
 #include "qa/scene_resource_save.h"
 #include "qa/application_equipment_content.h"
 #include "particle_audio.h"
+#include "particle_delivery.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
@@ -825,7 +826,7 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     if (!frontend || seat >= frontend->options.seats || !world || frontend->resource_inventory)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Event world is retained by resource preparation");
     frontend_event_state *state = frontend->events;
-    if (!state) return true;
+    if (!state) return frontend_particle_world(frontend,seat,world,error);
     frontend_event_view *view = &state->views[seat];
     if (!q1_fog_initialize(frontend, seat, &view->q1_fog, error)) return false;
     bool q1_fog = view->q1_fog.owner != 0;
@@ -876,7 +877,7 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     for (frontend_retained_light *light = state->lights; light; light = light->next)
         if (light->event.visible && seat_receives(frontend, seat, light->event.recipient) &&
             qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), light->event.actor)) ++count;
-    if (!count) return true;
+    if (!count) return frontend_particle_world(frontend,seat,world,error);
     if (world->light_count > SIZE_MAX - count || count + world->light_count > SIZE_MAX / sizeof(qa_scene_light))
         return frontend_fail(error, QA_ERROR_MEMORY, "authored light array exceeds native storage");
     qa_scene_light *lights = qa_arena_alloc(&frontend->frame.storage, (count + world->light_count) * sizeof(*lights), _Alignof(qa_scene_light), error);
@@ -902,7 +903,8 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
             .identity = light->identity, .revision = light->revision, .family = QA_SCENE_Q2,
             .shadow_resolution = event->resolution};
     }
-    world->lights = lights; world->light_count = used; return true;
+    world->lights = lights; world->light_count = used;
+    return frontend_particle_world(frontend,seat,world,error);
 }
 bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_error *error)
 {

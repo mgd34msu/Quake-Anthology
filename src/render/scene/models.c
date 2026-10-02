@@ -658,6 +658,10 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         else if (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MDL) name = "alias";
         for (size_t i = 0; i < input->custom_skin->count; ++i)
             if (!strcmp(input->custom_skin->mappings[i].surface, name)) {
+                if (input->custom_skin_materials) {
+                    external->material = input->custom_skin_materials[i];
+                    *out = external; return true;
+                }
                 if (input->material_library) {
                     if (!scene_model_external_material(model, input->material_library,
                         input->custom_skin->mappings[i].shader, &external->material, error)) return false;
@@ -685,6 +689,9 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
             if (!registered) return true;
             if (!scene_model_external_material(model, input->material_library,
                 registered->name, &external->material, error)) return false;
+            if (qa_material_library_has_source_profile(input->material_library) && external->material->default_shader &&
+                (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
+                external->material = qa_material_find(input->material_library, "*default");
             *out = external; return true;
         }
         *out = model->meshes[index].shaders[skin];
@@ -720,6 +727,46 @@ static qa_model_bounds cull_bounds(const qa_scene_model *model, const qa_scene_m
                             {mesh->bounds.maxs.x, mesh->bounds.maxs.y, mesh->bounds.maxs.z}};
 }
 
+static int source_md3_sphere(const qa_scene_model_input *input, const qa_model_frame *frame,
+    const qa_scene_plane planes[6])
+{
+    float point[3]; qa_model_transform_point(&input->transform, frame->origin, point);
+    bool inside = true;
+    for (unsigned i = 0; i < 4; ++i) {
+        float distance = qa_vec_dot(model_vec(point), planes[i].normal) - planes[i].distance;
+        if (distance < -frame->radius) return -1;
+        if (distance <= frame->radius) inside = false;
+    }
+    return inside ? 1 : 0;
+}
+static bool source_md3_visible(const qa_scene_model *model, const qa_scene_model_input *input)
+{
+    if (!model->source->frame_count || input->no_cull) return true;
+    const qa_model_frame *current = &model->source->frames[input->frame];
+    const qa_model_frame *previous = &model->source->frames[input->old_frame];
+    qa_scene_plane planes[6]; (void)qa_scene_frustum(&input->view, planes);
+    if (!input->non_normalized_axis) {
+        int a = source_md3_sphere(input, current, planes), b = current == previous ? a :
+            source_md3_sphere(input, previous, planes);
+        if (a == b && a) return a > 0;
+    }
+    qa_model_bounds merged;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        merged.min[axis] = fminf(current->bounds.min[axis], previous->bounds.min[axis]);
+        merged.max[axis] = fmaxf(current->bounds.max[axis], previous->bounds.max[axis]);
+    }
+    bool front[4] = {false};
+    for (unsigned corner = 0; corner < 8; ++corner) {
+        float local[3], point[3];
+        for (unsigned axis = 0; axis < 3; ++axis)
+            local[axis] = corner & (1u << axis) ? merged.max[axis] : merged.min[axis];
+        qa_model_transform_point(&input->transform, local, point);
+        for (unsigned plane = 0; plane < 4; ++plane)
+            if (qa_vec_dot(model_vec(point), planes[plane].normal) > planes[plane].distance) front[plane] = true;
+    }
+    return front[0] && front[1] && front[2] && front[3];
+}
+
 static bool alias_diffuse(const qa_scene_model_input *input, const float normal[3],
     qa_vec3 *out, qa_error *error)
 {
@@ -744,6 +791,9 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     const qa_model_mesh *source = &model->source->meshes[index];
     scene_model_mesh *retained = &model->meshes[index];
     *out = retained->retained;
+    if (model->source_topology && out->vertex_count != source->vertex_count) {
+        qa_error_set(error, QA_ERROR_FORMAT, index, "Source model lost its physical vertex extent"); return false;
+    }
     if (!out->vertex_count) return true;
     size_t source_vertex_count = source->vertex_count;
     if (source_vertex_count > SIZE_MAX / sizeof(qa_model_vertex) || out->vertex_count > SIZE_MAX / sizeof(qa_scene_vertex)) {
@@ -782,6 +832,9 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     out->bounds = model_bounds_empty();
     for (size_t i = 0; i < out->vertex_count; ++i) {
         uint32_t source_index = retained->sources[i];
+        if (source_index >= source->vertex_count || (model->source_topology && source_index != i)) {
+            qa_error_set(error, QA_ERROR_FORMAT, index, "Source model lost its physical vertex order"); return false;
+        }
         const qa_model_vertex *point = &sampled[source_index];
         vertices[i] = retained->vertices[i];
         vertices[i].position = model_vec(point->position); vertices[i].normal = model_vec(point->normal);
@@ -938,6 +991,8 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         (input.render_text_count && !input.render_texts) ||
         (input.shadow_light_count && !input.shadow_lights) ||
         (input.custom_skin && input.custom_skin->count && !input.custom_skin->mappings) ||
+        (input.custom_skin_materials && (!input.custom_skin ||
+            input.custom_skin_material_count != input.custom_skin->count)) ||
         (input.material_library && model->options.family != QA_SCENE_Q3) ||
         !qa_vec_finite(input.previous_origin) || !qa_vec_finite(input.ambient) ||
         !qa_vec_finite(input.directed) || !qa_vec_finite(input.light_direction) ||
@@ -985,6 +1040,14 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         model = model->replacement; input.animation = input.replacement->animation;
     }
     repair_frames(model, &input);
+    bool source_md4 = input.source_order && model->source_topology && model->source->format == QA_MODEL_MD4;
+    if (source_md4) {
+        input.custom_material = NULL; input.custom_skin = NULL;
+        input.custom_skin_materials = NULL; input.custom_skin_material_count = 0;
+        input.fog_index = 0; input.fog = (qa_scene_fog){0}; input.fog_has_surface = false;
+        input.fog_tc_scale = 0; input.fog_surface = (qa_scene_plane){0};
+        input.no_cull = true;
+    }
     if (model->source->format == QA_MODEL_MD5 && !input.pose) {
         if (input.animation) {
             size_t joint_count = input.animation->joint_count;
@@ -1000,13 +1063,15 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         } else { input.pose = model->source->bind_pose; input.pose_count = model->source->bone_count; }
     }
     bool visible = true;
+    bool source_md3 = input.source_order && model->source->format == QA_MODEL_MD3;
     if (!input.shadow_only) {
-        if (input.family == QA_SCENE_Q3) {
+        if (input.family == QA_SCENE_Q3 && !source_md4) {
             if ((input.flags & 2) && !input.view.clip_enabled && input.shadow_mode != 2 && input.shadow_mode != 3) visible = false;
             if ((input.flags & 4) && input.view.clip_enabled) visible = false;
         }
         if (input.family == QA_SCENE_Q2 && (input.flags & 4) && input.left_hand == 2) visible = false;
     }
+    if (source_md3 && !input.shadow_only && !source_md3_visible(model, &input)) visible = false;
     if (visible && (model->source->format == QA_MODEL_SPR || model->source->format == QA_MODEL_SP2)) {
         if (!scene_model_sprite_submit(model, &input, input.frame, frame, error)) return false;
     } else if (visible) {
@@ -1022,7 +1087,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
             if (!mesh_geometry(model, &input, i, frame, &mesh, error) ||
                 !select_image(model, &input, i, &external, &image, error)) return false;
             bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
-            if (!input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
+            if (!source_md3 && !input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;
                 qa_model_transform_bounds(&input.transform, &local, &world);
                 qa_bounds bounds = {model_vec(world.min), model_vec(world.max)};

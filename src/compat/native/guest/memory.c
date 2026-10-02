@@ -421,6 +421,25 @@ bool qa_native_guest_free(qa_native_guest *guest, uint64_t address, qa_error *er
     return true;
 }
 
+bool guest_allocation_transfer(qa_native_guest *guest, uint64_t address,
+    guest_allocation *out, uint64_t *backing, qa_error *error)
+{
+    if (!out || !backing || !guest_mutable(guest, error)) return false;
+    size_t index = 0;
+    while (index < guest->allocation_count && guest->allocations[index].address != address) ++index;
+    if (index == guest->allocation_count)
+        return guest_fail(error, QA_ERROR_ARGUMENT, address, "VM ownership transfer requires the actual allocation base");
+    guest_allocation allocation = guest->allocations[index];
+    uint64_t owned = 0;
+    if (!guest_allocation_storage(guest, &allocation, &owned, NULL, error)) return false;
+    /* Only the allocator claim moves. Actual RAM, aliases, permissions and
+     * the monotonic allocation cursor remain with the same lower owner. */
+    memmove(guest->allocations + index, guest->allocations + index + 1,
+        (--guest->allocation_count - index) * sizeof(*guest->allocations));
+    *out = allocation; *backing = owned;
+    return true;
+}
+
 bool qa_native_guest_allocation(const qa_native_guest *guest, uint64_t address,
     qa_native_allocation_info *out, qa_error *error)
 {

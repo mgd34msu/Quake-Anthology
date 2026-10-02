@@ -73,9 +73,19 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     for (q2_player_list *list = lists; list; list = list->next)
         list->count = 0;
     q2_entities *entities = game->entity_runtime;
+    q2_entities previous_entities = *entities;
     *entities = (q2_entities){.services = entities->services,
                               .wind = entities->wind,
-                              .wind_capacity = entities->wind_capacity};
+                              .wind_capacity = entities->wind_capacity,
+                              .primary = game->options.edition == QA_Q2_RERELEASE ? entities->primary : 0,
+                              .secondary = game->options.edition == QA_Q2_RERELEASE ? entities->secondary : 0,
+                              .primary_changes = game->options.edition == QA_Q2_RERELEASE ? entities->primary_changes : 0,
+                              .secondary_changes = game->options.edition == QA_Q2_RERELEASE ? entities->secondary_changes : 0,
+                              .level_count = entities->level_count,
+                              .visited_maps = entities->visited_maps,
+                              .visited_count = entities->visited_count,
+                              .visited_capacity = entities->visited_capacity};
+    memcpy(entities->levels, previous_entities.levels, sizeof(entities->levels));
     q2_monsters_begin_map(game);
     for (q2_trace_frame *frame = game->trace_frames; frame; frame = frame->next)
         frame->snapshot.count = 0;

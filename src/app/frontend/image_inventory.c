@@ -7,6 +7,8 @@
 #include "remote_q1_restore.h"
 #include "remote_q2_restore.h"
 #include "renderer_materials.h"
+#include "renderer_worlds.h"
+#include "unified_media_inventory.h"
 #include "qa/scene_resource_save.h"
 #include "qa/persistence_content.h"
 
@@ -91,13 +93,27 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
     if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
     if(ok && present) ok=add(inventory,graph,retained.images,11,0,0,error);
     if(ok && present) ok=add(inventory,graph,retained.lightmap_images,12,0,0,error);
+    frontend_renderer_worlds_view world; bool has_world=false;
+    if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
+    if(ok && has_world && world.private_heaps) ok=add(inventory,graph,world.images,13,0,0,error);
+    size_t unified_count=0;
+    if(ok) ok=frontend_unified_media_inventory_count(f,&unified_count,error);
+    for(size_t i=0;ok && i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        ok=frontend_unified_media_inventory_at(f,i,&media,error);
+        for(size_t j=0;ok && media && j<frontend_unified_media_bank_count(media);++j) {
+            frontend_unified_bank_view bank; uint64_t key;
+            ok=frontend_unified_media_bank_read(media,j,&bank) && frontend_unified_media_bank_key(i,j,&key) &&
+                add(inventory,graph,bank.images,14,key,0,error);
+        }
+    }
     return ok;
 }
 static bool header(qa_source_save_io *io, const image_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 4; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 6; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFIM", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 6 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(image_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         image_owner saved = inventory->entries[i];

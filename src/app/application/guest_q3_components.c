@@ -59,11 +59,11 @@ static bool namespace(component_game_row *row,qa_error *e)
             if(strcmp(saved->instance,row->provider->launch->selection.instance)||strcmp(saved->key,component)) continue;
             int n=snprintf(name,size,"qvm-component:%s:%s:%s:%llu",saved->instance,component,digest,(unsigned long long)saved->generation);
             snprintf(service,size+16,"%s:services",name);
-            ok=n>=0&&(size_t)n<size&&qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,(size_t)n})==saved->owner&&
+            ok=saved->owner<=UINT32_MAX&&n>=0&&(size_t)n<size&&qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,(size_t)n})==saved->owner&&
                 qa_strings_find(strings,(qa_bytes){(const uint8_t *)service,strlen(service)})==saved->services&&
                 qa_sha256_equal(&saved->program,&row->publication.metadata->program_digest)&&
                 qa_sha256_equal(&saved->declaration,&row->publication.metadata->declaration_digest);
-            if(ok) { row->publication.owner=saved->owner; row->publication.generation=saved->generation; row->services=saved->services; }
+            if(ok) { row->publication.owner=(qa_actor_owner)saved->owner; row->publication.generation=saved->generation; row->services=saved->services; }
             break;
         }
         free(name); free(service);
@@ -149,8 +149,8 @@ bool application_q3_components_create(const application_q3_components_options *o
         row->publication.catalog=selected->product_catalog; row->publication.product=selected->product;
         if(!qa_launch_instance_retain_metadata(selected->launch,&row->metadata_lease,e)) return false;
         row->publication.descriptor=qa_launch_instance_lease_view(row->metadata_lease); row->publication.content=row->publication.descriptor->content;
-        if(!qa_vfs_acquire(row->publication.content,metadata->program_path,&row->program,&row->program_acquisition,e)||
-            !qa_vfs_acquire(row->publication.content,metadata->declaration_path,&row->declaration,&row->declaration_acquisition,e)) return false;
+        if(!qa_vfs_acquire_receipt(row->publication.content,metadata->program_path,&row->program,&row->program_acquisition,e)||
+            !qa_vfs_acquire_receipt(row->publication.content,metadata->declaration_path,&row->declaration,&row->declaration_acquisition,e)) return false;
         row->publication.program=row->program; row->publication.declaration=row->declaration;
         if(!qa_sha256_equal(qa_resource_digest(row->program),&metadata->program_digest)||!qa_sha256_equal(qa_resource_digest(row->declaration),&metadata->declaration_digest))
             return application_fail(e,QA_ERROR_FORMAT,"Enabled component resources differ from the actual catalog discovery");
@@ -226,6 +226,7 @@ bool application_q3_components_initialize(application_q3_components *owner,qa_er
 bool application_q3_components_idle(const application_q3_components *owner)
 {
     if(!owner) return true;
+    if(owner->video&&!owner->video_entering) return false;
     if(!application_q3_component_client_adapter_idle(owner->clients_adapter)) return false;
     for(size_t i=0;i<owner->count;++i) if(owner->rows[i]&&(!q3components_scenes_idle(owner->rows[i])||(owner->rows[i]->publication.game&&!application_q3_component_idle(owner->rows[i]->publication.game)))) return false;
     return true;
@@ -234,6 +235,7 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
 {
     if(!slot||!*slot) return true;
     application_q3_components *owner=*slot;
+    if(owner->video) return application_fail(e,QA_ERROR_ARGUMENT,"Component retirement retains its real video reconstruction ticket");
     if(!application_q3_component_client_adapter_idle(owner->clients_adapter))
         return application_fail(e,QA_ERROR_ARGUMENT,"Component retirement retains client commands or deferred drops and their actual content owners");
     owner->closing=true;
@@ -242,8 +244,23 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
         component_game_row *row=owner->rows[i];
         if(!row) continue;
         if(owner->retained[i]) continue;
-        if(!q3components_scenes_destroy(row,e)||!application_q3_component_destroy(&row->publication.game,e)) return false;
+        if(!row->retirement_clock_held) {
+            qa_clock_state clock;
+            if(qa_session_clock(owner->options.application->session,owner->options.world_source->owner,&clock)) {
+                row->retirement_clock=clock.frame; row->retirement_clock_held=true;
+            }
+        }
+        row->destroying=true;
+        bool destroyed=q3components_scenes_destroy(row,e)&&application_q3_component_destroy(&row->publication.game,e);
+        row->destroying=false;
+        if(!destroyed) return false;
         row->publication.source=NULL;
+        if(!row->events_retired) {
+            if(!application_unified_event_owner_retire(owner->options.application,row->publication.owner,
+                row->retirement_clock_held?&row->retirement_clock:NULL,e)||
+                !application_unified_event_registration_clear(owner->options.application,row->publication.owner,e)) return false;
+            row->events_retired=true;
+        }
         if(row->attached) {
             bool removed=qa_session_remove(owner->options.application->session,row->publication.owner,e); qa_clock_state clock;
             if(removed||!qa_session_clock(owner->options.application->session,row->publication.owner,&clock)) row->attached=false;
@@ -260,7 +277,7 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
     }
     if(owner->owns_clients&&!application_q3_component_client_adapter_destroy(&owner->clients_adapter,e)) return false;
     qa_buffer_free(&owner->entity_text);
-    for(size_t i=0;i<owner->saved_count;++i) qa_buffer_free(&owner->saved[i].game);
+    for(size_t i=0;i<owner->saved_count;++i) { qa_buffer_free(&owner->saved[i].game); qa_buffer_free(&owner->saved[i].scenes); }
     free(owner->saved);
     qa_launch_snapshot_release(owner->options.snapshot);
     free(owner->retained); free(owner->rows); free(owner); *slot=NULL; return true;
@@ -314,13 +331,30 @@ bool application_q3_components_publication_at(application_q3_components *owner,s
 bool application_q3_components_event_source_read(const qa_application *app,qa_actor_owner id,application_q3_component_publication *out,qa_error *e)
 {
     application_q3_components *owner=app?app->components:NULL;
-    if(owner&&!owner->closing&&out) for(size_t i=0;i<owner->count;++i) {
+    for(;owner&&out;owner=owner->retired) for(size_t i=0;i<owner->count;++i) {
         component_game_row *row=owner->rows[i];
-        if(row&&row->publication.owner==id&&row->attached&&(row->initialized||row->initializing)&&q3components_current(row)) {
+        if(row&&row->publication.owner==id&&row->attached&&(row->initialized||row->initializing)&&
+            (q3components_current(row)||(row->destroying&&q3components_storage(row)))) {
             *out=row->publication; return true;
         }
     }
     return application_fail(e,QA_ERROR_NOT_FOUND,"Component event has no genuine installed or entered Init source owner");
+}
+bool application_q3_components_checkpoint_publication_read(const qa_application *app,qa_actor_owner id,
+    application_q3_component_publication *out,bool *found,qa_error *e)
+{
+    if(!app||!out||!found) return application_fail(e,QA_ERROR_ARGUMENT,"Component checkpoint lookup requires its real application");
+    *found=false;
+    application_q3_components *owner=app->components;
+    if(!owner) return true;
+    for(size_t i=0;i<owner->count;++i) {
+        component_game_row *row=owner->rows[i];
+        if(!row||row->publication.owner!=id) continue;
+        if(owner->closing||!row->publication.game||!row->initialized||!q3components_storage(row))
+            return application_fail(e,QA_ERROR_ARGUMENT,"Component checkpoint lost its imported physical continuation");
+        *out=row->publication; *found=true; return true;
+    }
+    return true;
 }
 bool application_q3_components_admit(application_q3_components *owner,qa_actor_id actor,qa_error *e)
 {
