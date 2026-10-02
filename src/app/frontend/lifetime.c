@@ -293,6 +293,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup replay requires its idle published source");
     qa_application *application=frontend->application;
     if (qa_application_startup_pending(application)) return true;
+    if (!frontend_tools_sync(frontend,error)) return false;
     for (size_t ordinal=0;ordinal<qa_application_startup_command_count(application);++ordinal) {
         if (!qa_application_startup_command_pending(application,ordinal)) continue;
         qa_console *console=NULL;
