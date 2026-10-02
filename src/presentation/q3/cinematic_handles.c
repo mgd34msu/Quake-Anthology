@@ -503,9 +503,13 @@ bool qa_q3_cinematic_stop(qa_q3_cinematic_source *source,int32_t handle,bool ski
 bool qa_q3_cinematic_extents(qa_q3_cinematic_source *source,int32_t handle,qa_scene_rect_f rect,qa_error *error)
 {
     if (!isfinite(rect.x) || !isfinite(rect.y) || !isfinite(rect.width) || !isfinite(rect.height) || !q3cin_enter(source,error)) return false;
-    if (handle>=0 && handle<16 && source->handles->movies[handle].playback &&
-        source->handles->movies[handle].status!=2) {
-        source->handles->movies[handle].rect=rect; source->handles->movies[handle].dirty=true;
+    if (handle>=0 && handle<16) {
+        q3cin_movie *movie=&source->handles->movies[handle];
+        qa_cinematic *decoder=movie->playback?movie->playback:
+            movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if (decoder && movie->status!=2) {
+            movie->rect=rect; movie->dirty=true;
+        }
     }
     return returned(source,true,error);
 }
@@ -612,18 +616,26 @@ bool qa_q3_cinematic_image(qa_q3_cinematic_source *source,int32_t handle,qa_scen
     if (!out || !rect || !frame || !q3cin_enter(source,error)) return false;
     *out=NULL;
     bool ok=true;
-    if (handle>=0 && handle<16 && source->handles->movies[handle].playback &&
-        qa_cinematic_frame(source->handles->movies[handle].playback)) {
-        ok=upload(source->handles,(uint32_t)handle,false,frame,error);
-        if (ok) { *out=source->handles->scratch[handle]; *rect=source->handles->movies[handle].rect; }
+    if (handle>=0 && handle<16) {
+        q3cin_movie *movie=&source->handles->movies[handle];
+        qa_cinematic *decoder=movie->playback?movie->playback:
+            movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if (decoder && qa_cinematic_frame(decoder)) {
+            ok=upload(source->handles,(uint32_t)handle,false,frame,error);
+            if (ok) { *out=source->handles->scratch[handle]; *rect=movie->rect; }
+        }
     }
     return returned(source,ok,error);
 }
 bool qa_q3_cinematic_draw_complete(qa_q3_cinematic_source *source,int32_t handle,qa_error *error)
 {
     if (!q3cin_enter(source,error)) return false;
-    if (handle>=0 && handle<16 && source->handles->movies[handle].playback)
-        source->handles->movies[handle].dirty=false;
+    if (handle>=0 && handle<16) {
+        q3cin_movie *movie=&source->handles->movies[handle];
+        qa_cinematic *decoder=movie->playback?movie->playback:
+            movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if (decoder) movie->dirty=false;
+    }
     return returned(source,true,error);
 }
 bool qa_q3_cinematic_shader_play(qa_q3_cinematic_source *source,const char *path,int32_t *handle,
