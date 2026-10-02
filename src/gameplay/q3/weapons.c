@@ -19,11 +19,10 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     uint32_t source_slot;
     qa_q3_weapon firing_weapon = entry->state.player.weapon;
     if (qa_q3_native_client_slot(game, actor, &source_slot, NULL)) {
-        qa_q3_entity source;
-        qa_q3_wire_visibility visibility;
-        if (!qa_q3_wire_entity_read(game, source_slot, &source, &visibility, error))
+        qa_q3_wire_player_publication source;
+        if (!qa_q3_wire_player_publication_read(game, actor, &source, error))
             return false;
-        body.origin = qa_v3(source.pos.base[0], source.pos.base[1], source.pos.base[2]);
+        body.origin = source.position;
         firing_weapon = (qa_q3_weapon)source.weapon;
     }
     entry = q3_actor_get(game, actor);
@@ -119,10 +118,9 @@ static bool beam_event(qa_q3_game *game, qa_actor_id shooter, int32_t code, int3
     int32_t client_number = 0;
     uint32_t slot;
     if (code == 53 && qa_q3_native_client_slot(game, shooter, &slot, NULL)) {
-        qa_q3_entity source;
-        qa_q3_wire_visibility visibility;
-        if (!qa_q3_wire_entity_read(game, slot, &source, &visibility, error)) return false;
-        client_number = source.clientNum;
+        qa_q3_wire_player_publication source;
+        if (!qa_q3_wire_player_publication_read(game, shooter, &source, error)) return false;
+        client_number = source.client_number;
     } else {
         const q3_actor *player = q3_actor_const(game, shooter);
         if (player && player->kind == Q3_ACTOR_PLAYER)

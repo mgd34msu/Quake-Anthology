@@ -397,10 +397,10 @@ static bool client_think(void *opaque, qa_session *session,
                     water_level, water_type, error);
             bool origin_scope = false;
             if (ok && live(app, call->actor)) {
-                qa_vec3 snapped;
-                ok = qa_q3_wire_player_position_read(provider->state.q3, call->actor, &snapped, error);
+                qa_q3_wire_player_publication published;
+                ok = qa_q3_wire_player_publication_read(provider->state.q3, call->actor, &published, error);
                 if (ok) {
-                    ok = qa_q3_client_current_origin(provider->state.q3, call->actor, snapped, error);
+                    ok = qa_q3_client_current_origin(provider->state.q3, call->actor, published.position, error);
                     origin_scope = ok;
                     if (ok) ok = qa_q3_client_events(provider->state.q3, call->actor, old_sequence, error);
                 }

@@ -663,19 +663,21 @@ bool qa_q3_wire_player_publish(qa_q3_game *game, qa_actor_id actor, bool snap,
     return true;
 }
 
-bool qa_q3_wire_player_position_read(const qa_q3_game *game, qa_actor_id actor,
-                                      qa_vec3 *out, qa_error *error) {
+bool qa_q3_wire_player_publication_read(const qa_q3_game *game, qa_actor_id actor,
+                                         qa_q3_wire_player_publication *out, qa_error *error) {
     uint32_t slot;
     if (!game || !game->wire || game->source_restored || !out)
-        return q3_fail(error, "Q3 published player position lacks its actual source owner or output");
+        return q3_fail(error, "Q3 player publication lacks its actual source owner or output");
     if (!qa_q3_native_client_slot(game, actor, &slot, error)) return false;
     const q3_wire_row *record = &game->wire->rows[slot];
     const q3_actor *entry = q3_actor_const(game, actor);
     if (!current(game, slot, actor) || !record->initialized || !record->player_published ||
         !entry || entry->kind != Q3_ACTOR_PLAYER)
-        return q3_fail(error, "Q3 published player position lost its actual BG conversion or client generation");
-    *out = qa_v3(record->player_position.base[0], record->player_position.base[1],
-                record->player_position.base[2]);
+        return q3_fail(error, "Q3 player publication lost its actual BG conversion or client generation");
+    *out = (qa_q3_wire_player_publication){
+        .position = qa_v3(record->player_position.base[0], record->player_position.base[1],
+                         record->player_position.base[2]),
+        .weapon = record->source.weapon, .client_number = record->source.client};
     return true;
 }
 
