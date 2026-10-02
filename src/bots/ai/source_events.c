@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_event_state.h"
+#include "source_selectors.h"
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_events.h"
@@ -53,7 +54,7 @@ static bool obituary(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity,qa_er
     } else if(attacker==self) {
         bot_ai_enemy_death_type_set(s,entity->eventParm);bot_ai_last_killed_player_set(s,target);
         bot_ai_killed_enemy_time_set(s,b->time);bot_ai_num_kills_set(s,increment(bot_ai_num_kills(s)));
-    } else if(attacker==s->source_enemy && target==attacker) bot_ai_enemy_suicide_set(s,true);
+    } else if(attacker==bot_ai_enemy_number(s) && target==attacker) bot_ai_enemy_suicide_set(s,true);
     if(s->team_arena && b->source_goals.game_type==5) {
         qa_bot_entity_info observed;bool found;
         if(!qa_bot_runtime_entity(b->runtime,target,&observed,&found,e)) return false;

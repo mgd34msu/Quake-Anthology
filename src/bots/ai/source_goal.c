@@ -7,6 +7,7 @@
 #include "source_team_state.h"
 #include "source_timers.h"
 #include "source_behavior_state.h"
+#include "source_selectors.h"
 #include "source_inventory.h"
 #include "source_goal.h"
 #include "source_orders.h"
@@ -75,7 +76,7 @@ static bool team_base(qa_bots *b,bot_ai_state *s,qa_bot_goal *goal,bool enemy,
 }
 static bool travel_time(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,uint32_t flags,
                           uint32_t *time,qa_error *e) {
-    qa_bot_nav_route_query query={.area=s->area,.goal_area=(uint32_t)goal->area,
+    qa_bot_nav_route_query query={.area=bot_ai_area(s),.goal_area=(uint32_t)goal->area,
         .origin=s->player.origin,.has_origin=true,.travel_flags=flags};
     qa_bot_nav_route route;
     SOURCE_CALL(qa_bot_navigation_route(navigation(b,s),&query,&route,e));

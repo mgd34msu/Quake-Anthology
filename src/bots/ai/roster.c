@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_selectors.h"
 #include "source_activation.h"
 #include "source_storage.h"
 #include "source_library.h"
@@ -467,6 +468,7 @@ bool qa_bots_read(const qa_bots *b, qa_actor_id actor, qa_bot_view *out, qa_erro
     bot_ai_state *s = bot_ai_actor(b, actor);
     if (!s || !s->inuse || !out || !bot_ai_live(b, actor)) return bot_ai_fail(e, "native bot actor is not live");
     *out = s->view;
+    out->enemy=bot_ai_enemy_actor(b,s);
     return true;
 }
 bool qa_bots_setup_failed(const qa_bots *b,qa_actor_id actor) {

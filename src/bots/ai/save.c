@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=22;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=23;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==22?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==23?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -112,7 +112,6 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     }
     if (!view_fields(io, &state->view) || !player_fields(io, &state->player)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
-    U(state->area); U(state->travel_flags);
     F(state->admitted_skill);
     const char *character=state->admitted_character,*name=state->admitted_name;
     if (!bot_save_text(io,&character)) return false;
@@ -123,12 +122,10 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
 
     F(state->state_time);
     F(state->blocked_time);
-    U(state->last_enemy_area);
     B(state->team_arena); B(state->retired);
     L(state->command_sequence);
     if(!qa_source_save_bytes(io,state->team_leader_name,sizeof(state->team_leader_name))) return false;
 
-    I(state->source_enemy);
     if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy)) return false;
     uint32_t phase=state->shutdown_phase;U(phase);if(phase>BOT_SHUTDOWN_FAILED) return false;
     state->shutdown_phase=(bot_shutdown_phase)phase;
@@ -204,7 +201,7 @@ static bool topology(const qa_bots *bots, qa_error *error)
         uint32_t i=state->view.client;
         if (i>=bots->client_capacity || bots->clients[i]!=state || state->view.actor.slot >= bots->actor_capacity ||
             bots->actor_clients[state->view.actor.slot] != i + 1 ||
-            state->view.entity < 0 || state->source_enemy<-1 || state->source_enemy>=BOT_SOURCE_EVENT_ENTITIES ||
+            state->view.entity < 0 ||
             state->view.source_client!=(int32_t)source ||
             (state->inuse && bots->source_clients[state->view.source_client]!=i+1) ||
             (!state->inuse && bots->source_clients[state->view.source_client]==i+1) ||

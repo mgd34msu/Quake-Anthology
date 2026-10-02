@@ -8,6 +8,7 @@
 #include "source_storage.h"
 #include "source_timers.h"
 #include "source_behavior_state.h"
+#include "source_selectors.h"
 #include "source_flags.h"
 
 static int32_t signed_word(uint32_t bits) {
@@ -79,7 +80,7 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     bot_ai_view_delta(s,delta,true);
     bot_ai_view_prepare(s);
     float factor = .05f, maximum = 360;
-    if (s->view.enemy.registry &&
+    if (bot_ai_enemy_number(s)>=0 &&
         (!bot_ai_character_float(b, s, BOT_C_VIEW_FACTOR, .01f, 1, &factor, e) ||
          !bot_ai_character_float(b, s, BOT_C_VIEW_MAX, 1, 1800, &maximum, e))) return false;
     bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
@@ -133,7 +134,11 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         ok=bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&height,e);
         if(ok) s->player.eye.z+=(float)height;
     }
-    if(ok) ok=bot_ai_point_area(b, s, s->player.origin, &s->area, e);
+    if(ok) {
+        uint32_t area;
+        ok=bot_ai_point_area(b,s,s->player.origin,&area,e);
+        if(ok) bot_ai_area_set(s,area);
+    }
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;

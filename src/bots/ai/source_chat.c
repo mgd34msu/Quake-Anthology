@@ -8,6 +8,7 @@
 #include "source_player.h"
 #include "source_timers.h"
 #include "source_behavior_state.h"
+#include "source_selectors.h"
 
 enum {
     SOURCE_CHAT_INSULT=24, SOURCE_CHAT_MISC=25, SOURCE_CHAT_START_END=26,
@@ -379,7 +380,7 @@ bool bot_ai_source_chat_enemy_suicide(qa_bots *b,bot_ai_state *s,bool *out,qa_er
     bool skip;CHAT_CALL(refused(b,s,chance,&skip,e));if(skip) return true;
     bool valid,enemies;CHAT_CALL(bot_ai_source_valid_chat_position(b,s,&valid,e));if(!valid) return true;
     CHAT_CALL(bot_ai_source_visible_enemies(b,s,&enemies,e));if(enemies) return true;
-    char name[32]={0};if(s->source_enemy>=0) CHAT_CALL(bot_ai_easy_name(b,s->source_enemy,name,sizeof(name),e));
+    char name[32]={0};if(bot_ai_enemy_number(s)>=0) CHAT_CALL(bot_ai_easy_name(b,bot_ai_enemy_number(s),name,sizeof(name),e));
     const char *variables[8]={name,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
     CHAT_CALL(bot_ai_source_initial_chat(b,s,"enemy_suicide",variables,e));all_chat(b,s,out);return true;
 }
@@ -412,7 +413,7 @@ static bool safe_hit_position(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) 
     *out=false;bool valid,enemies;
     CHAT_CALL(bot_ai_source_valid_chat_position(b,s,&valid,e));if(!valid) return true;
     CHAT_CALL(bot_ai_source_visible_enemies(b,s,&enemies,e));if(enemies) return true;
-    qa_bot_entity_info info;CHAT_CALL(observation(b,s->source_enemy,&info,e));
+    qa_bot_entity_info info;CHAT_CALL(observation(b,bot_ai_enemy_number(s),&info,e));
     *out=!(info.state.flags&0x100);return true;
 }
 bool bot_ai_source_chat_hit_no_death(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
@@ -431,9 +432,9 @@ bool bot_ai_source_chat_hit_no_kill(qa_bots *b,bot_ai_state *s,bool *out,qa_erro
     int32_t count;CHAT_CALL(active_count(b,s,&count,e));if(count<=1) return true;
     bool allowed;CHAT_CALL(hit_chance(b,s,SOURCE_CHAT_HIT_NO_KILL,&allowed,e));if(!allowed) return true;
     CHAT_CALL(safe_hit_position(b,s,&allowed,e));if(!allowed) return true;
-    qa_bot_source_player_state enemy;CHAT_CALL(player(b,s->source_enemy,&enemy,e));
+    qa_bot_source_player_state enemy;CHAT_CALL(player(b,bot_ai_enemy_number(s),&enemy,e));
     if(!enemy.has_player) return bot_ai_fail(e,"Source hit-no-kill chat requires an actual enemy client");
-    char name[32];CHAT_CALL(bot_ai_client_name(b,s->source_enemy,name,sizeof(name),true,e));
+    char name[32];CHAT_CALL(bot_ai_client_name(b,bot_ai_enemy_number(s),name,sizeof(name),true,e));
     const char *variables[8]={name,weapon_name(b->services.team_arena,enemy.last_hurt_mod),NULL,NULL,NULL,NULL,NULL,NULL};
     CHAT_CALL(bot_ai_source_initial_chat(b,s,"hit_nokill",variables,e));all_chat(b,s,out);return true;
 }

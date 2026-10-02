@@ -44,13 +44,12 @@ typedef struct bot_ai_state {
     qa_bot_source_span source_span;
     qa_bot_view view;
     qa_bot_player player;
-    uint32_t character, goals, weapons, chat, movement, area, travel_flags;
+    uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
     char *admitted_character;
     char *admitted_name;
     float state_time;
     float blocked_time;
-    uint32_t last_enemy_area;
     bool team_arena, retired;
     uint64_t command_sequence;
     char team_leader_name[32];
@@ -58,7 +57,6 @@ typedef struct bot_ai_state {
     bot_source_team_policy_state source_team_policy;
     bot_source_setup_state source_setup;
     bool inuse, counted;
-    int32_t source_enemy;
     bot_shutdown_phase shutdown_phase;
     bool shutdown_restart, shutdown_chat_pending;
     char name[128];

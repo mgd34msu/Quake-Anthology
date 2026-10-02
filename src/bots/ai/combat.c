@@ -7,6 +7,7 @@
 #include "source_timers.h"
 #include "source_flags.h"
 #include "source_storage.h"
+#include "source_selectors.h"
 #include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
@@ -201,16 +202,18 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     last_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HEALTH,&last_health,true,e)) return false;
     float best = INFINITY;
-    if (bot_ai_live(b, s->view.enemy)) {
+    qa_actor_id current_enemy=bot_ai_enemy_actor(b,s);
+    s->view.enemy=current_enemy;
+    if (bot_ai_live(b,current_enemy)) {
         qa_body_state enemy;
-        if (!qa_world_body_read(b->services.shared.world, s->view.enemy, &enemy, e)) return false;
+        if (!qa_world_body_read(b->services.shared.world,current_enemy,&enemy,e)) return false;
         qa_vec3 d = qa_vec_sub(enemy.origin, s->player.origin);
         best = qa_vec_dot(d,d);
     }
     for (size_t i = 0; i < b->entities.count; ++i) {
         qa_actor_id actor = b->entities.ids[i];
         if (!bot_ai_live(b, actor) || qa_actor_id_equal(actor, s->view.actor) ||
-            qa_actor_id_equal(actor, s->view.enemy)) continue;
+            qa_actor_id_equal(actor,bot_ai_enemy_actor(b,s))) continue;
         qa_bot_player player;bool present;
         if (!bot_ai_target(b,s,actor,&player,&present,e)) return false;
         if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
@@ -226,23 +229,23 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
         if (distance > best || distance > limit*limit ||
             (b->source_event_globals.last_teleport_time>recent_teleport &&
              qa_vec_dot(teleport_delta,teleport_delta)<70*70)) continue;
-        float fov = !s->view.enemy.registry && !hurt && !player.firing ?
+        float fov = bot_ai_enemy_number(s)<0 && !hurt && !player.firing ?
             180-(90-fminf(distance,810*810)/(810*9)) : 360;
         if (!in_view(bot_ai_view_angles(s),d,fov)) continue;
         float visible;
         if (!bot_ai_enemy_visible(b,s,actor,&visible,e)) return false;
         if (!visible) continue;
-        if (!s->view.enemy.registry && distance > 100*100 && !hurt && !player.firing &&
+        if (bot_ai_enemy_number(s)<0 && distance > 100*100 && !hurt && !player.firing &&
             !in_view(player.view_angles,qa_vec_scale(d,-1),90)) {
             bool retreat;
             if (!bot_ai_retreat(b,s,&retreat,e)) return false;
             if (retreat) continue;
         }
-        bool previous = s->view.enemy.registry != 0;
+        bool previous = bot_ai_enemy_number(s)>=0;
         qa_bot_entity source_enemy;
         if(!b->services.entity(b->services.context,actor,&source_enemy,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,actor)) return true;
-        s->source_enemy=source_enemy.number;bot_ai_enemy_suicide_set(s,false);
+        bot_ai_enemy_number_set(s,source_enemy.number);bot_ai_enemy_suicide_set(s,false);
         s->view.enemy = actor; bot_ai_enemy_sight_time_set(s,b->time-(previous ? 2 : 0));
         bot_ai_enemy_visible_time_set(s,b->time); bot_ai_enemy_death_time_set(s,0);
         bot_ai_enemy_origin_set(s,player.origin);bot_ai_enemy_velocity_set(s,player.velocity);
@@ -379,7 +382,8 @@ static int32_t source_inventory_integer(float value) {
 }
 bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     (void)moving;
-    qa_actor_id enemy=s->view.enemy;
+    qa_actor_id enemy=bot_ai_enemy_actor(b,s);
+    s->view.enemy=enemy;
     if(!bot_ai_live(b,enemy)) return true;
     qa_bot_player target;bool present;
     if(!bot_ai_target(b,s,enemy,&target,&present,e)) return false;

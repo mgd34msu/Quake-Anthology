@@ -1,5 +1,6 @@
 /* Source ai_cmd.c text orders over the actual botlib and GAME services. */
 #include "internal.h"
+#include "source_selectors.h"
 #include "source_goal_record.h"
 #include "source_team_state.h"
 #include "source_timers.h"
@@ -462,7 +463,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     if(client<0) return send_chat(b,s,"whois",name,NULL,self,QA_BOT_CHAT_TEAM,e);
     if(!variable(m,VAR_AREA,area,e)) return false;
     if(m->subtype&MATCH_THERE) {
-        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)s->area,s->player.origin);
+        bot_ai_goal_point_set(s,QA_BOT_SOURCE_TEAM_GOAL,s->view.entity,(int32_t)bot_ai_area(s),s->player.origin);
     } else if(m->subtype&MATCH_HERE) {
         if(client==self) return true;
         if(!bot_ai_source_locate(b,s,client,QA_BOT_SOURCE_TEAM_GOAL,e)) return false;
@@ -766,7 +767,7 @@ static bool where(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error
         if(!navigation) return bot_ai_fail(e,"Source WhereAreYou requires loaded AAS routing");
         const qa_bot_goal *red_goal=flags?&b->source_goals.red_flag:&b->source_goals.red_obelisk;
         const qa_bot_goal *blue_goal=flags?&b->source_goals.blue_flag:&b->source_goals.blue_obelisk;
-        qa_bot_nav_route_query query={.area=s->area,.origin=s->player.origin,.has_origin=true,
+        qa_bot_nav_route_query query={.area=bot_ai_area(s),.origin=s->player.origin,.has_origin=true,
             .travel_flags=0x011c0fbe,.goal_area=(uint32_t)red_goal->area};qa_bot_nav_route route;
         if(!qa_bot_navigation_route(navigation,&query,&route,e)) return false;
         red=route.travel_time;query.goal_area=(uint32_t)blue_goal->area;
