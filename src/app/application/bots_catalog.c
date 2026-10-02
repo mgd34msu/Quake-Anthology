@@ -9,7 +9,6 @@
 #include "native_q3_match.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
-#include "qa/game_q3_round.h"
 #include "qa/game_q3_source.h"
 #include <limits.h>
 #include <string.h>
@@ -70,10 +69,14 @@ static bool clock_read(void *context,qa_bot_catalog_clock *out,qa_error *error) 
         *out=(qa_bot_catalog_clock){.max_clients=(int32_t)maximum};
         return application_bot_world_clock(bots->shared_world,&out->time,&out->intermission_time,error);
     }
-    qa_q3_round_source round;
-    if(!qa_q3_round_read(actual->state.q3,&round,error) || round.max_clients>INT32_MAX) return false;
-    *out=(qa_bot_catalog_clock){.time=round.current_time_ms,.start_time=round.start_time_ms,
-        .max_clients=(int32_t)round.max_clients};
+    int32_t time,start_time;
+    uint32_t maximum;
+    if(!qa_q3_source_clock(actual->state.q3,&time,error) ||
+       !qa_q3_source_start_time(actual->state.q3,&start_time,error) ||
+       !qa_q3_source_max_clients(actual->state.q3,&maximum,error)) return false;
+    if(maximum>INT32_MAX) return application_fail(error,QA_ERROR_FORMAT,"native bot source client extent is not signed");
+    *out=(qa_bot_catalog_clock){.time=time,.start_time=start_time,
+        .max_clients=(int32_t)maximum};
     return application_native_q3_settings_integer(actual,"g_gametype",&out->game_type,error) &&
         application_native_q3_match_intermission(actual,&out->intermission_time,error);
 }

@@ -306,6 +306,7 @@ bool qa_q3_selected_holdable_give(qa_q3_game *, qa_actor_id, const char *, bool 
 bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
 bool qa_q3_source_clock(const qa_q3_game *, int32_t *source_time_ms, qa_error *);
+bool qa_q3_source_start_time(const qa_q3_game *, int32_t *source_start_time_ms, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 /* G_UpdateCvars writes the source numerical values without construction-time
  * range restrictions. Call from the real source settings phase. */

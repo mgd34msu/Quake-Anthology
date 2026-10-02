@@ -136,6 +136,13 @@ bool qa_q3_maps_bind_restore(qa_q3_game *game, const qa_q3_map_options *options,
     return maps_bind(game, options, true, error);
 }
 
+bool qa_q3_source_start_time(const qa_q3_game *game, int32_t *out, qa_error *error) {
+    if (!game || !game->map || game->source_restored || !out)
+        return q3_map_fail(error, "Q3 source startTime query requires its actual bound map and output");
+    *out = game->map->options.start_time_ms;
+    return true;
+}
+
 static bool maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
                        bool retain_configstrings, qa_error *error) {
     if (!game || game->source_restored || !game->map)
