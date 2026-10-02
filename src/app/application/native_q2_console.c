@@ -127,11 +127,41 @@ static void cvar_print(void *opaque, const char *text) {
     struct application_native_q2_console *owner = opaque;
     qa_console_emit(owner->console, NULL, text);
 }
+static const qa_launch_instance *source_descriptor(application_provider *provider)
+{
+    qa_application *app=provider->application;
+    const qa_launch_snapshot *snapshots[]={app->routing_snapshot,
+        qa_application_startup_candidate(app),qa_application_launch(app)};
+    for (size_t i=0;i<sizeof(snapshots)/sizeof(*snapshots);++i) {
+        const qa_launch_instance *selected=snapshots[i]?
+            qa_launch_snapshot_find(snapshots[i],provider->launch->selection.instance):NULL;
+        if (selected && selected->state==provider && selected->storage==provider->launch->storage) return selected;
+    }
+    return NULL;
+}
 static qa_command_result command(void *opaque, const qa_command_invocation *invocation,
                                   qa_error *error) {
     struct application_native_q2_console *owner = opaque;
     ++owner->calls;
     qa_command_result result = application_command_fallback(owner->provider->application, invocation, error);
+    application_provider *provider=owner->provider;
+    const qa_application_startup_hooks *hooks=provider->application->startup_hooks;
+    if (result==QA_COMMAND_UNHANDLED && hooks && hooks->source_common_command) {
+        const qa_launch_instance *descriptor=source_descriptor(provider);
+        if (!descriptor) {
+            --owner->calls;
+            application_fail(error,QA_ERROR_ARGUMENT,"Q2 common command lost its actual Source descriptor");
+            return QA_COMMAND_FAILED;
+        }
+        qa_application_startup_source source={.descriptor=descriptor,
+            .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q2_GAME},
+            .console=owner->console,.cvars=owner->cvars,.command=invocation->context,
+            .declaration_owner=provider->owner};
+        bool handled=false;
+        bool okay=hooks->source_common_command(hooks->context,provider->application,
+            &source,invocation,&handled,error);
+        result=!okay?QA_COMMAND_FAILED:handled?QA_COMMAND_HANDLED:QA_COMMAND_UNHANDLED;
+    }
     --owner->calls;
     return result;
 }
