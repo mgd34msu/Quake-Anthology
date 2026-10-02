@@ -157,7 +157,7 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
 {
     if (client >= QA_Q3_SOURCE_CLIENTS) return q3_fail(error, "victory model has no fixed source client");
     qa_actor_id actor;
-    if (!q3_spawn_raw_actor(game, 0, &actor, error))
+    if (!q3_spawn_raw_actor(game, game->source_noclass, &actor, error))
         return false;
     qa_q3_entity original;
     qa_q3_wire_visibility visible;
@@ -191,6 +191,13 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
     q3_actor *entry = q3_actor_get(game, actor);
     if (source.client_slot < 0 || source.client_slot >= (int32_t)QA_Q3_SOURCE_CLIENTS)
         return q3_fail(error, "victory model requires its genuine source client pointer");
+    qa_string_id classname;
+    if (!qa_builtin_resource(&game->options.services,
+            game->clients[source.client_slot].netname, &classname, error) ||
+        !qa_actors_set_metadata(qa_session_actor_registry(game->options.services.session),
+            actor, game->options.owner, classname, error))
+        return q3_rollback_spawn(game, actor, error);
+    game->source_entities[slot].classname = classname;
     game->source_entities[slot].client_slot = source.client_slot;
     entry->state.postgame.timestamp = game->now_ms;
     entry->state.postgame.physics_object = true;
