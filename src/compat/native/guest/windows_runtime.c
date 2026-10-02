@@ -503,8 +503,13 @@ bool guest_windows_close_files(guest_windows *owner, qa_error *error)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows file retirement requires its genuinely stopped retained lower owner");
     owner->retiring=true;
     if (owner->files_closed) return true;
-    if (!windows_stdio_close_files(owner,error) || !windows_kernel_close_pending(owner,error) ||
-        !guest_runtime_resources_destroy(&owner->resources,error)) return false;
+    /* Flush and close capabilities may call back into their retained runtime.
+     * Keep retirement owned until the complete close attempt has returned. */
+    ++owner->busy;
+    bool closed = windows_stdio_close_files(owner,error) && windows_kernel_close_pending(owner,error) &&
+        guest_runtime_resources_destroy(&owner->resources,error);
+    --owner->busy;
+    if (!closed) return false;
     owner->files_closed=true; return true;
 }
 
