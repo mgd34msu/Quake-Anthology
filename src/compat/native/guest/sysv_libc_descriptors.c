@@ -30,6 +30,18 @@ static bool identity(const sysv_service *s)
                 (s->result.kind == QA_NATIVE_F32 ? !strcmp(s->name+n,"f") : !s->name[n]);
         }
         if (strcmp(s->library,"libc.so.6")) return false;
+        if (s->operation == 25 || s->operation == 26) {
+            if (!s->a || s->a > UINT64_MAX-128 ||
+                (!wide && s->a+128 > UINT64_C(0x100000000)) || !version(s,base) ||
+                strcmp(s->name,s->operation == 25 ? "rand" : "srand")) return false;
+            for (size_t i = 0; i < s->runtime->service_count; ++i) {
+                const sysv_service *other = s->runtime->services[i];
+                if (other && other->group == SYSV_LIBC &&
+                    (other->operation == 25 || other->operation == 26) && other->a != s->a) return false;
+            }
+            return true;
+        }
+        if (s->operation == 27) return named(s,"strtod",27,0) && version(s,base);
         const char *names[] = {"__errno_location",NULL,"malloc","calloc","free","realloc",
             NULL,"memset","memcmp","strlen","strcmp",NULL,"strncpy",NULL,NULL,
             "strtok","strtol","time","qsort",NULL,NULL,NULL,"__isnanf","__stack_chk_fail"};
@@ -168,7 +180,7 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         else if (s->operation >= 10) result = s->a ? QA_NATIVE_U32 : QA_NATIVE_I32;
         break;
     case SYSV_LIBC:
-        valid = valid && s->operation >= 1 && s->operation <= 24;
+        valid = valid && s->operation >= 1 && s->operation <= 27;
         switch (s->operation) {
         case 1: result = p; break;
         case 2: count = 1; result = p; valid = valid && s->runtime->target.pointer_bytes == 8; break;
@@ -196,9 +208,13 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         case 22: count = 3; parameters[0] = s->parameters[0].kind;
             valid = valid && (parameters[0] == QA_NATIVE_F32 || parameters[0] == QA_NATIVE_F64); break;
         case 23: count = 1; parameters[0] = QA_NATIVE_F32; result = QA_NATIVE_I32; break;
+        case 25: result = QA_NATIVE_I32; valid = valid && s->a; break;
+        case 26: count = 1; parameters[0] = QA_NATIVE_U32; valid = valid && s->a; break;
+        case 27: count = 2; result = QA_NATIVE_F64; break;
         default: break;
         }
-        if (s->operation != 7 && s->operation != 12 && s->operation != 14 && s->operation != 15 && s->operation != 20)
+        if (s->operation != 7 && s->operation != 12 && s->operation != 14 && s->operation != 15 && s->operation != 20 &&
+            s->operation != 25 && s->operation != 26)
             valid = valid && !s->a;
         break;
     default: valid = false; break;

@@ -618,11 +618,13 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
             entry->registration_owner = owner;
             return true;
         }
-    qa_cvars *registry = cvar_owner(console, context_for(console, NULL), name);
+    qa_command_context context;
+    if (!qa_console_cvar_context(console, context_for(console, NULL), &context, error)) return false;
+    qa_cvars *registry = cvar_owner(console, &context, name);
     cvar_access access;
-    if (!cvar_access_read(console,context_for(console,NULL),registry,&access,error)) return false;
+    if (!cvar_access_read(console,&context,registry,&access,error)) return false;
     const qa_cvar_view *variable = cvar_find(access, name);
-    if (context_for(console, NULL)->dialect != QA_CONSOLE_Q3 && variable != NULL && *variable->value != '\0')
+    if (context.dialect != QA_CONSOLE_Q3 && variable != NULL && *variable->value != '\0')
         return qac_fail(error, QA_ERROR_ARGUMENT, "command name is already a cvar");
     command_entry *entry = calloc(1, sizeof(*entry));
     if (entry == NULL) return qac_fail(error, QA_ERROR_MEMORY, "allocating console command");

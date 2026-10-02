@@ -617,6 +617,7 @@ const qa_cvar_view *frontend_config_store_engine_value(const frontend_config_sto
     }
     return engine?qa_cvars_find(engine,name):NULL;
 }
+static bool same_command(const qa_command_context *,const qa_command_context *);
 bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_application *application,
     const qa_console *console,const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
 {
@@ -646,6 +647,14 @@ bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_applicati
     if (pending_tuple(manager,application,console,&source))
         return frontend_shared_values_edit(values,&source,command,registry,out,error);
     if (registry!=frontend_shared_values_registry(values)) return true;
+    if (application==manager->shared_application && console==manager->root_console &&
+        registry==manager->root_cvars && root_current(manager) &&
+        same_command(command,&manager->root_command) &&
+        qa_application_startup_bootstrap_images_ready(application) && qa_console_idle(console) &&
+        frontend_config_store_shared(manager,application,manager->shared_candidate)) {
+        qa_cvars *actual=NULL;
+        return frontend_shared_values_root_access(values,console,command,&actual,out,error) && actual==registry;
+    }
     qa_cvars *actual=NULL;
     return application==manager->shared_application &&
         frontend_shared_values_release_access(values,manager->frontend->input_settings,console,command,&actual,out,error) &&

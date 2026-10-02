@@ -1221,6 +1221,16 @@ static bool lower_valid(guest_sysv_runtime *r,const qa_native_guest *guest,qa_er
             !guest_range(guest,addresses[i],(size_t)sizes[i],QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_WRITE,error)) return false;
     for (size_t i = 0; i < r->heap_count; ++i)
         if (!owned_allocation(guest,r->heap[i].address,r->heap[i].bytes,INT32_C(0x53595648),true,error)) return false;
+    for (size_t i = 0; i < r->service_count; ++i) {
+        const sysv_service *s = r->services[i];
+        if (s->group != SYSV_LIBC || (s->operation != 25 && s->operation != 26)) continue;
+        uint8_t state[128];
+        if (!owned_allocation(guest,s->a,sizeof(state),INT32_C(0x53595652),true,error) ||
+            !guest_range(guest,s->a,sizeof(state),QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_WRITE,error) ||
+            !qa_native_guest_read(guest,s->a,state,sizeof(state),error)) return false;
+        if (qa_load_u32le(state) >= 31)
+            return sysv_fail(error,QA_ERROR_FORMAT,"saved System V random state has an invalid ring cursor");
+    }
     for (size_t i = 0; i < r->object_count; ++i) {
         const sysv_object *o = r->objects+i;
         if (!owned_allocation(guest,o->address,o->bytes,

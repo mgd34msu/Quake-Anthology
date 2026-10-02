@@ -17,6 +17,10 @@ bool frontend_shared_values_begin(qa_frontend *,frontend_config_store *,qa_appli
  * bootstrap, owns this preparation before any physical source joins. */
 bool frontend_shared_values_begin_root(qa_frontend *,frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,frontend_shared_values **,qa_error *);
+/* Command registration after the real images boundary reads the retained
+ * canonical edit while its actual ENGINE console has returned. */
+bool frontend_shared_values_root_access(const frontend_shared_values *,const qa_console *,
+    const qa_command_context *,qa_cvars **,qa_cvars_edit **,qa_error *);
 bool frontend_shared_values_begin_client(qa_frontend *,frontend_config_store *,qa_application *,
     qa_application_client_preparation *,frontend_shared_values **,qa_error *);
 bool frontend_shared_values_client_access(const frontend_shared_values *,

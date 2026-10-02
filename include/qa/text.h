@@ -22,6 +22,9 @@ bool qa_parse_number(qa_bytes input, double *out, qa_error *error);
  * prefix produces zero; overflow/underflow and nonfinite values are preserved.
  * False reports an argument/resource failure, never a rejected numeric token. */
 bool qa_parse_atof(const char *text, double *out, qa_error *error);
+/* C-locale strtod prefix receipt using the caller's rounding mode. The end
+ * offset and range error are returned without changing the host errno. */
+bool qa_parse_strtod(const char *, double *, size_t *consumed, bool *range_error, qa_error *);
 /* The same prefix conversion rounded directly to binary32. */
 bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
 /* Finite double serialization in the same C locale, with round-trip precision. */

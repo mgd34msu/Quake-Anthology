@@ -111,6 +111,31 @@ bool frontend_shared_values_begin_root(qa_frontend *f,frontend_config_store *man
     if (!qa_cvars_edit_prepare(registry,&owner->edit,error)) { free(owner); return false; }
     *out=owner; return true;
 }
+bool frontend_shared_values_root_access(const frontend_shared_values *owner,
+    const qa_console *console,const qa_command_context *command,qa_cvars **registry,
+    qa_cvars_edit **edit,qa_error *error)
+{
+    qa_console *actual_console=NULL; qa_cvars *actual_registry=NULL;
+    qa_command_context actual={0};
+    if (!registry || !edit || !command || !current(owner,error) || owner->client ||
+        owner->candidate || owner->terminal || owner->published || !owner->edit ||
+        !owner->root_console || console!=owner->root_console || !qa_console_idle(console) ||
+        !qa_application_startup_bootstrap_images_ready(owner->application) ||
+        !qa_application_startup_root_read(owner->application,owner->candidate,
+            &actual_console,&actual_registry,&actual,error) ||
+        actual_console!=console || actual_registry!=owner->registry ||
+        command->session!=actual.session || command->owner!=actual.owner ||
+        command->client!=actual.client || command->seat!=actual.seat ||
+        command->dialect!=actual.dialect || command->origin!=actual.origin ||
+        command->direct!=actual.direct || command->console_text!=actual.console_text ||
+        command->registry!=actual.registry || command->generation!=actual.generation ||
+        !qa_actor_id_equal(command->actor,actual.actor) ||
+        ((!command->script)!=(!actual.script)) ||
+        (command->script && strcmp(command->script,actual.script)) ||
+        !qa_cvars_edit_returned_is(owner->edit,owner->registry))
+        return fail(error,"Shared root lookup requires its returned images constructor and exact ENGINE command");
+    *registry=owner->registry; *edit=owner->edit; return true;
+}
 qa_cvars *frontend_shared_values_registry(const frontend_shared_values *owner)
 { return owner?owner->registry:NULL; }
 bool frontend_shared_values_begin_client(qa_frontend *f,frontend_config_store *manager,

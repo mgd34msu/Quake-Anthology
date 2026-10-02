@@ -1,11 +1,36 @@
 #include "sysv_libc_private.h"
+#include "qa/text.h"
+#include <fenv.h>
 
 enum libc_operation {
     LC_ERRNO = 1, LC_TLS, LC_MALLOC, LC_CALLOC, LC_FREE, LC_REALLOC,
     LC_COPY, LC_SET, LC_COMPARE, LC_LENGTH, LC_STRING_COMPARE, LC_STRING_COPY,
     LC_STRING_NCOPY, LC_CHARACTER, LC_SUBSTRING, LC_TOKEN, LC_STRTOL, LC_TIME,
-    LC_SORT, LC_MATH, LC_ATAN2, LC_SINCOS, LC_ISNAN, LC_STACK
+    LC_SORT, LC_MATH, LC_ATAN2, LC_SINCOS, LC_ISNAN, LC_STACK, LC_RAND, LC_SRAND, LC_STRTOD
 };
+static uint32_t random_step(uint8_t state[128])
+{
+    uint32_t rear = qa_load_u32le(state), front = (rear + 3) % 31;
+    uint32_t sum = qa_load_u32le(state + 4 + front * 4) +
+        qa_load_u32le(state + 4 + rear * 4);
+    qa_store_u32le(state + 4 + front * 4, sum);
+    qa_store_u32le(state, (rear + 1) % 31);
+    return sum >> 1;
+}
+static bool random_seed(guest_sysv_runtime *r, uint64_t address, uint32_t seed, qa_error *error)
+{
+    uint8_t state[128] = {0};
+    if (!seed) seed = 1;
+    qa_store_u32le(state + 4, seed);
+    int64_t word = seed <= INT32_MAX ? (int64_t)seed : (int64_t)seed - INT64_C(0x100000000);
+    for (size_t i = 1; i < 31; ++i) {
+        word = 16807 * (word % 127773) - 2836 * (word / 127773);
+        if (word < 0) word += INT32_MAX;
+        qa_store_u32le(state + 4 + i * 4, (uint32_t)word);
+    }
+    for (size_t i = 0; i < 310; ++i) (void)random_step(state);
+    return sysv_write(r, address, state, sizeof(state), error);
+}
 static bool add(guest_sysv_runtime *r, uint32_t operation, uint64_t flags,
     const char *library, const char *name, const char *const *versions,
     size_t version_count, const qa_native_value_type *types, size_t count,
@@ -25,6 +50,14 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
     const qa_native_value_type zp[] = {z}, zz[] = {z,z}, pp[] = {p,p}, pz[] = {p,z};
     const qa_native_value_type ppz[] = {p,p,z}, ppzz[] = {p,p,z,z}, piz[] = {p,QA_NATIVE_I32,z};
     const qa_native_value_type pi[] = {p,QA_NATIVE_I32}, ppi[] = {p,p,QA_NATIVE_I32}, pzzp[] = {p,z,z,p};
+    uint64_t random_state;
+    qa_native_value_type seed_type = QA_NATIVE_U32;
+    if (!sysv_allocate(r, 128, false, &random_state, error) ||
+        !random_seed(r, random_state, 1, error) ||
+        !add(r, LC_RAND, random_state, "libc.so.6", "rand", versions, 2,
+            NULL, 0, QA_NATIVE_I32, error) ||
+        !add(r, LC_SRAND, random_state, "libc.so.6", "srand", versions, 2,
+            &seed_type, 1, QA_NATIVE_VOID, error)) return false;
     if (!sysv_format_install(r, error) ||
         !add(r, LC_ERRNO, 0, "libc.so.6", "__errno_location", versions, 2, NULL, 0, p, error) ||
         (r->target.pointer_bytes == 8 && !add(r, LC_TLS, 0, "ld-linux-x86-64.so.2", "__tls_get_addr", tls, 2, &p, 1, p, error)) ||
@@ -56,6 +89,7 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
         !sysv_allocate(r, r->target.pointer_bytes, false, &r->strtok_slot, error) ||
         !add(r, LC_TOKEN, 0, "libc.so.6", "strtok", versions, 2, pp, 2, p, error) ||
         !add(r, LC_STRTOL, 0, "libc.so.6", "strtol", versions, 2, ppi, 3, s, error) ||
+        !add(r, LC_STRTOD, 0, "libc.so.6", "strtod", versions, 2, pp, 2, QA_NATIVE_F64, error) ||
         !add(r, LC_TIME, 0, "libc.so.6", "time", versions, 2, &p, 1, s, error) ||
         !add(r, LC_SORT, 0, "libc.so.6", "qsort", versions, 2, pzzp, 4, QA_NATIVE_VOID, error)) return false;
     const char *math_names[] = {"sin", "cos", "ceil", "floor", "sqrt", "fabs"};
@@ -205,6 +239,15 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
     uint64_t c = service->parameter_count > 2 ? sysv_integer(args + 2) : 0;
     size_t count;
     switch (service->operation) {
+    case LC_RAND: {
+        uint8_t state[128];
+        if (!sysv_read(r, service->a, state, sizeof(state), error)) return false;
+        if (qa_load_u32le(state) >= 31)
+            return sysv_fail(error, QA_ERROR_FORMAT, "System V random state has an invalid ring cursor");
+        out->as.i32 = (int32_t)random_step(state);
+        return sysv_write(r, service->a, state, sizeof(state), error);
+    }
+    case LC_SRAND: return random_seed(r, service->a, (uint32_t)a, error);
     case LC_ERRNO: out->as.address = r->errno_address; return true;
     case LC_TLS: {
         uint64_t module, offset;
@@ -331,6 +374,41 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         qa_buffer_free(&text); qa_buffer_free(&delimiters); return ok;
     }
     case LC_STRTOL: return strtol_call(r, args, out, error);
+    case LC_STRTOD: {
+        qa_buffer text = {0};
+        qa_native_guest_cpu cpu;
+        if ((b && !guest_range(r->guest,b,r->target.pointer_bytes,QA_NATIVE_GUEST_WRITE,error)) ||
+            !full_string(r,a,&text,error) || !qa_native_guest_cpu_read(r->guest,&cpu,error)) {
+            qa_buffer_free(&text); return false;
+        }
+        uint8_t *terminated = realloc(text.data,text.size+1);
+        if (!terminated) { qa_buffer_free(&text); return sysv_fail(error,QA_ERROR_MEMORY,"terminating System V strtod input"); }
+        text.data = terminated; text.data[text.size] = 0;
+        const int modes[] = {FE_TONEAREST,FE_DOWNWARD,FE_UPWARD,FE_TOWARDZERO};
+        unsigned rounding = r->target.pointer_bytes == 8 ? (cpu.mxcsr>>13)&3 : (cpu.fp_control>>10)&3;
+        fenv_t saved;
+        if (feholdexcept(&saved) != 0) {
+            qa_buffer_free(&text); return sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot retain the System V strtod floating environment");
+        }
+        bool ok = fesetround(modes[rounding]) == 0, range_error = false;
+        size_t consumed = 0;
+        if (ok) ok = qa_parse_strtod((const char *)text.data,&out->as.f64,&consumed,&range_error,error);
+        else sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot select System V strtod rounding");
+        int exceptions = fetestexcept(FE_ALL_EXCEPT);
+        if (fesetenv(&saved) != 0) ok = sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot restore the System V strtod floating environment");
+        qa_buffer_free(&text);
+        if (!ok) return false;
+        unsigned sticky = (exceptions & FE_INVALID ? 1u : 0u) |
+            (exceptions & FE_DIVBYZERO ? 4u : 0u) | (exceptions & FE_OVERFLOW ? 8u : 0u) |
+            (exceptions & FE_UNDERFLOW ? 16u : 0u) | (exceptions & FE_INEXACT ? 32u : 0u);
+        if (sticky) {
+            if (r->target.pointer_bytes == 8) cpu.mxcsr |= sticky;
+            else cpu.fp_status |= (uint16_t)sticky;
+            if (!qa_native_guest_cpu_write(r->guest,&cpu,error)) return false;
+        }
+        return (!range_error || sysv_errno(r,34,error)) &&
+            (!b || sysv_put_pointer(r,b,a+consumed,error));
+    }
     case LC_TIME: {
         int64_t seconds;
         if (!r->options.bindings.clock_id || !r->options.bindings.time)

@@ -53,7 +53,8 @@ add_library(qa_core STATIC
     src/core/strings.c
     src/core/text.c
     src/core/tokenizer.c
-    src/core/normals.c)
+    src/core/normals.c
+    src/persistence/source_values.c)
 target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)

@@ -4,6 +4,7 @@
 #include "qa/text.h"
 
 #include <fenv.h>
+#include <errno.h>
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
@@ -157,6 +158,31 @@ bool qa_parse_number(qa_bytes input, double *out, qa_error *error) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid numeric token");
         return false;
     }
+    *out = value;
+    return true;
+}
+
+bool qa_parse_strtod(const char *text, double *out, size_t *consumed, bool *range_error, qa_error *error) {
+    int previous_errno = errno;
+    if (!text || !out || !consumed || !range_error) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid strtod input");
+        errno = previous_errno;
+        return false;
+    }
+    if (!ready(error)) {
+        errno = previous_errno;
+        return false;
+    }
+    char *end;
+    errno = 0;
+#if defined(_WIN32)
+    double value = _strtod_l(text, &end, numeric_locale);
+#else
+    double value = strtod_l(text, &end, numeric_locale);
+#endif
+    *range_error = errno == ERANGE;
+    errno = previous_errno;
+    *consumed = (size_t)(end - text);
     *out = value;
     return true;
 }
