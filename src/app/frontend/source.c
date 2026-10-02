@@ -8,6 +8,7 @@
 #include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
 #include "qa/application_q3_components.h"
+#include "qa/application_native_q3_wire.h"
 #include "component_scene.h"
 #include "remote_q1_effects.h"
 #include "q1_sky.h"
@@ -1487,6 +1488,9 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (!frontend || !frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source construction requires idle frontend parent and child owners");
     if (role == QA_QVM_GAME) {
+        if (application == frontend->application &&
+            qa_application_native_q3_wire_preconstruction_current(application,owner,seat,host))
+            return frontend_network_source_services(frontend,host,error);
         qa_application_q3_client_preparation preparation;
         if(application!=frontend->application || !host ||
             !qa_application_q3_preconstruction_source_read(application,owner,role,seat,&preparation,error)) return false;

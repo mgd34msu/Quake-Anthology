@@ -76,6 +76,7 @@ struct application_native_q3_wire {
     application_provider *provider;
     qa_world *world;
     qa_q3_host_server_services server;
+    const qa_q3_host_options *preparing_services;
     void *frontend_lifetime;
     void (*release_frontend)(void *);
     native_q3_wire_client clients[QA_Q3_SOURCE_CLIENTS];
@@ -110,7 +111,7 @@ static struct application_native_q3_wire *wire_owner(application_provider *provi
 {
     struct application_native_q3_wire *wire = provider ? provider->native_q3_wire : NULL;
     if (!wire || wire->provider != provider || provider->kind != APPLICATION_PROVIDER_Q3 ||
-        !provider->state.q3 || wire->restore_pending || wire->closing || provider->close_pending ||
+        !provider->state.q3 || wire->preparing_services || wire->restore_pending || wire->closing || provider->close_pending ||
         !provider->application || provider->application->destroy_requested) {
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire source is not admitted");
         return NULL;
@@ -251,6 +252,25 @@ static void clients_clear(struct application_native_q3_wire *wire)
     }
 }
 
+bool qa_application_native_q3_wire_preconstruction_current(const qa_application *app,
+    qa_actor_owner owner, uint32_t seat, const qa_q3_host_options *services)
+{
+    if (!app || !owner || seat != UINT32_MAX || !services || app->destroy_requested)
+        return false;
+    for (const application_provider *provider = app->live_providers; provider;
+         provider = provider->next_live) {
+        if (provider->owner != owner) continue;
+        const struct application_native_q3_wire *wire = provider->native_q3_wire;
+        return provider->application == app && provider->kind == APPLICATION_PROVIDER_Q3 &&
+            provider->constructed && !provider->attached && !provider->close_pending &&
+            provider->state.q3 && wire && wire->provider == provider && !wire->closing &&
+            wire->calls == 1 && wire->preparing_services == services &&
+            services->role == QA_QVM_GAME && services->owner == owner &&
+            services->session == app->session && services->world == wire->world;
+    }
+    return false;
+}
+
 bool application_native_q3_wire_create(application_provider *provider, qa_world *source_world,
     bool restoring, qa_error *error)
 {
@@ -272,10 +292,17 @@ bool application_native_q3_wire_create(application_provider *provider, qa_world 
         wire->max_clients >= 1 && wire->max_clients <= QA_Q3_SOURCE_CLIENTS;
     qa_q3_host_options services = {.role = QA_QVM_GAME, .session = provider->application->session,
         .world = source_world, .owner = provider->owner};
-    if (ok && provider->application->q3_services)
+    if (ok && provider->application->q3_services) {
+        provider->native_q3_wire = wire;
+        wire->preparing_services = &services;
+        ++wire->calls;
         ok = provider->application->q3_services(provider->application->guest_context,
             provider->application, provider->owner, QA_QVM_GAME, UINT32_MAX, &services, error);
+        --wire->calls;
+        wire->preparing_services = NULL;
+    }
     if (!ok) {
+        provider->native_q3_wire = NULL;
         if (services.release_frontend) services.release_frontend(services.frontend_lifetime);
         free(wire);
         if (!error || !error->code)

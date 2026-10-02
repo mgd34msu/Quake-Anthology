@@ -4,6 +4,11 @@
 #include "qa/application_q3_client.h"
 #include "qa/network_q3.h"
 
+/* Only the actual synchronous native GAME wire service constructor owns this
+ * exact delegate pointer. It creates no original Q3 host or CLIENT namespace. */
+bool qa_application_native_q3_wire_preconstruction_current(const qa_application *,
+    qa_actor_owner, uint32_t seat, const qa_q3_host_options *);
+
 /* This is the genuine local GAME wire lease, independent of a guest host. */
 typedef struct application_native_q3_wire_client_lease qa_native_q3_wire_reader;
 typedef struct qa_native_q3_wire_basis {
