@@ -123,8 +123,10 @@ void qa_roq_decoder_destroy(qa_roq_decoder *decoder) {
 }
 static bool code(vq_reader *reader, unsigned *out, qa_error *error) {
     if (!reader->remaining) {
-        if (reader->bytes.size - reader->cursor < 2)
-            return roq_fail(error, "Truncated RoQ control word");
+        if (reader->bytes.size - reader->cursor < 2) {
+            roq_fail(error, "Truncated RoQ control word");
+            return false;
+        }
         reader->codes = qa_load_u16le(reader->bytes.data + reader->cursor);
         reader->cursor += 2;
         reader->remaining = 8;
@@ -135,8 +137,10 @@ static bool code(vq_reader *reader, unsigned *out, qa_error *error) {
     return true;
 }
 static bool byte(vq_reader *reader, uint8_t *out, qa_error *error) {
-    if (reader->cursor == reader->bytes.size)
-        return roq_fail(error, "Truncated RoQ block operand");
+    if (reader->cursor == reader->bytes.size) {
+        roq_fail(error, "Truncated RoQ block operand");
+        return false;
+    }
     *out = reader->bytes.data[reader->cursor++];
     return true;
 }
