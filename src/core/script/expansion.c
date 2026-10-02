@@ -45,7 +45,7 @@ static int parameter(qa_script *source,script_macro *macro,const qa_script_token
     return -1;
 }
 static bool arguments(qa_script *source,script_macro *macro,qa_script_location location,uint32_t heads[128],qa_error *error) {
-    script_queued_token token;bool found;
+    script_queued_token token=script_local_token();bool found;
     if(!script_raw(source,&token,&found,error)) return false;
     uint32_t count=script_macro_word(macro,12);
     if(count>128) return script_fail(source,location,"Macro has more than 128 parameters",error);

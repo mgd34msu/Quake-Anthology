@@ -257,7 +257,7 @@ qa_bytes qa_script_token_value(const qa_script_token *token) {
     }
     return value;
 }
-static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, qa_error *e) {
+static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, uint8_t *raw, qa_error *e) {
     if (l == NULL || out == NULL || found == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid script token request");
         return false;
@@ -266,10 +266,12 @@ static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, qa
     *found = false;
     if(script_lexer_available(l)) {
         script_lexer_available_set(l,false);*found=true;
+        memcpy(raw,l->record.bytes+SCRIPT_LEXER_TOKEN,SCRIPT_TOKEN_BYTES);
         return script_token_load(l->record.bytes+SCRIPT_LEXER_TOKEN,l->token_extent,
             l->token_location,l->token_whitespace,&l->arena,out,e);
     }
-    *out = (qa_script_token){0};
+    *out = (qa_script_token){0};memset(raw,0,SCRIPT_TOKEN_BYTES);
+    qa_store_u32le(raw+1048,qa_load_u32le(l->record.bytes+SCRIPT_LEXER_POINTER));
     qa_store_u32le(l->record.bytes+SCRIPT_LEXER_LAST_POINTER,
         qa_load_u32le(l->record.bytes+SCRIPT_LEXER_POINTER));
     qa_store_u32le(l->record.bytes+SCRIPT_LEXER_LAST_LINE,script_lexer_line(l));
@@ -282,6 +284,8 @@ static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, qa
         return true;
     qa_store_u32le(l->record.bytes+SCRIPT_LEXER_END_WHITESPACE,
         qa_load_u32le(l->record.bytes+SCRIPT_LEXER_POINTER));
+    qa_store_u32le(raw+1052,qa_load_u32le(l->record.bytes+SCRIPT_LEXER_POINTER));
+    qa_store_u32le(raw+1056,script_lexer_line(l));qa_store_u32le(raw+1060,script_lexer_line(l)-before);
     *out = (qa_script_token){
         .location = qa_script_lexer_position(l),
         .lines_crossed = script_lexer_line(l) - before,
@@ -289,31 +293,36 @@ static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, qa
     size_t start = script_lexer_offset(l);
     uint8_t c = script_peek(l, 0);
     if (c == '"' || c == '\'') {
-        if (!script_quoted(l, out, e))
+        if (!script_quoted(l, out, raw, e))
             return false;
     } else if (script_digit(c) || (c == '.' && script_digit(script_peek(l, 1)))) {
-        if (!script_number(l, out, e))
+        if (!script_number(l, out, raw, e))
             return false;
     } else if ((script_lexer_flags(l) & QA_SCRIPT_PRIMITIVE_TOKENS) != 0) {
         out->text = (qa_bytes){l->input.data + start, 0};
         while ((c = script_peek(l, 0)) > 32 && c < 128 && c != ';') {
             if (out->text.size >= l->options.token_limit)
                 return script_error(l, "Primitive exceeds script token limit", e);
+            if(!script_token_byte(l,raw,out->text.size,script_peek(l,0),e)) return false;
             script_advance(l, 1);
             out->text.size = script_lexer_offset(l) - start;
         }
         if (out->text.size == l->options.token_limit)
             return script_unsupported(l, "Primitive token has no source string terminator", e);
+        if(!script_token_byte(l,raw,out->text.size,0,e)) return false;
     } else if (script_alpha(c)) {
-        out->kind = QA_SCRIPT_NAME;
+        out->kind = QA_SCRIPT_NAME;qa_store_u32le(raw+1024,QA_SCRIPT_NAME);
         out->text = (qa_bytes){l->input.data + start, 0};
         while (script_name(script_peek(l, 0))) {
+            if(!script_token_byte(l,raw,out->text.size,script_peek(l,0),e)) return false;
             script_advance(l, 1);
             out->text.size = script_lexer_offset(l) - start;
             if (script_lexer_offset(l) - start >= l->options.token_limit)
                 return script_error(l, "Name exceeds script token limit", e);
         }
+        if(!script_token_byte(l,raw,out->text.size,0,e)) return false;
         out->subtype = (uint32_t)out->text.size;
+        qa_store_u32le(raw+1028,out->subtype);
     } else {
         uint32_t head=qa_load_u32le(l->table.bytes+(size_t)c*4);
         if(head>l->punctuation_count) return script_unsupported(l,"Punctuation head does not name its actual table record",e);
@@ -322,10 +331,13 @@ static bool next_token(qa_script_lexer *l, qa_script_token *out, bool *found, qa
             const char *text = l->punctuations[index].text;
             size_t size = strlen(text);
             if (size <= l->input.size - start && memcmp(l->input.data + start, text, size) == 0) {
+                if(size>=1024) return script_unsupported(l,"token_t string exceeds its 1024-byte field",e);
+                memcpy(raw,text,size);raw[size]=0;
                 out->kind = QA_SCRIPT_PUNCTUATION;
                 out->text = (qa_bytes){(const uint8_t *)text, size};
                 out->subtype = l->punctuations[index].id;
                 script_advance(l, size);
+                qa_store_u32le(raw+1024,QA_SCRIPT_PUNCTUATION);qa_store_u32le(raw+1028,out->subtype);
                 break;
             }
             index = l->next[index];
@@ -410,15 +422,20 @@ bool script_lexer_frame_restore(const qa_script_lexer_options *options,const qa_
     *out=l;return true;
 }
 
-bool qa_script_lexer_next(qa_script_lexer *l,qa_script_token *out,bool *found,qa_error *error) {
+bool script_lexer_next_into(qa_script_lexer *l,qa_script_token *out,bool *found,uint8_t *raw,qa_error *error) {
     if(!l || !out || !found) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid script token request");return false;}
     *out=(qa_script_token){0};*found=false;l->source_failure=false;
     if(!script_lexer_memory_validate(l,error)) return false;
-    bool unread=script_lexer_available(l),ok=next_token(l,out,found,error);
-    if(out->text.size) {
-        char *text=script_string(&l->arena,out->text.data,out->text.size,error);
-        if(!text) return false;
-        out->text.data=(uint8_t *)text;
+    bool unread=script_lexer_available(l),ok=next_token(l,out,found,raw,error);
+    /* Completion and failure projections both come from reached physical writes.
+     * A failed escaped string has no completed extended text extent. */
+    size_t extent=ok && *found && out->text.size && memchr(out->text.data,0,out->text.size)?out->text.size:SIZE_MAX;
+    qa_script_token projected;
+    qa_error projection_error={0};
+    if(script_token_output(raw,extent,out->location,out->leading_whitespace,&l->arena,&projected,&projection_error)) *out=projected;
+    else {
+        if(ok && error) *error=projection_error;
+        ok=false;*found=false;
     }
     if(out->leading_whitespace.size) {
         char *whitespace=script_string(&l->arena,out->leading_whitespace.data,out->leading_whitespace.size,error);
@@ -430,7 +447,16 @@ bool qa_script_lexer_next(qa_script_lexer *l,qa_script_token *out,bool *found,qa
         if(!path) return false;
         out->location.path=path;
     }
-    if(ok && *found && !unread && out->kind!=QA_SCRIPT_PRIMITIVE) ok=retained_token(l,out,error);
+    if(ok && *found && !unread && out->kind!=QA_SCRIPT_PRIMITIVE) {
+        memcpy(l->record.bytes+SCRIPT_LEXER_TOKEN,raw,SCRIPT_TOKEN_BYTES);
+        l->token_extent=out->text.size && memchr(out->text.data,0,out->text.size)?out->text.size:SIZE_MAX;
+        l->token_location=out->location;l->token_whitespace=out->leading_whitespace;
+    }
     if(!ok) *found=false;
     return ok;
+}
+
+bool qa_script_lexer_next(qa_script_lexer *l,qa_script_token *out,bool *found,qa_error *error) {
+    uint8_t raw[SCRIPT_TOKEN_BYTES];
+    return script_lexer_next_into(l,out,found,raw,error);
 }

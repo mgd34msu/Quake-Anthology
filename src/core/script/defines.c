@@ -53,7 +53,7 @@ static bool source_empty(void *,bool *,qa_error *);
 static bool source_redefine(void *,const script_queued_token *,qa_error *);
 static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa_error *error)
 {
-    script_macro_table *table=&source->macros;script_queued_token token={0};bool found;
+    script_macro_table *table=&source->macros;script_queued_token token=script_local_token();bool found;
     if(!script_line_token(source,&token,&found,error)) return false;
     if(!found || token.token.kind!=QA_SCRIPT_NAME) {
         if(found && !script_push(source,token,error)) return false;
@@ -121,7 +121,7 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
 }
 static bool source_empty(void *context,bool *empty,qa_error *error)
 {
-    qa_script *source=context;script_queued_token token={0};bool found;
+    qa_script *source=context;script_queued_token token=script_local_token();bool found;
     if(!script_read_nested(source,&token,&found,error)) return false;
     *empty=found && qa_script_token_is(&token.token,")");
     return !found || *empty || script_push(source,token,error);
@@ -134,7 +134,7 @@ static bool source_redefine(void *context,const script_queued_token *token,qa_er
     memcpy(message,prefix,length);memcpy(message+length,token->token.text.data,token->token.text.size);message[length+token->token.text.size]=0;
     script_warn(source,token->token.location,message);
     if(!script_push(source,*token,error)) return false;
-    script_queued_token copied;bool found;
+    script_queued_token copied=script_local_token();bool found;
     return script_line_token(source,&copied,&found,error) && found;
 }
 bool script_define_stream(qa_script *source,qa_script_location location,qa_error *error)

@@ -19,7 +19,7 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
     uint32_t first=0,last=0;size_t count=0;
     unsigned depth = 1;
     bool defined = false;
-    script_queued_token item;
+    script_queued_token item=script_local_token();
     bool found;
     if (dollar) {
         if (!script_raw(s, &item, &found, e))
@@ -219,7 +219,7 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
     return true;
 }
 static bool include_directive(qa_script *s, qa_script_location location, qa_error *e) {
-    script_queued_token item;
+    script_queued_token item=script_local_token();
     bool found;
     if (!script_line_token(s, &item, &found, e))
         return false;
@@ -275,7 +275,7 @@ static bool include_directive(qa_script *s, qa_script_location location, qa_erro
     return script_include(s, &request, e);
 }
 bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
-    script_queued_token item;
+    script_queued_token item=script_local_token();
     bool found;
     if (!script_line_token(s, &item, &found, e))
         return false;

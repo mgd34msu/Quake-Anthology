@@ -5,8 +5,9 @@ static size_t string_size(qa_bytes text) {
     const uint8_t *zero = text.size ? memchr(text.data, 0, text.size) : NULL;
     return zero ? (size_t)(zero - text.data) : text.size;
 }
-static bool concatenate(qa_script *s, qa_script_token *first, const qa_script_token *next,
+static bool concatenate(qa_script *s, script_queued_token *output, const qa_script_token *next,
                         qa_error *e) {
+    qa_script_token *first=&output->token;
     size_t left = string_size(first->text), right = string_size(next->text);
     if (!left) {
         qa_error_set(e, QA_ERROR_UNSUPPORTED, first->location.offset,
@@ -14,6 +15,7 @@ static bool concatenate(qa_script *s, qa_script_token *first, const qa_script_to
         return false;
     }
     first->text.size = --left;
+    if(output->raw) output->bytes[left]=0;
     if (right)
         --right;
     if (right > SIZE_MAX - left || left + right >= s->options.token_limit - 1)
@@ -38,7 +40,7 @@ static bool read_token(qa_script *s, bool *found, qa_error *e) {
     if (!script_grow((void **)&s->reads, &s->read_capacity, 1, sizeof(*s->reads), e))
         return false;
     s->read_count = 1;
-    s->reads[0] = (script_queued_token){0};
+    s->reads[0] = script_local_token();
     bool ok;
     script_queued_token *frame;
 read_next:
@@ -59,7 +61,7 @@ read_next:
                          sizeof(*s->reads), e);
         if (!ok)
             goto completed;
-        s->reads[s->read_count++] = (script_queued_token){0};
+        s->reads[s->read_count++] = script_local_token();
         goto read_next;
     }
 accept_token:
@@ -103,10 +105,10 @@ completed:
     if (*found) {
         frame = s->reads + s->read_count - 1;
         if (next.token.kind == QA_SCRIPT_STRING) {
-            ok=concatenate(s,&frame->token,&next.token,e);
+            ok=concatenate(s,frame,&next.token,e);
             if (ok && frame->raw) {
-                memset(frame->bytes,0,1024);
                 memcpy(frame->bytes,frame->token.text.data,frame->token.text.size);
+                frame->bytes[frame->token.text.size]=0;
             }
         } else ok=script_push(s,next,e);
         if (!ok)
@@ -156,11 +158,18 @@ bool qa_script_raw_token(const qa_script *s, qa_script_token *out, qa_error *e) 
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing raw source token/output");return false;
     }
     const script_queued_token *token=s->read_count?s->reads:&s->output;
+    if(token->raw && !memchr(token->bytes,0,1024)) {
+        qa_error_set(e,QA_ERROR_UNSUPPORTED,token->token.location.offset,
+            "token_t string lacks a terminator within its 1024-byte field");return false;
+    }
     if(token->unsupported) {
         qa_error_set(e,QA_ERROR_UNSUPPORTED,token->token.location.offset,
             "source token profile is unsupported: %s",token->unsupported);return false;
     }
-    *out=token->token;return true;
+    if(!token->raw) {*out=token->token;return true;}
+    size_t extent=token->token.text.size && memchr(token->token.text.data,0,token->token.text.size)?token->token.text.size:SIZE_MAX;
+    return script_token_output(token->bytes,extent,token->token.location,token->token.leading_whitespace,
+        &((qa_script *)s)->arena,out,e);
 }
 bool qa_script_source_failure(const qa_script *s) { return s && s->source_failure; }
 bool qa_script_unread(qa_script *s, const qa_script_token *token, qa_error *e) {
@@ -218,7 +227,7 @@ bool qa_script_read_line(qa_script *s, qa_script_token *out, bool *found, qa_err
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid script line output");
         return false;
     }
-    script_queued_token token = {0};
+    script_queued_token token = script_local_token();
     bool ok = script_line_token(s, &token, found, e);
     *out = token.token;
     return ok;

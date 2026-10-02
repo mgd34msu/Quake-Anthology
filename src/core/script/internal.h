@@ -70,8 +70,9 @@ static inline void script_lexer_cursor_set(qa_script_lexer *l,script_lexer_curso
     script_lexer_offset_set(l,cursor.offset);script_lexer_line_set(l,cursor.line);l->column=cursor.column;
 }
 bool script_token_store(uint8_t *,const qa_script_token *,uint32_t,uint32_t,qa_error *);
-bool script_token_saved_valid(const qa_script_queued_state *,qa_error *);
+bool script_token_saved_valid(const qa_script_queued_state *,bool,qa_error *);
 bool script_token_load(const uint8_t *,size_t,qa_script_location,qa_bytes,qa_arena *,qa_script_token *,qa_error *);
+bool script_token_output(const uint8_t *,size_t,qa_script_location,qa_bytes,qa_arena *,qa_script_token *,qa_error *);
 bool script_lexer_memory_bind(qa_script_lexer *,qa_error *);
 bool script_lexer_memory_open(qa_script_lexer *,const char *,qa_bytes,qa_error *);
 bool script_lexer_punctuation_open(qa_script_lexer *,qa_error *);
@@ -91,9 +92,14 @@ char *script_string(qa_arena *, const void *, size_t, qa_error *);
 bool script_error(qa_script_lexer *, const char *, qa_error *);
 void script_report_error(qa_script_lexer *, const char *);
 bool script_unsupported(qa_script_lexer *, const char *, qa_error *);
+static inline bool script_token_byte(qa_script_lexer *l,uint8_t *raw,size_t index,uint8_t value,qa_error *e) {
+    if(index>=1024) return script_unsupported(l,"token_t string byte is outside its field",e);
+    raw[index]=value;return true;
+}
 void script_warning(qa_script_lexer *, const char *);
-bool script_number(qa_script_lexer *, qa_script_token *, qa_error *);
-bool script_quoted(qa_script_lexer *, qa_script_token *, qa_error *);
+bool script_number(qa_script_lexer *, qa_script_token *, uint8_t *, qa_error *);
+bool script_quoted(qa_script_lexer *, qa_script_token *, uint8_t *, qa_error *);
+bool script_lexer_next_into(qa_script_lexer *,qa_script_token *,bool *,uint8_t *,qa_error *);
 void script_whitespace(qa_script_lexer *);
 uint8_t script_peek(const qa_script_lexer *, size_t);
 void script_advance(qa_script_lexer *, size_t);
@@ -114,6 +120,9 @@ typedef struct script_queued_token {
     bool raw;
     const char *unsupported;
 } script_queued_token;
+static inline script_queued_token script_local_token(void) {
+    return (script_queued_token){.token.location={.path="",.column=1}};
+}
 typedef struct script_token_record {
     script_lexer_allocation record;
     uint32_t pointer;

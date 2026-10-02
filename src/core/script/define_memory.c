@@ -364,7 +364,7 @@ bool script_table_saved_valid(const qa_script_checkpoint *saved,bool global,qa_e
     bool ok=true;table.queue=tokens;
     for(size_t i=0;ok && i<saved->queue_count;++i) {
         const qa_script_queued_state *row=saved->queue+i;
-        if(!row->pointer || row->pointer>=saved->next_token_pointer || !script_token_saved_valid(row,error)) {ok=false;break;}
+        if(!row->pointer || row->pointer>=saved->next_token_pointer || !script_token_saved_valid(row,false,error)) {ok=false;break;}
         tokens[i]=(script_token_record){.pointer=row->pointer,.record={.bytes=(uint8_t *)row->bytes,.size=SCRIPT_TOKEN_BYTES},
             .location=row->token.location,.whitespace=row->token.leading_whitespace,.extent=row->text_extent};
         for(size_t j=0;j<i;++j) if(row->pointer==saved->queue[j].pointer ||

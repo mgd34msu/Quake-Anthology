@@ -115,13 +115,23 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
             qa_error_set(e,QA_ERROR_FORMAT,0,"Source script pointer does not name its actual active frame");return false;
         }
         script_frame *frame = s->frames + script_current_frame(s);
-        *out = (script_queued_token){0};
-        bool ok = qa_script_lexer_next(frame->lexer, &out->token, found, e);
+        qa_script_location context=out->token.location;
+        qa_bytes whitespace=out->token.leading_whitespace;
+        const char *unsupported=out->unsupported;
+        *out = (script_queued_token){.raw=true,.token.location=context,
+            .token.leading_whitespace=whitespace,.unsupported=unsupported};
+        qa_script_token parsed;
+        bool ok = script_lexer_next_into(frame->lexer, &parsed, found, out->bytes, e);
+        out->token=parsed;
+        if(*found) out->unsupported=NULL;
+        if(!*found) {
+            out->token.location.path=context.path;out->token.location.column=context.column;
+            out->token.location.offset=context.offset;out->token.leading_whitespace=whitespace;
+            out->unsupported=unsupported;
+        }
         if (!ok && !frame->lexer->source_failure)
             return false;
         if (*found) {
-            memcpy(out->bytes,frame->lexer->record.bytes+SCRIPT_LEXER_TOKEN,SCRIPT_TOKEN_BYTES);
-            out->raw=out->token.kind!=QA_SCRIPT_PRIMITIVE;
             if (frame->token_count >= s->options.maximum_source_tokens)
                 return script_fail(s, out->token.location, "Source token limit exceeded", e);
             ++frame->token_count;
@@ -183,7 +193,7 @@ bool script_line(qa_script *s, qa_script_token **out, size_t *count, qa_error *e
     qa_script_token *tokens = NULL;
     size_t length = 0, capacity = 0;
     for (;;) {
-        script_queued_token token;
+        script_queued_token token=script_local_token();
         bool found;
         if (!script_line_token(s, &token, &found, e)) {
             free(tokens);
@@ -229,6 +239,7 @@ bool qa_script_open(const char *path, const qa_script_services *services,
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating script source");
         return false;
     }
+    s->output=script_local_token();
     s->services = *services;
     if (!script_memory_bind(s,e)) goto fail;
     if (options != NULL)

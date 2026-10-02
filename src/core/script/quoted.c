@@ -86,19 +86,22 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
     script_advance(l, 1);
     return true;
 }
-bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
+bool script_quoted(qa_script_lexer *l, qa_script_token *out, uint8_t *raw, qa_error *e) {
     uint8_t quote = script_peek(l, 0), *bytes = NULL;
     size_t count = 1;
     size_t start = script_lexer_offset(l);
     out->kind = quote == '"' ? QA_SCRIPT_STRING : QA_SCRIPT_LITERAL;
+    qa_store_u32le(raw+1024,(uint32_t)out->kind);raw[0]=quote;
     out->text = (qa_bytes){l->input.data + start, count};
     script_advance(l, 1);
     for (;;) {
         if (count >= l->options.token_limit - 2)
             return script_error(l, "String exceeds script token limit", e);
         uint8_t c = script_peek(l, 0);
-        if (c == 0 || c == '\n')
+        if (c == 0 || c == '\n') {
+            if(!script_token_byte(l,raw,count,0,e)) return false;
             return script_error(l, c == 0 ? "Missing trailing quote" : "Newline inside string", e);
+        }
         if (c == quote) {
             script_advance(l, 1);
             if ((script_lexer_flags(l) & QA_SCRIPT_NO_STRING_CONCAT) != 0)
@@ -115,10 +118,12 @@ bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
             continue;
         }
         if (c == '\\' && (script_lexer_flags(l) & QA_SCRIPT_NO_STRING_ESCAPES) == 0) {
-            if (!writable(l, out, &bytes, e) || !escape(l, &c, e))
-                return false;
-        } else
+            if (!writable(l, out, &bytes, e) || !escape(l, &c, e) ||
+                !script_token_byte(l,raw,count,c,e)) return false;
+        } else {
+            if(!script_token_byte(l,raw,count,c,e)) return false;
             script_advance(l, 1);
+        }
         if (bytes) {
             bytes[count] = c;
             bytes[count + 1] = 0;
@@ -129,7 +134,8 @@ bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
         bytes[count] = quote;
         bytes[count + 1] = 0;
     }
+    if(!script_token_byte(l,raw,count,quote,e) || !script_token_byte(l,raw,count+1,0,e)) return false;
     out->text.size = ++count;
-    out->subtype = (uint32_t)count;
+    out->subtype = (uint32_t)count;qa_store_u32le(raw+1028,out->subtype);
     return true;
 }

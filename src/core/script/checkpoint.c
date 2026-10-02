@@ -216,10 +216,11 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         (c->condition_count != 0 && c->conditions == NULL) ||
         !raw_token_valid(&c->raw_token, c->options.token_limit))
         goto bad;
-    if(c->output_unsupported) {
-        qa_script_queued_state output={.token=c->raw_token,.text_extent=c->raw_token.text.size};
+    {
+        size_t extent=c->raw_token.text.size && memchr(c->raw_token.text.data,0,c->raw_token.text.size)?c->raw_token.text.size:SIZE_MAX;
+        qa_script_queued_state output={.token=c->raw_token,.text_extent=extent};
         memcpy(output.bytes,c->output_record,SCRIPT_TOKEN_BYTES);
-        if(!script_token_saved_valid(&output,e)) return false;
+        if(!script_token_saved_valid(&output,true,e)) return false;
     }
     if(c->source_unsupported &&
        (qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_TOKEN+1024)>QA_SCRIPT_PUNCTUATION ||
@@ -282,7 +283,7 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
            (queued->text_extent!=SIZE_MAX && queued->text_extent>=1024) ||
            !memchr(queued->bytes,0,1024) || qa_load_u32le(queued->bytes+1024)>QA_SCRIPT_PUNCTUATION ||
            !token_valid(&c->queue[i].token, c->options.token_limit) ||
-           !script_token_saved_valid(queued,e) ||
+           !script_token_saved_valid(queued,false,e) ||
             (c->queue[i].expansion != SIZE_MAX && c->queue[i].expansion >= c->expansion_count))
             goto bad;
         uint32_t next=qa_load_u32le(queued->bytes+1064);bool resolved=!next;

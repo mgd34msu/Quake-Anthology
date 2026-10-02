@@ -49,14 +49,14 @@ bool script_token_store(uint8_t *bytes,const qa_script_token *token,uint32_t sta
     qa_store_u32le(bytes+1056,token->location.line);qa_store_u32le(bytes+1060,token->lines_crossed);
     return true;
 }
-bool script_token_load(const uint8_t *bytes,size_t extent,qa_script_location location,qa_bytes whitespace,
-    qa_arena *arena,qa_script_token *out,qa_error *error)
+static bool token_load(const uint8_t *bytes,size_t extent,qa_script_location location,qa_bytes whitespace,
+    qa_arena *arena,qa_script_token *out,bool partial,qa_error *error)
 {
     uint32_t type=qa_load_u32le(bytes+1024);const uint8_t *zero=memchr(bytes,0,1024);
-    if(type>QA_SCRIPT_PUNCTUATION || !zero || (extent!=SIZE_MAX && extent>=1024)) {
+    if(type>QA_SCRIPT_PUNCTUATION || (!zero && !partial) || (extent!=SIZE_MAX && extent>=1024)) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Retained lexer token has an invalid raw type or text extent");return false;
     }
-    size_t terminated=(size_t)(zero-bytes);
+    size_t terminated=zero?(size_t)(zero-bytes):1024;
     if(extent==SIZE_MAX || extent<terminated) extent=terminated;
     char *text=script_string(arena,bytes,extent,error);
     if(!text) return false;
@@ -68,6 +68,15 @@ bool script_token_load(const uint8_t *bytes,size_t extent,qa_script_location loc
         .lines_crossed=qa_load_u32le(bytes+1060),.integer=signed_integer,.number=number,
         .text={(uint8_t *)text,extent},.leading_whitespace=whitespace,.location=location};
     return true;
+}
+
+bool script_token_load(const uint8_t *bytes,size_t extent,qa_script_location location,qa_bytes whitespace,
+    qa_arena *arena,qa_script_token *out,qa_error *error) {
+    return token_load(bytes,extent,location,whitespace,arena,out,false,error);
+}
+bool script_token_output(const uint8_t *bytes,size_t extent,qa_script_location location,qa_bytes whitespace,
+    qa_arena *arena,qa_script_token *out,qa_error *error) {
+    return token_load(bytes,extent,location,whitespace,arena,out,true,error);
 }
 
 script_token_record *script_heap_token(const script_macro_table *s,uint32_t pointer)
@@ -264,11 +273,11 @@ void script_queue_close(qa_script *s,bool source)
         }
     }
 }
-bool script_token_saved_valid(const qa_script_queued_state *saved,qa_error *error)
+bool script_token_saved_valid(const qa_script_queued_state *saved,bool partial,qa_error *error)
 {
     qa_arena arena={0};qa_script_token projected;
-    bool ok=script_token_load(saved->bytes,saved->text_extent,saved->token.location,
-        saved->token.leading_whitespace,&arena,&projected,error);
+    bool ok=token_load(saved->bytes,saved->text_extent,saved->token.location,
+        saved->token.leading_whitespace,&arena,&projected,partial,error);
     if(ok) {
         const qa_script_token *token=&saved->token;
         ok=projected.kind==token->kind && projected.subtype==token->subtype &&
