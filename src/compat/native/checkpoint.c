@@ -83,7 +83,7 @@ static bool source_file_admit(qa_native_instance *instance, const char *director
     const char *path, bool write, source_file *file, qa_error *error)
 {
     if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return true;
-    if (!instance->process_resources)
+    if (!instance->process_resources.context)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native save file requires its retained resource graph");
     native_process_temporary *retained = calloc(1, sizeof(*retained));
     if (retained) retained->directory = native_strdup(directory, error);
@@ -100,14 +100,14 @@ static bool source_file_admit(qa_native_instance *instance, const char *director
     qa_fs_root *root = NULL;
     bool okay = qa_fs_root_open(directory, &root, error);
     uint32_t mode = QA_FS_OPENED_READ | (write ? QA_FS_OPENED_WRITE : 0u);
-    qa_native_process_resource_root authority = {prefix, root, mode};
-    if (okay) okay = qa_native_process_resources_root_add(instance->process_resources, &authority, &file->root, error);
+    if (okay) okay = instance->process_resources.root_add(instance->process_resources.context,
+        prefix,root,mode,&file->root,error);
     qa_fs_root_close(root); free(prefix);
     if (!okay) return false;
     bool windows = instance->process_kind == QA_NATIVE_PROCESS_WINDOWS;
-    okay = windows ? qa_native_process_resources_open_file(instance->process_resources, path, mode,
+    okay = windows ? instance->process_resources.open_windows_file(instance->process_resources.context, path, mode,
         QA_FS_OPEN_EXISTING, &file->windows_capability, &file->opened, error) :
-        qa_native_process_resources_open_sysv_file(instance->process_resources, path, mode,
+        instance->process_resources.open_sysv_file(instance->process_resources.context, path, mode,
         QA_FS_OPEN_EXISTING, &file->capability, &file->opened, error);
     if (file->opened) file->handle = windows ? file->windows_capability.id : file->capability.handle;
     if (okay && !file->opened)
@@ -136,7 +136,7 @@ static bool source_file_release(qa_native_instance *instance, source_file *file,
     } else if (file->opened) closed = windows ? file->windows_capability.close(file->windows_capability.context, &cleanup) :
         file->capability.close(file->capability.context, &cleanup);
     if (closed && file->root)
-        closed = qa_native_process_resources_root_remove(instance->process_resources, file->root, &cleanup);
+        closed = instance->process_resources.root_remove(instance->process_resources.context, file->root, &cleanup);
     if (okay && !closed && error) *error = cleanup;
     return okay && closed;
 }

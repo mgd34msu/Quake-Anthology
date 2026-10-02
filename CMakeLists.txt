@@ -51,10 +51,8 @@ add_library(qa_core STATIC
     src/core/common_parse.c
     src/core/json_writer.c
     src/core/strings.c
-    src/core/text.c
     src/core/tokenizer.c
-    src/core/normals.c
-    src/persistence/source_values.c)
+    src/core/normals.c)
 target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
@@ -1039,6 +1037,7 @@ add_library(qa_qvm STATIC
 target_link_libraries(qa_qvm PUBLIC qa_content)
 
 add_library(qa_native_host STATIC
+    src/compat/native_host/retired.c
     src/compat/native_host/artifact.c
     src/compat/native_host/checkpoint.c
     src/compat/native_host/host.c

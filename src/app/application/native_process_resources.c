@@ -809,6 +809,28 @@ bool qa_native_process_resources_program_restore_read(qa_native_process_resource
         .services = owner->program.services};
     return true;
 }
+static void source_resources_retain(void *context)
+{ qa_native_process_resources_retain(context); }
+static bool source_resources_release(void **context, qa_error *error)
+{
+    qa_native_process_resources *owner = *context;
+    bool okay = qa_native_process_resources_release(&owner,error);
+    *context = owner; return okay;
+}
+static bool source_root_add(void *context, const char *prefix, qa_fs_root *root, uint32_t mode,
+    uint64_t *out, qa_error *error)
+{
+    const qa_native_process_resource_root authority = {prefix,root,mode};
+    return qa_native_process_resources_root_add(context,&authority,out,error);
+}
+static bool source_root_remove(void *context, uint64_t id, qa_error *error)
+{ return qa_native_process_resources_root_remove(context,id,error); }
+static bool source_open_windows_file(void *context, const char *path, uint32_t mode,
+    qa_fs_opened_creation creation, qa_native_windows_file *out, bool *opened, qa_error *error)
+{ return qa_native_process_resources_open_file(context,path,mode,creation,out,opened,error); }
+static bool source_open_sysv_file(void *context, const char *path, uint32_t mode,
+    qa_fs_opened_creation creation, qa_native_sysv_file *out, bool *opened, qa_error *error)
+{ return qa_native_process_resources_open_sysv_file(context,path,mode,creation,out,opened,error); }
 bool qa_native_process_resources_options_read(qa_native_process_resources *owner, qa_native_process_options *out, qa_error *error)
 {
     if (!out || !qa_native_process_resources_current(owner, error)) return false;
@@ -818,7 +840,10 @@ bool qa_native_process_resources_options_read(qa_native_process_resources *owner
     bool windows = owner->artifacts[owner->options.primary].image.target.os == QA_NATIVE_OS_WINDOWS;
     *out = (qa_native_process_options){.kind = windows ? QA_NATIVE_PROCESS_WINDOWS : QA_NATIVE_PROCESS_SYSV,
         .source_id = qa_resource_id(owner->artifacts[owner->options.primary].resource),
-        .first_callback = owner->first_callback, .resources = owner};
+        .first_callback = owner->first_callback, .resources = {.context = owner,
+            .retain = source_resources_retain, .release = source_resources_release,
+            .root_add = source_root_add, .root_remove = source_root_remove,
+            .open_windows_file = source_open_windows_file, .open_sysv_file = source_open_sysv_file}};
     if (windows) out->fresh.windows = &owner->windows;
     else out->fresh.sysv = &owner->sysv;
     return true;

@@ -16,6 +16,19 @@ static bool source_matches(const qa_native_instance *instance, const qa_native_i
         bytes.data && !memcmp(bytes.data, module->bytes, bytes.size);
 }
 
+static bool retain_resources(qa_native_instance *instance,
+    const qa_native_process_resource_services *resources, qa_error *error)
+{
+    bool functions = resources->retain || resources->release || resources->root_add || resources->root_remove ||
+        resources->open_sysv_file || resources->open_windows_file;
+    if (resources->context ? !resources->retain || !resources->release || !resources->root_add ||
+        !resources->root_remove || !resources->open_sysv_file || !resources->open_windows_file : functions)
+        return native_fail(error,QA_ERROR_ARGUMENT,0,"native resource services differ from their actual retained owner");
+    instance->process_resources = *resources;
+    if (resources->context) resources->retain(resources->context);
+    return true;
+}
+
 bool native_process_open(qa_native_instance *instance, const qa_native_process_options *options,
     qa_error *error)
 {
@@ -24,8 +37,7 @@ bool native_process_open(qa_native_instance *instance, const qa_native_process_o
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process requires its actual artifact and callback namespace");
     instance->process_kind = options->kind; instance->source_id = options->source_id;
     instance->first_callback = options->first_callback;
-    instance->process_resources = options->resources;
-    qa_native_process_resources_retain(instance->process_resources);
+    if (!retain_resources(instance,&options->resources,error)) return false;
     bool found = false;
     if (options->kind == QA_NATIVE_PROCESS_SYSV) {
         const qa_native_sysv_process_options *actual = options->fresh.sysv;
@@ -121,7 +133,8 @@ bool native_process_close(qa_native_instance *instance, qa_error *error)
             native_remove_tree(temporary->directory);
             free(temporary->directory); free(temporary);
         }
-        okay = qa_native_process_resources_release(&instance->process_resources, error);
+        if (instance->process_resources.context)
+            okay = instance->process_resources.release(&instance->process_resources.context,error);
     }
     return okay;
 }
@@ -501,8 +514,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
     if (!options || !options->continuation.data || !options->continuation.size ||
         !instance->options.checkpoint || !instance->options.restore)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native cold construction requires its actual process and host bindings");
-    instance->process_resources = options->resources;
-    qa_native_process_resources_retain(instance->process_resources);
+    if (!retain_resources(instance,&options->resources,error)) return false;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, NULL, options->continuation, error)) return false;
     qa_bytes process = {0}, host = {0}; size_t count = 0;
@@ -612,8 +624,8 @@ bool native_process_publish(qa_native_instance *instance, qa_native_instance *pr
     /* Distinct retained helper owners hold separate native references, as
      * produced by actual capture/rebind. Their callbacks have distinct owned
      * contexts and must never consume the previous helper's close receipts. */
-    bool owned = previous && instance->process_resources && previous->process_resources &&
-        instance->process_resources != previous->process_resources;
+    bool owned = previous && instance->process_resources.context && previous->process_resources.context &&
+        instance->process_resources.context != previous->process_resources.context;
     bool okay;
     if (instance->process_kind == QA_NATIVE_PROCESS_SYSV)
         okay = owned ? qa_native_sysv_process_adopt_owned(instance->sysv_process,

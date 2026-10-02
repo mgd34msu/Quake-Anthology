@@ -1,5 +1,6 @@
 include(GNUInstallDirs)
 find_package(Threads REQUIRED)
+find_package(ICU REQUIRED COMPONENTS uc)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBFFI REQUIRED IMPORTED_TARGET libffi)
 
@@ -10,10 +11,12 @@ add_library(qa_data STATIC
     src/core/number.c
     src/core/number_js.c
     src/core/hash.c
+    src/core/text.c
+    src/persistence/source_values.c
     src/platform/filesystem.c
     src/platform/mapping.c)
 target_include_directories(qa_data PUBLIC include)
-target_link_libraries(qa_data PUBLIC qa_compile_options Threads::Threads)
+target_link_libraries(qa_data PUBLIC qa_compile_options Threads::Threads PRIVATE ICU::uc)
 if(UNIX)
     target_sources(qa_data PRIVATE src/platform/file.c src/platform/filesystem_posix.c)
     target_link_libraries(qa_data PUBLIC m)
@@ -41,7 +44,7 @@ add_library(qa_native STATIC
     src/compat/native/runner_child.c
     src/compat/native/runner_host.c
     src/compat/native/variadic.c)
-target_link_libraries(qa_native PUBLIC qa_data PRIVATE PkgConfig::LIBFFI ${CMAKE_DL_LIBS})
+target_link_libraries(qa_native PUBLIC qa_data PRIVATE PkgConfig::LIBFFI ICU::uc ${CMAKE_DL_LIBS})
 if(UNIX)
     target_compile_definitions(qa_native PRIVATE _POSIX_C_SOURCE=200809L)
 endif()

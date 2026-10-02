@@ -7,7 +7,6 @@
 #include "qa/native_region_scope.h"
 #include "qa/native_observe.h"
 #include "qa/native_process.h"
-#include "qa/native_process_resources.h"
 #include "guest/abi.h"
 #include "hook_control.h"
 
@@ -137,7 +136,7 @@ struct qa_native_instance {
     uint32_t slot_capacity;
     native_runner_connection *runner;
     qa_native_sysv_process *sysv_process;
-    qa_native_process_resources *process_resources;
+    qa_native_process_resource_services process_resources;
     native_process_temporary *process_temporaries;
     qa_native_windows_process *windows_process;
     qa_native_guest *guest;
