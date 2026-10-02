@@ -13,6 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* SV_SpawnServer starts the source clock at one second, before entity spawn. */
+#define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
+
 typedef struct q1_map_state q1_map_state;
 typedef struct q1_map_runtime q1_map_runtime;
 

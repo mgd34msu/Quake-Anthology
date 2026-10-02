@@ -541,7 +541,9 @@ static bool construct_q1(qa_application *application,
         !qa_q1_game_combat_policy(provider->state.q1, &provider->policy,
                                   error))
         return false;
+    uint64_t initial_time_ns = provider->component.clock.initial_time_ns;
     provider->component.clock = provider->launch->selection.clock;
+    provider->component.clock.initial_time_ns = initial_time_ns;
     return true;
 }
 

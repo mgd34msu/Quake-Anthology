@@ -124,9 +124,10 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->sight_actor = g->horn_charmer = (qa_actor_id){0};
     g->rogue_runes_world = (qa_actor_id){0};
     g->rogue_runes_started = false;
-    g->time = g->elapsed = g->sight_time = 0;
+    g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
+    g->time = (double)g->time_ns / 1000000000.0;
+    g->elapsed = g->sight_time = 0;
     qa_q1_game_finale_reset(g);
-    g->time_ns = 0;
     g->forward = g->right = g->up = qa_v3(0, 0, 0);
     g->run_straight = g->enemy_visible = false;
     g->rune_knight_melee = g->enemy_range = 0;

@@ -573,6 +573,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     }
     g->services = *services;
     g->options = *options;
+    g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
+    g->time = (double)g->time_ns / 1000000000.0;
     if (host)
         g->host = *host;
     qa_builtin_random_seed(&g->random, options->random_seed);
@@ -710,6 +712,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
         .actor_frame = actor_frame,
         .command_actor = command_actor,
         .actor_released = released};
+    out->clock.initial_time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->component_admitted = true;
     return true;
 }
