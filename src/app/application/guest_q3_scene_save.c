@@ -104,13 +104,13 @@ static bool tokens(qa_source_save_io *io,qa_command_tokens *t)
      * tokens_free frees only values/storage, never these borrowed strings. */
     return true;
 }
-static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_qvm_binding *event)
+static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_buffer *services,qa_qvm_binding *event)
 {
-    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=4;
+    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=5;
     qa_sha256_digest declaration=s->options.profile->declaration_digest;
-    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=4||
+    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=5||
         !qa_source_save_bytes(io,declaration.bytes,32)||!qa_sha256_equal(&declaration,&s->options.profile->declaration_digest)||
-        !qa_source_save_u64(io,event)||(!s->options.profile->player_events&&!*event)||(s->options.profile->player_events&&*event)||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||
+        !qa_source_save_u64(io,event)||(!s->options.profile->player_events&&!*event)||(s->options.profile->player_events&&*event)||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||!blob(io,services,SIZE_MAX)||
         !qa_source_save_u64(io,&s->context.generation)||!qa_source_save_i64(io,&s->revision)||s->revision<0||
         !qa_source_save_i64(io,&s->scene_revision)||s->scene_revision<0||
         !qa_source_save_i32(io,&s->context.time_ms)||s->context.time_ms<0||
@@ -161,22 +161,27 @@ static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,q
 }
 bool application_q3_scene_checkpoint(application_q3_scene *s,qa_buffer *out,qa_error *e)
 {
-    qa_qvm_saved_function descriptors[3]; qa_buffer vm={0},body={0};
+    qa_qvm_saved_function descriptors[3]; qa_buffer vm={0},body={0},services={0};
     if(!out||out->data||out->size||!s||!s->initialized||s->failed||s->restoring||
         !q3scene_descriptors(s,descriptors,e)||!qa_qvm_checkpoint_functions(s->vm,descriptors,s->options.profile->player_events?0:3,e))
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component checkpoint requires its complete physical callback owner");
     qa_source_save_io io={0}; qa_qvm_binding event=s->event_binding;
-    bool ok=qa_q3_host_checkpoint_portable_ready(s->host,e)&&
+    bool ok=qa_q3_host_checkpoint_services(s->host,&services,e)&&
         (s->options.profile->player_events||application_q3_component_body_checkpoint(s->body,&body,e))&&qa_qvm_checkpoint(s->vm,&vm,e)&&
-        qa_source_save_writer(&io,s->options.host.session,e)&&fields(&io,s,&vm,&body,&event)&&qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body); return ok;
+        qa_source_save_writer(&io,s->options.host.session,e)&&fields(&io,s,&vm,&body,&services,&event)&&qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body); qa_buffer_free(&services); return ok;
 }
 bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_error *e)
 {
     if(!s||!s->restoring||s->initialized||!application_q3_scene_idle(s)||s->defaults.data)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component restore requires its unentered isolated constructor");
-    qa_buffer vm={0},body={0}; qa_qvm_binding saved[3]={0}; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,s->options.host.session,bytes,e)&&fields(&io,s,&vm,&body,saved+2)&&qa_source_save_finish(&io,NULL);
+    qa_buffer vm={0},body={0},services={0},current_services={0}; qa_qvm_binding saved[3]={0}; qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,s->options.host.session,bytes,e)&&fields(&io,s,&vm,&body,&services,saved+2)&&qa_source_save_finish(&io,NULL);
+    if(ok) {
+        ok=qa_q3_host_checkpoint_services(s->host,&current_services,e);
+        if(ok&&(services.size!=current_services.size||memcmp(services.data,current_services.data,services.size)))
+            ok=q3scene_fail(e,QA_ERROR_FORMAT,"Component CG host services differ from their saved Source owner");
+    }
     qa_qvm_saved_function descriptors[3];
     if(ok) ok=(s->options.profile->player_events?body.size==0:application_q3_component_body_saved_read(&s->options.profile->body,(qa_bytes){body.data,body.size},saved,e))&&
         q3scene_descriptors(s,descriptors,e)&&qa_qvm_restore_candidate_bindings(s->vm,(qa_bytes){vm.data,vm.size},descriptors,saved,s->options.profile->player_events?0:3,e);
@@ -197,7 +202,8 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
         s->context.actors=s->actors; s->context.actor_count=s->actor_count;
         s->initialized=true;
     } else s->failed=true;
-    qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body); return ok;
+    qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body);
+    qa_buffer_free(&services); qa_buffer_free(&current_services); return ok;
 }
 bool application_q3_scene_finish_restore(application_q3_scene *s,qa_error *e)
 {

@@ -64,11 +64,12 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     const qa_q3_host_options *o = &host->options;
     const qa_command_context *c = &o->command_context;
     if (c->session || c->client || c->registry || c->generation || c->actor.registry ||
-        c->actor.generation || c->actor.slot || c->owner != o->owner)
+        c->actor.generation || c->actor.slot ||
+        (c->owner != o->owner && (!o->service_owner || c->owner != o->service_owner)))
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 17, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 18, role = o->role, abi = o->abi, owner = o->owner;
     bool write_present=o->write_view.root!=NULL;
     bool write_context=o->write_view.resolver.context!=NULL;
     bool write_resolver=o->write_view.resolver.root!=NULL;
@@ -79,7 +80,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     uint32_t time_dialect = o->client_time_cvars ? qa_cvars_dialect(o->client_time_cvars) : 0;
     bool time_present = o->client_time_cvars != NULL;
     bool time_alias = time_present && o->client_time_cvars == o->cvars;
-    uint64_t service_owner = o->service_owner, input_owner = o->input_owner;
+    uint64_t service_owner = o->service_owner, input_owner = o->input_owner, command_owner = c->owner;
     uint32_t client_base = o->bot_client_base, entity_base = o->bot_entity_base;
     uint32_t maximum_clients = o->server.maximum_clients, command_seat = c->seat;
     uint32_t dialect = c->dialect, origin = c->origin;
@@ -114,6 +115,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         qa_source_save_bool(&io, &shared) && qa_source_save_bool(&io, &remapped) &&
         qa_source_save_bool(&io, &globals) && qa_source_save_bool(&io, &globals_alias) &&
         qa_source_save_u64(&io, &globals_owner) &&
+        qa_source_save_u64(&io, &command_owner) &&
         qa_source_save_u32(&io, &command_seat) &&
         qa_source_save_u32(&io, &dialect) && qa_source_save_u32(&io, &origin) &&
         qa_source_save_bool(&io, &direct) && qa_source_save_bool(&io, &console_text) &&
@@ -138,6 +140,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         o->collision.geometry != NULL, o->collision.load_map != NULL,
         o->presentation.seat != NULL, o->presentation.fonts != NULL,
         o->presentation.configuration != NULL, o->presentation.update_screen != NULL,
+        o->presentation.end_registration != NULL,
         o->source_entity != NULL, o->source_entity_context != NULL,
         o->source_poly != NULL, o->source_poly_context != NULL,
         o->source_light != NULL, o->source_light_context != NULL,
