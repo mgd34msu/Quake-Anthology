@@ -91,6 +91,9 @@ static inline void bot_ai_teleport_time_set(bot_ai_state *s,float value) {
 static inline float bot_ai_attack_crouch_time(const bot_ai_state *s) {
     return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ATTACK_CROUCH_TIME);
 }
+static inline float bot_ai_attack_chase_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ATTACK_CHASE_TIME);
+}
 static inline void bot_ai_attack_crouch_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ATTACK_CROUCH_TIME,value);
 }

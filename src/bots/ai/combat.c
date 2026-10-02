@@ -275,12 +275,12 @@ bool bot_ai_chase(qa_bots *b,bot_ai_state *s,bool *chase,qa_error *e) {
     if(!aggression(b,s,&level,e)) return false;
     *chase=level>50;return true;
 }
-static bool source_enemy_dead(qa_bots *b,bot_ai_state *s,const qa_bot_entity_info *info,
+bool bot_ai_source_enemy_dead(qa_bots *b,bot_ai_state *s,const qa_bot_entity_info *info,
                               bool *dead,qa_error *e) {
     *dead=false;
     if(info->number<0 || info->number>=64) return true;
     if(!b->services.source_player_state)
-        return bot_ai_fail(e,"enemy search requires its actual fixed Source player state");
+        return bot_ai_fail(e,"Source enemy death requires its actual fixed player state");
     qa_bot_source_player_state player;
     if(!b->services.source_player_state(b->services.context,info->number,&player,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
@@ -342,12 +342,12 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         if(!qa_bot_runtime_entity(b->runtime,client,&info,&observed,e)) return false;
         if(!info.valid) continue;
         bool dead;
-        if(!source_enemy_dead(b,s,&info,&dead,e)) return false;
+        if(!bot_ai_source_enemy_dead(b,s,&info,&dead,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         int32_t entity=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
         if(dead || info.number==entity) continue;
         bool carrying=enemy_carries_flag(b,&info),firing=(info.state.flags&0x100)!=0;
-        if(!carrying && ((uint32_t)info.state.powerups&(1u<<4)) && !firing) continue;
+        if(!carrying && ((uint32_t)info.state.powerups&(1u<<5)) && !firing) continue;
         if(easy<.5f && (info.state.flags&0x1000)) continue;
         qa_vec3 direction=qa_vec_sub(info.state.origin,b->source_event_globals.last_teleport_origin);
         volatile float recent=b->time-3;
@@ -500,7 +500,19 @@ bool bot_ai_move_setup(qa_bots *b, bot_ai_state *s, qa_error *e) {
         .vector=move_setup_vector,.think_time=move_setup_think_time};
     return qa_bot_moves_initialize_from(qa_bot_runtime_moves(b->runtime),s->movement,&input,e);
 }
-bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
+bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, uint32_t travel_flags,
+                        qa_bot_move_result *result, qa_error *e) {
+    bool source=bot_ai_source_enemy(b,s);
+    int32_t attack_entity=bot_ai_enemy_number(s);
+    memset(result,0,sizeof(*result));
+    if(source && bot_ai_attack_chase_time(s)>b->time) {
+        qa_bot_goal goal={.entity=attack_entity,.area=(int32_t)bot_ai_last_enemy_area(s),
+            .origin=bot_ai_last_enemy_origin(s),.mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8)};
+        if(!bot_ai_move_setup(b,s,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+        return qa_bot_moves_goal(qa_bot_runtime_moves(b->runtime),s->movement,&goal,
+            travel_flags,result,e);
+    }
     float skill,jumper,croucher;
     if (!bot_ai_character_float(b,s,BOT_C_ATTACK,0,1,&skill,e) ||
         !bot_ai_character_float(b,s,BOT_C_JUMPER,0,1,&jumper,e) ||
@@ -508,7 +520,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (skill < .2f) return true;
     if (!bot_ai_move_setup(b,s,e)) return false;
     qa_bot_entity_info info;bool observed;
-    if(!qa_bot_runtime_entity(b->runtime,bot_ai_enemy_number(s),&info,&observed,e)) return false;
+    if(!qa_bot_runtime_entity(b->runtime,source?attack_entity:bot_ai_enemy_number(s),&info,&observed,e)) return false;
     qa_vec3 toward=qa_vec_sub(info.state.origin,bot_ai_origin(s));
     float distance=qa_vec_length(toward);
     qa_vec3 forward=qa_vec_normalize(toward),backward=qa_vec_scale(forward,-1);
@@ -516,7 +528,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (bot_ai_attack_crouch_time(s) < b->time-1) {
         float random;if(!bot_ai_random(b,&random,e)) return false;
         if (random<jumper) type=QA_BOT_DIRECTION_JUMP;
-        else {
+        else if(!source || bot_ai_attack_crouch_time(s)<b->time-1) {
             if(!bot_ai_random(b,&random,e)) return false;
             if(random<croucher) bot_ai_attack_crouch_time_set(s,b->time+croucher*5);
         }
@@ -526,10 +538,13 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if (bot_ai_attack_jump_time(s)>b->time) type=QA_BOT_DIRECTION_WALK;
         else bot_ai_attack_jump_time_set(s,b->time+1);
     }
+    int32_t held=bot_ai_weapon_number(s);
+    if(source && !bot_ai_source_player_word(b,s,BOT_PS_WEAPON,&held,e)) return false;
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if (!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     bool melee=false;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) melee=weapons[i].melee;
+    for(size_t i=0;i<count;++i)
+        if(weapons[i].weapon.number==(source?held:bot_ai_weapon_number(s))) melee=weapons[i].melee;
     b->services.arsenal_end(b->services.context,lease);
     float desired=melee?0:140,range=melee?0:40;
     qa_bot_moves *moves=qa_bot_runtime_moves(b->runtime);bool moved;
