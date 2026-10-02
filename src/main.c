@@ -78,7 +78,7 @@ static void usage(FILE *stream)
           "\n"
           "  --content-root PATH      Primary data root, default executable folder\n"
           "  --game-path PATH         Additional install folder, repeatable\n"
-          "  --save-game-path PATH    Remember an install folder and list content\n"
+          "  --save-game-path PATH    Remember an install folder, then exit\n"
           "  --user-content-root PATH Writable user content root\n"
           "  --list-content           List discovered products\n"
           "  --menu                   Open the startup menu, default without --game\n"
