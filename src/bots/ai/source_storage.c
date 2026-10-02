@@ -126,11 +126,24 @@ bool bot_ai_activation_validate(const bot_ai_state *s,qa_error *e) {
     }
     return true;
 }
-bool bot_ai_activation_top(const bot_ai_state *s,uint32_t *index,bool *found,qa_error *e) {
-    if(!index || !found || !bot_ai_activation_validate(s,e)) return false;
+bool bot_ai_activation_peek_top(const bot_ai_state *s,uint32_t *index,bool *found,qa_error *e) {
+    if(!s || !index || !found || !s->source_span.data ||
+       s->source_span.length!=QA_BOT_STATE_SOURCE_BYTES || s->source_record.length!=QA_BOT_STATE_SOURCE_BYTES ||
+       s->source_record.offset>QA_BOT_GAME_MEMORY_BYTES-QA_BOT_STATE_SOURCE_BYTES)
+        return bot_ai_fail(e,"activation top has no actual complete GAME record");
     uint32_t address=bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK);
     *found=address!=0;*index=0;
     return !address || activation_index(s,address,index,e);
+}
+bool bot_ai_activation_drop_inactive_top(bot_ai_state *s,qa_error *e) {
+    uint32_t index;bool found;
+    if(!bot_ai_activation_peek_top(s,&index,&found,e)) return false;
+    if(found && !bot_source_word_read(s->source_span.data+activation_offset(index)))
+        bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK,0);
+    return true;
+}
+bool bot_ai_activation_top(const bot_ai_state *s,uint32_t *index,bool *found,qa_error *e) {
+    return bot_ai_activation_validate(s,e) && bot_ai_activation_peek_top(s,index,found,e);
 }
 qa_bot_source_activation bot_ai_activation_read(const bot_ai_state *s,uint32_t index) {
     const uint8_t *p=s->source_span.data+activation_offset(index);

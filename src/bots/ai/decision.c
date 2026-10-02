@@ -242,6 +242,110 @@ static bool clear_path(qa_bots *b,bot_ai_state *s,qa_bot_move_result *result,qa_
     }
     return true;
 }
+typedef struct activation_query_state {
+    qa_bots *bots;
+    bot_ai_state *state;
+} activation_query_state;
+static bool activation_query_current(const activation_query_state *query,qa_error *e) {
+    return live(query->bots,query->state) || bot_ai_fail(e,"activation query lost its actual bot owner");
+}
+static bool activation_query_origin(void *opaque,qa_vec3 *out,qa_error *e) {
+    activation_query_state *query=opaque;
+    if(!activation_query_current(query,e)) return false;
+    *out=bot_ai_origin(query->state);return true;
+}
+static bool activation_query_eye(void *opaque,qa_vec3 *out,qa_error *e) {
+    activation_query_state *query=opaque;
+    if(!activation_query_current(query,e)) return false;
+    *out=bot_ai_eye(query->state);return true;
+}
+static bool activation_query_area(void *opaque,int32_t *out,qa_error *e) {
+    activation_query_state *query=opaque;
+    if(!activation_query_current(query,e)) return false;
+    *out=bot_source_i32_read(query->state->source_span.data+QA_BOT_SOURCE_AREA);return true;
+}
+static bool activation_query_travel(void *opaque,uint32_t *out,qa_error *e) {
+    activation_query_state *query=opaque;
+    if(!activation_query_current(query,e)) return false;
+    *out=bot_ai_travel_flags(query->state);return true;
+}
+static bool activation_query_top(void *opaque,qa_bot_source_activation *out,bool *found,qa_error *e) {
+    activation_query_state *query=opaque;uint32_t index;
+    if(!activation_query_current(query,e) || !bot_ai_activation_peek_top(query->state,&index,found,e)) return false;
+    *out=*found?bot_ai_activation_read(query->state,index):(qa_bot_source_activation){0};return true;
+}
+static bool activation_query_developer(void *opaque,bool *out,qa_error *e) {
+    activation_query_state *query=opaque;
+    if(!activation_query_current(query,e)) return false;
+    *out=query->bots->source_match.cvars[BOT_SOURCE_DEVELOPER].integer_value!=0;return true;
+}
+static bool source_activation(qa_bots *b,bot_ai_state *s,int32_t blocker,
+                              qa_bot_source_activation *out,int32_t *bsp,qa_error *e) {
+    activation_query_state state={b,s};
+    qa_bot_activation_query query={.context=&state,.origin=activation_query_origin,.eye=activation_query_eye,
+        .area=activation_query_area,.travel_flags=activation_query_travel,.top=activation_query_top,
+        .developer=activation_query_developer,.time=b->time};
+    return b->services.source_activation(b->services.context,s->view.actor,blocker,&query,out,bsp,e);
+}
+static bool activation_enable(qa_bots *b,bot_ai_state *s,qa_bot_source_activation *row,qa_error *e) {
+    if(!row->areas_disabled) return true;
+    if(row->area_count<0 || row->area_count>32)
+        return bot_ai_fail(e,"activation routing count exceeds its actual Source row");
+    for(int32_t i=0;i<row->area_count;++i) {
+        bool previous;
+        DECISION_CALL(qa_bot_navigation_enable(navigation(b,s),(uint32_t)row->areas[i],true,&previous,e));
+    }
+    row->areas_disabled=false;return true;
+}
+static bool activation_go(qa_bots *b,bot_ai_state *s,qa_bot_source_activation *row,qa_error *e) {
+    row->inuse=true;
+    if(!row->time) row->time=b->time+10;
+    row->start_time=b->time;
+    qa_bot_entity_info info;bool found;
+    DECISION_CALL(qa_bot_runtime_entity(b->runtime,row->goal.entity,&info,&found,e));
+    row->origin=info.state.origin;
+    bool pushed;
+    if(!bot_ai_activation_push(s,row,b->time,&pushed,e)) return false;
+    if(pushed) ENTER(QA_BOT_ACTIVATING);
+    else DECISION_CALL(activation_enable(b,s,row,e));
+    return true;
+}
+static bool predict_obstacles(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,bool *handled,qa_error *e) {
+    *handled=false;
+    if(!b->services.source_activation || !b->services.source_model_bounds ||
+       !b->source_match.cvars[BOT_SOURCE_PREDICT_OBSTACLES].integer_value) return true;
+    if(bot_ai_predict_obstacles_area(s)==goal->area && bot_ai_predict_obstacles_time(s)>b->time-6) return true;
+    bot_ai_predict_obstacles_area_set(s,goal->area);bot_ai_predict_obstacles_time_set(s,b->time);
+    qa_bot_route_prediction_query query={.route={.area=bot_ai_area(s),.origin=bot_ai_origin(s),
+        .has_origin=true,.goal_area=(uint32_t)goal->area,.travel_flags=bot_ai_travel_flags(s)},
+        .maximum_areas=100,.maximum_time=1000,.stop_events=QA_BOT_ROUTE_TRAVEL|QA_BOT_ROUTE_CONTENTS,
+        .stop_contents=1024,.stop_travel_flags=0x04000000};
+    qa_bot_route_prediction route;
+    DECISION_CALL(qa_bot_navigation_predict_route(navigation(b,s),&query,&route,e));
+    if((route.stop_event&QA_BOT_ROUTE_CONTENTS) && (route.end_contents&1024u)) {
+        int32_t model=(int32_t)(route.end_contents>>24);
+        if(model>=128) model-=256;
+        if(model) {
+            int32_t entity;
+            DECISION_CALL(b->services.source_model_bounds(b->services.context,model,4,0,NULL,NULL,&entity,e));
+            if(entity) {
+                qa_bot_source_activation row;int32_t bsp;
+                DECISION_CALL(source_activation(b,s,entity,&row,&bsp,e));
+                if(bsp) {
+                    bool duplicate;
+                    if(!bot_ai_activation_drop_inactive_top(s,e) ||
+                       !bot_ai_activation_contains(s,row.goal.entity,b->time,&duplicate,e)) return false;
+                    if(!duplicate) {
+                        DECISION_CALL(activation_go(b,s,&row,e));
+                        *handled=true;return true;
+                    }
+                    DECISION_CALL(activation_enable(b,s,&row,e));
+                }
+            }
+        }
+    }
+    return true;
+}
 static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool activate,
                         qa_bot_move_result *result, qa_error *e) {
     memset(result,0,sizeof(*result));
@@ -268,7 +372,19 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool 
         }
         qa_bot_entity_info blocker;bool observed;
         DECISION_CALL(qa_bot_runtime_entity(b->runtime,result->block_entity,&blocker,&observed,e));
-        if(activate && b->services.activation) {
+        if(activate && b->services.source_activation && blocker.state.model_index>0 &&
+           blocker.state.model_index<=b->source_goals.max_bsp_model_index) {
+            qa_bot_source_activation row;int32_t bsp;
+            DECISION_CALL(source_activation(b,s,blocker.number,&row,&bsp,e));
+            if(bsp) {
+                bool duplicate;
+                if(!bot_ai_activation_drop_inactive_top(s,e) ||
+                   !bot_ai_activation_contains(s,row.goal.entity,b->time,&duplicate,e)) return false;
+                if(!duplicate) DECISION_CALL(activation_go(b,s,&row,e));
+                if(!(result->flags&QA_BOT_MOVE_ON_OBSTACLE) &&
+                   qa_bot_navigation_area(navigation(b,s),bot_ai_area(s)).reach_count) return true;
+            } else DECISION_CALL(activation_enable(b,s,&row,e));
+        } else if(activate && !b->services.source_activation && b->services.activation) {
             qa_bot_activation activation;bool found;
             DECISION_CALL(b->services.activation(b->services.context,s->view.actor,blocker.number,&activation,&found,e));
             if(found && bot_ai_live(b,activation.target)) {
@@ -564,6 +680,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 qa_bot_move_result result={0};
                 if(!visible) {
                     goal=activation.goal;
+                    bool predicted;DECISION_CALL(predict_obstacles(b,s,&goal,&predicted,e));
+                    if(predicted) continue;
                     DECISION_CALL(move_goal(b,s,&goal,true,&result,e));
                 }
                 DECISION_CALL(clear_path(b,s,&result,e));
@@ -634,6 +752,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     ENTER(QA_BOT_SEEK_LONG_TERM);bot_ai_check_time_set(s,b->time+.05f);continue;
                 }
             }
+            bool predicted;DECISION_CALL(predict_obstacles(b,s,&goal,&predicted,e));
+            if(predicted) continue;
             qa_bot_move_result result;
             DECISION_CALL(move_goal(b,s,&goal,true,&result,e));
             DECISION_CALL(clear_path(b,s,&result,e));

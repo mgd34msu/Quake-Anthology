@@ -829,6 +829,10 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .console=bot_console,.userinfo=bot_userinfo,.get_userinfo=bot_get_userinfo,.set_userinfo=bot_set_userinfo,
         .source_game_type=bot_game_type,.exit_level=bot_exit_level,.insert_console_command=bot_insert_command,.random=bot_random,
         .check_spawn=application_bots_catalog_check_spawn,.activation=application_bot_activation,
+        .source_activation=!bots->shared_world && source && source->kind==APPLICATION_PROVIDER_Q3?
+            application_bot_source_activation:NULL,
+        .source_model_bounds=!bots->shared_world && source && source->kind==APPLICATION_PROVIDER_Q3?
+            application_bot_source_model_bounds:NULL,
         .predict_motion=application_bot_predict_motion};
 }
 static bool prepare_bots(qa_application *application,const qa_launch_choices *choices,

@@ -1,4 +1,8 @@
 #include "bots_private.h"
+#include "native_q3_console.h"
+#include "qa/bots_memory.h"
+#include "qa/game_q3_wire.h"
+#include "qa/game_q3_source.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -148,6 +152,315 @@ bool application_bot_activation(void *opaque,qa_actor_id bot,int32_t number,qa_b
             .maxs=qa_vec_sub(qa_vec_add(target.origin,target.bounds.maxs),origin),.entity=(int32_t)mover.activation.slot}};
     *found=qa_actors_get(qa_session_actors(bots->application->session),blocker) &&
            qa_actors_get(qa_session_actors(bots->application->session),mover.activation);return true;
+}
+typedef struct source_activation_call {
+    application_bots *bots;
+    application_provider *source;
+    qa_q3_game *game;
+    qa_actor_id actor;
+    qa_bot_navigation *navigation;
+    const qa_entities *entities;
+    const qa_bot_activation_query *query;
+} source_activation_call;
+static bool activation_current(const source_activation_call *call,qa_error *error) {
+    application_provider *source=call->source;
+    if(call->bots->source!=source || source->kind!=APPLICATION_PROVIDER_Q3 ||
+       !source->constructed || !source->attached || source->close_pending ||
+       source->state.q3!=call->game || call->bots->restoring ||
+       (call->actor.registry && !qa_actors_get(qa_session_actors(call->bots->application->session),call->actor)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source activation lost its actual GAME owner");
+    return true;
+}
+bool application_bot_source_model_bounds(void *opaque,int32_t model,int32_t type,int32_t contents,
+    qa_vec3 *mins,qa_vec3 *maxs,int32_t *entity,qa_error *error) {
+    application_bots *bots=opaque;
+    if(!bots || !entity || !bots->runtime || bots->calls==SIZE_MAX)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source model lookup requires its actual GAME owner");
+    application_provider *source=bots->source;
+    source_activation_call call={.bots=bots,.source=source,
+        .game=source && source->kind==APPLICATION_PROVIDER_Q3?source->state.q3:NULL};
+    if(!source || !activation_current(&call,error) || !qa_bot_runtime_lease_begin(bots->runtime,error)) return false;
+    ++bots->calls;bool okay=true,matched=false;
+    for(uint32_t slot=0;okay;++slot) {
+        uint32_t count;qa_q3_source_binding binding;
+        if(!qa_q3_source_entity_count(call.game,&count,error)) {okay=false;break;}
+        if(slot>=count) break;
+        if(!qa_q3_source_binding_read(call.game,slot,&binding,error)) {okay=false;break;}
+        if(!binding.in_use) continue;
+        qa_q3_source_model value;
+        if(!qa_q3_source_model_read(call.game,slot,&value,error)) {okay=false;break;}
+        if(type && value.type!=type) continue;
+        if(contents) {
+            int32_t actual;
+            if(!qa_q3_source_contents_read(call.game,slot,&actual,error) ||
+               !activation_current(&call,error)) {okay=false;break;}
+            if(actual!=contents) continue;
+            /* The reached contents owner may change s.modelindex. */
+            if(!qa_q3_source_model_read(call.game,slot,&value,error)) {okay=false;break;}
+        }
+        if(value.model!=model) continue;
+        if(mins || maxs) {
+            if(!qa_q3_source_model_bounds_read(call.game,slot,mins,maxs,error) ||
+               !activation_current(&call,error)) {okay=false;break;}
+        }
+        *entity=(int32_t)slot;matched=true;break;
+    }
+    if(okay && !matched) {
+        if(mins) *mins=(qa_vec3){0};
+        if(maxs) *maxs=(qa_vec3){0};
+        *entity=0;
+    }
+    --bots->calls;qa_bot_runtime_lease_end(bots->runtime);return okay;
+}
+static bool activation_string(const qa_entities *entities,int32_t entity,const char *key,
+                              char *out,size_t capacity) {
+    qa_bytes value;out[0]=0;
+    if(!qa_bot_bsp_value(entities,entity,key,&value)) return false;
+    size_t n=0;
+    while(n<value.size && n+1<capacity && value.data[n]) {out[n]=(char)value.data[n];++n;}
+    out[n]=0;return true;
+}
+static bool activation_model(const qa_entities *entities,int32_t entity,size_t capacity,
+                             int32_t *model,qa_error *error) {
+    char text[1024];*model=0;
+    if(!activation_string(entities,entity,"model",text,capacity) || !text[0]) return true;
+    return qa_bot_bsp_parse_integer((qa_bytes){(const uint8_t *)text+1,strlen(text+1)},model,error);
+}
+static bool activation_vector(const source_activation_call *call,
+    bool (*read)(void *,qa_vec3 *,qa_error *),qa_vec3 *out,qa_error *error) {
+    return read(call->query->context,out,error) && activation_current(call,error);
+}
+static bool activation_area(const source_activation_call *call,int32_t *out,qa_error *error) {
+    return call->query->area(call->query->context,out,error) && activation_current(call,error);
+}
+static bool activation_reachable(const source_activation_call *call,int32_t area) {
+    return area>0 && qa_bot_navigation_area(call->navigation,(uint32_t)area).reach_count!=0;
+}
+static bool activation_stand(const source_activation_call *call,int32_t entity,
+                             qa_bot_source_activation *out,qa_error *error) {
+    out->goal.entity=entity;out->goal.number=0;out->goal.flags=0;
+    if(!activation_vector(call,call->query->origin,&out->goal.origin,error) ||
+       !activation_area(call,&out->goal.area,error)) return false;
+    out->goal.mins=(qa_vec3){-8,-8,-8};out->goal.maxs=(qa_vec3){8,8,8};return true;
+}
+static void activation_expand(qa_bot_goal *goal,qa_vec3 direction) {
+    goal->mins=qa_vec_add(goal->mins,(qa_vec3){direction.x<0?0:fabsf(direction.x),
+        direction.y<0?0:fabsf(direction.y),direction.z<0?0:fabsf(direction.z)});
+    goal->maxs=qa_vec_add(goal->maxs,(qa_vec3){direction.x<0?fabsf(direction.x):0,
+        direction.y<0?fabsf(direction.y):0,direction.z<0?fabsf(direction.z):0});
+}
+static bool activation_button(const source_activation_call *call,int32_t bsp,
+                              qa_bot_source_activation *out,bool *found,qa_error *error) {
+    *found=false;out->shoot=false;out->target=(qa_vec3){0};
+    int32_t model,entity;qa_vec3 mins,maxs;
+    if(!activation_model(call->entities,bsp,128,&model,error)) return false;
+    if(!model) return true;
+    if(!application_bot_source_model_bounds(call->bots,model,4,0,&mins,&maxs,&entity,error) ||
+       !activation_current(call,error)) return false;
+    float lip,angle,health;bool present;
+    if(!qa_bot_bsp_float(call->entities,bsp,"lip",&lip,&present,error) ||
+       !qa_bot_bsp_float(call->entities,bsp,"angle",&angle,&present,error)) return false;
+    float radians=angle*(float)(3.14159265358979323846*2.0/360.0);
+    qa_vec3 direction=angle==-1?(qa_vec3){0,0,1}:angle==-2?(qa_vec3){0,0,-1}:
+        (qa_vec3){(float)cos((double)radians),(float)sin((double)radians),-0.0f};
+    qa_vec3 size=qa_vec_sub(maxs,mins),origin=qa_vec_scale(qa_vec_add(mins,maxs),.5f);
+    float distance=(fabsf(direction.x)*size.x+fabsf(direction.y)*size.y+fabsf(direction.z)*size.z)*.5f;
+    if(!qa_bot_bsp_float(call->entities,bsp,"health",&health,&present,error)) return false;
+    if(health!=0) {
+        out->target=qa_vec_add(origin,qa_vec_scale(direction,-distance));out->shoot=true;
+        qa_vec3 eye;qa_trace_result trace;
+        if(!activation_vector(call,call->query->eye,&eye,error) ||
+           !qa_bot_navigation_trace(call->navigation,eye,out->target,NULL,call->actor,0x06000001u,&trace,error) ||
+           !activation_current(call,error)) return false;
+        uint32_t hit=trace.hit==QA_TRACE_HIT_WORLD?QA_Q3_SOURCE_WORLD:QA_Q3_SOURCE_NONE;
+        if(trace.hit==QA_TRACE_HIT_ACTOR && !qa_q3_source_actor_slot(call->game,trace.actor,&hit,error)) return false;
+        if(trace.fraction>=1 || hit==(uint32_t)entity) {
+            if(!activation_stand(call,entity,out,error)) return false;
+            *found=true;return true;
+        }
+    }
+    qa_bounds bounds=qa_bot_navigation_presence(call->navigation,4);
+    distance+=fabsf(direction.x)*fabsf(direction.x<0?bounds.maxs.x:bounds.mins.x);
+    distance+=fabsf(direction.y)*fabsf(direction.y<0?bounds.maxs.y:bounds.mins.y);
+    distance+=fabsf(direction.z)*fabsf(direction.z<0?bounds.maxs.z:bounds.mins.z);
+    qa_vec3 start=qa_vec_add(origin,qa_vec_scale(direction,-distance));start.z+=24;
+    qa_vec3 end=start;end.z-=health!=0?512:100;
+    qa_aas_crossing crossings[10];size_t count;
+    if(!qa_bot_navigation_trace_areas(call->navigation,start,end,crossings,10,&count,error) ||
+       !activation_current(call,error)) return false;
+    for(size_t i=0;i<count;++i) {
+        size_t index=health!=0?count-1-i:i;
+        if(!activation_reachable(call,(int32_t)crossings[index].area)) continue;
+        out->goal.origin=health!=0?crossings[index].point:origin;
+        out->goal.area=(int32_t)crossings[index].area;
+        out->goal.mins=health!=0?(qa_vec3){8,8,8}:qa_vec_sub(mins,origin);
+        out->goal.maxs=health!=0?(qa_vec3){-8,-8,-8}:qa_vec_sub(maxs,origin);
+        activation_expand(&out->goal,direction);
+        out->goal.entity=entity;out->goal.number=0;out->goal.flags=0;*found=true;break;
+    }
+    return true;
+}
+static bool activation_trigger(const source_activation_call *call,int32_t bsp,
+                               qa_bot_source_activation *out,bool *found,qa_error *error) {
+    *found=false;out->shoot=false;out->target=(qa_vec3){0};
+    int32_t model,entity;qa_vec3 mins,maxs;
+    if(!activation_model(call->entities,bsp,128,&model,error)) return false;
+    if(!model) return true;
+    if(!application_bot_source_model_bounds(call->bots,model,0,0x40000000,&mins,&maxs,&entity,error) ||
+       !activation_current(call,error)) return false;
+    qa_vec3 origin=qa_vec_scale(qa_vec_add(mins,maxs),.5f),start=origin;start.z+=24;
+    qa_vec3 end=start;end.z-=100;
+    qa_aas_crossing crossings[10];size_t count;
+    if(!qa_bot_navigation_trace_areas(call->navigation,start,end,crossings,10,&count,error) ||
+       !activation_current(call,error)) return false;
+    for(size_t i=0;i<count;++i) if(activation_reachable(call,(int32_t)crossings[i].area)) {
+        out->goal.origin=origin;out->goal.area=(int32_t)crossings[i].area;
+        out->goal.mins=qa_vec_sub(mins,origin);out->goal.maxs=qa_vec_sub(maxs,origin);
+        out->goal.entity=entity;out->goal.number=0;out->goal.flags=0;*found=true;break;
+    }
+    return true;
+}
+static bool activation_report(const source_activation_call *call,bool developer,
+                              const char *format,const char *value,qa_error *error) {
+    if(developer) {
+        bool enabled;
+        if(!call->query->developer(call->query->context,&enabled,error) ||
+           !activation_current(call,error)) return false;
+        if(!enabled) return true;
+    }
+    char text[1280];snprintf(text,sizeof(text),format,value);
+    return application_native_q3_console_print(call->source,text,error) && activation_current(call,error);
+}
+static bool activation_construct(const source_activation_call *call,int32_t blocker,
+                                qa_bot_source_activation *out,int32_t *result,qa_error *error) {
+    memset(out,0,sizeof(*out));*result=0;
+    qa_bot_entity_info cached;bool found;
+    if(!qa_bot_runtime_entity(call->bots->runtime,blocker,&cached,&found,error)) return false;
+    char model[1024],text[128],classname[128];
+    snprintf(model,sizeof(model),"*%d",cached.state.model_index);
+    int32_t bsp=qa_bot_bsp_next(call->entities,0);
+    for(;bsp;bsp=qa_bot_bsp_next(call->entities,bsp))
+        if(activation_string(call->entities,bsp,"model",text,sizeof(text)) && !strcmp(text,model)) break;
+    if(!bsp) return activation_report(call,false,"^1Error: BotGetActivateGoal: no entity found with model %s\n",model,error);
+    activation_string(call->entities,bsp,"classname",classname,sizeof(classname));
+    if(!strcmp(classname,"func_door")) {
+        float health;bool present;
+        if(!qa_bot_bsp_float(call->entities,bsp,"health",&health,&present,error)) return false;
+        if(present && health!=0) {
+            int32_t number,entity;qa_vec3 mins,maxs;
+            if(!activation_model(call->entities,bsp,1024,&number,error)) return false;
+            if(number) {
+                if(!application_bot_source_model_bounds(call->bots,number,4,0,&mins,&maxs,&entity,error) ||
+                   !activation_current(call,error)) return false;
+                out->target=qa_vec_scale(qa_vec_add(mins,maxs),.5f);out->shoot=true;
+                if(!activation_stand(call,entity,out,error)) return false;
+            }
+            *result=bsp;return true;
+        }
+        int32_t flags;qa_vec3 origin;
+        if(!qa_bot_bsp_integer(call->entities,bsp,"spawnflags",&flags,&present,error)) return false;
+        if(flags&1) return true;
+        if(!qa_bot_bsp_vector(call->entities,bsp,"origin",&origin,&present,error)) return false;
+        if(origin.x!=cached.state.origin.x || origin.y!=cached.state.origin.y || origin.z!=cached.state.origin.z) return true;
+        activation_string(call->entities,bsp,"model",model,sizeof(model));
+        int32_t number;
+        if(!activation_model(call->entities,bsp,1024,&number,error)) return false;
+        if(number) {
+            qa_vec3 mins,maxs;int32_t entity;uint32_t areas[64];size_t count;
+            if(!application_bot_source_model_bounds(call->bots,number,4,0,&mins,&maxs,&entity,error) ||
+               !activation_current(call,error) ||
+               !qa_bot_navigation_bbox_areas(call->navigation,(qa_bounds){mins,maxs},areas,64,&count,error) ||
+               !activation_current(call,error)) return false;
+            for(size_t pass=0;pass<2;++pass) for(size_t i=0;i<count && out->area_count<32;++i) {
+                qa_bot_nav_area area=qa_bot_navigation_area(call->navigation,areas[i]);
+                if((area.reach_count!=0)==(pass==0) && (area.contents&1024u))
+                    out->areas[out->area_count++]=(int32_t)areas[i];
+            }
+        }
+    }
+    if(!strcmp(classname,"func_button")) return true;
+    char targets[10][128];int32_t next[10];
+    if(!activation_string(call->entities,bsp,"targetname",targets[0],sizeof(targets[0])))
+        return activation_report(call,true,"^1Error: BotGetActivateGoal: entity with model \"%s\" has no targetname\n",model,error);
+    next[0]=qa_bot_bsp_next(call->entities,0);
+    for(int depth=0;depth>=0 && depth<10;) {
+        int32_t candidate=next[depth];
+        for(;candidate;candidate=qa_bot_bsp_next(call->entities,candidate))
+            if(activation_string(call->entities,candidate,"target",text,sizeof(text)) && !strcmp(text,targets[depth])) {
+                next[depth]=qa_bot_bsp_next(call->entities,candidate);break;
+            }
+        if(!candidate) {
+            if(!activation_report(call,true,"^1Error: BotGetActivateGoal: no entity with target \"%s\"\n",targets[depth],error)) return false;
+            --depth;continue;
+        }
+        if(!activation_string(call->entities,candidate,"classname",classname,sizeof(classname))) {
+            if(!activation_report(call,true,"^1Error: BotGetActivateGoal: entity with target \"%s\" has no classname\n",targets[depth],error)) return false;
+            continue;
+        }
+        if(!strcmp(classname,"func_button") || !strcmp(classname,"trigger_multiple")) {
+            bool made;
+            bool okay=!strcmp(classname,"func_button")?activation_button(call,candidate,out,&made,error):
+                activation_trigger(call,candidate,out,&made,error);
+            if(!okay) return false;
+            if(!made) continue;
+            qa_bot_source_activation top;bool has_top;
+            if(!call->query->top(call->query->context,&top,&has_top,error) || !activation_current(call,error)) return false;
+            if(has_top && top.inuse && top.goal.entity==out->goal.entity && top.time>call->query->time &&
+               top.start_time<call->query->time-2.0f) continue;
+            int32_t area;
+            if(!activation_area(call,&area,error)) return false;
+            if(activation_reachable(call,area)) {
+                if(!out->areas_disabled) {
+                    for(int32_t i=0;i<out->area_count;++i) {
+                        bool previous;
+                        if(!qa_bot_navigation_enable(call->navigation,(uint32_t)out->areas[i],false,&previous,error) ||
+                           !activation_current(call,error)) return false;
+                    }
+                    out->areas_disabled=true;
+                }
+                qa_vec3 origin;uint32_t flags;qa_bot_nav_route route;
+                if(!activation_area(call,&area,error) || !activation_vector(call,call->query->origin,&origin,error) ||
+                   !call->query->travel_flags(call->query->context,&flags,error) || !activation_current(call,error) ||
+                   !qa_bot_navigation_route(call->navigation,&(qa_bot_nav_route_query){.area=(uint32_t)area,
+                       .goal_area=(uint32_t)out->goal.area,.travel_flags=flags,.origin=origin,.has_origin=true},&route,error) ||
+                   !activation_current(call,error)) return false;
+                if(!route.travel_time) continue;
+                out->time=(call->query->time+(float)route.travel_time*.01f)+5.0f;
+            }
+            *result=candidate;return true;
+        }
+        if(!strcmp(classname,"target_relay") || !strcmp(classname,"target_delay")) {
+            if(activation_string(call->entities,candidate,"targetname",text,sizeof(text))) {
+                if(depth==9) return application_fail(error,QA_ERROR_ARGUMENT,"BotGetActivateGoal activation chain exceeds the source ten-level target allocation");
+                ++depth;memcpy(targets[depth],text,sizeof(text));next[depth]=qa_bot_bsp_next(call->entities,0);
+            }
+        }
+    }
+    const qa_cvar_view *debug=qa_cvars_find(application_native_q3_console_registry(call->source),"com_botObstacleDebug");
+    if(debug && debug->integer)
+        return activation_report(call,false,"^1Error: BotGetActivateGoal: no valid activator for entity with target \"%s\"\n",targets[0],error);
+    return true;
+}
+bool application_bot_source_activation(void *opaque,qa_actor_id actor,int32_t blocker,
+    const qa_bot_activation_query *query,qa_bot_source_activation *out,int32_t *bsp_entity,qa_error *error) {
+    application_bots *bots=opaque;
+    if(!bots || !query || !out || !bsp_entity || !query->origin || !query->eye || !query->area ||
+       !query->travel_flags || !query->top || !query->developer || !bots->runtime || bots->calls==SIZE_MAX)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source activation requires its actual state readers");
+    application_provider *source=bots->source;
+    source_activation_call call={.bots=bots,.source=source,.actor=actor,.query=query,
+        .game=source && source->kind==APPLICATION_PROVIDER_Q3?source->state.q3:NULL,
+        .entities=qa_bot_runtime_bsp(bots->runtime)};
+    if(!source || !activation_current(&call,error)) return false;
+    uint32_t client;
+    if(!qa_q3_native_client_slot(call.game,actor,&client,error)) return false;
+    call.navigation=qa_bot_runtime_navigation(bots->runtime,(int32_t)client);
+    if(!call.navigation)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Source activation has no actual client routing graph");
+    if(!qa_bot_runtime_lease_begin(bots->runtime,error)) return false;
+    ++bots->calls;
+    bool okay=activation_construct(&call,blocker,out,bsp_entity,error);
+    --bots->calls;qa_bot_runtime_lease_end(bots->runtime);return okay;
 }
 static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_state *out,bool *found,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;

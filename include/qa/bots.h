@@ -56,6 +56,18 @@ typedef struct qa_bot_activation {
     qa_vec3 blocker_origin, target_origin, aim;
     bool shoot;
 } qa_bot_activation;
+struct qa_bot_source_activation;
+/* Readers borrow the actual BotState words at the reached Source stage. */
+typedef struct qa_bot_activation_query {
+    void *context;
+    bool (*origin)(void *,qa_vec3 *,qa_error *);
+    bool (*eye)(void *,qa_vec3 *,qa_error *);
+    bool (*area)(void *,int32_t *,qa_error *);
+    bool (*travel_flags)(void *,uint32_t *,qa_error *);
+    bool (*top)(void *,struct qa_bot_source_activation *,bool *,qa_error *);
+    bool (*developer)(void *,bool *,qa_error *);
+    float time;
+} qa_bot_activation_query;
 typedef struct qa_bot_admission {
     qa_actor_id actor;
     uint32_t client;
@@ -149,6 +161,10 @@ typedef struct qa_bot_services {
     bool (*command)(void *, qa_actor_id, const char *, qa_error *);
     bool (*activation)(void *, qa_actor_id bot, int32_t blocker_entity,
                         qa_bot_activation *, bool *found, qa_error *);
+    bool (*source_activation)(void *,qa_actor_id bot,int32_t blocker_entity,
+        const qa_bot_activation_query *,struct qa_bot_source_activation *,int32_t *bsp_entity,qa_error *);
+    bool (*source_model_bounds)(void *,int32_t model,int32_t entity_type,int32_t contents,
+        qa_vec3 *mins,qa_vec3 *maxs,int32_t *entity,qa_error *);
     bool (*predict_motion)(void *, qa_actor_id target,
                             const qa_bot_movement_prediction_query *,
                             qa_bot_movement_prediction *, bool *available, qa_error *);

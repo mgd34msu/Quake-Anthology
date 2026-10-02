@@ -143,6 +143,9 @@ bool application_bot_weapon_resolve(application_bots *,qa_actor_id,int32_t slot,
 qa_actor_id application_bot_actor(void *,int32_t);
 bool application_bot_travel_model(void *,int32_t,qa_bot_travel_model *,bool *,qa_error *);
 bool application_bot_activation(void *,qa_actor_id,int32_t,qa_bot_activation *,bool *,qa_error *);
+bool application_bot_source_activation(void *,qa_actor_id,int32_t,const qa_bot_activation_query *,
+    struct qa_bot_source_activation *,int32_t *,qa_error *);
+bool application_bot_source_model_bounds(void *,int32_t,int32_t,int32_t,qa_vec3 *,qa_vec3 *,int32_t *,qa_error *);
 bool application_bot_travel_weapon(void *,int32_t,qa_nav_travel,int32_t *,bool *,qa_error *);
 bool application_bot_grapple_state(void *,int32_t,qa_bot_grapple_observation *,qa_error *);
 bool application_bot_predict_motion(void *,qa_actor_id,const qa_bot_movement_prediction_query *,

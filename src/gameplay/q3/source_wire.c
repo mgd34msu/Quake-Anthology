@@ -1011,6 +1011,78 @@ bool qa_q3_wire_entity_read(const qa_q3_game *game, uint32_t slot, qa_q3_entity 
     --retained->observation_depth;
     return ok;
 }
+
+bool qa_q3_source_model_read(const qa_q3_game *game, uint32_t slot,
+                              qa_q3_source_model *out, qa_error *error) {
+    if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored ||
+        !game->source_entities[slot].in_use || !game->wire->rows[slot].initialized)
+        return q3_fail(error, "Q3 model observation requires a completed physical Source row");
+    qa_actor_id actor = game->source_entities[slot].actor;
+    if (!current(game, slot, actor))
+        return q3_fail(error, "Q3 model observation has a stale Source actor generation");
+    const q3_wire_entity_source *source = &game->wire->rows[slot].source;
+    qa_q3_source_model value = {.type = source->type, .model = source->model};
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (entry && entry->kind == Q3_ACTOR_TEMPORARY) {
+        value.type = entry->state.temporary.entity.eType;
+        value.model = entry->state.temporary.entity.modelindex;
+    } else if (entry && (entry->kind == Q3_ACTOR_PODIUM || entry->kind == Q3_ACTOR_VICTORY_MODEL)) {
+        value.type = entry->state.postgame.entity.eType;
+        value.model = entry->state.postgame.entity.modelindex;
+    }
+    *out = value;
+    return true;
+}
+
+bool qa_q3_source_contents_read(const qa_q3_game *game, uint32_t slot,
+                                 int32_t *out, qa_error *error) {
+    if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored ||
+        !game->source_entities[slot].in_use || !game->source_entities[slot].body_attached ||
+        !game->wire->rows[slot].initialized || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "Q3 contents observation requires a completed physical Source body");
+    qa_actor_id actor = game->source_entities[slot].actor;
+    if (!current(game, slot, actor))
+        return q3_fail(error, "Q3 contents observation has a stale Source actor generation");
+    qa_world *world = game->options.services.world;
+    uint64_t storage = qa_world_body_storage_serial(world, actor);
+    if (!storage) return q3_fail(error, "Q3 contents observation lost its actual Source body");
+    qa_q3_game *retained = (qa_q3_game *)game;
+    const q3_wire_state *wire = game->wire;
+    ++retained->observation_depth;
+    qa_actor_collision collision;
+    qa_error observed = {0};
+    bool present = qa_world_get_collision(world, actor, &collision, &observed);
+    bool okay = present || observed.code == QA_OK;
+    if (!okay && error) *error = observed;
+    if (okay && (game->source_restored || game->wire != wire ||
+        game->options.services.world != world || !current(game, slot, actor) ||
+        !game->source_entities[slot].in_use || !game->source_entities[slot].body_attached ||
+        !game->wire->rows[slot].initialized || storage != qa_world_body_storage_serial(world, actor)))
+        okay = q3_fail(error, "Q3 contents owner changed during its actual collision observation");
+    if (okay) *out = present ? collision.contents : 0;
+    --retained->observation_depth;
+    return okay;
+}
+
+bool qa_q3_source_model_bounds_read(const qa_q3_game *game, uint32_t slot,
+                                     qa_vec3 *mins, qa_vec3 *maxs, qa_error *error) {
+    if (!game || !game->wire || (!mins && !maxs) || slot >= QA_Q3_SOURCE_NONE ||
+        game->source_restored || !game->source_entities[slot].in_use ||
+        !game->source_entities[slot].body_attached || !game->wire->rows[slot].initialized)
+        return q3_fail(error, "Q3 model bounds require a completed physical Source row and output");
+    qa_actor_id actor = game->source_entities[slot].actor;
+    if (!current(game, slot, actor))
+        return q3_fail(error, "Q3 model bounds have a stale Source actor generation");
+    qa_body_state body;
+    if (!q3_source_body_read((qa_q3_game *)game, actor, &body, error)) return false;
+    if (!current(game, slot, actor) || !game->source_entities[slot].in_use ||
+        !game->source_entities[slot].body_attached || !game->wire->rows[slot].initialized)
+        return q3_fail(error, "Q3 model bounds lost their physical Source row during observation");
+    if (mins) *mins = qa_vec_add(body.origin, body.bounds.mins);
+    if (maxs) *maxs = qa_vec_add(body.origin, body.bounds.maxs);
+    return true;
+}
+
 bool qa_q3_wire_entity_motion_write(qa_q3_game *game, qa_actor_id actor,
                                      const qa_trajectory *position, const qa_trajectory *angular,
                                      int32_t ground, qa_error *error) {

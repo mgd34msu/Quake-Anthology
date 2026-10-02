@@ -61,6 +61,19 @@ bool qa_q3_wire_player_read(const qa_q3_game *, uint32_t source_client,
                             qa_q3_player *, qa_error *);
 bool qa_q3_wire_entity_read(const qa_q3_game *, uint32_t physical_slot,
                             qa_q3_entity *, qa_q3_wire_visibility *, qa_error *);
+typedef struct qa_q3_source_model {
+    int32_t type, model;
+} qa_q3_source_model;
+/* Pure initialized physical Source fields before model matching. */
+bool qa_q3_source_model_read(const qa_q3_game *, uint32_t physical_slot,
+                              qa_q3_source_model *, qa_error *);
+/* Literal current r.contents from its actual collision owner, only at the
+ * requested contents stage of the Source scan. */
+bool qa_q3_source_contents_read(const qa_q3_game *, uint32_t physical_slot,
+                                 int32_t *, qa_error *);
+/* BotModelMinsMaxs observes only requested r.currentOrigin + r.mins/maxs. */
+bool qa_q3_source_model_bounds_read(const qa_q3_game *, uint32_t physical_slot,
+                                     qa_vec3 *mins, qa_vec3 *maxs, qa_error *);
 /* Actual source S trajectories/ground only; never changes r.currentOrigin. */
 bool qa_q3_wire_entity_motion_write(qa_q3_game *, qa_actor_id, const qa_trajectory *,
                                      const qa_trajectory *, int32_t ground_number, qa_error *);

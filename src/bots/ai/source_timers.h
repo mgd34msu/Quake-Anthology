@@ -148,6 +148,18 @@ static inline float bot_ai_blocked_avoid_time(const bot_ai_state *s) {
 static inline void bot_ai_blocked_avoid_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_BLOCKED_AVOID_TIME,value);
 }
+static inline float bot_ai_predict_obstacles_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_PREDICT_OBSTACLES_TIME);
+}
+static inline void bot_ai_predict_obstacles_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_PREDICT_OBSTACLES_TIME,value);
+}
+static inline int32_t bot_ai_predict_obstacles_area(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_PREDICT_OBSTACLES_AREA);
+}
+static inline void bot_ai_predict_obstacles_area_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_PREDICT_OBSTACLES_AREA,value);
+}
 static inline float bot_ai_order_time(const bot_ai_state *s) {
     return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ORDER_TIME);
 }
