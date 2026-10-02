@@ -401,7 +401,8 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
     row->busy=false;
     if (!ok) return false;
     *rendered=true;
-    if (qa_cinematic_status(row->movie)==QA_MEDIA_ENDED) return end(row,QA_CINEMATIC_FINISHED,error);
+    if (qa_cinematic_status(row->movie)==QA_MEDIA_ENDED &&
+        (!row->numeric_source || qa_cinematic_frame(row->movie))) return end(row,QA_CINEMATIC_FINISHED,error);
     return true;
 }
 bool frontend_system_cinematic_restore_attach(frontend_system_cinematic *row,qa_error *error)

@@ -95,10 +95,15 @@ static bool local(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_cinematic
 static bool system_movie(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_cinematic_handles_refs *refs)
 {
     qa_buffer saved={0}; bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    bool owned=movie->system.context || movie->system.status || movie->system.end ||
+        movie->system.release || movie->system.playback;
+    if (!qa_source_save_bool(io,&owned) || !state(io,movie) || !movie->occupied) return false;
+    if (!owned) return movie->status==0 && !movie->asset && !movie->playback && !movie->bus &&
+        movie->uploaded==UINT64_MAX && !movie->redefine && !movie->uploaded_shader &&
+        !movie->draw_width && !movie->draw_height;
     if ((reading && (!refs->system_decode || !refs->system_discard)) || (!reading && !refs->system_encode))
         return q3cin_fail(io->error,QA_ERROR_ARGUMENT,"Actual system cinematic codec is unbound");
-    bool ok=state(io,movie) && movie->occupied && movie->status!=2;
-    if (ok) ok=reading || refs->system_encode(refs->context,movie->source,&movie->system,movie->flags,&saved,io->error);
+    bool ok=reading || refs->system_encode(refs->context,movie->source,&movie->system,movie->flags,&saved,io->error);
     if (ok) ok=blob(io,&saved);
     if (ok && reading) ok=refs->system_decode(refs->context,movie->source,(qa_bytes){saved.data,saved.size},movie->flags,&movie->system,io->error) &&
         movie->system.status && movie->system.end && movie->system.release;
@@ -107,9 +112,9 @@ static bool system_movie(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_ci
 static bool fields(qa_source_save_io *io,qa_q3_cinematic_handles *owner,
     const qa_q3_cinematic_handles_refs *refs,double anchor,qa_q3_cinematic_handles *actual)
 {
-    uint8_t magic[4]={'Q','3','C','H'}; uint32_t version=2;
+    uint8_t magic[4]={'Q','3','C','H'}; uint32_t version=3;
     if (!refs || !qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3CH",4) ||
-        !qa_source_save_u32(io,&version) || version!=2) return false;
+        !qa_source_save_u32(io,&version) || version!=3) return false;
     if (!qa_source_save_i32(io,&owner->selected_handle) || !qa_source_save_i32(io,&owner->decoder_handle) ||
         owner->selected_handle < -1 || owner->selected_handle>=16 ||
         owner->decoder_handle < -1 || owner->decoder_handle>=16) return false;

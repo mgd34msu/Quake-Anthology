@@ -294,6 +294,7 @@ bool qa_q3_cinematic_system_select(qa_q3_cinematic_source *source,int32_t handle
     bool ok=movie->source==source && (movie->flags&1u) && !movie->pending &&
         movie->system.playback && movie->system.playback(movie->system.context)==playback;
     if (!ok) q3cin_fail(error,QA_ERROR_ARGUMENT,"Fullscreen decoder lost its actual global cinematic slot");
+    if (ok && movie->status==2) return returned(source,true,error);
     if (ok && owner->decoder_handle!=handle) ok=qa_cinematic_roq_restart(playback,error);
     if (ok) owner->selected_handle=owner->decoder_handle=handle;
     return returned(source,ok,error);
@@ -329,7 +330,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
     char *path=path_copy(request,error);
     if (!path) return false;
     if (!(flags&1u)) for (uint32_t i=0;i<16;++i) if (slots[i].occupied && slots[i].path &&
-        !(slots[i].flags&1u) && slots[i].source->options.files==source->options.files &&
+        slots[i].source->options.files==source->options.files &&
         slots[i].source->options.media==source->options.media && !strcmp(slots[i].path,path)) {
         free(path); *out=(int32_t)i; return true;
     }
@@ -343,9 +344,19 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
         .pending=true,.occupied=true,.dirty=true,.play_on_walls=1,.status=1,.width=512,.height=512};
     bool ok;
     if (flags&1u) {
+        qa_error local={0};
         qa_q3_movie_request requested={.path=path,.loop=(flags&2u)!=0,.hold=(flags&4u)!=0,
             .silent=(flags&8u)!=0,.numeric_source=source,.numeric_handle=(int32_t)index};
-        ok=open && open(context,&requested,&movie->system,error);
+        ok=open && open(context,&requested,&movie->system,&local);
+        bool owned=movie->system.context || movie->system.status || movie->system.end ||
+            movie->system.release || movie->system.playback;
+        if (!ok && !owned && local.code==QA_ERROR_NOT_FOUND) {
+            free(movie->path); *movie=(q3cin_movie){0}; *out=-1; return true;
+        }
+        if (!ok && !owned && local.code==QA_ERROR_FORMAT) {
+            movie->pending=false; movie->status=0; *out=-1; return true;
+        }
+        if (!ok && error) *error=local;
         if (ok && (!movie->system.status || !movie->system.end || !movie->system.release))
             ok=q3cin_fail(error,QA_ERROR_ARGUMENT,"System cinematic returned incomplete ownership");
     } else {
@@ -408,7 +419,7 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
     if (movie->pending || !movie->source->options.current(movie->source->options.context,&movie->source->options))
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Cinematic handle retains an unavailable physical source");
     if (movie->status==2) return true;
-    if (!(movie->flags&1u) && !movie->playback) {
+    if (!movie->playback && !movie->system.status) {
         if (owner->decoder_handle!=handle)
             return q3cin_fail(error,QA_ERROR_FORMAT,"Cannot reset an uninitialized cinematic without its retained decoder");
         *out=movie->status; return true;
@@ -421,17 +432,17 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
         if (!qa_cinematic_roq_restart(decoder,error)) return false;
         movie->status=5;
     }
-    if (movie->playback && movie->play_on_walls < -1) { *out=movie->status; return true; }
+    if (decoder && movie->play_on_walls < -1) { *out=movie->status; return true; }
     owner->selected_handle=handle;
-    if (movie->playback && movie->status==0) { *out=0; return true; }
+    if (decoder && movie->status==0) { *out=0; return true; }
     qa_media_tick tick={.status=QA_MEDIA_STOPPED};
-    uint64_t before=movie->playback?qa_cinematic_revision(movie->playback):0;
+    uint64_t before=decoder?qa_cinematic_revision(decoder):0;
     bool ok=true;
-    if (movie->flags&1u) tick.status=movie->system.status(movie->system.context);
-    else ok=qa_cinematic_tick(movie->playback,&tick,error);
+    if (decoder) ok=qa_cinematic_tick(decoder,&tick,error);
+    else tick.status=movie->system.status(movie->system.context);
     if (!ok) return false;
-    if (movie->playback && qa_cinematic_revision(movie->playback)!=before) movie->dirty=true;
-    const qa_media_frame *picture=movie->playback?qa_cinematic_frame(movie->playback):NULL;
+    if (decoder && qa_cinematic_revision(decoder)!=before) movie->dirty=true;
+    const qa_media_frame *picture=decoder?qa_cinematic_frame(decoder):NULL;
     if (picture && (movie->width!=picture->width || movie->height!=picture->height || !movie->draw_width)) {
         bool limited=false;
         if (!owner->options.ui_limits(owner->options.context,&limited,error)) return false;
@@ -453,7 +464,13 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
             movie->status=0; movie->occupied=false; owner->selected_handle=-1;
         }
         *out=movie->status; return true;
-    } else return q3cin_close(owner,(uint32_t)handle,QA_CINEMATIC_STOPPED,error);
+    } else {
+        if (decoder && tick.status==QA_MEDIA_ENDED && !qa_cinematic_frame(decoder)) {
+            movie->status=2; *out=2; return true;
+        }
+        return q3cin_close(owner,(uint32_t)handle,
+            tick.status==QA_MEDIA_ENDED?QA_CINEMATIC_FINISHED:QA_CINEMATIC_STOPPED,error);
+    }
     movie->status=*out;
     return true;
 }
@@ -465,9 +482,13 @@ bool qa_q3_cinematic_run(qa_q3_cinematic_source *source,int32_t handle,int32_t *
 bool qa_q3_cinematic_stop(qa_q3_cinematic_source *source,int32_t handle,bool skip,qa_error *error)
 {
     if (!q3cin_enter(source,error)) return false;
-    if (handle>=0 && handle<16 && !(source->handles->movies[handle].flags&1u) &&
-        !source->handles->movies[handle].playback) {
-        source->handles->selected_handle=handle; return returned(source,true,error);
+    if (handle>=0 && handle<16) {
+        q3cin_movie *movie=&source->handles->movies[handle];
+        qa_cinematic *system=movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if ((!movie->playback && !movie->system.status) ||
+            (movie->system.playback && (!system || !qa_cinematic_frame(system)))) {
+            source->handles->selected_handle=handle; return returned(source,true,error);
+        }
     }
     if (handle>=0 && handle<16 && source->handles->movies[handle].playback) {
         q3cin_movie *movie=&source->handles->movies[handle]; source->handles->selected_handle=handle;
@@ -548,11 +569,13 @@ bool qa_q3_cinematic_system_fullscreen(qa_q3_cinematic_source *source,int32_t ha
     q3cin_movie *movie=&owner->movies[handle];
     qa_cinematic *decoder=movie->system.playback?movie->system.playback(movie->system.context):NULL;
     if (!qa_q3_cinematic_system_select(source,handle,decoder,error) || !q3cin_enter(source,error)) return false;
-    bool ok=decoder && movie->source==source && (movie->flags&1u) && !movie->pending && owner->decoder_handle==handle;
+    bool ok=decoder && movie->source==source && (movie->flags&1u) && !movie->pending &&
+        (owner->decoder_handle==handle || movie->status==2);
     if (!ok) q3cin_fail(error,QA_ERROR_ARGUMENT,"Fullscreen draw lost its selected global decoder");
     uint64_t before=ok?qa_cinematic_revision(decoder):0;
     qa_media_tick tick={0};
     if (ok) ok=qa_cinematic_tick(decoder,&tick,error);
+    if (ok && tick.status==QA_MEDIA_ENDED && !tick.frame) movie->status=2;
     bool visible=ok && tick.status!=QA_MEDIA_ENDED && tick.status!=QA_MEDIA_STOPPED && tick.frame;
     if (visible) {
         if (qa_cinematic_revision(decoder)!=before) movie->dirty=true;
@@ -624,7 +647,10 @@ const qa_scene_image *qa_q3_cinematic_shader_resolve(qa_q3_cinematic_source *sou
         found=true;
         int32_t status;
         ok=run(owner,(int32_t)i,&status,error);
-        if (ok && owner->movies[i].playback && qa_cinematic_frame(owner->movies[i].playback)) {
+        const q3cin_movie *movie=&owner->movies[i];
+        qa_cinematic *decoder=movie->playback?movie->playback:
+            movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if (ok && decoder && qa_cinematic_frame(decoder)) {
             ok=upload(owner,i,true,frame,error);
             if (ok) image=owner->scratch[i];
         }
