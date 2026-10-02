@@ -469,8 +469,8 @@ static bool objective(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
                     int32_t self,team;
                     SOURCE_CALL(bot_ai_source_client(b,s,&self,e));
                     SOURCE_CALL(bot_ai_source_team(b,self,&team,e));
-                    if(team==1) s->source_order.blue_flag_status=1;
-                    else if(team==2) s->source_order.red_flag_status=1;
+                    if(team==1) bot_ai_blue_flag_status_set(s,1);
+                    else if(team==2) bot_ai_red_flag_status_set(s,1);
                 }
                 bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
             }

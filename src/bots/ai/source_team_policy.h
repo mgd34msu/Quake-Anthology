@@ -8,7 +8,7 @@ enum { BOT_SOURCE_ALTERNATE_ROUTES = 32 };
 typedef struct bot_source_team_policy_state {
     float become_team_leader_time, team_give_orders_time;
     float reached_alt_route_time, ctf_roam_time;
-    int32_t num_teammates, ctf_strategy, own_decision_time, team_task_preference;
+    int32_t own_decision_time, team_task_preference;
 } bot_source_team_policy_state;
 typedef struct bot_source_team_policy_globals {
     int32_t num_team_mates_maxclients, sort_team_mates_maxclients, team_orders_maxclients;

@@ -179,7 +179,7 @@ static bool follow_carrier(qa_bots *b, bot_ai_state *s, int32_t teammate,
     if(!alive(b,s)) return true;
     if(!bot_ai_client_name(b,teammate,name,sizeof(name),true,e)) return false;
     if(!alive(b,s)) return true;
-    bool own=s->source_order.flag_carrier==self;
+    bool own=bot_ai_flag_carrier(s)==self;
     if(!chat_initial(b,s,own?"cmd_accompanyme":"cmd_accompany",name,own?NULL:carrier,e) ||
        !bot_ai_source_voice(b,s,teammate,own?"followme":"followflagcarrier",false,e)) return false;
     return say_order(b,s,teammate,false,e);
@@ -205,8 +205,8 @@ static bool issue_at(qa_bots *b, bot_ai_state *s, const int32_t teammates[64], i
 }
 static bool carrier_name(qa_bots *b, bot_ai_state *s, bool always, char name[36], qa_error *e) {
     name[0]=0;
-    return !alive(b,s) || (!always && s->source_order.flag_carrier==-1) ||
-        bot_ai_client_name(b,s->source_order.flag_carrier,name,36,true,e);
+    return !alive(b,s) || (!always && bot_ai_flag_carrier(s)==-1) ||
+        bot_ai_client_name(b,bot_ai_flag_carrier(s),name,36,true,e);
 }
 static bool follow_or_get(qa_bots *b, bot_ai_state *s, int32_t teammate,
                            const char *carrier, bool follow, bool voice_first, qa_error *e) {
@@ -219,21 +219,21 @@ static bool orders_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s)) return true;
     if(!bot_ai_source_team(b,self,&team,e)) return false;
     if(!alive(b,s)) return true;
-    int64_t status=team==1?(int64_t)s->source_order.red_flag_status*2+s->source_order.blue_flag_status:
-        (int64_t)s->source_order.blue_flag_status*2+s->source_order.red_flag_status;
+    int64_t status=team==1?(int64_t)bot_ai_red_flag_status(s)*2+bot_ai_blue_flag_status(s):
+        (int64_t)bot_ai_blue_flag_status(s)*2+bot_ai_red_flag_status(s);
     if(status<0 || status>3) return true;
     if(!sorted_team_mates(b,s,teammates,&count,e)) return false;
     if(!alive(b,s)) return true;
-    bool aggressive=(s->source_team_policy.ctf_strategy&1)!=0;
-    int32_t carrier=s->source_order.flag_carrier,client,first,last,defenders,attackers;
+    bool aggressive=(bot_ai_ctf_strategy(s)&1)!=0;
+    int32_t carrier=bot_ai_flag_carrier(s),client,first,last,defenders,attackers;
     char name[36];
     if(status==3) {
-        if(s->source_team_policy.num_teammates==1) return true;
-        if(s->source_team_policy.num_teammates==2) {
+        if(bot_ai_num_teammates(s)==1) return true;
+        if(bot_ai_num_teammates(s)==2) {
             if(!at(teammates,count,0,&first,e)) return false;
             return issue_at(b,s,teammates,count,first!=carrier?0:1,"cmd_getflag","getflag",first!=carrier?0:1,false,e);
         }
-        if(s->source_team_policy.num_teammates==3) {
+        if(bot_ai_num_teammates(s)==3) {
             if(!at(teammates,count,0,&first,e) || !at(teammates,count,first!=carrier?0:1,&client,e)) return false;
             if(!carrier_name(b,s,false,name,e) || !follow_or_get(b,s,client,name,carrier!=-1,true,e)) return false;
             if(!alive(b,s)) return true;
@@ -253,11 +253,11 @@ static bool orders_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         return true;
     }
     if(status==2) {
-        if(s->source_team_policy.num_teammates==1) return true;
-        if(s->source_team_policy.num_teammates==2)
+        if(bot_ai_num_teammates(s)==1) return true;
+        if(bot_ai_num_teammates(s)==2)
             return issue_at(b,s,teammates,count,0,aggressive?"cmd_getflag":"cmd_defendbase","getflag",0,false,e) &&
                 issue_at(b,s,teammates,count,1,"cmd_getflag","getflag",1,false,e);
-        if(s->source_team_policy.num_teammates==3)
+        if(bot_ai_num_teammates(s)==3)
             return issue_at(b,s,teammates,count,0,"cmd_defendbase",aggressive?"getflag":"defend",0,false,e) &&
                 issue_at(b,s,teammates,count,1,"cmd_getflag","getflag",1,false,e) &&
                 issue_at(b,s,teammates,count,2,"cmd_getflag","getflag",2,false,e);
@@ -307,13 +307,13 @@ static bool orders_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     return true;
 }
 static bool orders_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    int32_t status=s->source_order.neutral_flag_status;
+    int32_t status=bot_ai_neutral_flag_status(s);
     if(status<0 || status>3) return true;
     int32_t teammates[64],count=0;
     if(!sorted_team_mates(b,s,teammates,&count,e)) return false;
     if(!alive(b,s) || count==1) return true;
-    bool aggressive=(s->source_team_policy.ctf_strategy&1)!=0;
-    int32_t carrier=s->source_order.flag_carrier,client,first,defenders,attackers;
+    bool aggressive=(bot_ai_ctf_strategy(s)&1)!=0;
+    int32_t carrier=bot_ai_flag_carrier(s),client,first,defenders,attackers;
     if(status==1) {
         if(count==2) {
             int32_t index=teammates[0]==carrier?1:0;
@@ -379,7 +379,7 @@ static bool orders_bases(qa_bots *b, bot_ai_state *s, const char *attack_command
     int32_t teammates[64],count=0;
     if(!sorted_team_mates(b,s,teammates,&count,e)) return false;
     if(!alive(b,s) || count==1) return true;
-    bool aggressive=(s->source_team_policy.ctf_strategy&1)!=0;
+    bool aggressive=(bot_ai_ctf_strategy(s)&1)!=0;
     if(count==2 || count==3) {
         if(!issue_at(b,s,teammates,count,0,"cmd_defendbase","defend",0,false,e)) return false;
         if(count==3 && !issue_at(b,s,teammates,count,1,aggressive?attack_command:"cmd_defendbase",
@@ -452,8 +452,8 @@ bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
     if(!bot_ai_source_client_from_name(b,name,&leader,e)) return false;
     if(!alive(b,s)) return true;
     int32_t type=b->source_goals.game_type;
-    bool flags_at_base=(type!=4 || (!s->source_order.red_flag_status && !s->source_order.blue_flag_status)) &&
-        (type!=5 || !s->source_order.neutral_flag_status);
+    bool flags_at_base=(type!=4 || (!bot_ai_red_flag_status(s) && !bot_ai_blue_flag_status(s))) &&
+        (type!=5 || !bot_ai_neutral_flag_status(s));
     int32_t *preference=&s->source_team_policy.team_task_preference;
     if(!(*preference&(offense?2:1))) {
         bool bot_leader;if(!known_bot_leader(b,s,&bot_leader,e)) return false;
@@ -539,7 +539,7 @@ bool bot_ai_source_set_last_order(qa_bots *b, bot_ai_state *s, bool *out, qa_err
     if(b->source_goals.game_type==4 && last_type==BOT_LTG_RETURN_FLAG) {
         if(!source_team(b,s,&team,e)) return false;
         if(!alive(b,s)) return true;
-        if((team==1?s->source_order.red_flag_status:s->source_order.blue_flag_status)==0) {
+        if((team==1?bot_ai_red_flag_status(s):bot_ai_blue_flag_status(s))==0) {
             last_type=BOT_LTG_NONE;
             if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,true,e)) return false;
         }
@@ -689,15 +689,18 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(type>7 || (type>4 && !s->team_arena)) return true;
     bot_source_team_policy_state *policy=&s->source_team_policy;
     bool flags=type==4 || type==5;
-    if(policy->num_teammates!=count || s->source_order.force_orders || (flags && s->source_order.flag_status_changed)) {
-        policy->team_give_orders_time=b->time;policy->num_teammates=count;s->source_order.force_orders=false;
-        if(flags) s->source_order.flag_status_changed=false;
+    if(bot_ai_num_teammates(s)!=count || bot_ai_force_orders(s) || (flags && bot_ai_flag_status_changed(s))) {
+        policy->team_give_orders_time=b->time;bot_ai_num_teammates_set(s,count);
+        if(flags) bot_ai_flag_status_changed_set(s,false);
+        bot_ai_force_orders_set(s,false);
     }
-    if(flags && s->source_order.last_flag_capture_time<b->time-240.0f) {
-        s->source_order.last_flag_capture_time=b->time;float random;
+    if(flags && bot_ai_last_flag_capture_time(s)<b->time-240.0f) {
+        bot_ai_last_flag_capture_time_set(s,b->time);float random;
         if(!bot_ai_random(b,&random,e)) return false;
         if(!alive(b,s)) return true;
-        if((double)random<.4) {policy->ctf_strategy^=1;policy->team_give_orders_time=b->time;}
+        if((double)random<.4) {
+            bot_ai_ctf_strategy_set(s,bot_ai_ctf_strategy(s)^1);policy->team_give_orders_time=b->time;
+        }
     }
     float delay=type==4?3.0f:type==5?2.0f:5.0f;
     if(!policy->team_give_orders_time || !(policy->team_give_orders_time<b->time-delay)) return true;
@@ -862,7 +865,7 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(bot_ai_rush_base_away_time(s)>b->time) {
             if(!source_team(b,s,&team,e)) return false;
             if(!alive(b,s)) return true;
-            if((team==1?s->source_order.red_flag_status:s->source_order.blue_flag_status)==0) bot_ai_rush_base_away_time_set(s,0);
+            if((team==1?bot_ai_red_flag_status(s):bot_ai_blue_flag_status(s))==0) bot_ai_rush_base_away_time_set(s,0);
         }
         return true;
     }
@@ -873,8 +876,8 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     if(!source_team(b,s,&team,e)) return false;
     if(!alive(b,s)) return true;
-    int64_t status=team==1?(int64_t)s->source_order.red_flag_status*2+s->source_order.blue_flag_status:
-        (int64_t)s->source_order.blue_flag_status*2+s->source_order.red_flag_status;
+    int64_t status=team==1?(int64_t)bot_ai_red_flag_status(s)*2+bot_ai_blue_flag_status(s):
+        (int64_t)bot_ai_blue_flag_status(s)*2+bot_ai_red_flag_status(s);
     if(status==1) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time &&
            !(bot_ai_long_term_goal(s)==BOT_LTG_DEFEND && (bot_ai_team_goal(s).number==b->source_goals.red_flag.number ||
@@ -952,7 +955,7 @@ static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(!alive(b,s)) return true;
         if(!carrying) bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
     }
-    if(s->source_order.neutral_flag_status==1) {
+    if(bot_ai_neutral_flag_status(s)==1) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time) {
             if(bot_ai_long_term_goal(s)!=BOT_LTG_TEAM_ACCOMPANY) {
                 int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,true,true,false,&carrier,e)) return false;
@@ -973,7 +976,7 @@ static bool seek_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
         }
         return true;
     }
-    if(s->source_order.neutral_flag_status==2) {
+    if(bot_ai_neutral_flag_status(s)==2) {
         if((double)s->source_team_policy.own_decision_time<(double)b->time) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,false,true,false,&carrier,e)) return false;
             if(!alive(b,s) || protect_order(bot_ai_long_term_goal(s))) return true;

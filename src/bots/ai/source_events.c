@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "source_event_state.h"
 #include "source_selectors.h"
+#include "source_team_state.h"
 #include "source_timers.h"
 #include "source_inventory.h"
 #include "source_events.h"
@@ -61,28 +62,27 @@ static bool obituary(qa_bots *b,bot_ai_state *s,const qa_q3_entity *entity,qa_er
         if(found && (observed.state.powerups&(1<<9))) {
             bool same_team;if(!bot_ai_source_same_team(b,s,target,&same_team,e)) return false;
             if(!same_team && live(b,s)) {
-                s->source_order.neutral_flag_status=3;s->source_order.flag_status_changed=true;
+                bot_ai_neutral_flag_status_set(s,3);bot_ai_flag_status_changed_set(s,true);
             }
         }
     }
     return true;
 }
 static bool team_sound(qa_bots *b,bot_ai_state *s,int32_t sound,qa_error *e) {
-    bot_source_order_state *order=&s->source_order;
     if(b->source_goals.game_type==4) switch(sound) {
-    case 0:case 1:order->blue_flag_status=0;order->red_flag_status=0;order->flag_status_changed=true;break;
-    case 2:order->blue_flag_status=0;order->flag_status_changed=true;break;
-    case 3:order->red_flag_status=0;order->flag_status_changed=true;break;
-    case 4:order->blue_flag_status=1;order->flag_status_changed=true;break;
-    case 5:order->red_flag_status=1;order->flag_status_changed=true;break;
+    case 0:case 1:bot_ai_blue_flag_status_set(s,0);bot_ai_red_flag_status_set(s,0);bot_ai_flag_status_changed_set(s,true);break;
+    case 2:bot_ai_blue_flag_status_set(s,0);bot_ai_flag_status_changed_set(s,true);break;
+    case 3:bot_ai_red_flag_status_set(s,0);bot_ai_flag_status_changed_set(s,true);break;
+    case 4:bot_ai_blue_flag_status_set(s,1);bot_ai_flag_status_changed_set(s,true);break;
+    case 5:bot_ai_red_flag_status_set(s,1);bot_ai_flag_status_changed_set(s,true);break;
     default:break;
     } else if(s->team_arena && b->source_goals.game_type==5) switch(sound) {
-    case 0:case 1:case 2:case 3:order->neutral_flag_status=0;order->flag_status_changed=true;break;
+    case 0:case 1:case 2:case 3:bot_ai_neutral_flag_status_set(s,0);bot_ai_flag_status_changed_set(s,true);break;
     case 4:case 5: {
         int32_t self,team;
         if(!bot_ai_source_client(b,s,&self,e) || !bot_ai_source_team(b,self,&team,e)) return false;
         if(live(b,s)) {
-            order->neutral_flag_status=team==(sound==4?1:2)?2:1;order->flag_status_changed=true;
+            bot_ai_neutral_flag_status_set(s,team==(sound==4?1:2)?2:1);bot_ai_flag_status_changed_set(s,true);
         }
         break;
     }

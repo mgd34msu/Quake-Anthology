@@ -830,27 +830,31 @@ static bool objective_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *
     return finish_order(b,s,m->type==MSG_ATTACK || m->type==MSG_HARVEST,e);
 }
 static bool flag_message(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
-    bot_source_order_state *order=&s->source_order;
     if(b->source_goals.game_type==4) {
         char flag[128];if(!qa_bot_chat_match_variable(m,1,flag,sizeof(flag),e)) return false;
         if(m->subtype&MATCH_GOT_FLAG) {
+            bool red=same(flag,"RED");
+            if(red) bot_ai_red_flag_status_set(s,1);else bot_ai_blue_flag_status_set(s,1);
             int32_t self,team;if(!bot_ai_source_client(b,s,&self,e) || !bot_ai_source_team(b,self,&team,e)) return false;
-            bool red=same(flag,"RED");if(red) order->red_flag_status=1;else order->blue_flag_status=1;
             if(team==(red?2:1)) {
-                char name[36];if(!qa_bot_chat_match_variable(m,VAR_NAME,name,sizeof(name),e) ||
-                   !bot_ai_source_client_from_name(b,name,&order->flag_carrier,e)) return false;
+                char name[36];int32_t carrier;
+                if(!qa_bot_chat_match_variable(m,VAR_NAME,name,sizeof(name),e) ||
+                   !bot_ai_source_client_from_name(b,name,&carrier,e)) return false;
+                bot_ai_flag_carrier_set(s,carrier);
             }
-            order->flag_status_changed=true;order->last_flag_capture_time=b->time;
+            bot_ai_flag_status_changed_set(s,true);bot_ai_last_flag_capture_time_set(s,b->time);
         } else if(m->subtype&MATCH_CAPTURED_FLAG) {
-            order->red_flag_status=0;order->blue_flag_status=0;order->flag_carrier=0;
-            order->flag_status_changed=true;
+            bot_ai_red_flag_status_set(s,0);bot_ai_blue_flag_status_set(s,0);bot_ai_flag_carrier_set(s,0);
+            bot_ai_flag_status_changed_set(s,true);
         } else if(m->subtype&MATCH_RETURNED_FLAG) {
-            if(same(flag,"RED")) order->red_flag_status=0;else order->blue_flag_status=0;
-            order->flag_status_changed=true;
+            if(same(flag,"RED")) bot_ai_red_flag_status_set(s,0);else bot_ai_blue_flag_status_set(s,0);
+            bot_ai_flag_status_changed_set(s,true);
         }
     } else if(s->team_arena && b->source_goals.game_type==5 && (m->subtype&65535)) {
-        char name[36];if(!qa_bot_chat_match_variable(m,VAR_NAME,name,sizeof(name),e) ||
-           !bot_ai_source_client_from_name(b,name,&order->flag_carrier,e)) return false;
+        char name[36];int32_t carrier;
+        if(!qa_bot_chat_match_variable(m,VAR_NAME,name,sizeof(name),e) ||
+           !bot_ai_source_client_from_name(b,name,&carrier,e)) return false;
+        bot_ai_flag_carrier_set(s,carrier);
     }
     return true;
 }
@@ -910,7 +914,7 @@ bool bot_ai_source_order_message(qa_bots *b,bot_ai_state *s,const char *message,
     case MSG_DOING:return doing(b,s,&m,e);
     case MSG_MY_COMMAND: {
         bool leader;if(!self_is_leader(b,s,36,&leader,e)) return false;
-        if(leader && alive(b,s)) s->source_order.force_orders=true;
+        if(leader && alive(b,s)) bot_ai_force_orders_set(s,true);
         return true;
     }
     case MSG_WHERE:return where(b,s,&m,e);

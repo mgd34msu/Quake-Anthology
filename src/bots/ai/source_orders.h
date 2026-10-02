@@ -20,10 +20,7 @@ typedef struct bot_source_orders_state {
 typedef struct bot_source_order_state {
     char subteam[32];
     int32_t checkpoints, patrol_points, current_patrol_point, patrol_flags;
-    float ask_team_leader_time, last_flag_capture_time;
-    int32_t red_flag_status, blue_flag_status, neutral_flag_status, flag_carrier;
-    bool flag_status_changed;
-    bool force_orders;
+    float ask_team_leader_time;
 } bot_source_order_state;
 
 struct qa_bots;

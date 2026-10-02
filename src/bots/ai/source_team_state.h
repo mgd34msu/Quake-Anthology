@@ -33,4 +33,52 @@ static inline bool bot_ai_ordered(const bot_ai_state *s) {
 static inline void bot_ai_ordered_set(bot_ai_state *s,bool value) {
     bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_ORDERED,value?1u:0u);
 }
+static inline int32_t bot_ai_num_teammates(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_TEAMMATE_COUNT);
+}
+static inline void bot_ai_num_teammates_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_TEAMMATE_COUNT,value);
+}
+static inline int32_t bot_ai_red_flag_status(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_RED_FLAG_STATUS);
+}
+static inline void bot_ai_red_flag_status_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_RED_FLAG_STATUS,value);
+}
+static inline int32_t bot_ai_blue_flag_status(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_BLUE_FLAG_STATUS);
+}
+static inline void bot_ai_blue_flag_status_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_BLUE_FLAG_STATUS,value);
+}
+static inline int32_t bot_ai_neutral_flag_status(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_NEUTRAL_FLAG_STATUS);
+}
+static inline void bot_ai_neutral_flag_status_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_NEUTRAL_FLAG_STATUS,value);
+}
+static inline bool bot_ai_flag_status_changed(const bot_ai_state *s) {
+    return bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_FLAG_STATUS_CHANGED)!=0;
+}
+static inline void bot_ai_flag_status_changed_set(bot_ai_state *s,bool value) {
+    bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_FLAG_STATUS_CHANGED,value?1u:0u);
+}
+static inline bool bot_ai_force_orders(const bot_ai_state *s) {
+    return bot_source_word_read(s->source_span.data+QA_BOT_SOURCE_FORCE_ORDERS)!=0;
+}
+static inline void bot_ai_force_orders_set(bot_ai_state *s,bool value) {
+    bot_source_word_write(s->source_span.data+QA_BOT_SOURCE_FORCE_ORDERS,value?1u:0u);
+}
+static inline int32_t bot_ai_flag_carrier(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_FLAG_CARRIER);
+}
+static inline void bot_ai_flag_carrier_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_FLAG_CARRIER,value);
+}
+static inline int32_t bot_ai_ctf_strategy(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CTF_STRATEGY);
+}
+static inline void bot_ai_ctf_strategy_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_CTF_STRATEGY,value);
+}
 #endif

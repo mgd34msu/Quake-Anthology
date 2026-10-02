@@ -220,4 +220,10 @@ static inline float bot_ai_lead_backup_time(const bot_ai_state *s) {
 static inline void bot_ai_lead_backup_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_BACKUP_TIME,value);
 }
+static inline float bot_ai_last_flag_capture_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LAST_FLAG_CAPTURE_TIME);
+}
+static inline void bot_ai_last_flag_capture_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LAST_FLAG_CAPTURE_TIME,value);
+}
 #endif
