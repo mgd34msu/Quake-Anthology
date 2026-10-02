@@ -1,22 +1,32 @@
 #include "internal.h"
 #include <stdio.h>
 
+static qa_script_location report_location(const qa_script *s,qa_script_location fallback) {
+    uint32_t pointer=script_source_pointer(s);
+    if(pointer && pointer<=s->frame_count)
+        return qa_script_lexer_position(s->frames[pointer-1].lexer);
+    if(s->stack_count)
+        return qa_script_lexer_position(s->frames[s->stack[s->stack_count-1]].lexer);
+    return fallback;
+}
+static void source_report(qa_script *s,qa_script_severity severity,qa_script_location location,
+                          const char *message) {
+    if(s->services.diagnostic) {
+        qa_script_diagnostic diagnostic={severity,report_location(s,location),message};
+        s->services.diagnostic(s->services.context,&diagnostic);
+    }
+}
 bool script_fail(qa_script *s, qa_script_location location, const char *message, qa_error *e) {
+    location=report_location(s,location);
     s->source_failure = true;
     qa_error_set(e, QA_ERROR_FORMAT, location.offset, "%s:%u:%u: %s",
                  location.path == NULL ? "<script>" : location.path, location.line, location.column,
                  message);
-    if ((s->options.lexer_flags & QA_SCRIPT_NO_ERRORS) == 0 && s->services.diagnostic != NULL) {
-        qa_script_diagnostic d = {QA_SCRIPT_ERROR, location, message};
-        s->services.diagnostic(s->services.context, &d);
-    }
+    source_report(s,QA_SCRIPT_ERROR,location,message);
     return false;
 }
 void script_warn(qa_script *s, qa_script_location location, const char *message) {
-    if ((s->options.lexer_flags & QA_SCRIPT_NO_WARNINGS) == 0 && s->services.diagnostic != NULL) {
-        qa_script_diagnostic d = {QA_SCRIPT_WARNING, location, message};
-        s->services.diagnostic(s->services.context, &d);
-    }
+    source_report(s,QA_SCRIPT_WARNING,location,message);
 }
 static bool same_path(const char *a, const char *b) {
     for (;;) {
@@ -73,23 +83,31 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
         s->services.release(s->services.context,&resource);
         return script_fail(s,qa_script_position(s),"Script resolver returned an invalid resource",e);
     }
-    for(size_t i=0;i<s->stack_count;++i)
-        if(same_path(s->frames[s->stack[i]].resource.path,resource.path)) {
-            script_warn(s,qa_script_position(s),"Recursive script include ignored");
-            if(staged) qa_script_lexer_close(lexer);
-            else s->services.release(s->services.context,&resource);
-            return true;
-        }
-    if(!script_grow((void **)&s->frames,&s->frame_capacity,s->frame_count+1,sizeof(*s->frames),e) ||
-       !script_grow((void **)&s->stack,&s->stack_capacity,s->stack_count+1,sizeof(*s->stack),e)) {
-        if(staged) script_lexer_dispose(lexer);
-        else s->services.release(s->services.context,&resource);
-        return false;
-    }
     if(!staged && !qa_script_lexer_open(resource.path,resource.bytes,&options,&lexer,e)) {
         s->services.release(s->services.context,&resource);return false;
     }
     if(!staged && s->services.file_text) script_lexer_compress(lexer);
+    const char *included=qa_script_lexer_position(lexer).path;
+    for(size_t i=0;i<s->stack_count;++i)
+        if(same_path(qa_script_lexer_position(s->frames[s->stack[i]].lexer).path,included)) {
+            size_t length=strlen(included);char *message=qa_arena_alloc(&s->arena,length+sizeof(" recursively included"),1,e);
+            if(!message) {
+                script_lexer_dispose(lexer);
+                if(!staged) s->services.release(s->services.context,&resource);
+                return false;
+            }
+            memcpy(message,included,length);memcpy(message+length," recursively included",sizeof(" recursively included"));
+            source_report(s,QA_SCRIPT_ERROR,qa_script_position(s),message);
+            script_lexer_dispose(lexer);
+            if(!staged) s->services.release(s->services.context,&resource);
+            return true;
+        }
+    if(!script_grow((void **)&s->frames,&s->frame_capacity,s->frame_count+1,sizeof(*s->frames),e) ||
+       !script_grow((void **)&s->stack,&s->stack_capacity,s->stack_count+1,sizeof(*s->stack),e)) {
+        script_lexer_dispose(lexer);
+        if(!staged) s->services.release(s->services.context,&resource);
+        return false;
+    }
     qa_store_u32le(lexer->record.bytes+SCRIPT_LEXER_NEXT,script_source_pointer(s));
     s->frames[s->frame_count] = (script_frame){
         .resource = resource, .lexer = lexer, .owned=staged, .condition_base = s->condition_count, .active = true};

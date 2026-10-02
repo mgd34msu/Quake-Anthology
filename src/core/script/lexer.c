@@ -88,7 +88,7 @@ bool script_error(qa_script_lexer *l, const char *message, qa_error *e) {
     qa_script_location location = qa_script_lexer_position(l);
     qa_error_set(e, QA_ERROR_FORMAT, location.offset, "%s:%u:%u: %s", l->path, location.line,
                  location.column, message);
-    l->source_failure = (script_lexer_flags(l) & QA_SCRIPT_NO_ERRORS) == 0;
+    l->source_failure = true;
     script_report_error(l, message);
     return false;
 }
