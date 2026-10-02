@@ -328,9 +328,25 @@ static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, flo
                     const char *label, double value, bool warning, qa_error *error) {
     char numeric[32];
     if (!qa_format_number(value, numeric, error)) return false;
+    qa_ui *ui = hud->options.ui;
+    qa_font_info font;
+    if (!qa_font_describe(ui->options.fonts.primary ? ui->options.fonts.primary : ui->options.fonts.classic, &font))
+        return ui_fail(error, "HUD value lost its retained font metrics");
+    float cap = font.has_cap_ink ? font.cap_height : 8, top = font.has_cap_ink ? font.cap_top : 0;
+    if (!isfinite(cap) || cap <= 0 || !isfinite(top))
+        return ui_fail(error, "HUD value has invalid retained cap metrics");
+    float text_scale = ui->text_scale * 1.5f;
+    bool compact = ui->scale * text_scale * cap < 8;
+    float label_scale = compact ? 8 / cap / ui->scale : text_scale * .8f;
+    float number_scale = compact ? label_scale : text_scale * 1.5f;
+    float row = compact ? 14 / ui->scale : fmaxf(13, cap * label_scale + 4);
+    float height = row + cap * number_scale;
+    y = fminf(y, 476 - height);
     qa_scene_vec4 color = warning ? (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
-    return text(hud, scene, target, x, y, label, color, .9f, QA_FONT_ALIGN_CENTER, error) &&
-           text(hud, scene, target, x, y + 13, numeric, color, 1.5f, QA_FONT_ALIGN_CENTER, error);
+    return ui_draw_text(ui, scene, target, x, y - top * label_scale, label, color,
+               label_scale / ui->text_scale, QA_FONT_ALIGN_CENTER, error) &&
+           ui_draw_text(ui, scene, target, x, y + row - top * number_scale, numeric, color,
+               number_scale / ui->text_scale, QA_FONT_ALIGN_CENTER, error);
 }
 static const char *flag_status(uint32_t bits) {
     return bits & 4 ? "dropped" : bits & 2 ? "carried" : "home";
