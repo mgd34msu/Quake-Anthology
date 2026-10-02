@@ -325,6 +325,7 @@ bool frontend_system_cinematic_view_read(qa_frontend *f,frontend_cinematic_view 
     frontend_cinematic_view view={.files=row->source.files,.path=row->path,.seat=row->source.identity.physical_seat,
         .viewport={0,0,f->width,f->height},.status=qa_cinematic_status(row->movie)};
     if (!qa_cinematic_time(row->movie,&view.elapsed_ms,&view.source_ms,&view.loop,error)) return false;
+    if (row->numeric_source) view.elapsed_ms=row->clock_ms;
     if (!frontend_system_cinematic_source_current(row)) return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic view lost its source lease");
     *out=view; *found=true; return true;
 }
@@ -339,6 +340,7 @@ bool frontend_system_cinematic_input(qa_frontend *f,uint32_t seat,qa_input_focus
     if (!press) return true;
     double elapsed,source; uint64_t loop;
     if (!qa_cinematic_time(row->movie,&elapsed,&source,&loop,error)) return false;
+    if (row->numeric_source) elapsed=row->clock_ms;
     if (elapsed>1000 || (qa_cinematic_status(row->movie)==QA_MEDIA_HELD && row->clock_ms>1000))
         return end(row,QA_CINEMATIC_SKIPPED,error);
     return true;

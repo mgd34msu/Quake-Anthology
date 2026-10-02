@@ -100,7 +100,8 @@ static void diagnostic(void *context,const char *text)
 bool frontend_cinematic_idle(const qa_frontend *f)
 { return f && frontend_ui_features_idle(f) && (!f->cinematic || !f->cinematic->busy); }
 bool frontend_cinematic_running(const qa_frontend *f)
-{ return f && f->cinematic && f->cinematic->movie && current(f->cinematic); }
+{ return frontend_system_cinematic_running(f) ||
+    (f && f->cinematic && f->cinematic->movie && current(f->cinematic)); }
 bool frontend_cinematic_capture_ready(const qa_frontend *f)
 { return f && !f->cinematic; }
 bool frontend_cinematic_destroy(qa_frontend *f,qa_error *error)
@@ -243,6 +244,7 @@ static bool finish(frontend_cinematic *owner,qa_error *error)
 }
 bool frontend_cinematic_drain(qa_frontend *f,qa_error *error)
 {
+    if (f && !frontend_system_cinematic_drain(f,error)) return false;
     if (!f || !f->cinematic) return true;
     frontend_cinematic *owner=f->cinematic;
     if (owner->busy || f->capture || f->preparing || f->round || !frontend_ui_features_idle(f) ||
@@ -268,6 +270,8 @@ bool frontend_cinematic_input(qa_frontend *f,uint32_t seat,qa_input_focus focus,
     const qa_input_event *event,bool *handled,qa_error *error)
 {
     if (!f || !event || !handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid cinematic input event");
+    if (!frontend_system_cinematic_input(f,seat,focus,event,handled,error)) return false;
+    if (*handled) return true;
     *handled=false; frontend_cinematic *owner=f->cinematic;
     if (!owner || !owner->movie || owner->request.seat!=seat || !current(owner) || focus!=QA_INPUT_GAME) return true;
     if (!frontend_ui_features_idle(f))
@@ -301,6 +305,8 @@ bool frontend_cinematic_view_read(qa_frontend *f,frontend_cinematic_view *out,bo
 bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,qa_error *error)
 {
     if (!f || !rendered) return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid cinematic frame");
+    if (frontend_system_cinematic_running(f))
+        return frontend_system_cinematic_frame(f,elapsed_ns,rendered,error);
     *rendered=false; frontend_cinematic *owner=f->cinematic;
     if (!owner || !owner->movie || !current(owner)) return true;
     if (!frontend_ui_features_idle(f))
