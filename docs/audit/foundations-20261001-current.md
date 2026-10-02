@@ -6,6 +6,18 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B26 final raw per-bot policy scalars, 2026-10-02
+
+CTF roam time 6164, own-decision integer deadline 6620, alternate-route reached time 6736 and team task preference 6752 now use actual GAME bytes through existing private timer/team-state headers. Their reached pickup preference mutations, attack/defense thresholds, diagnostic duration, autonomous CTF/one-flag decision gates and AAS alternate-route reset/completion callers are migrated. Preference bit operations read the current raw word after real voice/leader callbacks, preserving intervening alias writes; route reached time publishes only after the actual successful travel query and live-owner check.
+
+The own-decision producer retains genuine binary32 addition, the family's explicit finite/int32 admission and truncation, and the existing double comparison against current time. Roam admission publishes the actual sixty-second deadline before its reached team-status call. No placeholder state or float-to-int fallback is introduced.
+
+All per-bot policy fields now have actual backing authority, so `bot_source_team_policy_state`, its member in `bot_ai_state` and its entire duplicated codec function are deleted. Population schema 27 rejects schema 26 and retains the complete 9088-byte GAME record/span binding. Typed MEMORY/checkpoint/history continuation carries those literal bytes. Shared alternate-route arrays, their real map/query owner, actual global caches and independently canonical actor/order metadata remain retained by their existing owners.
+
+All 27 registered AI production units passed their actual strict `-O2 -Werror` commands into `/home/buzzkill/.cache/quake-anthology-recovery/ai-objects/policy-scalars-20261002`; actual command and compiler evidence is retained there. Searches across current production source find zero deleted per-bot policy type/member/codec references, and whitespace checks are clean. Six existing AI paths and this existing report changed, with no public API, new files, test infrastructure, shared build outputs, CMake or Git writes.
+
+Remaining native BotState metadata includes subteam text, waypoint/order links and patrol flags, plus canonical view/player projections. Full original enemy/activation/obstacle/clear-path execution, route/global raw allocation topology and aggregate cold runtime remain separate work. Root owns executable integration, runtime checks, commits and pushes.
+
 ## Authorized B26 raw leader text and election/order timers, 2026-10-02
 
 The native 32-byte leader name and ask/become/give-orders timers are removed. Actual leader text begins at GAME 6900; timer helpers use 6932/6936/6940. Chat start/stop/new-leader, voice commands, human/self election, task preferences, actual leader lookup and status reporting now consume the genuine bytes. The election's enter-time choice additionally reads actual GAME 6064, while the independently exposed canonical view remains a separate projection.

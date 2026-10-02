@@ -8,9 +8,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=26;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=27;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==26?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==27?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -54,11 +54,6 @@ static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *or
     if(!qa_source_save_bytes(io,order->subteam,sizeof(order->subteam)) ||
        !memchr(order->subteam,0,sizeof(order->subteam))) return false;
     I(order->checkpoints);I(order->patrol_points);I(order->current_patrol_point);I(order->patrol_flags);
-    return true;
-}
-static bool source_policy_fields(qa_source_save_io *io,bot_source_team_policy_state *policy) {
-    F(policy->reached_alt_route_time);F(policy->ctf_roam_time);
-    I(policy->own_decision_time);I(policy->team_task_preference);
     return true;
 }
 static bool source_orders_fields(qa_source_save_io *io,bot_source_orders_state *orders) {
@@ -120,7 +115,7 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     B(state->team_arena); B(state->retired);
     L(state->command_sequence);
 
-    if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy)) return false;
+    if(!source_order_fields(io,&state->source_order)) return false;
     uint32_t phase=state->shutdown_phase;U(phase);if(phase>BOT_SHUTDOWN_FAILED) return false;
     state->shutdown_phase=(bot_shutdown_phase)phase;
     B(state->shutdown_restart); B(state->shutdown_chat_pending);

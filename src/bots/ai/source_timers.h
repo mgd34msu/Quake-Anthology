@@ -247,4 +247,16 @@ static inline float bot_ai_give_orders_time(const bot_ai_state *s) {
 static inline void bot_ai_give_orders_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_GIVE_ORDERS_TIME,value);
 }
+static inline float bot_ai_ctf_roam_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_CTF_ROAM_TIME);
+}
+static inline void bot_ai_ctf_roam_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_CTF_ROAM_TIME,value);
+}
+static inline float bot_ai_alternate_goal_reached_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ALT_GOAL_REACHED_TIME);
+}
+static inline void bot_ai_alternate_goal_reached_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ALT_GOAL_REACHED_TIME,value);
+}
 #endif

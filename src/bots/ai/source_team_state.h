@@ -84,4 +84,16 @@ static inline void bot_ai_ctf_strategy_set(bot_ai_state *s,int32_t value) {
 static inline void bot_ai_team_leader_clear(bot_ai_state *s) {
     s->source_span.data[QA_BOT_SOURCE_TEAM_LEADER]=0;
 }
+static inline int32_t bot_ai_own_decision_time(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_OWN_DECISION_TIME);
+}
+static inline void bot_ai_own_decision_time_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_OWN_DECISION_TIME,value);
+}
+static inline int32_t bot_ai_team_task_preference(const bot_ai_state *s) {
+    return bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_TEAM_TASK_PREFERENCE);
+}
+static inline void bot_ai_team_task_preference_set(bot_ai_state *s,int32_t value) {
+    bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_TEAM_TASK_PREFERENCE,value);
+}
 #endif

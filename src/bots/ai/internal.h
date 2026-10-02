@@ -53,7 +53,6 @@ typedef struct bot_ai_state {
     bool team_arena, retired;
     uint64_t command_sequence;
     bot_source_order_state source_order;
-    bot_source_team_policy_state source_team_policy;
     bot_source_setup_state source_setup;
     bool inuse, counted;
     bot_shutdown_phase shutdown_phase;
